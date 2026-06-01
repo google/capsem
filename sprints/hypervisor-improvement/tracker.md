@@ -307,6 +307,19 @@
   low current write IOPS even with default writable geometry, so accepting the
   rootfs candidate requires canonical `just benchmark` rather than isolated
   disk interpretation.
+- H05 canonical rootfs-only benchmark ran through `just benchmark` with
+  `CAPSEM_KVM_BLK_ROOTFS_QUEUE_COUNT=8`, `CAPSEM_KVM_BLK_ROOTFS_QUEUE_SIZE=128`,
+  `CAPSEM_KVM_BLK_ROOTFS_SEG_MAX=64`, and
+  `CAPSEM_KVM_BLK_ROOTFS_LOGICAL_BLOCK_SIZE=4096` on source commit `b834d554`.
+  The run refreshed the active Linux x86_64 artifacts and preserved the prior
+  active generated artifacts in local archive
+  `benchmarks/archive/benchmark-prerun-20260601T180613Z.zip`. Artifact metadata
+  recorded source-clean git state (`source_dirty=false`) plus generated
+  security-engine artifacts already modified by the same benchmark run. The
+  canonical suite generated all requested performance artifacts but failed the
+  endpoint-latency gate: service global endpoints were roughly 3.3-6.1 ms p95
+  against the 3 ms gate, and `/logs/{id}` was roughly 25.3-26.3 ms p95 against
+  the 12 ms gate.
 
 ## Coverage Ledger
 
@@ -422,7 +435,20 @@
   targeted disk at seq write +2.3%, seq read +2.4%, random write -0.6%, random
   read +10.8% without event-index, but it was not accepted because it was not
   the systematic backend-wide profile now being pursued.
+  The H05 rootfs-only block-shape canonical run on commit `b834d554` improved
+  the committed Linux baseline on the lanes the focused grid predicted:
+  rootfs random read 2,686 IOPS (+109.1%), small-JS reads 88,791 ops/s
+  (+18.7%), metadata stat 58,674 stats/s (+64.5%), python startup 31.7 ms
+  (+27.8% faster), node 302.1 ms (+18.5%), claude 1,509.7 ms (+12.8%),
+  gemini 3,206.5 ms (+1.4%), and codex 979.0 ms (+13.9%). It did not close
+  the macOS gap: Linux/macOS ratios were rootfs seq 0.17x, random IOPS 0.31x,
+  cold large-binary 0.17x, small-JS 0.22x, metadata 0.29x, disk seq read
+  0.08x, and disk random read 0.08x. Against the same Linux host-native/raw
+  artifact, the VM measured disk seq write 0.35x host, disk seq read 0.05x,
+  disk random read 0.02x, small-file reads 0.52x, and metadata stats 0.27x.
+  VM random write appeared 4.03x host-native because the two paths have
+  different buffering/sync behavior, so that lane is not a clean raw-efficiency
+  signal.
 - Missing/deferred: Real OTLP exporter process/configuration is deferred to the
-  broader telemetry sprint; canonical `just benchmark` artifact refresh is
-  deferred until the full async default is accepted after broader VM smoke and
-  storage/startup proof.
+  broader telemetry sprint. Endpoint-latency regressions are recorded by the
+  canonical benchmark gate and still need a control-plane performance fix.

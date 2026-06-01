@@ -1,6 +1,6 @@
 {
   "version": "0.1.0",
-  "timestamp": 1780329448.7454088,
+  "timestamp": 1780337652.6007793,
   "vm_count": 8,
   "iterations": {
     "service_global": 16,
@@ -25,687 +25,687 @@
     "service_global": {
       "/version": {
         "count": 16,
-        "min_ms": 0.735,
-        "p50_ms": 0.821,
-        "p95_ms": 0.963,
-        "p99_ms": 0.963,
-        "max_ms": 0.963
+        "min_ms": 0.714,
+        "p50_ms": 0.78,
+        "p95_ms": 1.028,
+        "p99_ms": 1.028,
+        "max_ms": 1.028
       },
       "/list": {
         "count": 16,
-        "min_ms": 1.672,
-        "p50_ms": 1.804,
-        "p95_ms": 1.891,
-        "p99_ms": 1.891,
-        "max_ms": 1.891
+        "min_ms": 1.673,
+        "p50_ms": 1.773,
+        "p95_ms": 1.838,
+        "p99_ms": 1.838,
+        "max_ms": 1.838
       },
       "/stats": {
         "count": 16,
-        "min_ms": 1.817,
-        "p50_ms": 1.915,
-        "p95_ms": 2.496,
-        "p99_ms": 2.496,
-        "max_ms": 2.496
+        "min_ms": 1.813,
+        "p50_ms": 1.87,
+        "p95_ms": 2.023,
+        "p99_ms": 2.023,
+        "max_ms": 2.023
       },
       "/settings": {
         "count": 16,
-        "min_ms": 4.146,
-        "p50_ms": 4.227,
-        "p95_ms": 4.522,
-        "p99_ms": 4.522,
-        "max_ms": 4.522
+        "min_ms": 4.032,
+        "p50_ms": 4.346,
+        "p95_ms": 6.113,
+        "p99_ms": 6.113,
+        "max_ms": 6.113
       },
       "/settings/presets": {
         "count": 16,
-        "min_ms": 3.175,
-        "p50_ms": 3.295,
-        "p95_ms": 3.706,
-        "p99_ms": 3.706,
-        "max_ms": 3.706
+        "min_ms": 3.09,
+        "p50_ms": 3.379,
+        "p95_ms": 4.782,
+        "p99_ms": 4.782,
+        "max_ms": 4.782
       },
       "/profiles": {
         "count": 16,
-        "min_ms": 5.459,
-        "p50_ms": 5.598,
-        "p95_ms": 5.906,
-        "p99_ms": 5.906,
-        "max_ms": 5.906
+        "min_ms": 5.407,
+        "p50_ms": 5.481,
+        "p95_ms": 5.637,
+        "p99_ms": 5.637,
+        "max_ms": 5.637
       },
       "/profiles/catalog": {
         "count": 16,
-        "min_ms": 0.989,
-        "p50_ms": 1.097,
-        "p95_ms": 1.185,
-        "p99_ms": 1.185,
-        "max_ms": 1.185
+        "min_ms": 1.002,
+        "p50_ms": 1.054,
+        "p95_ms": 1.39,
+        "p99_ms": 1.39,
+        "max_ms": 1.39
       },
       "/rules": {
         "count": 16,
-        "min_ms": 2.869,
-        "p50_ms": 3.016,
-        "p95_ms": 3.13,
-        "p99_ms": 3.13,
-        "max_ms": 3.13
+        "min_ms": 2.855,
+        "p50_ms": 2.94,
+        "p95_ms": 4.326,
+        "p99_ms": 4.326,
+        "max_ms": 4.326
       },
       "/enforcement": {
         "count": 16,
-        "min_ms": 1.072,
-        "p50_ms": 1.167,
-        "p95_ms": 1.281,
-        "p99_ms": 1.281,
-        "max_ms": 1.281
+        "min_ms": 1.005,
+        "p50_ms": 1.062,
+        "p95_ms": 1.17,
+        "p99_ms": 1.17,
+        "max_ms": 1.17
       },
       "/enforcement/stats": {
         "count": 16,
-        "min_ms": 3.165,
-        "p50_ms": 3.515,
-        "p95_ms": 4.114,
-        "p99_ms": 4.114,
-        "max_ms": 4.114
+        "min_ms": 3.219,
+        "p50_ms": 3.601,
+        "p95_ms": 3.894,
+        "p99_ms": 3.894,
+        "max_ms": 3.894
       },
       "/detection": {
         "count": 16,
-        "min_ms": 0.689,
-        "p50_ms": 0.762,
-        "p95_ms": 0.859,
-        "p99_ms": 0.859,
-        "max_ms": 0.859
+        "min_ms": 0.664,
+        "p50_ms": 0.745,
+        "p95_ms": 0.849,
+        "p99_ms": 0.849,
+        "max_ms": 0.849
       },
       "/detection/stats": {
         "count": 16,
-        "min_ms": 2.77,
-        "p50_ms": 3.035,
-        "p95_ms": 4.016,
-        "p99_ms": 4.016,
-        "max_ms": 4.016
+        "min_ms": 2.795,
+        "p50_ms": 2.999,
+        "p95_ms": 3.3,
+        "p99_ms": 3.3,
+        "max_ms": 3.3
       },
       "/confirm/pending": {
         "count": 16,
-        "min_ms": 0.681,
-        "p50_ms": 0.779,
-        "p95_ms": 0.902,
-        "p99_ms": 0.902,
-        "max_ms": 0.902
+        "min_ms": 0.667,
+        "p50_ms": 0.732,
+        "p95_ms": 0.813,
+        "p99_ms": 0.813,
+        "max_ms": 0.813
       },
       "/skills": {
         "count": 16,
-        "min_ms": 3.043,
-        "p50_ms": 3.228,
-        "p95_ms": 3.593,
-        "p99_ms": 3.593,
-        "max_ms": 3.593
+        "min_ms": 3.123,
+        "p50_ms": 3.241,
+        "p95_ms": 3.49,
+        "p99_ms": 3.49,
+        "max_ms": 3.49
       },
       "/setup/state": {
         "count": 16,
-        "min_ms": 0.684,
-        "p50_ms": 0.792,
-        "p95_ms": 0.915,
-        "p99_ms": 0.915,
-        "max_ms": 0.915
+        "min_ms": 0.709,
+        "p50_ms": 0.755,
+        "p95_ms": 0.848,
+        "p99_ms": 0.848,
+        "max_ms": 0.848
       },
       "/setup/assets": {
         "count": 16,
-        "min_ms": 0.936,
-        "p50_ms": 0.989,
-        "p95_ms": 1.111,
-        "p99_ms": 1.111,
-        "max_ms": 1.111
+        "min_ms": 0.889,
+        "p50_ms": 0.969,
+        "p95_ms": 1.073,
+        "p99_ms": 1.073,
+        "max_ms": 1.073
       },
       "/mcp/connectors": {
         "count": 16,
-        "min_ms": 3.062,
-        "p50_ms": 3.153,
-        "p95_ms": 3.368,
-        "p99_ms": 3.368,
-        "max_ms": 3.368
+        "min_ms": 3.104,
+        "p50_ms": 3.203,
+        "p95_ms": 3.672,
+        "p99_ms": 3.672,
+        "max_ms": 3.672
       }
     },
     "service_vm": {
-      "/info/epbench-ae4d8629-0": {
+      "/info/epbench-6ba35f60-0": {
         "count": 4,
-        "min_ms": 3.893,
-        "p50_ms": 3.951,
-        "p95_ms": 4.284,
-        "p99_ms": 4.284,
-        "max_ms": 4.284
+        "min_ms": 4.141,
+        "p50_ms": 4.312,
+        "p95_ms": 4.567,
+        "p99_ms": 4.567,
+        "max_ms": 4.567
       },
-      "/logs/epbench-ae4d8629-0": {
+      "/logs/epbench-6ba35f60-0": {
         "count": 4,
-        "min_ms": 25.949,
-        "p50_ms": 26.031,
-        "p95_ms": 26.274,
-        "p99_ms": 26.274,
-        "max_ms": 26.274
+        "min_ms": 25.722,
+        "p50_ms": 25.847,
+        "p95_ms": 26.13,
+        "p99_ms": 26.13,
+        "max_ms": 26.13
       },
-      "/history/epbench-ae4d8629-0": {
+      "/history/epbench-6ba35f60-0": {
         "count": 4,
-        "min_ms": 3.212,
-        "p50_ms": 3.228,
-        "p95_ms": 3.574,
-        "p99_ms": 3.574,
-        "max_ms": 3.574
+        "min_ms": 3.11,
+        "p50_ms": 3.183,
+        "p95_ms": 3.479,
+        "p99_ms": 3.479,
+        "max_ms": 3.479
       },
-      "/history/epbench-ae4d8629-0/counts": {
+      "/history/epbench-6ba35f60-0/counts": {
         "count": 4,
-        "min_ms": 2.403,
-        "p50_ms": 2.416,
-        "p95_ms": 2.617,
-        "p99_ms": 2.617,
-        "max_ms": 2.617
+        "min_ms": 2.396,
+        "p50_ms": 2.432,
+        "p95_ms": 2.536,
+        "p99_ms": 2.536,
+        "max_ms": 2.536
       },
-      "/history/epbench-ae4d8629-0/processes": {
+      "/history/epbench-6ba35f60-0/processes": {
         "count": 4,
-        "min_ms": 2.535,
-        "p50_ms": 2.566,
-        "p95_ms": 2.651,
-        "p99_ms": 2.651,
-        "max_ms": 2.651
+        "min_ms": 2.523,
+        "p50_ms": 2.555,
+        "p95_ms": 2.694,
+        "p99_ms": 2.694,
+        "max_ms": 2.694
       },
-      "/history/epbench-ae4d8629-0/transcript": {
+      "/history/epbench-6ba35f60-0/transcript": {
         "count": 4,
-        "min_ms": 0.822,
-        "p50_ms": 0.887,
-        "p95_ms": 1.044,
-        "p99_ms": 1.044,
-        "max_ms": 1.044
+        "min_ms": 0.792,
+        "p50_ms": 0.843,
+        "p95_ms": 0.907,
+        "p99_ms": 0.907,
+        "max_ms": 0.907
       },
-      "/files/epbench-ae4d8629-0": {
+      "/files/epbench-6ba35f60-0": {
         "count": 4,
-        "min_ms": 10.654,
-        "p50_ms": 10.664,
-        "p95_ms": 11.591,
-        "p99_ms": 11.591,
-        "max_ms": 11.591
+        "min_ms": 10.634,
+        "p50_ms": 10.902,
+        "p95_ms": 11.838,
+        "p99_ms": 11.838,
+        "max_ms": 11.838
       },
-      "/sessions/epbench-ae4d8629-0/policy-contexts": {
+      "/sessions/epbench-6ba35f60-0/policy-contexts": {
         "count": 4,
-        "min_ms": 8.296,
-        "p50_ms": 8.49,
-        "p95_ms": 8.931,
-        "p99_ms": 8.931,
-        "max_ms": 8.931
+        "min_ms": 7.762,
+        "p50_ms": 8.096,
+        "p95_ms": 8.253,
+        "p99_ms": 8.253,
+        "max_ms": 8.253
       },
-      "/info/epbench-ae4d8629-1": {
+      "/info/epbench-6ba35f60-1": {
         "count": 4,
-        "min_ms": 4.119,
-        "p50_ms": 4.177,
-        "p95_ms": 4.56,
-        "p99_ms": 4.56,
-        "max_ms": 4.56
+        "min_ms": 3.923,
+        "p50_ms": 3.977,
+        "p95_ms": 4.468,
+        "p99_ms": 4.468,
+        "max_ms": 4.468
       },
-      "/logs/epbench-ae4d8629-1": {
+      "/logs/epbench-6ba35f60-1": {
         "count": 4,
-        "min_ms": 25.694,
-        "p50_ms": 25.77,
-        "p95_ms": 25.977,
-        "p99_ms": 25.977,
-        "max_ms": 25.977
+        "min_ms": 25.592,
+        "p50_ms": 25.649,
+        "p95_ms": 26.345,
+        "p99_ms": 26.345,
+        "max_ms": 26.345
       },
-      "/history/epbench-ae4d8629-1": {
+      "/history/epbench-6ba35f60-1": {
         "count": 4,
-        "min_ms": 3.048,
-        "p50_ms": 3.279,
-        "p95_ms": 3.636,
-        "p99_ms": 3.636,
-        "max_ms": 3.636
+        "min_ms": 2.935,
+        "p50_ms": 3.087,
+        "p95_ms": 3.398,
+        "p99_ms": 3.398,
+        "max_ms": 3.398
       },
-      "/history/epbench-ae4d8629-1/counts": {
+      "/history/epbench-6ba35f60-1/counts": {
         "count": 4,
-        "min_ms": 2.338,
-        "p50_ms": 2.369,
-        "p95_ms": 2.459,
-        "p99_ms": 2.459,
-        "max_ms": 2.459
+        "min_ms": 2.28,
+        "p50_ms": 2.284,
+        "p95_ms": 2.422,
+        "p99_ms": 2.422,
+        "max_ms": 2.422
       },
-      "/history/epbench-ae4d8629-1/processes": {
+      "/history/epbench-6ba35f60-1/processes": {
         "count": 4,
-        "min_ms": 2.557,
-        "p50_ms": 2.613,
-        "p95_ms": 2.792,
-        "p99_ms": 2.792,
-        "max_ms": 2.792
+        "min_ms": 2.514,
+        "p50_ms": 2.524,
+        "p95_ms": 2.594,
+        "p99_ms": 2.594,
+        "max_ms": 2.594
       },
-      "/history/epbench-ae4d8629-1/transcript": {
+      "/history/epbench-6ba35f60-1/transcript": {
         "count": 4,
-        "min_ms": 0.809,
-        "p50_ms": 0.827,
-        "p95_ms": 0.875,
-        "p99_ms": 0.875,
-        "max_ms": 0.875
+        "min_ms": 0.79,
+        "p50_ms": 0.813,
+        "p95_ms": 0.851,
+        "p99_ms": 0.851,
+        "max_ms": 0.851
       },
-      "/files/epbench-ae4d8629-1": {
+      "/files/epbench-6ba35f60-1": {
         "count": 4,
-        "min_ms": 10.81,
-        "p50_ms": 10.957,
-        "p95_ms": 10.98,
-        "p99_ms": 10.98,
-        "max_ms": 10.98
+        "min_ms": 10.468,
+        "p50_ms": 10.631,
+        "p95_ms": 10.927,
+        "p99_ms": 10.927,
+        "max_ms": 10.927
       },
-      "/sessions/epbench-ae4d8629-1/policy-contexts": {
+      "/sessions/epbench-6ba35f60-1/policy-contexts": {
         "count": 4,
-        "min_ms": 7.73,
-        "p50_ms": 7.769,
-        "p95_ms": 7.995,
-        "p99_ms": 7.995,
-        "max_ms": 7.995
+        "min_ms": 7.583,
+        "p50_ms": 7.706,
+        "p95_ms": 7.928,
+        "p99_ms": 7.928,
+        "max_ms": 7.928
       },
-      "/info/epbench-ae4d8629-2": {
+      "/info/epbench-6ba35f60-2": {
         "count": 4,
-        "min_ms": 3.937,
-        "p50_ms": 4.116,
-        "p95_ms": 4.455,
-        "p99_ms": 4.455,
-        "max_ms": 4.455
+        "min_ms": 4.029,
+        "p50_ms": 4.094,
+        "p95_ms": 4.265,
+        "p99_ms": 4.265,
+        "max_ms": 4.265
       },
-      "/logs/epbench-ae4d8629-2": {
+      "/logs/epbench-6ba35f60-2": {
         "count": 4,
-        "min_ms": 25.834,
-        "p50_ms": 26.028,
-        "p95_ms": 26.227,
-        "p99_ms": 26.227,
-        "max_ms": 26.227
+        "min_ms": 25.256,
+        "p50_ms": 25.514,
+        "p95_ms": 26.114,
+        "p99_ms": 26.114,
+        "max_ms": 26.114
       },
-      "/history/epbench-ae4d8629-2": {
+      "/history/epbench-6ba35f60-2": {
         "count": 4,
-        "min_ms": 3.091,
-        "p50_ms": 3.179,
-        "p95_ms": 3.425,
-        "p99_ms": 3.425,
-        "max_ms": 3.425
+        "min_ms": 2.922,
+        "p50_ms": 2.99,
+        "p95_ms": 3.133,
+        "p99_ms": 3.133,
+        "max_ms": 3.133
       },
-      "/history/epbench-ae4d8629-2/counts": {
+      "/history/epbench-6ba35f60-2/counts": {
         "count": 4,
-        "min_ms": 2.323,
-        "p50_ms": 2.405,
-        "p95_ms": 2.511,
-        "p99_ms": 2.511,
-        "max_ms": 2.511
+        "min_ms": 2.276,
+        "p50_ms": 2.304,
+        "p95_ms": 2.604,
+        "p99_ms": 2.604,
+        "max_ms": 2.604
       },
-      "/history/epbench-ae4d8629-2/processes": {
+      "/history/epbench-6ba35f60-2/processes": {
         "count": 4,
-        "min_ms": 2.564,
-        "p50_ms": 2.605,
-        "p95_ms": 2.709,
-        "p99_ms": 2.709,
-        "max_ms": 2.709
+        "min_ms": 2.449,
+        "p50_ms": 2.487,
+        "p95_ms": 2.52,
+        "p99_ms": 2.52,
+        "max_ms": 2.52
       },
-      "/history/epbench-ae4d8629-2/transcript": {
+      "/history/epbench-6ba35f60-2/transcript": {
         "count": 4,
-        "min_ms": 0.827,
-        "p50_ms": 0.832,
-        "p95_ms": 1.013,
-        "p99_ms": 1.013,
-        "max_ms": 1.013
+        "min_ms": 0.773,
+        "p50_ms": 0.819,
+        "p95_ms": 0.912,
+        "p99_ms": 0.912,
+        "max_ms": 0.912
       },
-      "/files/epbench-ae4d8629-2": {
+      "/files/epbench-6ba35f60-2": {
         "count": 4,
-        "min_ms": 10.481,
-        "p50_ms": 10.637,
-        "p95_ms": 10.876,
-        "p99_ms": 10.876,
-        "max_ms": 10.876
+        "min_ms": 10.561,
+        "p50_ms": 10.671,
+        "p95_ms": 10.99,
+        "p99_ms": 10.99,
+        "max_ms": 10.99
       },
-      "/sessions/epbench-ae4d8629-2/policy-contexts": {
+      "/sessions/epbench-6ba35f60-2/policy-contexts": {
         "count": 4,
-        "min_ms": 8.101,
-        "p50_ms": 8.278,
-        "p95_ms": 8.896,
-        "p99_ms": 8.896,
-        "max_ms": 8.896
+        "min_ms": 7.915,
+        "p50_ms": 8.011,
+        "p95_ms": 8.263,
+        "p99_ms": 8.263,
+        "max_ms": 8.263
       },
-      "/info/epbench-ae4d8629-3": {
+      "/info/epbench-6ba35f60-3": {
         "count": 4,
-        "min_ms": 4.263,
-        "p50_ms": 4.335,
-        "p95_ms": 4.444,
-        "p99_ms": 4.444,
-        "max_ms": 4.444
+        "min_ms": 3.907,
+        "p50_ms": 3.942,
+        "p95_ms": 4.373,
+        "p99_ms": 4.373,
+        "max_ms": 4.373
       },
-      "/logs/epbench-ae4d8629-3": {
+      "/logs/epbench-6ba35f60-3": {
         "count": 4,
-        "min_ms": 25.525,
-        "p50_ms": 25.695,
-        "p95_ms": 26.047,
-        "p99_ms": 26.047,
-        "max_ms": 26.047
+        "min_ms": 25.402,
+        "p50_ms": 25.451,
+        "p95_ms": 25.707,
+        "p99_ms": 25.707,
+        "max_ms": 25.707
       },
-      "/history/epbench-ae4d8629-3": {
+      "/history/epbench-6ba35f60-3": {
         "count": 4,
-        "min_ms": 3.021,
-        "p50_ms": 3.127,
-        "p95_ms": 3.297,
-        "p99_ms": 3.297,
-        "max_ms": 3.297
+        "min_ms": 3.112,
+        "p50_ms": 3.114,
+        "p95_ms": 3.292,
+        "p99_ms": 3.292,
+        "max_ms": 3.292
       },
-      "/history/epbench-ae4d8629-3/counts": {
+      "/history/epbench-6ba35f60-3/counts": {
         "count": 4,
-        "min_ms": 2.288,
-        "p50_ms": 2.339,
-        "p95_ms": 2.413,
-        "p99_ms": 2.413,
-        "max_ms": 2.413
+        "min_ms": 2.397,
+        "p50_ms": 2.404,
+        "p95_ms": 2.567,
+        "p99_ms": 2.567,
+        "max_ms": 2.567
       },
-      "/history/epbench-ae4d8629-3/processes": {
+      "/history/epbench-6ba35f60-3/processes": {
         "count": 4,
-        "min_ms": 2.454,
+        "min_ms": 2.495,
+        "p50_ms": 2.5,
+        "p95_ms": 2.528,
+        "p99_ms": 2.528,
+        "max_ms": 2.528
+      },
+      "/history/epbench-6ba35f60-3/transcript": {
+        "count": 4,
+        "min_ms": 0.78,
+        "p50_ms": 0.807,
+        "p95_ms": 0.878,
+        "p99_ms": 0.878,
+        "max_ms": 0.878
+      },
+      "/files/epbench-6ba35f60-3": {
+        "count": 4,
+        "min_ms": 10.334,
+        "p50_ms": 10.337,
+        "p95_ms": 10.712,
+        "p99_ms": 10.712,
+        "max_ms": 10.712
+      },
+      "/sessions/epbench-6ba35f60-3/policy-contexts": {
+        "count": 4,
+        "min_ms": 7.672,
+        "p50_ms": 7.702,
+        "p95_ms": 8.155,
+        "p99_ms": 8.155,
+        "max_ms": 8.155
+      },
+      "/info/epbench-6ba35f60-4": {
+        "count": 4,
+        "min_ms": 3.858,
+        "p50_ms": 3.911,
+        "p95_ms": 4.103,
+        "p99_ms": 4.103,
+        "max_ms": 4.103
+      },
+      "/logs/epbench-6ba35f60-4": {
+        "count": 4,
+        "min_ms": 25.517,
+        "p50_ms": 25.85,
+        "p95_ms": 25.999,
+        "p99_ms": 25.999,
+        "max_ms": 25.999
+      },
+      "/history/epbench-6ba35f60-4": {
+        "count": 4,
+        "min_ms": 3.128,
+        "p50_ms": 3.168,
+        "p95_ms": 3.351,
+        "p99_ms": 3.351,
+        "max_ms": 3.351
+      },
+      "/history/epbench-6ba35f60-4/counts": {
+        "count": 4,
+        "min_ms": 2.305,
+        "p50_ms": 2.328,
+        "p95_ms": 2.368,
+        "p99_ms": 2.368,
+        "max_ms": 2.368
+      },
+      "/history/epbench-6ba35f60-4/processes": {
+        "count": 4,
+        "min_ms": 2.482,
+        "p50_ms": 2.564,
+        "p95_ms": 2.608,
+        "p99_ms": 2.608,
+        "max_ms": 2.608
+      },
+      "/history/epbench-6ba35f60-4/transcript": {
+        "count": 4,
+        "min_ms": 0.745,
+        "p50_ms": 0.793,
+        "p95_ms": 0.836,
+        "p99_ms": 0.836,
+        "max_ms": 0.836
+      },
+      "/files/epbench-6ba35f60-4": {
+        "count": 4,
+        "min_ms": 10.637,
+        "p50_ms": 10.649,
+        "p95_ms": 10.992,
+        "p99_ms": 10.992,
+        "max_ms": 10.992
+      },
+      "/sessions/epbench-6ba35f60-4/policy-contexts": {
+        "count": 4,
+        "min_ms": 7.692,
+        "p50_ms": 7.697,
+        "p95_ms": 8.137,
+        "p99_ms": 8.137,
+        "max_ms": 8.137
+      },
+      "/info/epbench-6ba35f60-5": {
+        "count": 4,
+        "min_ms": 3.791,
+        "p50_ms": 3.895,
+        "p95_ms": 4.156,
+        "p99_ms": 4.156,
+        "max_ms": 4.156
+      },
+      "/logs/epbench-6ba35f60-5": {
+        "count": 4,
+        "min_ms": 25.504,
+        "p50_ms": 25.603,
+        "p95_ms": 25.808,
+        "p99_ms": 25.808,
+        "max_ms": 25.808
+      },
+      "/history/epbench-6ba35f60-5": {
+        "count": 4,
+        "min_ms": 3.149,
+        "p50_ms": 3.293,
+        "p95_ms": 3.538,
+        "p99_ms": 3.538,
+        "max_ms": 3.538
+      },
+      "/history/epbench-6ba35f60-5/counts": {
+        "count": 4,
+        "min_ms": 2.356,
         "p50_ms": 2.473,
-        "p95_ms": 2.496,
-        "p99_ms": 2.496,
-        "max_ms": 2.496
+        "p95_ms": 2.594,
+        "p99_ms": 2.594,
+        "max_ms": 2.594
       },
-      "/history/epbench-ae4d8629-3/transcript": {
+      "/history/epbench-6ba35f60-5/processes": {
         "count": 4,
-        "min_ms": 0.768,
-        "p50_ms": 0.773,
-        "p95_ms": 0.839,
-        "p99_ms": 0.839,
-        "max_ms": 0.839
+        "min_ms": 2.494,
+        "p50_ms": 2.524,
+        "p95_ms": 2.537,
+        "p99_ms": 2.537,
+        "max_ms": 2.537
       },
-      "/files/epbench-ae4d8629-3": {
-        "count": 4,
-        "min_ms": 10.317,
-        "p50_ms": 10.391,
-        "p95_ms": 10.553,
-        "p99_ms": 10.553,
-        "max_ms": 10.553
-      },
-      "/sessions/epbench-ae4d8629-3/policy-contexts": {
-        "count": 4,
-        "min_ms": 7.669,
-        "p50_ms": 7.716,
-        "p95_ms": 8.203,
-        "p99_ms": 8.203,
-        "max_ms": 8.203
-      },
-      "/info/epbench-ae4d8629-4": {
-        "count": 4,
-        "min_ms": 3.992,
-        "p50_ms": 4.058,
-        "p95_ms": 4.303,
-        "p99_ms": 4.303,
-        "max_ms": 4.303
-      },
-      "/logs/epbench-ae4d8629-4": {
-        "count": 4,
-        "min_ms": 26.165,
-        "p50_ms": 26.295,
-        "p95_ms": 26.459,
-        "p99_ms": 26.459,
-        "max_ms": 26.459
-      },
-      "/history/epbench-ae4d8629-4": {
-        "count": 4,
-        "min_ms": 3.16,
-        "p50_ms": 3.189,
-        "p95_ms": 3.373,
-        "p99_ms": 3.373,
-        "max_ms": 3.373
-      },
-      "/history/epbench-ae4d8629-4/counts": {
-        "count": 4,
-        "min_ms": 2.353,
-        "p50_ms": 2.374,
-        "p95_ms": 2.435,
-        "p99_ms": 2.435,
-        "max_ms": 2.435
-      },
-      "/history/epbench-ae4d8629-4/processes": {
-        "count": 4,
-        "min_ms": 2.582,
-        "p50_ms": 2.583,
-        "p95_ms": 2.632,
-        "p99_ms": 2.632,
-        "max_ms": 2.632
-      },
-      "/history/epbench-ae4d8629-4/transcript": {
+      "/history/epbench-6ba35f60-5/transcript": {
         "count": 4,
         "min_ms": 0.836,
-        "p50_ms": 0.914,
-        "p95_ms": 0.988,
-        "p99_ms": 0.988,
-        "max_ms": 0.988
+        "p50_ms": 0.858,
+        "p95_ms": 0.977,
+        "p99_ms": 0.977,
+        "max_ms": 0.977
       },
-      "/files/epbench-ae4d8629-4": {
+      "/files/epbench-6ba35f60-5": {
         "count": 4,
-        "min_ms": 10.312,
-        "p50_ms": 10.707,
-        "p95_ms": 10.74,
-        "p99_ms": 10.74,
-        "max_ms": 10.74
+        "min_ms": 10.432,
+        "p50_ms": 10.669,
+        "p95_ms": 11.093,
+        "p99_ms": 11.093,
+        "max_ms": 11.093
       },
-      "/sessions/epbench-ae4d8629-4/policy-contexts": {
+      "/sessions/epbench-6ba35f60-5/policy-contexts": {
         "count": 4,
-        "min_ms": 8.12,
-        "p50_ms": 8.171,
-        "p95_ms": 8.225,
-        "p99_ms": 8.225,
-        "max_ms": 8.225
+        "min_ms": 7.941,
+        "p50_ms": 7.945,
+        "p95_ms": 8.216,
+        "p99_ms": 8.216,
+        "max_ms": 8.216
       },
-      "/info/epbench-ae4d8629-5": {
+      "/info/epbench-6ba35f60-6": {
         "count": 4,
-        "min_ms": 3.956,
-        "p50_ms": 3.981,
-        "p95_ms": 4.135,
-        "p99_ms": 4.135,
-        "max_ms": 4.135
+        "min_ms": 3.765,
+        "p50_ms": 3.795,
+        "p95_ms": 4.126,
+        "p99_ms": 4.126,
+        "max_ms": 4.126
       },
-      "/logs/epbench-ae4d8629-5": {
+      "/logs/epbench-6ba35f60-6": {
         "count": 4,
-        "min_ms": 25.275,
-        "p50_ms": 25.565,
-        "p95_ms": 25.832,
-        "p99_ms": 25.832,
-        "max_ms": 25.832
+        "min_ms": 25.04,
+        "p50_ms": 25.113,
+        "p95_ms": 25.285,
+        "p99_ms": 25.285,
+        "max_ms": 25.285
       },
-      "/history/epbench-ae4d8629-5": {
+      "/history/epbench-6ba35f60-6": {
         "count": 4,
-        "min_ms": 3.103,
-        "p50_ms": 3.154,
-        "p95_ms": 3.281,
-        "p99_ms": 3.281,
-        "max_ms": 3.281
+        "min_ms": 3.035,
+        "p50_ms": 3.151,
+        "p95_ms": 3.359,
+        "p99_ms": 3.359,
+        "max_ms": 3.359
       },
-      "/history/epbench-ae4d8629-5/counts": {
+      "/history/epbench-6ba35f60-6/counts": {
         "count": 4,
-        "min_ms": 2.325,
-        "p50_ms": 2.328,
-        "p95_ms": 2.408,
-        "p99_ms": 2.408,
-        "max_ms": 2.408
+        "min_ms": 2.318,
+        "p50_ms": 2.334,
+        "p95_ms": 2.38,
+        "p99_ms": 2.38,
+        "max_ms": 2.38
       },
-      "/history/epbench-ae4d8629-5/processes": {
+      "/history/epbench-6ba35f60-6/processes": {
         "count": 4,
-        "min_ms": 2.466,
-        "p50_ms": 2.521,
-        "p95_ms": 2.548,
-        "p99_ms": 2.548,
-        "max_ms": 2.548
+        "min_ms": 2.49,
+        "p50_ms": 2.493,
+        "p95_ms": 2.523,
+        "p99_ms": 2.523,
+        "max_ms": 2.523
       },
-      "/history/epbench-ae4d8629-5/transcript": {
+      "/history/epbench-6ba35f60-6/transcript": {
         "count": 4,
-        "min_ms": 0.8,
-        "p50_ms": 0.831,
-        "p95_ms": 0.854,
-        "p99_ms": 0.854,
-        "max_ms": 0.854
+        "min_ms": 0.825,
+        "p50_ms": 0.84,
+        "p95_ms": 0.846,
+        "p99_ms": 0.846,
+        "max_ms": 0.846
       },
-      "/files/epbench-ae4d8629-5": {
+      "/files/epbench-6ba35f60-6": {
         "count": 4,
-        "min_ms": 10.331,
-        "p50_ms": 10.489,
-        "p95_ms": 10.948,
-        "p99_ms": 10.948,
-        "max_ms": 10.948
+        "min_ms": 10.422,
+        "p50_ms": 10.668,
+        "p95_ms": 10.833,
+        "p99_ms": 10.833,
+        "max_ms": 10.833
       },
-      "/sessions/epbench-ae4d8629-5/policy-contexts": {
+      "/sessions/epbench-6ba35f60-6/policy-contexts": {
         "count": 4,
-        "min_ms": 7.958,
-        "p50_ms": 7.983,
-        "p95_ms": 8.31,
-        "p99_ms": 8.31,
-        "max_ms": 8.31
+        "min_ms": 7.96,
+        "p50_ms": 8.168,
+        "p95_ms": 8.479,
+        "p99_ms": 8.479,
+        "max_ms": 8.479
       },
-      "/info/epbench-ae4d8629-6": {
+      "/info/epbench-6ba35f60-7": {
         "count": 4,
-        "min_ms": 4.171,
-        "p50_ms": 4.282,
-        "p95_ms": 4.369,
-        "p99_ms": 4.369,
-        "max_ms": 4.369
+        "min_ms": 3.922,
+        "p50_ms": 3.967,
+        "p95_ms": 4.346,
+        "p99_ms": 4.346,
+        "max_ms": 4.346
       },
-      "/logs/epbench-ae4d8629-6": {
+      "/logs/epbench-6ba35f60-7": {
         "count": 4,
-        "min_ms": 25.082,
-        "p50_ms": 25.142,
-        "p95_ms": 26.329,
-        "p99_ms": 26.329,
-        "max_ms": 26.329
+        "min_ms": 25.161,
+        "p50_ms": 25.324,
+        "p95_ms": 25.914,
+        "p99_ms": 25.914,
+        "max_ms": 25.914
       },
-      "/history/epbench-ae4d8629-6": {
+      "/history/epbench-6ba35f60-7": {
         "count": 4,
-        "min_ms": 3.088,
-        "p50_ms": 3.139,
-        "p95_ms": 3.531,
-        "p99_ms": 3.531,
-        "max_ms": 3.531
+        "min_ms": 3.077,
+        "p50_ms": 3.17,
+        "p95_ms": 3.341,
+        "p99_ms": 3.341,
+        "max_ms": 3.341
       },
-      "/history/epbench-ae4d8629-6/counts": {
+      "/history/epbench-6ba35f60-7/counts": {
         "count": 4,
-        "min_ms": 2.304,
-        "p50_ms": 2.316,
-        "p95_ms": 2.391,
-        "p99_ms": 2.391,
-        "max_ms": 2.391
+        "min_ms": 2.353,
+        "p50_ms": 2.382,
+        "p95_ms": 2.421,
+        "p99_ms": 2.421,
+        "max_ms": 2.421
       },
-      "/history/epbench-ae4d8629-6/processes": {
+      "/history/epbench-6ba35f60-7/processes": {
         "count": 4,
-        "min_ms": 2.481,
-        "p50_ms": 2.576,
-        "p95_ms": 2.65,
-        "p99_ms": 2.65,
-        "max_ms": 2.65
+        "min_ms": 2.551,
+        "p50_ms": 2.558,
+        "p95_ms": 2.656,
+        "p99_ms": 2.656,
+        "max_ms": 2.656
       },
-      "/history/epbench-ae4d8629-6/transcript": {
+      "/history/epbench-6ba35f60-7/transcript": {
         "count": 4,
-        "min_ms": 0.81,
-        "p50_ms": 0.819,
-        "p95_ms": 0.89,
-        "p99_ms": 0.89,
-        "max_ms": 0.89
+        "min_ms": 0.98,
+        "p50_ms": 1.008,
+        "p95_ms": 1.078,
+        "p99_ms": 1.078,
+        "max_ms": 1.078
       },
-      "/files/epbench-ae4d8629-6": {
+      "/files/epbench-6ba35f60-7": {
         "count": 4,
-        "min_ms": 10.326,
-        "p50_ms": 10.803,
-        "p95_ms": 11.408,
-        "p99_ms": 11.408,
-        "max_ms": 11.408
+        "min_ms": 10.715,
+        "p50_ms": 10.717,
+        "p95_ms": 10.796,
+        "p99_ms": 10.796,
+        "max_ms": 10.796
       },
-      "/sessions/epbench-ae4d8629-6/policy-contexts": {
+      "/sessions/epbench-6ba35f60-7/policy-contexts": {
         "count": 4,
-        "min_ms": 7.851,
-        "p50_ms": 8.039,
-        "p95_ms": 8.402,
-        "p99_ms": 8.402,
-        "max_ms": 8.402
-      },
-      "/info/epbench-ae4d8629-7": {
-        "count": 4,
-        "min_ms": 3.835,
-        "p50_ms": 4.014,
-        "p95_ms": 4.184,
-        "p99_ms": 4.184,
-        "max_ms": 4.184
-      },
-      "/logs/epbench-ae4d8629-7": {
-        "count": 4,
-        "min_ms": 25.601,
-        "p50_ms": 25.656,
-        "p95_ms": 25.942,
-        "p99_ms": 25.942,
-        "max_ms": 25.942
-      },
-      "/history/epbench-ae4d8629-7": {
-        "count": 4,
-        "min_ms": 3.085,
-        "p50_ms": 3.098,
-        "p95_ms": 3.459,
-        "p99_ms": 3.459,
-        "max_ms": 3.459
-      },
-      "/history/epbench-ae4d8629-7/counts": {
-        "count": 4,
-        "min_ms": 2.42,
-        "p50_ms": 2.492,
-        "p95_ms": 2.573,
-        "p99_ms": 2.573,
-        "max_ms": 2.573
-      },
-      "/history/epbench-ae4d8629-7/processes": {
-        "count": 4,
-        "min_ms": 2.586,
-        "p50_ms": 2.591,
-        "p95_ms": 2.73,
-        "p99_ms": 2.73,
-        "max_ms": 2.73
-      },
-      "/history/epbench-ae4d8629-7/transcript": {
-        "count": 4,
-        "min_ms": 0.783,
-        "p50_ms": 0.814,
-        "p95_ms": 0.922,
-        "p99_ms": 0.922,
-        "max_ms": 0.922
-      },
-      "/files/epbench-ae4d8629-7": {
-        "count": 4,
-        "min_ms": 10.342,
-        "p50_ms": 10.862,
-        "p95_ms": 11.374,
-        "p99_ms": 11.374,
-        "max_ms": 11.374
-      },
-      "/sessions/epbench-ae4d8629-7/policy-contexts": {
-        "count": 4,
-        "min_ms": 7.737,
-        "p50_ms": 7.962,
-        "p95_ms": 8.274,
-        "p99_ms": 8.274,
-        "max_ms": 8.274
+        "min_ms": 7.648,
+        "p50_ms": 7.748,
+        "p95_ms": 7.832,
+        "p99_ms": 7.832,
+        "max_ms": 7.832
       }
     },
     "gateway": {
       "/health": {
         "count": 32,
-        "min_ms": 0.262,
-        "p50_ms": 0.325,
-        "p95_ms": 0.473,
-        "p99_ms": 0.583,
-        "max_ms": 0.583
+        "min_ms": 0.267,
+        "p50_ms": 0.322,
+        "p95_ms": 0.543,
+        "p99_ms": 0.707,
+        "max_ms": 0.707
       },
       "/token": {
         "count": 32,
-        "min_ms": 0.253,
-        "p50_ms": 0.307,
-        "p95_ms": 0.4,
-        "p99_ms": 0.415,
-        "max_ms": 0.415
+        "min_ms": 0.245,
+        "p50_ms": 0.278,
+        "p95_ms": 0.322,
+        "p99_ms": 0.38,
+        "max_ms": 0.38
       },
       "/status": {
         "count": 32,
-        "min_ms": 0.687,
-        "p50_ms": 0.789,
-        "p95_ms": 1.091,
-        "p99_ms": 1.155,
-        "max_ms": 1.155
+        "min_ms": 0.693,
+        "p50_ms": 0.744,
+        "p95_ms": 0.879,
+        "p99_ms": 0.937,
+        "max_ms": 0.937
       }
     }
   },
   "schema": "capsem.benchmark-artifact.v1",
   "project_version": "1.2.1780320819",
   "arch": "x86_64",
-  "recorded_at": 1780329448.7459722,
-  "recorded_at_utc": "2026-06-01T15:57:28.745975+00:00",
+  "recorded_at": 1780337652.601377,
+  "recorded_at_utc": "2026-06-01T18:14:12.601382+00:00",
   "command": "uv run pytest tests/capsem-serial/test_endpoint_latency_benchmark.py -xvs",
   "host": {
     "platform": "Linux",
@@ -725,7 +725,7 @@
     "os_version_id": "26.04"
   },
   "git": {
-    "commit": "19ca286e21f245e60a3cfa599d12665ba558db6a",
+    "commit": "b834d5540a633c05616a3e2a1ce65f29e20aa5bf",
     "dirty": true,
     "source_dirty": false,
     "dirty_paths": [

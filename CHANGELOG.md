@@ -14,6 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added rootfs-specific and writable-device-specific Linux KVM virtio-blk
   shape knobs so read-only rootfs tuning can be tested without forcing the
   writable scratch block device onto the same queue geometry.
+- Recorded a Linux x86_64 canonical `just benchmark` run with the rootfs-only
+  KVM block-shape candidate on source commit `b834d554`, including refreshed
+  in-VM, host-native/raw-system, endpoint-latency, lifecycle, fork, parallel,
+  and security-engine artifacts.
 - Added a focused KVM block-shape gridsearch harness that records structured
   artifacts for queue count, queue size, segment limit, logical block size,
   Linux sysfs queue state, and `capsem-bench rootfs` results.

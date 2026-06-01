@@ -1,64 +1,64 @@
 {
   "version": "0.1.0",
-  "timestamp": 1780329475.5641143,
+  "timestamp": 1780337678.4377213,
   "runs": 3,
   "operations": {
     "provision_ms": {
-      "min": 2343.8,
-      "mean": 2463.9,
-      "max": 2600.8,
+      "min": 2132.7,
+      "mean": 2188.4,
+      "max": 2238.7,
       "values": [
-        2600.8,
-        2447.1,
-        2343.8
+        2238.7,
+        2132.7,
+        2193.8
       ]
     },
     "exec_ready_ms": {
-      "min": 24.4,
-      "mean": 25.0,
-      "max": 25.4,
+      "min": 22.7,
+      "mean": 25.3,
+      "max": 28.7,
       "values": [
-        25.4,
-        25.2,
-        24.4
+        24.5,
+        28.7,
+        22.7
       ]
     },
     "exec_ms": {
-      "min": 23.2,
-      "mean": 23.4,
-      "max": 23.6,
+      "min": 23.5,
+      "mean": 23.8,
+      "max": 24.0,
       "values": [
-        23.6,
-        23.2,
+        24.0,
+        23.8,
         23.5
       ]
     },
     "delete_ms": {
-      "min": 166.2,
+      "min": 166.3,
       "mean": 166.8,
       "max": 167.5,
       "values": [
+        166.3,
         167.5,
-        166.7,
-        166.2
+        166.6
       ]
     },
     "total_ms": {
-      "min": 2557.9,
-      "mean": 2679.1,
-      "max": 2817.3,
+      "min": 2352.7,
+      "mean": 2404.3,
+      "max": 2453.5,
       "values": [
-        2817.3,
-        2662.2,
-        2557.9
+        2453.5,
+        2352.7,
+        2406.6
       ]
     }
   },
   "schema": "capsem.benchmark-artifact.v1",
   "project_version": "1.2.1780320819",
   "arch": "x86_64",
-  "recorded_at": 1780329475.56453,
-  "recorded_at_utc": "2026-06-01T15:57:55.564533+00:00",
+  "recorded_at": 1780337678.4380887,
+  "recorded_at_utc": "2026-06-01T18:14:38.438091+00:00",
   "command": "uv run pytest tests/capsem-serial/test_lifecycle_benchmark.py::test_lifecycle_benchmark -xvs",
   "host": {
     "platform": "Linux",
@@ -78,7 +78,7 @@
     "os_version_id": "26.04"
   },
   "git": {
-    "commit": "19ca286e21f245e60a3cfa599d12665ba558db6a",
+    "commit": "b834d5540a633c05616a3e2a1ce65f29e20aa5bf",
     "dirty": true,
     "source_dirty": false,
     "dirty_paths": [
