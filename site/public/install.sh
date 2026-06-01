@@ -232,7 +232,7 @@ install_linux() {
     verify_asset_hash "$TMPDIR_INSTALL/manifest.json" "$DEB_PATH" "$DEB_NAME"
 
     echo "Installing .deb package (may prompt for sudo password)..."
-    sudo apt install -y "$DEB_PATH"
+    sudo apt install --reinstall -y "$DEB_PATH"
 
     echo ""
     echo "Capsem $_version installed."

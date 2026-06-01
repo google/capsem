@@ -1104,7 +1104,7 @@ install: _pnpm-install _stamp-version _check-assets
         bash scripts/repack-deb.sh "$DEB" "target/release" "$INSTALL_ASSETS_DIR"
         DEB_PATH=$(realpath "$DEB")
         echo "=== Installing .deb ==="
-        sudo apt install -y "$DEB_PATH"
+        sudo apt install --reinstall -y "$DEB_PATH"
     fi
 
     echo "=== Restoring preserved settings ==="

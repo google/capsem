@@ -250,6 +250,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   system unit that runs Capsem as the installing user.
 - Fixed Linux `.deb` post-install asset seeding so local dev symlinks under
   `~/.capsem/assets` are replaced before root copies package manifests.
+- Fixed Linux `.deb` installs to force reinstall from the downloaded/local
+  artifact so same-version half-configured packages unpack the new maintainer
+  scripts instead of rerunning stale dpkg control data.
 - Fixed Linux local `just install` so the rebuilt `.deb` is passed to `apt`
   through an absolute file path instead of being interpreted as a package name.
 - Fixed release/install version stamping on Linux by replacing BSD-specific
