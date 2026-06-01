@@ -222,6 +222,8 @@ fn process_env_allowlist_forwards_child_runtime_knobs() {
         "CAPSEM_KVM_BLK_WRITABLE_SEG_MAX",
         "CAPSEM_KVM_BLK_WRITABLE_LOGICAL_BLOCK_SIZE",
         "CAPSEM_KVM_BLK_IO_URING",
+        "CAPSEM_KVM_BLK_DIRECT_IO",
+        "CAPSEM_KVM_BLK_ROOTFS_DIRECT_IO",
     ] {
         assert!(
             PROCESS_ENV_ALLOWLIST.contains(&key),

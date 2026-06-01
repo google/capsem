@@ -7,6 +7,7 @@
 use std::collections::HashMap;
 use std::io::{Seek, SeekFrom, Write};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Once};
@@ -360,9 +361,13 @@ impl VirtioBlockDevice {
 
     fn new_with_shape(path: &Path, read_only: bool, shape: BlockShape) -> Result<Self> {
         describe_metrics_once();
-        let file = std::fs::OpenOptions::new()
-            .read(true)
-            .write(!read_only)
+        let direct_io = should_use_direct_io(read_only);
+        let mut options = std::fs::OpenOptions::new();
+        options.read(true).write(!read_only);
+        if direct_io {
+            options.custom_flags(libc::O_DIRECT);
+        }
+        let file = options
             .open(path)
             .with_context(|| format!("open block device: {}", path.display()))?;
 
@@ -387,6 +392,7 @@ impl VirtioBlockDevice {
             queue_size = shape.queue_size,
             seg_max = shape.seg_max,
             logical_block_size = shape.logical_block_size,
+            direct_io,
             "virtio-blk shape selected"
         );
 
@@ -1951,6 +1957,21 @@ fn should_use_io_uring(read_only: bool) -> bool {
             .map(str::to_ascii_lowercase)
             .as_deref(),
         Some("0" | "false" | "off" | "sync")
+    )
+}
+
+fn should_use_direct_io(read_only: bool) -> bool {
+    if !read_only {
+        return false;
+    }
+    matches!(
+        std::env::var("CAPSEM_KVM_BLK_ROOTFS_DIRECT_IO")
+            .or_else(|_| std::env::var("CAPSEM_KVM_BLK_DIRECT_IO"))
+            .ok()
+            .as_deref()
+            .map(str::to_ascii_lowercase)
+            .as_deref(),
+        Some("1" | "true" | "on" | "yes")
     )
 }
 
@@ -3552,6 +3573,24 @@ mod tests {
             "the sync escape hatch remains available for ablation and fallback"
         );
         std::env::remove_var("CAPSEM_KVM_BLK_IO_URING");
+    }
+
+    #[test]
+    fn block_direct_io_gate_is_rootfs_only_and_opt_in() {
+        std::env::remove_var("CAPSEM_KVM_BLK_DIRECT_IO");
+        std::env::remove_var("CAPSEM_KVM_BLK_ROOTFS_DIRECT_IO");
+        assert!(!should_use_direct_io(true));
+        assert!(!should_use_direct_io(false));
+
+        std::env::set_var("CAPSEM_KVM_BLK_DIRECT_IO", "1");
+        assert!(should_use_direct_io(true));
+        assert!(!should_use_direct_io(false));
+
+        std::env::remove_var("CAPSEM_KVM_BLK_DIRECT_IO");
+        std::env::set_var("CAPSEM_KVM_BLK_ROOTFS_DIRECT_IO", "true");
+        assert!(should_use_direct_io(true));
+        assert!(!should_use_direct_io(false));
+        std::env::remove_var("CAPSEM_KVM_BLK_ROOTFS_DIRECT_IO");
     }
 
     // -----------------------------------------------------------------------

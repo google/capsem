@@ -406,6 +406,7 @@ def run_cell(
     startup: bool,
     timeout: int,
     scope: str,
+    direct_io: bool,
 ) -> dict:
     home = TARGET / "homes" / format_name
     env = {
@@ -415,6 +416,8 @@ def run_cell(
         "CAPSEM_DEV_KERNEL_CMDLINE_APPEND": f"{rootfs_image['cmdline_append']} capsem.bench_lower=1",
         **shape_env(shape, scope=scope),
     }
+    if direct_io:
+        env["CAPSEM_KVM_BLK_ROOTFS_DIRECT_IO"] = "1"
     started = time.time()
     proc = run(
         [
@@ -435,6 +438,7 @@ def run_cell(
     result: dict = {
         "format": format_name,
         "shape": shape,
+        "direct_io": direct_io,
         "returncode": proc.returncode,
         "duration_s": round(duration, 3),
         "sysfs": extract_sysfs(combined),
@@ -562,6 +566,11 @@ def main() -> int:
     parser.add_argument("--logical-block-sizes", default="512,4096")
     parser.add_argument("--startup", action="store_true", help="also run capsem-bench startup")
     parser.add_argument(
+        "--direct-io",
+        action="store_true",
+        help="open the read-only KVM rootfs block backing file with O_DIRECT",
+    )
+    parser.add_argument(
         "--scope",
         choices=["rootfs", "all"],
         default="rootfs",
@@ -604,6 +613,7 @@ def main() -> int:
         "git_commit": git_commit(),
         "host": host_metadata(),
         "startup": args.startup,
+        "direct_io": args.direct_io,
         "scope": args.scope,
         "formats": rootfs_images,
         "shapes": shapes,
@@ -634,6 +644,7 @@ def main() -> int:
                 startup=args.startup,
                 timeout=args.timeout,
                 scope=args.scope,
+                direct_io=args.direct_io,
             )
             artifact["results"].append(result)
             if result["returncode"] != 0:

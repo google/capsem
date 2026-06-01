@@ -57,6 +57,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   read and overlay metadata lanes while shrinking the image versus the current
   lz4hc build, though tuned EROFS still trailed uncompressed SquashFS on
   metadata throughput.
+- Added an opt-in Linux KVM rootfs direct-I/O ablation lane:
+  `CAPSEM_KVM_BLK_ROOTFS_DIRECT_IO=1` opens the read-only virtio-blk backing
+  file with `O_DIRECT`, and the rootfs-format grid can run it with
+  `--direct-io`.
 - Added a focused KVM block-shape gridsearch harness that records structured
   artifacts for queue count, queue size, segment limit, logical block size,
   Linux sysfs queue state, and `capsem-bench rootfs` results.

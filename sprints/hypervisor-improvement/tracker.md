@@ -493,6 +493,13 @@
   lanes and size but remains about 44-53% behind on metadata throughput, so
   cluster tuning improves the compressed candidate without closing the metadata
   gap.
+- H05 direct-I/O ablation lane landed locally: KVM virtio-blk now accepts
+  `CAPSEM_KVM_BLK_ROOTFS_DIRECT_IO=1` (or global
+  `CAPSEM_KVM_BLK_DIRECT_IO=1`) and opens the read-only rootfs backing file
+  with `O_DIRECT`. The gate is rootfs-only and opt-in because direct I/O has
+  alignment constraints and should be measured before it becomes a product
+  default. The rootfs-format grid exposes this with `--direct-io` and records
+  the direct-I/O flag in each artifact.
 
 ## Coverage Ledger
 
