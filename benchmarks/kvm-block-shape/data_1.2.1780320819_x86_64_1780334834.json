@@ -1,0 +1,221 @@
+{
+  "schema": "capsem.kvm-block-shape-grid.v1",
+  "timestamp": 1780334789.9355924,
+  "version": "1.2.1780320819",
+  "arch": "x86_64",
+  "git_commit": "f7674a96172c9b7e9448c14011c8368ad6924d78",
+  "host": {
+    "machine": "x86_64",
+    "system": "Linux",
+    "release": "7.0.0-1003-gcp",
+    "processor": ""
+  },
+  "startup": true,
+  "shapes": [
+    {
+      "queue_count": 8,
+      "queue_size": 128,
+      "seg_max": 64,
+      "logical_block_size": 4096
+    }
+  ],
+  "results": [
+    {
+      "shape": {
+        "queue_count": 8,
+        "queue_size": 128,
+        "seg_max": 64,
+        "logical_block_size": 4096
+      },
+      "returncode": 0,
+      "duration_s": 44.389,
+      "sysfs": {
+        "mq_dirs": "4",
+        "max_segments": "64",
+        "logical_block_size": "4096",
+        "nr_requests": "64"
+      },
+      "rootfs": {
+        "scan_dirs": [
+          "/usr/bin",
+          "/usr/lib",
+          "/opt/ai-clis"
+        ],
+        "largest_file": "/opt/ai-clis/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe",
+        "largest_file_size": 239650512,
+        "seq_read": {
+          "file": "/opt/ai-clis/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe",
+          "size_bytes": 239650512,
+          "block_size": 1048576,
+          "duration_ms": 1584.9,
+          "throughput_mbps": 144.2
+        },
+        "files_found": 5554,
+        "rand_read_4k": {
+          "count": 5000,
+          "files_sampled": 2584,
+          "block_size": 4096,
+          "duration_ms": 1427.8,
+          "iops": 3502.0,
+          "throughput_mbps": 13.7
+        },
+        "large_binary_seq_read": {
+          "count": 3,
+          "files": [
+            {
+              "path": "/opt/ai-clis/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe",
+              "size_bytes": 239650512,
+              "cold": {
+                "file": "/opt/ai-clis/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe",
+                "size_bytes": 239650512,
+                "block_size": 1048576,
+                "duration_ms": 1210.4,
+                "throughput_mbps": 188.8
+              },
+              "warm": {
+                "file": "/opt/ai-clis/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe",
+                "size_bytes": 239650512,
+                "block_size": 1048576,
+                "duration_ms": 43.9,
+                "throughput_mbps": 5209.6
+              }
+            },
+            {
+              "path": "/opt/ai-clis/lib/node_modules/@anthropic-ai/claude-code/node_modules/@anthropic-ai/claude-code-linux-x64/claude",
+              "size_bytes": 239650512,
+              "cold": {
+                "file": "/opt/ai-clis/lib/node_modules/@anthropic-ai/claude-code/node_modules/@anthropic-ai/claude-code-linux-x64/claude",
+                "size_bytes": 239650512,
+                "block_size": 1048576,
+                "duration_ms": 1143.9,
+                "throughput_mbps": 199.8
+              },
+              "warm": {
+                "file": "/opt/ai-clis/lib/node_modules/@anthropic-ai/claude-code/node_modules/@anthropic-ai/claude-code-linux-x64/claude",
+                "size_bytes": 239650512,
+                "block_size": 1048576,
+                "duration_ms": 43.1,
+                "throughput_mbps": 5296.9
+              }
+            },
+            {
+              "path": "/opt/ai-clis/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex",
+              "size_bytes": 222019904,
+              "cold": {
+                "file": "/opt/ai-clis/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex",
+                "size_bytes": 222019904,
+                "block_size": 1048576,
+                "duration_ms": 1001.4,
+                "throughput_mbps": 211.4
+              },
+              "warm": {
+                "file": "/opt/ai-clis/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex",
+                "size_bytes": 222019904,
+                "block_size": 1048576,
+                "duration_ms": 38.3,
+                "throughput_mbps": 5524.4
+              }
+            }
+          ],
+          "bytes_read": 701320928,
+          "cold_duration_ms": 3355.7,
+          "warm_duration_ms": 125.3,
+          "cold_throughput_mbps": 199.3,
+          "warm_throughput_mbps": 5337.8
+        },
+        "small_js_read": {
+          "count": 5000,
+          "files_sampled": 113,
+          "bytes_read": 43709170,
+          "duration_ms": 47.3,
+          "ops_per_sec": 105613.9,
+          "throughput_mbps": 880.5
+        },
+        "metadata_stat": {
+          "entries": 6573,
+          "files": 5554,
+          "dirs": 670,
+          "symlinks": 349,
+          "errors": 0,
+          "duration_ms": 107.4,
+          "stats_per_sec": 61218.8
+        }
+      },
+      "startup": {
+        "runs_per_command": 3,
+        "commands": {
+          "python3": {
+            "command": [
+              "python3",
+              "--version"
+            ],
+            "timings_ms": [
+              31.5,
+              30.8,
+              30.9
+            ],
+            "min_ms": 30.8,
+            "mean_ms": 31.1,
+            "max_ms": 31.5
+          },
+          "node": {
+            "command": [
+              "node",
+              "--version"
+            ],
+            "timings_ms": [
+              246.9,
+              247.6,
+              247.5
+            ],
+            "min_ms": 246.9,
+            "mean_ms": 247.3,
+            "max_ms": 247.6
+          },
+          "claude": {
+            "command": [
+              "claude",
+              "--version"
+            ],
+            "timings_ms": [
+              1491.2,
+              1283.0,
+              1131.1
+            ],
+            "min_ms": 1131.1,
+            "mean_ms": 1301.8,
+            "max_ms": 1491.2
+          },
+          "gemini": {
+            "command": [
+              "gemini",
+              "--version"
+            ],
+            "timings_ms": [
+              3163.0,
+              2895.3,
+              2792.2
+            ],
+            "min_ms": 2792.2,
+            "mean_ms": 2950.2,
+            "max_ms": 3163.0
+          },
+          "codex": {
+            "command": [
+              "codex",
+              "--version"
+            ],
+            "timings_ms": [
+              824.2,
+              820.8,
+              816.5
+            ],
+            "min_ms": 816.5,
+            "mean_ms": 820.5,
+            "max_ms": 824.2
+          }
+        }
+      }
+    }
+  ]
+}

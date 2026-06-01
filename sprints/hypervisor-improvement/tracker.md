@@ -284,6 +284,18 @@
   8-queue device configs on this 2-vCPU VM, so the next grid should include
   vCPU count and avoid assuming requested queue count equals active Linux
   hardware queues.
+- H05 candidate startup proof recorded
+  `benchmarks/kvm-block-shape/data_1.2.1780320819_x86_64_1780334834.json`
+  for `queue_count=8`, `queue_size=128`, `seg_max=64`,
+  `logical_block_size=4096` with startup enabled. Rootfs stayed in the same
+  improved band: random read 3,502 IOPS (+172.6%), small JS 105,614 ops/s
+  (+41.1%), metadata 61,219 stats/s (+71.6%), cold large-binary 199.3 MB/s
+  (+23.4%), sequential read 144.2 MB/s (-14.8%). Startup also improved versus
+  the committed Linux baseline: python3 31.1 ms (+30.2% faster), node
+  247.3 ms (+44.8%), claude 1,301.8 ms (+30.8%), gemini 2,950.2 ms (+10.2%),
+  codex 820.5 ms (+36.0%). This candidate is strong enough for a default
+  experiment, but still needs canonical `just benchmark` and macOS/shared
+  impact review before acceptance.
 
 ## Coverage Ledger
 
