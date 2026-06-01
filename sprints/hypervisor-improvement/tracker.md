@@ -224,6 +224,20 @@
   867.4 ms (-6.4%), gemini 2332.6 ms (-2.3%), and codex 713.2 ms (-0.1%).
   The corrected lesson is that crosvm's cache-friendly epoll block path is the
   better reference here, not uring by itself.
+- crosvm/Firecracker source audit, first accepted Capsem slice: crosvm
+  advertises `VIRTIO_BLK_F_SEG_MAX` and `VIRTIO_BLK_F_BLK_SIZE`, with
+  `seg_max` bounded by the queue size, while Firecracker keeps a simple
+  single-queue device shape. Capsem now reports `seg_max = queue_size - 2` and
+  `blk_size = 512` before attempting higher-risk multi-queue work, so Linux can
+  use explicit block geometry without changing the async backend contract.
+- Focused live KVM check for that slice confirmed Linux sees
+  `/sys/block/vda/queue/max_segments = 254` and `logical_block_size = 512`.
+  Against the committed Linux baseline artifact, the same live `capsem-bench
+  rootfs` probe measured random read 1,463 IOPS (+13.9%), cold large-binary
+  181.4 MB/s (+12.3%), small JS 78,261 ops/s (+4.6%), metadata 39,394 stats/s
+  (+10.4%), warm large-binary 5,468.8 MB/s (-1.6%), and sequential read
+  129.2 MB/s (-23.6%). This is a focused experiment, not a replacement for a
+  canonical `just benchmark` artifact.
 
 ## Coverage Ledger
 
@@ -292,7 +306,9 @@
   appear in that same JSON response for a real booted VM. The third H03 live
   check confirmed gateway `/status` carries those counters to the TUI-facing
   feed for a real booted VM. H02 default async block selection was smoke-tested
-  through the same KVM one-shot VM path.
+  through the same KVM one-shot VM path. The latest isolated live KVM check
+  used the repo assets path and confirmed the guest-visible virtio-blk geometry
+  before running `capsem-bench rootfs`.
 - Telemetry: H03 first slice exposes existing `VmMetricsSnapshot.resources`
   fields through the service API and CLI. H03 second slice adds
   `VmMetricsSnapshot.hypervisor.block` and feeds it from the KVM virtio-blk

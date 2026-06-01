@@ -36,12 +36,17 @@ const SECTOR_SIZE: u64 = 512;
 
 /// Maximum device ID length (virtio spec).
 const VIRTIO_BLK_ID_LEN: usize = 20;
+/// Maximum payload segments per request. Two descriptors are reserved for the
+/// request header and status byte in the guest-visible queue.
+const VIRTIO_BLK_SEG_MAX: u32 = QUEUE_SIZE as u32 - 2;
 
 /// Size of one virtio discard segment.
 const DISCARD_SEGMENT_SIZE: usize = 16;
 
 // Feature bits
+const VIRTIO_BLK_F_SEG_MAX: u64 = 1 << 2;
 const VIRTIO_BLK_F_RO: u64 = 1 << 5;
+const VIRTIO_BLK_F_BLK_SIZE: u64 = 1 << 6;
 const VIRTIO_BLK_F_DISCARD: u64 = 1 << 13;
 const VIRTIO_F_VERSION_1: u64 = 1 << 32;
 
@@ -1460,7 +1465,10 @@ impl VirtioDevice for VirtioBlockDevice {
     }
 
     fn features(&self) -> u64 {
-        let mut f = VIRTIO_F_VERSION_1 | VIRTIO_RING_F_EVENT_IDX;
+        let mut f = VIRTIO_F_VERSION_1
+            | VIRTIO_RING_F_EVENT_IDX
+            | VIRTIO_BLK_F_SEG_MAX
+            | VIRTIO_BLK_F_BLK_SIZE;
         if self.read_only {
             f |= VIRTIO_BLK_F_RO;
         } else {
@@ -1476,6 +1484,8 @@ impl VirtioDevice for VirtioBlockDevice {
     fn read_config(&self, offset: u64, data: &mut [u8]) {
         let mut config = [0_u8; 48];
         config[0..8].copy_from_slice(&self.capacity_sectors.to_le_bytes());
+        config[12..16].copy_from_slice(&VIRTIO_BLK_SEG_MAX.to_le_bytes());
+        config[20..24].copy_from_slice(&(SECTOR_SIZE as u32).to_le_bytes());
         if !self.read_only {
             let max_discard_sectors = self.capacity_sectors.min(u32::MAX as u64) as u32;
             config[36..40].copy_from_slice(&max_discard_sectors.to_le_bytes());
@@ -2383,6 +2393,8 @@ mod tests {
         let f = dev.features();
         assert_ne!(f & VIRTIO_F_VERSION_1, 0, "must have VERSION_1");
         assert_ne!(f & VIRTIO_RING_F_EVENT_IDX, 0, "must have EVENT_IDX");
+        assert_ne!(f & VIRTIO_BLK_F_SEG_MAX, 0, "must report SEG_MAX");
+        assert_ne!(f & VIRTIO_BLK_F_BLK_SIZE, 0, "must report BLK_SIZE");
         assert_ne!(f & VIRTIO_BLK_F_RO, 0, "must have RO bit");
         assert_eq!(f & VIRTIO_BLK_F_DISCARD, 0, "RO disks must not discard");
     }
@@ -2394,6 +2406,8 @@ mod tests {
         let f = dev.features();
         assert_ne!(f & VIRTIO_F_VERSION_1, 0, "must have VERSION_1");
         assert_ne!(f & VIRTIO_RING_F_EVENT_IDX, 0, "must have EVENT_IDX");
+        assert_ne!(f & VIRTIO_BLK_F_SEG_MAX, 0, "must report SEG_MAX");
+        assert_ne!(f & VIRTIO_BLK_F_BLK_SIZE, 0, "must report BLK_SIZE");
         assert_eq!(f & VIRTIO_BLK_F_RO, 0, "must NOT have RO bit");
         assert_ne!(f & VIRTIO_BLK_F_DISCARD, 0, "RW disks must support discard");
     }
@@ -2414,6 +2428,20 @@ mod tests {
         dev.read_config(0, &mut data);
         let capacity = u64::from_le_bytes(data);
         assert_eq!(capacity, 16);
+    }
+
+    #[test]
+    fn block_config_reports_segment_limit_and_block_size() {
+        let path = temp_disk("shape-cfg.img", 8192);
+        let dev = VirtioBlockDevice::new(&path, false).unwrap();
+        let mut seg_max = [0u8; 4];
+        let mut block_size = [0u8; 4];
+
+        dev.read_config(12, &mut seg_max);
+        dev.read_config(20, &mut block_size);
+
+        assert_eq!(u32::from_le_bytes(seg_max), VIRTIO_BLK_SEG_MAX);
+        assert_eq!(u32::from_le_bytes(block_size), SECTOR_SIZE as u32);
     }
 
     #[test]

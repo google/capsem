@@ -117,6 +117,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   results.
 
 ### Changed
+- Changed Linux KVM virtio-blk to advertise guest-visible segment-limit and
+  logical block-size geometry, matching the conservative crosvm/Firecracker
+  shape before larger queue or multi-queue experiments.
 - Marked the Hypervisor Improvement H01 safety-and-queue-contracts slice
   complete after the full KVM unit gate and one-shot VM exec smoke passed, and
   opened H03 observability/status/OTel as the next active slice.
