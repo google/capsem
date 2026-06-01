@@ -51,6 +51,42 @@ def test_rootfs_format_grid_dry_run_crosses_formats_and_shapes():
     ]
 
 
+def test_rootfs_format_grid_dry_run_appends_zstd_level_formats():
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT),
+            "--dry-run",
+            "--formats",
+            "squashfs-zstd",
+            "--zstd-levels",
+            "1,15,22",
+            "--queue-counts",
+            "1",
+            "--queue-sizes",
+            "128",
+            "--seg-maxes",
+            "64",
+            "--logical-block-sizes",
+            "4096",
+        ],
+        cwd=ROOT,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=True,
+    )
+
+    payload = json.loads(proc.stdout)
+    assert payload["formats"] == [
+        "squashfs-zstd",
+        "squashfs-zstd-l1",
+        "squashfs-zstd-l15",
+        "squashfs-zstd-l22",
+    ]
+    assert payload["count"] == 4
+
+
 def test_rootfs_format_grid_rejects_unknown_format():
     proc = subprocess.run(
         [

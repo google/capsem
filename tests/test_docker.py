@@ -390,6 +390,13 @@ class TestRenderKernel:
         assert "CONFIG_VIRTIO_MMIO=y" in defconfig
         assert "CONFIG_VIRTIO_MMIO_CMDLINE_DEVICES=y" in defconfig
 
+    def test_kernel_defconfigs_support_erofs_rootfs_experiments(self, real_config):
+        """Rootfs-format benchmarks need EROFS support on both shipped kernels."""
+        for arch in ("arm64", "x86_64"):
+            defconfig = (PROJECT_ROOT / f"guest/config/kernel/defconfig.{arch}").read_text()
+            assert "CONFIG_EROFS_FS=y" in defconfig
+            assert "CONFIG_EROFS_FS_ZIP=y" in defconfig
+
     def test_x86_64_kernel_image(self, real_config):
         result = render_dockerfile(
             "Dockerfile.kernel.j2", real_config, "x86_64", kernel_version="6.6.127"

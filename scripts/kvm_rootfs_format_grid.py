@@ -39,6 +39,8 @@ FORMAT_PROFILES = {
     },
 }
 
+ZSTD_FORMAT_RE = re.compile(r"^squashfs-zstd-l([1-9]|1[0-9]|2[0-2])$")
+
 
 def run(
     cmd: list[str],
@@ -130,6 +132,38 @@ def materialize_squashfs_zstd(*, rebuild: bool) -> dict:
     return rootfs_image_metadata("squashfs-zstd")
 
 
+def materialize_squashfs_zstd_level(format_name: str, *, rebuild: bool) -> dict:
+    match = ZSTD_FORMAT_RE.match(format_name)
+    if not match:
+        raise ValueError(f"invalid zstd format name: {format_name}")
+    level = int(match.group(1), 10)
+    dst = copy_common_assets(format_name)
+    out = dst / "rootfs.squashfs"
+    if not out.exists() or rebuild:
+        root = ensure_extracted_rootfs(rebuild=rebuild)
+        tmp = out.with_suffix(".tmp")
+        tmp.unlink(missing_ok=True)
+        run(
+            [
+                "mksquashfs",
+                str(root),
+                str(tmp),
+                "-comp",
+                "zstd",
+                "-Xcompression-level",
+                str(level),
+                "-b",
+                "128K",
+                "-noappend",
+                "-processors",
+                str(os.cpu_count() or 1),
+            ],
+            timeout=1800,
+        )
+        tmp.replace(out)
+    return rootfs_image_metadata(format_name)
+
+
 def materialize_squashfs_uncompressed(*, rebuild: bool) -> dict:
     dst = copy_common_assets("squashfs-uncompressed")
     out = dst / "rootfs.squashfs"
@@ -190,9 +224,9 @@ def materialize_erofs(*, rebuild: bool) -> dict:
 
 
 def rootfs_image_metadata(format_name: str) -> dict:
-    profile = FORMAT_PROFILES[format_name]
+    profile = format_profile(format_name)
     path = variant_arch_dir(format_name) / "rootfs.squashfs"
-    return {
+    metadata = {
         "format": format_name,
         "description": profile["description"],
         "mount_type": profile["mount_type"],
@@ -200,11 +234,33 @@ def rootfs_image_metadata(format_name: str) -> dict:
         "size_bytes": path.stat().st_size,
         "cmdline_append": f"capsem.rootfs={profile['mount_type']}",
     }
+    if "compression" in profile:
+        metadata["compression"] = profile["compression"]
+    if "compression_level" in profile:
+        metadata["compression_level"] = profile["compression_level"]
+    return metadata
+
+
+def format_profile(format_name: str) -> dict:
+    if format_name in FORMAT_PROFILES:
+        return FORMAT_PROFILES[format_name]
+    match = ZSTD_FORMAT_RE.match(format_name)
+    if match:
+        level = int(match.group(1), 10)
+        return {
+            "mount_type": "squashfs",
+            "description": f"generated SquashFS zstd level {level} rootfs",
+            "compression": "zstd",
+            "compression_level": level,
+        }
+    raise ValueError(f"unknown format: {format_name}")
 
 
 def materialize_format(format_name: str, *, rebuild: bool) -> dict:
     if format_name == "squashfs-zstd":
         return materialize_squashfs_zstd(rebuild=rebuild)
+    if ZSTD_FORMAT_RE.match(format_name):
+        return materialize_squashfs_zstd_level(format_name, rebuild=rebuild)
     if format_name == "squashfs-uncompressed":
         return materialize_squashfs_uncompressed(rebuild=rebuild)
     if format_name == "erofs":
@@ -348,10 +404,29 @@ def parse_formats(raw: str) -> list[str]:
     formats = [part.strip() for part in raw.split(",") if part.strip()]
     if not formats:
         raise argparse.ArgumentTypeError("formats must contain at least one value")
-    unknown = [fmt for fmt in formats if fmt not in FORMAT_PROFILES]
+    unknown = []
+    for fmt in formats:
+        try:
+            format_profile(fmt)
+        except ValueError:
+            unknown.append(fmt)
     if unknown:
         raise argparse.ArgumentTypeError(f"unknown rootfs format(s): {', '.join(unknown)}")
     return formats
+
+
+def parse_zstd_levels(raw: str) -> list[int]:
+    levels: list[int] = []
+    for part in raw.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        level = int(part, 10)
+        if not 1 <= level <= 22:
+            raise argparse.ArgumentTypeError(f"zstd level must be between 1 and 22: {level}")
+        if level not in levels:
+            levels.append(level)
+    return levels
 
 
 def main() -> int:
@@ -360,6 +435,11 @@ def main() -> int:
         "--formats",
         default="squashfs-zstd,squashfs-uncompressed,erofs",
         help="comma-separated rootfs formats to test",
+    )
+    parser.add_argument(
+        "--zstd-levels",
+        default="",
+        help="append generated SquashFS zstd level variants, e.g. 1,3,9,15,22",
     )
     parser.add_argument("--queue-counts", default="1,4,8")
     parser.add_argument("--queue-sizes", default="128,256")
@@ -379,6 +459,10 @@ def main() -> int:
     args = parser.parse_args()
 
     formats = parse_formats(args.formats)
+    for level in parse_zstd_levels(args.zstd_levels):
+        name = f"squashfs-zstd-l{level}"
+        if name not in formats:
+            formats.append(name)
     shapes = build_shapes(args)
     if args.dry_run:
         print(json.dumps({"formats": formats, "count": len(formats) * len(shapes), "shapes": shapes}, indent=2))

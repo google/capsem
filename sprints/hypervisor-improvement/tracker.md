@@ -385,12 +385,24 @@
   does not enable `CONFIG_EROFS_FS`, so EROFS needs a kernel-capability slice
   before it can be compared fairly. DAX remains a capability/design audit, not
   a block-image benchmark, because the current rootfs transport is virtio-blk.
+- H05 EROFS kernel-capability slice landed locally: both arm64 and x86_64 guest
+  defconfigs now enable `CONFIG_EROFS_FS` and `CONFIG_EROFS_FS_ZIP` so rebuilt
+  kernels can mount benchmark-generated EROFS rootfs images. The next proof is
+  to rebuild the x86_64 kernel asset, rerun the EROFS cell, and then include
+  EROFS in the same best-vs-best rootfs-format/block-shape grid.
+- H05 compression-level matrix support landed locally: the rootfs-format grid
+  now accepts `--zstd-levels`, appending generated `squashfs-zstd-l<N>` variants
+  such as levels 1/3/9/15/22. These variants are rebuilt from the same extracted
+  rootfs and run through the same block-shape cells as production zstd,
+  uncompressed SquashFS, and EROFS, so compression level is measured fairly
+  rather than compared against a differently tuned block path.
 
 ## Coverage Ledger
 
 - Unit/contract: `tests/test_archive_superseded_benchmark_artifacts.py`,
   `tests/test_benchmark_contract.py`, `tests/test_benchmark_artifacts.py`,
   `tests/test_kvm_rootfs_format_grid.py`,
+  `tests/test_docker.py::TestRenderKernel::test_kernel_defconfigs_support_erofs_rootfs_experiments`,
   `cargo test -p capsem-core guest_memory_ref --lib`,
   `cargo test -p capsem-core block_guest_iovecs_reject_range_that_crosses_ram_end --lib`,
   `cargo test -p capsem-core virtio_blk --lib`,
