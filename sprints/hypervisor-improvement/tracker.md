@@ -43,7 +43,7 @@
 - [ ] H06: benchmark and product proof.
   - [x] Add a crosvm reference harness for the same Capsem x86_64
         rootfs/startup workload used by the Firecracker comparison.
-  - [x] Record crosvm epoll, direct-I/O, multi-worker, and unavailable-uring
+  - [x] Record crosvm epoll, corrected-uring, direct-I/O, and multi-worker
         lanes as structured benchmark artifacts.
 - [ ] H07: docs, changelog, release gate.
 
@@ -210,10 +210,20 @@
   at 298.7 MB/s, but small JS dropped to 97,162 ops/s and metadata dropped to
   43,584/s. This argues against blindly adding more block workers without a
   measured queue/contention reason.
-- crosvm `--async-executor uring` could not start on this kernel:
-  `io_uring is unavailable: URingContext failure: Failed to mmap submit ring ...
-  Invalid argument`. The failure is preserved as a benchmark artifact so future
-  Linux hosts can distinguish "not supported here" from "not tested".
+- crosvm `--async-executor uring` initially could not start because upstream
+  crosvm's private `io_uring_setup` wrapper passed `io_uring_params` as an
+  immutable reference even though the kernel writes ring offsets back into it.
+  In the optimized release build, crosvm then computed a zero submit-ring mmap
+  length and failed with `Failed to mmap submit ring ... Invalid argument`.
+  A private reference patch changing that wrapper to `&mut io_uring_params`
+  proved uring can boot on this host.
+- crosvm uring after the private ABI fix is not faster than crosvm epoll on
+  this read-heavy workload: seq read 121.7 MB/s (-1.3%), random read 2067 IOPS
+  (-2.1%), cold large-binary 287.7 MB/s (-3.6%), small JS 103,633 ops/s
+  (-0.7%), metadata 46,717/s (-2.7%), node startup 246.4 ms (-1.2%), claude
+  867.4 ms (-6.4%), gemini 2332.6 ms (-2.3%), and codex 713.2 ms (-0.1%).
+  The corrected lesson is that crosvm's cache-friendly epoll block path is the
+  better reference here, not uring by itself.
 
 ## Coverage Ledger
 
@@ -309,7 +319,8 @@
   than proving io_uring alone is the missing lever. crosvm epoll improved on
   Firecracker Sync for this workload by +10.5% random rootfs, +10.4% cold
   large-binary, +13.1% small JS, +13.6% metadata, and +6.8% codex startup, while
-  crosvm direct-I/O and multi-worker ablations were rejected. A local
+  crosvm corrected-uring, direct-I/O, and multi-worker ablations were rejected.
+  A local
   uncommitted VirtioFS batching probe measured `/root`
   targeted disk at seq write +2.3%, seq read +2.4%, random write -0.6%, random
   read +10.8% without event-index, but it was not accepted because it was not

@@ -38,8 +38,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rootfs/startup benchmark workload under the official Firecracker release with
   the Capsem x86_64 kernel/rootfs assets and records structured JSON results.
 - Added a repeatable crosvm reference benchmark harness for the same Capsem
-  x86_64 kernel/rootfs rootfs/startup workload, with epoll, direct-I/O,
-  multi-worker, and unavailable-uring lanes recorded as structured artifacts.
+  x86_64 kernel/rootfs rootfs/startup workload, with epoll, corrected-uring,
+  direct-I/O, and multi-worker lanes recorded as structured artifacts.
 - Recorded a fresh Linux x86_64 canonical `just benchmark` run from clean
   source commit `b6f9b6e2`, including refreshed active artifacts and a
   pre-rerun archive of the prior Linux artifacts for provenance.
