@@ -1,0 +1,92 @@
+{
+  "version": "0.1.0",
+  "timestamp": 1780329475.5641143,
+  "runs": 3,
+  "operations": {
+    "provision_ms": {
+      "min": 2343.8,
+      "mean": 2463.9,
+      "max": 2600.8,
+      "values": [
+        2600.8,
+        2447.1,
+        2343.8
+      ]
+    },
+    "exec_ready_ms": {
+      "min": 24.4,
+      "mean": 25.0,
+      "max": 25.4,
+      "values": [
+        25.4,
+        25.2,
+        24.4
+      ]
+    },
+    "exec_ms": {
+      "min": 23.2,
+      "mean": 23.4,
+      "max": 23.6,
+      "values": [
+        23.6,
+        23.2,
+        23.5
+      ]
+    },
+    "delete_ms": {
+      "min": 166.2,
+      "mean": 166.8,
+      "max": 167.5,
+      "values": [
+        167.5,
+        166.7,
+        166.2
+      ]
+    },
+    "total_ms": {
+      "min": 2557.9,
+      "mean": 2679.1,
+      "max": 2817.3,
+      "values": [
+        2817.3,
+        2662.2,
+        2557.9
+      ]
+    }
+  },
+  "schema": "capsem.benchmark-artifact.v1",
+  "project_version": "1.2.1780320819",
+  "arch": "x86_64",
+  "recorded_at": 1780329475.56453,
+  "recorded_at_utc": "2026-06-01T15:57:55.564533+00:00",
+  "command": "uv run pytest tests/capsem-serial/test_lifecycle_benchmark.py::test_lifecycle_benchmark -xvs",
+  "host": {
+    "platform": "Linux",
+    "release": "7.0.0-1003-gcp",
+    "version": "#3-Ubuntu SMP PREEMPT Mon Apr 13 16:29:20 UTC 2026",
+    "machine": "x86_64",
+    "processor": "",
+    "python_version": "3.14.4",
+    "cpu_count": 16,
+    "cpu_count_logical": 16,
+    "cpu_model": "Intel(R) Xeon(R) CPU @ 2.80GHz",
+    "cpu_count_physical": 8,
+    "memory_total_bytes": 67415740416,
+    "memory_total_gb": 62.79,
+    "os_pretty_name": "Ubuntu 26.04 LTS",
+    "os_id": "ubuntu",
+    "os_version_id": "26.04"
+  },
+  "git": {
+    "commit": "19ca286e21f245e60a3cfa599d12665ba558db6a",
+    "dirty": true,
+    "source_dirty": false,
+    "dirty_paths": [
+      "benchmarks/capsem-bench/data_1.2.1780320819_x86_64.json",
+      "benchmarks/endpoint-latency/data_1.2.1780320819_x86_64.json",
+      "benchmarks/host-native/data_1.2.1780320819_x86_64.json",
+      "benchmarks/security-engine/data_1.2.1780320819_x86_64_cel_microbench.json",
+      "benchmarks/security-engine/data_1.2.1780320819_x86_64_security_packs_microbench.json"
+    ]
+  }
+}

@@ -306,7 +306,15 @@
   record project version, git commit, source dirty state, host metadata, and
   active Linux x86_64 results. `scripts/compare_benchmark_artifacts.py`
   produced Linux/macOS ratios for shared lanes. Refreshed macOS artifacts from
-  `1.2.1780103109` are now present on main and compared successfully. H02 first
+  `1.2.1780103109` are now present on main and compared successfully. A
+  canonical Linux x86_64 rerun on commit `19ca286e` recorded fresh artifacts
+  for `1.2.1780320819`; it completed artifact generation but failed the
+  endpoint-latency gate on service global endpoints at roughly 3-6 ms p95 and
+  `/logs/{id}` at roughly 26 ms p95. The same artifact set shows Linux still
+  behind macOS on the user-visible lanes: rootfs random read 1,285 vs 8,734
+  IOPS, rootfs metadata 35,677 vs 199,915 stats/s, rootfs cold large-binary
+  161.5 vs 977.3 MB/s, node startup 358.1 vs 77.6 ms, claude startup 1,702.2
+  vs 309.0 ms, and codex startup 1,115.5 vs 237.1 ms. H02 first
   and second slices are correctness/backpressure for the io_uring path. H02
   full-profile local benchmarks measured the full async engine before grouped
   ablation: same-run rootfs showed cold binary +8.0%, small JS +2.7%, metadata

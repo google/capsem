@@ -1,0 +1,95 @@
+{
+  "schema": "capsem.security-engine-benchmark.v1",
+  "kind": "vm_originated_process_enforcement",
+  "version": "1.2.1780320819",
+  "source_commit": "19ca286e",
+  "timestamp": 1780329650.2259548,
+  "arch": "x86_64",
+  "host": {
+    "platform": "Linux",
+    "release": "7.0.0-1003-gcp",
+    "version": "#3-Ubuntu SMP PREEMPT Mon Apr 13 16:29:20 UTC 2026",
+    "machine": "x86_64",
+    "processor": "",
+    "python_version": "3.14.4",
+    "cpu_count": 16,
+    "cpu_count_logical": 16,
+    "cpu_model": "Intel(R) Xeon(R) CPU @ 2.80GHz",
+    "cpu_count_physical": 8,
+    "memory_total_bytes": 67415740416,
+    "memory_total_gb": 62.79,
+    "os_pretty_name": "Ubuntu 26.04 LTS",
+    "os_id": "ubuntu",
+    "os_version_id": "26.04"
+  },
+  "command": "uv run pytest tests/capsem-serial/test_security_engine_benchmark.py -xvs",
+  "workload": {
+    "event_family": "process",
+    "event_type": "process.exec",
+    "source": "vm_originated",
+    "path": "service_api_to_capsem_process_to_security_engine"
+  },
+  "runs": 8,
+  "gate_ms": 750,
+  "rule": {
+    "id": "runtime.block-shell-bench.aae5d5fc",
+    "pack_id": "runtime-benchmark",
+    "condition": "process.activity.operation == 'exec' && process.activity.command_class == 'shell'",
+    "decision": "block"
+  },
+  "operations": {
+    "blocked_process_exec_ms": {
+      "min": 15.433,
+      "mean": 16.073,
+      "median": 15.922,
+      "p95": 17.296,
+      "p99": 17.296,
+      "max": 17.296,
+      "values": [
+        16.257,
+        17.296,
+        15.499,
+        15.433,
+        15.805,
+        15.824,
+        16.021,
+        16.446
+      ]
+    }
+  },
+  "assertions": {
+    "session_db_security_events": {
+      "row_count": 8,
+      "distinct_event_ids": 8,
+      "blocked_count": 8,
+      "vm_id": "secbench-eb298571",
+      "profile_id": "profile-asset-boot",
+      "user_id": "elieb_google_com",
+      "process_operation": "exec",
+      "process_command_class": "shell",
+      "rule_id": "runtime.block-shell-bench.aae5d5fc",
+      "reason": "shell exec blocked by security benchmark"
+    },
+    "runtime_match_count": 8,
+    "runtime_last_event_id": "process-af94e20513d4603f",
+    "logs_exposed_security_decision": true
+  },
+  "project_version": "1.2.1780320819",
+  "recorded_at": 1780329650.2264116,
+  "recorded_at_utc": "2026-06-01T16:00:50.226414+00:00",
+  "git": {
+    "commit": "19ca286e21f245e60a3cfa599d12665ba558db6a",
+    "dirty": true,
+    "source_dirty": false,
+    "dirty_paths": [
+      "benchmarks/capsem-bench/data_1.2.1780320819_x86_64.json",
+      "benchmarks/endpoint-latency/data_1.2.1780320819_x86_64.json",
+      "benchmarks/fork/data_1.2.1780320819_x86_64.json",
+      "benchmarks/host-native/data_1.2.1780320819_x86_64.json",
+      "benchmarks/lifecycle/data_1.2.1780320819_x86_64.json",
+      "benchmarks/parallel/data_1.2.1780320819_x86_64.json",
+      "benchmarks/security-engine/data_1.2.1780320819_x86_64_cel_microbench.json",
+      "benchmarks/security-engine/data_1.2.1780320819_x86_64_security_packs_microbench.json"
+    ]
+  }
+}

@@ -1,0 +1,168 @@
+{
+  "kind": "host_native_baseline",
+  "version": "0.1.0",
+  "timestamp": 1780329450.2955306,
+  "filesystem": {
+    "directory": "/home/elieb_google_com/capsem/target/host-native-benchmark/tmphrp648l4",
+    "disk_usage": {
+      "total_bytes": 519537790976,
+      "used_bytes": 290005295104,
+      "free_bytes": 229515718656
+    },
+    "df": {
+      "source": "/dev/root",
+      "fstype": "ext4",
+      "blocks_1k": 507361124,
+      "used_1k": 283208296,
+      "available_1k": 224136444,
+      "capacity": "56%",
+      "mount": "/"
+    }
+  },
+  "disk": {
+    "directory": "/home/elieb_google_com/capsem/target/host-native-benchmark/tmphrp648l4",
+    "size_mb": 256,
+    "seq_write": {
+      "size_bytes": 268435456,
+      "block_size": 1048576,
+      "duration_ms": 590.1,
+      "throughput_mbps": 433.8
+    },
+    "seq_read": {
+      "size_bytes": 268435456,
+      "block_size": 1048576,
+      "duration_ms": 33.4,
+      "throughput_mbps": 7663.2
+    },
+    "rand_write_4k": {
+      "count": 10000,
+      "block_size": 4096,
+      "duration_ms": 14361.8,
+      "iops": 696.3,
+      "throughput_mbps": 2.7
+    },
+    "rand_read_4k": {
+      "count": 10000,
+      "block_size": 4096,
+      "duration_ms": 26.8,
+      "iops": 373091.2,
+      "throughput_mbps": 1457.4
+    }
+  },
+  "startup": {
+    "runs_per_command": 3,
+    "commands": {
+      "python3": {
+        "command": [
+          "python3",
+          "--version"
+        ],
+        "timings_ms": [
+          1.8,
+          1.6,
+          1.5
+        ],
+        "min_ms": 1.5,
+        "mean_ms": 1.6,
+        "max_ms": 1.8
+      },
+      "node": {
+        "command": [
+          "node",
+          "--version"
+        ],
+        "timings_ms": [
+          64.2,
+          64.6,
+          64.5
+        ],
+        "min_ms": 64.2,
+        "mean_ms": 64.4,
+        "max_ms": 64.6
+      },
+      "claude": {
+        "command": [
+          "claude",
+          "--version"
+        ],
+        "error": "not found or timed out"
+      },
+      "gemini": {
+        "command": [
+          "gemini",
+          "--version"
+        ],
+        "error": "not found or timed out"
+      },
+      "codex": {
+        "command": [
+          "codex",
+          "--version"
+        ],
+        "timings_ms": [
+          15.9,
+          16.1,
+          16.1
+        ],
+        "min_ms": 15.9,
+        "mean_ms": 16.0,
+        "max_ms": 16.1
+      }
+    }
+  },
+  "small_file_read": {
+    "count": 5000,
+    "files_sampled": 128,
+    "bytes_read": 3280000,
+    "duration_ms": 30.9,
+    "ops_per_sec": 161747.2,
+    "throughput_mbps": 101.2
+  },
+  "metadata_stat": {
+    "entries": 5050,
+    "files": 5000,
+    "dirs": 50,
+    "errors": 0,
+    "duration_ms": 23.6,
+    "stats_per_sec": 214290.2
+  },
+  "io_shape": {
+    "sequential_block_size": 1048576,
+    "random_block_size": 4096,
+    "size_mb": 256
+  },
+  "schema": "capsem.benchmark-artifact.v1",
+  "project_version": "1.2.1780320819",
+  "arch": "x86_64",
+  "recorded_at": 1780329466.6396222,
+  "recorded_at_utc": "2026-06-01T15:57:46.639625+00:00",
+  "command": "uv run pytest tests/capsem-serial/test_host_native_benchmark.py -xvs",
+  "host": {
+    "platform": "Linux",
+    "release": "7.0.0-1003-gcp",
+    "version": "#3-Ubuntu SMP PREEMPT Mon Apr 13 16:29:20 UTC 2026",
+    "machine": "x86_64",
+    "processor": "",
+    "python_version": "3.14.4",
+    "cpu_count": 16,
+    "cpu_count_logical": 16,
+    "cpu_model": "Intel(R) Xeon(R) CPU @ 2.80GHz",
+    "cpu_count_physical": 8,
+    "memory_total_bytes": 67415740416,
+    "memory_total_gb": 62.79,
+    "os_pretty_name": "Ubuntu 26.04 LTS",
+    "os_id": "ubuntu",
+    "os_version_id": "26.04"
+  },
+  "git": {
+    "commit": "19ca286e21f245e60a3cfa599d12665ba558db6a",
+    "dirty": true,
+    "source_dirty": false,
+    "dirty_paths": [
+      "benchmarks/capsem-bench/data_1.2.1780320819_x86_64.json",
+      "benchmarks/endpoint-latency/data_1.2.1780320819_x86_64.json",
+      "benchmarks/security-engine/data_1.2.1780320819_x86_64_cel_microbench.json",
+      "benchmarks/security-engine/data_1.2.1780320819_x86_64_security_packs_microbench.json"
+    ]
+  }
+}

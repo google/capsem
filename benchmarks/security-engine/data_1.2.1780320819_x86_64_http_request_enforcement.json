@@ -1,0 +1,376 @@
+{
+  "schema": "capsem.security-engine-benchmark.v1",
+  "kind": "vm_originated_http_request_enforcement",
+  "version": "1.2.1780320819",
+  "source_commit": "19ca286e",
+  "timestamp": 1780329654.8771315,
+  "arch": "x86_64",
+  "host": {
+    "platform": "Linux",
+    "release": "7.0.0-1003-gcp",
+    "version": "#3-Ubuntu SMP PREEMPT Mon Apr 13 16:29:20 UTC 2026",
+    "machine": "x86_64",
+    "processor": "",
+    "python_version": "3.14.4",
+    "cpu_count": 16,
+    "cpu_count_logical": 16,
+    "cpu_model": "Intel(R) Xeon(R) CPU @ 2.80GHz",
+    "cpu_count_physical": 8,
+    "memory_total_bytes": 67415740416,
+    "memory_total_gb": 62.79,
+    "os_pretty_name": "Ubuntu 26.04 LTS",
+    "os_id": "ubuntu",
+    "os_version_id": "26.04"
+  },
+  "command": "uv run pytest tests/capsem-serial/test_security_engine_benchmark.py::test_http_request_enforcement_benchmark_records_vm_originated_path -xvs",
+  "workload": {
+    "event_family": "network",
+    "event_type": "http.request",
+    "source": "vm_originated",
+    "path": "guest_curl_to_mitm_to_security_engine"
+  },
+  "runs": 8,
+  "warmup_runs": 1,
+  "keepalive_runs": 8,
+  "gate_ms": 1000,
+  "rule": {
+    "id": "runtime.block-http-bench.2603ddb0",
+    "pack_id": "runtime-benchmark",
+    "condition": "http.request.host == 'example.com' && http.request.path == '/security-engine-bench-block-b83b41b2'",
+    "decision": "block"
+  },
+  "operations": {
+    "blocked_http_request_wall_ms": {
+      "min": 18.551,
+      "mean": 21.438,
+      "median": 20.917,
+      "p95": 28.112,
+      "p99": 28.112,
+      "max": 28.112,
+      "values": [
+        23.231,
+        19.09,
+        21.251,
+        19.302,
+        28.112,
+        18.551,
+        20.584,
+        21.385
+      ]
+    },
+    "blocked_http_request_starttransfer_ms": {
+      "min": 9.184,
+      "mean": 10.387,
+      "median": 10.121,
+      "p95": 12.486,
+      "p99": 12.486,
+      "max": 12.486,
+      "values": [
+        11.628,
+        9.74,
+        10.119,
+        9.184,
+        12.486,
+        9.545,
+        10.123,
+        10.27
+      ]
+    },
+    "curl_phase_ms": {
+      "appconnect": {
+        "min": 7.452,
+        "mean": 8.489,
+        "median": 8.278,
+        "p95": 10.636,
+        "p99": 10.636,
+        "max": 10.636,
+        "values": [
+          9.341,
+          7.713,
+          8.274,
+          7.452,
+          10.636,
+          7.888,
+          8.282,
+          8.327
+        ]
+      },
+      "connect": {
+        "min": 2.603,
+        "mean": 2.858,
+        "median": 2.863,
+        "p95": 3.059,
+        "p99": 3.059,
+        "max": 3.059,
+        "values": [
+          2.935,
+          2.67,
+          2.844,
+          2.882,
+          3.044,
+          2.826,
+          2.603,
+          3.059
+        ]
+      },
+      "namelookup": {
+        "min": 2.517,
+        "mean": 2.764,
+        "median": 2.765,
+        "p95": 2.96,
+        "p99": 2.96,
+        "max": 2.96,
+        "values": [
+          2.838,
+          2.578,
+          2.748,
+          2.782,
+          2.947,
+          2.74,
+          2.517,
+          2.96
+        ]
+      },
+      "pretransfer": {
+        "min": 7.505,
+        "mean": 8.621,
+        "median": 8.334,
+        "p95": 10.79,
+        "p99": 10.79,
+        "max": 10.79,
+        "values": [
+          9.61,
+          7.876,
+          8.333,
+          7.505,
+          10.79,
+          7.968,
+          8.334,
+          8.554
+        ]
+      },
+      "starttransfer": {
+        "min": 9.184,
+        "mean": 10.387,
+        "median": 10.121,
+        "p95": 12.486,
+        "p99": 12.486,
+        "max": 12.486,
+        "values": [
+          11.628,
+          9.74,
+          10.119,
+          9.184,
+          12.486,
+          9.545,
+          10.123,
+          10.27
+        ]
+      },
+      "total": {
+        "min": 9.208,
+        "mean": 10.415,
+        "median": 10.146,
+        "p95": 12.543,
+        "p99": 12.543,
+        "max": 12.543,
+        "values": [
+          11.653,
+          9.764,
+          10.144,
+          9.208,
+          12.543,
+          9.571,
+          10.147,
+          10.294
+        ]
+      }
+    },
+    "curl_phase_delta_ms": {
+      "dns": {
+        "min": 2.517,
+        "mean": 2.764,
+        "median": 2.765,
+        "p95": 2.96,
+        "p99": 2.96,
+        "max": 2.96,
+        "values": [
+          2.838,
+          2.578,
+          2.748,
+          2.782,
+          2.947,
+          2.74,
+          2.517,
+          2.96
+        ]
+      },
+      "pretransfer_after_tls": {
+        "min": 0.052,
+        "mean": 0.132,
+        "median": 0.117,
+        "p95": 0.269,
+        "p99": 0.269,
+        "max": 0.269,
+        "values": [
+          0.269,
+          0.163,
+          0.059,
+          0.053,
+          0.154,
+          0.08,
+          0.052,
+          0.227
+        ]
+      },
+      "response_tail_after_first_byte": {
+        "min": 0.024,
+        "mean": 0.029,
+        "median": 0.025,
+        "p95": 0.057,
+        "p99": 0.057,
+        "max": 0.057,
+        "values": [
+          0.025,
+          0.024,
+          0.025,
+          0.024,
+          0.057,
+          0.026,
+          0.024,
+          0.024
+        ]
+      },
+      "server_first_byte_after_pretransfer": {
+        "min": 1.577,
+        "mean": 1.766,
+        "median": 1.751,
+        "p95": 2.018,
+        "p99": 2.018,
+        "max": 2.018,
+        "values": [
+          2.018,
+          1.864,
+          1.786,
+          1.679,
+          1.696,
+          1.577,
+          1.789,
+          1.716
+        ]
+      },
+      "tcp_connect": {
+        "min": 0.086,
+        "mean": 0.094,
+        "median": 0.097,
+        "p95": 0.1,
+        "p99": 0.1,
+        "max": 0.1,
+        "values": [
+          0.097,
+          0.092,
+          0.096,
+          0.1,
+          0.097,
+          0.086,
+          0.086,
+          0.099
+        ]
+      },
+      "tls_appconnect": {
+        "min": 4.57,
+        "mean": 5.631,
+        "median": 5.349,
+        "p95": 7.592,
+        "p99": 7.592,
+        "max": 7.592,
+        "values": [
+          6.406,
+          5.043,
+          5.43,
+          4.57,
+          7.592,
+          5.062,
+          5.679,
+          5.268
+        ]
+      }
+    },
+    "keepalive_http_request_starttransfer_ms": {
+      "min": 1.421,
+      "mean": 1.719,
+      "median": 1.639,
+      "p95": 2.511,
+      "p99": 2.511,
+      "max": 2.511,
+      "values": [
+        2.511,
+        1.629,
+        1.421,
+        1.487,
+        1.783,
+        1.53,
+        1.741,
+        1.648
+      ]
+    },
+    "keepalive_http_request_total_ms": {
+      "min": 1.447,
+      "mean": 1.751,
+      "median": 1.707,
+      "p95": 2.542,
+      "p99": 2.542,
+      "max": 2.542,
+      "values": [
+        2.542,
+        1.764,
+        1.447,
+        1.503,
+        1.797,
+        1.542,
+        1.752,
+        1.661
+      ]
+    },
+    "keepalive_connection_ms": {
+      "connect_ms": 23.988,
+      "tls_handshake_ms": 2.908
+    }
+  },
+  "assertions": {
+    "session_db_security_events": {
+      "row_count": 17,
+      "distinct_event_ids": 17,
+      "blocked_count": 17,
+      "vm_id": "sechttp-904a37b2",
+      "profile_id": "profile-asset-boot",
+      "user_id": "elieb_google_com",
+      "process_operation": null,
+      "process_command_class": null,
+      "rule_id": "runtime.block-http-bench.2603ddb0",
+      "reason": "HTTP request blocked by security benchmark"
+    },
+    "runtime_match_count": 17,
+    "runtime_last_event_id": "net-http-45795d8f4a658b01",
+    "logs_exposed_security_decision": true
+  },
+  "project_version": "1.2.1780320819",
+  "recorded_at": 1780329654.8779647,
+  "recorded_at_utc": "2026-06-01T16:00:54.877967+00:00",
+  "git": {
+    "commit": "19ca286e21f245e60a3cfa599d12665ba558db6a",
+    "dirty": true,
+    "source_dirty": false,
+    "dirty_paths": [
+      "benchmarks/capsem-bench/data_1.2.1780320819_x86_64.json",
+      "benchmarks/endpoint-latency/data_1.2.1780320819_x86_64.json",
+      "benchmarks/fork/data_1.2.1780320819_x86_64.json",
+      "benchmarks/host-native/data_1.2.1780320819_x86_64.json",
+      "benchmarks/lifecycle/data_1.2.1780320819_x86_64.json",
+      "benchmarks/parallel/data_1.2.1780320819_x86_64.json",
+      "benchmarks/security-engine/data_1.2.1780320819_x86_64_cel_microbench.json",
+      "benchmarks/security-engine/data_1.2.1780320819_x86_64_process_enforcement.json",
+      "benchmarks/security-engine/data_1.2.1780320819_x86_64_security_packs_microbench.json"
+    ]
+  }
+}
