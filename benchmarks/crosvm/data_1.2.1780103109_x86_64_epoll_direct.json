@@ -1,0 +1,207 @@
+{
+  "schema": "capsem.crosvm_benchmark.v1",
+  "timestamp": 1780320088.0063355,
+  "crosvm": {
+    "binary": "/home/elieb_google_com/capsem/private/crosvm/target/release/crosvm",
+    "version": "crosvm 0.1.0",
+    "source_commit": "e9b6ed4c3916acc3a633e6a445b4f64855b11598"
+  },
+  "engine": "epoll",
+  "direct": true,
+  "multiple_workers": false,
+  "duration_s": 50.726,
+  "returncode": 0,
+  "host": {
+    "machine": "x86_64",
+    "system": "Linux",
+    "release": "7.0.0-1003-gcp",
+    "processor": ""
+  },
+  "git_commit": "45abe6d38089b128aea541ddcb4cfd9f25417893",
+  "assets": {
+    "kernel": "/home/elieb_google_com/capsem/assets/x86_64/vmlinuz",
+    "rootfs": "/home/elieb_google_com/capsem/assets/x86_64/rootfs.squashfs",
+    "initrd_source": "/home/elieb_google_com/capsem/assets/x86_64/initrd.img"
+  },
+  "rootfs": {
+    "scan_dirs": [
+      "/usr/bin",
+      "/usr/lib",
+      "/opt/ai-clis"
+    ],
+    "largest_file": "/opt/ai-clis/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe",
+    "largest_file_size": 239650512,
+    "seq_read": {
+      "file": "/opt/ai-clis/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe",
+      "size_bytes": 239650512,
+      "block_size": 1048576,
+      "duration_ms": 3586.3,
+      "throughput_mbps": 63.7
+    },
+    "files_found": 5554,
+    "rand_read_4k": {
+      "count": 5000,
+      "files_sampled": 2566,
+      "block_size": 4096,
+      "duration_ms": 11319.2,
+      "iops": 441.7,
+      "throughput_mbps": 1.7
+    },
+    "large_binary_seq_read": {
+      "count": 3,
+      "files": [
+        {
+          "path": "/opt/ai-clis/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe",
+          "size_bytes": 239650512,
+          "cold": {
+            "file": "/opt/ai-clis/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe",
+            "size_bytes": 239650512,
+            "block_size": 1048576,
+            "duration_ms": 2188.8,
+            "throughput_mbps": 104.4
+          },
+          "warm": {
+            "file": "/opt/ai-clis/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe",
+            "size_bytes": 239650512,
+            "block_size": 1048576,
+            "duration_ms": 40.7,
+            "throughput_mbps": 5615.4
+          }
+        },
+        {
+          "path": "/opt/ai-clis/lib/node_modules/@anthropic-ai/claude-code/node_modules/@anthropic-ai/claude-code-linux-x64/claude",
+          "size_bytes": 239650512,
+          "cold": {
+            "file": "/opt/ai-clis/lib/node_modules/@anthropic-ai/claude-code/node_modules/@anthropic-ai/claude-code-linux-x64/claude",
+            "size_bytes": 239650512,
+            "block_size": 1048576,
+            "duration_ms": 1997.0,
+            "throughput_mbps": 114.4
+          },
+          "warm": {
+            "file": "/opt/ai-clis/lib/node_modules/@anthropic-ai/claude-code/node_modules/@anthropic-ai/claude-code-linux-x64/claude",
+            "size_bytes": 239650512,
+            "block_size": 1048576,
+            "duration_ms": 37.2,
+            "throughput_mbps": 6151.1
+          }
+        },
+        {
+          "path": "/opt/ai-clis/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex",
+          "size_bytes": 222019904,
+          "cold": {
+            "file": "/opt/ai-clis/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex",
+            "size_bytes": 222019904,
+            "block_size": 1048576,
+            "duration_ms": 2295.7,
+            "throughput_mbps": 92.2
+          },
+          "warm": {
+            "file": "/opt/ai-clis/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex",
+            "size_bytes": 222019904,
+            "block_size": 1048576,
+            "duration_ms": 35.5,
+            "throughput_mbps": 5969.9
+          }
+        }
+      ],
+      "bytes_read": 701320928,
+      "cold_duration_ms": 6481.5,
+      "warm_duration_ms": 113.4,
+      "cold_throughput_mbps": 103.2,
+      "warm_throughput_mbps": 5898.0
+    },
+    "small_js_read": {
+      "count": 5000,
+      "files_sampled": 113,
+      "bytes_read": 44520399,
+      "duration_ms": 171.2,
+      "ops_per_sec": 29204.6,
+      "throughput_mbps": 248.0
+    },
+    "metadata_stat": {
+      "entries": 6573,
+      "files": 5554,
+      "dirs": 670,
+      "symlinks": 349,
+      "errors": 0,
+      "duration_ms": 450.8,
+      "stats_per_sec": 14579.9
+    }
+  },
+  "startup": {
+    "runs_per_command": 3,
+    "commands": {
+      "python3": {
+        "command": [
+          "python3",
+          "--version"
+        ],
+        "timings_ms": [
+          108.0,
+          114.3,
+          114.4
+        ],
+        "min_ms": 108.0,
+        "mean_ms": 112.2,
+        "max_ms": 114.4
+      },
+      "node": {
+        "command": [
+          "node",
+          "--version"
+        ],
+        "timings_ms": [
+          693.5,
+          639.4,
+          635.5
+        ],
+        "min_ms": 635.5,
+        "mean_ms": 656.1,
+        "max_ms": 693.5
+      },
+      "claude": {
+        "command": [
+          "claude",
+          "--version"
+        ],
+        "timings_ms": [
+          2391.5,
+          2071.0,
+          2019.3
+        ],
+        "min_ms": 2019.3,
+        "mean_ms": 2160.6,
+        "max_ms": 2391.5
+      },
+      "gemini": {
+        "command": [
+          "gemini",
+          "--version"
+        ],
+        "timings_ms": [
+          3727.2,
+          3136.8,
+          3072.6
+        ],
+        "min_ms": 3072.6,
+        "mean_ms": 3312.2,
+        "max_ms": 3727.2
+      },
+      "codex": {
+        "command": [
+          "codex",
+          "--version"
+        ],
+        "timings_ms": [
+          1924.6,
+          1769.3,
+          1769.3
+        ],
+        "min_ms": 1769.3,
+        "mean_ms": 1821.1,
+        "max_ms": 1924.6
+      }
+    }
+  }
+}

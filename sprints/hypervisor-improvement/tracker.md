@@ -41,6 +41,10 @@
 - [ ] H04: CPU, SMP, and lifecycle.
 - [ ] H05: storage, rootfs, and filesystem experiments.
 - [ ] H06: benchmark and product proof.
+  - [x] Add a crosvm reference harness for the same Capsem x86_64
+        rootfs/startup workload used by the Firecracker comparison.
+  - [x] Record crosvm epoll, direct-I/O, multi-worker, and unavailable-uring
+        lanes as structured benchmark artifacts.
 - [ ] H07: docs, changelog, release gate.
 
 ## Notes
@@ -180,6 +184,36 @@
   metadata stat +20.3%. This makes the next Capsem sprint less about blindly
   defaulting io_uring and more about matching Firecracker's virtqueue,
   interrupt, request, and guest-visible block behavior first.
+- crosvm reference check, 2026-06-01: no packaged `crosvm` binary was available
+  through apt, snap, or GitHub releases on this host, so the comparison uses a
+  private source checkout built per crosvm's documented Linux path with a
+  minimal no-default-features release build. This is reference evidence, not a
+  Capsem product dependency.
+- crosvm epoll with the same Capsem x86_64 kernel/rootfs/initrd shape beat
+  Firecracker Sync on the rootfs lanes: seq read 123.3 MB/s (+1.1%), random
+  read 2111 IOPS (+10.5%), cold large-binary 298.4 MB/s (+10.4%), small JS
+  104,348 ops/s (+13.1%), metadata stat 48,030/s (+13.6%). Startup was similar
+  or slightly better: python3 30.4 ms (+5.3%), node 243.5 ms (-0.5%), claude
+  815.2 ms (+6.0%), gemini 2280.4 ms (+0.2%), codex 712.6 ms (+6.8%).
+- crosvm epoll is still far from the committed macOS Capsem artifact: 0.13x seq
+  rootfs read, 0.24x random IOPS, 0.31x cold large-binary read, 0.26x small JS,
+  0.24x metadata stat, and roughly 2.8x-4.2x startup latency for the shared
+  startup commands. That supports the hardware/host-storage hypothesis and the
+  need to reason about overhead instead of treating any one Linux VMM as
+  macOS-speed proof.
+- crosvm `direct=true` is rejected for this read-mostly rootfs workload:
+  seq read 63.7 MB/s, random 442 IOPS, cold large-binary 103.2 MB/s, small JS
+  29,205 ops/s, metadata 14,580/s, and codex startup 1769.3 ms. Bypassing the
+  host page cache made both cold and loader-style paths much worse.
+- crosvm `multiple-workers=true` did not improve the default epoll shape:
+  random read stayed similar at 2103 IOPS and cold large-binary stayed similar
+  at 298.7 MB/s, but small JS dropped to 97,162 ops/s and metadata dropped to
+  43,584/s. This argues against blindly adding more block workers without a
+  measured queue/contention reason.
+- crosvm `--async-executor uring` could not start on this kernel:
+  `io_uring is unavailable: URingContext failure: Failed to mmap submit ring ...
+  Invalid argument`. The failure is preserved as a benchmark artifact so future
+  Linux hosts can distinguish "not supported here" from "not tested".
 
 ## Coverage Ledger
 
@@ -272,7 +306,10 @@
   VMM/device path gap is real: Firecracker Sync was +46.6% random rootfs,
   +58.2% cold large-binary, +21.7% small JS, +12.1% metadata, and 12.3-42.6%
   faster on AI CLI startup. Firecracker Async remained in the same band rather
-  than proving io_uring alone is the missing lever. A local
+  than proving io_uring alone is the missing lever. crosvm epoll improved on
+  Firecracker Sync for this workload by +10.5% random rootfs, +10.4% cold
+  large-binary, +13.1% small JS, +13.6% metadata, and +6.8% codex startup, while
+  crosvm direct-I/O and multi-worker ablations were rejected. A local
   uncommitted VirtioFS batching probe measured `/root`
   targeted disk at seq write +2.3%, seq read +2.4%, random write -0.6%, random
   read +10.8% without event-index, but it was not accepted because it was not

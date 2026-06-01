@@ -1,0 +1,27 @@
+{
+  "schema": "capsem.crosvm_benchmark.v1",
+  "timestamp": 1780320022.0307052,
+  "crosvm": {
+    "binary": "/home/elieb_google_com/capsem/private/crosvm/target/release/crosvm",
+    "version": "crosvm 0.1.0",
+    "source_commit": "e9b6ed4c3916acc3a633e6a445b4f64855b11598"
+  },
+  "engine": "uring",
+  "direct": false,
+  "multiple_workers": false,
+  "duration_s": 0.003,
+  "returncode": 1,
+  "host": {
+    "machine": "x86_64",
+    "system": "Linux",
+    "release": "7.0.0-1003-gcp",
+    "processor": ""
+  },
+  "git_commit": "45abe6d38089b128aea541ddcb4cfd9f25417893",
+  "assets": {
+    "kernel": "/home/elieb_google_com/capsem/assets/x86_64/vmlinuz",
+    "rootfs": "/home/elieb_google_com/capsem/assets/x86_64/rootfs.squashfs",
+    "initrd_source": "/home/elieb_google_com/capsem/assets/x86_64/initrd.img"
+  },
+  "error": "crosvm exited non-zero"
+}

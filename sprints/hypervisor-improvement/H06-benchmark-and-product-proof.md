@@ -17,6 +17,10 @@ Keep the science strict and make the product surface honest.
   - kernel cmdline and storage/FUSE limits;
   - git/source dirty state.
 - Add product-facing status proof for resource counters and hypervisor health.
+- Keep external VMM comparisons honest: Firecracker uses an official release
+  binary; crosvm currently has no apt/snap/GitHub release binary on this host,
+  so crosvm numbers are from a private documented source build and are treated
+  as reference evidence only.
 
 ## Done
 
@@ -31,4 +35,4 @@ Keep the science strict and make the product surface honest.
 - `just benchmark-compare`
 - status/info functional proof
 - docs updated with artifact interpretation
-
+- crosvm reference artifacts under `benchmarks/crosvm/`
