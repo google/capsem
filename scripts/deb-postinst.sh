@@ -91,8 +91,14 @@ seed_base_profiles() {
     install -m 0644 "$PKG_SHARE/profiles/base/"*.profile.toml "$CAPSEM_DIR/profiles/base/"
 }
 
-# Create user-level directory layout
-mkdir -p "$CAPSEM_DIR/bin" "$CAPSEM_DIR/assets" "$CAPSEM_DIR/profiles/base" "$CAPSEM_DIR/run"
+# Create user-level directory layout. Local dev installs may have
+# ~/.capsem/assets symlinked into the repo; never seed package assets through
+# that link as root, or generated dev manifests become root-owned.
+mkdir -p "$CAPSEM_DIR/bin" "$CAPSEM_DIR/profiles/base" "$CAPSEM_DIR/run"
+if [ -L "$CAPSEM_DIR/assets" ]; then
+    rm "$CAPSEM_DIR/assets"
+fi
+mkdir -p "$CAPSEM_DIR/assets"
 
 # Symlink system binaries into user dir
 for bin in capsem capsem-service capsem-process capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-gateway capsem-tray capsem-tui capsem-admin; do

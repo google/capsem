@@ -490,13 +490,14 @@ def test_postinstall_seeds_signed_manifest_and_dev_pubkey_loudly():
         assert 'cp -R "$PKG_SHARE/assets/"*' not in text
 
 
-def test_macos_postinstall_replaces_symlinked_asset_dir_before_seeding():
+def test_package_postinstall_replaces_symlinked_asset_dir_before_seeding():
     """A local dev symlink must not let root seed package assets into the repo."""
-    text = PKG_POSTINSTALL.read_text()
+    for script in (PKG_POSTINSTALL, DEB_POSTINST):
+        text = script.read_text()
 
-    assert 'if [ -L "$CAPSEM_DIR/assets" ]' in text
-    assert 'rm "$CAPSEM_DIR/assets"' in text
-    assert text.index('if [ -L "$CAPSEM_DIR/assets" ]') < text.index("# Copy asset metadata")
+        assert 'if [ -L "$CAPSEM_DIR/assets" ]' in text
+        assert 'rm "$CAPSEM_DIR/assets"' in text
+        assert text.index('if [ -L "$CAPSEM_DIR/assets" ]') < text.rindex("seed_assets")
 
 
 def test_macos_postinstall_materializes_app_bundle_in_applications():

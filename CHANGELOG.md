@@ -248,6 +248,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed Linux `.deb` post-install service registration in non-login shells by
   falling back from unavailable `systemctl --user` sessions to a real systemd
   system unit that runs Capsem as the installing user.
+- Fixed Linux `.deb` post-install asset seeding so local dev symlinks under
+  `~/.capsem/assets` are replaced before root copies package manifests.
 - Fixed Linux local `just install` so the rebuilt `.deb` is passed to `apt`
   through an absolute file path instead of being interpreted as a package name.
 - Fixed release/install version stamping on Linux by replacing BSD-specific
