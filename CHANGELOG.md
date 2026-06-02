@@ -51,6 +51,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   downloads during `just exec` after guest binary changes.
 
 ### Added
+- Added an ignored host-only framed MCP throughput diagnostic that drives the
+  production `serve_io` parser/policy/telemetry path over an in-memory duplex
+  stream. The first Linux run processed 10,000 `local__echo` requests at
+  roughly 25,290 RPS, isolating the current VM `mcp-load` ceiling away from
+  host framed-MCP CPU and toward guest relay/vsock/KVM delivery.
 - Added MCP load-test attribution lanes to `capsem-bench mcp-load`. The
   benchmark now reports FastMCP, raw JSON-RPC through one guest relay, and raw
   JSON-RPC through four guest relay processes in the same canonical output so

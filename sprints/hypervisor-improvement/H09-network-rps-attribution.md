@@ -253,11 +253,21 @@ transport/dispatch bottleneck to trace next, not an upstream network failure.
   remaining RPS ceiling is still shared host/vsock/framed scheduling or
   security/telemetry CPU, not FastMCP, raw guest relay, or response syscalls
   alone.
+- Host-only framed MCP diagnostic added as an ignored Rust test:
+  `cargo test -p capsem-core framed_mcp_host_duplex_throughput_diagnostic --
+  --ignored --nocapture`. It drives the production `serve_io` framed parser,
+  MCP policy, endpoint-local `local__echo`, response writer, and session DB
+  telemetry over `tokio::io::duplex`, without guest stdio relay or vsock. First
+  Linux proof processed 10,000 requests in 395.4ms, or 25,290.2 RPS. This
+  strongly isolates the ~800 RPS VM `raw-single` ceiling away from host
+  framed-MCP/security/telemetry CPU and toward guest relay, KVM/vsock delivery,
+  or host-vsock socket integration.
 
 ## First Questions
 
 - Is the Linux RPS gap actually in KVM/vsock, or in host-side MITM/security
-  processing?
+  processing? Current answer: host framed-MCP processing alone is not the cap;
+  the next trace target is guest relay/vsock/KVM delivery.
 - Why did `local__echo` regress to ~0.2x baseline throughput with >3x p99
   latency while producing zero errors? Trace guest stdio relay, framed vsock
   single-stream behavior, host MCP endpoint parsing, aggregator dispatch, and

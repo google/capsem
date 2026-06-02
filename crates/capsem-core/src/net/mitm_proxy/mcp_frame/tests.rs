@@ -409,6 +409,68 @@ async fn framed_mcp_response_is_not_held_behind_db_writer_backpressure() {
     restore_env("CAPSEM_TEST_SLOW_DB_BATCH_MS", previous);
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "diagnostic throughput probe; run explicitly when attributing MCP RPS"]
+async fn framed_mcp_host_duplex_throughput_diagnostic() {
+    let total_requests = std::env::var("CAPSEM_TEST_MCP_HOST_THROUGHPUT_REQUESTS")
+        .ok()
+        .and_then(|value| value.parse::<u32>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(10_000);
+
+    let dir = tempfile::tempdir().unwrap();
+    let db = std::sync::Arc::new(
+        DbWriter::open(&dir.path().join("mcp-host-throughput-session.db"), 16_384).unwrap(),
+    );
+    let (aggregator, _rx) = crate::mcp::aggregator::AggregatorClient::channel(1);
+    let endpoint = std::sync::Arc::new(McpEndpointState::new(
+        aggregator,
+        std::sync::Arc::new(tokio::sync::RwLock::new(std::sync::Arc::new(
+            McpPolicy::new(),
+        ))),
+        std::sync::Arc::new(RuntimeSecurityEngineSlot::new(None)),
+        std::sync::Arc::new(tokio::sync::Semaphore::new(256)),
+        McpTimeouts::default(),
+    ));
+
+    let (client, server) = tokio::io::duplex(1024 * 1024);
+    let server_db = std::sync::Arc::clone(&db);
+    let server_task = tokio::spawn(async move {
+        let _ = serve_io(Vec::new(), server, endpoint, server_db).await;
+    });
+    let (mut client_reader, mut client_writer) = tokio::io::split(client);
+
+    let started = std::time::Instant::now();
+    let writer_task = tokio::spawn(async move {
+        for stream_id in 1..=total_requests {
+            let payload = format!(
+                r#"{{"jsonrpc":"2.0","id":{stream_id},"method":"tools/call","params":{{"name":"local__echo","arguments":{{"text":"ping"}}}}}}"#
+            );
+            let frame =
+                capsem_proto::encode_mcp_frame(stream_id, 0, "codex", payload.as_bytes()).unwrap();
+            client_writer.write_all(&frame).await.unwrap();
+        }
+        client_writer.flush().await.unwrap();
+    });
+
+    for _ in 0..total_requests {
+        let frame = read_test_response_frame(&mut client_reader).await.unwrap();
+        assert!(!frame.payload.is_empty());
+    }
+
+    writer_task.await.unwrap();
+    let elapsed = started.elapsed();
+    drop(client_reader);
+    let _ = tokio::time::timeout(Duration::from_secs(2), server_task).await;
+    db.shutdown_blocking();
+
+    let rps = total_requests as f64 / elapsed.as_secs_f64();
+    println!(
+        "host-framed-mcp-duplex total_requests={total_requests} elapsed_ms={:.1} rps={rps:.1}",
+        elapsed.as_secs_f64() * 1000.0
+    );
+}
+
 async fn read_test_response_frame<R: tokio::io::AsyncRead + Unpin>(
     reader: &mut R,
 ) -> anyhow::Result<capsem_proto::McpFrame> {

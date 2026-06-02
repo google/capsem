@@ -271,6 +271,14 @@
           decision rows, process exec decision rows, and MCP file-tool restore
           rows. This keeps the same persisted audit/security data while
           reducing sender lock/clone churn outside the narrow MCP load path.
+    - [x] Add and run a host-only framed MCP throughput diagnostic to isolate
+          host parser/policy/telemetry CPU from guest relay/vsock. Ignored test:
+          `cargo test -p capsem-core framed_mcp_host_duplex_throughput_diagnostic
+          -- --ignored --nocapture`. First Linux proof processed 10,000
+          in-memory `local__echo` requests through production `serve_io` in
+          395.4ms, or 25,290.2 RPS. Conclusion: the host framed-MCP path is
+          not the ~800 RPS VM cap; next target is guest relay/vsock/KVM
+          delivery.
   - [ ] Land only trace-backed RPS speedups, with before/after percentages by
         lane and canonical `just benchmark` artifacts.
 - [ ] H07: docs, changelog, release gate.
