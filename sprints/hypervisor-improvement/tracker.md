@@ -24,6 +24,9 @@
   - [x] Replace guest net-proxy per-connection `/proc/<pid>/fd` process lookup
         with a shared throttled socket-owner index, preserving best-effort
         process attribution while reducing burst RPS CPU work.
+  - [x] Fix dev-service profile materialization after initrd repack so
+        one-shot VM smoke uses the freshly packed local guest binaries instead
+        of stale profile-pinned remote asset hashes.
   - [ ] Finish the crosvm async engine and Firecracker async file-engine trace
         before choosing the first implementation slice.
   - [ ] Pick and land one coherent code-path improvement with counters and
@@ -211,6 +214,11 @@
   socket-owner index. The tradeoff is measurable: very short burst connections
   can fall back to `unknown` process names between refresh windows, so the next
   VM proof must record attribution quality as well as RPS.
+- Validation fix: `just exec` exposed stale local profile hashes after initrd
+  repack. `_ensure-service` now explicitly materializes
+  `~/.capsem/profiles/base` from the current local manifest before service
+  launch, matching the package install path and avoiding remote downloads for
+  old initrd hashes during dev smoke tests.
 - Current highest-leverage H08 task: produce a Capsem vs Firecracker vs crosvm
   block-lifecycle mechanism table before running another long benchmark. The
   table must cover descriptor parsing, guest-memory translation, event-loop /
@@ -749,6 +757,8 @@
   `cargo test -p capsem-gateway status::tests --bin capsem-gateway`,
   `cargo test -p capsem-process vsock::tests`,
   `cargo test -p capsem-agent --bin capsem-net-proxy`,
+  `just exec "echo net-proxy-smoke"` (rerun after fixing dev profile
+  materialization),
   `cargo test -p capsem --bin capsem format_session_resource_lines_shows_live_metrics`,
   `cargo test -p capsem --bin capsem format_session_hypervisor_lines_shows_block_counters`,
   `cargo test -p capsem --bin capsem`,

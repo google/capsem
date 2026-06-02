@@ -13,6 +13,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   directory for every proxied connection. This keeps process attribution
   best-effort while reducing per-connection guest CPU work on HTTP/RPS bursts.
 
+### Fixed
+- Fixed the dev service startup recipe so it materializes local base profiles
+  from the freshly repacked asset manifest before launching `capsem-service`.
+  This prevents stale profile-pinned initrd hashes from forcing remote asset
+  downloads during `just exec` after guest binary changes.
+
 ### Added
 - Added process-side vsock connection metrics with bounded port-kind labels,
   active-connection gauges, close-result counters, and handler-duration

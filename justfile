@@ -93,6 +93,7 @@ _sign: _build-host
 _ensure-service: _sign
     #!/bin/bash
     set -euo pipefail
+    ROOT="{{justfile_directory()}}"
     arch=$(uname -m)
     [[ "$arch" == "arm64" ]] || arch="x86_64"
     # Resolve capsem home + run dir from env, matching the Rust helpers.
@@ -194,6 +195,13 @@ _ensure-service: _sign
     # Refresh the local development profile after every initrd repack. The
     # profile pins asset hashes, so leaving it stale makes the service reject
     # the freshly repacked initrd before the VM can boot.
+    if [ -d "$ROOT/config/profiles/base" ] && [ -f "$DEV_ASSETS/manifest.json" ]; then
+        python3 "$ROOT/scripts/materialize-install-profiles.py" \
+            "$ROOT/config/profiles/base" \
+            "$DEV_ASSETS" \
+            "$CAPSEM_HOME_DIR/profiles/base" \
+            "$DEV_ASSETS"
+    fi
     CAPSEM_ASSETS_DIR="${CAPSEM_ASSETS_DIR:-$DEV_ASSETS}" {{cli_binary}} setup --non-interactive --accept-detected
     cleanup_runtime_processes
     GATEWAY_ARGS=(--gateway-binary {{gateway_binary}})
