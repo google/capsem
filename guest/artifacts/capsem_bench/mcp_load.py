@@ -22,6 +22,8 @@ import contextlib
 import json
 import os
 import resource
+import socket
+import struct
 import time
 
 from rich.table import Table
@@ -29,10 +31,17 @@ from rich.table import Table
 from .helpers import console, percentile
 
 MCP_SERVER = "/run/capsem-mcp-server"
+MCP_VSOCK_HOST_CID = 2
+MCP_VSOCK_PORT = 5002
+MCP_FRAME_MAGIC = 0x4D43
+MCP_FRAME_VERSION = 1
+MCP_FRAME_HEADER_LEN = 16
+MCP_FRAME_MAX_SIZE = 1_052_672
+MCP_PROCESS_NAME = "python3"
 DEFAULT_CONCURRENCY = (1, 10, 50, 200)
 DEFAULT_DURATION_S = 10.0
 DEFAULT_PAYLOAD = "ping"
-DEFAULT_LANES = ("fastmcp", "raw-single", "raw-multiprocess")
+DEFAULT_LANES = ("fastmcp", "raw-single", "raw-multiprocess", "direct-vsock")
 RAW_MULTIPROCESS_RELAYS = 4
 
 
@@ -227,6 +236,179 @@ class RawMcpPool:
         return await client.call_echo(payload)
 
 
+class DirectVsockMcpClient:
+    def __init__(self):
+        self.sock = None
+        self.next_id = 1
+        self.pending = {}
+        self.write_lock = asyncio.Lock()
+        self.reader_task = None
+
+    async def start(self):
+        if not hasattr(socket, "AF_VSOCK"):
+            raise RuntimeError("Python socket.AF_VSOCK is unavailable")
+        loop = asyncio.get_running_loop()
+        self.sock = socket.socket(socket.AF_VSOCK, socket.SOCK_STREAM)
+        self.sock.setblocking(False)
+        await loop.sock_connect(
+            self.sock,
+            (MCP_VSOCK_HOST_CID, _physical_mcp_vsock_port()),
+        )
+        await loop.sock_sendall(
+            self.sock,
+            f"\0CAPSEM_META:{MCP_PROCESS_NAME}\n".encode("utf-8"),
+        )
+        self.reader_task = asyncio.create_task(self._read_responses())
+        await self.call_echo("warmup")
+
+    async def close(self):
+        if self.sock is not None:
+            with contextlib.suppress(OSError):
+                self.sock.shutdown(socket.SHUT_WR)
+            self.sock.close()
+            self.sock = None
+        if self.reader_task is not None:
+            self.reader_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self.reader_task
+
+    async def call_echo(self, payload):
+        request_id = await self._send_request(
+            "tools/call",
+            {"name": "local__echo", "arguments": {"text": payload}},
+        )
+        response = await self.pending[request_id]
+        if "error" in response:
+            raise RuntimeError(response["error"])
+        return response.get("result")
+
+    async def _send_request(self, method, params):
+        async with self.write_lock:
+            request_id = self.next_id
+            self.next_id += 1
+            loop = asyncio.get_running_loop()
+            self.pending[request_id] = loop.create_future()
+            payload = json.dumps(
+                {
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "method": method,
+                    "params": params,
+                },
+                separators=(",", ":"),
+            ).encode("utf-8")
+            frame = _encode_mcp_frame(request_id, 0, MCP_PROCESS_NAME, payload)
+            await loop.sock_sendall(self.sock, frame)
+            return request_id
+
+    async def _read_responses(self):
+        loop = asyncio.get_running_loop()
+        while True:
+            try:
+                len_buf = await _sock_recv_exact(loop, self.sock, 4)
+                total_len = struct.unpack(">I", len_buf)[0]
+                body = await _sock_recv_exact(loop, self.sock, total_len)
+                frame = _decode_mcp_frame_body(body)
+                response = json.loads(frame["payload"])
+            except Exception as error:
+                for future in self.pending.values():
+                    if not future.done():
+                        future.set_exception(error)
+                self.pending.clear()
+                return
+            request_id = response.get("id")
+            future = self.pending.pop(request_id, None)
+            if future is not None and not future.done():
+                future.set_result(response)
+
+
+async def _sock_recv_exact(loop, sock, length):
+    chunks = []
+    remaining = length
+    while remaining:
+        chunk = await loop.sock_recv(sock, remaining)
+        if not chunk:
+            raise RuntimeError("direct-vsock connection closed")
+        chunks.append(chunk)
+        remaining -= len(chunk)
+    return b"".join(chunks)
+
+
+def _physical_mcp_vsock_port():
+    return MCP_VSOCK_PORT + _vsock_port_offset_from_cmdline(_read_proc_cmdline())
+
+
+def _read_proc_cmdline():
+    try:
+        with open("/proc/cmdline", encoding="utf-8") as f:
+            return f.read()
+    except OSError:
+        return ""
+
+
+def _vsock_port_offset_from_cmdline(cmdline):
+    for part in cmdline.split():
+        if not part.startswith("capsem.vsock_port_offset="):
+            continue
+        raw = part.split("=", 1)[1]
+        try:
+            offset = int(raw)
+        except ValueError:
+            return 0
+        if MCP_VSOCK_PORT + offset > 65535:
+            return 0
+        return max(offset, 0)
+    return 0
+
+
+def _encode_mcp_frame(stream_id, flags, process_name, payload):
+    process_name_bytes = process_name.encode("utf-8")
+    if len(process_name_bytes) > 128:
+        raise ValueError("MCP process name too long")
+    total_len = MCP_FRAME_HEADER_LEN + len(process_name_bytes) + len(payload)
+    if total_len > MCP_FRAME_MAX_SIZE:
+        raise ValueError("MCP frame too large")
+    body = struct.pack(
+        ">HBBIHHI",
+        MCP_FRAME_MAGIC,
+        MCP_FRAME_VERSION,
+        MCP_FRAME_HEADER_LEN,
+        stream_id,
+        flags,
+        len(process_name_bytes),
+        len(payload),
+    )
+    return struct.pack(">I", total_len) + body + process_name_bytes + payload
+
+
+def _decode_mcp_frame_body(body):
+    if len(body) < MCP_FRAME_HEADER_LEN:
+        raise ValueError("MCP frame body too short")
+    if len(body) > MCP_FRAME_MAX_SIZE:
+        raise ValueError("MCP frame body too large")
+    magic, version, header_len, stream_id, flags, process_len, payload_len = struct.unpack(
+        ">HBBIHHI",
+        body[:MCP_FRAME_HEADER_LEN],
+    )
+    if magic != MCP_FRAME_MAGIC:
+        raise ValueError("invalid MCP frame magic")
+    if version != MCP_FRAME_VERSION:
+        raise ValueError("unsupported MCP frame version")
+    if header_len != MCP_FRAME_HEADER_LEN:
+        raise ValueError("invalid MCP frame header length")
+    expected = MCP_FRAME_HEADER_LEN + process_len + payload_len
+    if len(body) != expected:
+        raise ValueError("invalid MCP frame length")
+    process_start = MCP_FRAME_HEADER_LEN
+    payload_start = process_start + process_len
+    return {
+        "stream_id": stream_id,
+        "flags": flags,
+        "process_name": body[process_start:payload_start].decode("utf-8"),
+        "payload": body[payload_start:],
+    }
+
+
 async def _run_fastmcp(concurrency_levels, duration_s, payload):
     from fastmcp import Client
     from fastmcp.client.transports import StdioTransport
@@ -288,6 +470,14 @@ async def _run_async(concurrency_levels, duration_s, payload, lanes):
             duration_s,
             payload,
         )
+    if "direct-vsock" in lanes:
+        rows_by_lane["direct-vsock"] = await _run_raw_lane(
+            "direct-vsock",
+            DirectVsockMcpClient(),
+            concurrency_levels,
+            duration_s,
+            payload,
+        )
     return rows_by_lane
 
 
@@ -319,7 +509,7 @@ def mcp_load_bench(concurrency_levels=None, duration_s=None, payload=None):
     rows_by_lane = asyncio.run(_run_async(concurrency_levels, duration_s, payload, lanes))
 
     out = {
-        "version": "1.1",
+        "version": "1.2",
         "tool": "local__echo",
         "payload_bytes": len(payload),
         "lanes": rows_by_lane,

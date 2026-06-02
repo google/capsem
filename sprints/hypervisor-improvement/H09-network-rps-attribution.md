@@ -262,12 +262,21 @@ transport/dispatch bottleneck to trace next, not an upstream network failure.
   strongly isolates the ~800 RPS VM `raw-single` ceiling away from host
   framed-MCP/security/telemetry CPU and toward guest relay, KVM/vsock delivery,
   or host-vsock socket integration.
+- Direct-vsock lane added to `capsem-bench mcp-load` to bypass the guest
+  `/run/capsem-mcp-server` stdio relay and speak framed MCP directly from the
+  guest benchmark process to host vsock:5002. Scoped Linux proof:
+  raw-single 574.0/784.8/784.8/822.0 RPS and direct-vsock
+  572.2/806.4/811.0/842.8 RPS at c=1/10/50/200, all zero errors. Direct
+  vsock is only +0%/+2.7%/+3.4%/+2.5% over the raw relay lane, so the guest
+  stdio relay is not the main cap. Combined with the host-only 25k RPS proof,
+  the next target is KVM/vsock delivery or host-vsock socket integration.
 
 ## First Questions
 
 - Is the Linux RPS gap actually in KVM/vsock, or in host-side MITM/security
   processing? Current answer: host framed-MCP processing alone is not the cap;
-  the next trace target is guest relay/vsock/KVM delivery.
+  direct-vsock also matches the raw relay cap, so the next trace target is
+  KVM/vsock delivery or host-vsock socket integration.
 - Why did `local__echo` regress to ~0.2x baseline throughput with >3x p99
   latency while producing zero errors? Trace guest stdio relay, framed vsock
   single-stream behavior, host MCP endpoint parsing, aggregator dispatch, and

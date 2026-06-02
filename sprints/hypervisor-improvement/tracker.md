@@ -279,6 +279,14 @@
           395.4ms, or 25,290.2 RPS. Conclusion: the host framed-MCP path is
           not the ~800 RPS VM cap; next target is guest relay/vsock/KVM
           delivery.
+    - [x] Add and run a direct-vsock `capsem-bench mcp-load` lane to bypass
+          `/run/capsem-mcp-server` stdio relay. Scoped Linux proof:
+          raw-single 574.0/784.8/784.8/822.0 RPS, direct-vsock
+          572.2/806.4/811.0/842.8 RPS at c=1/10/50/200, all zero errors.
+          Conclusion: direct guest vsock is only ~0-3% faster than the raw
+          relay lane, so the stdio relay is not the primary cap. Combined with
+          the 25k RPS host-only proof, next target is KVM/vsock delivery or
+          host-vsock socket integration.
   - [ ] Land only trace-backed RPS speedups, with before/after percentages by
         lane and canonical `just benchmark` artifacts.
 - [ ] H07: docs, changelog, release gate.

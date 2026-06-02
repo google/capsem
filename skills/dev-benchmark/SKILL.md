@@ -39,9 +39,11 @@ Python tool that runs inside the VM. Rich tables to stderr (human), structured J
 `capsem-bench mcp-load` is the canonical MCP transport load diagnostic. It
 drives deterministic `local__echo` and reports multiple lanes in one artifact:
 FastMCP client, raw JSON-RPC through one guest `/run/capsem-mcp-server` relay,
-and raw JSON-RPC through four relay processes. Use `CAPSEM_BENCH_MCP_LANES`
-with comma-separated `fastmcp`, `raw-single`, and `raw-multiprocess` only when
-you deliberately need a subset; otherwise keep the default all-lane output.
+raw JSON-RPC through four relay processes, and direct framed MCP over guest
+vsock:5002 without the stdio relay. Use `CAPSEM_BENCH_MCP_LANES` with
+comma-separated `fastmcp`, `raw-single`, `raw-multiprocess`, and
+`direct-vsock` only when you deliberately need a subset; otherwise keep the
+default all-lane output.
 
 `just benchmark` also records a host-native artifact under
 `benchmarks/host-native/` with local disk I/O, CLI startup, synthetic small-file

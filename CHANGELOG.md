@@ -57,10 +57,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   roughly 25,290 RPS, isolating the current VM `mcp-load` ceiling away from
   host framed-MCP CPU and toward guest relay/vsock/KVM delivery.
 - Added MCP load-test attribution lanes to `capsem-bench mcp-load`. The
-  benchmark now reports FastMCP, raw JSON-RPC through one guest relay, and raw
-  JSON-RPC through four guest relay processes in the same canonical output so
-  MCP RPS investigations can separate Python/FastMCP overhead from the shared
-  guest relay, vsock, and host framed-MCP path.
+  benchmark now reports FastMCP, raw JSON-RPC through one guest relay, raw
+  JSON-RPC through four guest relay processes, and direct framed MCP over
+  guest vsock:5002 in the same canonical output so MCP RPS investigations can
+  separate Python/FastMCP, stdio relay, vsock, and host framed-MCP overhead.
 - Added `CAPSEM_METRICS_DEBUG_INTERVAL_SECS`, an opt-in capsem-process
   diagnostic recorder that logs compact MCP stage histogram snapshots to
   `process.log`. This gives the H09 RPS investigation live stage attribution

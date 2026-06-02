@@ -17,6 +17,7 @@ def test_selected_lanes_defaults_to_all(monkeypatch):
         "fastmcp",
         "raw-single",
         "raw-multiprocess",
+        "direct-vsock",
     )
 
 
@@ -68,6 +69,32 @@ for line in sys.stdin:
     ]
 
 
+def test_mcp_frame_codec_roundtrip():
+    payload = b'{"jsonrpc":"2.0","id":7,"method":"tools/call"}'
+    encoded = mcp_load._encode_mcp_frame(42, 0, "python3", payload)
+
+    total_len = int.from_bytes(encoded[:4], "big")
+    assert total_len == len(encoded) - 4
+
+    decoded = mcp_load._decode_mcp_frame_body(encoded[4:])
+    assert decoded["stream_id"] == 42
+    assert decoded["flags"] == 0
+    assert decoded["process_name"] == "python3"
+    assert decoded["payload"] == payload
+
+
+def test_vsock_port_offset_from_cmdline():
+    assert mcp_load._vsock_port_offset_from_cmdline("") == 0
+    assert (
+        mcp_load._vsock_port_offset_from_cmdline(
+            "quiet capsem.vsock_port_offset=100 root=/dev/vda"
+        )
+        == 100
+    )
+    assert mcp_load._vsock_port_offset_from_cmdline("capsem.vsock_port_offset=nope") == 0
+    assert mcp_load._vsock_port_offset_from_cmdline("capsem.vsock_port_offset=70000") == 0
+
+
 def test_mcp_load_bench_preserves_legacy_fastmcp_key(monkeypatch):
     monkeypatch.setenv("CAPSEM_BENCH_MCP_LANES", "raw-single")
 
@@ -98,6 +125,6 @@ def test_mcp_load_bench_preserves_legacy_fastmcp_key(monkeypatch):
         payload="x",
     )
 
-    assert result["version"] == "1.1"
+    assert result["version"] == "1.2"
     assert result["lanes"]["raw-single"][0]["rps"] == 100.0
     assert result["concurrency_levels"] == []
