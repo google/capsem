@@ -166,43 +166,6 @@ where
             let summary = interpret_mcp_method(&request);
             record_mcp_stage("parse_json_rpc", &summary, "ok", parse_started);
             record_method_metric(&summary);
-            let decision_request =
-                McpDecisionRequest::from_request(&process_name, &request, &summary);
-            let policy = endpoint.policy.read().await.clone();
-            let decision_provider = LocalMcpDecisionProvider::enforce_arc(Arc::clone(&policy));
-            let mut request_decision = decision_provider.decide(&decision_request);
-            let mut runtime_block_event = None;
-            if endpoint.security_engine.has_engine() {
-                let runtime_event = build_mcp_security_event_from_request(
-                    &process_name,
-                    &request,
-                    &summary,
-                    crate::telemetry::ambient_capsem_trace_id(),
-                    SystemTime::now(),
-                );
-                match endpoint.security_engine.evaluate(runtime_event) {
-                    Ok(runtime_result) => {
-                        if !mcp_security_result_allows_dispatch(&runtime_result) {
-                            request_decision = mcp_policy_decision_from_security_result(
-                                &runtime_result,
-                                "mcp.runtime.blocked",
-                            );
-                            runtime_block_event = Some(runtime_result.resolved_event);
-                        }
-                    }
-                    Err(error) => {
-                        request_decision = McpEnforcementDecision {
-                            mode: McpPolicyMode::Enforce,
-                            action: McpEnforcementAction::Block,
-                            rule: "mcp.runtime.error".into(),
-                            reason: format!("security engine error: {error}"),
-                            rewrite_target: None,
-                            rewrite_value: None,
-                            policy_rule_name: None,
-                        };
-                    }
-                }
-            }
 
             ::metrics::counter!(
                 metrics::PARSER_EVENTS_TOTAL,
@@ -235,68 +198,6 @@ where
                 continue;
             }
 
-            let mut dispatch_request = request.clone();
-            let response_decision_request = if request_decision.action == McpEnforcementAction::Rewrite {
-                match rewrite_mcp_request(dispatch_request, &request_decision) {
-                    Ok(rewritten) => {
-                        dispatch_request = rewritten;
-                        McpDecisionRequest::from_request(&process_name, &dispatch_request, &summary)
-                    }
-                    Err(error) => {
-                        let failed_decision = McpEnforcementDecision {
-                            reason: error,
-                            ..request_decision.clone()
-                        };
-                        let response = policy_blocked_response(
-                            request.id.clone(),
-                            "request rewrite",
-                            &failed_decision,
-                        );
-                        log_mcp_call_with_policy(
-                            &db,
-                            &policy_safe_request_for_rewrite_error(&request),
-                            &response,
-                            &process_name,
-                            0,
-                            McpCallEnforcementFields::from(&failed_decision),
-                            None,
-                        )
-                        .await;
-                        streams
-                            .lock()
-                            .expect("framed MCP stream tracker poisoned")
-                            .complete(frame.stream_id);
-                        send_response(&tx, frame.stream_id, &process_name, &response).await?;
-                        continue;
-                    }
-                }
-            } else {
-                decision_request.clone()
-            };
-
-            if request_decision.action.blocks_dispatch() && request_decision.action != McpEnforcementAction::Rewrite {
-                let response =
-                    policy_blocked_response(request.id.clone(), "request", &request_decision);
-                let log_request =
-                    policy_safe_request_for_pre_dispatch_denial(&dispatch_request, &request_decision);
-                log_mcp_call_with_policy(
-                    &db,
-                    log_request.as_ref(),
-                    &response,
-                    &process_name,
-                    0,
-                    McpCallEnforcementFields::from(&request_decision),
-                    runtime_block_event,
-                )
-                .await;
-                streams
-                    .lock()
-                    .expect("framed MCP stream tracker poisoned")
-                    .complete(frame.stream_id);
-                send_response(&tx, frame.stream_id, &process_name, &response).await?;
-                continue;
-            }
-
             let permit = match Arc::clone(&endpoint.inflight).acquire_owned().await {
                 Ok(permit) => permit,
                 Err(_) => {
@@ -313,6 +214,169 @@ where
             let tool_kind = mcp_tool_kind_from_summary(&summary);
             tokio::spawn(async move {
                 let _permit = permit;
+                let decision_request =
+                    McpDecisionRequest::from_request(&process_name, &request, &summary);
+                let policy = endpoint_h.policy.read().await.clone();
+                let decision_provider = LocalMcpDecisionProvider::enforce_arc(Arc::clone(&policy));
+                let mut request_decision = decision_provider.decide(&decision_request);
+                let mut runtime_block_event = None;
+                if endpoint_h.security_engine.has_engine() {
+                    let runtime_event = build_mcp_security_event_from_request(
+                        &process_name,
+                        &request,
+                        &summary,
+                        crate::telemetry::ambient_capsem_trace_id(),
+                        SystemTime::now(),
+                    );
+                    match endpoint_h.security_engine.evaluate(runtime_event) {
+                        Ok(runtime_result) => {
+                            if !mcp_security_result_allows_dispatch(&runtime_result) {
+                                request_decision = mcp_policy_decision_from_security_result(
+                                    &runtime_result,
+                                    "mcp.runtime.blocked",
+                                );
+                                runtime_block_event = Some(runtime_result.resolved_event);
+                            }
+                        }
+                        Err(error) => {
+                            request_decision = McpEnforcementDecision {
+                                mode: McpPolicyMode::Enforce,
+                                action: McpEnforcementAction::Block,
+                                rule: "mcp.runtime.error".into(),
+                                reason: format!("security engine error: {error}"),
+                                rewrite_target: None,
+                                rewrite_value: None,
+                                policy_rule_name: None,
+                            };
+                        }
+                    }
+                }
+
+                let mut dispatch_request = request.clone();
+                let response_decision_request =
+                    if request_decision.action == McpEnforcementAction::Rewrite {
+                        match rewrite_mcp_request(dispatch_request, &request_decision) {
+                            Ok(rewritten) => {
+                                dispatch_request = rewritten;
+                                McpDecisionRequest::from_request(
+                                    &process_name,
+                                    &dispatch_request,
+                                    &summary,
+                                )
+                            }
+                            Err(error) => {
+                                let failed_decision = McpEnforcementDecision {
+                                    reason: error,
+                                    ..request_decision.clone()
+                                };
+                                let response = policy_blocked_response(
+                                    request.id.clone(),
+                                    "request rewrite",
+                                    &failed_decision,
+                                );
+                                log_mcp_call_with_policy(
+                                    &db_h,
+                                    &policy_safe_request_for_rewrite_error(&request),
+                                    &response,
+                                    &process_name,
+                                    0,
+                                    McpCallEnforcementFields::from(&failed_decision),
+                                    None,
+                                )
+                                .await;
+                                streams_h
+                                    .lock()
+                                    .expect("framed MCP stream tracker poisoned")
+                                    .complete(frame.stream_id);
+                                let send_started = Instant::now();
+                                if let Err(e) = send_response_with_labels(
+                                    &tx_h,
+                                    frame.stream_id,
+                                    &process_name,
+                                    &response,
+                                    method_kind,
+                                    tool_kind,
+                                )
+                                .await
+                                {
+                                    record_mcp_stage_labels(
+                                        "response_enqueue",
+                                        method_kind,
+                                        tool_kind,
+                                        "error",
+                                        send_started,
+                                    );
+                                    debug!(error = %e, "framed MCP response dropped");
+                                } else {
+                                    record_mcp_stage_labels(
+                                        "response_enqueue",
+                                        method_kind,
+                                        tool_kind,
+                                        mcp_response_result(&response),
+                                        send_started,
+                                    );
+                                }
+                                return;
+                            }
+                        }
+                    } else {
+                        decision_request.clone()
+                    };
+
+                if request_decision.action.blocks_dispatch()
+                    && request_decision.action != McpEnforcementAction::Rewrite
+                {
+                    let response =
+                        policy_blocked_response(request.id.clone(), "request", &request_decision);
+                    let log_request = policy_safe_request_for_pre_dispatch_denial(
+                        &dispatch_request,
+                        &request_decision,
+                    );
+                    log_mcp_call_with_policy(
+                        &db_h,
+                        log_request.as_ref(),
+                        &response,
+                        &process_name,
+                        0,
+                        McpCallEnforcementFields::from(&request_decision),
+                        runtime_block_event,
+                    )
+                    .await;
+                    streams_h
+                        .lock()
+                        .expect("framed MCP stream tracker poisoned")
+                        .complete(frame.stream_id);
+                    let send_started = Instant::now();
+                    if let Err(e) = send_response_with_labels(
+                        &tx_h,
+                        frame.stream_id,
+                        &process_name,
+                        &response,
+                        method_kind,
+                        tool_kind,
+                    )
+                    .await
+                    {
+                        record_mcp_stage_labels(
+                            "response_enqueue",
+                            method_kind,
+                            tool_kind,
+                            "error",
+                            send_started,
+                        );
+                        debug!(error = %e, "framed MCP response dropped");
+                    } else {
+                        record_mcp_stage_labels(
+                            "response_enqueue",
+                            method_kind,
+                            tool_kind,
+                            mcp_response_result(&response),
+                            send_started,
+                        );
+                    }
+                    return;
+                }
+
                 let start = Instant::now();
                 let response = endpoint_h.handle_request(&dispatch_request).await;
                 let duration_ms = start.elapsed().as_millis() as u64;

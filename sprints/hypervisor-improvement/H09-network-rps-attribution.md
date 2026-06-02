@@ -192,6 +192,27 @@ transport/dispatch bottleneck to trace next, not an upstream network failure.
   in steady snapshots. The next code-path bet should therefore remove or
   collapse local builtin stdio/RMCP round trips for safe builtin tools, then
   rerun the same attribution to prove the dispatch ceiling moved.
+- Endpoint-level `local__echo` collapse landed as the first code-path fix:
+  the MITM MCP endpoint now returns the safe echo diagnostic result directly
+  after framed MCP policy evaluation, while external tools and networked or
+  stateful local builtins still use the isolated aggregator/builtin
+  subprocesses. Fresh-initrd Linux VM proof: canonical `mcp-load` reached
+  c=1 407.2 RPS p99 2.9ms, c=10 608.4 RPS p99 19.2ms, c=50 601.0 RPS p99
+  139.6ms, and c=200 616.8 RPS p99 755.0ms, all zero errors. Compared with
+  the earlier no-recorder local-echo branch run (c=1 312.0 RPS p99 4.2ms,
+  c=10 770.8 RPS p99 17.1ms, c=50 752.6 RPS p99 77.3ms, c=200 771.4 RPS
+  p99 300.7ms), the fix improves the single-request path by +30.5% RPS and
+  -31.0% p99 latency but does not solve the high-concurrency ceiling.
+- Post-fix attributed raw proof shows local echo no longer spends time in the
+  process-to-aggregator pipe during current windows: `mitm.mcp_endpoint_dispatch_ms`
+  for `tools/call local_echo` is roughly 0.04-0.05ms average and p99 below
+  0.09ms, while `parse_json_rpc`, `telemetry_enqueue`, `response_enqueue`, and
+  `response_write` remain individually small. Raw pipelined probes still land
+  around 618 RPS on one relay connection and 620 RPS across four relay
+  connections, so the remaining regression is not local builtin dispatch. The
+  next trace should focus on framed guest/host transport, VM/vsock scheduling,
+  and session telemetry/DB side effects that are not represented by the
+  existing per-stage enqueue timers.
 
 ## First Questions
 

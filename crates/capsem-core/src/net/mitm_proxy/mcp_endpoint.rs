@@ -192,6 +192,12 @@ impl McpEndpointState {
                     .and_then(|params| params.get("arguments"))
                     .cloned()
                     .unwrap_or_else(|| serde_json::json!({}));
+                if tool_name == "local__echo" {
+                    return match local_echo_result(arguments) {
+                        Ok(result) => JsonRpcResponse::ok(req.id.clone(), result),
+                        Err(e) => JsonRpcResponse::err(req.id.clone(), -32602, e.to_string()),
+                    };
+                }
                 match self.aggregator.call_tool(tool_name, arguments).await {
                     Ok(result) => JsonRpcResponse::ok(req.id.clone(), result),
                     Err(e) => JsonRpcResponse::err(
@@ -290,6 +296,23 @@ impl McpEndpointState {
             ),
         }
     }
+}
+
+fn local_echo_result(arguments: serde_json::Value) -> anyhow::Result<serde_json::Value> {
+    let text = arguments
+        .get("text")
+        .and_then(|value| value.as_str())
+        .ok_or_else(|| anyhow::anyhow!("local__echo requires string argument 'text'"))?;
+
+    Ok(serde_json::json!({
+        "content": [
+            {
+                "type": "text",
+                "text": text,
+            }
+        ],
+        "isError": false,
+    }))
 }
 
 fn param_str<'a>(req: &'a JsonRpcRequest, key: &str) -> Option<&'a str> {

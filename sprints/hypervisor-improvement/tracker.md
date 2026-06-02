@@ -213,6 +213,18 @@
             p99 and response frame write is ~0.19-0.20ms average /
             ~0.25-0.27ms p99. Next implementation bet: collapse the local
             builtin stdio/RMCP round trip for safe builtin tools.
+    - [x] Collapse safe `local__echo` dispatch at the MITM endpoint so the
+          deterministic diagnostic tool no longer enters the aggregator pipe
+          or builtin stdio/RMCP subprocess path.
+          Fresh-initrd Linux VM proof: canonical `mcp-load` c=1 improved to
+          407.2 RPS / 2.9ms p99, but c=10/50/200 stayed at 608.4/601.0/616.8
+          RPS. Attributed proof shows current `local_echo` endpoint dispatch
+          is ~0.04-0.05ms average and no longer emits
+          `mitm.mcp_aggregator_request_ms` in the local-echo windows. Raw
+          single-connection and four-connection pipelined probes stayed around
+          618-620 RPS, so the remaining ceiling is outside local builtin
+          dispatch and should be traced in framed guest/host transport,
+          session telemetry/logging pressure, or DB-writer side effects.
   - [ ] Land only trace-backed RPS speedups, with before/after percentages by
         lane and canonical `just benchmark` artifacts.
 - [ ] H07: docs, changelog, release gate.

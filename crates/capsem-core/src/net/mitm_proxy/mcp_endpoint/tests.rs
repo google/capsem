@@ -136,11 +136,11 @@ async fn endpoint_dispatches_every_supported_method_family() {
     let call = endpoint
         .handle_request(&json_request(
             "tools/call",
-            serde_json::json!({"name": "local__echo", "arguments": {"text": "hi"}}),
+            serde_json::json!({"name": "github__search", "arguments": {"query": "capsem"}}),
         ))
         .await
         .unwrap();
-    assert_eq!(call.result.as_ref().unwrap()["name"], "local__echo");
+    assert_eq!(call.result.as_ref().unwrap()["name"], "github__search");
 
     let resources = endpoint
         .handle_request(&json_request("resources/list", serde_json::json!({})))
@@ -195,12 +195,60 @@ async fn endpoint_dispatches_every_supported_method_family() {
 }
 
 #[tokio::test]
+async fn endpoint_handles_local_echo_without_aggregator_dispatch() {
+    let (endpoint, calls) = endpoint_with_driver(McpTimeouts::default(), |_req| async move {
+        AggregatorResult::Error {
+            error: "local echo should not dispatch".to_string(),
+        }
+    });
+
+    let call = endpoint
+        .handle_request(&json_request(
+            "tools/call",
+            serde_json::json!({"name": "local__echo", "arguments": {"text": "hi"}}),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(call.result.as_ref().unwrap()["content"][0]["type"], "text");
+    assert_eq!(call.result.as_ref().unwrap()["content"][0]["text"], "hi");
+    assert_eq!(call.result.as_ref().unwrap()["isError"], false);
+    assert!(calls.lock().await.is_empty());
+}
+
+#[tokio::test]
+async fn endpoint_rejects_invalid_local_echo_without_aggregator_dispatch() {
+    let (endpoint, calls) = endpoint_with_driver(McpTimeouts::default(), |_req| async move {
+        AggregatorResult::Error {
+            error: "local echo should not dispatch".to_string(),
+        }
+    });
+
+    let call = endpoint
+        .handle_request(&json_request(
+            "tools/call",
+            serde_json::json!({"name": "local__echo", "arguments": {}}),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(call.error.as_ref().unwrap().code, -32602);
+    assert!(call
+        .error
+        .as_ref()
+        .unwrap()
+        .message
+        .contains("requires string argument 'text'"));
+    assert!(calls.lock().await.is_empty());
+}
+
+#[tokio::test]
 async fn endpoint_maps_aggregator_errors_for_each_method_family() {
     let cases = [
         ("tools/list", serde_json::json!({}), "tools list failed"),
         (
             "tools/call",
-            serde_json::json!({"name": "local__echo", "arguments": {}}),
+            serde_json::json!({"name": "github__search", "arguments": {}}),
             "tool call failed",
         ),
         (

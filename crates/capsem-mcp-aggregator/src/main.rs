@@ -21,6 +21,8 @@
 //! external MCP servers.
 
 mod metrics_debug;
+#[cfg(test)]
+mod tests;
 
 use std::sync::{Arc, RwLock};
 
@@ -376,6 +378,32 @@ async fn handle_request(
         }
 
         AggregatorMethod::CallTool { name, arguments } => {
+            if name == "local__echo" {
+                let fast_path_started = std::time::Instant::now();
+                let response = AggregatorResponse {
+                    id,
+                    body: match local_echo_result(arguments) {
+                        Ok(result) => AggregatorResult::CallResult { result },
+                        Err(e) => AggregatorResult::Error {
+                            error: e.to_string(),
+                        },
+                    },
+                };
+                record_aggregator_stage_metric(
+                    fast_path_started,
+                    "local_fast_path",
+                    method_kind,
+                    tool_kind,
+                    response_result(&response),
+                );
+                record_builtin_tool_metric(
+                    fast_path_started,
+                    tool_kind,
+                    response_result(&response),
+                );
+                return response;
+            }
+
             // Resolve the dispatch under a sync read guard, then drop the
             // guard before awaiting the rmcp RPC. Concurrent CallTool
             // handlers proceed in parallel; the read lock never crosses an
@@ -550,6 +578,23 @@ async fn handle_request(
             }
         }
     }
+}
+
+fn local_echo_result(arguments: serde_json::Value) -> Result<serde_json::Value> {
+    let text = arguments
+        .get("text")
+        .and_then(|value| value.as_str())
+        .ok_or_else(|| anyhow::anyhow!("local__echo requires string argument 'text'"))?;
+
+    Ok(serde_json::json!({
+        "content": [
+            {
+                "type": "text",
+                "text": text,
+            }
+        ],
+        "isError": false,
+    }))
 }
 
 fn response_result(resp: &AggregatorResponse) -> &'static str {

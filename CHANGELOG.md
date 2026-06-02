@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- Changed deterministic `local__echo` MCP dispatch to bypass the
+  process-to-aggregator and builtin-stdio/RMCP subprocess path at the MITM
+  endpoint. The safe echo diagnostic tool still goes through framed MCP
+  policy, response policy, telemetry, and session logging, while external
+  tools and stateful/networked local builtins still route through the
+  isolated aggregator/builtin subprocesses. A Linux VM proof improved
+  c=1 `mcp-load` from the recorded ~312 RPS / 4.2ms p99 shape to 407 RPS /
+  2.9ms p99, but c=10/50/200 remain capped around 600 RPS, so the remaining
+  RPS ceiling is now tracked as framed guest/host transport or telemetry
+  pipeline work rather than local builtin dispatch.
 - Changed the guest `capsem-net-proxy` process-name lookup to use a shared
   throttled socket-owner index instead of walking every `/proc/<pid>/fd`
   directory for every proxied connection. This keeps process attribution
