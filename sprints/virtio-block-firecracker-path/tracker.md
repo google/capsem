@@ -17,6 +17,9 @@
 - [x] Add async-path telemetry counters for io_uring submissions/completions.
 - [x] Implement and benchmark EROFS over virtio-pmem DAX as the final rootfs
       transport experiment before macOS reruns the shared rootfs candidates.
+- [ ] Revisit Direct I/O in the EROFS+DAX plan: distinguish direct host-file
+      pmem backing for DAX from virtio-blk `O_DIRECT` for fallback/rootfs-blk
+      and scratch devices, then benchmark each independently.
 - [ ] Ask macOS team to rerun `just benchmark` for shared/rootfs-impacting changes.
 - [x] Commit accepted benchmark artifacts after each accepted milestone.
 - [x] Update `CHANGELOG.md` with each functional milestone.
@@ -58,6 +61,13 @@
   path. Capsem's embedded virtio-fs does not expose a shared-memory DAX cache
   window, and we do not need virtio-fs DAX for rootfs-on-pmem, so the kernel
   defconfigs explicitly keep `CONFIG_FUSE_DAX` disabled.
+- Direct I/O needs a revisit, but not as one global switch. The earlier
+  rootfs virtio-blk `O_DIRECT` ablation was bad for compressed blk-backed
+  rootfs. For EROFS+DAX, the more relevant question is direct host-file pmem
+  backing: pad rootfs images to pmem alignment, map the file directly instead
+  of copying into anonymous memory, and measure page faults, CPU time, and
+  streaming throughput. Separately, rerun `O_DIRECT` for writable scratch and
+  fallback rootfs-over-blk so non-DAX platforms still have a clean answer.
 
 ## Experiment Ledger
 
