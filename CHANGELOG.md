@@ -45,6 +45,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   read 2.8%, cold large-binary read 2.4%, and lower-rootfs metadata 2.3% versus
   the prior active artifact, while random IOPS and small-JS reads regressed
   3.7% and 4.7%.
+- Added KVM file-backed pmem mapping policy knobs for the EROFS DAX rootfs:
+  `CAPSEM_KVM_ROOTFS_PMEM_MADVISE=none|sequential|random|willneed` and
+  `CAPSEM_KVM_ROOTFS_PMEM_POPULATE=1`. The rootfs-format grid can sweep these
+  policies and records them in each cell. The startup-inclusive rerun kept the
+  default at `none`: `willneed` improved sequential read by 5.9%, but regressed
+  cold large-binary read 6.2%, small-JS reads 9.2%, lower metadata 4.7%, and
+  Codex startup mean 14.3%.
 - Added bounded Linux KVM virtio-blk shape knobs for queue count, queue size,
   segment limit, logical block size, and io_uring mode so rootfs/startup
   tuning can sweep coupled block-device settings instead of one-off constants.

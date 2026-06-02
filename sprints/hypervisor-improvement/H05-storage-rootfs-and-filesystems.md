@@ -56,6 +56,10 @@ Close Linux/macOS storage gaps without breaking Capsem's product storage model.
   benchmark artifact `1780369716` showed a modest raw-throughput improvement
   over the prior active artifact: sequential +2.8%, cold large-binary +2.4%,
   lower metadata +2.3%, with random IOPS -3.7% and small-JS -4.7%.
+- KVM pmem mmap-policy slice: file-backed DAX rootfs can now sweep host
+  `madvise` and `MAP_POPULATE` policies. Startup-inclusive evidence rejected a
+  default change for now: `willneed` improved same-run sequential read 5.9% but
+  regressed cold large-binary, small-JS, lower metadata, and Codex startup.
 
 ## Done
 

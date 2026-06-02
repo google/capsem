@@ -450,6 +450,8 @@ def run_cell(
     pmem_dax: bool,
     pmem_file_backed: bool,
     rootfs_read_ahead_kb: int,
+    pmem_madvise: str,
+    pmem_populate: bool,
 ) -> dict:
     home = TARGET / "homes" / format_name
     read_ahead_arg = f"capsem.rootfs_readahead_kb={rootfs_read_ahead_kb}"
@@ -471,6 +473,9 @@ def run_cell(
         env["CAPSEM_KVM_ROOTFS_PMEM_DAX"] = "1"
     if pmem_file_backed:
         env["CAPSEM_KVM_ROOTFS_PMEM_FILE_BACKED"] = "1"
+        env["CAPSEM_KVM_ROOTFS_PMEM_MADVISE"] = pmem_madvise
+        if pmem_populate:
+            env["CAPSEM_KVM_ROOTFS_PMEM_POPULATE"] = "1"
     started = time.time()
     proc = run(
         [
@@ -495,6 +500,8 @@ def run_cell(
         "pmem_dax": pmem_dax,
         "pmem_file_backed": pmem_file_backed,
         "rootfs_read_ahead_kb": rootfs_read_ahead_kb,
+        "pmem_madvise": pmem_madvise,
+        "pmem_populate": pmem_populate,
         "returncode": proc.returncode,
         "duration_s": round(duration, 3),
         "sysfs": extract_sysfs(combined),
@@ -520,9 +527,23 @@ def build_shapes(args: argparse.Namespace) -> list[dict[str, int]]:
         )
     else:
         rootfs_read_ahead_kbs = [16384 if args.pmem_dax else 4096]
+    pmem_madvises = parse_pmem_madvises(args.pmem_madvises)
+    pmem_populates = parse_bool_csv(args.pmem_populates, name="pmem-populates")
     shapes: list[dict[str, int]] = []
-    for queue_count, queue_size, logical_block_size, rootfs_read_ahead_kb in itertools.product(
-        queue_counts, queue_sizes, logical_block_sizes, rootfs_read_ahead_kbs
+    for (
+        queue_count,
+        queue_size,
+        logical_block_size,
+        rootfs_read_ahead_kb,
+        pmem_madvise,
+        pmem_populate,
+    ) in itertools.product(
+        queue_counts,
+        queue_sizes,
+        logical_block_sizes,
+        rootfs_read_ahead_kbs,
+        pmem_madvises,
+        pmem_populates,
     ):
         for seg_max in parse_seg_maxes(args.seg_maxes, queue_size):
             shapes.append(
@@ -532,6 +553,8 @@ def build_shapes(args: argparse.Namespace) -> list[dict[str, int]]:
                     "seg_max": seg_max,
                     "logical_block_size": logical_block_size,
                     "rootfs_read_ahead_kb": rootfs_read_ahead_kb,
+                    "pmem_madvise": pmem_madvise,
+                    "pmem_populate": pmem_populate,
                 }
             )
     if args.limit is not None:
@@ -602,6 +625,47 @@ def parse_erofs_lz4hc_clusters(raw: str) -> list[int]:
     return clusters
 
 
+def parse_pmem_madvises(raw: str) -> list[str]:
+    values: list[str] = []
+    allowed = {"none", "sequential", "random", "willneed"}
+    aliases = {
+        "will-need": "willneed",
+        "will_need": "willneed",
+    }
+    for part in raw.split(","):
+        value = aliases.get(part.strip().lower(), part.strip().lower())
+        if not value:
+            continue
+        if value not in allowed:
+            raise argparse.ArgumentTypeError(
+                f"pmem madvise must be one of none,sequential,random,willneed: {value}"
+            )
+        if value not in values:
+            values.append(value)
+    if not values:
+        values.append("none")
+    return values
+
+
+def parse_bool_csv(raw: str, *, name: str) -> list[bool]:
+    values: list[bool] = []
+    for part in raw.split(","):
+        value = part.strip().lower()
+        if not value:
+            continue
+        if value in {"0", "false", "no", "off"}:
+            parsed = False
+        elif value in {"1", "true", "yes", "on"}:
+            parsed = True
+        else:
+            raise argparse.ArgumentTypeError(f"{name} values must be booleans: {value}")
+        if parsed not in values:
+            values.append(parsed)
+    if not values:
+        values.append(False)
+    return values
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -650,6 +714,16 @@ def main() -> int:
         help="pad EROFS images to KVM pmem alignment and mmap them directly instead of copying into anonymous memory",
     )
     parser.add_argument(
+        "--pmem-madvises",
+        default="none",
+        help="comma-separated KVM file-backed pmem madvise policies: none,sequential,random,willneed",
+    )
+    parser.add_argument(
+        "--pmem-populates",
+        default="0",
+        help="comma-separated KVM file-backed pmem MAP_POPULATE modes: 0,1",
+    )
+    parser.add_argument(
         "--scope",
         choices=["rootfs", "all"],
         default="rootfs",
@@ -683,6 +757,11 @@ def main() -> int:
             )
     if args.pmem_file_backed and not args.pmem_dax:
         raise SystemExit("--pmem-file-backed requires --pmem-dax")
+    if not args.pmem_file_backed:
+        if parse_pmem_madvises(args.pmem_madvises) != ["none"]:
+            raise SystemExit("--pmem-madvises other than none require --pmem-file-backed")
+        if parse_bool_csv(args.pmem_populates, name="pmem-populates") != [False]:
+            raise SystemExit("--pmem-populates=1 requires --pmem-file-backed")
     shapes = build_shapes(args)
     if args.dry_run:
         print(
@@ -693,6 +772,8 @@ def main() -> int:
                     "shapes": shapes,
                     "pmem_dax": args.pmem_dax,
                     "pmem_file_backed": args.pmem_file_backed,
+                    "pmem_madvises": parse_pmem_madvises(args.pmem_madvises),
+                    "pmem_populates": parse_bool_csv(args.pmem_populates, name="pmem-populates"),
                 },
                 indent=2,
             )
@@ -735,6 +816,8 @@ def main() -> int:
                 "mount": "erofs -o dax /dev/pmem0" if args.pmem_dax else None,
                 "backing": "file_mmap" if args.pmem_file_backed else ("anonymous_copy" if args.pmem_dax else None),
                 "alignment_bytes": PMEM_ALIGNMENT_BYTES if args.pmem_file_backed else None,
+                "madvises": parse_pmem_madvises(args.pmem_madvises) if args.pmem_file_backed else None,
+                "populates": parse_bool_csv(args.pmem_populates, name="pmem-populates") if args.pmem_file_backed else None,
             }
         },
         "results": [],
@@ -757,6 +840,8 @@ def main() -> int:
                 pmem_dax=args.pmem_dax,
                 pmem_file_backed=args.pmem_file_backed,
                 rootfs_read_ahead_kb=shape["rootfs_read_ahead_kb"],
+                pmem_madvise=shape["pmem_madvise"],
+                pmem_populate=shape["pmem_populate"],
             )
             artifact["results"].append(result)
             if result["returncode"] != 0:

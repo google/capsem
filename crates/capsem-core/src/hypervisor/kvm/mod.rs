@@ -184,6 +184,8 @@ struct PmemMapping {
     image_size: u64,
     guest_phys_addr: u64,
     backing: PmemBacking,
+    advice: PmemMadvise,
+    populate: bool,
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -199,6 +201,50 @@ impl PmemBacking {
         match self {
             Self::AnonymousCopy => "anonymous_copy",
             Self::FileMmap => "file_mmap",
+        }
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PmemMadvise {
+    None,
+    Sequential,
+    Random,
+    WillNeed,
+}
+
+#[cfg(target_arch = "x86_64")]
+impl PmemMadvise {
+    fn from_env() -> Result<Self> {
+        let raw =
+            std::env::var("CAPSEM_KVM_ROOTFS_PMEM_MADVISE").unwrap_or_else(|_| "none".to_string());
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "" | "none" => Ok(Self::None),
+            "sequential" => Ok(Self::Sequential),
+            "random" => Ok(Self::Random),
+            "willneed" | "will_need" | "will-need" => Ok(Self::WillNeed),
+            other => anyhow::bail!(
+                "invalid CAPSEM_KVM_ROOTFS_PMEM_MADVISE={other}; expected none,sequential,random,willneed"
+            ),
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Sequential => "sequential",
+            Self::Random => "random",
+            Self::WillNeed => "willneed",
+        }
+    }
+
+    fn libc_advice(self) -> Option<libc::c_int> {
+        match self {
+            Self::None => None,
+            Self::Sequential => Some(libc::MADV_SEQUENTIAL),
+            Self::Random => Some(libc::MADV_RANDOM),
+            Self::WillNeed => Some(libc::MADV_WILLNEED),
         }
     }
 }
@@ -233,12 +279,18 @@ impl PmemMapping {
     }
 
     fn map_file(path: &Path, file: &File, image_size: u64, guest_phys_addr: u64) -> Result<Self> {
+        let advice = PmemMadvise::from_env()?;
+        let populate = env_truthy("CAPSEM_KVM_ROOTFS_PMEM_POPULATE");
+        let mut flags = libc::MAP_PRIVATE;
+        if populate {
+            flags |= libc::MAP_POPULATE;
+        }
         let ptr = unsafe {
             libc::mmap(
                 std::ptr::null_mut(),
                 image_size as usize,
                 libc::PROT_READ | libc::PROT_WRITE,
-                libc::MAP_PRIVATE,
+                flags,
                 file.as_raw_fd(),
                 0,
             )
@@ -250,12 +302,28 @@ impl PmemMapping {
                 std::io::Error::last_os_error()
             );
         }
+        if let Some(libc_advice) = advice.libc_advice() {
+            let ret = unsafe { libc::madvise(ptr, image_size as usize, libc_advice) };
+            if ret != 0 {
+                let err = std::io::Error::last_os_error();
+                unsafe {
+                    libc::munmap(ptr, image_size as usize);
+                }
+                anyhow::bail!(
+                    "failed to madvise file-backed pmem rootfs image {} with {}: {err}",
+                    path.display(),
+                    advice.as_str()
+                );
+            }
+        }
         Ok(Self {
             ptr: ptr as *mut u8,
             size: image_size,
             image_size,
             guest_phys_addr,
             backing: PmemBacking::FileMmap,
+            advice,
+            populate,
         })
     }
 
@@ -289,6 +357,8 @@ impl PmemMapping {
             image_size,
             guest_phys_addr,
             backing: PmemBacking::AnonymousCopy,
+            advice: PmemMadvise::None,
+            populate: false,
         };
         let dst = unsafe { std::slice::from_raw_parts_mut(mapping.ptr, image_size as usize) };
         if let Err(err) = file.read_exact(dst) {
@@ -379,6 +449,8 @@ impl Hypervisor for KvmHypervisor {
                 size = mapping.size,
                 image_size = mapping.image_size,
                 backing = mapping.backing.as_str(),
+                madvise = mapping.advice.as_str(),
+                populate = mapping.populate,
                 "attached read-only rootfs image as virtio-pmem backing memory"
             );
             Some(mapping)
@@ -1398,14 +1470,18 @@ mod tests {
 
         std::env::remove_var("CAPSEM_KVM_ROOTFS_PMEM_DAX");
         std::env::remove_var("CAPSEM_KVM_ROOTFS_PMEM_FILE_BACKED");
+        std::env::remove_var("CAPSEM_KVM_ROOTFS_PMEM_POPULATE");
         assert!(!should_attach_pmem_rootfs(&config));
         assert!(!should_use_file_backed_pmem_rootfs());
+        assert!(!env_truthy("CAPSEM_KVM_ROOTFS_PMEM_POPULATE"));
         assert_eq!(virtio_mmio_device_count(&config, &[]), 1);
 
         std::env::set_var("CAPSEM_KVM_ROOTFS_PMEM_DAX", "1");
         std::env::set_var("CAPSEM_KVM_ROOTFS_PMEM_FILE_BACKED", "yes");
+        std::env::set_var("CAPSEM_KVM_ROOTFS_PMEM_POPULATE", "on");
         assert!(!should_attach_pmem_rootfs(&config));
         assert!(should_use_file_backed_pmem_rootfs());
+        assert!(env_truthy("CAPSEM_KVM_ROOTFS_PMEM_POPULATE"));
 
         config.disk_path = Some("/tmp/rootfs.erofs".into());
         assert!(should_attach_pmem_rootfs(&config));
@@ -1413,6 +1489,7 @@ mod tests {
 
         std::env::remove_var("CAPSEM_KVM_ROOTFS_PMEM_DAX");
         std::env::remove_var("CAPSEM_KVM_ROOTFS_PMEM_FILE_BACKED");
+        std::env::remove_var("CAPSEM_KVM_ROOTFS_PMEM_POPULATE");
     }
 
     #[cfg(target_arch = "x86_64")]
@@ -1427,6 +1504,24 @@ mod tests {
         assert_eq!(size, 896 * 1024 * 1024);
         assert!(!is_pmem_file_backing_size(image_size));
         assert!(is_pmem_file_backing_size(size));
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn pmem_madvise_policy_parses_env() {
+        std::env::remove_var("CAPSEM_KVM_ROOTFS_PMEM_MADVISE");
+        assert_eq!(PmemMadvise::from_env().unwrap(), PmemMadvise::None);
+
+        std::env::set_var("CAPSEM_KVM_ROOTFS_PMEM_MADVISE", "sequential");
+        assert_eq!(PmemMadvise::from_env().unwrap(), PmemMadvise::Sequential);
+
+        std::env::set_var("CAPSEM_KVM_ROOTFS_PMEM_MADVISE", "will-need");
+        assert_eq!(PmemMadvise::from_env().unwrap(), PmemMadvise::WillNeed);
+
+        std::env::set_var("CAPSEM_KVM_ROOTFS_PMEM_MADVISE", "bad");
+        assert!(PmemMadvise::from_env().is_err());
+
+        std::env::remove_var("CAPSEM_KVM_ROOTFS_PMEM_MADVISE");
     }
 
     #[cfg(not(target_arch = "x86_64"))]

@@ -58,6 +58,8 @@
   - [ ] Test EROFS zstd after bumping the guest kernel to Linux 6.11 or newer.
   - [x] Investigate guest rootfs readahead for the EROFS DAX pmem path and
         land the measured 16 MiB pmem default.
+  - [x] Add KVM file-backed pmem mmap policy knobs and benchmark madvise /
+        populate behavior on the lead EROFS DAX path.
   - [ ] Continue raw/cold throughput investigation: EROFS DAX mount/cache
         behavior, KVM block fallback for non-DAX rootfs, host page-fault/mmap
         behavior for file-backed pmem, and benchmark cache purity.
@@ -270,6 +272,20 @@
   168.4k/s (+2.3%). Conclusion: keep the pmem DAX read-ahead default because
   it nudges raw throughput up without a large metadata penalty, but continue
   the larger raw-throughput investigation.
+- H05 KVM pmem mmap-policy slice landed locally: file-backed pmem mapping now
+  supports `CAPSEM_KVM_ROOTFS_PMEM_MADVISE=none|sequential|random|willneed` and
+  `CAPSEM_KVM_ROOTFS_PMEM_POPULATE=1`; the rootfs-format grid sweeps these
+  policies and records them in each result shape.
+- H05 mmap-policy evidence: full sweep artifact `1780402337` and confirmatory
+  no-populate artifact `1780402545` are archived in
+  `benchmarks/archive/benchmark-history-20260602T121925Z.zip`; the active
+  startup-inclusive artifact is
+  `benchmarks/kvm-rootfs-format-grid/data_1.2.1780320819_x86_64_1780402733.json`.
+  `willneed` vs same-run control improved seq read 274.8 MB/s vs 259.5
+  (+5.9%), but regressed cold large-binary 311.9 MB/s vs 332.6 (-6.2%),
+  small JS 512k/s vs 564k/s (-9.2%), lower metadata 148k/s vs 156k/s (-4.7%),
+  and Codex startup mean 693.4 ms vs 606.7 (+14.3%). Conclusion: keep policy
+  knobs and benchmark coverage, but do not change the default from `none`.
 - crosvm epoll is still far from the committed macOS Capsem artifact: 0.13x seq
   rootfs read, 0.24x random IOPS, 0.31x cold large-binary read, 0.26x small JS,
   0.24x metadata stat, and roughly 2.8x-4.2x startup latency for the shared

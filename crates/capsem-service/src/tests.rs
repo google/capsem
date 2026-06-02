@@ -226,6 +226,8 @@ fn process_env_allowlist_forwards_child_runtime_knobs() {
         "CAPSEM_KVM_BLK_ROOTFS_DIRECT_IO",
         "CAPSEM_KVM_ROOTFS_PMEM_DAX",
         "CAPSEM_KVM_ROOTFS_PMEM_FILE_BACKED",
+        "CAPSEM_KVM_ROOTFS_PMEM_MADVISE",
+        "CAPSEM_KVM_ROOTFS_PMEM_POPULATE",
     ] {
         assert!(
             PROCESS_ENV_ALLOWLIST.contains(&key),
