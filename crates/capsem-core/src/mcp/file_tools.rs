@@ -848,10 +848,10 @@ pub fn handle_revert_file(
                 user_id: non_empty_env(crate::telemetry::CAPSEM_USER_ID_ENV),
             },
         );
-        db.try_write(capsem_logger::WriteOp::FileEvent(event));
-        db.try_write(capsem_logger::WriteOp::ResolvedSecurityEvent(
-            resolved_event,
-        ));
+        db.try_write_many([
+            capsem_logger::WriteOp::FileEvent(event),
+            capsem_logger::WriteOp::ResolvedSecurityEvent(resolved_event),
+        ]);
     }
 
     JsonRpcResponse::ok(

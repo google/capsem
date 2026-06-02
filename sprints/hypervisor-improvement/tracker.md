@@ -265,6 +265,12 @@
           improved c=200 p99 from ~498.7ms to 358.2ms in the scoped shape, but
           throughput remains capped near 800 RPS. Conclusion: useful tail
           cleanup, not the primary RPS fix.
+    - [x] Sweep `DbWriter` batching across general related telemetry emitters.
+          Added `try_write_many` for best-effort non-blocking paths and
+          converted HTTP/model telemetry, fs monitor file/security rows, DNS
+          decision rows, process exec decision rows, and MCP file-tool restore
+          rows. This keeps the same persisted audit/security data while
+          reducing sender lock/clone churn outside the narrow MCP load path.
   - [ ] Land only trace-backed RPS speedups, with before/after percentages by
         lane and canonical `just benchmark` artifacts.
 - [ ] H07: docs, changelog, release gate.

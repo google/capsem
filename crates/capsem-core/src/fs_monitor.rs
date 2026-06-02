@@ -276,9 +276,11 @@ impl FsMonitor {
                 user_id: non_empty_env(crate::telemetry::CAPSEM_USER_ID_ENV),
             },
         );
-        db.write(WriteOp::FileEvent(event)).await;
-        db.write(WriteOp::ResolvedSecurityEvent(resolved_event))
-            .await;
+        db.write_many([
+            WriteOp::FileEvent(event),
+            WriteOp::ResolvedSecurityEvent(resolved_event),
+        ])
+        .await;
     }
 
     /// Signal the monitor to stop.

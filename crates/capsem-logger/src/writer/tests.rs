@@ -2322,6 +2322,29 @@ fn try_write_on_open_writer_succeeds() {
 }
 
 #[test]
+fn try_write_many_on_open_writer_succeeds() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("many.db");
+    let writer = DbWriter::open(&path, 64).unwrap();
+    let accepted = writer.try_write_many([
+        WriteOp::FileEvent(seed_file_event()),
+        WriteOp::FileEvent({
+            let mut event = seed_file_event();
+            event.path = "/workspace/seed-2.txt".into();
+            event
+        }),
+    ]);
+    assert!(accepted);
+    writer.shutdown_blocking();
+
+    let conn = Connection::open(path).unwrap();
+    let count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM fs_events", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(count, 2);
+}
+
+#[test]
 fn reader_for_in_memory_writer_fails() {
     let writer = DbWriter::open_in_memory(16).unwrap();
     match writer.reader() {

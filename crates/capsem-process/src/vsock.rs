@@ -568,10 +568,10 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                     let evaluation =
                         capsem_process_engine::evaluate_exec_security_event(&event, runtime_engine);
                     log_process_exec_security_decision(&evaluation.resolved_event);
-                    db_for_cmd.try_write(capsem_logger::WriteOp::ExecEvent(event));
-                    db_for_cmd.try_write(capsem_logger::WriteOp::ResolvedSecurityEvent(
-                        evaluation.resolved_event,
-                    ));
+                    db_for_cmd.try_write_many([
+                        capsem_logger::WriteOp::ExecEvent(event),
+                        capsem_logger::WriteOp::ResolvedSecurityEvent(evaluation.resolved_event),
+                    ]);
                     if !evaluation.allow_guest_exec {
                         resolve_blocked_exec_job(
                             &js_for_cmd,
@@ -1230,10 +1230,10 @@ async fn serve_dns_session(
     let resolved_event = runtime_resolved_event.unwrap_or_else(|| {
         capsem_network_engine::dns_security::build_dns_resolved_security_event(&event)
     });
-    db.try_write(capsem_logger::WriteOp::DnsEvent(event));
-    db.try_write(capsem_logger::WriteOp::ResolvedSecurityEvent(
-        resolved_event,
-    ));
+    db.try_write_many([
+        capsem_logger::WriteOp::DnsEvent(event),
+        capsem_logger::WriteOp::ResolvedSecurityEvent(resolved_event),
+    ]);
 
     let response = capsem_proto::DnsResponse {
         raw: result.answer_bytes,

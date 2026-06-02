@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- Changed related session telemetry emitters to use batched `DbWriter`
+  submission helpers where they already construct multiple rows for one
+  event. HTTP/model telemetry, filesystem monitor events, DNS decisions,
+  process exec decisions, MCP file-tool restore logging, and framed MCP
+  logging now avoid repeated sender locks/clones while preserving the same
+  persisted audit/security rows.
 - Changed framed MCP transport hot paths to avoid one inbound payload copy,
   reuse MCP telemetry JSON previews for byte counts, enqueue related MCP
   telemetry rows with one `DbWriter` sender clone, and batch ready response

@@ -449,6 +449,36 @@ impl DbWriter {
         sent
     }
 
+    /// Try to send several write ops without blocking, using one sender lock.
+    ///
+    /// Returns true only if every op was accepted. If the channel becomes full
+    /// mid-batch, earlier accepted ops keep the same best-effort semantics as
+    /// repeated `try_write` calls.
+    pub fn try_write_many<I>(&self, ops: I) -> bool
+    where
+        I: IntoIterator<Item = WriteOp>,
+    {
+        let Some(tx) = self.tx.lock().unwrap().as_ref().cloned() else {
+            return false;
+        };
+        let mut all_sent = true;
+        for op in ops {
+            let metrics_update = self.metrics.update_for_write_op(&op);
+            match tx.try_send(op) {
+                Ok(()) => {
+                    if let Some(update) = metrics_update {
+                        self.metrics.record_security_update(update);
+                    }
+                }
+                Err(_) => {
+                    all_sent = false;
+                    break;
+                }
+            }
+        }
+        all_sent
+    }
+
     /// Deterministically shut down the writer thread: drop the stored
     /// sender and join. Safe to call through a shared `Arc<DbWriter>` --
     /// other Arc clones stay valid but subsequent `write` calls become

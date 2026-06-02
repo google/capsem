@@ -241,15 +241,15 @@ pub async fn emit_synthetic_http_response(
         completed_http_records(deps, &req_ctx, &resp_stats, &[]);
     log_outcome(&req_ctx);
 
-    deps.db.write(WriteOp::NetEvent(net_event)).await;
+    let mut ops = Vec::with_capacity(1 + resolved_events.len() + usize::from(model_call.is_some()));
+    ops.push(WriteOp::NetEvent(net_event));
     for resolved_event in resolved_events {
-        deps.db
-            .write(WriteOp::ResolvedSecurityEvent(resolved_event))
-            .await;
+        ops.push(WriteOp::ResolvedSecurityEvent(resolved_event));
     }
     if let Some(mc) = model_call {
-        deps.db.write(WriteOp::ModelCall(mc)).await;
+        ops.push(WriteOp::ModelCall(mc));
     }
+    deps.db.write_many(ops).await;
 }
 
 fn emit_completed_http_request_with_llm_events(
@@ -265,14 +265,16 @@ fn emit_completed_http_request_with_llm_events(
     // Spawn DB writes so the response path doesn't block on backpressure.
     let db = Arc::clone(&deps.db);
     tokio::spawn(async move {
-        db.write(WriteOp::NetEvent(net_event)).await;
+        let mut ops =
+            Vec::with_capacity(1 + resolved_events.len() + usize::from(model_call.is_some()));
+        ops.push(WriteOp::NetEvent(net_event));
         for resolved_event in resolved_events {
-            db.write(WriteOp::ResolvedSecurityEvent(resolved_event))
-                .await;
+            ops.push(WriteOp::ResolvedSecurityEvent(resolved_event));
         }
         if let Some(mc) = model_call {
-            db.write(WriteOp::ModelCall(mc)).await;
+            ops.push(WriteOp::ModelCall(mc));
         }
+        db.write_many(ops).await;
     });
 }
 
