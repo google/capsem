@@ -1,6 +1,7 @@
 //! Tests for `status` (extracted from inline `mod tests`).
 
 use super::*;
+use metrics_util::debugging::{DebugValue, DebuggingRecorder, Snapshotter};
 
 #[test]
 fn status_response_serializes() {
@@ -161,9 +162,68 @@ async fn cache_starts_empty() {
     assert!(guard.is_none());
 }
 
+#[tokio::test]
+async fn handle_status_records_cache_hit_metric() {
+    let recorder = DebuggingRecorder::new();
+    let snapshotter = recorder.snapshotter();
+    let _guard = ::metrics::set_default_local_recorder(&recorder);
+
+    let state = std::sync::Arc::new(test_app_state("/tmp/missing-capsem-service.sock"));
+    {
+        let mut cache = state.status_cache.inner.write().await;
+        *cache = Some((
+            Instant::now(),
+            StatusResponse {
+                service: "running".into(),
+                gateway_version: "test".into(),
+                vm_count: 0,
+                vms: vec![],
+                resource_summary: None,
+                assets: None,
+            },
+        ));
+    }
+
+    let _ = handle_status(axum::extract::State(state)).await;
+
+    assert_eq!(
+        counter_value(
+            &snapshotter,
+            crate::metrics::STATUS_CACHE_TOTAL,
+            &[("state", "hit")]
+        ),
+        1
+    );
+}
+
 // --- fetch_status with mock UDS ---
 
 use crate::AppState;
+
+fn counter_value(snapshotter: &Snapshotter, metric: &str, labels: &[(&str, &str)]) -> u64 {
+    snapshotter
+        .snapshot()
+        .into_vec()
+        .into_iter()
+        .filter_map(|(key, _, _, value)| {
+            if key.key().name() != metric {
+                return None;
+            }
+            let has_labels = labels.iter().all(|(want_key, want_value)| {
+                key.key()
+                    .labels()
+                    .any(|label| label.key() == *want_key && label.value() == *want_value)
+            });
+            if !has_labels {
+                return None;
+            }
+            match value {
+                DebugValue::Counter(count) => Some(count),
+                _ => None,
+            }
+        })
+        .sum()
+}
 
 fn test_vm(id: &str, name: Option<&str>, status: &str, persistent: bool) -> VmSummary {
     VmSummary {
@@ -281,6 +341,10 @@ async fn fetch_status_multiple_vms() {
 
 #[tokio::test]
 async fn fetch_status_enriches_running_vm_with_info_metrics() {
+    let recorder = DebuggingRecorder::new();
+    let snapshotter = recorder.snapshotter();
+    let _guard = ::metrics::set_default_local_recorder(&recorder);
+
     let mock = axum::Router::new()
         .route(
             "/list",
@@ -352,6 +416,22 @@ async fn fetch_status_enriches_running_vm_with_info_metrics() {
     assert_eq!(running.block_max_data_descriptors_per_request, Some(4));
     assert_eq!(running.block_max_requests_per_drain, Some(6));
     assert_eq!(resp.vms[1].block_queue_notifications_total, None);
+    assert_eq!(
+        counter_value(
+            &snapshotter,
+            crate::metrics::STATUS_SERVICE_REQUESTS_TOTAL,
+            &[("endpoint", "list"), ("result", "ok")]
+        ),
+        1
+    );
+    assert_eq!(
+        counter_value(
+            &snapshotter,
+            crate::metrics::STATUS_SERVICE_REQUESTS_TOTAL,
+            &[("endpoint", "info"), ("result", "ok")]
+        ),
+        1
+    );
     h.abort();
 }
 

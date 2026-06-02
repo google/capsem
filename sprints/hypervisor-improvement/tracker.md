@@ -9,6 +9,11 @@
         control-plane overhead.
   - [x] Start the block lifecycle mechanism table from actual Capsem,
         Firecracker, and crosvm source paths.
+  - [x] Start the network/RPS control-plane trace and identify the gateway
+        `/status` cache plus service `/list`/`/info` fan-out as the first
+        measurable status/TUI lane.
+  - [x] Add gateway `/status` cache/refresh/service-fan-out metrics with a
+        focused gateway status test proof.
   - [ ] Finish the crosvm async engine and Firecracker async file-engine trace
         before choosing the first implementation slice.
   - [ ] Pick and land one coherent code-path improvement with counters and
@@ -138,6 +143,9 @@
 - [ ] H09: network and RPS attribution.
   - [x] Create the focused H09 sprint slice so weak RPS is not left as a vague
         H08 follow-up.
+  - [x] Add first control-plane attribution counters for gateway `/status`
+        cache decisions, refresh duration/result, and service fan-out to
+        `/list` and per-running-VM `/info`.
   - [ ] Refresh canonical HTTP, proxy throughput, endpoint-latency,
         security-engine, and host-native artifacts after the working Linux
         install.

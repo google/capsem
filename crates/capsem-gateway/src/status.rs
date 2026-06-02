@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use tokio::net::UnixStream;
 use tokio::sync::RwLock;
 
+use crate::metrics as gateway_metrics;
 use crate::AppState;
 
 const CACHE_TTL: Duration = Duration::from_secs(1);
@@ -23,6 +24,7 @@ pub struct StatusCache {
 
 impl StatusCache {
     pub fn new() -> Self {
+        gateway_metrics::describe_all();
         Self {
             inner: RwLock::new(None),
             refresh: tokio::sync::Mutex::new(()),
@@ -190,8 +192,24 @@ pub async fn handle_status(State(state): State<Arc<AppState>>) -> Response {
         let cache = state.status_cache.inner.read().await;
         if let Some((ts, ref resp)) = *cache {
             if ts.elapsed() < CACHE_TTL {
+                ::metrics::counter!(
+                    gateway_metrics::STATUS_CACHE_TOTAL,
+                    "state" => "hit",
+                )
+                .increment(1);
                 return (StatusCode::OK, axum::Json(resp.clone())).into_response();
             }
+            ::metrics::counter!(
+                gateway_metrics::STATUS_CACHE_TOTAL,
+                "state" => "stale",
+            )
+            .increment(1);
+        } else {
+            ::metrics::counter!(
+                gateway_metrics::STATUS_CACHE_TOTAL,
+                "state" => "miss",
+            )
+            .increment(1);
         }
     }
 
@@ -203,6 +221,11 @@ pub async fn handle_status(State(state): State<Arc<AppState>>) -> Response {
         let cache = state.status_cache.inner.read().await;
         if let Some((ts, ref resp)) = *cache {
             if ts.elapsed() < CACHE_TTL {
+                ::metrics::counter!(
+                    gateway_metrics::STATUS_CACHE_TOTAL,
+                    "state" => "refreshed_by_peer",
+                )
+                .increment(1);
                 return (StatusCode::OK, axum::Json(resp.clone())).into_response();
             }
         }
@@ -221,7 +244,23 @@ pub async fn handle_status(State(state): State<Arc<AppState>>) -> Response {
             .unwrap_or_default()
     };
 
+    let refresh_started = Instant::now();
     let resp = fetch_status(&state).await;
+    let refresh_result = if resp.service == "running" {
+        "running"
+    } else {
+        "unavailable"
+    };
+    ::metrics::counter!(
+        gateway_metrics::STATUS_REFRESH_TOTAL,
+        "result" => refresh_result,
+    )
+    .increment(1);
+    ::metrics::histogram!(
+        gateway_metrics::STATUS_REFRESH_DURATION_MS,
+        "result" => refresh_result,
+    )
+    .record(refresh_started.elapsed().as_secs_f64() * 1000.0);
 
     // Detect VM state changes and broadcast events.
     for vm in &resp.vms {
@@ -391,10 +430,19 @@ async fn fetch_status(state: &AppState) -> StatusResponse {
 
     let list = match uds_get(&state.uds_path, "/list").await {
         Ok(body) => match serde_json::from_slice::<ListResponse>(&body) {
-            Ok(l) => l,
-            Err(_) => return unavailable,
+            Ok(l) => {
+                record_status_service_request("list", "ok");
+                l
+            }
+            Err(_) => {
+                record_status_service_request("list", "error");
+                return unavailable;
+            }
         },
-        Err(_) => return unavailable,
+        Err(_) => {
+            record_status_service_request("list", "error");
+            return unavailable;
+        }
     };
 
     let mut vms = Vec::with_capacity(list.sessions.len());
@@ -508,8 +556,32 @@ fn is_running_status(status: &str) -> bool {
 }
 
 async fn fetch_session_info(uds_path: &std::path::Path, id: &str) -> Option<SessionInfo> {
-    let body = uds_get(uds_path, &format!("/info/{id}")).await.ok()?;
-    serde_json::from_slice::<SessionInfo>(&body).ok()
+    let body = match uds_get(uds_path, &format!("/info/{id}")).await {
+        Ok(body) => body,
+        Err(_) => {
+            record_status_service_request("info", "error");
+            return None;
+        }
+    };
+    match serde_json::from_slice::<SessionInfo>(&body) {
+        Ok(info) => {
+            record_status_service_request("info", "ok");
+            Some(info)
+        }
+        Err(_) => {
+            record_status_service_request("info", "error");
+            None
+        }
+    }
+}
+
+fn record_status_service_request(endpoint: &'static str, result: &'static str) {
+    ::metrics::counter!(
+        gateway_metrics::STATUS_SERVICE_REQUESTS_TOTAL,
+        "endpoint" => endpoint,
+        "result" => result,
+    )
+    .increment(1);
 }
 
 /// Simple GET request over UDS.

@@ -46,7 +46,7 @@ The P0 standard is:
 | --- | --- | --- | --- |
 | P0.1 | Block lifecycle mechanism table: Capsem vs Firecracker vs crosvm. | Active | Table covers notify, descriptor parse, memory translation, syscall/cache policy, async completion, used-ring publication, interrupt, and counters. |
 | P0.2 | Pick first block architecture slice from the table. | Not Started | Slice names the changed mechanism before any benchmark, includes tests/counters, and avoids isolated knob tweaks. |
-| P0.3 | Network/RPS lifecycle table. | Not Started | Splits guest network, vsock, MITM, DNS, security engine, gateway/service, status/TUI polling, and disk/workspace dependencies. |
+| P0.3 | Network/RPS lifecycle table. | Active | Splits guest network, vsock, MITM, DNS, security engine, gateway/service, status/TUI polling, and disk/workspace dependencies. |
 | P0.4 | vCPU/SMP lifecycle table. | Not Started | Compares Capsem KVM vCPU control to Firecracker pause/resume/start/stop and names transferable pieces. |
 | P0.5 | Memory/cache attribution table. | Not Started | Separates EROFS DAX page faults, host page cache, guest cache, direct I/O lanes, and snapshot/resume memory behavior. |
 
@@ -86,6 +86,25 @@ block I/O first, because it already has measurements and existing counters.
   status polling, gateway/service overhead, MITM policy, DNS, vsock, or disk.
 - If a proposed change cannot improve at least one of disk, RPS, CPU overhead,
   memory/cache behavior, or user-visible telemetry, it is not P0.
+
+## Initial P0.3 Control-Plane Trace
+
+The first network/RPS read found a control-plane lane worth instrumenting before
+any benchmark loop:
+
+- `capsem-tui` defaults to a 1 second live refresh interval and calls
+  `GatewayProvider::load()` on each refresh.
+- `GatewayProvider::load_async()` fetches `/status`, then refreshes profile
+  options through `/profiles`.
+- `capsem-gateway` caches `/status` for 1 second and serializes refreshes with
+  a mutex, but a refresh fans out to capsem-service `/list` plus `/info/{id}`
+  for each running VM.
+- MITM and DNS already have useful request, hook, upstream, body, DNS-cache,
+  and DNS-duration metric names in `capsem-core`.
+
+First implementation slice: add gateway `/status` cache, refresh, and
+service-fan-out metrics so endpoint latency can be attributed to cache misses,
+running-VM `/info` fan-out, or another lane.
 
 ## Immediate Next Slice
 

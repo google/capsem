@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Added gateway `/status` control-plane metrics for the P0 hypervisor sprint:
+  cache hit/miss/stale decisions, refresh count/duration, and service fan-out
+  requests to `/list` and `/info`. These low-cardinality metrics make TUI and
+  status polling overhead measurable before optimizing network/RPS lanes.
 - Added the P0 Fundamental 80/20 Hypervisor Advances sprint board. It ranks
   the five source-traced performance bets across disk, network/RPS, CPU
   lifecycle, memory/cache, and control-plane overhead, and starts the block

@@ -1,5 +1,6 @@
 mod auth;
 mod cors;
+mod metrics;
 mod proxy;
 mod status;
 mod terminal;

@@ -33,6 +33,7 @@ tower-http = { version = "0.6", features = ["trace", "cors"] }
 rand = "0.9"
 tokio-tungstenite = "0.29.0"
 futures.workspace = true
+metrics = "0.24"
 
 [lints]
 workspace = true
@@ -41,3 +42,4 @@ workspace = true
 tempfile = "3"
 tower = { version = "0.5", features = ["util"] }
 futures.workspace = true
+metrics-util = "0.19"
