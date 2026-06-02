@@ -19,6 +19,24 @@ This sprint owns Linux/KVM implementation. Shared benchmark, rootfs, telemetry,
 status, and product-surface changes must remain useful to Apple VZ and future
 Android/ARM work.
 
+## Fundamental Advance Rule
+
+Benchmarks are proof gates, not the sprint engine. The next performance work
+must start from source-level understanding and architectural hypotheses:
+
+- trace the full lifecycle in Capsem and at least one proven VMM before
+  changing code;
+- make one coherent implementation slice at a time, not isolated knob tweaks;
+- prefer changes that improve the core VMM shape even before a microbenchmark
+  exposes the full value;
+- run focused smoke measurements only to catch obvious regressions during
+  development;
+- reserve full `just benchmark` for accepted milestones and cross-platform
+  comparison.
+
+If a task cannot name the mechanism it is improving, it is not ready for more
+benchmark time.
+
 ## Firecracker Lessons
 
 Source basis: `private/firecracker` at
@@ -72,6 +90,8 @@ Capsem strengths we should preserve:
 - Every functional milestone updates this sprint tracker and `CHANGELOG.md`.
 - Every performance claim cites committed `just benchmark` artifacts and
   percentage deltas against the previous accepted artifact.
+- Every performance implementation cites the source-path mechanism it changes
+  before citing benchmark output.
 - Every telemetry/status claim proves that a real session exposes the counter or
   resource value through the user-facing path and the OTel-ready metrics path.
 - Every KVM-only change compiles cleanly on non-Linux or is cfg-isolated.

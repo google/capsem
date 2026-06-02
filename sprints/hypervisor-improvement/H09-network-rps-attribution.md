@@ -18,8 +18,8 @@ before optimizing status/TUI polling or proxy code.
 
 ## Scope
 
-- Refresh the canonical Linux/macOS/host-native benchmark comparison after the
-  installed Linux build is working.
+- Trace the request lifecycle first, then use benchmarks as proof. A network
+  benchmark run without a named mechanism is not sufficient progress.
 - Split RPS-facing paths into explicit lanes:
   - guest HTTP through net-proxy and host MITM;
   - guest DNS through dns-proxy and host resolver bridge;
@@ -37,6 +37,8 @@ before optimizing status/TUI polling or proxy code.
 - Compare relevant pieces against Firecracker/crosvm only where they share the
   same VM/device transport shape. MITM, gateway, and policy-engine comparisons
   are Capsem-specific and should use host-native/control benchmarks instead.
+- Refresh the canonical Linux/macOS/host-native benchmark comparison after the
+  trace has identified the lanes and counters that need proof.
 
 ## Out Of Scope
 

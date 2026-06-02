@@ -57,18 +57,38 @@ hypervisor implementation targets.
 - MITM/proxy redesign. RPS is included only where disk, workspace, or VM
   status polling clearly affects it.
 
-## Work Plan
+## Fundamental Advance Plan
 
-1. Baseline the accepted rootfs and scratch lanes against the active committed
-   artifact, including host-native ratios and macOS comparison if available.
-2. Add virtio-blk timing counters behind the existing metrics snapshot path.
-3. Add DAX/rootfs cache evidence so DAX throughput can be separated from block
-   backend throughput.
-4. Run the trace benchmark and summarize request shapes before coding speedups.
-5. Implement the first trace-backed virtio-blk improvement as one functional
-   milestone.
-6. Benchmark the change versus the immediately previous accepted artifact.
-7. Repeat for at most two more trace-backed improvements before reassessing.
+1. Trace the block lifecycle in Capsem from guest notify through descriptor
+   parsing, guest-memory translation, host syscall, completion, used-ring
+   publication, and interrupt.
+2. Trace the same lifecycle in Firecracker and crosvm, following concrete code
+   paths rather than searching for keywords.
+3. Produce a side-by-side mechanism table that names the material differences:
+   thread/worker ownership, event delivery, queue draining, memory access,
+   syscall shape, batching, completion publication, and cache policy.
+4. Pick one coherent architecture slice that follows from the mechanism table.
+   Examples: block worker/event-loop shape, completion batching, cache/direct
+   I/O policy, or DAX/rootfs mapping behavior. Do not pick isolated constants
+   unless the trace proves request fragmentation is the mechanism.
+5. Implement that slice with counters and tests.
+6. Run focused smoke measurements to catch regressions, then a canonical
+   `just benchmark` only when the implementation is ready to be accepted.
+7. Repeat for at most two fundamental slices before reassessing whether disk,
+   memory/CPU, or network/RPS is the dominant remaining bottleneck.
+
+## Mechanism Bets
+
+- The leading disk/VMM bet is no longer "try more benchmarks." It is that
+  Capsem's remaining Linux gap is in the end-to-end block lifecycle shape:
+  event delivery, worker ownership, completion batching, cache policy, or
+  DAX/fallback transport behavior.
+- DAX/EROFS remains a real architectural candidate because it changes the
+  transport and mapping model, not just a benchmark knob.
+- Direct I/O and io_uring should be revisited only as part of a coherent block
+  engine/cache policy, not as one-off toggles.
+- If Firecracker/crosvm are faster because their shape is simpler, the fix is
+  to simplify Capsem's path where product semantics allow it.
 
 ## Initial Baseline
 
@@ -170,12 +190,14 @@ throughput attribution for writable/fallback virtio-blk and the workspace path.
 - Prove the new KVM block request-shape counters move in a live VM during
   `capsem-bench disk` and `capsem-bench storage`.
 - Record a fresh canonical `just benchmark` artifact now that the installed
-  Linux build is working again.
+  Linux build is working again, but only as the acceptance artifact after the
+  source-path trace is complete.
 - Add DAX/rootfs cache and page-fault evidence so DAX rootfs throughput is not
   confused with fallback virtio-blk throughput.
 - Trace Capsem, Firecracker, and crosvm through the same block lifecycle:
   descriptor parsing, guest-memory translation, syscall, completion,
   used-ring publication, and interrupt.
+- Produce the mechanism table before landing another speedup.
 - Land the first trace-backed KVM virtio-blk code-path speedup. The scratch
   lane correction fixed benchmark semantics and product diagnostics; it did
   not claim the underlying `/root` VirtioFS or raw virtio-blk path became

@@ -144,6 +144,10 @@
 
 - User priority: improvements should include core systematic goodness, not only
   benchmark-visible wins.
+- User correction on 2026-06-02: stop spending hours benchmarking before we
+  understand what to improve. Benchmarks are acceptance proof; the sprint must
+  prioritize source-path tracing, fundamental architecture bets, and coherent
+  implementation slices.
 - User priority: counters must become visible in status and available for
   OpenTelemetry.
 - User priority: expose CPU usage, I/O, and memory usage so users get a clear
@@ -161,6 +165,11 @@
   the actual code path, separates DAX from virtio-blk from VirtioFS/workspace,
   and then lands trace-backed speedups. Memory, CPU/SMP, and weak RPS are next
   performance domains, not part of the first disk attribution milestone.
+- Current highest-leverage H08 task: produce a Capsem vs Firecracker vs crosvm
+  block-lifecycle mechanism table before running another long benchmark. The
+  table must cover descriptor parsing, guest-memory translation, event-loop /
+  worker ownership, syscall/cache policy, completion batching, used-ring
+  publication, and interrupt decisions.
 - Firecracker source audit found the strongest transferable patterns in vCPU
   control, event scheduling, virtqueue contracts, block engine configuration,
   io_uring restrictions/probes/backpressure, and hot-path metrics.
