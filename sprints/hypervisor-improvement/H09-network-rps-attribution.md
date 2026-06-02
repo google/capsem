@@ -402,6 +402,19 @@ transport/dispatch bottleneck to trace next, not an upstream network failure.
   593.4/3758.0/5630.6/5749.0. Deltas:
   +268.7%/+170.4%/+147.5%/+142.4%; p99 improved from
   2.2/3.8/15.2/42.7ms to 1.0/1.6/4.9/19.0ms.
+- Post-routing attributed recorder run on `upbeat-beacon-tmp` used
+  `CAPSEM_METRICS_DEBUG_INTERVAL_SECS=2` with 3s levels. Runtime install log
+  confirmed `event_family_scope="dns,http"` for `everyday-work`, so MCP runtime
+  CEL was not evaluated on this path. Recorder-overhead run measured
+  direct-vsock 1901.3/8478.7/9431.0/9751.7 RPS and transport-only
+  3023.0/10824.3/16355.7/20589.7 RPS at c=1/10/50/200. Stage snapshots for
+  `tools/call local_echo` showed parse, endpoint dispatch, response enqueue,
+  and response write all below ~0.1ms p99 in steady windows. The remaining
+  visible backlog is post-response `telemetry_enqueue`: it grows from
+  sub-0.1ms early to seconds under sustained load because durable session DB
+  audit writes lag behind completed responses. This does not currently block
+  guest-visible responses, but it is the next durability/resource-efficiency
+  target before claiming the MCP path is clean.
 
 ## First Questions
 
