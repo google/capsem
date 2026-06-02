@@ -100,6 +100,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   best-effort while reducing per-connection guest CPU work on HTTP/RPS bursts.
 
 ### Fixed
+- Fixed local Linux installs that rebuilt VM assets leaving `capsem status`
+  blocked by stopped persistent VMs with missing pinned initrd/rootfs assets.
+  The dev asset sync now preserves hash-named files from the previous installed
+  asset backup, and default `capsem purge` removes stopped persistent VMs that
+  are already unrecoverable because their pinned base assets are missing.
 - Fixed the dev service startup recipe so it materializes local base profiles
   from the freshly repacked asset manifest before launching `capsem-service`.
   This prevents stale profile-pinned initrd hashes from forcing remote asset

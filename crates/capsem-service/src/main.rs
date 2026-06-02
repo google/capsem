@@ -12049,6 +12049,10 @@ async fn handle_purge(
                     !instances.contains_key(&entry.name)
                         && (payload.all
                             || entry.defunct
+                            || saved_vm_assets::entry_has_missing_saved_base_assets(
+                                entry,
+                                &state.assets_dir,
+                            )
                             || vm_profile_status(entry.profile_pin.as_ref(), &profile_catalog)
                                 == VmProfileStatus::Corrupted)
                 })

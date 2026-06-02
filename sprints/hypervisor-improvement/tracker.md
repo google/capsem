@@ -142,6 +142,12 @@
         reference `~/.capsem/bin/*` symlinks resolving to `/usr/bin/*`, so the
         installed service no longer appears stale when the package layout is
         correct.
+  - [x] Fixed local install recovery when a package reinstall replaces the dev
+        `~/.capsem/assets` symlink and drops hash-named files needed by stopped
+        persistent VMs. The dev asset sync now restores backed-up pinned
+        assets, and default `capsem purge` removes stopped persistent VMs whose
+        pinned base assets are already missing so `capsem status` can recover
+        without `--all`.
 - [ ] H06: benchmark and product proof.
   - [x] Add a crosvm reference harness for the same Capsem x86_64
         rootfs/startup workload used by the Firecracker comparison.

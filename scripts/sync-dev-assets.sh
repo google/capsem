@@ -92,6 +92,28 @@ for src_file in "$SRC/$ARCH"/*; do
     cp -f "$src_file" "$dst_file"
 done
 
+# Local package postinstall replaces a dev symlink at ~/.capsem/assets with a
+# real directory before this script syncs freshly built assets back in. When
+# that happens, keep hash-named assets from the previous installed backup so
+# stopped persistent VMs with pinned base assets remain recoverable.
+if [[ "$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$DST")" == "$(python3 -c 'import os; print(os.path.realpath(os.path.expanduser("~/.capsem/assets")))' 2>/dev/null)" ]]; then
+    BACKUP="$HOME/.capsem/assets.installed/$ARCH"
+    if [[ -d "$BACKUP" ]]; then
+        for backup_file in "$BACKUP"/*; do
+            [[ -e "$backup_file" ]] || continue
+            [[ -f "$backup_file" ]] || continue
+            case "$(basename "$backup_file")" in
+                vmlinuz-*|initrd-*.img|rootfs-*.squashfs)
+                    dst_file="$DST/$ARCH/$(basename "$backup_file")"
+                    if [[ ! -e "$dst_file" ]]; then
+                        cp -f "$backup_file" "$dst_file"
+                    fi
+                    ;;
+            esac
+        done
+    fi
+fi
+
 # Sign the freshly copied manifest and deploy the dev pubkey next to it.
 sign_manifest_with_dev_key "$DST/manifest.json" "$DST"
 

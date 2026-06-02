@@ -3130,12 +3130,19 @@ async fn purge_default_removes_broken_persistent_vms_but_keeps_healthy_persisten
     let (state, dir) = make_test_state_with_tempdir();
     let defunct_dir = dir.path().join("defunct-vm");
     let corrupted_dir = dir.path().join("corrupted-vm");
+    let missing_assets_dir = dir.path().join("missing-assets-vm");
     let healthy_dir = dir.path().join("healthy-vm");
     std::fs::create_dir_all(&defunct_dir).unwrap();
     std::fs::create_dir_all(&corrupted_dir).unwrap();
+    std::fs::create_dir_all(&missing_assets_dir).unwrap();
     std::fs::create_dir_all(&healthy_dir).unwrap();
+    std::fs::create_dir_all(&state.assets_dir).unwrap();
     {
         let mut registry = state.persistent_registry.lock().unwrap();
+        let healthy_assets = test_saved_vm_base_assets();
+        for filename in saved_vm_assets::saved_asset_filenames(&healthy_assets) {
+            std::fs::write(state.assets_dir.join(filename), b"asset").unwrap();
+        }
         registry
             .register(PersistentVmEntry {
                 name: "defunct-vm".into(),
@@ -3176,12 +3183,39 @@ async fn purge_default_removes_broken_persistent_vms_but_keeps_healthy_persisten
             .unwrap();
         registry
             .register(PersistentVmEntry {
+                name: "missing-assets-vm".into(),
+                ram_mb: 2048,
+                cpus: 2,
+                base_version: "0.0.0".into(),
+                base_assets: Some(capsem_service::registry::SavedVmBaseAssets {
+                    kernel_hash: "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+                        .into(),
+                    initrd_hash: "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+                        .into(),
+                    rootfs_hash: "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+                        .into(),
+                    ..test_saved_vm_base_assets()
+                }),
+                profile_pin: Some(test_saved_vm_profile_pin(test_saved_vm_base_assets())),
+                created_at: "0".into(),
+                session_dir: missing_assets_dir,
+                forked_from: None,
+                description: None,
+                suspended: false,
+                defunct: false,
+                last_error: None,
+                checkpoint_path: None,
+                env: None,
+            })
+            .unwrap();
+        registry
+            .register(PersistentVmEntry {
                 name: "healthy-vm".into(),
                 ram_mb: 2048,
                 cpus: 2,
                 base_version: "0.0.0".into(),
-                base_assets: None,
-                profile_pin: Some(test_saved_vm_profile_pin(test_saved_vm_base_assets())),
+                base_assets: Some(healthy_assets.clone()),
+                profile_pin: Some(test_saved_vm_profile_pin(healthy_assets)),
                 created_at: "0".into(),
                 session_dir: healthy_dir,
                 forked_from: None,
@@ -3199,12 +3233,13 @@ async fn purge_default_removes_broken_persistent_vms_but_keeps_healthy_persisten
         .await
         .unwrap();
 
-    assert_eq!(response.purged, 2);
-    assert_eq!(response.persistent_purged, 2);
+    assert_eq!(response.purged, 3);
+    assert_eq!(response.persistent_purged, 3);
     assert_eq!(response.ephemeral_purged, 0);
     let registry = state.persistent_registry.lock().unwrap();
     assert!(registry.get("defunct-vm").is_none());
     assert!(registry.get("corrupted-vm").is_none());
+    assert!(registry.get("missing-assets-vm").is_none());
     assert!(registry.get("healthy-vm").is_some());
 }
 

@@ -92,6 +92,12 @@ pub fn missing_saved_base_asset_names(
     .collect()
 }
 
+pub fn entry_has_missing_saved_base_assets(entry: &PersistentVmEntry, base_dir: &Path) -> bool {
+    entry.base_assets.as_ref().is_some_and(|base_assets| {
+        !missing_saved_base_asset_names(base_dir, base_assets).is_empty()
+    })
+}
+
 pub fn ensure_saved_base_assets_available(
     vm_name: &str,
     base_dir: &Path,
