@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Added gateway proxy request metrics with bounded endpoint-class labels,
+  method labels, status classes, and request-duration histograms. This makes
+  `/profiles`, action endpoints, files/history, and other service proxy traffic
+  measurable without high-cardinality path labels.
 - Added gateway `/status` control-plane metrics for the P0 hypervisor sprint:
   cache hit/miss/stale decisions, refresh count/duration, and service fan-out
   requests to `/list` and `/info`. These low-cardinality metrics make TUI and

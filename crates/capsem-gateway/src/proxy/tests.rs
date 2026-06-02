@@ -4,10 +4,36 @@ use super::*;
 use axum::body::Body;
 use axum::Router;
 use bytes::Bytes;
+use metrics_util::debugging::{DebugValue, DebuggingRecorder, Snapshotter};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tower::ServiceExt;
 
 use crate::status::StatusCache;
+
+fn counter_value(snapshotter: &Snapshotter, metric: &str, labels: &[(&str, &str)]) -> u64 {
+    snapshotter
+        .snapshot()
+        .into_vec()
+        .into_iter()
+        .filter_map(|(key, _, _, value)| {
+            if key.key().name() != metric {
+                return None;
+            }
+            let has_labels = labels.iter().all(|(want_key, want_value)| {
+                key.key()
+                    .labels()
+                    .any(|label| label.key() == *want_key && label.value() == *want_value)
+            });
+            if !has_labels {
+                return None;
+            }
+            match value {
+                DebugValue::Counter(count) => Some(count),
+                _ => None,
+            }
+        })
+        .sum()
+}
 
 fn proxy_app(uds_path: &str) -> Router {
     let state = Arc::new(AppState {
@@ -50,6 +76,10 @@ async fn status_of(app: Router, method: &str, uri: &str) -> StatusCode {
 
 #[tokio::test]
 async fn returns_502_when_uds_missing() {
+    let recorder = DebuggingRecorder::new();
+    let snapshotter = recorder.snapshotter();
+    let _guard = ::metrics::set_default_local_recorder(&recorder);
+
     let app = proxy_app("/tmp/capsem-gw-test-nonexistent.sock");
     let resp = app
         .oneshot(
@@ -66,6 +96,18 @@ async fn returns_502_when_uds_missing() {
         .unwrap();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(json["error"], "service unavailable");
+    assert_eq!(
+        counter_value(
+            &snapshotter,
+            crate::metrics::PROXY_REQUESTS_TOTAL,
+            &[
+                ("endpoint", "list"),
+                ("method", "GET"),
+                ("status_class", "5xx")
+            ],
+        ),
+        1
+    );
 }
 
 #[tokio::test]
@@ -105,6 +147,10 @@ async fn returns_502_when_uds_exists_but_closed() {
 
 #[tokio::test]
 async fn forwards_get_to_uds() {
+    let recorder = DebuggingRecorder::new();
+    let snapshotter = recorder.snapshotter();
+    let _guard = ::metrics::set_default_local_recorder(&recorder);
+
     let mock = axum::Router::new().route(
         "/list",
         axum::routing::get(|| async { axum::Json(serde_json::json!({"sandboxes": []})) }),
@@ -127,6 +173,18 @@ async fn forwards_get_to_uds() {
         .unwrap();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(json["sandboxes"], serde_json::json!([]));
+    assert_eq!(
+        counter_value(
+            &snapshotter,
+            crate::metrics::PROXY_REQUESTS_TOTAL,
+            &[
+                ("endpoint", "list"),
+                ("method", "GET"),
+                ("status_class", "2xx")
+            ],
+        ),
+        1
+    );
     h.abort();
 }
 

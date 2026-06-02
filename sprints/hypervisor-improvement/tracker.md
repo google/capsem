@@ -14,6 +14,9 @@
         measurable status/TUI lane.
   - [x] Add gateway `/status` cache/refresh/service-fan-out metrics with a
         focused gateway status test proof.
+  - [x] Add gateway proxy endpoint-class request counters and duration
+        histograms so `/profiles`, actions, files/history, and unknown service
+        fan-out are visible without high-cardinality labels.
   - [ ] Finish the crosvm async engine and Firecracker async file-engine trace
         before choosing the first implementation slice.
   - [ ] Pick and land one coherent code-path improvement with counters and
@@ -146,6 +149,8 @@
   - [x] Add first control-plane attribution counters for gateway `/status`
         cache decisions, refresh duration/result, and service fan-out to
         `/list` and per-running-VM `/info`.
+  - [x] Add gateway proxy endpoint-class metrics to split `/profiles` and
+        other proxied control-plane traffic from `/status` polling.
   - [ ] Refresh canonical HTTP, proxy throughput, endpoint-latency,
         security-engine, and host-native artifacts after the working Linux
         install.

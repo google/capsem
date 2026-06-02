@@ -106,6 +106,11 @@ First implementation slice: add gateway `/status` cache, refresh, and
 service-fan-out metrics so endpoint latency can be attributed to cache misses,
 running-VM `/info` fan-out, or another lane.
 
+Second implementation slice: add bounded gateway proxy request metrics for the
+catch-all service proxy. These record endpoint class, method, status class, and
+duration, so TUI `/profiles` refreshes and action traffic can be separated from
+`/status` cache behavior and from guest network/MITM paths.
+
 ## Immediate Next Slice
 
 Finish P0.1 by tracing the remaining details:
