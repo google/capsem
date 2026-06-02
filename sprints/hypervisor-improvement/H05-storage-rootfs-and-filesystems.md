@@ -36,6 +36,22 @@ Close Linux/macOS storage gaps without breaking Capsem's product storage model.
   4.5% cold large-binary throughput, but gained 12.5% random IOPS and 10.1%
   small-JS reads.
 
+## Current Decision
+
+- Lead candidate: compressed `erofs-lz4hc-c65536` with DAX. It is much smaller
+  than uncompressed EROFS, wins the interactive small-file/random lanes we care
+  about, and keeps the product download/disk footprint sane.
+- Do not lock the tuning yet. Retest `lz4hc` cluster size and image layout
+  after the throughput investigation, because the best small-file shape may not
+  be the best large-read shape.
+- Test EROFS zstd after a guest kernel bump to Linux 6.11 or newer. Kernel zstd
+  support makes this a real candidate for smaller images without assuming lz4hc
+  is the final compression choice.
+- Raw/cold throughput is the remaining first-order issue. Investigate:
+  guest readahead behavior, EROFS DAX mount/cache behavior, KVM block fallback
+  for non-DAX rootfs, host page-fault/mmap behavior for file-backed pmem, and
+  whether the benchmark is measuring true cold reads or mixed cache state.
+
 ## Done
 
 - We know whether slow rootfs reads, metadata IOPS, small JS reads, and large

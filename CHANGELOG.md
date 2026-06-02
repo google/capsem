@@ -33,6 +33,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   read 3.1% and cold large-binary read 4.5%, but improved random IOPS 12.5%
   and small-JS reads 10.1%. This keeps file-backed DAX as a measured candidate,
   not yet the default throughput answer.
+- Recorded compressed `erofs-lz4hc-c65536` + DAX as the current rootfs lead
+  candidate because it balances image size with the strongest random/small-file
+  behavior. Follow-up remains open for lz4hc retuning, EROFS zstd after a Linux
+  6.11+ guest-kernel bump, and raw/cold throughput investigation.
 - Added bounded Linux KVM virtio-blk shape knobs for queue count, queue size,
   segment limit, logical block size, and io_uring mode so rootfs/startup
   tuning can sweep coupled block-device settings instead of one-off constants.

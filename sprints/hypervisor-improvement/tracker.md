@@ -51,6 +51,15 @@
         DAX-capability path.
   - [x] Add and measure a strict file-backed EROFS DAX lane that maps aligned
         rootfs images directly instead of copying them into anonymous pmem RAM.
+  - [x] Record compressed `erofs-lz4hc-c65536` + DAX as the current lead
+        candidate, with tuning explicitly still open.
+  - [ ] Rerun EROFS tuning around the compressed lead after raw throughput
+        work, including cluster size/layout tradeoffs.
+  - [ ] Test EROFS zstd after bumping the guest kernel to Linux 6.11 or newer.
+  - [ ] Investigate raw/cold throughput in five slices: guest readahead,
+        EROFS DAX mount/cache behavior, KVM block fallback for non-DAX rootfs,
+        host page-fault/mmap behavior for file-backed pmem, and benchmark cache
+        purity.
   - [ ] Revisit Direct I/O for writable scratch and fallback rootfs-over-blk
         separately from the EROFS DAX pmem path.
 - [ ] H06: benchmark and product proof.
@@ -240,6 +249,11 @@
   lower metadata 168.4k/s vs 172.5k/s (-2.4%). Conclusion: file-backed DAX
   helps some compressed random/small-file lanes but is not the large-read
   throughput fix; continue with block/Direct-I/O and filesystem tuning.
+- Current H05 product candidate decision: prefer compressed `erofs-lz4hc-c65536`
+  + DAX over uncompressed EROFS because it is much smaller and has the strongest
+  small-file/random interactive profile. This is not the final tuning lock:
+  revisit lz4hc cluster/layout settings, add EROFS zstd after a Linux 6.11+
+  guest-kernel bump, and focus the next investigation on raw/cold throughput.
 - crosvm epoll is still far from the committed macOS Capsem artifact: 0.13x seq
   rootfs read, 0.24x random IOPS, 0.31x cold large-binary read, 0.26x small JS,
   0.24x metadata stat, and roughly 2.8x-4.2x startup latency for the shared
