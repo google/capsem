@@ -409,6 +409,52 @@ async fn framed_mcp_response_is_not_held_behind_db_writer_backpressure() {
     restore_env("CAPSEM_TEST_SLOW_DB_BATCH_MS", previous);
 }
 
+#[tokio::test(flavor = "current_thread")]
+async fn transport_echo_returns_without_mcp_dispatch() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = std::sync::Arc::new(
+        DbWriter::open(&dir.path().join("transport-echo-session.db"), 1).unwrap(),
+    );
+    let (aggregator, _rx) = crate::mcp::aggregator::AggregatorClient::channel(1);
+    let endpoint = std::sync::Arc::new(McpEndpointState::new(
+        aggregator,
+        std::sync::Arc::new(tokio::sync::RwLock::new(std::sync::Arc::new(
+            McpPolicy::new(),
+        ))),
+        std::sync::Arc::new(RuntimeSecurityEngineSlot::new(None)),
+        std::sync::Arc::new(tokio::sync::Semaphore::new(1)),
+        McpTimeouts::default(),
+    ));
+    let (client, server) = tokio::io::duplex(4096);
+    let server_db = std::sync::Arc::clone(&db);
+    let server_task = tokio::spawn(async move {
+        let _ = serve_io(Vec::new(), server, endpoint, server_db).await;
+    });
+    let (mut client_reader, mut client_writer) = tokio::io::split(client);
+
+    let request =
+        br#"{"jsonrpc":"2.0","id":1,"method":"capsem.transport/echo","params":{"payload":"ping"}}"#;
+    let frame = capsem_proto::encode_mcp_frame(1, 0, "codex", request).unwrap();
+    client_writer.write_all(&frame).await.unwrap();
+    client_writer.flush().await.unwrap();
+
+    let response_frame = tokio::time::timeout(
+        Duration::from_millis(200),
+        read_test_response_frame(&mut client_reader),
+    )
+    .await
+    .expect("transport echo should not wait for MCP endpoint dispatch")
+    .unwrap();
+
+    assert_eq!(response_frame.stream_id, 1);
+    let response: JsonRpcResponse = serde_json::from_slice(&response_frame.payload).unwrap();
+    assert_eq!(response.result.as_ref().unwrap()["payload"], "ping");
+
+    drop(client_writer);
+    let _ = tokio::time::timeout(Duration::from_secs(2), server_task).await;
+    db.shutdown_blocking();
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "diagnostic throughput probe; run explicitly when attributing MCP RPS"]
 async fn framed_mcp_host_duplex_throughput_diagnostic() {

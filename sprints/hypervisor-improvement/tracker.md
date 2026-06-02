@@ -1074,6 +1074,9 @@
   performance fix. The first focused `mitm-load` rerun is explicitly rejected
   as performance evidence because the environment produced request exceptions
   and timeout tails at every concurrency level. The `mcp-load` rerun is valid
-  evidence and now has source tracing plus OTel-ready stage histograms; it
-  still needs a live VM rerun with metric capture before making a speedup
-  claim or changing audit/telemetry behavior.
+  evidence and now has source tracing plus OTel-ready stage histograms. The new
+  `direct-vsock-transport` lane proves same-VM framed KVM/vhost-vsock transport
+  can reach 3,086.6/13,632.2/22,003.0/37,027.6 RPS at c=1/10/50/200 while the
+  real direct-vsock MCP tool path stays at 588.0/812.8/806.0/822.8 RPS. This
+  leaves the next missing proof in the real MCP policy/security/telemetry/
+  inflight path after frame parsing, not guest Python/FastMCP or raw KVM/vsock.

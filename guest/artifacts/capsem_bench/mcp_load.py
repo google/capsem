@@ -41,7 +41,14 @@ MCP_PROCESS_NAME = "python3"
 DEFAULT_CONCURRENCY = (1, 10, 50, 200)
 DEFAULT_DURATION_S = 10.0
 DEFAULT_PAYLOAD = "ping"
-DEFAULT_LANES = ("fastmcp", "raw-single", "raw-multiprocess", "direct-vsock")
+TRANSPORT_ECHO_METHOD = "capsem.transport/echo"
+DEFAULT_LANES = (
+    "fastmcp",
+    "raw-single",
+    "raw-multiprocess",
+    "direct-vsock",
+    "direct-vsock-transport",
+)
 RAW_MULTIPROCESS_RELAYS = 4
 
 
@@ -322,6 +329,18 @@ class DirectVsockMcpClient:
                 future.set_result(response)
 
 
+class DirectVsockTransportClient(DirectVsockMcpClient):
+    async def call_echo(self, payload):
+        request_id = await self._send_request(
+            TRANSPORT_ECHO_METHOD,
+            {"payload": payload},
+        )
+        response = await self.pending[request_id]
+        if "error" in response:
+            raise RuntimeError(response["error"])
+        return response.get("result")
+
+
 async def _sock_recv_exact(loop, sock, length):
     chunks = []
     remaining = length
@@ -478,6 +497,14 @@ async def _run_async(concurrency_levels, duration_s, payload, lanes):
             duration_s,
             payload,
         )
+    if "direct-vsock-transport" in lanes:
+        rows_by_lane["direct-vsock-transport"] = await _run_raw_lane(
+            "direct-vsock-transport",
+            DirectVsockTransportClient(),
+            concurrency_levels,
+            duration_s,
+            payload,
+        )
     return rows_by_lane
 
 
@@ -502,8 +529,8 @@ def mcp_load_bench(concurrency_levels=None, duration_s=None, payload=None):
     lanes = _selected_lanes()
 
     console.print(
-        f"[bold]mcp-load[/bold] tool=local__echo "
-        f"payload_bytes={len(payload)} duration={duration_s}s lanes={','.join(lanes)}"
+        f"[bold]mcp-load[/bold] payload_bytes={len(payload)} "
+        f"duration={duration_s}s lanes={','.join(lanes)}"
     )
 
     rows_by_lane = asyncio.run(_run_async(concurrency_levels, duration_s, payload, lanes))
@@ -511,12 +538,13 @@ def mcp_load_bench(concurrency_levels=None, duration_s=None, payload=None):
     out = {
         "version": "1.2",
         "tool": "local__echo",
+        "transport_echo_method": TRANSPORT_ECHO_METHOD,
         "payload_bytes": len(payload),
         "lanes": rows_by_lane,
         "concurrency_levels": rows_by_lane.get("fastmcp", []),
     }
 
-    table = Table(title=f"mcp-load (tool=local__echo, {duration_s}s per level)")
+    table = Table(title=f"mcp-load ({duration_s}s per level)")
     table.add_column("lane", justify="left")
     table.add_column("concurrency", justify="right")
     table.add_column("rps", justify="right")

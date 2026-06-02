@@ -293,16 +293,34 @@ transport/dispatch bottleneck to trace next, not an upstream network failure.
   with the prior scoped direct-vsock proof 572.2/806.4/811.0/842.8 RPS, the
   direct-vsock deltas are +4.9%/-2.9%/-2.6%/-1.0%; event-index is correct
   virtio hygiene, but not the remaining throughput limiter.
+- Direct-vsock transport-only attribution landed next. The benchmark now has a
+  `direct-vsock-transport` lane that uses the same guest AF_VSOCK connection,
+  host KVM/vhost-vsock path, `AsyncFdStream`, framed MCP parser, stream
+  tracker, and writer batch path, but handles a reserved diagnostic echo before
+  MCP policy, endpoint dispatch, aggregator, or session DB writes. Unit proof:
+  `cargo test -p capsem-core net::mitm_proxy::mcp_frame --lib` passed 12 tests
+  with one ignored diagnostic, `cargo test -p capsem-core hypervisor::kvm
+  --lib` passed 350 KVM tests, and `uv run python -m pytest
+  tests/test_capsem_bench_mcp_load.py -q` passed 7 tests. Scoped live proof:
+  `just exec "CAPSEM_BENCH_MCP_LANES=direct-vsock,direct-vsock-transport
+  CAPSEM_BENCH_MCP_DURATION=5 capsem-bench mcp-load"` measured same-run
+  direct-vsock 588.0/812.8/806.0/822.8 RPS and transport-only
+  3,086.6/13,632.2/22,003.0/37,027.6 RPS at c=1/10/50/200, all zero errors.
+  The transport lane is 5.25x/16.77x/27.30x/45.00x faster with p99
+  0.5/1.4/2.8/12.6ms versus direct-vsock 2.6/13.6/105.2/341.1ms. Conclusion:
+  raw KVM/vhost-vsock transport and the host frame codec are not the current
+  ~800 RPS ceiling; the next code target is the real MCP policy/dispatch/
+  telemetry path after frame parsing.
 
 ## First Questions
 
 - Is the Linux RPS gap actually in KVM/vsock, or in host-side MITM/security
-  processing? Current answer: host framed-MCP processing alone is not the cap;
-  direct-vsock also matches the raw relay cap, and KVM ioeventfd queue-notify
-  plus event-index wiring are now in place without moving the ceiling. The next
-  trace target is vsock socket buffering/readiness, guest/kernel vsock
-  scheduling, or framed single-stream batching rather than userspace MMIO
-  notify/interrupt hygiene alone.
+  processing? Current answer: not raw KVM/vhost-vsock transport. Host-only
+  framed MCP is fast, direct-vsock matches the raw relay cap, KVM ioeventfd
+  queue-notify plus event-index wiring did not move the ceiling, and the new
+  transport-only direct-vsock lane reaches up to 37k RPS in the same VM. The
+  next trace target is real MCP policy/security/telemetry/inflight scheduling
+  after frame parsing, not another KVM/vsock transport knob.
 - Why did `local__echo` regress to ~0.2x baseline throughput with >3x p99
   latency while producing zero errors? Trace guest stdio relay, framed vsock
   single-stream behavior, host MCP endpoint parsing, aggregator dispatch, and

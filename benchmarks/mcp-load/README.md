@@ -25,6 +25,19 @@ Pure protocol cost. If `mcp-load` does not scale linearly with
 concurrency, there is a serialization point in the guest relay / MITM
 endpoint / aggregator / server / vsock chain.
 
+## Lanes
+
+- `fastmcp`: guest FastMCP client through `/run/capsem-mcp-server`.
+- `raw-single`: raw JSON-RPC through one guest stdio relay process.
+- `raw-multiprocess`: raw JSON-RPC through four guest stdio relay processes.
+- `direct-vsock`: guest benchmark process speaks framed MCP directly to host
+  `vsock:5002`, bypassing guest stdio relay while keeping MCP policy,
+  endpoint dispatch, response policy, telemetry, and session DB writes.
+- `direct-vsock-transport`: same guest AF_VSOCK connection and frame codec,
+  but a reserved diagnostic method echoes before MCP policy, endpoint
+  dispatch, aggregator, or session DB writes. This lane is transport
+  attribution, not a product tool-path benchmark.
+
 ## Pre-rewrite headline numbers
 
 | concurrency | rps    | p50_ms | p95_ms | p99_ms | p999_ms |
@@ -67,6 +80,28 @@ Treat it as an H09 source-tracing target: guest stdio relay, framed vsock
 single-stream behavior, MITM MCP endpoint parsing, aggregator dispatch,
 builtin stdio round trips, and telemetry writes.
 
+## H09 transport isolation, 2026-06-02
+
+Focused same-run proof:
+
+```bash
+just exec "CAPSEM_BENCH_MCP_LANES=direct-vsock,direct-vsock-transport \
+  CAPSEM_BENCH_MCP_DURATION=5 capsem-bench mcp-load && \
+  cat /tmp/capsem-benchmark.json"
+```
+
+| concurrency | direct-vsock RPS | transport RPS | transport ratio | direct p99 | transport p99 |
+|------------:|-----------------:|--------------:|----------------:|-----------:|--------------:|
+| 1           | 588.0            | 3,086.6       | 5.25x           | 2.6 ms     | 0.5 ms        |
+| 10          | 812.8            | 13,632.2      | 16.77x          | 13.6 ms    | 1.4 ms        |
+| 50          | 806.0            | 22,003.0      | 27.30x          | 105.2 ms   | 2.8 ms        |
+| 200         | 822.8            | 37,027.6      | 45.00x          | 341.1 ms   | 12.6 ms       |
+
+The transport-only lane uses the same KVM/vhost-vsock path, host fd wrapper,
+frame parser, stream tracker, and response writer as the direct tool path. This
+rules out raw KVM/vsock delivery as the current ~800 RPS ceiling. The next H09
+target is the real MCP policy/dispatch/telemetry path after frame parsing.
+
 ## Capturing the baseline
 
 ```
@@ -92,6 +127,11 @@ Per-concurrency-level row:
 - `rps`, `p50_ms`, `p95_ms`, `p99_ms`, `p999_ms`
 - `rss_peak_mb`
 
-Defaults: concurrency `1, 10, 50, 200`; duration `10s` per level
-(override via `CAPSEM_BENCH_MCP_DURATION`); echo payload `"ping"`
-(override via `CAPSEM_BENCH_MCP_PAYLOAD`).
+Top-level `tool` remains `local__echo` for the MCP tool-path lanes. The
+`transport_echo_method` field names the reserved diagnostic method used only by
+`direct-vsock-transport`.
+
+Defaults: lanes `fastmcp,raw-single,raw-multiprocess,direct-vsock,direct-vsock-transport`;
+concurrency `1, 10, 50, 200`; duration `10s` per level (override via
+`CAPSEM_BENCH_MCP_DURATION`); echo payload `"ping"` (override via
+`CAPSEM_BENCH_MCP_PAYLOAD`).

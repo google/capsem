@@ -18,6 +18,7 @@ def test_selected_lanes_defaults_to_all(monkeypatch):
         "raw-single",
         "raw-multiprocess",
         "direct-vsock",
+        "direct-vsock-transport",
     )
 
 
@@ -81,6 +82,26 @@ def test_mcp_frame_codec_roundtrip():
     assert decoded["flags"] == 0
     assert decoded["process_name"] == "python3"
     assert decoded["payload"] == payload
+
+
+def test_direct_vsock_transport_client_uses_transport_echo_method(monkeypatch):
+    async def run():
+        client = mcp_load.DirectVsockTransportClient()
+        future = asyncio.get_running_loop().create_future()
+        future.set_result({"result": {"payload": "ping"}})
+        client.pending[7] = future
+
+        async def fake_send(method, params):
+            assert method == "capsem.transport/echo"
+            assert params == {"payload": "ping"}
+            return 7
+
+        monkeypatch.setattr(client, "_send_request", fake_send)
+        return await client.call_echo("ping")
+
+    result = asyncio.run(run())
+
+    assert result == {"payload": "ping"}
 
 
 def test_vsock_port_offset_from_cmdline():

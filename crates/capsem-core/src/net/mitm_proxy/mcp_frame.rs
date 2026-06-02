@@ -36,6 +36,7 @@ use crate::mcp::types::{parse_namespaced, parse_resource_uri, JsonRpcRequest, Js
 const MCP_JSON_RPC_MAX_BYTES: usize =
     capsem_proto::MCP_FRAME_MAX_SIZE - capsem_proto::MCP_FRAME_HEADER_LEN as usize;
 const MCP_REQUEST_PREVIEW_BYTES: usize = 4096;
+const TRANSPORT_ECHO_METHOD: &str = "capsem.transport/echo";
 
 pub(super) async fn serve(
     initial_buf: Vec<u8>,
@@ -174,6 +175,38 @@ where
                         .expect("framed MCP stream tracker poisoned")
                         .complete(frame.stream_id);
                 }
+                continue;
+            }
+
+            if let Some(response) = transport_echo_response(&request) {
+                record_mcp_stage_labels(
+                    "parse_json_rpc",
+                    "unknown",
+                    "none",
+                    "ok",
+                    parse_started,
+                );
+                streams
+                    .lock()
+                    .expect("framed MCP stream tracker poisoned")
+                    .complete(frame.stream_id);
+                let send_started = Instant::now();
+                send_response_with_labels(
+                    &tx,
+                    frame.stream_id,
+                    &process_name,
+                    &response,
+                    "unknown",
+                    "none",
+                )
+                .await?;
+                record_mcp_stage_labels(
+                    "response_enqueue",
+                    "unknown",
+                    "none",
+                    "ok",
+                    send_started,
+                );
                 continue;
             }
 
@@ -1813,6 +1846,23 @@ fn validate_frame_request_pair(frame: &InboundFrame, req: &JsonRpcRequest) -> Re
         (false, true) => Ok(()),
         (false, false) => bail!("request stream is missing a JSON-RPC id"),
     }
+}
+
+fn transport_echo_response(req: &JsonRpcRequest) -> Option<JsonRpcResponse> {
+    if req.method != TRANSPORT_ECHO_METHOD {
+        return None;
+    }
+
+    let payload = req
+        .params
+        .as_ref()
+        .and_then(|params| params.get("payload"))
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    Some(JsonRpcResponse::ok(
+        req.id.clone(),
+        serde_json::json!({ "payload": payload }),
+    ))
 }
 
 fn interpret_mcp_method(req: &JsonRpcRequest) -> McpMethodSummary {

@@ -66,6 +66,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   downloads during `just exec` after guest binary changes.
 
 ### Added
+- Added a `direct-vsock-transport` attribution lane to `capsem-bench
+  mcp-load`. It uses the same guest AF_VSOCK connection and framed MCP codec
+  as `direct-vsock`, but handles a reserved diagnostic echo before MCP policy,
+  endpoint dispatch, aggregator, or session DB writes. A scoped Linux VM proof
+  measured 3,086.6/13,632.2/22,003.0/37,027.6 RPS at c=1/10/50/200 with zero
+  errors, while the same-run `direct-vsock` tool path stayed at
+  588.0/812.8/806.0/822.8 RPS. This isolates the current MCP RPS ceiling away
+  from KVM/vhost-vsock transport and toward the real MCP policy/dispatch/
+  telemetry path after frame parsing.
 - Added an ignored host-only framed MCP throughput diagnostic that drives the
   production `serve_io` parser/policy/telemetry path over an in-memory duplex
   stream. The first Linux run processed 10,000 `local__echo` requests at
