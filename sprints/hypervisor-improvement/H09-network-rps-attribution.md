@@ -144,6 +144,12 @@ transport/dispatch bottleneck to trace next, not an upstream network failure.
   `local_http`, `local_snapshot`, `local_other`, `external`, `none`,
   `unknown`) so the metrics can flow to OTel without high-cardinality tool
   names.
+- Live stage proof now has an opt-in runtime path:
+  `CAPSEM_METRICS_DEBUG_INTERVAL_SECS=<seconds>` installs a capsem-process
+  debug metrics recorder and emits compact `mcp_metric_snapshot` log lines for
+  the MCP histograms above. This is a diagnostic bridge until the real OTLP
+  exporter is configured; the expected next artifact is a same-run `mcp-load`
+  result plus `process.log` stage summaries showing which stage owns p95/p99.
 
 ## First Questions
 

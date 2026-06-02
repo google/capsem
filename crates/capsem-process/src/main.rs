@@ -2,6 +2,7 @@ mod helpers;
 mod ipc;
 mod job_store;
 mod mcp_runtime;
+mod metrics_debug;
 mod pty_log;
 mod terminal;
 mod vsock;
@@ -182,6 +183,7 @@ fn main() -> Result<()> {
         sink: capsem_core::telemetry::LogSink::Stderr,
         default_filter: "info",
     })?;
+    let _metrics_debug_guard = metrics_debug::MetricsDebugGuard::maybe_start();
     let args = Args::parse();
 
     // Root span shared across the whole capsem-process run: every

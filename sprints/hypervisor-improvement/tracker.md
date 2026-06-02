@@ -178,6 +178,11 @@
           endpoint dispatch, process-to-aggregator round trip, telemetry
           enqueue, response enqueue, and response write with bounded
           `method_kind`, `tool_kind`, and `result` labels.
+    - [x] Add the opt-in `CAPSEM_METRICS_DEBUG_INTERVAL_SECS` process recorder
+          and service env forwarding so live VM runs can emit compact
+          `mcp_metric_snapshot` histogram summaries to `process.log`.
+    - [ ] Run `mcp-load` with the process recorder enabled and identify the
+          dominant stage before changing MCP audit/dispatch behavior.
   - [ ] Land only trace-backed RPS speedups, with before/after percentages by
         lane and canonical `just benchmark` artifacts.
 - [ ] H07: docs, changelog, release gate.

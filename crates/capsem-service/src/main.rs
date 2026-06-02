@@ -75,6 +75,8 @@ const PROCESS_ENV_ALLOWLIST: &[&str] = &[
     "CAPSEM_MCP_DEFAULT_TIMEOUT_SECS",
     "CAPSEM_MCP_TOOL_CALL_TIMEOUT_SECS",
     "CAPSEM_MCP_TOOL_CALL_TIMEOUT_CEILING_SECS",
+    // Opt-in process-local metrics recorder for live stage attribution.
+    "CAPSEM_METRICS_DEBUG_INTERVAL_SECS",
     // E2E-only: lets capsem-process dial a local fixture while preserving
     // the guest-visible upstream host for MITM policy/provider detection.
     "CAPSEM_TEST_UPSTREAM_OVERRIDES",

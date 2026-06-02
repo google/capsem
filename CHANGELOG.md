@@ -20,6 +20,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   downloads during `just exec` after guest binary changes.
 
 ### Added
+- Added `CAPSEM_METRICS_DEBUG_INTERVAL_SECS`, an opt-in capsem-process
+  diagnostic recorder that logs compact MCP stage histogram snapshots to
+  `process.log`. This gives the H09 RPS investigation live stage attribution
+  while the full OTLP exporter remains a separate telemetry sprint.
 - Added OTel-ready MCP echo-path timing histograms for the H09 RPS
   investigation: framed MCP stage timing, MITM endpoint dispatch timing, and
   process-to-aggregator request timing. Labels are bounded by method kind,
