@@ -11,6 +11,8 @@
 //! - CAPSEM_DOMAIN_DEFAULT: Default domain action, "allow" or "deny"
 //! - CAPSEM_SESSION_DB: Path to session DB for telemetry (optional)
 
+mod metrics_debug;
+
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -178,7 +180,10 @@ impl BuiltinHandler {
         )
     )]
     async fn echo(&self, Parameters(params): Parameters<EchoParams>) -> Result<String, String> {
-        Ok(params.text)
+        let started = std::time::Instant::now();
+        let result = Ok(params.text);
+        capsem_core::mcp::aggregator::record_builtin_tool_metric(started, "local_echo", "ok");
+        result
     }
 
     // -- HTTP tools --
@@ -364,6 +369,7 @@ async fn call_builtin(
     name: &str,
     args: serde_json::Value,
 ) -> Result<String, String> {
+    let started = std::time::Instant::now();
     let resp = builtin_tools::call_builtin_tool(
         name,
         &args,
@@ -373,7 +379,13 @@ async fn call_builtin(
         &handler.db,
     )
     .await;
-    extract_text(resp)
+    let result = extract_text(resp);
+    capsem_core::mcp::aggregator::record_builtin_tool_metric(
+        started,
+        capsem_core::mcp::aggregator::namespaced_metric_kind(&format!("local__{name}")),
+        if result.is_ok() { "ok" } else { "error" },
+    );
+    result
 }
 
 fn extract_text(resp: JsonRpcResponse) -> Result<String, String> {
@@ -415,6 +427,7 @@ async fn main() -> Result<()> {
         sink: capsem_core::telemetry::LogSink::Stderr,
         default_filter: "capsem_mcp_builtin=info",
     })?;
+    let _metrics_debug_guard = metrics_debug::MetricsDebugGuard::maybe_start();
 
     info!("capsem-mcp-builtin starting");
 

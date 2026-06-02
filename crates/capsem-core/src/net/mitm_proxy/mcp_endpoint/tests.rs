@@ -33,7 +33,7 @@ where
     let calls = Arc::new(Mutex::new(Vec::new()));
     let calls_h = Arc::clone(&calls);
     tokio::spawn(async move {
-        while let Some((req, resp_tx)) = rx.recv().await {
+        while let Some((req, _enqueued_at, resp_tx)) = rx.recv().await {
             let label = match &req.method {
                 AggregatorMethod::ListServers => "list_servers",
                 AggregatorMethod::ListTools => "list_tools",

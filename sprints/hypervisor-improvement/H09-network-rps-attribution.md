@@ -164,6 +164,34 @@ transport/dispatch bottleneck to trace next, not an upstream network failure.
   ~0.06ms p99. The c=200 ~270-300ms client p99 is therefore queueing behind a
   roughly 770-800 RPS single hot path, not slow parse, response write, or
   telemetry enqueue.
+- Next decomposition instrumentation is in place. Process-side snapshots now
+  include `mcp.aggregator_client_stage_duration_ms` for channel send, driver
+  queue wait, request MessagePack encode, request frame write, response frame
+  read, response MessagePack decode, and response route. Aggregator stderr
+  snapshots include `mcp.aggregator_stage_duration_ms` for request frame read,
+  request MessagePack decode, handler queue wait, manager lookup, server RPC,
+  response channel send, response MessagePack encode, and response frame
+  write. Builtin stderr snapshots include `mcp.builtin_tool_duration_ms` for
+  local builtin tool execution. `CAPSEM_METRICS_DEBUG_INTERVAL_SECS` now flows
+  through process -> aggregator -> builtin so the next `mcp-load` run can
+  separate rmcp stdio transport/funnel cost from actual builtin tool work.
+- Decomposition proof on 2026-06-02, same isolated service with
+  `CAPSEM_METRICS_DEBUG_INTERVAL_SECS=2`, completed `CAPSEM_BENCH_MCP_DURATION=5
+  capsem-bench mcp-load` with zero errors: c=1 265.2 RPS p99 4.1ms, c=10
+  590.8 RPS p99 19.2ms, c=50 586.0 RPS p99 93.9ms, c=200 636.4 RPS p99
+  377.4ms. This run carries heavier multi-process stage recorders, so use it
+  as attribution proof rather than a clean speed baseline.
+- The decomposition shows the actual `local__echo` builtin is not the
+  bottleneck: `mcp.builtin_tool_duration_ms{tool_kind=local_echo}` stayed
+  around 0.015ms average with p99 mostly 0.02-0.03ms. Aggregator
+  `server_rpc` to the builtin stdio peer owned the largest non-idle stage at
+  roughly 0.68-0.69ms average, 0.76-0.79ms p95, and 0.86-0.89ms p99.
+  Aggregator `response_frame_write` added roughly 0.19-0.20ms average and
+  0.25-0.27ms p99; request decode, handler queue, manager lookup, response
+  encode, and process-side route/encode/write stages were all sub-0.1ms p99
+  in steady snapshots. The next code-path bet should therefore remove or
+  collapse local builtin stdio/RMCP round trips for safe builtin tools, then
+  rerun the same attribution to prove the dispatch ceiling moved.
 
 ## First Questions
 

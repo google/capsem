@@ -120,7 +120,12 @@ fn aggregator_log_path(session_dir: &Path) -> PathBuf {
     session_dir.join("mcp-aggregator.stderr.log")
 }
 
-const AGGREGATOR_PARENT_ENV_ALLOWLIST: &[&str] = &["PATH", "RUST_LOG", "RUST_BACKTRACE"];
+const AGGREGATOR_PARENT_ENV_ALLOWLIST: &[&str] = &[
+    "PATH",
+    "RUST_LOG",
+    "RUST_BACKTRACE",
+    "CAPSEM_METRICS_DEBUG_INTERVAL_SECS",
+];
 
 fn process_kernel_cmdline() -> String {
     let append = if cfg!(debug_assertions) {
@@ -821,7 +826,7 @@ async fn spawn_mcp_aggregator(
             aggregator_bin.display()
         );
         tokio::spawn(async move {
-            while let Some((req, resp_tx)) = rx.recv().await {
+            while let Some((req, _enqueued_at, resp_tx)) = rx.recv().await {
                 let body = match req.method {
                     AggregatorMethod::ListServers => AggregatorResult::Servers { servers: vec![] },
                     AggregatorMethod::ListTools => AggregatorResult::Tools { tools: vec![] },
@@ -912,20 +917,60 @@ async fn spawn_mcp_aggregator(
 
     // Background driver: reads from client channel, writes to subprocess stdin,
     // reads responses from subprocess stdout, routes back to callers.
-    let pending: Arc<
-        tokio::sync::Mutex<HashMap<u64, tokio::sync::oneshot::Sender<AggregatorResponse>>>,
-    > = Arc::new(tokio::sync::Mutex::new(HashMap::new()));
+    struct PendingAggregatorRequest {
+        tx: tokio::sync::oneshot::Sender<AggregatorResponse>,
+        method_kind: &'static str,
+        tool_kind: &'static str,
+    }
+
+    let pending: Arc<tokio::sync::Mutex<HashMap<u64, PendingAggregatorRequest>>> =
+        Arc::new(tokio::sync::Mutex::new(HashMap::new()));
 
     // Reader task: reads msgpack frames from subprocess stdout and routes to pending callers.
     let pending_reader = Arc::clone(&pending);
     tokio::spawn(async move {
         info!("aggregator reader task started");
         loop {
-            match read_frame::<_, AggregatorResponse>(&mut child_stdout).await {
-                Ok(Some(resp)) => {
+            let read_started = std::time::Instant::now();
+            match read_frame_payload(&mut child_stdout).await {
+                Ok(Some(payload)) => {
+                    let decode_started = std::time::Instant::now();
+                    let resp = match decode_frame_payload::<AggregatorResponse>(&payload) {
+                        Ok(resp) => resp,
+                        Err(e) => {
+                            error!(error = %e, "failed to decode aggregator response frame");
+                            continue;
+                        }
+                    };
                     let mut map = pending_reader.lock().await;
-                    if let Some(tx) = map.remove(&resp.id) {
-                        capsem_core::try_send!("aggregator_oneshot", tx.send(resp));
+                    if let Some(pending) = map.remove(&resp.id) {
+                        let result = match &resp.body {
+                            AggregatorResult::Error { .. } => "error",
+                            _ => "ok",
+                        };
+                        record_aggregator_client_stage_metric(
+                            read_started,
+                            "response_frame_read",
+                            pending.method_kind,
+                            pending.tool_kind,
+                            result,
+                        );
+                        record_aggregator_client_stage_metric(
+                            decode_started,
+                            "response_msgpack_decode",
+                            pending.method_kind,
+                            pending.tool_kind,
+                            result,
+                        );
+                        let route_started = std::time::Instant::now();
+                        capsem_core::try_send!("aggregator_oneshot", pending.tx.send(resp));
+                        record_aggregator_client_stage_metric(
+                            route_started,
+                            "response_route",
+                            pending.method_kind,
+                            pending.tool_kind,
+                            result,
+                        );
                     }
                 }
                 Ok(None) => {
@@ -945,16 +990,69 @@ async fn spawn_mcp_aggregator(
     let pending_writer = Arc::clone(&pending);
     tokio::spawn(async move {
         info!("aggregator writer task started");
-        while let Some((req, resp_tx)) = rx.recv().await {
+        while let Some((req, enqueued_at, resp_tx)) = rx.recv().await {
+            let method_kind = req.method.metric_label();
+            let tool_kind = req.method.tool_kind_label();
+            record_aggregator_client_stage_metric(
+                enqueued_at,
+                "driver_queue_wait",
+                method_kind,
+                tool_kind,
+                "ok",
+            );
             {
                 let mut map = pending_writer.lock().await;
-                map.insert(req.id, resp_tx);
+                map.insert(
+                    req.id,
+                    PendingAggregatorRequest {
+                        tx: resp_tx,
+                        method_kind,
+                        tool_kind,
+                    },
+                );
             }
-            if let Err(e) = write_frame(&mut child_stdin, &req).await {
+            let encode_started = std::time::Instant::now();
+            let payload = match encode_frame_payload(&req) {
+                Ok(payload) => payload,
+                Err(e) => {
+                    record_aggregator_client_stage_metric(
+                        encode_started,
+                        "request_msgpack_encode",
+                        method_kind,
+                        tool_kind,
+                        "error",
+                    );
+                    error!(error = %e, "failed to encode aggregator request frame");
+                    continue;
+                }
+            };
+            record_aggregator_client_stage_metric(
+                encode_started,
+                "request_msgpack_encode",
+                method_kind,
+                tool_kind,
+                "ok",
+            );
+            let write_started = std::time::Instant::now();
+            if let Err(e) = write_frame_payload(&mut child_stdin, &payload).await {
+                record_aggregator_client_stage_metric(
+                    write_started,
+                    "request_frame_write",
+                    method_kind,
+                    tool_kind,
+                    "error",
+                );
                 error!(error = %e, "failed to write aggregator request frame");
                 info!("aggregator writer task ending due to write error");
                 break;
             }
+            record_aggregator_client_stage_metric(
+                write_started,
+                "request_frame_write",
+                method_kind,
+                tool_kind,
+                "ok",
+            );
         }
         info!("aggregator writer task ending (channel closed or break)");
     });
@@ -1292,6 +1390,10 @@ mod tests {
         source.insert("PATH".to_string(), "/usr/bin:/bin".to_string());
         source.insert("RUST_LOG".to_string(), "capsem=debug".to_string());
         source.insert("RUST_BACKTRACE".to_string(), "1".to_string());
+        source.insert(
+            "CAPSEM_METRICS_DEBUG_INTERVAL_SECS".to_string(),
+            "2".to_string(),
+        );
         source.insert("CAPSEM_HOME".to_string(), "/tmp/capsem-home".to_string());
         source.insert(
             "CAPSEM_SERVICE_SETTINGS".to_string(),
@@ -1311,6 +1413,11 @@ mod tests {
             Some("capsem=debug")
         );
         assert_eq!(env.get("RUST_BACKTRACE").map(String::as_str), Some("1"));
+        assert_eq!(
+            env.get("CAPSEM_METRICS_DEBUG_INTERVAL_SECS")
+                .map(String::as_str),
+            Some("2")
+        );
         assert!(!env.contains_key("CAPSEM_USER_CONFIG"));
         assert!(!env.contains_key("CAPSEM_CORP_CONFIG"));
         assert!(!env.contains_key("CAPSEM_TEST_UPSTREAM_OVERRIDES"));

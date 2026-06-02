@@ -28,6 +28,7 @@ const STDIO_CHILD_ENV_ALLOWLIST: &[&str] = &[
     "CAPSEM_TRACE_ID",
     "TRACEPARENT",
     "TRACESTATE",
+    "CAPSEM_METRICS_DEBUG_INTERVAL_SECS",
 ];
 
 fn stdio_child_base_env_from<F>(lookup: F) -> HashMap<String, String>
@@ -648,6 +649,10 @@ mod tests {
         source.insert("CAPSEM_VM_ID".to_string(), "vm-1".to_string());
         source.insert("CAPSEM_TRACE_ID".to_string(), "trace-1".to_string());
         source.insert("TRACEPARENT".to_string(), "00-abc-def-01".to_string());
+        source.insert(
+            "CAPSEM_METRICS_DEBUG_INTERVAL_SECS".to_string(),
+            "2".to_string(),
+        );
         source.insert("CAPSEM_HOME".to_string(), "/tmp/capsem-home".to_string());
         source.insert(
             "CAPSEM_SERVICE_SETTINGS".to_string(),
@@ -670,6 +675,11 @@ mod tests {
         assert_eq!(
             env.get("TRACEPARENT").map(String::as_str),
             Some("00-abc-def-01")
+        );
+        assert_eq!(
+            env.get("CAPSEM_METRICS_DEBUG_INTERVAL_SECS")
+                .map(String::as_str),
+            Some("2")
         );
         assert!(!env.contains_key("CAPSEM_USER_CONFIG"));
         assert!(!env.contains_key("CAPSEM_CORP_CONFIG"));

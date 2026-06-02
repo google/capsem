@@ -190,9 +190,29 @@
           errors. Stage p99 points at endpoint/aggregator dispatch
           (~1.3-1.55ms p99) while parse, telemetry enqueue, and response write
           stay below ~0.12ms p99.
-    - [ ] Decompose process-to-aggregator/local builtin dispatch next:
+    - [x] Decompose process-to-aggregator/local builtin dispatch next:
           aggregator queue wait, msgpack encode/decode, builtin stdio write,
           builtin tool execution, and builtin stdio read.
+      - [x] Add process-driver histograms for channel send, driver queue wait,
+            request MessagePack encode, request frame write, response frame
+            read, response MessagePack decode, and response route.
+      - [x] Add aggregator-subprocess histograms for request frame read,
+            request MessagePack decode, handler queue wait, manager lookup,
+            server RPC, response channel send, response MessagePack encode,
+            and response frame write.
+      - [x] Add builtin tool execution timing for `local_echo` and local
+            builtin HTTP tools, plus metrics debug forwarding from process ->
+            aggregator -> stdio child.
+      - [x] Run attributed `mcp-load` and record which sub-stage owns the
+            `server_rpc`/dispatch p99.
+            Decomposition-recorder run: c=1 265.2 RPS p99 4.1ms, c=10
+            590.8 RPS p99 19.2ms, c=50 586.0 RPS p99 93.9ms, c=200
+            636.4 RPS p99 377.4ms, zero errors. Builtin `local_echo` itself
+            is ~0.015ms average / ~0.02-0.03ms p99; aggregator `server_rpc`
+            to the builtin stdio peer is ~0.68-0.69ms average / ~0.86-0.89ms
+            p99 and response frame write is ~0.19-0.20ms average /
+            ~0.25-0.27ms p99. Next implementation bet: collapse the local
+            builtin stdio/RMCP round trip for safe builtin tools.
   - [ ] Land only trace-backed RPS speedups, with before/after percentages by
         lane and canonical `just benchmark` artifacts.
 - [ ] H07: docs, changelog, release gate.

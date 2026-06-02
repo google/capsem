@@ -31,18 +31,8 @@ where
     W: AsyncWriteExt + Unpin,
     T: Serialize,
 {
-    let payload = rmp_serde::to_vec_named(msg).context("msgpack serialize")?;
-    let len = payload.len() as u32;
-    writer
-        .write_all(&len.to_be_bytes())
-        .await
-        .context("write frame length")?;
-    writer
-        .write_all(&payload)
-        .await
-        .context("write frame payload")?;
-    writer.flush().await.context("flush frame")?;
-    Ok(())
+    let payload = encode_frame_payload(msg)?;
+    write_frame_payload(writer, &payload).await
 }
 
 /// Read a length-prefixed msgpack frame. Returns None on EOF.
@@ -50,6 +40,53 @@ pub async fn read_frame<R, T>(reader: &mut R) -> Result<Option<T>>
 where
     R: AsyncReadExt + Unpin,
     T: for<'de> Deserialize<'de>,
+{
+    let Some(buf) = read_frame_payload(reader).await? else {
+        return Ok(None);
+    };
+    Ok(Some(decode_frame_payload(&buf)?))
+}
+
+/// Serialize a frame payload without writing it. Exposed so hot paths can
+/// time MessagePack encode separately from pipe write latency.
+pub fn encode_frame_payload<T>(msg: &T) -> Result<Vec<u8>>
+where
+    T: Serialize,
+{
+    rmp_serde::to_vec_named(msg).context("msgpack serialize")
+}
+
+/// Deserialize a frame payload without reading it. Exposed so hot paths can
+/// time MessagePack decode separately from pipe read latency.
+pub fn decode_frame_payload<T>(buf: &[u8]) -> Result<T>
+where
+    T: for<'de> Deserialize<'de>,
+{
+    rmp_serde::from_slice(buf).context("msgpack deserialize")
+}
+
+/// Write a pre-serialized length-prefixed MessagePack frame.
+pub async fn write_frame_payload<W>(writer: &mut W, payload: &[u8]) -> Result<()>
+where
+    W: AsyncWriteExt + Unpin,
+{
+    let len = payload.len() as u32;
+    writer
+        .write_all(&len.to_be_bytes())
+        .await
+        .context("write frame length")?;
+    writer
+        .write_all(payload)
+        .await
+        .context("write frame payload")?;
+    writer.flush().await.context("flush frame")?;
+    Ok(())
+}
+
+/// Read a raw length-prefixed MessagePack payload.
+pub async fn read_frame_payload<R>(reader: &mut R) -> Result<Option<Vec<u8>>>
+where
+    R: AsyncReadExt + Unpin,
 {
     let mut len_buf = [0u8; 4];
     match reader.read_exact(&mut len_buf).await {
@@ -66,8 +103,7 @@ where
         .read_exact(&mut buf)
         .await
         .context("read frame payload")?;
-    let msg: T = rmp_serde::from_slice(&buf).context("msgpack deserialize")?;
-    Ok(Some(msg))
+    Ok(Some(buf))
 }
 
 // ── Request (process -> aggregator) ─────────────────────────────────
@@ -139,7 +175,7 @@ pub enum AggregatorMethod {
 }
 
 impl AggregatorMethod {
-    fn metric_label(&self) -> &'static str {
+    pub fn metric_label(&self) -> &'static str {
         match self {
             Self::ListServers => "list_servers",
             Self::ListTools => "list_tools",
@@ -153,7 +189,7 @@ impl AggregatorMethod {
         }
     }
 
-    fn tool_kind_label(&self) -> &'static str {
+    pub fn tool_kind_label(&self) -> &'static str {
         match self {
             Self::CallTool { name, .. } | Self::GetPrompt { name, .. } => {
                 namespaced_metric_kind(name)
@@ -164,7 +200,7 @@ impl AggregatorMethod {
     }
 }
 
-fn namespaced_metric_kind(name: &str) -> &'static str {
+pub fn namespaced_metric_kind(name: &str) -> &'static str {
     match name {
         "local__echo" => "local_echo",
         n if n.starts_with("local__snapshots_") => "local_snapshot",
@@ -173,6 +209,53 @@ fn namespaced_metric_kind(name: &str) -> &'static str {
         n if n.contains("__") || n.starts_with("capsem://") => "external",
         _ => "unknown",
     }
+}
+
+pub const MCP_AGGREGATOR_CLIENT_STAGE_MS: &str = "mcp.aggregator_client_stage_duration_ms";
+pub const MCP_AGGREGATOR_STAGE_MS: &str = "mcp.aggregator_stage_duration_ms";
+pub const MCP_BUILTIN_TOOL_DURATION_MS: &str = "mcp.builtin_tool_duration_ms";
+
+pub fn record_aggregator_client_stage_metric(
+    started: Instant,
+    stage: &'static str,
+    method_kind: &'static str,
+    tool_kind: &'static str,
+    result: &'static str,
+) {
+    ::metrics::histogram!(
+        MCP_AGGREGATOR_CLIENT_STAGE_MS,
+        "stage" => stage,
+        "method_kind" => method_kind,
+        "tool_kind" => tool_kind,
+        "result" => result,
+    )
+    .record(started.elapsed().as_secs_f64() * 1000.0);
+}
+
+pub fn record_aggregator_stage_metric(
+    started: Instant,
+    stage: &'static str,
+    method_kind: &'static str,
+    tool_kind: &'static str,
+    result: &'static str,
+) {
+    ::metrics::histogram!(
+        MCP_AGGREGATOR_STAGE_MS,
+        "stage" => stage,
+        "method_kind" => method_kind,
+        "tool_kind" => tool_kind,
+        "result" => result,
+    )
+    .record(started.elapsed().as_secs_f64() * 1000.0);
+}
+
+pub fn record_builtin_tool_metric(started: Instant, tool_kind: &'static str, result: &'static str) {
+    ::metrics::histogram!(
+        MCP_BUILTIN_TOOL_DURATION_MS,
+        "tool_kind" => tool_kind,
+        "result" => result,
+    )
+    .record(started.elapsed().as_secs_f64() * 1000.0);
 }
 
 fn record_aggregator_request_metric(
@@ -249,7 +332,11 @@ pub struct AggregatorServerStatus {
 // ── Client (used by capsem-process and MITM MCP endpoint) ───────────
 
 /// Internal message sent through the client's mpsc channel.
-type ClientMessage = (AggregatorRequest, oneshot::Sender<AggregatorResponse>);
+type ClientMessage = (
+    AggregatorRequest,
+    Instant,
+    oneshot::Sender<AggregatorResponse>,
+);
 
 static NEXT_REQ_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -287,10 +374,26 @@ impl AggregatorClient {
         let req = AggregatorRequest { id, method };
         let (resp_tx, resp_rx) = oneshot::channel();
 
-        if self.tx.send((req, resp_tx)).await.is_err() {
+        let send_started = Instant::now();
+        let enqueued_at = Instant::now();
+        if self.tx.send((req, enqueued_at, resp_tx)).await.is_err() {
+            record_aggregator_client_stage_metric(
+                send_started,
+                "channel_send",
+                method_kind,
+                tool_kind,
+                "channel_closed",
+            );
             record_aggregator_request_metric(started, method_kind, tool_kind, "channel_closed");
             return Err(anyhow::anyhow!("aggregator channel closed"));
         }
+        record_aggregator_client_stage_metric(
+            send_started,
+            "channel_send",
+            method_kind,
+            tool_kind,
+            "ok",
+        );
 
         let resp = match resp_rx.await {
             Ok(resp) => resp,
@@ -580,7 +683,7 @@ mod tests {
 
         let (client, mut rx) = AggregatorClient::channel(4);
         tokio::spawn(async move {
-            while let Some((req, resp_tx)) = rx.recv().await {
+            while let Some((req, _enqueued_at, resp_tx)) = rx.recv().await {
                 let _ = resp_tx.send(AggregatorResponse {
                     id: req.id,
                     body: AggregatorResult::CallResult {

@@ -6,13 +6,8 @@ use metrics_util::debugging::{DebugValue, DebuggingRecorder, Snapshotter};
 use tracing::{info, warn};
 
 const ENV_INTERVAL_SECS: &str = "CAPSEM_METRICS_DEBUG_INTERVAL_SECS";
-const LOG_TARGET: &str = "capsem_process::metrics_debug";
-const MCP_METRIC_NAMES: &[&str] = &[
-    "mitm.mcp_stage_duration_ms",
-    "mitm.mcp_endpoint_dispatch_ms",
-    "mitm.mcp_aggregator_request_ms",
-    capsem_core::mcp::aggregator::MCP_AGGREGATOR_CLIENT_STAGE_MS,
-];
+const LOG_TARGET: &str = "capsem_mcp_builtin::metrics_debug";
+const MCP_METRIC_NAMES: &[&str] = &[capsem_core::mcp::aggregator::MCP_BUILTIN_TOOL_DURATION_MS];
 
 pub(crate) struct MetricsDebugGuard {
     stop_tx: Option<Sender<()>>,
@@ -34,7 +29,7 @@ impl MetricsDebugGuard {
 
         let (stop_tx, stop_rx) = mpsc::channel();
         let handle = thread::Builder::new()
-            .name("capsem-metrics-debug".into())
+            .name("capsem-builtin-metrics-debug".into())
             .spawn(move || metrics_debug_loop(snapshotter, interval, stop_rx))
             .ok()?;
         info!(
@@ -96,8 +91,6 @@ fn emit_mcp_metric_snapshot(snapshotter: &Snapshotter) {
         info!(
             target: LOG_TARGET,
             metric = name,
-            stage = label_value(&key, "stage").unwrap_or("none"),
-            method_kind = label_value(&key, "method_kind").unwrap_or("unknown"),
             tool_kind = label_value(&key, "tool_kind").unwrap_or("unknown"),
             result = label_value(&key, "result").unwrap_or("unknown"),
             count = summary.count,

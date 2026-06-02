@@ -20,6 +20,8 @@
 //! filesystem, or service IPC. It only has network access to reach
 //! external MCP servers.
 
+mod metrics_debug;
+
 use std::sync::{Arc, RwLock};
 
 use anyhow::{Context, Result};
@@ -30,6 +32,12 @@ use tracing::{debug, error, info, warn};
 use capsem_core::mcp::aggregator::*;
 use capsem_core::mcp::server_manager::McpServerManager;
 use capsem_core::mcp::types::McpServerDef;
+
+struct ResponseEnvelope {
+    response: AggregatorResponse,
+    method_kind: &'static str,
+    tool_kind: &'static str,
+}
 
 #[derive(Parser, Debug)]
 #[command(name = "capsem-mcp-aggregator", about = "MCP aggregator subprocess")]
@@ -54,6 +62,7 @@ async fn main() -> Result<()> {
         sink: capsem_core::telemetry::LogSink::Stderr,
         default_filter: "capsem_mcp_aggregator=info",
     })?;
+    let _metrics_debug_guard = metrics_debug::MetricsDebugGuard::maybe_start();
 
     // Root span: every log inherits `vm_id` and `trace_id` as
     // structured fields, so lines in mcp-aggregator.stderr.log can be
@@ -122,21 +131,84 @@ async fn main() -> Result<()> {
     // is fine. Channel depth 256 is large enough that handlers don't normally
     // block on send, small enough that a stuck writer creates backpressure on
     // the reader instead of growing memory unbounded.
-    let (resp_tx, mut resp_rx) = mpsc::channel::<AggregatorResponse>(256);
+    let (resp_tx, mut resp_rx) = mpsc::channel::<ResponseEnvelope>(256);
 
     let writer_task = tokio::spawn(async move {
-        while let Some(resp) = resp_rx.recv().await {
-            if let Err(e) = write_frame(&mut stdout, &resp).await {
+        while let Some(envelope) = resp_rx.recv().await {
+            let result = response_result(&envelope.response);
+            let encode_started = std::time::Instant::now();
+            let payload = match encode_frame_payload(&envelope.response) {
+                Ok(payload) => payload,
+                Err(e) => {
+                    record_aggregator_stage_metric(
+                        encode_started,
+                        "response_msgpack_encode",
+                        envelope.method_kind,
+                        envelope.tool_kind,
+                        "error",
+                    );
+                    error!(error = %e, "failed to encode response frame");
+                    continue;
+                }
+            };
+            record_aggregator_stage_metric(
+                encode_started,
+                "response_msgpack_encode",
+                envelope.method_kind,
+                envelope.tool_kind,
+                result,
+            );
+            let write_started = std::time::Instant::now();
+            if let Err(e) = write_frame_payload(&mut stdout, &payload).await {
+                record_aggregator_stage_metric(
+                    write_started,
+                    "response_frame_write",
+                    envelope.method_kind,
+                    envelope.tool_kind,
+                    "error",
+                );
                 error!(error = %e, "failed to write response frame");
                 break;
             }
+            record_aggregator_stage_metric(
+                write_started,
+                "response_frame_write",
+                envelope.method_kind,
+                envelope.tool_kind,
+                result,
+            );
         }
     });
 
     let reader_result: Result<()> = async {
         loop {
-            let req: AggregatorRequest = match read_frame(&mut stdin).await {
-                Ok(Some(r)) => r,
+            let read_started = std::time::Instant::now();
+            let req: AggregatorRequest = match read_frame_payload(&mut stdin).await {
+                Ok(Some(payload)) => {
+                    let decode_started = std::time::Instant::now();
+                    let req = match decode_frame_payload::<AggregatorRequest>(&payload) {
+                        Ok(req) => req,
+                        Err(e) => {
+                            error!(error = %e, "failed to decode request frame");
+                            continue;
+                        }
+                    };
+                    record_aggregator_stage_metric(
+                        read_started,
+                        "request_frame_read",
+                        req.method.metric_label(),
+                        req.method.tool_kind_label(),
+                        "ok",
+                    );
+                    record_aggregator_stage_metric(
+                        decode_started,
+                        "request_msgpack_decode",
+                        req.method.metric_label(),
+                        req.method.tool_kind_label(),
+                        "ok",
+                    );
+                    req
+                }
                 Ok(None) => {
                     info!("stdin closed, shutting down");
                     return Ok(());
@@ -151,9 +223,13 @@ async fn main() -> Result<()> {
             // out cleanly without depending on a spawned handler completing.
             if matches!(req.method, AggregatorMethod::Shutdown) {
                 let _ = resp_tx
-                    .send(AggregatorResponse {
-                        id: req.id,
-                        body: AggregatorResult::Ok { ok: true },
+                    .send(ResponseEnvelope {
+                        response: AggregatorResponse {
+                            id: req.id,
+                            body: AggregatorResult::Ok { ok: true },
+                        },
+                        method_kind: "shutdown",
+                        tool_kind: "none",
                     })
                     .await;
                 info!("shutdown acknowledged, exiting");
@@ -162,10 +238,45 @@ async fn main() -> Result<()> {
 
             let mgr_h = Arc::clone(&manager);
             let tx_h = resp_tx.clone();
+            let handler_enqueued_at = std::time::Instant::now();
             tokio::spawn(async move {
-                let resp = handle_request(&mgr_h, req).await;
-                if tx_h.send(resp).await.is_err() {
+                let method_kind = req.method.metric_label();
+                let tool_kind = req.method.tool_kind_label();
+                record_aggregator_stage_metric(
+                    handler_enqueued_at,
+                    "handler_queue_wait",
+                    method_kind,
+                    tool_kind,
+                    "ok",
+                );
+                let resp = handle_request(&mgr_h, req, method_kind, tool_kind).await;
+                let send_started = std::time::Instant::now();
+                let result = response_result(&resp);
+                if tx_h
+                    .send(ResponseEnvelope {
+                        response: resp,
+                        method_kind,
+                        tool_kind,
+                    })
+                    .await
+                    .is_err()
+                {
+                    record_aggregator_stage_metric(
+                        send_started,
+                        "response_channel_send",
+                        method_kind,
+                        tool_kind,
+                        "channel_closed",
+                    );
                     debug!("aggregator writer channel closed; dropping response");
+                } else {
+                    record_aggregator_stage_metric(
+                        send_started,
+                        "response_channel_send",
+                        method_kind,
+                        tool_kind,
+                        result,
+                    );
                 }
             });
         }
@@ -191,6 +302,8 @@ async fn main() -> Result<()> {
 async fn handle_request(
     manager: &Arc<RwLock<McpServerManager>>,
     req: AggregatorRequest,
+    method_kind: &'static str,
+    tool_kind: &'static str,
 ) -> AggregatorResponse {
     let id = req.id;
 
@@ -267,25 +380,37 @@ async fn handle_request(
             // guard before awaiting the rmcp RPC. Concurrent CallTool
             // handlers proceed in parallel; the read lock never crosses an
             // `.await`.
+            let lookup_started = std::time::Instant::now();
             let dispatch = manager
                 .read()
                 .expect("manager rwlock poisoned")
                 .dispatch_call_tool(&name, arguments);
+            record_aggregator_stage_metric(
+                lookup_started,
+                "manager_lookup",
+                method_kind,
+                tool_kind,
+                if dispatch.is_ok() { "ok" } else { "error" },
+            );
             match dispatch {
-                Ok(fut) => match fut.await {
-                    Ok(resp) => AggregatorResponse {
-                        id,
-                        body: AggregatorResult::CallResult {
-                            result: resp.result.unwrap_or(serde_json::Value::Null),
+                Ok(fut) => {
+                    let rpc_started = std::time::Instant::now();
+                    match fut.await {
+                        Ok(resp) => AggregatorResponse {
+                            id,
+                            body: AggregatorResult::CallResult {
+                                result: resp.result.unwrap_or(serde_json::Value::Null),
+                            },
                         },
-                    },
-                    Err(e) => AggregatorResponse {
-                        id,
-                        body: AggregatorResult::Error {
-                            error: e.to_string(),
+                        Err(e) => AggregatorResponse {
+                            id,
+                            body: AggregatorResult::Error {
+                                error: e.to_string(),
+                            },
                         },
-                    },
-                },
+                    }
+                    .tap_record_rpc(rpc_started, method_kind, tool_kind)
+                }
                 Err(e) => AggregatorResponse {
                     id,
                     body: AggregatorResult::Error {
@@ -296,25 +421,37 @@ async fn handle_request(
         }
 
         AggregatorMethod::ReadResource { uri } => {
+            let lookup_started = std::time::Instant::now();
             let dispatch = manager
                 .read()
                 .expect("manager rwlock poisoned")
                 .dispatch_read_resource(&uri);
+            record_aggregator_stage_metric(
+                lookup_started,
+                "manager_lookup",
+                method_kind,
+                tool_kind,
+                if dispatch.is_ok() { "ok" } else { "error" },
+            );
             match dispatch {
-                Ok(fut) => match fut.await {
-                    Ok(resp) => AggregatorResponse {
-                        id,
-                        body: AggregatorResult::CallResult {
-                            result: resp.result.unwrap_or(serde_json::Value::Null),
+                Ok(fut) => {
+                    let rpc_started = std::time::Instant::now();
+                    match fut.await {
+                        Ok(resp) => AggregatorResponse {
+                            id,
+                            body: AggregatorResult::CallResult {
+                                result: resp.result.unwrap_or(serde_json::Value::Null),
+                            },
                         },
-                    },
-                    Err(e) => AggregatorResponse {
-                        id,
-                        body: AggregatorResult::Error {
-                            error: e.to_string(),
+                        Err(e) => AggregatorResponse {
+                            id,
+                            body: AggregatorResult::Error {
+                                error: e.to_string(),
+                            },
                         },
-                    },
-                },
+                    }
+                    .tap_record_rpc(rpc_started, method_kind, tool_kind)
+                }
                 Err(e) => AggregatorResponse {
                     id,
                     body: AggregatorResult::Error {
@@ -325,25 +462,37 @@ async fn handle_request(
         }
 
         AggregatorMethod::GetPrompt { name, arguments } => {
+            let lookup_started = std::time::Instant::now();
             let dispatch = manager
                 .read()
                 .expect("manager rwlock poisoned")
                 .dispatch_get_prompt(&name, arguments);
+            record_aggregator_stage_metric(
+                lookup_started,
+                "manager_lookup",
+                method_kind,
+                tool_kind,
+                if dispatch.is_ok() { "ok" } else { "error" },
+            );
             match dispatch {
-                Ok(fut) => match fut.await {
-                    Ok(resp) => AggregatorResponse {
-                        id,
-                        body: AggregatorResult::CallResult {
-                            result: resp.result.unwrap_or(serde_json::Value::Null),
+                Ok(fut) => {
+                    let rpc_started = std::time::Instant::now();
+                    match fut.await {
+                        Ok(resp) => AggregatorResponse {
+                            id,
+                            body: AggregatorResult::CallResult {
+                                result: resp.result.unwrap_or(serde_json::Value::Null),
+                            },
                         },
-                    },
-                    Err(e) => AggregatorResponse {
-                        id,
-                        body: AggregatorResult::Error {
-                            error: e.to_string(),
+                        Err(e) => AggregatorResponse {
+                            id,
+                            body: AggregatorResult::Error {
+                                error: e.to_string(),
+                            },
                         },
-                    },
-                },
+                    }
+                    .tap_record_rpc(rpc_started, method_kind, tool_kind)
+                }
                 Err(e) => AggregatorResponse {
                     id,
                     body: AggregatorResult::Error {
@@ -400,5 +549,39 @@ async fn handle_request(
                 body: AggregatorResult::Ok { ok: true },
             }
         }
+    }
+}
+
+fn response_result(resp: &AggregatorResponse) -> &'static str {
+    match &resp.body {
+        AggregatorResult::Error { .. } => "error",
+        _ => "ok",
+    }
+}
+
+trait RecordRpcStage {
+    fn tap_record_rpc(
+        self,
+        started: std::time::Instant,
+        method_kind: &'static str,
+        tool_kind: &'static str,
+    ) -> Self;
+}
+
+impl RecordRpcStage for AggregatorResponse {
+    fn tap_record_rpc(
+        self,
+        started: std::time::Instant,
+        method_kind: &'static str,
+        tool_kind: &'static str,
+    ) -> Self {
+        record_aggregator_stage_metric(
+            started,
+            "server_rpc",
+            method_kind,
+            tool_kind,
+            response_result(&self),
+        );
+        self
     }
 }

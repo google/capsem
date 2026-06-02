@@ -18,6 +18,7 @@ rmp-serde.workspace = true
 anyhow.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+metrics-util = "0.19"
 reqwest.workspace = true
 clap = { workspace = true, features = ["derive"] }
 capsem-guard = { path = "../capsem-guard" }

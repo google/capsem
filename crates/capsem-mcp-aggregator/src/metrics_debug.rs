@@ -6,13 +6,8 @@ use metrics_util::debugging::{DebugValue, DebuggingRecorder, Snapshotter};
 use tracing::{info, warn};
 
 const ENV_INTERVAL_SECS: &str = "CAPSEM_METRICS_DEBUG_INTERVAL_SECS";
-const LOG_TARGET: &str = "capsem_process::metrics_debug";
-const MCP_METRIC_NAMES: &[&str] = &[
-    "mitm.mcp_stage_duration_ms",
-    "mitm.mcp_endpoint_dispatch_ms",
-    "mitm.mcp_aggregator_request_ms",
-    capsem_core::mcp::aggregator::MCP_AGGREGATOR_CLIENT_STAGE_MS,
-];
+const LOG_TARGET: &str = "capsem_mcp_aggregator::metrics_debug";
+const MCP_METRIC_NAMES: &[&str] = &[capsem_core::mcp::aggregator::MCP_AGGREGATOR_STAGE_MS];
 
 pub(crate) struct MetricsDebugGuard {
     stop_tx: Option<Sender<()>>,
@@ -34,7 +29,7 @@ impl MetricsDebugGuard {
 
         let (stop_tx, stop_rx) = mpsc::channel();
         let handle = thread::Builder::new()
-            .name("capsem-metrics-debug".into())
+            .name("capsem-aggregator-metrics-debug".into())
             .spawn(move || metrics_debug_loop(snapshotter, interval, stop_rx))
             .ok()?;
         info!(

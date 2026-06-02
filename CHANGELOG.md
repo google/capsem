@@ -31,6 +31,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   roughly 770-800 RPS for deterministic `local__echo`, with or without the
   debug recorder. Stage histograms show endpoint/aggregator dispatch dominates
   while parse, telemetry enqueue, and response write stay sub-0.12ms p99.
+- Added H09 MCP dispatch decomposition metrics across the process driver,
+  aggregator subprocess, and builtin server. The new low-cardinality
+  histograms split client channel send, driver queue wait, MessagePack
+  encode/decode, frame read/write, aggregator handler queue, manager lookup,
+  server RPC, response channel send, and builtin tool execution. The same
+  `CAPSEM_METRICS_DEBUG_INTERVAL_SECS` knob now reaches the aggregator and
+  stdio builtin child so live VM proof can compare those stages directly.
+- Recorded the H09 MCP decomposition proof: the heavier multi-process
+  diagnostic run reached 265/591/586/636 RPS at concurrency 1/10/50/200 with
+  zero errors. The builtin `local__echo` body is effectively free
+  (~0.015ms average), while aggregator `server_rpc` to the builtin stdio peer
+  owns roughly 0.68-0.69ms average and 0.86-0.89ms p99, making local builtin
+  stdio/RMCP collapse the next trace-backed RPS implementation target.
 - Added OTel-ready MCP echo-path timing histograms for the H09 RPS
   investigation: framed MCP stage timing, MITM endpoint dispatch timing, and
   process-to-aggregator request timing. Labels are bounded by method kind,
