@@ -15,7 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   MCP policy blocks still log canonical `security_events`. The runtime-engine
   install log now records the event-family scope. Scoped Linux direct-vsock
   `mcp-load` improved from 593.4/3758.0/5630.6/5749.0 RPS to
-  2188.2/10163.2/13934.4/13935.2 RPS at c=1/10/50/200, zero errors.
+  2188.2/10163.2/13934.4/13935.2 RPS at c=1/10/50/200, zero errors. This
+  routing assumes effective MCP rules remain enforced by the MCP policy layer
+  rather than converted into runtime CEL; any new security-engine merge must
+  reassess the event-family contract and ensure MCP-capable rules advertise
+  `Mcp` or all-family scope before preserving this optimization.
 - Changed `DbWriter` resolved security-event inserts to skip stale child-row
   cleanup deletes on brand-new event IDs while retaining the cleanup path for
   repeated event IDs. This reduces per-event SQLite work on hot audit paths
