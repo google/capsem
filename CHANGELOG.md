@@ -14,6 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   speedups. The sprint requires request-shape/timing counters, status/OTel
   visibility, real VM counter proof, and canonical `just benchmark` artifacts
   with before/after percentages.
+- Recorded the initial H08 artifact baseline: canonical Linux scratch
+  sequential read is 0.08x macOS and 0.046x Linux host-native, while the active
+  compressed EROFS DAX candidate already lifts rootfs random/small-file lanes
+  well beyond the old canonical Linux rootfs artifact. HTTP RPS is 0.83x macOS
+  and proxy throughput is 0.93x macOS, so disk remains the first-order gap.
 - Added an opt-in Linux KVM EROFS DAX experiment: `CAPSEM_KVM_ROOTFS_PMEM_DAX=1`
   maps the read-only rootfs image through virtio-pmem, `capsem.rootfs=erofs-dax`
   mounts `/dev/pmem0` with `-o dax`, and the rootfs-format grid records it with

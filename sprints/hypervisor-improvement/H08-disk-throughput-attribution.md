@@ -70,6 +70,66 @@ hypervisor implementation targets.
 6. Benchmark the change versus the immediately previous accepted artifact.
 7. Repeat for at most two more trace-backed improvements before reassessing.
 
+## Initial Baseline
+
+Recorded on 2026-06-02 from committed benchmark artifacts before new H08 code:
+
+- Canonical Linux artifact:
+  `benchmarks/capsem-bench/data_1.2.1780320819_x86_64.json`, source commit
+  `b834d5540a633c05616a3e2a1ce65f29e20aa5bf`, recorded dirty.
+- Canonical macOS artifact:
+  `benchmarks/capsem-bench/data_1.2.1780103109_arm64.json`.
+- Active DAX rootfs candidate artifact:
+  `benchmarks/kvm-rootfs-format-grid/data_1.2.1780320819_x86_64_1780402733.json`.
+
+Canonical Linux versus macOS:
+
+| Lane | Linux | macOS | Ratio |
+| --- | ---: | ---: | ---: |
+| Scratch seq read | 320.9 MB/s | 4043.0 MB/s | 0.08x |
+| Scratch rand read | 7388 IOPS | 89809 IOPS | 0.08x |
+| Rootfs seq read | 156.6 MB/s | 945.3 MB/s | 0.17x |
+| Rootfs rand read | 2686 IOPS | 8734 IOPS | 0.31x |
+| Rootfs large-binary cold read | 162.3 MB/s | 977.3 MB/s | 0.17x |
+| Rootfs small-JS reads | 88791 ops/s | 399176 ops/s | 0.22x |
+| Rootfs metadata stat | 58674 stats/s | 199915 stats/s | 0.29x |
+| HTTP RPS | 54.8 rps | 65.7 rps | 0.83x |
+| Proxy throughput | 17.43 Mb/s | 18.69 Mb/s | 0.93x |
+
+Canonical Linux VM versus Linux host-native:
+
+| Lane | VM | Host | Ratio |
+| --- | ---: | ---: | ---: |
+| Scratch seq read | 320.9 MB/s | 7048.0 MB/s | 0.046x |
+| Scratch rand read | 7388 IOPS | 341675 IOPS | 0.022x |
+| Scratch seq write | 155.1 MB/s | 441.2 MB/s | 0.35x |
+| Scratch rand write | 2780 IOPS | 691 IOPS | 4.03x |
+
+Active compressed EROFS DAX candidate, same Linux host:
+
+| Lane | DAX candidate |
+| --- | ---: |
+| Rootfs seq read | 259.5 MB/s |
+| Rootfs rand read | 22427 IOPS |
+| Rootfs large-binary cold read | 332.6 MB/s |
+| Rootfs small-JS reads | 564103 ops/s |
+| Rootfs metadata stat | 121746 stats/s |
+| Python startup mean | 11.0 ms |
+| Node startup mean | 156.5 ms |
+| Claude startup mean | 745.0 ms |
+| Gemini startup mean | 2308.1 ms |
+| Codex startup mean | 606.7 ms |
+
+Interpretation:
+
+- The DAX rootfs candidate already fixed much of the rootfs random/small-file
+  problem versus the old canonical Linux artifact.
+- The worst remaining disk gap is writable/fallback virtio-blk throughput:
+  scratch read is only 0.08x macOS and 0.046x host-native.
+- RPS is weaker than macOS, but not in the same class as disk throughput; keep
+  RPS visible and revisit it after block/path attribution unless traces show a
+  direct disk/workspace dependency.
+
 ## Acceptance Gates
 
 - Every claimed improvement reports before/after percentages and identifies

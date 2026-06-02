@@ -71,6 +71,12 @@
   - [ ] Baseline accepted DAX rootfs, fallback block rootfs, writable scratch,
         VirtioFS, and RPS-adjacent lanes against the current committed
         artifact.
+    - [x] Initial artifact baseline recorded in
+          `H08-disk-throughput-attribution.md`: canonical Linux scratch seq
+          read is 0.08x macOS and 0.046x host-native; active compressed EROFS
+          DAX rootfs is already far faster than the old canonical Linux rootfs
+          on random/small-file/metadata lanes; HTTP RPS is 0.83x macOS and
+          proxy throughput is 0.93x macOS.
   - [ ] Add request-shape and timing counters for virtio-blk queue notify,
         drain, syscall, completion, used-ring publication, and interrupt
         decisions.
