@@ -125,6 +125,19 @@
         ownership, and rootfs/virtiofs-facing reads, then compare each path to
         the matching Capsem implementation and turn transferable differences
         into measured implementation slices.
+- [ ] H09: network and RPS attribution.
+  - [x] Create the focused H09 sprint slice so weak RPS is not left as a vague
+        H08 follow-up.
+  - [ ] Refresh canonical HTTP, proxy throughput, endpoint-latency,
+        security-engine, and host-native artifacts after the working Linux
+        install.
+  - [ ] Split RPS-facing paths into guest network, vsock bridge, MITM/proxy,
+        DNS, security-engine evaluation, service/gateway endpoints, TUI/status
+        polling, and workspace/disk dependencies.
+  - [ ] Add or expose low-cardinality counters for the missing RPS lanes and
+        prove them in a real VM run.
+  - [ ] Land only trace-backed RPS speedups, with before/after percentages by
+        lane and canonical `just benchmark` artifacts.
 - [ ] H07: docs, changelog, release gate.
 
 ## Notes

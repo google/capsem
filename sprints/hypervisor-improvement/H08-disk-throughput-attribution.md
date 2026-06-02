@@ -182,8 +182,9 @@ throughput attribution for writable/fallback virtio-blk and the workspace path.
   faster.
 - Revisit Direct I/O only for writable scratch and fallback rootfs-over-blk,
   separately from the EROFS DAX pmem path.
-- Park CPU/SMP, memory, and RPS follow-up slices with concrete metrics after
-  disk attribution identifies which subsystem still dominates.
+- Park CPU/SMP and memory follow-up slices with concrete metrics after disk
+  attribution identifies which subsystem still dominates. RPS now has its own
+  H09 attribution slice so it is not tracked only as a vague follow-up.
 
 ## 2026-06-02 Installed Build Handoff
 
@@ -203,5 +204,5 @@ Manual-test handoff is complete on Linux:
   and cache duplication between host and guest.
 - CPU/SMP: vCPU exit reasons, host CPU burn per disk request, scheduler
   placement, and pause/resume lifecycle control.
-- RPS: MITM/proxy request throughput, TUI/status polling overhead, and any
-  disk/workspace dependency in serving paths.
+- RPS: tracked explicitly in
+  [H09 - Network And RPS Attribution](H09-network-rps-attribution.md).
