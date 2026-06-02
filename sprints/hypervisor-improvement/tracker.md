@@ -1084,3 +1084,7 @@
   showed only +1.5%/+0.0%/+0.7%/+0.7% RPS at c=1/10/50/200; it improved c=200
   p99 by about 10.6% but would make the diagnostic less representative without
   improving real external MCP or policy-heavy paths.
+  A per-connection audit worker was also rejected: it moved RPS to
+  562.6/781.4/811.8/840.6 (-4.6%/-3.9%/+0.7%/+2.3%) and worsened c=200 p99 to
+  363.3ms, so post-response audit construction/task fanout is not the simple
+  limiter.

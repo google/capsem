@@ -319,6 +319,13 @@ transport/dispatch bottleneck to trace next, not an upstream network failure.
   p99 341.1ms -> 304.8ms, but it is too local to the diagnostic benchmark and
   does not attack real external MCP tools or policy-heavy paths. Do not pursue
   local-echo-only bypasses as the next H09 implementation target.
+- Rejected experiment: a per-connection MCP audit worker that moved successful
+  response audit construction/writes off the request task was tested but not
+  accepted. Same-run direct-vsock RPS changed from 588.0/812.8/806.0/822.8 to
+  562.6/781.4/811.8/840.6 at c=1/10/50/200 (-4.6%/-3.9%/+0.7%/+2.3%), and
+  c=200 p99 worsened 341.1ms -> 363.3ms. The shape suggests the bottleneck is
+  not simply "request tasks keep doing audit work after response enqueue."
+  Leave audit-worker fanout alone until a stronger trace points there.
 
 ## First Questions
 
