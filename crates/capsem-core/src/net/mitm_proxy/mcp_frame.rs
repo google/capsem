@@ -428,27 +428,17 @@ where
                     McpEnforcementAction::Allow => response,
                 };
                 let policy_fields = McpCallEnforcementFields::from(&final_decision);
-                log_mcp_call_with_policy(
-                    &db_h,
-                    &dispatch_request,
-                    &response,
+                let send_started = Instant::now();
+                let send_result = send_response_with_labels(
+                    &tx_h,
+                    frame.stream_id,
                     &process_name,
-                    duration_ms,
-                    policy_fields,
-                    None,
+                    &response,
+                    method_kind,
+                    tool_kind,
                 )
                 .await;
-                let send_started = Instant::now();
-                if let Err(e) =
-                    send_response_with_labels(
-                        &tx_h,
-                        frame.stream_id,
-                        &process_name,
-                        &response,
-                        method_kind,
-                        tool_kind,
-                    )
-                    .await
+                if let Err(e) = send_result
                 {
                     record_mcp_stage_labels(
                         "response_enqueue",
@@ -467,6 +457,17 @@ where
                         send_started,
                     );
                 }
+                drop(_permit);
+                log_mcp_call_with_policy(
+                    &db_h,
+                    &dispatch_request,
+                    &response,
+                    &process_name,
+                    duration_ms,
+                    policy_fields,
+                    None,
+                )
+                .await;
             });
         }
     }

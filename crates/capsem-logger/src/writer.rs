@@ -355,9 +355,10 @@ impl DbWriter {
         let (tx, rx) = tokio::sync::mpsc::channel(capacity);
         let db_path = path.to_path_buf();
 
+        let writer_db_path = db_path.clone();
         let join_handle = std::thread::Builder::new()
             .name("capsem-db-writer".into())
-            .spawn(move || writer_loop(conn, rx))
+            .spawn(move || writer_loop(conn, rx, writer_db_path))
             .expect("failed to spawn db writer thread");
 
         Ok(Self {
@@ -378,9 +379,10 @@ impl DbWriter {
 
         let (tx, rx) = tokio::sync::mpsc::channel(capacity);
 
+        let writer_db_path = PathBuf::from(":memory:");
         let join_handle = std::thread::Builder::new()
             .name("capsem-db-writer".into())
-            .spawn(move || writer_loop(conn, rx))
+            .spawn(move || writer_loop(conn, rx, writer_db_path))
             .expect("failed to spawn db writer thread");
 
         Ok(Self {
@@ -1188,7 +1190,7 @@ impl Drop for DbWriter {
 }
 
 /// The writer thread loop: block-then-drain batching.
-fn writer_loop(conn: Connection, mut rx: tokio::sync::mpsc::Receiver<WriteOp>) {
+fn writer_loop(conn: Connection, mut rx: tokio::sync::mpsc::Receiver<WriteOp>, db_path: PathBuf) {
     // 1. Block until at least one op arrives. Returns None when all
     //    Senders are dropped (clean shutdown) and ends the loop.
     while let Some(first_op) = rx.blocking_recv() {
@@ -1201,6 +1203,12 @@ fn writer_loop(conn: Connection, mut rx: tokio::sync::mpsc::Receiver<WriteOp>) {
             if batch.len() >= 128 {
                 break;
             }
+        }
+
+        // Test hook for deterministic backpressure tests. Production only
+        // pays the env lookup and the hook is inert unless explicitly set.
+        if let Some(ms) = test_slow_db_batch_ms(&db_path) {
+            std::thread::sleep(std::time::Duration::from_millis(ms));
         }
 
         // 3. Execute entire batch in a single transaction.
@@ -1221,6 +1229,17 @@ fn writer_loop(conn: Connection, mut rx: tokio::sync::mpsc::Receiver<WriteOp>) {
 
     // All senders dropped -- checkpoint WAL before closing connection.
     let _ = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)");
+}
+
+fn test_slow_db_batch_ms(db_path: &Path) -> Option<u64> {
+    let raw = std::env::var("CAPSEM_TEST_SLOW_DB_BATCH_MS").ok()?;
+    if let Some((needle, ms)) = raw.split_once('=') {
+        if !db_path.to_string_lossy().contains(needle) {
+            return None;
+        }
+        return ms.parse().ok();
+    }
+    raw.parse().ok()
 }
 
 fn execute_batch(conn: &Connection, batch: &[WriteOp]) -> rusqlite::Result<()> {

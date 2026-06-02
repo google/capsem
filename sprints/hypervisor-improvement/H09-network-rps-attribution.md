@@ -213,6 +213,19 @@ transport/dispatch bottleneck to trace next, not an upstream network failure.
   next trace should focus on framed guest/host transport, VM/vsock scheduling,
   and session telemetry/DB side effects that are not represented by the
   existing per-stage enqueue timers.
+- DB-writer backpressure collapse landed as the next code-path fix: successful
+  framed MCP responses now enqueue the already policy-checked response and
+  release the MCP in-flight permit before awaiting the two session DB audit
+  writes (`mcp_calls` and resolved security event). This preserves request and
+  response policy enforcement before bytes return to the guest, but removes
+  session DB backpressure from the response critical path. Regression proof:
+  `framed_mcp_response_is_not_held_behind_db_writer_backpressure` saturates a
+  real `DbWriter` and still observes the framed `local__echo` response within
+  200ms. Live Linux proof via `just exec "capsem-bench mcp-load"` reached c=1
+  489.8 RPS p99 3.0ms, c=10 772.0 RPS p99 15.0ms, c=50 775.2 RPS p99
+  108.9ms, and c=200 787.9 RPS p99 519.7ms, all zero errors. Against the
+  previous fresh-initrd endpoint-fast-path run (407.2/608.4/601.0/616.8 RPS),
+  RPS improved +22.6%, +28.4%, +29.0%, and +29.6% at c=1/10/50/200.
 
 ## First Questions
 

@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- Changed framed MCP success responses to enqueue the already policy-checked
+  response before waiting on session DB audit writes. MCP calls still record
+  `mcp_calls` and resolved security events through the normal `DbWriter`, but
+  saturated telemetry no longer holds the guest-visible response or the MCP
+  in-flight permit on the hot path. Linux `mcp-load` improved from the
+  previous fresh-initrd proof at 407/608/601/617 RPS for concurrency
+  1/10/50/200 to 490/772/775/788 RPS, with zero errors.
 - Changed deterministic `local__echo` MCP dispatch to bypass the
   process-to-aggregator and builtin-stdio/RMCP subprocess path at the MITM
   endpoint. The safe echo diagnostic tool still goes through framed MCP

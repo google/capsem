@@ -225,6 +225,24 @@
           618-620 RPS, so the remaining ceiling is outside local builtin
           dispatch and should be traced in framed guest/host transport,
           session telemetry/logging pressure, or DB-writer side effects.
+    - [x] Decouple successful framed MCP responses from session DB writer
+          backpressure. Hypothesis: the ~600 RPS ceiling matches two DB writes
+          per MCP request (`mcp_calls` + `security_events`) with the response
+          currently emitted only after both writes are accepted. Regression
+          target: a real framed `local__echo` response must be observable even
+          while the real `DbWriter` channel is intentionally saturated.
+          Implementation now sends the already policy-checked response and
+          releases the MCP in-flight permit before awaiting session DB audit
+          enqueue. Unit proof:
+          `framed_mcp_response_is_not_held_behind_db_writer_backpressure`.
+          Live Linux proof via `just exec "capsem-bench mcp-load"`:
+          c=1 489.8 RPS p99 3.0ms, c=10 772.0 RPS p99 15.0ms, c=50
+          775.2 RPS p99 108.9ms, c=200 787.9 RPS p99 519.7ms, zero errors.
+          Compared with the previous fresh-initrd endpoint-fast-path run
+          (407.2/608.4/601.0/616.8 RPS), RPS improved +22.6%, +28.4%,
+          +29.0%, and +29.6% at c=1/10/50/200. High-concurrency p99 improved
+          roughly -22.0%, -21.3%, and -30.1% at c=10/50/200; c=1 p99 is
+          effectively unchanged within rounding.
   - [ ] Land only trace-backed RPS speedups, with before/after percentages by
         lane and canonical `just benchmark` artifacts.
 - [ ] H07: docs, changelog, release gate.

@@ -7,15 +7,13 @@ characterize the MCP transport overhead end-to-end:
     Python fastmcp.Client (in guest)
       -> stdio -> /run/capsem-mcp-server (guest agent's MCP server)
       -> framed MCP over vsock:5002 -> capsem-process MITM MCP endpoint
-      -> capsem-mcp-aggregator (host)
-      -> stdio -> capsem-mcp-builtin (host subprocess)
-      -> echo handler returns the text
+      -> endpoint-local echo handler returns the text
       -> back up the chain
 
 Pure protocol cost. If `mcp-load` does NOT scale linearly with
 concurrency, we have a serialization bug in the guest relay / MITM
-endpoint / aggregator / server / vsock path and the transport needs
-attention.
+endpoint / vsock path, policy/telemetry handling, or the guest stdio
+client path and the transport needs attention.
 Sister bench to `mitm-load` (which isolates the proxy hot path).
 """
 

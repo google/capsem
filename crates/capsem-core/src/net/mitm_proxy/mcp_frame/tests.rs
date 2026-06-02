@@ -5,9 +5,10 @@ use capsem_security_engine::{
     CelEnforcementEvaluator, CelEnforcementRule, SecurityDecisionAction, SecurityEngine,
     SecurityEventSubject,
 };
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use crate::mcp::policy::{McpPolicy, ToolDecision};
-use crate::net::mitm_proxy::McpTimeouts;
+use crate::net::mitm_proxy::{McpTimeouts, RuntimeSecurityEngineSlot};
 
 use super::*;
 
@@ -347,4 +348,109 @@ async fn log_mcp_call_writes_blocked_security_event() {
     assert!(security.contains("mcp.request"));
     assert!(security.contains("block"));
     assert!(security.contains("mcp.tool.github__delete_repo"));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn framed_mcp_response_is_not_held_behind_db_writer_backpressure() {
+    let _guard = MCP_TIMEOUT_ENV_LOCK.lock().unwrap();
+    let previous = std::env::var("CAPSEM_TEST_SLOW_DB_BATCH_MS").ok();
+    // SAFETY: guarded by MCP_TIMEOUT_ENV_LOCK because environment variables
+    // are process-global and Rust tests run concurrently.
+    unsafe {
+        std::env::set_var("CAPSEM_TEST_SLOW_DB_BATCH_MS", "mcp-backpressure=500");
+    }
+
+    let dir = tempfile::tempdir().unwrap();
+    let db = std::sync::Arc::new(
+        DbWriter::open(&dir.path().join("mcp-backpressure-session.db"), 1).unwrap(),
+    );
+    saturate_db_writer(&db).await;
+
+    let (aggregator, _rx) = crate::mcp::aggregator::AggregatorClient::channel(1);
+    let endpoint = std::sync::Arc::new(McpEndpointState::new(
+        aggregator,
+        std::sync::Arc::new(tokio::sync::RwLock::new(std::sync::Arc::new(
+            McpPolicy::new(),
+        ))),
+        std::sync::Arc::new(RuntimeSecurityEngineSlot::new(None)),
+        std::sync::Arc::new(tokio::sync::Semaphore::new(1)),
+        McpTimeouts::default(),
+    ));
+    let (client, server) = tokio::io::duplex(4096);
+    let server_db = std::sync::Arc::clone(&db);
+    let server_task = tokio::spawn(async move {
+        let _ = serve_io(Vec::new(), server, endpoint, server_db).await;
+    });
+    let (mut client_reader, mut client_writer) = tokio::io::split(client);
+
+    let request = br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"local__echo","arguments":{"text":"hi"}}}"#;
+    let frame = capsem_proto::encode_mcp_frame(1, 0, "codex", request).unwrap();
+    client_writer.write_all(&frame).await.unwrap();
+    client_writer.flush().await.unwrap();
+
+    let response_frame = tokio::time::timeout(
+        Duration::from_millis(200),
+        read_test_response_frame(&mut client_reader),
+    )
+    .await
+    .expect("response should not wait for saturated DB writer")
+    .unwrap();
+
+    assert_eq!(response_frame.stream_id, 1);
+    let response: JsonRpcResponse = serde_json::from_slice(&response_frame.payload).unwrap();
+    assert_eq!(
+        response.result.as_ref().unwrap()["content"][0]["text"],
+        "hi"
+    );
+
+    drop(client_writer);
+    let _ = tokio::time::timeout(Duration::from_secs(2), server_task).await;
+    db.shutdown_blocking();
+    restore_env("CAPSEM_TEST_SLOW_DB_BATCH_MS", previous);
+}
+
+async fn read_test_response_frame<R: tokio::io::AsyncRead + Unpin>(
+    reader: &mut R,
+) -> anyhow::Result<capsem_proto::McpFrame> {
+    let mut len_buf = [0u8; 4];
+    reader.read_exact(&mut len_buf).await?;
+    let total_len = u32::from_be_bytes(len_buf) as usize;
+    let mut body = vec![0u8; total_len];
+    reader.read_exact(&mut body).await?;
+    capsem_proto::decode_mcp_frame_body(&body)
+}
+
+async fn saturate_db_writer(db: &DbWriter) {
+    db.write(test_mcp_write_op("prefill-1")).await;
+    let deadline = std::time::Instant::now() + Duration::from_secs(1);
+    while !db.try_write(test_mcp_write_op("prefill-2")) {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "DB writer channel did not become saturatable"
+        );
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+}
+
+fn test_mcp_write_op(request_id: &str) -> capsem_logger::WriteOp {
+    capsem_logger::WriteOp::McpCall(capsem_logger::McpCall {
+        timestamp: std::time::SystemTime::now(),
+        server_name: "local".to_string(),
+        method: "tools/call".to_string(),
+        tool_name: Some("local__echo".to_string()),
+        request_id: Some(request_id.to_string()),
+        request_preview: Some(r#"{"name":"local__echo"}"#.to_string()),
+        response_preview: Some(r#"{"content":[]}"#.to_string()),
+        decision: "allowed".to_string(),
+        duration_ms: 0,
+        error_message: None,
+        process_name: Some("codex".to_string()),
+        bytes_sent: 0,
+        bytes_received: 0,
+        policy_mode: None,
+        policy_action: None,
+        policy_rule: None,
+        policy_reason: None,
+        trace_id: None,
+    })
 }
