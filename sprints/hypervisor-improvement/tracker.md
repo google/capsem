@@ -714,6 +714,12 @@
   before running `capsem-bench rootfs`. The latest MQ live KVM check confirmed
   four virtio-blk queues, tuned queue size, tuned segment limit, and tuned
   logical block size in Linux sysfs before running `capsem-bench rootfs`.
+  H08 first telemetry slice attempted `just exec "echo ok"` after compiling and
+  repacking the x86_64 guest agent/initrd, but VM provisioning did not start
+  because installed assets were not ready and the service could not resolve
+  `assets.capsem.dev` for the missing `2026.0601.2` x86_64 `vmlinuz`/`initrd`.
+  This leaves live VM counter proof open rather than silently treating focused
+  unit/API tests as E2E coverage.
 - Telemetry: H03 first slice exposes existing `VmMetricsSnapshot.resources`
   fields through the service API and CLI. H03 second slice adds
   `VmMetricsSnapshot.hypervisor.block` and feeds it from the KVM virtio-blk
