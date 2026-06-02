@@ -12,8 +12,9 @@ console = Console(stderr=True)
 BLOCK_1M = 1024 * 1024
 BLOCK_4K = 4096
 
-# Disk benchmark defaults
-DEFAULT_DIR = "/root"
+# Disk benchmark defaults. /root is the host-visible VirtioFS workspace in
+# current storage mode; the disk benchmark tracks writable scratch/system I/O.
+DEFAULT_DIR = "/var/tmp"
 DEFAULT_SIZE_MB = 256
 RAND_IO_SIZE_MB = 64
 RAND_IO_COUNT = 10000

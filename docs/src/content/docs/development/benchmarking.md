@@ -87,7 +87,9 @@ claims should cite the active latest artifacts.
 
 ### Disk I/O (`disk`)
 
-Measures scratch disk performance in `/root` (VirtioFS-backed workspace).
+Measures writable scratch/system performance in `/var/tmp` by default. The
+host-visible `/root` workspace is intentionally measured by `storage`, not by
+the canonical scratch disk lane.
 
 | Test | Method | Metric |
 |------|--------|--------|
@@ -96,7 +98,8 @@ Measures scratch disk performance in `/root` (VirtioFS-backed workspace).
 | Random 4K write | 10,000 random `pwrite` calls on 64MB file, `fdatasync` per write | IOPS, throughput |
 | Random 4K read | 10,000 random `pread` calls on 64MB file after `drop_caches` | IOPS, throughput |
 
-Write test size is configurable via `CAPSEM_BENCH_SIZE_MB` (default: 256).
+Write test size is configurable via `CAPSEM_BENCH_SIZE_MB` (default: 256). The
+test directory is configurable via `CAPSEM_BENCH_DIR` (default: `/var/tmp`).
 
 ### Rootfs reads (`rootfs`)
 

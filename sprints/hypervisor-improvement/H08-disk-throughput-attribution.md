@@ -143,6 +143,28 @@ Interpretation:
 - Unit/contract tests cover counter math and request-shape classification.
 - KVM-only code stays Linux-cfg isolated.
 
+## 2026-06-02 Scratch Lane Correction
+
+`capsem-bench disk` previously defaulted to `/root`, which is the host-visible
+VirtioFS workspace in current storage mode, while the benchmark title called it
+scratch disk I/O. The canonical disk lane now defaults to `/var/tmp` so the
+disk benchmark measures writable scratch/system-overlay performance. `/root`
+remains visible in `capsem-bench storage` for workspace/VirtioFS attribution.
+
+Packaged VM measurements after changing the default, with an explicit `/root`
+control run on the same code path:
+
+| Lane | `/root` workspace | `/var/tmp` scratch/system | Improvement |
+| --- | ---: | ---: | ---: |
+| Sequential write | 121.3 MB/s | 174.1 MB/s | +43.5% |
+| Sequential read | 522.4 MB/s | 809.1 MB/s | +54.9% |
+| Random write | 615 IOPS | 2374 IOPS | +286.0% |
+| Random read | 7903 IOPS | 563314 IOPS | +7028.9% |
+
+This is a benchmark-contract/product-diagnostic improvement, not a claim that
+VirtioFS `/root` got faster. The remaining hypervisor work is still raw
+throughput attribution for writable/fallback virtio-blk and the workspace path.
+
 ## Follow-Up Domains
 
 - Memory: RSS attribution, guest working-set pressure, DAX page-fault behavior,

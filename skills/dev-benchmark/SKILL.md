@@ -101,7 +101,7 @@ Key metrics: per-operation latency in ms. Regressions in `create` usually mean t
 
 ### Environment variables
 
-- `CAPSEM_BENCH_DIR`: Test directory for disk benchmarks (default: `/root`)
+- `CAPSEM_BENCH_DIR`: Test directory for disk benchmarks (default: `/var/tmp`, the writable scratch/system lane)
 - `CAPSEM_BENCH_SIZE_MB`: Write test size in MB (default: 256)
 - `CAPSEM_STORAGE_BENCH_PATHS`: Colon-separated writable paths for storage split diagnostics (default: `/root:/tmp:/var/tmp:/var/log:/run`)
 - `CAPSEM_STORAGE_BENCH_SIZE_MB`: Write test size in MB for each storage split writable path (default: 64)

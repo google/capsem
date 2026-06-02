@@ -35,14 +35,16 @@ The diagnostic suite enforces boot time stays under 1 second. The two heaviest s
 
 ## Disk I/O
 
-Scratch disk performance on the VirtioFS-backed workspace (`/root`). Test size: 256MB.
+Scratch disk performance in the writable scratch/system lane (`/var/tmp`).
+Test size: 256MB. Workspace/VirtioFS performance for `/root` is tracked by the
+storage split benchmark.
 
 | Test | Throughput | IOPS | Duration |
 |------|-----------|------|----------|
-| Sequential write (1MB blocks) | 156.9 MB/s | - | 1,631.6ms |
-| Sequential read (1MB blocks) | 352.8 MB/s | - | 725.5ms |
-| Random 4K write (fdatasync) | 10.8 MB/s | 2,777 | 3,601.1ms |
-| Random 4K read | 29.1 MB/s | 7,440 | 1,344.2ms |
+| Sequential write (1MB blocks) | 174.1 MB/s | - | 1,470.2ms |
+| Sequential read (1MB blocks) | 809.1 MB/s | - | 316.4ms |
+| Random 4K write (fdatasync) | 9.3 MB/s | 2,374 | 4,212.9ms |
+| Random 4K read | 2,200.4 MB/s | 563,314 | 17.8ms |
 
 Sequential I/O reflects the active host filesystem and hypervisor backend. Random write IOPS are limited by per-write `fdatasync` -- this reflects the worst case for database-style workloads.
 

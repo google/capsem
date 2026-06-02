@@ -246,6 +246,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   results.
 
 ### Changed
+- Changed `capsem-bench disk` to default to `/var/tmp`, the writable
+  scratch/system lane, instead of `/root`, the host-visible VirtioFS workspace.
+  The packaged VM before/after path comparison showed `/var/tmp` improving
+  sequential write by 43.5%, sequential read by 54.9%, random write by
+  286.0%, and random read by 7028.9% versus `/root`; workspace/VirtioFS
+  performance remains recorded by `capsem-bench storage`.
 - Changed Linux KVM virtio-blk to advertise guest-visible segment-limit and
   logical block-size geometry, matching the conservative crosvm/Firecracker
   shape before larger queue or multi-queue experiments.

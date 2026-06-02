@@ -1,8 +1,10 @@
 import subprocess
+import sys
 from pathlib import Path
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(PROJECT_ROOT / "guest" / "artifacts"))
 
 
 def test_just_benchmark_runs_full_canonical_artifact_suite():
@@ -24,6 +26,12 @@ def test_capsem_bench_all_includes_storage_split_diagnostics():
 
     assert 'if mode in ("storage", "all"):' in entrypoint
     assert 'output["storage"] = storage_bench()' in entrypoint
+
+
+def test_capsem_bench_disk_defaults_to_scratch_overlay_lane():
+    from capsem_bench.helpers import DEFAULT_DIR
+
+    assert DEFAULT_DIR == "/var/tmp"
 
 
 def test_serial_benchmark_marker_collects_required_artifact_lanes():

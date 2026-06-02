@@ -31,7 +31,7 @@ def main():
         console.print("  all                 Run standard benchmarks, including storage split diagnostics")
         console.print()
         console.print("Environment:")
-        console.print("  CAPSEM_BENCH_DIR                Test directory (default: /root)")
+        console.print("  CAPSEM_BENCH_DIR                Test directory (default: /var/tmp)")
         console.print("  CAPSEM_BENCH_SIZE_MB            Write test size in MB (default: 256)")
         console.print("  CAPSEM_STORAGE_BENCH_PATHS      Storage paths for split diagnostics")
         console.print("  CAPSEM_STORAGE_BENCH_SIZE_MB    Storage split write size in MB")
