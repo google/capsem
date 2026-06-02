@@ -77,6 +77,14 @@
           DAX rootfs is already far faster than the old canonical Linux rootfs
           on random/small-file/metadata lanes; HTTP RPS is 0.83x macOS and
           proxy throughput is 0.93x macOS.
+    - [x] Corrected `capsem-bench disk` to default to `/var/tmp`, the writable
+          scratch/system lane, while keeping `/root` workspace/VirtioFS
+          attribution in `capsem-bench storage`. Packaged VM comparison:
+          sequential write +43.5%, sequential read +54.9%, random write
+          +286.0%, random read +7028.9% versus forced `/root`.
+    - [ ] Still needs a fresh full canonical `just benchmark` artifact on the
+          installed working build so current Linux/macOS/host-native comparison
+          is not based on the older pre-H08 artifact.
   - [ ] Add request-shape and timing counters for virtio-blk queue notify,
         drain, syscall, completion, used-ring publication, and interrupt
         decisions.
@@ -86,6 +94,9 @@
           virtio-blk metrics. These now flow through VM metrics snapshots,
           OTel-compatible metric points, service `/info`, gateway `/status`,
           and `capsem info`.
+    - [ ] Still needs live VM proof that counters move during
+          `capsem-bench disk` / `capsem-bench storage`; focused unit/API tests
+          passed, but this acceptance gate remains open.
   - [ ] Add DAX/rootfs cache and page-fault evidence where available, so DAX
         throughput is not confused with virtio-blk throughput.
   - [ ] Compare Capsem, Firecracker, and crosvm by the same request lifecycle
@@ -95,6 +106,14 @@
   - [ ] Record accepted results through canonical `just benchmark`.
   - [ ] Park memory, CPU/SMP, and RPS follow-up slices with concrete metrics
         once disk attribution shows what still matters.
+  - [x] Restore an installed Linux build for manual testing before continuing
+        perf work: `capsem 1.2.1780406785`, `capsem status` ready with
+        service/assets/gateway ok and zero issues, and installed
+        `capsem run "echo installed-capsem-ready-after-status-fix"` passed.
+  - [x] Fixed Linux status validation for installed systemd units that
+        reference `~/.capsem/bin/*` symlinks resolving to `/usr/bin/*`, so the
+        installed service no longer appears stale when the package layout is
+        correct.
 - [ ] H06: benchmark and product proof.
   - [x] Add a crosvm reference harness for the same Capsem x86_64
         rootfs/startup workload used by the Firecracker comparison.

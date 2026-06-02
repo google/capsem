@@ -165,6 +165,38 @@ This is a benchmark-contract/product-diagnostic improvement, not a claim that
 VirtioFS `/root` got faster. The remaining hypervisor work is still raw
 throughput attribution for writable/fallback virtio-blk and the workspace path.
 
+## Current Open Work
+
+- Prove the new KVM block request-shape counters move in a live VM during
+  `capsem-bench disk` and `capsem-bench storage`.
+- Record a fresh canonical `just benchmark` artifact now that the installed
+  Linux build is working again.
+- Add DAX/rootfs cache and page-fault evidence so DAX rootfs throughput is not
+  confused with fallback virtio-blk throughput.
+- Trace Capsem, Firecracker, and crosvm through the same block lifecycle:
+  descriptor parsing, guest-memory translation, syscall, completion,
+  used-ring publication, and interrupt.
+- Land the first trace-backed KVM virtio-blk code-path speedup. The scratch
+  lane correction fixed benchmark semantics and product diagnostics; it did
+  not claim the underlying `/root` VirtioFS or raw virtio-blk path became
+  faster.
+- Revisit Direct I/O only for writable scratch and fallback rootfs-over-blk,
+  separately from the EROFS DAX pmem path.
+- Park CPU/SMP, memory, and RPS follow-up slices with concrete metrics after
+  disk attribution identifies which subsystem still dominates.
+
+## 2026-06-02 Installed Build Handoff
+
+Manual-test handoff is complete on Linux:
+
+- Installed package version: `capsem 1.2.1780406785`.
+- `capsem status --json`: state `ready`; service unit, assets, service
+  endpoint, and gateway all `ok`; zero issues.
+- Installed VM smoke: `capsem run "echo installed-capsem-ready-after-status-fix"`
+  returned `installed-capsem-ready-after-status-fix`.
+- Fixed status validation for Linux systemd units that reference
+  `~/.capsem/bin/*` symlinks resolving to `/usr/bin/*`.
+
 ## Follow-Up Domains
 
 - Memory: RSS attribution, guest working-set pressure, DAX page-fault behavior,
