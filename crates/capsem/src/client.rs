@@ -167,6 +167,20 @@ pub struct SessionInfo {
     #[serde(default)]
     pub block_bytes_written_total: Option<u64>,
     #[serde(default)]
+    pub block_requests_total: Option<u64>,
+    #[serde(default)]
+    pub block_request_bytes_total: Option<u64>,
+    #[serde(default)]
+    pub block_request_duration_micros_total: Option<u64>,
+    #[serde(default)]
+    pub block_queue_drain_duration_micros_total: Option<u64>,
+    #[serde(default)]
+    pub block_max_request_bytes: Option<u64>,
+    #[serde(default)]
+    pub block_max_data_descriptors_per_request: Option<u64>,
+    #[serde(default)]
+    pub block_max_requests_per_drain: Option<u64>,
+    #[serde(default)]
     pub block_async_submissions_total: Option<u64>,
     #[serde(default)]
     pub block_async_completions_total: Option<u64>,

@@ -1999,6 +1999,13 @@ fn attach_metrics_snapshot_projects_security_status_fields() {
     snapshot.hypervisor.block.write_ops_total = 14;
     snapshot.hypervisor.block.bytes_read_total = 4096;
     snapshot.hypervisor.block.bytes_written_total = 8192;
+    snapshot.hypervisor.block.requests_total = 20;
+    snapshot.hypervisor.block.request_bytes_total = 80 * 1024;
+    snapshot.hypervisor.block.request_duration_micros_total = 40_000;
+    snapshot.hypervisor.block.queue_drain_duration_micros_total = 10_000;
+    snapshot.hypervisor.block.max_request_bytes = 16 * 1024;
+    snapshot.hypervisor.block.max_data_descriptors_per_request = 4;
+    snapshot.hypervisor.block.max_requests_per_drain = 6;
     snapshot.hypervisor.block.async_submissions_total = 15;
     snapshot.hypervisor.block.async_completions_total = 16;
     snapshot.hypervisor.block.async_fallbacks_total = 17;
@@ -2048,6 +2055,13 @@ fn attach_metrics_snapshot_projects_security_status_fields() {
     assert_eq!(info.block_write_ops_total, Some(14));
     assert_eq!(info.block_bytes_read_total, Some(4096));
     assert_eq!(info.block_bytes_written_total, Some(8192));
+    assert_eq!(info.block_requests_total, Some(20));
+    assert_eq!(info.block_request_bytes_total, Some(80 * 1024));
+    assert_eq!(info.block_request_duration_micros_total, Some(40_000));
+    assert_eq!(info.block_queue_drain_duration_micros_total, Some(10_000));
+    assert_eq!(info.block_max_request_bytes, Some(16 * 1024));
+    assert_eq!(info.block_max_data_descriptors_per_request, Some(4));
+    assert_eq!(info.block_max_requests_per_drain, Some(6));
     assert_eq!(info.block_async_submissions_total, Some(15));
     assert_eq!(info.block_async_completions_total, Some(16));
     assert_eq!(info.block_async_fallbacks_total, Some(17));

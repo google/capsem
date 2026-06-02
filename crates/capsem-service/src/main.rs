@@ -2797,6 +2797,16 @@ fn attach_metrics_snapshot(info: &mut SandboxInfo, snapshot: &VmMetricsSnapshot)
     info.block_write_ops_total = Some(snapshot.hypervisor.block.write_ops_total);
     info.block_bytes_read_total = Some(snapshot.hypervisor.block.bytes_read_total);
     info.block_bytes_written_total = Some(snapshot.hypervisor.block.bytes_written_total);
+    info.block_requests_total = Some(snapshot.hypervisor.block.requests_total);
+    info.block_request_bytes_total = Some(snapshot.hypervisor.block.request_bytes_total);
+    info.block_request_duration_micros_total =
+        Some(snapshot.hypervisor.block.request_duration_micros_total);
+    info.block_queue_drain_duration_micros_total =
+        Some(snapshot.hypervisor.block.queue_drain_duration_micros_total);
+    info.block_max_request_bytes = Some(snapshot.hypervisor.block.max_request_bytes);
+    info.block_max_data_descriptors_per_request =
+        Some(snapshot.hypervisor.block.max_data_descriptors_per_request);
+    info.block_max_requests_per_drain = Some(snapshot.hypervisor.block.max_requests_per_drain);
     info.block_async_submissions_total = Some(snapshot.hypervisor.block.async_submissions_total);
     info.block_async_completions_total = Some(snapshot.hypervisor.block.async_completions_total);
     info.block_async_fallbacks_total = Some(snapshot.hypervisor.block.async_fallbacks_total);

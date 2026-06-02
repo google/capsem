@@ -154,6 +154,20 @@ pub struct VmSummary {
     pub block_bytes_read_total: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub block_bytes_written_total: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub block_requests_total: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub block_request_bytes_total: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub block_request_duration_micros_total: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub block_queue_drain_duration_micros_total: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub block_max_request_bytes: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub block_max_data_descriptors_per_request: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub block_max_requests_per_drain: Option<u64>,
 }
 
 #[derive(Serialize, Clone)]
@@ -349,6 +363,20 @@ struct SessionInfo {
     block_bytes_read_total: Option<u64>,
     #[serde(default)]
     block_bytes_written_total: Option<u64>,
+    #[serde(default)]
+    block_requests_total: Option<u64>,
+    #[serde(default)]
+    block_request_bytes_total: Option<u64>,
+    #[serde(default)]
+    block_request_duration_micros_total: Option<u64>,
+    #[serde(default)]
+    block_queue_drain_duration_micros_total: Option<u64>,
+    #[serde(default)]
+    block_max_request_bytes: Option<u64>,
+    #[serde(default)]
+    block_max_data_descriptors_per_request: Option<u64>,
+    #[serde(default)]
+    block_max_requests_per_drain: Option<u64>,
 }
 
 async fn fetch_status(state: &AppState) -> StatusResponse {
@@ -431,6 +459,14 @@ async fn fetch_status(state: &AppState) -> StatusResponse {
             block_write_ops_total: metrics.block_write_ops_total,
             block_bytes_read_total: metrics.block_bytes_read_total,
             block_bytes_written_total: metrics.block_bytes_written_total,
+            block_requests_total: metrics.block_requests_total,
+            block_request_bytes_total: metrics.block_request_bytes_total,
+            block_request_duration_micros_total: metrics.block_request_duration_micros_total,
+            block_queue_drain_duration_micros_total: metrics
+                .block_queue_drain_duration_micros_total,
+            block_max_request_bytes: metrics.block_max_request_bytes,
+            block_max_data_descriptors_per_request: metrics.block_max_data_descriptors_per_request,
+            block_max_requests_per_drain: metrics.block_max_requests_per_drain,
         });
     }
 

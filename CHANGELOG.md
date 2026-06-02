@@ -19,6 +19,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   compressed EROFS DAX candidate already lifts rootfs random/small-file lanes
   well beyond the old canonical Linux rootfs artifact. HTTP RPS is 0.83x macOS
   and proxy throughput is 0.93x macOS, so disk remains the first-order gap.
+- Added H08 KVM virtio-blk request-shape counters for disk attribution:
+  completed block requests, request bytes, aggregate request/drain duration,
+  max request bytes, max data descriptors per request, and max requests per
+  queue drain. The counters flow through VM metrics snapshots, OTel-compatible
+  metric points, service `/info`, gateway `/status`, and `capsem info`.
 - Added an opt-in Linux KVM EROFS DAX experiment: `CAPSEM_KVM_ROOTFS_PMEM_DAX=1`
   maps the read-only rootfs image through virtio-pmem, `capsem.rootfs=erofs-dax`
   mounts `/dev/pmem0` with `-o dax`, and the rootfs-format grid records it with

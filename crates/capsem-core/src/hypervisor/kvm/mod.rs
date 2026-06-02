@@ -1172,6 +1172,17 @@ impl VmHandle for KvmHandle {
             block.write_ops_total += snapshot.write_ops_total;
             block.bytes_read_total += snapshot.bytes_read_total;
             block.bytes_written_total += snapshot.bytes_written_total;
+            block.requests_total += snapshot.requests_total;
+            block.request_bytes_total += snapshot.request_bytes_total;
+            block.request_duration_micros_total += snapshot.request_duration_micros_total;
+            block.queue_drain_duration_micros_total += snapshot.queue_drain_duration_micros_total;
+            block.max_request_bytes = block.max_request_bytes.max(snapshot.max_request_bytes);
+            block.max_data_descriptors_per_request = block
+                .max_data_descriptors_per_request
+                .max(snapshot.max_data_descriptors_per_request);
+            block.max_requests_per_drain = block
+                .max_requests_per_drain
+                .max(snapshot.max_requests_per_drain);
             block.async_submissions_total += snapshot.async_submissions_total;
             block.async_completions_total += snapshot.async_completions_total;
             block.async_fallbacks_total += snapshot.async_fallbacks_total;

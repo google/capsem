@@ -80,6 +80,12 @@
   - [ ] Add request-shape and timing counters for virtio-blk queue notify,
         drain, syscall, completion, used-ring publication, and interrupt
         decisions.
+    - [x] Added completed request count, request bytes, aggregate request
+          duration, aggregate queue-drain duration, max request bytes, max data
+          descriptors per request, and max requests per drain to KVM
+          virtio-blk metrics. These now flow through VM metrics snapshots,
+          OTel-compatible metric points, service `/info`, gateway `/status`,
+          and `capsem info`.
   - [ ] Add DAX/rootfs cache and page-fault evidence where available, so DAX
         throughput is not confused with virtio-blk throughput.
   - [ ] Compare Capsem, Firecracker, and crosvm by the same request lifecycle
@@ -716,7 +722,10 @@
   adds OTel-compatible metric-point mapping with bounded attributes. Real OTLP
   exporter process/configuration remains open for the broader telemetry sprint.
   H02 first slice adds `async_queue_full_total` to the KVM block snapshot and
-  OTel-compatible block metric points.
+  OTel-compatible block metric points. H08 first telemetry slice adds
+  request-shape and timing attribution counters to the same paths: VM metrics
+  snapshot, OTel-compatible points, service `/info`, gateway `/status`, and
+  `capsem info`.
 - Performance: canonical `just benchmark` rerun completed; benchmark artifacts
   record project version, git commit, source dirty state, host metadata, and
   active Linux x86_64 results. `scripts/compare_benchmark_artifacts.py`
@@ -763,5 +772,8 @@
   different buffering/sync behavior, so that lane is not a clean raw-efficiency
   signal.
 - Missing/deferred: Real OTLP exporter process/configuration is deferred to the
-  broader telemetry sprint. Endpoint-latency regressions are recorded by the
+  broader telemetry sprint. H08 request-shape counters have focused unit/API
+  coverage but still need live VM proof that they move during `capsem-bench
+  disk` or `storage`, followed by a canonical `just benchmark` artifact before
+  performance claims. Endpoint-latency regressions are recorded by the
   canonical benchmark gate and still need a control-plane performance fix.

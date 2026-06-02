@@ -216,6 +216,20 @@ pub struct SandboxInfo {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub block_bytes_written_total: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub block_requests_total: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub block_request_bytes_total: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub block_request_duration_micros_total: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub block_queue_drain_duration_micros_total: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub block_max_request_bytes: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub block_max_data_descriptors_per_request: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub block_max_requests_per_drain: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub block_async_submissions_total: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub block_async_completions_total: Option<u64>,
@@ -303,6 +317,13 @@ impl SandboxInfo {
             block_write_ops_total: None,
             block_bytes_read_total: None,
             block_bytes_written_total: None,
+            block_requests_total: None,
+            block_request_bytes_total: None,
+            block_request_duration_micros_total: None,
+            block_queue_drain_duration_micros_total: None,
+            block_max_request_bytes: None,
+            block_max_data_descriptors_per_request: None,
+            block_max_requests_per_drain: None,
             block_async_submissions_total: None,
             block_async_completions_total: None,
             block_async_fallbacks_total: None,

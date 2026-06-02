@@ -100,6 +100,13 @@ pub(super) struct BlockDeviceMetrics {
     write_ops_total: AtomicU64,
     bytes_read_total: AtomicU64,
     bytes_written_total: AtomicU64,
+    requests_total: AtomicU64,
+    request_bytes_total: AtomicU64,
+    request_duration_micros_total: AtomicU64,
+    queue_drain_duration_micros_total: AtomicU64,
+    max_request_bytes: AtomicU64,
+    max_data_descriptors_per_request: AtomicU64,
+    max_requests_per_drain: AtomicU64,
     async_submissions_total: AtomicU64,
     async_completions_total: AtomicU64,
     async_fallbacks_total: AtomicU64,
@@ -120,6 +127,19 @@ impl BlockDeviceMetrics {
             write_ops_total: self.write_ops_total.load(Ordering::Relaxed),
             bytes_read_total: self.bytes_read_total.load(Ordering::Relaxed),
             bytes_written_total: self.bytes_written_total.load(Ordering::Relaxed),
+            requests_total: self.requests_total.load(Ordering::Relaxed),
+            request_bytes_total: self.request_bytes_total.load(Ordering::Relaxed),
+            request_duration_micros_total: self
+                .request_duration_micros_total
+                .load(Ordering::Relaxed),
+            queue_drain_duration_micros_total: self
+                .queue_drain_duration_micros_total
+                .load(Ordering::Relaxed),
+            max_request_bytes: self.max_request_bytes.load(Ordering::Relaxed),
+            max_data_descriptors_per_request: self
+                .max_data_descriptors_per_request
+                .load(Ordering::Relaxed),
+            max_requests_per_drain: self.max_requests_per_drain.load(Ordering::Relaxed),
             async_submissions_total: self.async_submissions_total.load(Ordering::Relaxed),
             async_completions_total: self.async_completions_total.load(Ordering::Relaxed),
             async_fallbacks_total: self.async_fallbacks_total.load(Ordering::Relaxed),
@@ -153,6 +173,20 @@ impl BlockDeviceMetrics {
             .fetch_add(result.bytes_read, Ordering::Relaxed);
         self.bytes_written_total
             .fetch_add(result.bytes_written, Ordering::Relaxed);
+        self.requests_total
+            .fetch_add(result.requests as u64, Ordering::Relaxed);
+        self.request_bytes_total
+            .fetch_add(result.request_bytes, Ordering::Relaxed);
+        self.request_duration_micros_total
+            .fetch_add(duration_micros(result.request_duration), Ordering::Relaxed);
+        self.queue_drain_duration_micros_total
+            .fetch_add(duration_micros(result.drain_duration), Ordering::Relaxed);
+        update_atomic_max(&self.max_request_bytes, result.max_request_bytes);
+        update_atomic_max(
+            &self.max_data_descriptors_per_request,
+            result.max_data_descriptors_per_request as u64,
+        );
+        update_atomic_max(&self.max_requests_per_drain, result.processed as u64);
         self.async_submissions_total
             .fetch_add(result.submitted as u64, Ordering::Relaxed);
         self.async_fallbacks_total
@@ -180,6 +214,19 @@ impl BlockDeviceMetrics {
             .fetch_add(completion.bytes_read, Ordering::Relaxed);
         self.bytes_written_total
             .fetch_add(completion.bytes_written, Ordering::Relaxed);
+        self.requests_total
+            .fetch_add(completion.requests as u64, Ordering::Relaxed);
+        self.request_bytes_total
+            .fetch_add(completion.request_bytes, Ordering::Relaxed);
+        self.request_duration_micros_total.fetch_add(
+            duration_micros(completion.request_duration),
+            Ordering::Relaxed,
+        );
+        update_atomic_max(&self.max_request_bytes, completion.max_request_bytes);
+        update_atomic_max(
+            &self.max_data_descriptors_per_request,
+            completion.max_data_descriptors_per_request as u64,
+        );
         self.async_in_flight
             .store(in_flight.try_into().unwrap_or(u64::MAX), Ordering::Relaxed);
     }
@@ -802,6 +849,11 @@ impl VirtioBlockDevice {
         let mut write_ops = 0u32;
         let mut bytes_read = 0u64;
         let mut bytes_written = 0u64;
+        let mut requests = 0u32;
+        let mut request_bytes = 0u64;
+        let mut request_duration = Duration::ZERO;
+        let mut max_request_bytes = 0u64;
+        let mut max_data_descriptors_per_request = 0u32;
         while let Some(chain) = queue.pop_or_enable_notification() {
             let descs = &chain.descriptors;
             processed += 1;
@@ -880,8 +932,13 @@ impl VirtioBlockDevice {
                     continue;
                 }
             };
+            requests += 1;
+            request_bytes += total_data as u64;
+            max_request_bytes = max_request_bytes.max(total_data as u64);
+            max_data_descriptors_per_request =
+                max_data_descriptors_per_request.max(data_descs.len() as u32);
 
-            let status = match type_ {
+            let timed = match type_ {
                 VIRTIO_BLK_T_IN => timed_request(type_, total_data, || {
                     Self::process_read(file, mem, capacity_sectors, sector, &data_descs)
                 }),
@@ -896,6 +953,8 @@ impl VirtioBlockDevice {
                 }),
                 _ => timed_request(type_, total_data, || VIRTIO_BLK_S_UNSUPP),
             };
+            request_duration += timed.duration;
+            let status = timed.status;
             match type_ {
                 VIRTIO_BLK_T_IN => {
                     read_ops += 1;
@@ -950,6 +1009,11 @@ impl VirtioBlockDevice {
             write_ops,
             bytes_read,
             bytes_written,
+            requests,
+            request_bytes,
+            request_duration,
+            max_request_bytes,
+            max_data_descriptors_per_request,
             drain_duration,
         }
     }
@@ -1043,11 +1107,12 @@ impl VirtioBlockDevice {
                     continue;
                 }
             };
-
             match type_ {
                 VIRTIO_BLK_T_IN | VIRTIO_BLK_T_OUT => {
                     if type_ == VIRTIO_BLK_T_OUT && read_only {
-                        timed_request(type_, total_data, || VIRTIO_BLK_S_IOERR);
+                        result.record_completed_request(total_data, data_descs.len() as u32);
+                        let timed = timed_request(type_, total_data, || VIRTIO_BLK_S_IOERR);
+                        result.request_duration += timed.duration;
                         Self::write_status(mem, status_desc.addr, VIRTIO_BLK_S_IOERR);
                         queue.push_used_deferred(chain.head, 1);
                         result.used_entries += 1;
@@ -1059,7 +1124,10 @@ impl VirtioBlockDevice {
                         match Self::prepare_rw_iovecs(mem, capacity_sectors, sector, &data_descs) {
                             Ok(prepared) => prepared,
                             Err(status) => {
-                                timed_request(type_, total_data, || status);
+                                result
+                                    .record_completed_request(total_data, data_descs.len() as u32);
+                                let timed = timed_request(type_, total_data, || status);
+                                result.request_duration += timed.duration;
                                 Self::write_status(mem, status_desc.addr, status);
                                 queue.push_used_deferred(chain.head, 1);
                                 result.used_entries += 1;
@@ -1076,6 +1144,7 @@ impl VirtioBlockDevice {
                         chain.head,
                         type_,
                         total_data,
+                        data_descs.len() as u32,
                         status_desc.addr,
                         offset,
                         iovecs,
@@ -1115,7 +1184,8 @@ impl VirtioBlockDevice {
                     )
                     .increment(1);
                     result.async_fallbacks += 1;
-                    let status = if type_ == VIRTIO_BLK_T_IN {
+                    result.record_completed_request(total_data, data_descs.len() as u32);
+                    let timed = if type_ == VIRTIO_BLK_T_IN {
                         timed_request(type_, total_data, || {
                             Self::process_read(file, mem, capacity_sectors, sector, &data_descs)
                         })
@@ -1131,6 +1201,8 @@ impl VirtioBlockDevice {
                             )
                         })
                     };
+                    result.request_duration += timed.duration;
+                    let status = timed.status;
                     Self::write_status(mem, status_desc.addr, status);
                     let used_len = if status == VIRTIO_BLK_S_OK && type_ == VIRTIO_BLK_T_IN {
                         total_data + 1
@@ -1152,23 +1224,32 @@ impl VirtioBlockDevice {
                     }
                 }
                 VIRTIO_BLK_T_GET_ID => {
-                    let status = timed_request(type_, total_data, || {
+                    result.record_completed_request(total_data, data_descs.len() as u32);
+                    let timed = timed_request(type_, total_data, || {
                         Self::process_get_id(mem, device_id, &data_descs)
                     });
+                    result.request_duration += timed.duration;
+                    let status = timed.status;
                     Self::write_status(mem, status_desc.addr, status);
                     queue.push_used_deferred(chain.head, 1);
                     result.used_entries += 1;
                 }
                 VIRTIO_BLK_T_DISCARD => {
-                    let status = timed_request(type_, total_data, || {
+                    result.record_completed_request(total_data, data_descs.len() as u32);
+                    let timed = timed_request(type_, total_data, || {
                         Self::process_discard(file, mem, read_only, capacity_sectors, &data_descs)
                     });
+                    result.request_duration += timed.duration;
+                    let status = timed.status;
                     Self::write_status(mem, status_desc.addr, status);
                     queue.push_used_deferred(chain.head, 1);
                     result.used_entries += 1;
                 }
                 _ => {
-                    let status = timed_request(type_, total_data, || VIRTIO_BLK_S_UNSUPP);
+                    result.record_completed_request(total_data, data_descs.len() as u32);
+                    let timed = timed_request(type_, total_data, || VIRTIO_BLK_S_UNSUPP);
+                    result.request_duration += timed.duration;
+                    let status = timed.status;
                     Self::write_status(mem, status_desc.addr, status);
                     queue.push_used_deferred(chain.head, 1);
                     result.used_entries += 1;
@@ -1224,6 +1305,11 @@ struct QueueProcessResult {
     write_ops: u32,
     bytes_read: u64,
     bytes_written: u64,
+    requests: u32,
+    request_bytes: u64,
+    request_duration: Duration,
+    max_request_bytes: u64,
+    max_data_descriptors_per_request: u32,
     drain_duration: Duration,
 }
 
@@ -1240,8 +1326,22 @@ impl QueueProcessResult {
             write_ops: 0,
             bytes_read: 0,
             bytes_written: 0,
+            requests: 0,
+            request_bytes: 0,
+            request_duration: Duration::ZERO,
+            max_request_bytes: 0,
+            max_data_descriptors_per_request: 0,
             drain_duration: drain_started.elapsed(),
         }
+    }
+
+    fn record_completed_request(&mut self, total_data: u32, data_descriptor_count: u32) {
+        self.requests += 1;
+        self.request_bytes += total_data as u64;
+        self.max_request_bytes = self.max_request_bytes.max(total_data as u64);
+        self.max_data_descriptors_per_request = self
+            .max_data_descriptors_per_request
+            .max(data_descriptor_count);
     }
 }
 
@@ -1254,6 +1354,7 @@ struct PendingBlockRequest {
     head: u16,
     type_: u32,
     total_data: u32,
+    data_descriptor_count: u32,
     status_addr: u64,
     iovecs: Vec<libc::iovec>,
     started: Instant,
@@ -1313,6 +1414,7 @@ impl BlockIoUring {
         head: u16,
         type_: u32,
         total_data: u32,
+        data_descriptor_count: u32,
         status_addr: u64,
         offset: u64,
         iovecs: Vec<libc::iovec>,
@@ -1342,6 +1444,7 @@ impl BlockIoUring {
                 head,
                 type_,
                 total_data,
+                data_descriptor_count,
                 status_addr,
                 iovecs,
                 started: Instant::now(),
@@ -1402,12 +1505,8 @@ impl BlockIoUring {
             } else {
                 VIRTIO_BLK_S_IOERR
             };
-            emit_request_metrics(
-                request.type_,
-                request.total_data,
-                status,
-                request.started.elapsed(),
-            );
+            let request_duration = request.started.elapsed();
+            emit_request_metrics(request.type_, request.total_data, status, request_duration);
             ::metrics::counter!(
                 METRIC_ASYNC_COMPLETIONS_TOTAL,
                 "operation" => request_operation_label(request.type_),
@@ -1423,6 +1522,13 @@ impl BlockIoUring {
             queue.push_used_deferred(request.head, used_len);
             result.completed += 1;
             result.used_entries += 1;
+            result.requests += 1;
+            result.request_bytes += request.total_data as u64;
+            result.request_duration += request_duration;
+            result.max_request_bytes = result.max_request_bytes.max(request.total_data as u64);
+            result.max_data_descriptors_per_request = result
+                .max_data_descriptors_per_request
+                .max(request.data_descriptor_count);
             match request.type_ {
                 VIRTIO_BLK_T_IN => {
                     result.read_ops += 1;
@@ -1486,6 +1592,11 @@ struct CompletionResult {
     write_ops: u32,
     bytes_read: u64,
     bytes_written: u64,
+    requests: u32,
+    request_bytes: u64,
+    request_duration: Duration,
+    max_request_bytes: u64,
+    max_data_descriptors_per_request: u32,
 }
 
 fn describe_metrics_once() {
@@ -1572,11 +1683,31 @@ fn duration_ms(duration: Duration) -> f64 {
     duration.as_secs_f64() * 1000.0
 }
 
-fn timed_request(type_: u32, total_data: u32, f: impl FnOnce() -> u8) -> u8 {
+fn duration_micros(duration: Duration) -> u64 {
+    duration.as_micros().try_into().unwrap_or(u64::MAX)
+}
+
+fn update_atomic_max(target: &AtomicU64, value: u64) {
+    let mut current = target.load(Ordering::Relaxed);
+    while value > current {
+        match target.compare_exchange_weak(current, value, Ordering::Relaxed, Ordering::Relaxed) {
+            Ok(_) => break,
+            Err(observed) => current = observed,
+        }
+    }
+}
+
+struct TimedRequest {
+    status: u8,
+    duration: Duration,
+}
+
+fn timed_request(type_: u32, total_data: u32, f: impl FnOnce() -> u8) -> TimedRequest {
     let started = Instant::now();
     let status = f();
-    emit_request_metrics(type_, total_data, status, started.elapsed());
-    status
+    let duration = started.elapsed();
+    emit_request_metrics(type_, total_data, status, duration);
+    TimedRequest { status, duration }
 }
 
 fn emit_request_metrics(type_: u32, total_data: u32, status: u8, duration: Duration) {
@@ -2925,6 +3056,11 @@ mod tests {
         assert_eq!(block.interrupts_raised_total, 1);
         assert_eq!(block.read_ops_total, 1);
         assert_eq!(block.bytes_read_total, 512);
+        assert_eq!(block.requests_total, 1);
+        assert_eq!(block.request_bytes_total, 512);
+        assert_eq!(block.max_request_bytes, 512);
+        assert_eq!(block.max_data_descriptors_per_request, 1);
+        assert_eq!(block.max_requests_per_drain, 1);
     }
 
     #[cfg(target_os = "linux")]
@@ -3114,6 +3250,7 @@ mod tests {
                 7,
                 VIRTIO_BLK_T_IN,
                 512,
+                1,
                 RAM_BASE + pending_status_offset,
                 0,
                 pending_iovecs,

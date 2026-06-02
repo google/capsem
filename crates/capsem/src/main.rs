@@ -1358,6 +1358,53 @@ fn format_session_hypervisor_lines(info: &client::SessionInfo) -> Vec<String> {
             format_bytes(written)
         ));
     }
+    if let Some(requests) = info.block_requests_total {
+        lines.push(format!("  Block Requests:            {}", requests));
+    }
+    if let (Some(bytes), Some(requests)) =
+        (info.block_request_bytes_total, info.block_requests_total)
+    {
+        if requests > 0 {
+            lines.push(format!(
+                "  Avg Block Request:         {}",
+                format_bytes(bytes / requests)
+            ));
+        }
+    }
+    if let (Some(micros), Some(requests)) = (
+        info.block_request_duration_micros_total,
+        info.block_requests_total,
+    ) {
+        if requests > 0 {
+            lines.push(format!(
+                "  Avg Block Request Time:    {:.3} ms",
+                micros as f64 / requests as f64 / 1000.0
+            ));
+        }
+    }
+    if let (Some(micros), Some(drains)) = (
+        info.block_queue_drain_duration_micros_total,
+        info.block_queue_drains_total,
+    ) {
+        if drains > 0 {
+            lines.push(format!(
+                "  Avg Block Drain Time:      {:.3} ms",
+                micros as f64 / drains as f64 / 1000.0
+            ));
+        }
+    }
+    if let Some(bytes) = info.block_max_request_bytes {
+        lines.push(format!(
+            "  Max Block Request:         {}",
+            format_bytes(bytes)
+        ));
+    }
+    if let Some(count) = info.block_max_data_descriptors_per_request {
+        lines.push(format!("  Max Block Data Segments:   {}", count));
+    }
+    if let Some(count) = info.block_max_requests_per_drain {
+        lines.push(format!("  Max Requests Per Drain:    {}", count));
+    }
     if let Some(count) = info.block_async_submissions_total {
         lines.push(format!("  Async Submissions:         {}", count));
     }
@@ -5988,6 +6035,13 @@ best_for = "Testing typed profile TOML parsing."
             block_write_ops_total: None,
             block_bytes_read_total: None,
             block_bytes_written_total: None,
+            block_requests_total: None,
+            block_request_bytes_total: None,
+            block_request_duration_micros_total: None,
+            block_queue_drain_duration_micros_total: None,
+            block_max_request_bytes: None,
+            block_max_data_descriptors_per_request: None,
+            block_max_requests_per_drain: None,
             block_async_submissions_total: None,
             block_async_completions_total: None,
             block_async_fallbacks_total: None,
@@ -6058,6 +6112,13 @@ best_for = "Testing typed profile TOML parsing."
             block_write_ops_total: Some(11),
             block_bytes_read_total: Some(12 * 1024),
             block_bytes_written_total: Some(13 * 1024),
+            block_requests_total: Some(20),
+            block_request_bytes_total: Some(80 * 1024),
+            block_request_duration_micros_total: Some(40_000),
+            block_queue_drain_duration_micros_total: Some(10_000),
+            block_max_request_bytes: Some(16 * 1024),
+            block_max_data_descriptors_per_request: Some(4),
+            block_max_requests_per_drain: Some(6),
             block_async_submissions_total: Some(14),
             block_async_completions_total: Some(15),
             block_async_fallbacks_total: Some(16),
@@ -6133,6 +6194,13 @@ best_for = "Testing typed profile TOML parsing."
             block_write_ops_total: Some(11),
             block_bytes_read_total: Some(12 * 1024),
             block_bytes_written_total: Some(13 * 1024),
+            block_requests_total: Some(20),
+            block_request_bytes_total: Some(80 * 1024),
+            block_request_duration_micros_total: Some(40_000),
+            block_queue_drain_duration_micros_total: Some(10_000),
+            block_max_request_bytes: Some(16 * 1024),
+            block_max_data_descriptors_per_request: Some(4),
+            block_max_requests_per_drain: Some(6),
             block_async_submissions_total: Some(14),
             block_async_completions_total: Some(15),
             block_async_fallbacks_total: Some(16),
@@ -6151,6 +6219,13 @@ best_for = "Testing typed profile TOML parsing."
                 "  Block Interrupts:          8 raised, 9 suppressed",
                 "  Block Ops:                 10 read, 11 write",
                 "  Block Bytes:               12.0 KiB read, 13.0 KiB written",
+                "  Block Requests:            20",
+                "  Avg Block Request:         4.0 KiB",
+                "  Avg Block Request Time:    2.000 ms",
+                "  Avg Block Drain Time:      2.000 ms",
+                "  Max Block Request:         16.0 KiB",
+                "  Max Block Data Segments:   4",
+                "  Max Requests Per Drain:    6",
                 "  Async Submissions:         14",
                 "  Async Completions:         15",
                 "  Async Fallbacks:           16",
@@ -6285,6 +6360,13 @@ best_for = "Testing typed profile TOML parsing."
             block_write_ops_total: None,
             block_bytes_read_total: None,
             block_bytes_written_total: None,
+            block_requests_total: None,
+            block_request_bytes_total: None,
+            block_request_duration_micros_total: None,
+            block_queue_drain_duration_micros_total: None,
+            block_max_request_bytes: None,
+            block_max_data_descriptors_per_request: None,
+            block_max_requests_per_drain: None,
             block_async_submissions_total: None,
             block_async_completions_total: None,
             block_async_fallbacks_total: None,

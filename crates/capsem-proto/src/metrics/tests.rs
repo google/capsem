@@ -20,6 +20,13 @@ fn otel_metric_points_include_resource_and_block_counters() {
     snapshot.hypervisor.block.used_entries_total = 25_264;
     snapshot.hypervisor.block.read_ops_total = 8_578;
     snapshot.hypervisor.block.bytes_read_total = 31_394_816;
+    snapshot.hypervisor.block.requests_total = 8_600;
+    snapshot.hypervisor.block.request_bytes_total = 34_000_000;
+    snapshot.hypervisor.block.request_duration_micros_total = 1_200_000;
+    snapshot.hypervisor.block.queue_drain_duration_micros_total = 500_000;
+    snapshot.hypervisor.block.max_request_bytes = 131_072;
+    snapshot.hypervisor.block.max_data_descriptors_per_request = 32;
+    snapshot.hypervisor.block.max_requests_per_drain = 12;
     snapshot.hypervisor.block.async_queue_full_total = 2;
     snapshot.hypervisor.block.async_in_flight = 3;
 
@@ -41,6 +48,18 @@ fn otel_metric_points_include_resource_and_block_counters() {
     let bytes_read = point(&points, "capsem.vm.block.bytes_read");
     assert_eq!(bytes_read.unit, "By");
     assert_eq!(bytes_read.value, 31_394_816.0);
+
+    let request_duration = point(&points, "capsem.vm.block.request_duration");
+    assert_eq!(request_duration.unit, "us");
+    assert_eq!(request_duration.value, 1_200_000.0);
+
+    let max_request = point(&points, "capsem.vm.block.max_request_bytes");
+    assert_eq!(max_request.kind, OtelMetricKind::Gauge);
+    assert_eq!(max_request.value, 131_072.0);
+
+    let max_drain = point(&points, "capsem.vm.block.max_requests_per_drain");
+    assert_eq!(max_drain.kind, OtelMetricKind::Gauge);
+    assert_eq!(max_drain.value, 12.0);
 
     let in_flight = point(&points, "capsem.vm.block.async_in_flight");
     assert_eq!(in_flight.kind, OtelMetricKind::Gauge);

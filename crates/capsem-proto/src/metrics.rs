@@ -194,6 +194,62 @@ impl VmMetricsSnapshot {
         );
         push_counter(
             points,
+            "capsem.vm.block.requests",
+            "1",
+            block.requests_total as f64,
+            attrs.clone(),
+            source,
+        );
+        push_counter(
+            points,
+            "capsem.vm.block.request_bytes",
+            "By",
+            block.request_bytes_total as f64,
+            attrs.clone(),
+            source,
+        );
+        push_counter(
+            points,
+            "capsem.vm.block.request_duration",
+            "us",
+            block.request_duration_micros_total as f64,
+            attrs.clone(),
+            source,
+        );
+        push_counter(
+            points,
+            "capsem.vm.block.queue_drain_duration",
+            "us",
+            block.queue_drain_duration_micros_total as f64,
+            attrs.clone(),
+            source,
+        );
+        push_gauge(
+            points,
+            "capsem.vm.block.max_request_bytes",
+            "By",
+            block.max_request_bytes as f64,
+            attrs.clone(),
+            source,
+        );
+        push_gauge(
+            points,
+            "capsem.vm.block.max_data_descriptors_per_request",
+            "1",
+            block.max_data_descriptors_per_request as f64,
+            attrs.clone(),
+            source,
+        );
+        push_gauge(
+            points,
+            "capsem.vm.block.max_requests_per_drain",
+            "1",
+            block.max_requests_per_drain as f64,
+            attrs.clone(),
+            source,
+        );
+        push_counter(
+            points,
             "capsem.vm.block.async_submissions",
             "1",
             block.async_submissions_total as f64,
@@ -469,6 +525,13 @@ pub struct VmBlockMetrics {
     pub write_ops_total: u64,
     pub bytes_read_total: u64,
     pub bytes_written_total: u64,
+    pub requests_total: u64,
+    pub request_bytes_total: u64,
+    pub request_duration_micros_total: u64,
+    pub queue_drain_duration_micros_total: u64,
+    pub max_request_bytes: u64,
+    pub max_data_descriptors_per_request: u64,
+    pub max_requests_per_drain: u64,
     pub async_submissions_total: u64,
     pub async_completions_total: u64,
     pub async_fallbacks_total: u64,

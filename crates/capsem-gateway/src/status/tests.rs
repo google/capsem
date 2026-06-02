@@ -197,6 +197,13 @@ fn test_vm(id: &str, name: Option<&str>, status: &str, persistent: bool) -> VmSu
         block_write_ops_total: None,
         block_bytes_read_total: None,
         block_bytes_written_total: None,
+        block_requests_total: None,
+        block_request_bytes_total: None,
+        block_request_duration_micros_total: None,
+        block_queue_drain_duration_micros_total: None,
+        block_max_request_bytes: None,
+        block_max_data_descriptors_per_request: None,
+        block_max_requests_per_drain: None,
     }
 }
 
@@ -304,7 +311,14 @@ async fn fetch_status_enriches_running_vm_with_info_metrics() {
                     "block_read_ops_total": 8580u64,
                     "block_write_ops_total": 3u64,
                     "block_bytes_read_total": 31_394_816u64,
-                    "block_bytes_written_total": 4096u64
+                    "block_bytes_written_total": 4096u64,
+                    "block_requests_total": 20u64,
+                    "block_request_bytes_total": 80 * 1024u64,
+                    "block_request_duration_micros_total": 40_000u64,
+                    "block_queue_drain_duration_micros_total": 10_000u64,
+                    "block_max_request_bytes": 16 * 1024u64,
+                    "block_max_data_descriptors_per_request": 4u64,
+                    "block_max_requests_per_drain": 6u64
                 }))
             }),
         );
@@ -327,6 +341,16 @@ async fn fetch_status_enriches_running_vm_with_info_metrics() {
     assert_eq!(running.block_write_ops_total, Some(3));
     assert_eq!(running.block_bytes_read_total, Some(31_394_816));
     assert_eq!(running.block_bytes_written_total, Some(4096));
+    assert_eq!(running.block_requests_total, Some(20));
+    assert_eq!(running.block_request_bytes_total, Some(80 * 1024));
+    assert_eq!(running.block_request_duration_micros_total, Some(40_000));
+    assert_eq!(
+        running.block_queue_drain_duration_micros_total,
+        Some(10_000)
+    );
+    assert_eq!(running.block_max_request_bytes, Some(16 * 1024));
+    assert_eq!(running.block_max_data_descriptors_per_request, Some(4));
+    assert_eq!(running.block_max_requests_per_drain, Some(6));
     assert_eq!(resp.vms[1].block_queue_notifications_total, None);
     h.abort();
 }
