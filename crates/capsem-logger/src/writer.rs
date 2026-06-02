@@ -1327,23 +1327,33 @@ fn insert_resolved_security_event(
     let common = &event.event.common;
     let event_id = &common.event_id;
 
-    conn.execute(
-        "DELETE FROM detection_finding_tags
-         WHERE finding_id IN (SELECT finding_id FROM detection_findings WHERE event_id = ?1)",
-        params![event_id],
-    )?;
-    conn.execute(
-        "DELETE FROM detection_findings WHERE event_id = ?1",
-        params![event_id],
-    )?;
-    conn.execute(
-        "DELETE FROM security_event_steps WHERE event_id = ?1",
-        params![event_id],
-    )?;
-    conn.execute(
-        "DELETE FROM security_event_links WHERE event_id = ?1",
-        params![event_id],
-    )?;
+    let existing_event = conn
+        .query_row(
+            "SELECT 1 FROM security_events WHERE event_id = ?1 LIMIT 1",
+            params![event_id],
+            |_| Ok(()),
+        )
+        .optional()?
+        .is_some();
+    if existing_event {
+        conn.execute(
+            "DELETE FROM detection_finding_tags
+             WHERE finding_id IN (SELECT finding_id FROM detection_findings WHERE event_id = ?1)",
+            params![event_id],
+        )?;
+        conn.execute(
+            "DELETE FROM detection_findings WHERE event_id = ?1",
+            params![event_id],
+        )?;
+        conn.execute(
+            "DELETE FROM security_event_steps WHERE event_id = ?1",
+            params![event_id],
+        )?;
+        conn.execute(
+            "DELETE FROM security_event_links WHERE event_id = ?1",
+            params![event_id],
+        )?;
+    }
 
     let timestamp = timestamp_from_unix_ms(common.timestamp_unix_ms);
     let (process_operation, process_command_class) = match &event.event.subject {

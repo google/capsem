@@ -178,6 +178,10 @@
           endpoint dispatch, process-to-aggregator round trip, telemetry
           enqueue, response enqueue, and response write with bounded
           `method_kind`, `tool_kind`, and `result` labels.
+    - [x] Reduce session DB audit-writer work on hot security-event inserts by
+          skipping stale child-table cleanup deletes for brand-new event IDs.
+          The repeated-event path still deletes/replaces child rows, preserving
+          security decision correctness and full auditability.
     - [x] Add the opt-in `CAPSEM_METRICS_DEBUG_INTERVAL_SECS` process recorder
           plus service/`just run-service` env forwarding so live VM runs can
           emit compact `mcp_metric_snapshot` histogram summaries to

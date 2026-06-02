@@ -924,6 +924,89 @@ fn resolved_security_event_writes_structured_event_steps_findings_and_links() {
 }
 
 #[test]
+fn resolved_security_event_rewrite_removes_stale_child_rows() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("security-event-rewrite.db");
+
+    let mut first = resolved_http_event(
+        "evt-security-rewrite",
+        42,
+        None,
+        SecurityAction::Block(BlockResponse {
+            reason_code: "first_block".to_string(),
+            rule_id: Some("enforce.first".to_string()),
+        }),
+    );
+    first.steps.push(ResolvedEventStep {
+        kind: ResolvedEventStepKind::EnforcementMatch,
+        status: StepStatus::Matched,
+        rule_id: Some("enforce.first".to_string()),
+        pack_id: Some("pack-first".to_string()),
+        message: Some("first write blocked".to_string()),
+    });
+    first.detection_findings.push(DetectionFinding {
+        finding_id: "finding-security-rewrite".to_string(),
+        event_id: "evt-security-rewrite".to_string(),
+        rule_id: "detect.first".to_string(),
+        pack_id: "pack-first".to_string(),
+        sigma_id: None,
+        title: "First finding".to_string(),
+        severity: Severity::Medium,
+        confidence: Confidence::High,
+        tags: vec!["capsem.test".to_string()],
+    });
+
+    let mut second =
+        resolved_http_event("evt-security-rewrite", 43, None, SecurityAction::Continue);
+    second.event.common.parent_event_id = None;
+    second.event.trace.history.clear();
+    second.event.context.history.clear();
+
+    {
+        let writer = DbWriter::open(&db_path, 64).unwrap();
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            writer.write(WriteOp::ResolvedSecurityEvent(first)).await;
+            writer.write(WriteOp::ResolvedSecurityEvent(second)).await;
+        });
+    }
+
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    let final_action: String = conn
+        .query_row(
+            "SELECT final_action FROM security_events WHERE event_id = 'evt-security-rewrite'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(final_action, "continue");
+
+    for (table, count_sql) in [
+        (
+            "security_event_steps",
+            "SELECT COUNT(*) FROM security_event_steps WHERE event_id = 'evt-security-rewrite'",
+        ),
+        (
+            "security_event_links",
+            "SELECT COUNT(*) FROM security_event_links WHERE event_id = 'evt-security-rewrite'",
+        ),
+        (
+            "detection_findings",
+            "SELECT COUNT(*) FROM detection_findings WHERE event_id = 'evt-security-rewrite'",
+        ),
+        (
+            "detection_finding_tags",
+            "SELECT COUNT(*) FROM detection_finding_tags WHERE finding_id = 'finding-security-rewrite'",
+        ),
+    ] {
+        let count: i64 = conn.query_row(count_sql, [], |row| row.get(0)).unwrap();
+        assert_eq!(count, 0, "stale {table} rows must be removed");
+    }
+}
+
+#[test]
 fn writer_metrics_snapshot_counts_resolved_security_decisions_and_findings() {
     let writer = DbWriter::open_in_memory(64).unwrap();
     let mut common = security_common("evt-metrics-block");

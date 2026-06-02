@@ -371,6 +371,18 @@ transport/dispatch bottleneck to trace next, not an upstream network failure.
   to 2.0/3.6/15.4/42.3ms. Post-fix recorder proof with a 3s run showed
   `runtime_security_evaluate` around p50 2.0ms and p99 3.1ms at high
   concurrency instead of the previous 20-22ms queue.
+- Audit-writer cleanup fast path landed as a follow-up that does not weaken
+  logging or blockability: `DbWriter` now checks whether a resolved
+  security-event ID already exists before deleting child rows. New MCP/security
+  events avoid four empty cleanup deletes; repeated event IDs still remove and
+  replace stale steps, findings, tags, and links before persisting the updated
+  decision. The regression proof is
+  `resolved_security_event_rewrite_removes_stale_child_rows`. Scoped live proof
+  on the fresh build measured direct-vsock `mcp-load`
+  593.4/3758.0/5630.6/5749.0 RPS at c=1/10/50/200, all zero errors, versus
+  the post-pool baseline 586.0/3775.4/5564.0/5661.0. Deltas:
+  +1.3%/-0.5%/+1.2%/+1.6%, so this is retained as audit-writer hygiene, not a
+  new throughput breakthrough.
 
 ## First Questions
 

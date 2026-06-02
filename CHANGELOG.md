@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- Changed `DbWriter` resolved security-event inserts to skip stale child-row
+  cleanup deletes on brand-new event IDs while retaining the cleanup path for
+  repeated event IDs. This reduces per-event SQLite work on hot audit paths
+  without dropping MCP/security logs or weakening blockability. A scoped Linux
+  direct-vsock `mcp-load` proof measured 593.4/3758.0/5630.6/5749.0 RPS at
+  c=1/10/50/200, zero errors, versus the post-pool baseline
+  586.0/3775.4/5564.0/5661.0.
 - Changed runtime security-engine evaluation in `capsem-process` from one
   global `Mutex<SecurityEngine>` to a CPU-sized pool of identical compiled
   engines with a shared rule-match accumulator. This preserves runtime MCP/HTTP
