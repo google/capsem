@@ -912,6 +912,67 @@ fn service_unit_check_accepts_escaped_paths() {
     assert!(issues.is_empty(), "unexpected issues: {issues:?}");
 }
 
+#[cfg(unix)]
+#[test]
+fn service_unit_check_accepts_symlinked_installed_paths() {
+    let dir = tempfile::tempdir().unwrap();
+    let real_bin = dir.path().join("usr-bin");
+    let home_bin = dir.path().join("home-bin");
+    std::fs::create_dir_all(&real_bin).unwrap();
+    std::fs::create_dir_all(&home_bin).unwrap();
+
+    let paths = crate::paths::CapsemPaths {
+        cli_bin: real_bin.join("capsem"),
+        service_bin: real_bin.join("capsem-service"),
+        process_bin: real_bin.join("capsem-process"),
+        mcp_bin: real_bin.join("capsem-mcp"),
+        mcp_aggregator_bin: real_bin.join("capsem-mcp-aggregator"),
+        mcp_builtin_bin: real_bin.join("capsem-mcp-builtin"),
+        gateway_bin: real_bin.join("capsem-gateway"),
+        tray_bin: real_bin.join("capsem-tray"),
+        assets_dir: dir.path().join("assets"),
+    };
+    std::fs::create_dir_all(&paths.assets_dir).unwrap();
+
+    for path in [
+        &paths.service_bin,
+        &paths.process_bin,
+        &paths.gateway_bin,
+        &paths.tray_bin,
+    ] {
+        write_executable(path);
+        std::os::unix::fs::symlink(path, home_bin.join(path.file_name().unwrap())).unwrap();
+    }
+
+    let unit_path = dir.path().join("capsem.service");
+    let service_link = home_bin.join("capsem-service");
+    let process_link = home_bin.join("capsem-process");
+    let gateway_link = home_bin.join("capsem-gateway");
+    let tray_link = home_bin.join("capsem-tray");
+    std::fs::write(
+        &unit_path,
+        format!(
+            "ExecStart={} --assets-dir {} --process-binary {} --gateway-binary {} --tray-binary {}",
+            service_link.display(),
+            paths.assets_dir.display(),
+            process_link.display(),
+            gateway_link.display(),
+            tray_link.display(),
+        ),
+    )
+    .unwrap();
+    let service = crate::service_install::ServiceStatus {
+        installed: true,
+        running: true,
+        pid: Some(42),
+        unit_path: Some(unit_path),
+        service_unit_required: true,
+    };
+
+    let issues = super::check_service_unit(&service, &paths);
+    assert!(issues.is_empty(), "unexpected issues: {issues:?}");
+}
+
 #[test]
 fn service_unit_check_skips_isolated_dev_service() {
     let dir = tempfile::tempdir().unwrap();

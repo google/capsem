@@ -383,6 +383,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cold-booting.
 
 ### Fixed
+- Fixed `capsem status` on Linux installs where the systemd unit references
+  `~/.capsem/bin/*` symlinks that resolve to `/usr/bin/*`. The stale-unit
+  checker now accepts canonicalized symlink targets, so a valid installed
+  service no longer reports `service_unit_stale_path`.
 - Fixed `capsem-tui` terminal rendering so the guest cursor remains visible at
   the active VM PTY cursor position, and removed the duplicate gradient
   `CAPSEM` word from the empty-state panel.

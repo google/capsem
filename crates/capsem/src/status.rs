@@ -1209,7 +1209,33 @@ fn unit_references_path(unit: &str, path: &Path) -> bool {
         .replace('<', "&lt;")
         .replace('>', "&gt;");
 
-    unit.contains(&raw) || unit.contains(&systemd_escaped) || unit.contains(&xml_escaped)
+    unit.contains(&raw)
+        || unit.contains(&systemd_escaped)
+        || unit.contains(&xml_escaped)
+        || unit_path_candidates(unit)
+            .iter()
+            .any(|candidate| paths_resolve_to_same_file(candidate, path))
+}
+
+fn unit_path_candidates(unit: &str) -> Vec<PathBuf> {
+    unit.split_whitespace()
+        .filter_map(|token| {
+            let token = token.trim_matches(|c| c == '"' || c == '\'' || c == ';');
+            let start = token.find('/')?;
+            let candidate = token[start..].replace("\\x20", " ");
+            Some(PathBuf::from(candidate))
+        })
+        .collect()
+}
+
+fn paths_resolve_to_same_file(candidate: &Path, expected: &Path) -> bool {
+    let Ok(candidate) = std::fs::canonicalize(candidate) else {
+        return false;
+    };
+    let Ok(expected) = std::fs::canonicalize(expected) else {
+        return false;
+    };
+    candidate == expected
 }
 
 fn is_executable_file(path: &Path) -> bool {
