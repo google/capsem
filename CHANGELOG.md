@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- Changed Linux KVM vhost-vsock queue notifications to expose the RX/TX vhost
+  kick eventfds and register them with `KVM_IOEVENTFD` at the virtio-mmio
+  `QUEUE_NOTIFY` register. This matches the existing virtio-blk KVM shape and
+  avoids the userspace `queue_notify` fallback on normal guest vsock writes.
+  Live `mcp-load` still stayed near the prior ceiling: direct-vsock measured
+  590.0/812.7/813.6/825.4 RPS at c=1/10/50/200 versus the previous scoped
+  572.2/806.4/811.0/842.8 RPS, so the remaining RPS cap is not queue-notify
+  trapping alone.
 - Changed related session telemetry emitters to use batched `DbWriter`
   submission helpers where they already construct multiple rows for one
   event. HTTP/model telemetry, filesystem monitor events, DNS decisions,

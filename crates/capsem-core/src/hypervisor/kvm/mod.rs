@@ -937,9 +937,17 @@ impl Hypervisor for KvmHypervisor {
         if let Some(vsock_bindings) = vsock_bindings {
             let guest_cid = vsock_bindings.guest_cid();
             let vhost_fd = virtio_vsock::open_vhost_vsock()?;
-            let (vsock_device, call_fds) =
+            let (vsock_device, vsock_event_fds) =
                 virtio_vsock::VhostVsockDevice::new(guest_cid, vhost_fd)?;
             let vsock_interrupt_status = Arc::new(AtomicU32::new(0));
+            for (queue_index, &kick_fd) in vsock_event_fds.backend_kick_fds.iter().enumerate() {
+                vm.ioeventfd(
+                    kick_fd,
+                    memory::virtio_mmio_addr(3) + virtio_mmio::QUEUE_NOTIFY_OFFSET,
+                    4,
+                    Some(queue_index as u64),
+                )?;
+            }
 
             let vsock_mmio = virtio_mmio::VirtioMmioTransport::new_with_shared_interrupt_status(
                 Box::new(vsock_device),
@@ -956,14 +964,14 @@ impl Hypervisor for KvmHypervisor {
             )?;
 
             let vsock_gsi = irq_to_gsi(memory::virtio_mmio_irq(3));
-            let mut irq_fds = Vec::with_capacity(call_fds.len());
-            for _ in &call_fds {
+            let mut irq_fds = Vec::with_capacity(vsock_event_fds.call_fds.len());
+            for _ in &vsock_event_fds.call_fds {
                 let irq_fd = create_irq_eventfd()?;
                 vm.irqfd(irq_fd.as_raw_fd(), vsock_gsi)?;
                 irq_fds.push(irq_fd);
             }
             vsock_irq_handles = virtio_vsock::spawn_call_irq_bridges(
-                &call_fds,
+                &vsock_event_fds.call_fds,
                 irq_fds,
                 vsock_interrupt_status,
                 Arc::clone(&shutdown),

@@ -287,6 +287,17 @@
           relay lane, so the stdio relay is not the primary cap. Combined with
           the 25k RPS host-only proof, next target is KVM/vsock delivery or
           host-vsock socket integration.
+    - [x] Wire KVM vhost-vsock RX/TX queue notifications through
+          `KVM_IOEVENTFD` instead of relying on the userspace MMIO
+          `queue_notify` fallback. Unit proof:
+          `cargo test -p capsem-core hypervisor::kvm --lib` passed 350 KVM
+          tests. Live proof via `just exec "capsem-bench mcp-load"` completed:
+          raw-single 573.4/765.2/785.4/815.0 RPS and direct-vsock
+          590.0/812.7/813.6/825.4 RPS at c=1/10/50/200, zero errors.
+          Compared with the previous scoped direct-vsock run
+          572.2/806.4/811.0/842.8 RPS, this is +3.2%/+0.8%/+0.3%/-2.1%;
+          conclusion: correct KVM/vhost-vsock shape, but queue-notify trapping
+          alone is not the remaining ~800 RPS ceiling.
   - [ ] Land only trace-backed RPS speedups, with before/after percentages by
         lane and canonical `just benchmark` artifacts.
 - [ ] H07: docs, changelog, release gate.

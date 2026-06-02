@@ -270,13 +270,26 @@ transport/dispatch bottleneck to trace next, not an upstream network failure.
   vsock is only +0%/+2.7%/+3.4%/+2.5% over the raw relay lane, so the guest
   stdio relay is not the main cap. Combined with the host-only 25k RPS proof,
   the next target is KVM/vsock delivery or host-vsock socket integration.
+- KVM vhost-vsock queue notifications now expose the backend RX/TX kick
+  eventfds and register them through `KVM_IOEVENTFD` on the virtio-mmio
+  `QUEUE_NOTIFY` register, matching the virtio-blk shape and avoiding a
+  userspace MMIO queue-notify bounce for normal guest vsock writes. Unit proof:
+  `cargo test -p capsem-core hypervisor::kvm --lib` passed 350 KVM tests.
+  Live proof via `just exec "capsem-bench mcp-load"` booted and completed, but
+  throughput did not materially move: raw-single 573.4/765.2/785.4/815.0 RPS
+  and direct-vsock 590.0/812.7/813.6/825.4 RPS at c=1/10/50/200, all zero
+  errors. Against the prior 5s scoped direct-vsock proof
+  572.2/806.4/811.0/842.8 RPS, that is +3.2%/+0.8%/+0.3%/-2.1%; queue-notify
+  trapping alone is therefore not the ~800 RPS ceiling.
 
 ## First Questions
 
 - Is the Linux RPS gap actually in KVM/vsock, or in host-side MITM/security
   processing? Current answer: host framed-MCP processing alone is not the cap;
-  direct-vsock also matches the raw relay cap, so the next trace target is
-  KVM/vsock delivery or host-vsock socket integration.
+  direct-vsock also matches the raw relay cap, and KVM ioeventfd queue-notify
+  wiring is now in place without moving the ceiling. The next trace target is
+  vsock socket buffering/readiness, guest/kernel vsock scheduling, or framed
+  single-stream batching rather than userspace MMIO notify trapping alone.
 - Why did `local__echo` regress to ~0.2x baseline throughput with >3x p99
   latency while producing zero errors? Trace guest stdio relay, framed vsock
   single-stream behavior, host MCP endpoint parsing, aggregator dispatch, and

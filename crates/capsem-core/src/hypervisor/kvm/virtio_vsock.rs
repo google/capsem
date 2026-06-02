@@ -64,6 +64,13 @@ pub(super) struct VhostVsockDevice {
     activated: bool,
 }
 
+pub(super) struct VhostVsockEventFds {
+    /// RX/TX kick eventfds consumed by Linux vhost_vsock. The event queue is
+    /// guest-visible only, so it intentionally has no vhost backend kick fd.
+    pub backend_kick_fds: [RawFd; VHOST_VSOCK_BACKEND_QUEUES],
+    pub call_fds: [RawFd; VSOCK_NUM_QUEUES],
+}
+
 /// Validate that a guest CID is usable.
 fn validate_guest_cid(cid: u32) -> Result<()> {
     if cid < MIN_GUEST_CID {
@@ -87,19 +94,23 @@ fn create_eventfd() -> Result<OwnedFd> {
 impl VhostVsockDevice {
     /// Create a new vhost-vsock device.
     ///
-    /// Returns the device and the raw fds of the 3 call eventfds so the
-    /// caller can wire them to KVM_IRQFD before the guest boots.
-    pub fn new(guest_cid: u32, vhost_fd: OwnedFd) -> Result<(Self, [RawFd; VSOCK_NUM_QUEUES])> {
+    /// Returns the device plus raw eventfds so the caller can wire RX/TX
+    /// notifications through KVM_IOEVENTFD and callfds through KVM_IRQFD
+    /// before the guest boots.
+    pub fn new(guest_cid: u32, vhost_fd: OwnedFd) -> Result<(Self, VhostVsockEventFds)> {
         validate_guest_cid(guest_cid)?;
 
         let kick_fds = [create_eventfd()?, create_eventfd()?, create_eventfd()?];
         let call_fds = [create_eventfd()?, create_eventfd()?, create_eventfd()?];
 
-        let call_raw = [
-            call_fds[0].as_raw_fd(),
-            call_fds[1].as_raw_fd(),
-            call_fds[2].as_raw_fd(),
-        ];
+        let event_fds = VhostVsockEventFds {
+            backend_kick_fds: [kick_fds[0].as_raw_fd(), kick_fds[1].as_raw_fd()],
+            call_fds: [
+                call_fds[0].as_raw_fd(),
+                call_fds[1].as_raw_fd(),
+                call_fds[2].as_raw_fd(),
+            ],
+        };
 
         let dev = Self {
             guest_cid: guest_cid as u64,
@@ -109,7 +120,7 @@ impl VhostVsockDevice {
             activated: false,
         };
 
-        Ok((dev, call_raw))
+        Ok((dev, event_fds))
     }
 
     /// Configure the vhost-vsock backend with queue addresses from the guest.
@@ -936,6 +947,18 @@ mod tests {
     fn vhost_backend_configures_rx_tx_only() {
         assert_eq!(VSOCK_NUM_QUEUES, 3);
         assert_eq!(VHOST_VSOCK_BACKEND_QUEUES, 2);
+    }
+
+    #[test]
+    fn new_exposes_backend_kick_fds_for_kvm_ioeventfd() {
+        let vhost_fd = create_eventfd().unwrap();
+        let (_dev, fds) = VhostVsockDevice::new(3, vhost_fd).unwrap();
+
+        assert_eq!(fds.backend_kick_fds.len(), VHOST_VSOCK_BACKEND_QUEUES);
+        assert_eq!(fds.call_fds.len(), VSOCK_NUM_QUEUES);
+        for fd in fds.backend_kick_fds.iter().chain(fds.call_fds.iter()) {
+            assert!(*fd >= 0);
+        }
     }
 
     #[test]
