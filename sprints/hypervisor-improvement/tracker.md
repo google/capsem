@@ -1080,3 +1080,7 @@
   real direct-vsock MCP tool path stays at 588.0/812.8/806.0/822.8 RPS. This
   leaves the next missing proof in the real MCP policy/security/telemetry/
   inflight path after frame parsing, not guest Python/FastMCP or raw KVM/vsock.
+  A local-echo-only default-policy fast path was rejected after same-run proof
+  showed only +1.5%/+0.0%/+0.7%/+0.7% RPS at c=1/10/50/200; it improved c=200
+  p99 by about 10.6% but would make the diagnostic less representative without
+  improving real external MCP or policy-heavy paths.

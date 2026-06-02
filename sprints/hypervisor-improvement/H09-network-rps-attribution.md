@@ -311,6 +311,14 @@ transport/dispatch bottleneck to trace next, not an upstream network failure.
   raw KVM/vhost-vsock transport and the host frame codec are not the current
   ~800 RPS ceiling; the next code target is the real MCP policy/dispatch/
   telemetry path after frame parsing.
+- Rejected experiment: a guarded default-policy `local__echo` fast path that
+  bypassed the general MCP inflight/task/policy path was tested but not
+  accepted. It changed same-run direct-vsock RPS from
+  588.0/812.8/806.0/822.8 to 596.8/813.0/811.8/828.2 at c=1/10/50/200
+  (+1.5%/+0.0%/+0.7%/+0.7%). It improved some tail latency, especially c=200
+  p99 341.1ms -> 304.8ms, but it is too local to the diagnostic benchmark and
+  does not attack real external MCP tools or policy-heavy paths. Do not pursue
+  local-echo-only bypasses as the next H09 implementation target.
 
 ## First Questions
 
