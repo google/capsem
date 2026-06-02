@@ -179,10 +179,20 @@
           enqueue, response enqueue, and response write with bounded
           `method_kind`, `tool_kind`, and `result` labels.
     - [x] Add the opt-in `CAPSEM_METRICS_DEBUG_INTERVAL_SECS` process recorder
-          and service env forwarding so live VM runs can emit compact
-          `mcp_metric_snapshot` histogram summaries to `process.log`.
-    - [ ] Run `mcp-load` with the process recorder enabled and identify the
+          plus service/`just run-service` env forwarding so live VM runs can
+          emit compact `mcp_metric_snapshot` histogram summaries to
+          `process.log`.
+    - [x] Run `mcp-load` with the process recorder enabled and identify the
           dominant stage before changing MCP audit/dispatch behavior.
+          Isolated branch no-recorder: c=1 312.0 RPS, c=10 770.8 RPS, c=50
+          752.6 RPS, c=200 771.4 RPS, zero errors. Recorder-enabled: c=1
+          296.6 RPS, c=10 737.8 RPS, c=50 740.6 RPS, c=200 807.0 RPS, zero
+          errors. Stage p99 points at endpoint/aggregator dispatch
+          (~1.3-1.55ms p99) while parse, telemetry enqueue, and response write
+          stay below ~0.12ms p99.
+    - [ ] Decompose process-to-aggregator/local builtin dispatch next:
+          aggregator queue wait, msgpack encode/decode, builtin stdio write,
+          builtin tool execution, and builtin stdio read.
   - [ ] Land only trace-backed RPS speedups, with before/after percentages by
         lane and canonical `just benchmark` artifacts.
 - [ ] H07: docs, changelog, release gate.

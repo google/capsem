@@ -150,6 +150,20 @@ transport/dispatch bottleneck to trace next, not an upstream network failure.
   the MCP histograms above. This is a diagnostic bridge until the real OTLP
   exporter is configured; the expected next artifact is a same-run `mcp-load`
   result plus `process.log` stage summaries showing which stage owns p95/p99.
+- Live proof on 2026-06-02, isolated branch service, 5s per level:
+  no-recorder `mcp-load` was c=1 312.0 RPS p99 4.2ms, c=10 770.8 RPS p99
+  17.1ms, c=50 752.6 RPS p99 77.3ms, c=200 771.4 RPS p99 300.7ms, all zero
+  errors. With `CAPSEM_METRICS_DEBUG_INTERVAL_SECS=2`, the same branch shape
+  was c=1 296.6 RPS, c=10 737.8 RPS, c=50 740.6 RPS, c=200 807.0 RPS, all
+  zero errors, so the diagnostic recorder is not the root regression.
+- Stage snapshots during the attributed run show `tools/call local_echo`
+  `endpoint_dispatch` / `mitm.mcp_aggregator_request_ms` dominating at roughly
+  1.13-1.20ms average, 1.24-1.35ms p95, and 1.31-1.55ms p99 across steady
+  snapshots. `parse_json_rpc` stayed below ~0.09ms p99,
+  `telemetry_enqueue` below ~0.12ms p99, and response enqueue/write below
+  ~0.06ms p99. The c=200 ~270-300ms client p99 is therefore queueing behind a
+  roughly 770-800 RPS single hot path, not slow parse, response write, or
+  telemetry enqueue.
 
 ## First Questions
 
@@ -159,8 +173,8 @@ transport/dispatch bottleneck to trace next, not an upstream network failure.
   latency while producing zero errors? Trace guest stdio relay, framed vsock
   single-stream behavior, host MCP endpoint parsing, aggregator dispatch, and
   builtin stdio server round trips before changing code. The current leading
-  suspect is the post-dispatch telemetry write path, but it must be confirmed
-  with the new per-stage histograms before changing audit behavior.
+  suspect is now the process-to-aggregator/local builtin dispatch path rather
+  than post-dispatch telemetry enqueue.
 - Does TUI/status polling add measurable endpoint contention when sessions are
   active?
 - Are weak RPS results correlated with VirtioFS workspace reads, policy-context

@@ -60,6 +60,7 @@ assets_dir := "assets"
 default_asset_profile := "config/profiles/base/coding.profile.toml"
 entitlements := "entitlements.plist"
 host_crates := "-p capsem-service -p capsem-process -p capsem -p capsem-mcp -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-gateway -p capsem-tray -p capsem-tui"
+metrics_debug_interval := env_var_or_default("CAPSEM_METRICS_DEBUG_INTERVAL_SECS", "")
 
 # Stamp version as 1.2.{unix_timestamp} in Cargo.toml, tauri.conf.json, and pyproject.toml.
 _stamp-version:
@@ -212,6 +213,10 @@ _ensure-service: _sign
     fi
     echo "Starting capsem-service (CAPSEM_HOME=$CAPSEM_HOME_DIR)..."
     cleanup_runtime_processes
+    METRICS_DEBUG_INTERVAL="{{metrics_debug_interval}}"
+    if [ -n "$METRICS_DEBUG_INTERVAL" ]; then
+        export CAPSEM_METRICS_DEBUG_INTERVAL_SECS="$METRICS_DEBUG_INTERVAL"
+    fi
     # Close fd 3 on the service; otherwise the backgrounded service inherits
     # the execution-lock fd from `just smoke` / `just test` and keeps the
     # flock held after the outer shell exits, blocking subsequent runs.

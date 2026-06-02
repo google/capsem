@@ -6,6 +6,7 @@ use metrics_util::debugging::{DebugValue, DebuggingRecorder, Snapshotter};
 use tracing::{info, warn};
 
 const ENV_INTERVAL_SECS: &str = "CAPSEM_METRICS_DEBUG_INTERVAL_SECS";
+const LOG_TARGET: &str = "capsem_process::metrics_debug";
 const MCP_METRIC_NAMES: &[&str] = &[
     "mitm.mcp_stage_duration_ms",
     "mitm.mcp_endpoint_dispatch_ms",
@@ -24,7 +25,7 @@ impl MetricsDebugGuard {
         let snapshotter = recorder.snapshotter();
         if recorder.install().is_err() {
             warn!(
-                target: "metrics",
+                target: LOG_TARGET,
                 "metrics debug recorder requested but a global metrics recorder is already installed"
             );
             return None;
@@ -36,7 +37,7 @@ impl MetricsDebugGuard {
             .spawn(move || metrics_debug_loop(snapshotter, interval, stop_rx))
             .ok()?;
         info!(
-            target: "metrics",
+            target: LOG_TARGET,
             interval_secs = interval.as_secs_f64(),
             "metrics_debug_recorder_started"
         );
@@ -92,7 +93,7 @@ fn emit_mcp_metric_snapshot(snapshotter: &Snapshotter) {
             continue;
         };
         info!(
-            target: "metrics",
+            target: LOG_TARGET,
             metric = name,
             stage = label_value(&key, "stage").unwrap_or("none"),
             method_kind = label_value(&key, "method_kind").unwrap_or("unknown"),

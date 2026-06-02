@@ -23,7 +23,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `CAPSEM_METRICS_DEBUG_INTERVAL_SECS`, an opt-in capsem-process
   diagnostic recorder that logs compact MCP stage histogram snapshots to
   `process.log`. This gives the H09 RPS investigation live stage attribution
-  while the full OTLP exporter remains a separate telemetry sprint.
+  while the full OTLP exporter remains a separate telemetry sprint. The dev
+  `just run-service` path now forwards the knob into the service environment
+  so live benchmark runs can use it, and snapshots log under the normal
+  `capsem_process::metrics_debug` target.
+- Recorded the H09 MCP live-stage proof: the isolated Linux branch remains at
+  roughly 770-800 RPS for deterministic `local__echo`, with or without the
+  debug recorder. Stage histograms show endpoint/aggregator dispatch dominates
+  while parse, telemetry enqueue, and response write stay sub-0.12ms p99.
 - Added OTel-ready MCP echo-path timing histograms for the H09 RPS
   investigation: framed MCP stage timing, MITM endpoint dispatch timing, and
   process-to-aggregator request timing. Labels are bounded by method kind,
