@@ -61,26 +61,40 @@ where
     let streams = Arc::new(Mutex::new(StreamTracker::default()));
 
     let writer_task = tokio::spawn(async move {
+        let mut batch = Vec::with_capacity(64);
         while let Some(out) = rx.recv().await {
+            batch.push(out);
+            while batch.len() < 64 {
+                match rx.try_recv() {
+                    Ok(out) => batch.push(out),
+                    Err(tokio::sync::mpsc::error::TryRecvError::Empty) => break,
+                    Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => break,
+                }
+            }
+
             let started = Instant::now();
-            if let Err(e) = write_frame(&mut writer, &out).await {
+            if let Err(e) = write_frame_batch(&mut writer, &batch).await {
+                for out in batch.drain(..) {
+                    record_mcp_stage_labels(
+                        "response_write",
+                        out.method_kind,
+                        out.tool_kind,
+                        "error",
+                        started,
+                    );
+                }
+                debug!(error = %e, "framed MCP writer failed");
+                break;
+            }
+            for out in batch.drain(..) {
                 record_mcp_stage_labels(
                     "response_write",
                     out.method_kind,
                     out.tool_kind,
-                    "error",
+                    "ok",
                     started,
                 );
-                debug!(error = %e, "framed MCP writer failed");
-                break;
             }
-            record_mcp_stage_labels(
-                "response_write",
-                out.method_kind,
-                out.tool_kind,
-                "ok",
-                started,
-            );
         }
     });
 
@@ -127,7 +141,7 @@ where
             };
 
             let parse_started = Instant::now();
-            let request = match parse_json_rpc_payload(&frame.payload) {
+            let request = match parse_json_rpc_payload(frame.payload()) {
                 Ok(req) => req,
                 Err(e) => {
                     record_mcp_stage_labels(
@@ -506,11 +520,30 @@ where
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum FrameRead {
     Eof,
-    Frame(capsem_proto::McpFrame),
+    Frame(InboundFrame),
     InvalidFrame {
         stream_id: Option<u32>,
         error: String,
     },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct InboundFrame {
+    stream_id: u32,
+    flags: u16,
+    process_name: String,
+    body: Vec<u8>,
+    payload_start: usize,
+}
+
+impl InboundFrame {
+    fn is_notification(&self) -> bool {
+        self.stream_id == 0 && self.flags & capsem_proto::MCP_FRAME_FLAG_NOTIFICATION != 0
+    }
+
+    fn payload(&self) -> &[u8] {
+        &self.body[self.payload_start..]
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -870,22 +903,18 @@ async fn log_mcp_call_with_policy(
         .result
         .as_ref()
         .and_then(|result| serde_json::to_string(result).ok());
-    let bytes_sent = req
-        .params
+    let bytes_sent = request_preview
         .as_ref()
-        .and_then(|params| serde_json::to_vec(params).ok())
-        .map(|bytes| bytes.len() as u64)
+        .map(|preview| preview.len() as u64)
         .unwrap_or(0);
-    let bytes_received = resp
-        .result
+    let bytes_received = response_preview
         .as_ref()
-        .and_then(|result| serde_json::to_vec(result).ok())
-        .map(|bytes| bytes.len() as u64)
+        .map(|preview| preview.len() as u64)
         .unwrap_or(0);
 
     let timestamp = SystemTime::now();
     let trace_id = crate::telemetry::ambient_capsem_trace_id();
-    db.write(WriteOp::McpCall(McpCall {
+    let mcp_call = WriteOp::McpCall(McpCall {
         timestamp,
         server_name: server_name.to_string(),
         method: req.method.clone(),
@@ -904,8 +933,7 @@ async fn log_mcp_call_with_policy(
         policy_rule: policy_fields.policy_rule.clone(),
         policy_reason: policy_fields.policy_reason.clone(),
         trace_id: trace_id.clone(),
-    }))
-    .await;
+    });
     let resolved_event = resolved_event.unwrap_or_else(|| {
         build_mcp_resolved_security_event(
             req,
@@ -918,7 +946,7 @@ async fn log_mcp_call_with_policy(
             trace_id,
         )
     });
-    db.write(WriteOp::ResolvedSecurityEvent(resolved_event))
+    db.write_many([mcp_call, WriteOp::ResolvedSecurityEvent(resolved_event)])
         .await;
     record_mcp_stage_labels(
         "telemetry_enqueue",
@@ -1679,13 +1707,50 @@ async fn read_next_frame<R: AsyncRead + Unpin>(reader: &mut R) -> Result<FrameRe
         .read_exact(&mut body)
         .await
         .context("read MCP frame body")?;
-    match capsem_proto::decode_mcp_frame_body(&body) {
+    match decode_inbound_frame(body) {
         Ok(frame) => Ok(FrameRead::Frame(frame)),
         Err(e) => Ok(FrameRead::InvalidFrame {
-            stream_id: recover_stream_id(&body),
+            stream_id: recover_stream_id(e.body()),
             error: e.to_string(),
         }),
     }
+}
+
+struct InboundFrameDecodeError {
+    body: Vec<u8>,
+    error: anyhow::Error,
+}
+
+impl InboundFrameDecodeError {
+    fn body(&self) -> &[u8] {
+        &self.body
+    }
+}
+
+impl fmt::Display for InboundFrameDecodeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.error)
+    }
+}
+
+fn decode_inbound_frame(
+    body: Vec<u8>,
+) -> std::result::Result<InboundFrame, InboundFrameDecodeError> {
+    let frame = match capsem_proto::decode_mcp_frame_body_ref(&body) {
+        Ok(frame) => frame,
+        Err(error) => return Err(InboundFrameDecodeError { body, error }),
+    };
+    let payload_start = frame.payload.as_ptr() as usize - body.as_ptr() as usize;
+    let stream_id = frame.stream_id;
+    let flags = frame.flags;
+    let process_name = frame.process_name.to_string();
+    Ok(InboundFrame {
+        stream_id,
+        flags,
+        process_name,
+        body,
+        payload_start,
+    })
 }
 
 fn recover_stream_id(body: &[u8]) -> Option<u32> {
@@ -1741,7 +1806,7 @@ fn parse_json_rpc_payload(
     })
 }
 
-fn validate_frame_request_pair(frame: &capsem_proto::McpFrame, req: &JsonRpcRequest) -> Result<()> {
+fn validate_frame_request_pair(frame: &InboundFrame, req: &JsonRpcRequest) -> Result<()> {
     match (frame.is_notification(), req.id.is_some()) {
         (true, false) => Ok(()),
         (true, true) => bail!("notification stream carried a JSON-RPC id"),
@@ -1930,6 +1995,27 @@ async fn write_frame<W: AsyncWrite + Unpin>(writer: &mut W, out: &OutboundFrame)
     let bytes = capsem_proto::encode_mcp_frame(out.stream_id, 0, &out.process_name, &out.payload)?;
     writer.write_all(&bytes).await.context("write MCP frame")?;
     writer.flush().await.context("flush MCP frame")
+}
+
+async fn write_frame_batch<W: AsyncWrite + Unpin>(
+    writer: &mut W,
+    batch: &[OutboundFrame],
+) -> Result<()> {
+    if batch.len() == 1 {
+        return write_frame(writer, &batch[0]).await;
+    }
+
+    let mut bytes = Vec::new();
+    for out in batch {
+        let frame =
+            capsem_proto::encode_mcp_frame(out.stream_id, 0, &out.process_name, &out.payload)?;
+        bytes.extend_from_slice(&frame);
+    }
+    writer
+        .write_all(&bytes)
+        .await
+        .context("write MCP frame batch")?;
+    writer.flush().await.context("flush MCP frame batch")
 }
 
 #[cfg(test)]

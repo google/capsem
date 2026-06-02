@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- Changed framed MCP transport hot paths to avoid one inbound payload copy,
+  reuse MCP telemetry JSON previews for byte counts, enqueue related MCP
+  telemetry rows with one `DbWriter` sender clone, and batch ready response
+  frames into one write/flush per connection. The scoped Linux `raw-single`
+  `mcp-load` proof remains throughput-capped near 800 RPS, but c=200 p99
+  improved from roughly 499ms to 358ms in the 5s scoped run, confirming
+  per-frame response flushes contributed to tail latency while the remaining
+  RPS ceiling is elsewhere.
 - Changed framed MCP success responses to enqueue the already policy-checked
   response before waiting on session DB audit writes. MCP calls still record
   `mcp_calls` and resolved security events through the normal `DbWriter`, but

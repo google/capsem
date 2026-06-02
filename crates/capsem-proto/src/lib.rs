@@ -146,6 +146,20 @@ impl McpFrame {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct McpFrameRef<'a> {
+    pub stream_id: u32,
+    pub flags: u16,
+    pub process_name: &'a str,
+    pub payload: &'a [u8],
+}
+
+impl McpFrameRef<'_> {
+    pub fn is_notification(&self) -> bool {
+        self.stream_id == 0 && self.flags & MCP_FRAME_FLAG_NOTIFICATION != 0
+    }
+}
+
 /// Encode a framed MCP payload as:
 /// `[u32 total_len_be][fixed header][process_name bytes][payload bytes]`.
 pub fn encode_mcp_frame(
@@ -223,6 +237,20 @@ pub fn looks_like_mcp_frame_prefix(buf: &[u8]) -> bool {
 
 /// Decode the frame body after the four-byte total length prefix.
 pub fn decode_mcp_frame_body(body: &[u8]) -> Result<McpFrame> {
+    let frame = decode_mcp_frame_body_ref(body)?;
+    Ok(McpFrame {
+        stream_id: frame.stream_id,
+        flags: frame.flags,
+        process_name: frame.process_name.to_string(),
+        payload: frame.payload.to_vec(),
+    })
+}
+
+/// Decode the frame body without copying the process name or payload.
+///
+/// The returned frame borrows from `body`, so callers that only need to parse
+/// or forward payload bytes can avoid an extra allocation on the hot path.
+pub fn decode_mcp_frame_body_ref(body: &[u8]) -> Result<McpFrameRef<'_>> {
     if body.len() < MCP_FRAME_HEADER_LEN as usize {
         bail!("MCP frame body too short: {} bytes", body.len());
     }
@@ -264,11 +292,10 @@ pub fn decode_mcp_frame_body(body: &[u8]) -> Result<McpFrame> {
     let process_start = MCP_FRAME_HEADER_LEN as usize;
     let payload_start = process_start + process_name_len;
     let process_name = std::str::from_utf8(&body[process_start..payload_start])
-        .context("MCP process name is not UTF-8")?
-        .to_string();
-    let payload = body[payload_start..].to_vec();
+        .context("MCP process name is not UTF-8")?;
+    let payload = &body[payload_start..];
 
-    Ok(McpFrame {
+    Ok(McpFrameRef {
         stream_id,
         flags,
         process_name,

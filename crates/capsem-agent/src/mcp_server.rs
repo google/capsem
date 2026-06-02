@@ -258,7 +258,7 @@ fn framed_vsock_to_stdout(
         if read_exact_fd(dup_fd, &mut body).is_err() {
             break;
         }
-        let frame = match capsem_proto::decode_mcp_frame_body(&body) {
+        let frame = match capsem_proto::decode_mcp_frame_body_ref(&body) {
             Ok(frame) => frame,
             Err(e) => {
                 eprintln!("[capsem-mcp-server] invalid MCP frame from host: {e:#}");

@@ -410,6 +410,28 @@ impl DbWriter {
         }
     }
 
+    /// Send several write ops with one channel-sender clone.
+    ///
+    /// The writer thread already drains queued ops into transactions; this
+    /// helper keeps hot paths from re-locking the stored sender for related
+    /// telemetry rows emitted together.
+    pub async fn write_many<I>(&self, ops: I)
+    where
+        I: IntoIterator<Item = WriteOp>,
+    {
+        if let Some(tx) = self.clone_sender() {
+            for op in ops {
+                let metrics_update = self.metrics.update_for_write_op(&op);
+                if let Err(e) = tx.send(op).await {
+                    warn!(error = %e, "db writer channel closed, dropping write op");
+                    break;
+                } else if let Some(update) = metrics_update {
+                    self.metrics.record_security_update(update);
+                }
+            }
+        }
+    }
+
     /// Try to send without blocking. Returns false if the channel is full or closed.
     pub fn try_write(&self, op: WriteOp) -> bool {
         let metrics_update = self.metrics.update_for_write_op(&op);

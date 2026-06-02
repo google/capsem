@@ -252,6 +252,19 @@
           FastMCP is only a c=1 tax; the high-concurrency ceiling is shared
           host/vsock/framed-MCP or telemetry/security CPU, not the guest Python
           client or a single relay process.
+    - [x] Land a structural framed-MCP hot-path cleanup and record what it
+          improved. `capsem-proto` now exposes a borrowed MCP frame decoder;
+          the guest relay and host framed parser use it to avoid payload copies;
+          MCP telemetry reuses JSON preview strings for byte counts and enqueues
+          the `mcp_calls`/resolved-security-event pair with one `DbWriter`
+          sender clone; the host response writer batches ready frames into one
+          write/flush. Scoped Linux raw-single proofs at 5s per level:
+          borrowed decode 565.8/751.2/782.8/806.2 RPS, telemetry cleanup
+          571.6/767.8/783.6/830.6 RPS, response batching
+          576.4/805.4/788.4/819.6 RPS at c=1/10/50/200. Response batching
+          improved c=200 p99 from ~498.7ms to 358.2ms in the scoped shape, but
+          throughput remains capped near 800 RPS. Conclusion: useful tail
+          cleanup, not the primary RPS fix.
   - [ ] Land only trace-backed RPS speedups, with before/after percentages by
         lane and canonical `just benchmark` artifacts.
 - [ ] H07: docs, changelog, release gate.

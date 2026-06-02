@@ -19,6 +19,13 @@ fn mcp_frame_roundtrip() {
     assert_eq!(decoded.process_name, "claude");
     assert_eq!(decoded.payload, payload);
     assert!(!decoded.is_notification());
+
+    let borrowed = decode_mcp_frame_body_ref(&encoded[4..]).unwrap();
+    assert_eq!(borrowed.stream_id, 42);
+    assert_eq!(borrowed.flags, 0);
+    assert_eq!(borrowed.process_name, "claude");
+    assert_eq!(borrowed.payload, payload);
+    assert!(!borrowed.is_notification());
 }
 
 #[test]

@@ -236,6 +236,23 @@ transport/dispatch bottleneck to trace next, not an upstream network failure.
   tail latency, so the next source trace should focus on shared host/vsock,
   framed MCP scheduling, security/telemetry CPU, or KVM virtio-vsock delivery
   rather than guest Python/FastMCP.
+- Framed MCP hot-path cleanup landed as a structural cross-architecture slice:
+  `capsem-proto` now has a borrowed MCP frame decoder, the guest relay writes
+  response payloads from borrowed frame buffers, the host parses inbound
+  payloads without copying them into an owned `McpFrame`, MCP telemetry reuses
+  JSON preview strings for byte counts, related `mcp_calls` and
+  `security_events` rows share one `DbWriter` sender clone, and ready response
+  frames are batched into one write/flush per connection. Scoped Linux
+  `raw-single` proofs:
+  - after borrowed decode only: 565.8/751.2/782.8/806.2 RPS at c=1/10/50/200;
+  - after telemetry enqueue cleanup: 571.6/767.8/783.6/830.6 RPS;
+  - after response batching: 576.4/805.4/788.4/819.6 RPS, with c=200 p99
+    improving from roughly 498.7ms to 358.2ms in the same 5s scoped shape.
+  Interpretation: payload copies and response flush granularity were not the
+  primary throughput cap, but batching reduces high-concurrency tails. The
+  remaining RPS ceiling is still shared host/vsock/framed scheduling or
+  security/telemetry CPU, not FastMCP, raw guest relay, or response syscalls
+  alone.
 
 ## First Questions
 
