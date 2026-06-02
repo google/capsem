@@ -74,6 +74,7 @@ Capsem strengths we should preserve:
 
 | # | Sub-sprint | Status | Purpose | Depends On |
 | --- | --- | --- | --- | --- |
+| P0 | [Fundamental 80/20 Hypervisor Advances](P0-fundamental-80-20.md) | Active | Keep the sprint focused on source-traced, high-leverage architecture slices across disk, network/RPS, CPU, and memory instead of benchmark-first knob loops. | H00 |
 | H00 | [Reality And Wrap-Up](H00-reality-and-wrap-up.md) | Done | Close current KVM/block context, preserve benchmark truth, identify the 2-3 pre-flight items before deeper work. | none |
 | H01 | [Safety And Queue Contracts](H01-safety-and-queue-contracts.md) | Done | Fix guest-memory range validation, descriptor validation, queue invariants, and adversarial tests. | H00 |
 | H02 | [Event Delivery And Backpressure](H02-event-delivery-and-backpressure.md) | Not Started | Generalize worker/event-loop patterns, widen ioeventfd/event_idx where safe, add queue-full backpressure. | H01 |
@@ -104,6 +105,9 @@ Capsem strengths we should preserve:
 - Network/RPS work starts from attribution too. Guest network, vsock bridge,
   MITM/proxy, DNS, security engine, service/gateway endpoints, TUI/status
   polling, and workspace/disk dependencies must be measured as separate lanes.
+- P0 work must produce a source-path mechanism table before any long benchmark
+  run. The table must name the changed mechanism and the counters that will
+  prove it.
 
 ## Proof Matrix
 

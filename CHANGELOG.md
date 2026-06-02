@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Added the P0 Fundamental 80/20 Hypervisor Advances sprint board. It ranks
+  the five source-traced performance bets across disk, network/RPS, CPU
+  lifecycle, memory/cache, and control-plane overhead, and starts the block
+  lifecycle comparison against Firecracker and crosvm before accepting another
+  long benchmark loop.
 - Added the H08 Disk Throughput Attribution sprint under Hypervisor
   Improvement, separating EROFS DAX rootfs, fallback virtio-blk rootfs,
   writable scratch, VirtioFS, and RPS-adjacent I/O lanes before accepting more

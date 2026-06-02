@@ -3,6 +3,16 @@
 ## Tasks
 
 - [x] Create meta-sprint structure and sub-sprint plan.
+- [ ] P0: fundamental 80/20 hypervisor advances.
+  - [x] Add a P0 sprint board that ranks the five highest-leverage mechanism
+        bets across disk, network/RPS, CPU lifecycle, memory/cache, and
+        control-plane overhead.
+  - [x] Start the block lifecycle mechanism table from actual Capsem,
+        Firecracker, and crosvm source paths.
+  - [ ] Finish the crosvm async engine and Firecracker async file-engine trace
+        before choosing the first implementation slice.
+  - [ ] Pick and land one coherent code-path improvement with counters and
+        before/after proof by lane.
 - [x] H00: close current KVM/block context and benchmark truth.
 - [x] H00: make benchmark artifact retention part of `just benchmark`.
 - [x] H01: safety and queue contracts.
