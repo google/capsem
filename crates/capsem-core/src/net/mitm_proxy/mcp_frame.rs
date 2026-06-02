@@ -62,10 +62,25 @@ where
 
     let writer_task = tokio::spawn(async move {
         while let Some(out) = rx.recv().await {
+            let started = Instant::now();
             if let Err(e) = write_frame(&mut writer, &out).await {
+                record_mcp_stage_labels(
+                    "response_write",
+                    out.method_kind,
+                    out.tool_kind,
+                    "error",
+                    started,
+                );
                 debug!(error = %e, "framed MCP writer failed");
                 break;
             }
+            record_mcp_stage_labels(
+                "response_write",
+                out.method_kind,
+                out.tool_kind,
+                "ok",
+                started,
+            );
         }
     });
 
@@ -111,9 +126,17 @@ where
                 }
             };
 
+            let parse_started = Instant::now();
             let request = match parse_json_rpc_payload(&frame.payload) {
                 Ok(req) => req,
                 Err(e) => {
+                    record_mcp_stage_labels(
+                        "parse_json_rpc",
+                        "unknown",
+                        "unknown",
+                        "error",
+                        parse_started,
+                    );
                     warn!(error = %e, "invalid JSON-RPC in framed MCP request");
                     if disposition == StreamDisposition::Request {
                         let response = JsonRpcResponse::err(e.id, e.code, e.message);
@@ -141,6 +164,7 @@ where
             }
 
             let summary = interpret_mcp_method(&request);
+            record_mcp_stage("parse_json_rpc", &summary, "ok", parse_started);
             record_method_metric(&summary);
             let decision_request =
                 McpDecisionRequest::from_request(&process_name, &request, &summary);
@@ -285,11 +309,20 @@ where
             let db_h = Arc::clone(&db);
             let tx_h = tx.clone();
             let streams_h = Arc::clone(&streams);
+            let method_kind = summary.kind.label();
+            let tool_kind = mcp_tool_kind_from_summary(&summary);
             tokio::spawn(async move {
                 let _permit = permit;
                 let start = Instant::now();
                 let response = endpoint_h.handle_request(&dispatch_request).await;
                 let duration_ms = start.elapsed().as_millis() as u64;
+                record_mcp_stage_labels(
+                    "endpoint_dispatch",
+                    method_kind,
+                    tool_kind,
+                    mcp_optional_response_result(response.as_ref()),
+                    start,
+                );
                 streams_h
                     .lock()
                     .expect("framed MCP stream tracker poisoned")
@@ -341,8 +374,34 @@ where
                     None,
                 )
                 .await;
-                if let Err(e) = send_response(&tx_h, frame.stream_id, &process_name, &response).await {
+                let send_started = Instant::now();
+                if let Err(e) =
+                    send_response_with_labels(
+                        &tx_h,
+                        frame.stream_id,
+                        &process_name,
+                        &response,
+                        method_kind,
+                        tool_kind,
+                    )
+                    .await
+                {
+                    record_mcp_stage_labels(
+                        "response_enqueue",
+                        method_kind,
+                        tool_kind,
+                        "error",
+                        send_started,
+                    );
                     debug!(error = %e, "framed MCP response dropped");
+                } else {
+                    record_mcp_stage_labels(
+                        "response_enqueue",
+                        method_kind,
+                        tool_kind,
+                        mcp_response_result(&response),
+                        send_started,
+                    );
                 }
             });
         }
@@ -713,6 +772,7 @@ async fn log_mcp_call_with_policy(
     policy_fields: McpCallEnforcementFields,
     resolved_event: Option<ResolvedSecurityEvent>,
 ) {
+    let started = Instant::now();
     let tool_name = req
         .params
         .as_ref()
@@ -795,6 +855,13 @@ async fn log_mcp_call_with_policy(
     });
     db.write(WriteOp::ResolvedSecurityEvent(resolved_event))
         .await;
+    record_mcp_stage_labels(
+        "telemetry_enqueue",
+        mcp_method_kind_label(&req.method),
+        mcp_tool_kind_from_name(tool_name),
+        mcp_response_result(resp),
+        started,
+    );
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1494,6 +1561,8 @@ struct OutboundFrame {
     stream_id: u32,
     process_name: String,
     payload: Vec<u8>,
+    method_kind: &'static str,
+    tool_kind: &'static str,
 }
 
 async fn send_response(
@@ -1502,11 +1571,24 @@ async fn send_response(
     process_name: &str,
     response: &JsonRpcResponse,
 ) -> Result<()> {
+    send_response_with_labels(tx, stream_id, process_name, response, "unknown", "unknown").await
+}
+
+async fn send_response_with_labels(
+    tx: &tokio::sync::mpsc::Sender<OutboundFrame>,
+    stream_id: u32,
+    process_name: &str,
+    response: &JsonRpcResponse,
+    method_kind: &'static str,
+    tool_kind: &'static str,
+) -> Result<()> {
     let payload = serde_json::to_vec(response).context("serialize framed MCP response")?;
     tx.send(OutboundFrame {
         stream_id,
         process_name: process_name.to_string(),
         payload,
+        method_kind,
+        tool_kind,
     })
     .await
     .context("framed MCP writer channel closed")
@@ -1704,6 +1786,79 @@ fn record_method_metric(summary: &McpMethodSummary) {
         "kind" => summary.kind.label(),
     )
     .increment(1);
+}
+
+fn record_mcp_stage(
+    stage: &'static str,
+    summary: &McpMethodSummary,
+    result: &'static str,
+    started: Instant,
+) {
+    record_mcp_stage_labels(
+        stage,
+        summary.kind.label(),
+        mcp_tool_kind_from_summary(summary),
+        result,
+        started,
+    );
+}
+
+fn record_mcp_stage_labels(
+    stage: &'static str,
+    method_kind: &'static str,
+    tool_kind: &'static str,
+    result: &'static str,
+    started: Instant,
+) {
+    ::metrics::histogram!(
+        metrics::MCP_STAGE_DURATION_MS,
+        "stage" => stage,
+        "method_kind" => method_kind,
+        "tool_kind" => tool_kind,
+        "result" => result,
+    )
+    .record(started.elapsed().as_secs_f64() * 1000.0);
+}
+
+fn mcp_method_kind_label(method: &str) -> &'static str {
+    match method {
+        "initialize" => "initialize",
+        "notifications/initialized" => "notifications/initialized",
+        "tools/list" => "tools/list",
+        "tools/call" => "tools/call",
+        "resources/list" => "resources/list",
+        "resources/read" => "resources/read",
+        "prompts/list" => "prompts/list",
+        "prompts/get" => "prompts/get",
+        _ => "unknown",
+    }
+}
+
+fn mcp_tool_kind_from_summary(summary: &McpMethodSummary) -> &'static str {
+    mcp_tool_kind_from_name(summary.tool_name.as_deref())
+}
+
+fn mcp_tool_kind_from_name(tool_name: Option<&str>) -> &'static str {
+    match tool_name {
+        Some("local__echo") => "local_echo",
+        Some(name) if name.starts_with("local__snapshots_") => "local_snapshot",
+        Some("local__fetch_http" | "local__grep_http" | "local__http_headers") => "local_http",
+        Some(name) if name.starts_with("local__") => "local_other",
+        Some(_) => "external",
+        None => "none",
+    }
+}
+
+fn mcp_optional_response_result(response: Option<&JsonRpcResponse>) -> &'static str {
+    response.map_or("no_response", mcp_response_result)
+}
+
+fn mcp_response_result(response: &JsonRpcResponse) -> &'static str {
+    if response.error.is_some() {
+        "error"
+    } else {
+        "ok"
+    }
 }
 
 async fn write_frame<W: AsyncWrite + Unpin>(writer: &mut W, out: &OutboundFrame) -> Result<()> {

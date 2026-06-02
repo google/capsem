@@ -174,6 +174,10 @@
         polling, and workspace/disk dependencies.
   - [ ] Add or expose low-cardinality counters for the missing RPS lanes and
         prove them in a real VM run.
+    - [x] Add MCP echo-path stage timing histograms for framed parse,
+          endpoint dispatch, process-to-aggregator round trip, telemetry
+          enqueue, response enqueue, and response write with bounded
+          `method_kind`, `tool_kind`, and `result` labels.
   - [ ] Land only trace-backed RPS speedups, with before/after percentages by
         lane and canonical `just benchmark` artifacts.
 - [ ] H07: docs, changelog, release gate.
@@ -240,6 +244,18 @@
   -80.3%), p99 296.6ms vs 70.8ms (4.19x). This fails the documented
   `mcp-load` >2x p99 regression gate at every concurrency level and should
   move MCP transport tracing up the H09 priority list.
+- H09 source trace for the deterministic MCP echo path is recorded in
+  `H09-network-rps-attribution.md`. The path is guest FastMCP stdio ->
+  guest `capsem-mcp-server` framed vsock:5002 -> host MITM framed parser /
+  policy / inflight semaphore -> `McpEndpointState` -> process
+  `AggregatorClient` msgpack driver -> `capsem-mcp-aggregator` pipelined
+  handler -> pooled `capsem-mcp-builtin` stdio echo -> durable MCP/security
+  telemetry enqueue -> framed response write. Historical framed-MITM runs on
+  the same logical path reached ~9k-10k RPS at c=10/50 and ~8.3k-9.2k RPS at
+  c=200, so the current ~780 RPS ceiling is a regression. New OTel-ready
+  histograms are in place: `mitm.mcp_stage_duration_ms`,
+  `mitm.mcp_endpoint_dispatch_ms`, and `mitm.mcp_aggregator_request_ms`, all
+  with bounded method/tool/result labels.
 - Current highest-leverage H08 task: produce a Capsem vs Firecracker vs crosvm
   block-lifecycle mechanism table before running another long benchmark. The
   table must cover descriptor parsing, guest-memory translation, event-loop /
@@ -786,6 +802,12 @@
   `just exec "capsem-bench mcp-load && cat /tmp/capsem-benchmark.json"`
   (completed with zero errors; valid deterministic MCP transport regression
   proof against `benchmarks/mcp-load/baseline.json`),
+  `cargo test -p capsem-core aggregator_`,
+  `cargo test -p capsem-core endpoint_`,
+  `cargo test -p capsem-core mcp_stage_`,
+  `cargo test -p capsem-core log_mcp_call_writes_canonical_security_event`,
+  `cargo test -p capsem-core all_names_distinct`,
+  `cargo test -p capsem-core describe_all_does_not_panic`,
   `cargo test -p capsem --bin capsem format_session_resource_lines_shows_live_metrics`,
   `cargo test -p capsem --bin capsem format_session_hypervisor_lines_shows_block_counters`,
   `cargo test -p capsem --bin capsem`,
@@ -921,6 +943,6 @@
   performance fix. The first focused `mitm-load` rerun is explicitly rejected
   as performance evidence because the environment produced request exceptions
   and timeout tails at every concurrency level. The `mcp-load` rerun is valid
-  evidence and needs source tracing before code changes: guest relay, framed
-  vsock stream, host MCP endpoint, aggregator dispatch, builtin stdio server,
-  and telemetry write path.
+  evidence and now has source tracing plus OTel-ready stage histograms; it
+  still needs a live VM rerun with metric capture before making a speedup
+  claim or changing audit/telemetry behavior.

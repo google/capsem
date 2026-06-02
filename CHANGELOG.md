@@ -20,6 +20,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   downloads during `just exec` after guest binary changes.
 
 ### Added
+- Added OTel-ready MCP echo-path timing histograms for the H09 RPS
+  investigation: framed MCP stage timing, MITM endpoint dispatch timing, and
+  process-to-aggregator request timing. Labels are bounded by method kind,
+  coarse tool kind, stage, and result so the deterministic `local__echo`
+  regression can be traced without high-cardinality tool names.
 - Added process-side vsock connection metrics with bounded port-kind labels,
   active-connection gauges, close-result counters, and handler-duration
   histograms. These split guest network/MITM pressure from gateway/status

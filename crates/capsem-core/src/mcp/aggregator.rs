@@ -9,6 +9,7 @@
 //! filesystem, or service IPC.
 
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Instant;
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -137,6 +138,58 @@ pub enum AggregatorMethod {
     Shutdown,
 }
 
+impl AggregatorMethod {
+    fn metric_label(&self) -> &'static str {
+        match self {
+            Self::ListServers => "list_servers",
+            Self::ListTools => "list_tools",
+            Self::ListResources => "list_resources",
+            Self::ListPrompts => "list_prompts",
+            Self::CallTool { .. } => "call_tool",
+            Self::ReadResource { .. } => "read_resource",
+            Self::GetPrompt { .. } => "get_prompt",
+            Self::Refresh { .. } => "refresh",
+            Self::Shutdown => "shutdown",
+        }
+    }
+
+    fn tool_kind_label(&self) -> &'static str {
+        match self {
+            Self::CallTool { name, .. } | Self::GetPrompt { name, .. } => {
+                namespaced_metric_kind(name)
+            }
+            Self::ReadResource { uri } => namespaced_metric_kind(uri),
+            _ => "none",
+        }
+    }
+}
+
+fn namespaced_metric_kind(name: &str) -> &'static str {
+    match name {
+        "local__echo" => "local_echo",
+        n if n.starts_with("local__snapshots_") => "local_snapshot",
+        "local__fetch_http" | "local__grep_http" | "local__http_headers" => "local_http",
+        n if n.starts_with("local__") => "local_other",
+        n if n.contains("__") || n.starts_with("capsem://") => "external",
+        _ => "unknown",
+    }
+}
+
+fn record_aggregator_request_metric(
+    started: Instant,
+    method_kind: &'static str,
+    tool_kind: &'static str,
+    result: &'static str,
+) {
+    ::metrics::histogram!(
+        crate::net::mitm_proxy::metrics::MCP_AGGREGATOR_REQUEST_MS,
+        "method_kind" => method_kind,
+        "tool_kind" => tool_kind,
+        "result" => result,
+    )
+    .record(started.elapsed().as_secs_f64() * 1000.0);
+}
+
 // ── Response (aggregator -> process) ────────────────────────────────
 
 /// A response from the aggregator subprocess.
@@ -227,18 +280,35 @@ impl AggregatorClient {
 
     /// Send a request and wait for the response.
     pub async fn request(&self, method: AggregatorMethod) -> Result<AggregatorResult> {
+        let started = Instant::now();
+        let method_kind = method.metric_label();
+        let tool_kind = method.tool_kind_label();
         let id = NEXT_REQ_ID.fetch_add(1, Ordering::Relaxed);
         let req = AggregatorRequest { id, method };
         let (resp_tx, resp_rx) = oneshot::channel();
 
-        self.tx
-            .send((req, resp_tx))
-            .await
-            .map_err(|_| anyhow::anyhow!("aggregator channel closed"))?;
+        if self.tx.send((req, resp_tx)).await.is_err() {
+            record_aggregator_request_metric(started, method_kind, tool_kind, "channel_closed");
+            return Err(anyhow::anyhow!("aggregator channel closed"));
+        }
 
-        let resp = resp_rx
-            .await
-            .context("aggregator response channel dropped")?;
+        let resp = match resp_rx.await {
+            Ok(resp) => resp,
+            Err(error) => {
+                record_aggregator_request_metric(
+                    started,
+                    method_kind,
+                    tool_kind,
+                    "channel_dropped",
+                );
+                return Err(error).context("aggregator response channel dropped");
+            }
+        };
+        let result = match &resp.body {
+            AggregatorResult::Error { .. } => "error",
+            _ => "ok",
+        };
+        record_aggregator_request_metric(started, method_kind, tool_kind, result);
 
         Ok(resp.body)
     }
@@ -485,6 +555,67 @@ mod tests {
         } else {
             panic!("expected Ok");
         }
+    }
+
+    #[test]
+    fn aggregator_metric_labels_are_bounded() {
+        assert_eq!(namespaced_metric_kind("local__echo"), "local_echo");
+        assert_eq!(
+            namespaced_metric_kind("local__snapshots_list"),
+            "local_snapshot"
+        );
+        assert_eq!(namespaced_metric_kind("local__http_headers"), "local_http");
+        assert_eq!(namespaced_metric_kind("github__issue"), "external");
+        assert_eq!(namespaced_metric_kind("capsem://local/readme"), "external");
+        assert_eq!(namespaced_metric_kind("malformed"), "unknown");
+    }
+
+    #[tokio::test]
+    async fn aggregator_client_records_request_duration_metric() {
+        use metrics_util::debugging::{DebugValue, DebuggingRecorder, Snapshotter};
+
+        let recorder = DebuggingRecorder::new();
+        let snapshotter: Snapshotter = recorder.snapshotter();
+        let _guard = ::metrics::set_default_local_recorder(&recorder);
+
+        let (client, mut rx) = AggregatorClient::channel(4);
+        tokio::spawn(async move {
+            while let Some((req, resp_tx)) = rx.recv().await {
+                let _ = resp_tx.send(AggregatorResponse {
+                    id: req.id,
+                    body: AggregatorResult::CallResult {
+                        result: serde_json::json!({"ok": true}),
+                    },
+                });
+            }
+        });
+
+        let result = client
+            .call_tool("local__echo", serde_json::json!({"text": "hi"}))
+            .await
+            .unwrap();
+        assert_eq!(result["ok"], true);
+
+        let present =
+            snapshotter
+                .snapshot()
+                .into_vec()
+                .into_iter()
+                .any(|(key, _, _, value)| {
+                    key.key().name() == crate::net::mitm_proxy::metrics::MCP_AGGREGATOR_REQUEST_MS
+                        && key.key().labels().any(|label| {
+                            label.key() == "method_kind" && label.value() == "call_tool"
+                        })
+                        && key.key().labels().any(|label| {
+                            label.key() == "tool_kind" && label.value() == "local_echo"
+                        })
+                        && key
+                            .key()
+                            .labels()
+                            .any(|label| label.key() == "result" && label.value() == "ok")
+                        && matches!(value, DebugValue::Histogram(_))
+                });
+        assert!(present, "aggregator request histogram should be recorded");
     }
 
     #[test]

@@ -321,3 +321,68 @@ async fn endpoint_times_out_tool_calls_and_records_catalog_ceiling() {
         .as_ref()
         .is_some_and(|error| error.message.contains("timed out")));
 }
+
+#[test]
+fn endpoint_metric_labels_are_bounded() {
+    assert_eq!(mcp_method_kind_label("tools/call"), "tools/call");
+    assert_eq!(mcp_method_kind_label("not-a-real-method"), "unknown");
+    assert_eq!(mcp_tool_kind_label(Some("local__echo")), "local_echo");
+    assert_eq!(
+        mcp_tool_kind_label(Some("local__snapshots_list")),
+        "local_snapshot"
+    );
+    assert_eq!(mcp_tool_kind_label(Some("local__fetch_http")), "local_http");
+    assert_eq!(mcp_tool_kind_label(Some("github__issue")), "external");
+    assert_eq!(mcp_tool_kind_label(None), "none");
+}
+
+#[tokio::test]
+async fn endpoint_records_dispatch_duration_metric() {
+    use metrics_util::debugging::{DebugValue, DebuggingRecorder, Snapshotter};
+
+    let recorder = DebuggingRecorder::new();
+    let snapshotter: Snapshotter = recorder.snapshotter();
+    let _guard = ::metrics::set_default_local_recorder(&recorder);
+
+    let (endpoint, _) = endpoint_with_driver(McpTimeouts::default(), |req| async move {
+        match req.method {
+            AggregatorMethod::CallTool { name, arguments } => AggregatorResult::CallResult {
+                result: serde_json::json!({"name": name, "arguments": arguments}),
+            },
+            _ => AggregatorResult::Error {
+                error: "unexpected method".to_string(),
+            },
+        }
+    });
+
+    let response = endpoint
+        .handle_request(&json_request(
+            "tools/call",
+            serde_json::json!({"name": "local__echo", "arguments": {"text": "hi"}}),
+        ))
+        .await
+        .unwrap();
+    assert!(response.error.is_none());
+
+    let present = snapshotter
+        .snapshot()
+        .into_vec()
+        .into_iter()
+        .any(|(key, _, _, value)| {
+            key.key().name() == super::super::metrics::MCP_ENDPOINT_DISPATCH_MS
+                && key
+                    .key()
+                    .labels()
+                    .any(|label| label.key() == "method_kind" && label.value() == "tools/call")
+                && key
+                    .key()
+                    .labels()
+                    .any(|label| label.key() == "tool_kind" && label.value() == "local_echo")
+                && key
+                    .key()
+                    .labels()
+                    .any(|label| label.key() == "result" && label.value() == "ok")
+                && matches!(value, DebugValue::Histogram(_))
+        });
+    assert!(present, "endpoint dispatch histogram should be recorded");
+}

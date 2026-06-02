@@ -162,6 +162,29 @@ fn build_mcp_security_event_from_request_uses_canonical_mcp_subject() {
 }
 
 #[test]
+fn mcp_stage_metric_labels_are_bounded() {
+    let req = parse_json_rpc_payload(
+        br#"{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"local__echo","arguments":{"text":"hi"}}}"#,
+    )
+    .unwrap();
+    let summary = interpret_mcp_method(&req);
+
+    assert_eq!(mcp_method_kind_label("tools/call"), "tools/call");
+    assert_eq!(mcp_method_kind_label("bogus/method"), "unknown");
+    assert_eq!(mcp_tool_kind_from_summary(&summary), "local_echo");
+    assert_eq!(
+        mcp_tool_kind_from_name(Some("local__snapshots_list")),
+        "local_snapshot"
+    );
+    assert_eq!(
+        mcp_tool_kind_from_name(Some("local__http_headers")),
+        "local_http"
+    );
+    assert_eq!(mcp_tool_kind_from_name(Some("github__issue")), "external");
+    assert_eq!(mcp_tool_kind_from_name(None), "none");
+}
+
+#[test]
 fn runtime_mcp_block_projects_to_pre_dispatch_policy_decision() {
     let req = parse_json_rpc_payload(
         br#"{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"local__echo","arguments":{"text":"hi"}}}"#,
@@ -199,6 +222,12 @@ fn runtime_mcp_block_projects_to_pre_dispatch_policy_decision() {
 
 #[tokio::test]
 async fn log_mcp_call_writes_canonical_security_event() {
+    use metrics_util::debugging::{DebugValue, DebuggingRecorder, Snapshotter};
+
+    let recorder = DebuggingRecorder::new();
+    let snapshotter: Snapshotter = recorder.snapshotter();
+    let _guard = ::metrics::set_default_local_recorder(&recorder);
+
     let dir = tempfile::tempdir().unwrap();
     let db = std::sync::Arc::new(DbWriter::open(&dir.path().join("session.db"), 64).unwrap());
     let req = parse_json_rpc_payload(
@@ -243,6 +272,36 @@ async fn log_mcp_call_writes_canonical_security_event() {
     assert!(security.contains("mcp.request"));
     assert!(security.contains("continue"));
     assert!(security.contains("mcp.tool.github__create_issue"));
+
+    let telemetry_metric_present =
+        snapshotter
+            .snapshot()
+            .into_vec()
+            .into_iter()
+            .any(|(key, _, _, value)| {
+                key.key().name() == metrics::MCP_STAGE_DURATION_MS
+                    && key
+                        .key()
+                        .labels()
+                        .any(|label| label.key() == "stage" && label.value() == "telemetry_enqueue")
+                    && key
+                        .key()
+                        .labels()
+                        .any(|label| label.key() == "method_kind" && label.value() == "tools/call")
+                    && key
+                        .key()
+                        .labels()
+                        .any(|label| label.key() == "tool_kind" && label.value() == "external")
+                    && key
+                        .key()
+                        .labels()
+                        .any(|label| label.key() == "result" && label.value() == "ok")
+                    && matches!(value, DebugValue::Histogram(_))
+            });
+    assert!(
+        telemetry_metric_present,
+        "MCP telemetry enqueue histogram should be recorded"
+    );
 }
 
 #[tokio::test]

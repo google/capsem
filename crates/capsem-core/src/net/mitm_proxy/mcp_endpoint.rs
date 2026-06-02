@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use tokio::sync::RwLock;
 
@@ -120,17 +120,22 @@ impl McpEndpointState {
             return None;
         }
 
+        let started = Instant::now();
+        let method_kind = mcp_method_kind_label(&req.method);
+        let tool_kind = mcp_tool_kind_label(param_str(req, "name"));
         let timeout = self
             .timeout_for_request(&req.method, param_str(req, "name"))
             .await;
-        match tokio::time::timeout(timeout, self.dispatch(req)).await {
-            Ok(response) => Some(response),
-            Err(_) => Some(JsonRpcResponse::err(
+        let response = match tokio::time::timeout(timeout, self.dispatch(req)).await {
+            Ok(response) => response,
+            Err(_) => JsonRpcResponse::err(
                 req.id.clone(),
                 -32000,
                 format!("MCP request timed out after {} ms", timeout.as_millis()),
-            )),
-        }
+            ),
+        };
+        record_endpoint_dispatch(started, method_kind, tool_kind, &response);
+        Some(response)
     }
 
     async fn dispatch(&self, req: &JsonRpcRequest) -> JsonRpcResponse {
@@ -292,6 +297,50 @@ fn param_str<'a>(req: &'a JsonRpcRequest, key: &str) -> Option<&'a str> {
         .as_ref()
         .and_then(|params| params.get(key))
         .and_then(|value| value.as_str())
+}
+
+fn record_endpoint_dispatch(
+    started: Instant,
+    method_kind: &'static str,
+    tool_kind: &'static str,
+    response: &JsonRpcResponse,
+) {
+    let result = if response.error.is_some() {
+        "error"
+    } else {
+        "ok"
+    };
+    ::metrics::histogram!(
+        super::metrics::MCP_ENDPOINT_DISPATCH_MS,
+        "method_kind" => method_kind,
+        "tool_kind" => tool_kind,
+        "result" => result,
+    )
+    .record(started.elapsed().as_secs_f64() * 1000.0);
+}
+
+fn mcp_method_kind_label(method: &str) -> &'static str {
+    match method {
+        "initialize" => "initialize",
+        "tools/list" => "tools/list",
+        "tools/call" => "tools/call",
+        "resources/list" => "resources/list",
+        "resources/read" => "resources/read",
+        "prompts/list" => "prompts/list",
+        "prompts/get" => "prompts/get",
+        _ => "unknown",
+    }
+}
+
+fn mcp_tool_kind_label(tool_name: Option<&str>) -> &'static str {
+    match tool_name {
+        Some("local__echo") => "local_echo",
+        Some(name) if name.starts_with("local__snapshots_") => "local_snapshot",
+        Some("local__fetch_http" | "local__grep_http" | "local__http_headers") => "local_http",
+        Some(name) if name.starts_with("local__") => "local_other",
+        Some(_) => "external",
+        None => "none",
+    }
 }
 
 #[cfg(test)]

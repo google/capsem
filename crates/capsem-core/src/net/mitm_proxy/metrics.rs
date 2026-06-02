@@ -45,6 +45,9 @@ pub const REQUEST_BODY_BYTES: &str = "mitm.request_body_bytes";
 pub const RESPONSE_BODY_BYTES: &str = "mitm.response_body_bytes";
 pub const DNS_HANDLE_DURATION_MS: &str = "mitm.dns_handle_duration_ms";
 pub const DNS_UPSTREAM_DURATION_MS: &str = "mitm.dns_upstream_duration_ms";
+pub const MCP_STAGE_DURATION_MS: &str = "mitm.mcp_stage_duration_ms";
+pub const MCP_ENDPOINT_DISPATCH_MS: &str = "mitm.mcp_endpoint_dispatch_ms";
+pub const MCP_AGGREGATOR_REQUEST_MS: &str = "mitm.mcp_aggregator_request_ms";
 
 // ── Gauge names ─────────────────────────────────────────────────────
 
@@ -160,6 +163,21 @@ pub fn describe_all() {
         DNS_UPSTREAM_DURATION_MS,
         Unit::Milliseconds,
         "Wall time of one upstream DNS resolution attempt (UDP forward + receive). Only emitted on the upstream-forward path."
+    );
+    describe_histogram!(
+        MCP_STAGE_DURATION_MS,
+        Unit::Milliseconds,
+        "Wall time of one framed MCP transport stage, partitioned by bounded stage/method/tool/result labels."
+    );
+    describe_histogram!(
+        MCP_ENDPOINT_DISPATCH_MS,
+        Unit::Milliseconds,
+        "Wall time spent inside the MITM MCP endpoint dispatcher, including aggregator round trip for routed methods."
+    );
+    describe_histogram!(
+        MCP_AGGREGATOR_REQUEST_MS,
+        Unit::Milliseconds,
+        "Wall time for one capsem-process to capsem-mcp-aggregator request/response round trip."
     );
 
     describe_gauge!(

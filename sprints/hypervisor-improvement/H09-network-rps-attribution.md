@@ -109,6 +109,41 @@ before optimizing status/TUI polling or proxy code.
 This fails the documented `mcp-load` p99 regression gate (>2x) at every
 concurrency level. Because all rows have zero errors, this is a real MCP
 transport/dispatch bottleneck to trace next, not an upstream network failure.
+- Source trace of the current `local__echo` path:
+  1. guest `capsem-bench mcp-load` holds one FastMCP stdio session to
+     `/run/capsem-mcp-server`;
+  2. guest `capsem-mcp-server` frames every JSON-RPC request over the single
+     vsock:5002 connection and has a separate response reader thread, so the
+     relay can pipeline by stream id;
+  3. host `mcp_frame::serve_io` splits framed vsock read/write, validates
+     request/stream shape, applies MCP policy/runtime security, acquires the
+     bounded `CAPSEM_MCP_INFLIGHT` semaphore, and spawns a request handler;
+  4. `McpEndpointState::handle_request` dispatches `tools/call` through
+     `AggregatorClient::request`;
+  5. `capsem-process` writes length-prefixed msgpack to
+     `capsem-mcp-aggregator`, whose reader loop spawns one handler per request
+     and whose writer can return responses out of order by request id;
+  6. `McpServerManager::dispatch_call_tool` resolves the peer under a sync
+     read lock, drops the lock before awaiting rmcp, and routes `local__echo`
+     through the pool-safe local builtin stdio pool;
+  7. after the builtin response, the MITM framed handler awaits
+     `log_mcp_call_with_policy`, which enqueues both `McpCall` and
+     `ResolvedSecurityEvent` through the bounded durable `DbWriter` channel
+     before the framed response is queued back to the guest.
+- Historical comparison matters: retired framed-MITM runs hit
+  ~9k-10k RPS at concurrency 10/50 and ~8.3k-9.2k RPS at concurrency 200 with
+  zero errors on the same logical path, so the current ~780 RPS ceiling is a
+  regression to locate, not an expected Linux/KVM/vsock limit.
+- New low-cardinality MCP timing histograms added for the next proof:
+  `mitm.mcp_stage_duration_ms{stage,method_kind,tool_kind,result}` for framed
+  parse, endpoint dispatch, telemetry enqueue, response enqueue, and response
+  write; `mitm.mcp_endpoint_dispatch_ms{method_kind,tool_kind,result}` for the
+  MITM endpoint; and
+  `mitm.mcp_aggregator_request_ms{method_kind,tool_kind,result}` for
+  process-to-aggregator round trips. Tool labels are bounded (`local_echo`,
+  `local_http`, `local_snapshot`, `local_other`, `external`, `none`,
+  `unknown`) so the metrics can flow to OTel without high-cardinality tool
+  names.
 
 ## First Questions
 
@@ -117,7 +152,9 @@ transport/dispatch bottleneck to trace next, not an upstream network failure.
 - Why did `local__echo` regress to ~0.2x baseline throughput with >3x p99
   latency while producing zero errors? Trace guest stdio relay, framed vsock
   single-stream behavior, host MCP endpoint parsing, aggregator dispatch, and
-  builtin stdio server round trips before changing code.
+  builtin stdio server round trips before changing code. The current leading
+  suspect is the post-dispatch telemetry write path, but it must be confirmed
+  with the new per-stage histograms before changing audit behavior.
 - Does TUI/status polling add measurable endpoint contention when sessions are
   active?
 - Are weak RPS results correlated with VirtioFS workspace reads, policy-context
