@@ -111,6 +111,15 @@ catch-all service proxy. These record endpoint class, method, status class, and
 duration, so TUI `/profiles` refreshes and action traffic can be separated from
 `/status` cache behavior and from guest network/MITM paths.
 
+Third implementation slice: add bounded process-side vsock connection metrics.
+The Linux guest HTTP path is `capsem-net-proxy` accepting redirected localhost
+TCP, opening a host vsock connection for each client connection, and handing the
+host fd to `capsem-process` dispatch before MITM/DNS/security work begins.
+Capsem now records accepted/closed/active/duration metrics for
+`terminal|control|sni_proxy|dns_proxy|audit|exec|lifecycle|unknown`, so weak RPS
+can be separated into vsock dispatch pressure versus downstream MITM, DNS,
+security-engine, or gateway/control-plane work.
+
 ## Immediate Next Slice
 
 Finish P0.1 by tracing the remaining details:

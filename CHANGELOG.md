@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Added process-side vsock connection metrics with bounded port-kind labels,
+  active-connection gauges, close-result counters, and handler-duration
+  histograms. These split guest network/MITM pressure from gateway/status
+  traffic and make control, terminal, SNI proxy, DNS, audit, exec, lifecycle,
+  and unknown vsock lanes OTel-ready.
 - Added gateway proxy request metrics with bounded endpoint-class labels,
   method labels, status classes, and request-duration histograms. This makes
   `/profiles`, action endpoints, files/history, and other service proxy traffic

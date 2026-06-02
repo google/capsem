@@ -1,4 +1,5 @@
 use super::*;
+use metrics_util::debugging::{DebugValue, DebuggingRecorder, Snapshotter};
 use std::os::unix::io::RawFd;
 
 // -----------------------------------------------------------------------
@@ -46,6 +47,22 @@ fn classify_lifecycle_port() {
 }
 
 #[test]
+fn classify_audit_port() {
+    assert_eq!(
+        classify_vsock_port(capsem_proto::VSOCK_PORT_AUDIT),
+        VsockPortKind::Audit
+    );
+}
+
+#[test]
+fn classify_dns_proxy_port() {
+    assert_eq!(
+        classify_vsock_port(capsem_proto::VSOCK_PORT_DNS_PROXY),
+        VsockPortKind::DnsProxy
+    );
+}
+
+#[test]
 fn classify_unknown_port() {
     assert_eq!(classify_vsock_port(99999), VsockPortKind::Unknown);
 }
@@ -53,6 +70,90 @@ fn classify_unknown_port() {
 #[test]
 fn classify_port_zero_unknown() {
     assert_eq!(classify_vsock_port(0), VsockPortKind::Unknown);
+}
+
+#[test]
+fn vsock_port_labels_are_bounded_and_stable() {
+    assert_eq!(VsockPortKind::Terminal.label(), "terminal");
+    assert_eq!(VsockPortKind::Control.label(), "control");
+    assert_eq!(VsockPortKind::SniProxy.label(), "sni_proxy");
+    assert_eq!(VsockPortKind::Exec.label(), "exec");
+    assert_eq!(VsockPortKind::Audit.label(), "audit");
+    assert_eq!(VsockPortKind::Lifecycle.label(), "lifecycle");
+    assert_eq!(VsockPortKind::DnsProxy.label(), "dns_proxy");
+    assert_eq!(VsockPortKind::Unknown.label(), "unknown");
+}
+
+fn counter_value(snapshotter: &Snapshotter, metric: &str, labels: &[(&str, &str)]) -> u64 {
+    snapshotter
+        .snapshot()
+        .into_vec()
+        .into_iter()
+        .filter_map(|(key, _, _, value)| {
+            if key.key().name() != metric {
+                return None;
+            }
+            let has_labels = labels.iter().all(|(want_key, want_value)| {
+                key.key()
+                    .labels()
+                    .any(|label| label.key() == *want_key && label.value() == *want_value)
+            });
+            if !has_labels {
+                return None;
+            }
+            match value {
+                DebugValue::Counter(count) => Some(count),
+                _ => None,
+            }
+        })
+        .sum()
+}
+
+fn histogram_present(snapshotter: &Snapshotter, metric: &str, labels: &[(&str, &str)]) -> bool {
+    snapshotter
+        .snapshot()
+        .into_vec()
+        .into_iter()
+        .any(|(key, _, _, value)| {
+            key.key().name() == metric
+                && labels.iter().all(|(want_key, want_value)| {
+                    key.key()
+                        .labels()
+                        .any(|label| label.key() == *want_key && label.value() == *want_value)
+                })
+                && matches!(value, DebugValue::Histogram(_))
+        })
+}
+
+#[test]
+fn vsock_connection_scope_records_started_and_closed_metrics() {
+    let recorder = DebuggingRecorder::new();
+    let snapshotter = recorder.snapshotter();
+    let _guard = ::metrics::set_default_local_recorder(&recorder);
+
+    VsockConnectionMetrics::start(VsockPortKind::SniProxy).finish("closed");
+
+    assert_eq!(
+        counter_value(
+            &snapshotter,
+            METRIC_VSOCK_CONNECTIONS_TOTAL,
+            &[("port_kind", "sni_proxy")]
+        ),
+        1
+    );
+    assert_eq!(
+        counter_value(
+            &snapshotter,
+            METRIC_VSOCK_CONNECTION_CLOSED_TOTAL,
+            &[("port_kind", "sni_proxy"), ("result", "closed")]
+        ),
+        1
+    );
+    assert!(histogram_present(
+        &snapshotter,
+        METRIC_VSOCK_CONNECTION_DURATION_MS,
+        &[("port_kind", "sni_proxy"), ("result", "closed")]
+    ));
 }
 
 // -----------------------------------------------------------------------

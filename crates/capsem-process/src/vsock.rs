@@ -8,10 +8,12 @@ use capsem_security_engine::{
     AiAttributionScope, AiOriginKind, Enforceability, ResolvedSecurityEvent, SecurityAction,
     SecurityEventSubject, SourceEngine,
 };
+use metrics::{describe_counter, describe_gauge, describe_histogram, Unit};
 use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Once};
+use std::time::Instant;
 use tokio::sync::{broadcast, mpsc};
 use tracing::{error, info, warn};
 
@@ -29,6 +31,127 @@ use crate::job_store::{with_quiescence, JobResult, JobStore};
 /// retry: the guest drives retry at the transport layer.
 const HANDSHAKE_RETRY_MAX: usize = 3;
 const SUSPEND_RECONNECT_GRACE: std::time::Duration = std::time::Duration::from_millis(2500);
+const METRIC_VSOCK_CONNECTIONS_TOTAL: &str = "process.vsock.connections_total";
+const METRIC_VSOCK_CONNECTION_CLOSED_TOTAL: &str = "process.vsock.connection_closed_total";
+const METRIC_VSOCK_CONNECTION_DURATION_MS: &str = "process.vsock.connection_duration_ms";
+const METRIC_VSOCK_ACTIVE_CONNECTIONS: &str = "process.vsock.active_connections";
+
+static DESCRIBE_VSOCK_METRICS: Once = Once::new();
+
+fn describe_vsock_metrics() {
+    DESCRIBE_VSOCK_METRICS.call_once(|| {
+        describe_counter!(
+            METRIC_VSOCK_CONNECTIONS_TOTAL,
+            Unit::Count,
+            "Vsock connections accepted by capsem-process, partitioned by bounded port kind."
+        );
+        describe_counter!(
+            METRIC_VSOCK_CONNECTION_CLOSED_TOTAL,
+            Unit::Count,
+            "Vsock connections closed by capsem-process, partitioned by bounded port kind and result."
+        );
+        describe_histogram!(
+            METRIC_VSOCK_CONNECTION_DURATION_MS,
+            Unit::Milliseconds,
+            "Wall time a vsock connection spent in its process-side handler."
+        );
+        describe_gauge!(
+            METRIC_VSOCK_ACTIVE_CONNECTIONS,
+            Unit::Count,
+            "Currently active process-side vsock handlers, partitioned by bounded port kind."
+        );
+    });
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum VsockPortKind {
+    Terminal,
+    Control,
+    SniProxy,
+    Exec,
+    Audit,
+    Lifecycle,
+    DnsProxy,
+    Unknown,
+}
+
+impl VsockPortKind {
+    fn label(self) -> &'static str {
+        match self {
+            VsockPortKind::Terminal => "terminal",
+            VsockPortKind::Control => "control",
+            VsockPortKind::SniProxy => "sni_proxy",
+            VsockPortKind::Exec => "exec",
+            VsockPortKind::Audit => "audit",
+            VsockPortKind::Lifecycle => "lifecycle",
+            VsockPortKind::DnsProxy => "dns_proxy",
+            VsockPortKind::Unknown => "unknown",
+        }
+    }
+}
+
+fn classify_vsock_port(port: u32) -> VsockPortKind {
+    match port {
+        capsem_core::VSOCK_PORT_TERMINAL => VsockPortKind::Terminal,
+        capsem_core::VSOCK_PORT_CONTROL => VsockPortKind::Control,
+        capsem_core::VSOCK_PORT_SNI_PROXY => VsockPortKind::SniProxy,
+        capsem_core::VSOCK_PORT_EXEC => VsockPortKind::Exec,
+        capsem_proto::VSOCK_PORT_AUDIT => VsockPortKind::Audit,
+        capsem_core::VSOCK_PORT_LIFECYCLE => VsockPortKind::Lifecycle,
+        capsem_proto::VSOCK_PORT_DNS_PROXY => VsockPortKind::DnsProxy,
+        _ => VsockPortKind::Unknown,
+    }
+}
+
+struct VsockConnectionMetrics {
+    port_kind: VsockPortKind,
+    started_at: Instant,
+    active: bool,
+}
+
+impl VsockConnectionMetrics {
+    fn start(port_kind: VsockPortKind) -> Self {
+        let label = port_kind.label();
+        ::metrics::counter!(METRIC_VSOCK_CONNECTIONS_TOTAL, "port_kind" => label).increment(1);
+        ::metrics::gauge!(METRIC_VSOCK_ACTIVE_CONNECTIONS, "port_kind" => label).increment(1.0);
+        Self {
+            port_kind,
+            started_at: Instant::now(),
+            active: true,
+        }
+    }
+
+    fn finish(mut self, result: &'static str) {
+        self.record_finish(result);
+    }
+
+    fn record_finish(&mut self, result: &'static str) {
+        if !self.active {
+            return;
+        }
+        self.active = false;
+        let label = self.port_kind.label();
+        ::metrics::counter!(
+            METRIC_VSOCK_CONNECTION_CLOSED_TOTAL,
+            "port_kind" => label,
+            "result" => result
+        )
+        .increment(1);
+        ::metrics::histogram!(
+            METRIC_VSOCK_CONNECTION_DURATION_MS,
+            "port_kind" => label,
+            "result" => result
+        )
+        .record(self.started_at.elapsed().as_secs_f64() * 1000.0);
+        ::metrics::gauge!(METRIC_VSOCK_ACTIVE_CONNECTIONS, "port_kind" => label).decrement(1.0);
+    }
+}
+
+impl Drop for VsockConnectionMetrics {
+    fn drop(&mut self) {
+        self.record_finish("dropped");
+    }
+}
 
 pub(crate) struct VsockOptions {
     pub(crate) vm_id: String,
@@ -55,6 +178,8 @@ pub(crate) struct VsockOptions {
 }
 
 pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
+    describe_vsock_metrics();
+
     let vm_id_original = options.vm_id.clone();
     let vm_handle_original = options.vm.clone();
 
@@ -667,10 +792,13 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
         while let Some(conn) = vsock_rx.recv().await {
             match conn.port {
                 capsem_core::VSOCK_PORT_CONTROL => {
+                    let metric_scope =
+                        VsockConnectionMetrics::start(classify_vsock_port(conn.port));
                     info!("control port: connection accepted, performing handshake");
                     let mut fd = match clone_fd(conn.fd) {
                         Ok(f) => f,
                         Err(_) => {
+                            metric_scope.finish("clone_failed");
                             pending_aux.clear();
                             continue;
                         }
@@ -691,6 +819,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                     match hs_res {
                         Ok(Ok(())) => {
                             info!("control port: handshake successful, re-keying bridge");
+                            metric_scope.finish("handshake_ok");
                             let conn_arc = Arc::new(conn);
                             capsem_core::try_send!(
                                 "control_rekey",
@@ -718,21 +847,26 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                         }
                         Ok(Err(e)) => {
                             error!("control port: handshake failed: {e:#}");
+                            metric_scope.finish("handshake_error");
                             pending_aux.clear(); // Drop dead FDs
                         }
                         Err(e) => {
                             error!("control port: handshake panicked: {e}");
+                            metric_scope.finish("handshake_panic");
                             pending_aux.clear();
                         }
                     }
                 }
                 capsem_core::VSOCK_PORT_TERMINAL => {
+                    let metric_scope =
+                        VsockConnectionMetrics::start(classify_vsock_port(conn.port));
                     info!("terminal port: connection accepted, re-keying bridge");
                     let conn_arc = Arc::new(conn);
                     capsem_core::try_send!(
                         "terminal_rekey",
                         terminal_rekey_tx.send(conn_arc).await
                     );
+                    metric_scope.finish("rekeyed");
                 }
                 _ => {
                     if initial_handshake_done {
@@ -774,12 +908,15 @@ fn dispatch_aux_connection(
     ctrl_tx: &mpsc::Sender<ServiceToProcess>,
     vm_id: &str,
 ) {
+    let port_kind = classify_vsock_port(conn.port);
     match conn.port {
         capsem_core::VSOCK_PORT_SNI_PROXY => {
             let config = Arc::clone(mitm_config);
             tokio::spawn(async move {
+                let metric_scope = VsockConnectionMetrics::start(port_kind);
                 capsem_core::net::mitm_proxy::handle_connection(conn.fd, config).await;
                 drop(conn);
+                metric_scope.finish("closed");
             });
         }
         capsem_proto::VSOCK_PORT_DNS_PROXY => {
@@ -799,12 +936,15 @@ fn dispatch_aux_connection(
             let db_for_dns = Arc::clone(db);
             let security_engine = Arc::clone(&mitm_config.security_engine);
             tokio::spawn(async move {
+                let metric_scope = VsockConnectionMetrics::start(port_kind);
                 serve_dns_session(conn, handler, db_for_dns, security_engine).await;
+                metric_scope.finish("closed");
             });
         }
         capsem_core::VSOCK_PORT_EXEC => {
             let js = Arc::clone(job_store);
             std::thread::spawn(move || {
+                let metric_scope = VsockConnectionMetrics::start(port_kind);
                 let mut file = match clone_fd(conn.fd) {
                     Ok(f) => f,
                     Err(e) => {
@@ -844,11 +984,13 @@ fn dispatch_aux_connection(
                     }
                 }
                 drop(conn);
+                metric_scope.finish("closed");
             });
         }
         capsem_proto::VSOCK_PORT_AUDIT => {
             let db_clone = Arc::clone(db);
             std::thread::spawn(move || {
+                let metric_scope = VsockConnectionMetrics::start(port_kind);
                 let mut file = match clone_fd(conn.fd) {
                     Ok(f) => f,
                     Err(e) => {
@@ -894,6 +1036,7 @@ fn dispatch_aux_connection(
                     }
                 }
                 drop(conn);
+                metric_scope.finish("closed");
             });
         }
         capsem_core::VSOCK_PORT_LIFECYCLE => {
@@ -901,6 +1044,7 @@ fn dispatch_aux_connection(
             let ctx = ctrl_tx.clone();
             let id = vm_id.to_string();
             std::thread::spawn(move || {
+                let metric_scope = VsockConnectionMetrics::start(port_kind);
                 let mut f = match clone_fd(conn.fd) {
                     Ok(f) => f,
                     Err(_) => return,
@@ -932,9 +1076,11 @@ fn dispatch_aux_connection(
                     }
                 }
                 drop(conn);
+                metric_scope.finish("closed");
             });
         }
         other => {
+            VsockConnectionMetrics::start(port_kind).finish("unsupported");
             warn!(target: "ipc", port = other, "vsock dispatch: unknown port; auxiliary connection ignored");
         }
     }
@@ -1570,31 +1716,6 @@ fn is_retryable_handshake_error(err: &anyhow::Error) -> bool {
             )
         })
     })
-}
-
-#[cfg(test)]
-#[derive(Debug, PartialEq)]
-enum VsockPortKind {
-    Terminal,
-    Control,
-    SniProxy,
-    Exec,
-    Lifecycle,
-    DnsProxy,
-    Unknown,
-}
-
-#[cfg(test)]
-fn classify_vsock_port(port: u32) -> VsockPortKind {
-    match port {
-        capsem_core::VSOCK_PORT_TERMINAL => VsockPortKind::Terminal,
-        capsem_core::VSOCK_PORT_CONTROL => VsockPortKind::Control,
-        capsem_core::VSOCK_PORT_SNI_PROXY => VsockPortKind::SniProxy,
-        capsem_core::VSOCK_PORT_EXEC => VsockPortKind::Exec,
-        capsem_core::VSOCK_PORT_LIFECYCLE => VsockPortKind::Lifecycle,
-        capsem_proto::VSOCK_PORT_DNS_PROXY => VsockPortKind::DnsProxy,
-        _ => VsockPortKind::Unknown,
-    }
 }
 
 #[cfg(test)]

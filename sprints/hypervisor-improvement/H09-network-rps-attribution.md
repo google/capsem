@@ -61,6 +61,24 @@ before optimizing status/TUI polling or proxy code.
 - A real VM run proves the counters move during `capsem-bench http`,
   `capsem-bench throughput`, and at least one endpoint-latency path.
 
+## Source Trace
+
+- Guest HTTP(S) traffic does not use virtio-net/tap today. `capsem-agent`
+  redirects guest localhost TCP through `capsem-net-proxy`, then opens a host
+  vsock connection per client connection.
+- `capsem-process` receives those host vsock fds and dispatches SNI proxy
+  connections into the host MITM handler. DNS, audit, exec, lifecycle, terminal,
+  and control traffic use sibling vsock ports.
+- Gateway/status attribution already has low-cardinality metrics for `/status`
+  cache/refresh/service fan-out and catch-all service proxy endpoints.
+- Process-side vsock attribution now has low-cardinality metrics for accepted
+  connections, closed connections by result, active handlers, and handler
+  duration by port kind.
+- Remaining proof: run guest HTTP/proxy throughput in a real VM and confirm
+  process-side vsock metrics move alongside existing MITM/DNS metrics, then
+  expose the useful subset through status/session telemetry before making an
+  RPS performance claim.
+
 ## First Questions
 
 - Is the Linux RPS gap actually in KVM/vsock, or in host-side MITM/security

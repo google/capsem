@@ -17,6 +17,10 @@
   - [x] Add gateway proxy endpoint-class request counters and duration
         histograms so `/profiles`, actions, files/history, and unknown service
         fan-out are visible without high-cardinality labels.
+  - [x] Add process-side vsock connection counters, active gauges, close-result
+        counters, and duration histograms with bounded port-kind labels so
+        guest network/RPS pressure can be separated from MITM/DNS/security and
+        gateway/status lanes.
   - [ ] Finish the crosvm async engine and Firecracker async file-engine trace
         before choosing the first implementation slice.
   - [ ] Pick and land one coherent code-path improvement with counters and
@@ -151,6 +155,8 @@
         `/list` and per-running-VM `/info`.
   - [x] Add gateway proxy endpoint-class metrics to split `/profiles` and
         other proxied control-plane traffic from `/status` polling.
+  - [x] Add process-side vsock metrics for terminal/control rekeys and
+        auxiliary SNI proxy, DNS, audit, exec, lifecycle, and unknown ports.
   - [ ] Refresh canonical HTTP, proxy throughput, endpoint-latency,
         security-engine, and host-native artifacts after the working Linux
         install.
@@ -188,6 +194,11 @@
   the actual code path, separates DAX from virtio-blk from VirtioFS/workspace,
   and then lands trace-backed speedups. Memory, CPU/SMP, and weak RPS are next
   performance domains, not part of the first disk attribution milestone.
+- Network/RPS source trace: guest HTTP goes through redirected localhost TCP in
+  `capsem-agent`'s net proxy, opens one host vsock connection per client
+  connection, then `capsem-process` dispatches the fd to MITM/DNS/security
+  handlers. Process-side vsock counters now identify connection churn and
+  handler duration by port kind before we change relay or proxy code.
 - Current highest-leverage H08 task: produce a Capsem vs Firecracker vs crosvm
   block-lifecycle mechanism table before running another long benchmark. The
   table must cover descriptor parsing, guest-memory translation, event-loop /
@@ -724,6 +735,7 @@
   `cargo test -p capsem-service attach_metrics_snapshot_projects_security_status_fields --bin capsem-service`,
   `cargo test -p capsem-gateway fetch_status_enriches_running_vm_with_info_metrics --bin capsem-gateway`,
   `cargo test -p capsem-gateway status::tests --bin capsem-gateway`,
+  `cargo test -p capsem-process vsock::tests`,
   `cargo test -p capsem --bin capsem format_session_resource_lines_shows_live_metrics`,
   `cargo test -p capsem --bin capsem format_session_hypervisor_lines_shows_block_counters`,
   `cargo test -p capsem --bin capsem`,
@@ -795,7 +807,10 @@
   OTel-compatible block metric points. H08 first telemetry slice adds
   request-shape and timing attribution counters to the same paths: VM metrics
   snapshot, OTel-compatible points, service `/info`, gateway `/status`, and
-  `capsem info`.
+  `capsem info`. H09 first vsock slice adds process-side metrics facade points
+  for accepted/closed/active vsock connections and handler duration with
+  bounded port-kind labels; focused tests prove recorder visibility, while
+  live VM/status/exporter proof remains open.
 - Performance: canonical `just benchmark` rerun completed; benchmark artifacts
   record project version, git commit, source dirty state, host metadata, and
   active Linux x86_64 results. `scripts/compare_benchmark_artifacts.py`
@@ -845,5 +860,7 @@
   broader telemetry sprint. H08 request-shape counters have focused unit/API
   coverage but still need live VM proof that they move during `capsem-bench
   disk` or `storage`, followed by a canonical `just benchmark` artifact before
-  performance claims. Endpoint-latency regressions are recorded by the
+  performance claims. H09 vsock metrics need real VM proof under guest HTTP
+  load and a user-facing status/OTel export projection before they can support
+  a performance claim. Endpoint-latency regressions are recorded by the
   canonical benchmark gate and still need a control-plane performance fix.

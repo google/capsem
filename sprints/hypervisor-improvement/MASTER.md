@@ -84,7 +84,7 @@ Capsem strengths we should preserve:
 | H06 | [Benchmark And Product Proof](H06-benchmark-and-product-proof.md) | Not Started | Keep performance science strict: artifacts, host-native baselines, status visibility, doctor gates, macOS reruns. | H01-H05 |
 | H07 | [Docs Changelog And Release Gate](H07-docs-changelog-and-release-gate.md) | Not Started | Update docs, skills, bootstrap/doctor expectations, changelog, and final validation. | H06 |
 | H08 | [Disk Throughput Attribution](H08-disk-throughput-attribution.md) | Active | Trace DAX, virtio-blk, scratch, VirtioFS, and RPS-adjacent I/O before landing code-path speedups. | H03, H05 |
-| H09 | [Network And RPS Attribution](H09-network-rps-attribution.md) | Not Started | Split guest network, vsock, MITM, DNS, security-engine, endpoint-latency, TUI/status polling, and workspace/disk effects before landing RPS speedups. | H03, H06, H08 |
+| H09 | [Network And RPS Attribution](H09-network-rps-attribution.md) | Active | Split guest network, vsock, MITM, DNS, security-engine, endpoint-latency, TUI/status polling, and workspace/disk effects before landing RPS speedups. | H03, H06, H08 |
 
 ## Global Acceptance Gates
 
