@@ -219,6 +219,17 @@
   `~/.capsem/profiles/base` from the current local manifest before service
   launch, matching the package install path and avoiding remote downloads for
   old initrd hashes during dev smoke tests.
+- Validation rerun: `just exec "echo net-proxy-smoke"` passed after the
+  profile materialization fix and returned `net-proxy-smoke`.
+- H09 focused RPS diagnostic: `CAPSEM_BENCH_MITM_DURATION=3 capsem-bench
+  mitm-load` completed in a fresh VM, but is contaminated by host DNS/network
+  behavior. Results: c=1 21.7 RPS p95 20.0ms p99 1827.9ms errors=65; c=10
+  3.3 RPS p50 5025.8ms errors=10; c=50 16.7 RPS p50 5017.7ms errors=50;
+  c=200 67.3 RPS p50 10009.4ms errors=202. Do not compare this as a speedup
+  or regression against the committed reference baseline
+  (`benchmarks/mitm-load/baseline.json`: 1036.8/3042.6/3028.5/2698.9 RPS,
+  zero request exceptions). Next proof needs restored DNS/network or a local
+  deterministic upstream.
 - Current highest-leverage H08 task: produce a Capsem vs Firecracker vs crosvm
   block-lifecycle mechanism table before running another long benchmark. The
   table must cover descriptor parsing, guest-memory translation, event-loop /
@@ -759,6 +770,9 @@
   `cargo test -p capsem-agent --bin capsem-net-proxy`,
   `just exec "echo net-proxy-smoke"` (rerun after fixing dev profile
   materialization),
+  `CAPSEM_BENCH_MITM_DURATION=3 capsem-bench mitm-load` through `just exec`
+  (completed, but performance evidence rejected because every request path
+  returned exceptions under current host DNS/network conditions),
   `cargo test -p capsem --bin capsem format_session_resource_lines_shows_live_metrics`,
   `cargo test -p capsem --bin capsem format_session_hypervisor_lines_shows_block_counters`,
   `cargo test -p capsem --bin capsem`,
@@ -891,4 +905,6 @@
   HTTP/proxy throughput comparison and an attribution-quality check before it
   can be accepted as a measured speedup. Endpoint-latency regressions are
   recorded by the canonical benchmark gate and still need a control-plane
-  performance fix.
+  performance fix. The first focused `mitm-load` rerun is explicitly rejected
+  as performance evidence because the environment produced request exceptions
+  and timeout tails at every concurrency level.

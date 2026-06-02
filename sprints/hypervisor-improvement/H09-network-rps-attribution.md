@@ -85,6 +85,13 @@ before optimizing status/TUI polling or proxy code.
   process-side vsock metrics move alongside existing MITM/DNS metrics, then
   expose the useful subset through status/session telemetry before making an
   RPS performance claim.
+- First post-change diagnostic: `CAPSEM_BENCH_MITM_DURATION=3 capsem-bench
+  mitm-load` completed after the dev profile fix, but it is not accepted
+  performance evidence. It reported request exceptions at every concurrency
+  level and 5-10s tail latencies, while the committed reference baseline has
+  zero request exceptions and ~1k-3k RPS. This matches the same host DNS/network
+  failure that forced remote asset downloads to fail earlier, so the next RPS
+  proof needs either restored DNS/network or a local deterministic upstream.
 
 ## First Questions
 
