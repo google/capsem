@@ -5,8 +5,8 @@ use capsem_core::{read_control_msg, write_control_msg, VsockConnection};
 use capsem_proto::ipc::{ProcessToService, ServiceToProcess};
 use capsem_proto::{GuestToHost, HostToGuest};
 use capsem_security_engine::{
-    AiAttributionScope, AiOriginKind, Enforceability, ResolvedSecurityEvent, SecurityAction,
-    SecurityEventSubject, SourceEngine,
+    AiAttributionScope, AiOriginKind, Enforceability, EventFamily, ResolvedSecurityEvent,
+    SecurityAction, SecurityEventSubject, SourceEngine,
 };
 use metrics::{describe_counter, describe_gauge, describe_histogram, Unit};
 use std::io::{Read, Write};
@@ -560,7 +560,10 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                     };
                     let runtime_engine: Option<
                         &dyn capsem_core::net::mitm_proxy::RuntimeSecurityEngine,
-                    > = if mitm_config_for_cmd.security_engine.has_engine() {
+                    > = if mitm_config_for_cmd
+                        .security_engine
+                        .can_evaluate_event_family(EventFamily::Process)
+                    {
                         Some(mitm_config_for_cmd.security_engine.as_ref())
                     } else {
                         None
@@ -1151,7 +1154,7 @@ async fn serve_dns_session(
 
     let trace_id = capsem_core::telemetry::ambient_capsem_trace_id();
     let mut runtime_resolved_event: Option<ResolvedSecurityEvent> = None;
-    let result = if security_engine.has_engine() {
+    let result = if security_engine.can_evaluate_event_family(EventFamily::Dns) {
         match capsem_network_engine::dns_parser::parse_query(&req.raw) {
             Ok(query) => {
                 let event =

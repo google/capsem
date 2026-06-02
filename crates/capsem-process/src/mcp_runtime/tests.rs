@@ -8,8 +8,9 @@ use capsem_core::settings_profiles::{
 };
 use capsem_network_engine::domain_policy::{Action, DomainPolicy};
 use capsem_security_engine::{
-    AiAttributionScope, AiOriginKind, Enforceability, HttpSecuritySubject, ProcessSecuritySubject,
-    RedactionState, SecurityAction, SecurityEvent, SecurityEventCommon, SourceEngine,
+    AiAttributionScope, AiOriginKind, Enforceability, EventFamily, HttpSecuritySubject,
+    ProcessSecuritySubject, RedactionState, SecurityAction, SecurityEvent, SecurityEventCommon,
+    SourceEngine,
 };
 
 use capsem_core::mcp::policy::McpUserConfig;
@@ -422,6 +423,16 @@ fn load_runtime_policy_state_converts_vm_effective_rules_and_mcp_defaults() {
         .security_engine
         .as_ref()
         .expect("canonical HTTP rules should install a runtime Security Engine");
+    assert!(security_engine.can_evaluate_event_family(EventFamily::Http));
+    assert!(security_engine.can_evaluate_event_family(EventFamily::Dns));
+    assert!(
+        !security_engine.can_evaluate_event_family(EventFamily::Mcp),
+        "effective MCP rules are enforced by McpPolicy, not duplicated through runtime CEL"
+    );
+    assert!(
+        !security_engine.can_evaluate_event_family(EventFamily::Process),
+        "effective HTTP/DNS rules must not make process exec pay runtime CEL"
+    );
     let blocked = security_engine
         .evaluate(http_event("bad.example", "/"))
         .expect("profile runtime engine should evaluate canonical HTTP CEL");
@@ -579,6 +590,11 @@ fn load_runtime_policy_state_merges_service_runtime_rule_snapshot() {
         .security_engine
         .as_ref()
         .expect("runtime rule snapshot should install a Security Engine");
+    assert!(
+        security_engine.can_evaluate_event_family(EventFamily::Mcp),
+        "runtime snapshots are all-family because they do not carry callback metadata"
+    );
+    assert!(security_engine.can_evaluate_event_family(EventFamily::Process));
 
     let blocked = security_engine
         .evaluate(http_event("live-policy.test", "/"))

@@ -19,7 +19,7 @@ use capsem_network_engine::mcp_security::{
     McpPolicyFields as NetworkMcpPolicyFields, McpSecurityEventInput,
 };
 use capsem_security_engine::{
-    ResolvedSecurityEvent, SecurityAction, SecurityEvent, SecurityResult,
+    EventFamily, ResolvedSecurityEvent, SecurityAction, SecurityEvent, SecurityResult,
 };
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
@@ -267,7 +267,10 @@ where
                 let decision_provider = LocalMcpDecisionProvider::enforce_arc(Arc::clone(&policy));
                 let mut request_decision = decision_provider.decide(&decision_request);
                 let mut runtime_block_event = None;
-                if endpoint_h.security_engine.has_engine() {
+                if endpoint_h
+                    .security_engine
+                    .can_evaluate_event_family(EventFamily::Mcp)
+                {
                     let runtime_event_started = Instant::now();
                     let runtime_event = build_mcp_security_event_from_request(
                         &process_name,

@@ -34,8 +34,8 @@ use std::time::{Instant, SystemTime};
 
 use capsem_logger::{DbWriter, Decision, NetEvent, WriteOp};
 use capsem_security_engine::{
-    EventMutation, SecurityAction, SecurityDecisionAction, SecurityEngineError, SecurityEvent,
-    SecurityResult,
+    EventFamily, EventMutation, SecurityAction, SecurityDecisionAction, SecurityEngineError,
+    SecurityEvent, SecurityResult,
 };
 use http_body_util::{BodyExt, Full};
 use hyper::body::Bytes;
@@ -126,6 +126,14 @@ impl RuntimeSecurityEngineSlot {
 }
 
 impl RuntimeSecurityEngine for RuntimeSecurityEngineSlot {
+    fn can_evaluate_event_family(&self, family: EventFamily) -> bool {
+        self.inner
+            .read()
+            .expect("runtime security engine slot lock poisoned")
+            .as_ref()
+            .is_some_and(|engine| engine.can_evaluate_event_family(family))
+    }
+
     fn evaluate(&self, event: SecurityEvent) -> Result<SecurityResult, SecurityEngineError> {
         let engine = self
             .inner
@@ -174,7 +182,10 @@ fn evaluate_runtime_http_request(
     config: &MitmProxyConfig,
     input: RuntimeHttpRequestInput,
 ) -> Option<Result<RuntimeHttpDecision, SecurityEngineError>> {
-    if !config.security_engine.has_engine() {
+    if !config
+        .security_engine
+        .can_evaluate_event_family(EventFamily::Http)
+    {
         return None;
     }
     Some(evaluate_runtime_http_request_inner(
@@ -261,7 +272,10 @@ fn evaluate_runtime_http_response(
     config: &MitmProxyConfig,
     input: RuntimeHttpResponseInput,
 ) -> Option<Result<RuntimeHttpDecision, SecurityEngineError>> {
-    if !config.security_engine.has_engine() {
+    if !config
+        .security_engine
+        .can_evaluate_event_family(EventFamily::Http)
+    {
         return None;
     }
     Some(evaluate_runtime_http_response_inner(
@@ -1152,7 +1166,10 @@ async fn handle_request(
         preview: Vec::new(),
         max_preview: req_max_preview,
     }));
-    let mut buffered_request_body = if config.security_engine.has_engine() {
+    let http_security_enabled = config
+        .security_engine
+        .can_evaluate_event_family(EventFamily::Http);
+    let mut buffered_request_body = if http_security_enabled {
         Some(
             collect_request_body_for_security(
                 req_body
@@ -1548,7 +1565,7 @@ async fn handle_request(
         runtime_security_results,
     };
 
-    let response_body_security_enabled = config.security_engine.has_engine();
+    let response_body_security_enabled = http_security_enabled;
     let resp_body: ProxyBoxBody = if response_body_security_enabled {
         let mut response_body =
             match collect_response_body_for_security(resp_body, is_gzip, 100 * 1024 * 1024).await {

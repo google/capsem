@@ -9,13 +9,17 @@ use std::path::Path;
 
 use capsem_logger::ExecEvent;
 use capsem_security_engine::{
-    AiAttributionScope, AiOriginKind, Enforceability, ProcessSecuritySubject, RedactionState,
-    ResolvedEventStep, ResolvedEventStepKind, ResolvedSecurityEvent, SecurityAction,
-    SecurityEngineError, SecurityError, SecurityEvent, SecurityEventCommon, SourceEngine,
-    StepStatus, RESOLVED_EVENT_SCHEMA_VERSION,
+    AiAttributionScope, AiOriginKind, Enforceability, EventFamily, ProcessSecuritySubject,
+    RedactionState, ResolvedEventStep, ResolvedEventStepKind, ResolvedSecurityEvent,
+    SecurityAction, SecurityEngineError, SecurityError, SecurityEvent, SecurityEventCommon,
+    SourceEngine, StepStatus, RESOLVED_EVENT_SCHEMA_VERSION,
 };
 
 pub trait RuntimeSecurityEngine: Send + Sync {
+    fn can_evaluate_event_family(&self, _family: EventFamily) -> bool {
+        true
+    }
+
     fn evaluate(
         &self,
         event: SecurityEvent,
@@ -63,6 +67,13 @@ pub fn evaluate_exec_security_event(
             denial_message: None,
         };
     };
+    if !engine.can_evaluate_event_family(EventFamily::Process) {
+        return ProcessExecSecurityEvaluation {
+            resolved_event: initial_resolved_exec_event(security_event),
+            allow_guest_exec: true,
+            denial_message: None,
+        };
+    }
 
     match engine.evaluate(security_event.clone()) {
         Ok(result) => {

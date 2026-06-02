@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- Changed runtime security-engine routing to advertise event-family capability
+  and skip non-applicable runtime CEL evaluation for MCP, HTTP, DNS, and
+  process exec paths. Structured effective HTTP/DNS rules no longer make MCP
+  requests pay runtime CEL, while live runtime snapshots remain all-family and
+  MCP policy blocks still log canonical `security_events`. The runtime-engine
+  install log now records the event-family scope. Scoped Linux direct-vsock
+  `mcp-load` improved from 593.4/3758.0/5630.6/5749.0 RPS to
+  2188.2/10163.2/13934.4/13935.2 RPS at c=1/10/50/200, zero errors.
 - Changed `DbWriter` resolved security-event inserts to skip stale child-row
   cleanup deletes on brand-new event IDs while retaining the cleanup path for
   repeated event IDs. This reduces per-event SQLite work on hot audit paths

@@ -182,6 +182,10 @@
           skipping stale child-table cleanup deletes for brand-new event IDs.
           The repeated-event path still deletes/replaces child rows, preserving
           security decision correctness and full auditability.
+    - [x] Route runtime security-engine evaluation by declared event family so
+          MCP, HTTP, DNS, and process exec paths only evaluate applicable
+          runtime CEL. Runtime snapshots remain all-family, and MCP policy
+          blocks still deny dispatch and persist canonical security events.
     - [x] Add the opt-in `CAPSEM_METRICS_DEBUG_INTERVAL_SECS` process recorder
           plus service/`just run-service` env forwarding so live VM runs can
           emit compact `mcp_metric_snapshot` histogram summaries to

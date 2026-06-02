@@ -2,8 +2,8 @@ use std::time::Duration;
 
 use capsem_logger::DbWriter;
 use capsem_security_engine::{
-    CelEnforcementEvaluator, CelEnforcementRule, SecurityDecisionAction, SecurityEngine,
-    SecurityEventSubject,
+    CelEnforcementEvaluator, CelEnforcementRule, EventFamily, SecurityDecisionAction,
+    SecurityEngine, SecurityEventSubject,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -315,6 +315,93 @@ async fn runtime_mcp_security_stages_are_recorded_without_bypassing_block() {
         "runtime security projection histogram recorded"
     );
     assert!(has_block, "runtime security block histogram recorded");
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn non_mcp_runtime_scope_preserves_policy_block_and_logging() {
+    struct NonMcpRuntimeEngine {
+        evaluate_calls: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    impl crate::net::mitm_proxy::RuntimeSecurityEngine for NonMcpRuntimeEngine {
+        fn can_evaluate_event_family(&self, family: EventFamily) -> bool {
+            family != EventFamily::Mcp
+        }
+
+        fn evaluate(
+            &self,
+            event: capsem_security_engine::SecurityEvent,
+        ) -> Result<
+            capsem_security_engine::SecurityResult,
+            capsem_security_engine::SecurityEngineError,
+        > {
+            self.evaluate_calls
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let mut engine = SecurityEngine::default();
+            engine.evaluate(event)
+        }
+    }
+
+    let evaluate_calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let runtime_engine: std::sync::Arc<dyn crate::net::mitm_proxy::RuntimeSecurityEngine> =
+        std::sync::Arc::new(NonMcpRuntimeEngine {
+            evaluate_calls: std::sync::Arc::clone(&evaluate_calls),
+        });
+
+    let dir = tempfile::tempdir().unwrap();
+    let db = std::sync::Arc::new(DbWriter::open(&dir.path().join("session.db"), 64).unwrap());
+    let (aggregator, _rx) = crate::mcp::aggregator::AggregatorClient::channel(1);
+    let mut policy = McpPolicy::new();
+    policy
+        .tool_decisions
+        .insert("local__echo".to_string(), ToolDecision::Block);
+    let endpoint = std::sync::Arc::new(McpEndpointState::new(
+        aggregator,
+        std::sync::Arc::new(tokio::sync::RwLock::new(std::sync::Arc::new(policy))),
+        std::sync::Arc::new(RuntimeSecurityEngineSlot::new(Some(runtime_engine))),
+        std::sync::Arc::new(tokio::sync::Semaphore::new(1)),
+        McpTimeouts::default(),
+    ));
+    let (client, server) = tokio::io::duplex(4096);
+    let server_db = std::sync::Arc::clone(&db);
+    let server_task = tokio::spawn(async move {
+        let _ = serve_io(Vec::new(), server, endpoint, server_db).await;
+    });
+    let (mut client_reader, mut client_writer) = tokio::io::split(client);
+
+    let request = br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"local__echo","arguments":{"text":"hi"}}}"#;
+    let frame = capsem_proto::encode_mcp_frame(1, 0, "codex", request).unwrap();
+    client_writer.write_all(&frame).await.unwrap();
+    client_writer.flush().await.unwrap();
+
+    let response_frame = read_test_response_frame(&mut client_reader).await.unwrap();
+    let response: JsonRpcResponse = serde_json::from_slice(&response_frame.payload).unwrap();
+    assert!(
+        response.error.is_some(),
+        "MCP policy block must deny dispatch"
+    );
+    assert_eq!(
+        evaluate_calls.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "non-MCP runtime engine must not evaluate MCP requests"
+    );
+
+    drop(client_writer);
+    let _ = tokio::time::timeout(Duration::from_secs(2), server_task).await;
+    db.shutdown_blocking();
+
+    let reader = db.reader().unwrap();
+    let security = reader
+        .query_raw(
+            "SELECT event_family, event_type, final_action, steps.rule_id \
+             FROM security_events se \
+             LEFT JOIN security_event_steps steps ON steps.event_id = se.event_id",
+        )
+        .unwrap();
+    assert!(security.contains("mcp"));
+    assert!(security.contains("mcp.request"));
+    assert!(security.contains("block"));
+    assert!(security.contains("mcp.tool.local__echo"));
 }
 
 #[tokio::test]

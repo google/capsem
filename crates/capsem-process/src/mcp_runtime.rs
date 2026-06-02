@@ -15,10 +15,11 @@ use capsem_core::settings_profiles::{
 use capsem_core::vm::guest_config::{GuestConfig, GuestFile};
 use capsem_network_engine::domain_policy::{Action, DomainPolicy};
 use capsem_security_engine::{
-    CelEnforcementEvaluator, CelEnforcementRule, EventMutation, SecurityDecisionAction,
-    SecurityEngine, SecurityEngineError, SecurityEnginePhase, SecurityEvent, SecurityResult,
+    CelEnforcementEvaluator, CelEnforcementRule, EventFamily, EventMutation,
+    SecurityDecisionAction, SecurityEngine, SecurityEngineError, SecurityEnginePhase,
+    SecurityEvent, SecurityResult,
 };
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use tracing::{info, warn};
 
 const DEFAULT_SNAPSHOT_AUTO_MAX: usize = 10;
@@ -93,19 +94,25 @@ impl capsem_security_engine::RuleMatchRecorder for RuntimeRuleMatchAccumulator {
 
 struct PooledRuntimeSecurityEngine {
     engines: Vec<Mutex<SecurityEngine>>,
+    families: RuntimeSecurityEventFamilies,
     next: AtomicUsize,
 }
 
 impl PooledRuntimeSecurityEngine {
-    fn new(engines: Vec<SecurityEngine>) -> Self {
+    fn new(engines: Vec<SecurityEngine>, families: RuntimeSecurityEventFamilies) -> Self {
         Self {
             engines: engines.into_iter().map(Mutex::new).collect(),
+            families,
             next: AtomicUsize::new(0),
         }
     }
 }
 
 impl RuntimeSecurityEngine for PooledRuntimeSecurityEngine {
+    fn can_evaluate_event_family(&self, family: EventFamily) -> bool {
+        self.families.can_evaluate(family)
+    }
+
     fn evaluate(&self, event: SecurityEvent) -> Result<SecurityResult, SecurityEngineError> {
         let len = self.engines.len();
         if len == 0 {
@@ -130,6 +137,55 @@ impl RuntimeSecurityEngine for PooledRuntimeSecurityEngine {
                     message: format!("runtime security engine pool lock poisoned: {error}"),
                 })?;
         engine.evaluate(event)
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+struct RuntimeSecurityEventFamilies {
+    all: bool,
+    families: BTreeSet<EventFamily>,
+}
+
+impl RuntimeSecurityEventFamilies {
+    fn add(&mut self, family: EventFamily) {
+        if !self.all {
+            self.families.insert(family);
+        }
+    }
+
+    fn set_all(&mut self) {
+        self.all = true;
+        self.families.clear();
+    }
+
+    fn can_evaluate(&self, family: EventFamily) -> bool {
+        self.all || self.families.contains(&family)
+    }
+
+    fn label(&self) -> String {
+        if self.all {
+            return "all".to_string();
+        }
+        if self.families.is_empty() {
+            return "none".to_string();
+        }
+        self.families
+            .iter()
+            .map(|family| match family {
+                EventFamily::Dns => "dns",
+                EventFamily::Http => "http",
+                EventFamily::Mcp => "mcp",
+                EventFamily::Model => "model",
+                EventFamily::File => "file",
+                EventFamily::Process => "process",
+                EventFamily::Credential => "credential",
+                EventFamily::Vm => "vm",
+                EventFamily::Profile => "profile",
+                EventFamily::Conversation => "conversation",
+                EventFamily::Snapshot => "snapshot",
+            })
+            .collect::<Vec<_>>()
+            .join(",")
     }
 }
 
@@ -205,7 +261,11 @@ fn load_runtime_policy_state_from_effective_with_runtime_rules(
     );
     let mut enforcement_rules = Vec::new();
     let mut detection_rules = Vec::new();
+    let mut runtime_families = RuntimeSecurityEventFamilies::default();
     if let Some(runtime_rules) = runtime_rules {
+        if !runtime_rules.enforcement.is_empty() || !runtime_rules.detection.is_empty() {
+            runtime_families.set_all();
+        }
         enforcement_rules.extend(
             runtime_rules
                 .enforcement
@@ -221,16 +281,18 @@ fn load_runtime_policy_state_from_effective_with_runtime_rules(
                 .map(cel_detection_rule_from_snapshot),
         );
     }
-    enforcement_rules.extend(
-        effective
-            .as_ref()
-            .map(runtime_enforcement_rules_from_effective)
-            .unwrap_or_default(),
-    );
+    if let Some(effective) = effective.as_ref() {
+        let effective_rules = runtime_enforcement_rules_from_effective(effective);
+        for family in runtime_event_families_from_effective(effective) {
+            runtime_families.add(family);
+        }
+        enforcement_rules.extend(effective_rules);
+    }
     let security_engine = build_runtime_security_engine_from_rules(
         effective.as_ref(),
         enforcement_rules,
         detection_rules,
+        runtime_families,
         match_recorder,
     );
 
@@ -446,10 +508,36 @@ fn runtime_enforcement_rules_from_effective(
         .collect()
 }
 
+fn runtime_event_families_from_effective(
+    effective: &settings_profiles::EffectiveVmSettings,
+) -> Vec<EventFamily> {
+    let mut families = BTreeSet::new();
+    for rule in &effective.rules {
+        if runtime_enforcement_rule_from_effective(rule).is_some() {
+            if let Some(family) = runtime_event_family_from_callback(&rule.callback) {
+                families.insert(family);
+            }
+        }
+    }
+    families.into_iter().collect()
+}
+
+fn runtime_event_family_from_callback(callback: &str) -> Option<EventFamily> {
+    match callback {
+        "dns.request" => Some(EventFamily::Dns),
+        "http.request" | "http.response" | "http.read" | "http.write" => Some(EventFamily::Http),
+        "model.request" | "model.tool_response" | "model.response" | "model.tool_call" => {
+            Some(EventFamily::Http)
+        }
+        _ => None,
+    }
+}
+
 fn build_runtime_security_engine_from_rules(
     effective: Option<&settings_profiles::EffectiveVmSettings>,
     enforcement_rules: Vec<CelEnforcementRule>,
     detection_rules: Vec<capsem_security_engine::CelDetectionRule>,
+    event_families: RuntimeSecurityEventFamilies,
     match_recorder: Option<RuntimeRuleMatchAccumulator>,
 ) -> Option<Arc<dyn RuntimeSecurityEngine>> {
     if enforcement_rules.is_empty() && detection_rules.is_empty() {
@@ -470,10 +558,11 @@ fn build_runtime_security_engine_from_rules(
             .map(|effective| effective.profile_id.as_str())
             .unwrap_or("unknown"),
         pool_size,
+        event_family_scope = %event_families.label(),
         "installed runtime security engine"
     );
     let runtime: Arc<dyn RuntimeSecurityEngine> =
-        Arc::new(PooledRuntimeSecurityEngine::new(engines));
+        Arc::new(PooledRuntimeSecurityEngine::new(engines, event_families));
     Some(runtime)
 }
 

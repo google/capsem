@@ -383,6 +383,25 @@ transport/dispatch bottleneck to trace next, not an upstream network failure.
   the post-pool baseline 586.0/3775.4/5564.0/5661.0. Deltas:
   +1.3%/-0.5%/+1.2%/+1.6%, so this is retained as audit-writer hygiene, not a
   new throughput breakthrough.
+- Runtime security event-family routing landed as the next code-path
+  improvement. `RuntimeSecurityEngine` now advertises whether it can evaluate a
+  requested event family, and the MCP/HTTP/DNS/process exec paths only call the
+  runtime CEL engine when the installed engine declares that family. Structured
+  effective rules derive families from their callbacks; live runtime snapshots
+  remain all-family because they do not carry callback metadata. The
+  runtime-engine install log records the event-family scope so live sessions can
+  be audited for `all` versus callback-derived scopes such as `dns,http`.
+  Security proof: `non_mcp_runtime_scope_preserves_policy_block_and_logging`
+  verifies a non-MCP runtime engine is not evaluated for MCP while MCP policy
+  still blocks `local__echo` and persists the canonical `mcp.request` security
+  event; `runtime_mcp_security_stages_are_recorded_without_bypassing_block`
+  verifies an MCP-capable runtime block still denies dispatch. Scoped live
+  proof on the fresh build measured direct-vsock `mcp-load`
+  2188.2/10163.2/13934.4/13935.2 RPS at c=1/10/50/200, all zero errors, versus
+  the immediately prior fresh-build audit-writer run
+  593.4/3758.0/5630.6/5749.0. Deltas:
+  +268.7%/+170.4%/+147.5%/+142.4%; p99 improved from
+  2.2/3.8/15.2/42.7ms to 1.0/1.6/4.9/19.0ms.
 
 ## First Questions
 
