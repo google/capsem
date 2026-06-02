@@ -298,6 +298,17 @@
           572.2/806.4/811.0/842.8 RPS, this is +3.2%/+0.8%/+0.3%/-2.1%;
           conclusion: correct KVM/vhost-vsock shape, but queue-notify trapping
           alone is not the remaining ~800 RPS ceiling.
+    - [x] Advertise `VIRTIO_RING_F_EVENT_IDX` for KVM vhost-vsock so the
+          guest/backend can suppress unnecessary used-buffer interrupts. The
+          live backend accepted it (`enabled_features=0x120000000`, meaning
+          `VERSION_1|EVENT_IDX`). Unit proof:
+          `cargo test -p capsem-core hypervisor::kvm --lib` passed 350 KVM
+          tests. Scoped live proof:
+          raw-single 591.6/767.8/773.6/818.0 RPS and direct-vsock
+          589.6/782.0/789.8/834.2 RPS at c=1/10/50/200, zero errors. Against
+          the previous scoped direct-vsock proof 572.2/806.4/811.0/842.8 RPS,
+          direct-vsock moved +4.9%/-2.9%/-2.6%/-1.0%; conclusion: correct
+          virtio hygiene, but not the remaining throughput limiter.
   - [ ] Land only trace-backed RPS speedups, with before/after percentages by
         lane and canonical `just benchmark` artifacts.
 - [ ] H07: docs, changelog, release gate.

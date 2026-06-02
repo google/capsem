@@ -16,6 +16,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   590.0/812.7/813.6/825.4 RPS at c=1/10/50/200 versus the previous scoped
   572.2/806.4/811.0/842.8 RPS, so the remaining RPS cap is not queue-notify
   trapping alone.
+- Changed Linux KVM vhost-vsock to advertise `VIRTIO_RING_F_EVENT_IDX`, which
+  the local `/dev/vhost-vsock` backend negotiated as `enabled_features =
+  0x120000000`. This matches the interrupt-suppression shape already used by
+  virtio-blk. A scoped live `mcp-load` proof still stayed in the same band:
+  raw-single 591.6/767.8/773.6/818.0 RPS and direct-vsock
+  589.6/782.0/789.8/834.2 RPS at c=1/10/50/200, so event-index is not the
+  remaining RPS ceiling either.
 - Changed related session telemetry emitters to use batched `DbWriter`
   submission helpers where they already construct multiple rows for one
   event. HTTP/model telemetry, filesystem monitor events, DNS decisions,

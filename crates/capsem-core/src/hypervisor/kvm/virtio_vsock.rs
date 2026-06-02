@@ -21,6 +21,7 @@ use super::sys::{
     VHOST_VSOCK_SET_GUEST_CID, VHOST_VSOCK_SET_RUNNING,
 };
 use super::virtio_mmio::{QueueConfig, VirtioDevice};
+use super::virtio_queue::VIRTIO_RING_F_EVENT_IDX;
 use crate::hypervisor::VsockConnection;
 
 // ---------------------------------------------------------------------------
@@ -502,7 +503,7 @@ impl VirtioDevice for VhostVsockDevice {
     }
 
     fn features(&self) -> u64 {
-        VIRTIO_F_VERSION_1
+        VIRTIO_F_VERSION_1 | VIRTIO_RING_F_EVENT_IDX
     }
 
     fn queue_max_sizes(&self) -> &[u16] {
@@ -930,9 +931,11 @@ mod tests {
     }
 
     #[test]
-    fn features_version_1() {
+    fn features_include_modern_event_idx() {
         let dev = dummy_device();
-        assert_eq!(dev.features(), 1 << 32);
+        let features = dev.features();
+        assert_ne!(features & VIRTIO_F_VERSION_1, 0);
+        assert_ne!(features & VIRTIO_RING_F_EVENT_IDX, 0);
     }
 
     #[test]

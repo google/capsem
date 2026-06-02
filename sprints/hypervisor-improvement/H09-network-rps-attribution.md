@@ -281,15 +281,28 @@ transport/dispatch bottleneck to trace next, not an upstream network failure.
   errors. Against the prior 5s scoped direct-vsock proof
   572.2/806.4/811.0/842.8 RPS, that is +3.2%/+0.8%/+0.3%/-2.1%; queue-notify
   trapping alone is therefore not the ~800 RPS ceiling.
+- KVM vhost-vsock now advertises `VIRTIO_RING_F_EVENT_IDX`; the live backend
+  accepted it with `enabled_features=0x120000000`, confirming
+  `VERSION_1|EVENT_IDX` rather than an unsupported guest-visible bit. Unit
+  proof: `cargo test -p capsem-core hypervisor::kvm --lib` passed 350 KVM
+  tests. Scoped live proof:
+  `just exec "CAPSEM_BENCH_MCP_LANES=raw-single,direct-vsock
+  CAPSEM_BENCH_MCP_DURATION=5 capsem-bench mcp-load"` completed with
+  raw-single 591.6/767.8/773.6/818.0 RPS and direct-vsock
+  589.6/782.0/789.8/834.2 RPS at c=1/10/50/200, all zero errors. Compared
+  with the prior scoped direct-vsock proof 572.2/806.4/811.0/842.8 RPS, the
+  direct-vsock deltas are +4.9%/-2.9%/-2.6%/-1.0%; event-index is correct
+  virtio hygiene, but not the remaining throughput limiter.
 
 ## First Questions
 
 - Is the Linux RPS gap actually in KVM/vsock, or in host-side MITM/security
   processing? Current answer: host framed-MCP processing alone is not the cap;
   direct-vsock also matches the raw relay cap, and KVM ioeventfd queue-notify
-  wiring is now in place without moving the ceiling. The next trace target is
-  vsock socket buffering/readiness, guest/kernel vsock scheduling, or framed
-  single-stream batching rather than userspace MMIO notify trapping alone.
+  plus event-index wiring are now in place without moving the ceiling. The next
+  trace target is vsock socket buffering/readiness, guest/kernel vsock
+  scheduling, or framed single-stream batching rather than userspace MMIO
+  notify/interrupt hygiene alone.
 - Why did `local__echo` regress to ~0.2x baseline throughput with >3x p99
   latency while producing zero errors? Trace guest stdio relay, framed vsock
   single-stream behavior, host MCP endpoint parsing, aggregator dispatch, and
