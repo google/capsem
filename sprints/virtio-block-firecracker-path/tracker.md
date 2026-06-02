@@ -96,6 +96,50 @@
   it is not a default rootfs transport candidate without more rootfs layout or
   read-ahead work.
 
+### Accepted: EROFS DAX compressed versus uncompressed comparison
+- Bench:
+  `benchmarks/kvm-rootfs-format-grid/data_1.2.1780320819_x86_64_1780366089.json`
+- Command:
+  `python3 scripts/kvm_rootfs_format_grid.py --formats erofs-uncompressed,erofs-lz4hc-c65536 --queue-counts 8 --queue-sizes 128 --seg-maxes 64 --logical-block-sizes 4096 --startup --pmem-dax --timeout 900`
+- Mount proof for both cells:
+  - `/run/capsem-lower`: `erofs` from `/dev/pmem0`
+  - options: `ro,relatime,user_xattr,acl,cache_strategy=readaround,dax=always`
+  - `/sys/block/pmem0/queue/dax`: `1`
+- Uncompressed EROFS DAX:
+  - rootfs sequential read: 302.9 MB/s
+  - rootfs random 4K read: 38881 IOPS
+  - large binary cold read: 319.2 MB/s
+  - small JS reads: 465352 ops/s
+  - metadata stats: 114846 stats/s
+  - direct lower metadata stats: 148592 stats/s
+  - startup min: python 7.2 ms, node 18.3 ms, claude 344.8 ms,
+    gemini 1859.4 ms, codex 87.4 ms
+- Compressed `erofs-lz4hc-c65536` DAX, same run:
+  - rootfs sequential read: 279.9 MB/s
+  - rootfs random 4K read: 20042 IOPS
+  - large binary cold read: 338.6 MB/s
+  - small JS reads: 522448 ops/s
+  - metadata stats: 123333 stats/s
+  - direct lower metadata stats: 172544 stats/s
+  - startup min: python 6.4 ms, node 29.7 ms, claude 605.8 ms,
+    gemini 2061.7 ms, codex 134.0 ms
+- Result, uncompressed versus compressed DAX:
+  - rootfs sequential read: +8.2%
+  - rootfs random 4K read: +94.0%
+  - large binary cold read: -5.7%
+  - small JS reads: -10.9%
+  - metadata stats: -6.9%
+  - direct lower metadata stats: -13.9%
+  - python startup min: -12.5% slower
+  - node startup min: +38.4% faster
+  - claude startup min: +43.1% faster
+  - gemini startup min: +9.8% faster
+  - codex startup min: +34.8% faster
+- Decision: uncompressed EROFS DAX is the best signal so far for random IOPS
+  and AI CLI launch latency, but it is not an across-the-board winner. The next
+  rootfs decision needs either repeated variance runs or a weighted product
+  score that values startup/random I/O more than metadata-only probes.
+
 ### Accepted: combined KVM ioeventfd block batching
 - Code: `ba8f260e perf: combine kvm ioeventfd block batching`
 - Bench: `9d4c1f2a bench: record combined kvm block stack results`

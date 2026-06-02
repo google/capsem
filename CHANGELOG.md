@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `/run/capsem-lower` from `/dev/pmem0` with `dax=always`, improves random
   rootfs reads and metadata-heavy lanes over the tuned virtio-blk EROFS lane,
   and keeps the experiment opt-in because large sequential reads regressed.
+- Recorded an EROFS DAX compressed-vs-uncompressed comparison. Uncompressed
+  EROFS DAX improved random rootfs IOPS and most AI CLI startup timings versus
+  compressed EROFS DAX, while compressed DAX still led metadata, small-file,
+  and large-binary throughput in the same run.
 - Added bounded Linux KVM virtio-blk shape knobs for queue count, queue size,
   segment limit, logical block size, and io_uring mode so rootfs/startup
   tuning can sweep coupled block-device settings instead of one-off constants.
