@@ -226,6 +226,16 @@ transport/dispatch bottleneck to trace next, not an upstream network failure.
   108.9ms, and c=200 787.9 RPS p99 519.7ms, all zero errors. Against the
   previous fresh-initrd endpoint-fast-path run (407.2/608.4/601.0/616.8 RPS),
   RPS improved +22.6%, +28.4%, +29.0%, and +29.6% at c=1/10/50/200.
+- MCP load ablation added to the canonical `capsem-bench mcp-load` path. The
+  same run now reports FastMCP, raw JSON-RPC through one guest relay, and raw
+  JSON-RPC through four guest relay processes. Linux proof:
+  FastMCP 486.7/756.7/785.6/795.9 RPS at c=1/10/50/200; raw-single
+  571.6/795.1/800.4/806.5 RPS; raw-multiprocess 550.4/780.8/782.2/816.7 RPS.
+  Interpretation: FastMCP costs about 17% at c=1 but is not the high-concurrency
+  ceiling. Four relay/vsock connections do not lift the cap and worsen c=200
+  tail latency, so the next source trace should focus on shared host/vsock,
+  framed MCP scheduling, security/telemetry CPU, or KVM virtio-vsock delivery
+  rather than guest Python/FastMCP.
 
 ## First Questions
 

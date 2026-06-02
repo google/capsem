@@ -243,6 +243,15 @@
           +29.0%, and +29.6% at c=1/10/50/200. High-concurrency p99 improved
           roughly -22.0%, -21.3%, and -30.1% at c=10/50/200; c=1 p99 is
           effectively unchanged within rounding.
+    - [x] Extend canonical `capsem-bench mcp-load` with ablation lanes:
+          FastMCP client, raw JSON-RPC over one `/run/capsem-mcp-server`
+          relay, and raw JSON-RPC over four relay processes. Linux proof:
+          FastMCP 486.7/756.7/785.6/795.9 RPS, raw-single
+          571.6/795.1/800.4/806.5 RPS, raw-multiprocess
+          550.4/780.8/782.2/816.7 RPS at c=1/10/50/200. Conclusion:
+          FastMCP is only a c=1 tax; the high-concurrency ceiling is shared
+          host/vsock/framed-MCP or telemetry/security CPU, not the guest Python
+          client or a single relay process.
   - [ ] Land only trace-backed RPS speedups, with before/after percentages by
         lane and canonical `just benchmark` artifacts.
 - [ ] H07: docs, changelog, release gate.

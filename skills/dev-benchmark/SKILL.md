@@ -36,6 +36,13 @@ Python tool that runs inside the VM. Rich tables to stderr (human), structured J
 | snapshot | `capsem-bench snapshot` | Snapshot create/list/changes/revert/delete via MCP (ms per op at 10/100/500 files) |
 | all | `capsem-bench` | Default production suite including storage split diagnostics; excludes long-running load diagnostics |
 
+`capsem-bench mcp-load` is the canonical MCP transport load diagnostic. It
+drives deterministic `local__echo` and reports multiple lanes in one artifact:
+FastMCP client, raw JSON-RPC through one guest `/run/capsem-mcp-server` relay,
+and raw JSON-RPC through four relay processes. Use `CAPSEM_BENCH_MCP_LANES`
+with comma-separated `fastmcp`, `raw-single`, and `raw-multiprocess` only when
+you deliberately need a subset; otherwise keep the default all-lane output.
+
 `just benchmark` also records a host-native artifact under
 `benchmarks/host-native/` with local disk I/O, CLI startup, synthetic small-file
 reads, metadata-stat throughput, filesystem context, UTC timestamp, host
@@ -107,6 +114,9 @@ Key metrics: per-operation latency in ms. Regressions in `create` usually mean t
 - `CAPSEM_STORAGE_BENCH_SIZE_MB`: Write test size in MB for each storage split writable path (default: 64)
 - `CAPSEM_STORAGE_IO_PROFILE_SIZE_MB`: File size in MB for detailed sequential/random storage IOPS profiling (default: 64)
 - `CAPSEM_STORAGE_IO_PROFILE_RANDOM_OPS`: Random read/write operation count for storage IOPS profiling (default: 2000)
+- `CAPSEM_BENCH_MCP_DURATION`: Seconds per MCP load concurrency level (default: 10)
+- `CAPSEM_BENCH_MCP_PAYLOAD`: Echo payload for MCP load (default: `ping`)
+- `CAPSEM_BENCH_MCP_LANES`: Optional comma-separated MCP load lanes to run (`fastmcp`, `raw-single`, `raw-multiprocess`; default: all)
 
 ## Investigating slowness
 
