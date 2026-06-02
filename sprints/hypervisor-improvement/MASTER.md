@@ -1,6 +1,6 @@
 # Hypervisor Improvement Meta Sprint
 
-Last updated: 2026-05-30
+Last updated: 2026-06-02
 
 ## Mission
 
@@ -64,6 +64,7 @@ Capsem strengths we should preserve:
 | H05 | [Storage Rootfs And Filesystems](H05-storage-rootfs-and-filesystems.md) | Not Started | Compare rootfs formats/chunks/compression/cache policies and preserve Apple/Linux product semantics. | H03 |
 | H06 | [Benchmark And Product Proof](H06-benchmark-and-product-proof.md) | Not Started | Keep performance science strict: artifacts, host-native baselines, status visibility, doctor gates, macOS reruns. | H01-H05 |
 | H07 | [Docs Changelog And Release Gate](H07-docs-changelog-and-release-gate.md) | Not Started | Update docs, skills, bootstrap/doctor expectations, changelog, and final validation. | H06 |
+| H08 | [Disk Throughput Attribution](H08-disk-throughput-attribution.md) | Active | Trace DAX, virtio-blk, scratch, VirtioFS, and RPS-adjacent I/O before landing code-path speedups. | H03, H05 |
 
 ## Global Acceptance Gates
 
@@ -76,6 +77,9 @@ Capsem strengths we should preserve:
 - Every shared rootfs/benchmark/status change is suitable for Apple VZ rerun.
 - Hot-path metrics use stable, low-cardinality names.
 - Safety fixes include adversarial tests, not just happy-path benchmarks.
+- Disk throughput work starts from code-path attribution. DAX rootfs, fallback
+  virtio-blk rootfs, writable scratch, VirtioFS, and RPS-adjacent paths must be
+  measured as different lanes before conclusions are generalized.
 
 ## Proof Matrix
 

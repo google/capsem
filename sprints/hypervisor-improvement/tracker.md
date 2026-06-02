@@ -65,6 +65,24 @@
         behavior for file-backed pmem, and benchmark cache purity.
   - [ ] Revisit Direct I/O for writable scratch and fallback rootfs-over-blk
         separately from the EROFS DAX pmem path.
+- [ ] H08: disk throughput attribution.
+  - [x] Create the focused H08 sprint slice under the Hypervisor Improvement
+        meta sprint.
+  - [ ] Baseline accepted DAX rootfs, fallback block rootfs, writable scratch,
+        VirtioFS, and RPS-adjacent lanes against the current committed
+        artifact.
+  - [ ] Add request-shape and timing counters for virtio-blk queue notify,
+        drain, syscall, completion, used-ring publication, and interrupt
+        decisions.
+  - [ ] Add DAX/rootfs cache and page-fault evidence where available, so DAX
+        throughput is not confused with virtio-blk throughput.
+  - [ ] Compare Capsem, Firecracker, and crosvm by the same request lifecycle
+        instead of keyword/source skims.
+  - [ ] Land the first trace-backed code-path improvement and report
+        before/after percentages by lane.
+  - [ ] Record accepted results through canonical `just benchmark`.
+  - [ ] Park memory, CPU/SMP, and RPS follow-up slices with concrete metrics
+        once disk attribution shows what still matters.
 - [ ] H06: benchmark and product proof.
   - [x] Add a crosvm reference harness for the same Capsem x86_64
         rootfs/startup workload used by the Firecracker comparison.
@@ -94,6 +112,11 @@
   as a read-only Linux-native alternative, and investigate DAX-style aggressive
   guest mapping for rootfs data before assuming more virtio-blk tuning is the
   main lever.
+- User direction on 2026-06-02: stop treating the remaining sequential
+  throughput issue as another knob sweep. Build a focused sprint that traces
+  the actual code path, separates DAX from virtio-blk from VirtioFS/workspace,
+  and then lands trace-backed speedups. Memory, CPU/SMP, and weak RPS are next
+  performance domains, not part of the first disk attribution milestone.
 - Firecracker source audit found the strongest transferable patterns in vCPU
   control, event scheduling, virtqueue contracts, block engine configuration,
   io_uring restrictions/probes/backpressure, and hot-path metrics.

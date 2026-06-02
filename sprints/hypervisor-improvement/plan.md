@@ -27,7 +27,8 @@ Recommended:
 4. H02 event delivery/backpressure.
 5. H04 CPU/SMP lifecycle.
 6. H05 storage/rootfs experiments.
-7. H06/H07 proof, docs, release gate.
+7. H08 disk throughput attribution for the remaining raw-throughput gap.
+8. H06/H07 proof, docs, release gate.
 
 Reasoning: safety must come before exposing official counters; counters must
 come before aggressive optimization so we can explain real workload behavior.
@@ -55,6 +56,7 @@ come before aggressive optimization so we can explain real workload behavior.
 - KVM event delivery and async backpressure have Firecracker-grade contracts
   where implemented.
 - Storage/rootfs experiments have Linux and Apple-compatible benchmark proof.
+- Remaining Linux disk throughput gaps are attributed by transport path before
+  implementation changes are accepted.
 - Docs and sprint tracker carry enough context for future work without relying
   on chat history.
-

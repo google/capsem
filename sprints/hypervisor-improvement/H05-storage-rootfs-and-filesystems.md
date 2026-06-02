@@ -60,6 +60,10 @@ Close Linux/macOS storage gaps without breaking Capsem's product storage model.
   `madvise` and `MAP_POPULATE` policies. Startup-inclusive evidence rejected a
   default change for now: `willneed` improved same-run sequential read 5.9% but
   regressed cold large-binary, small-JS, lower metadata, and Codex startup.
+- Raw throughput now moves to H08 as a code-path attribution sprint. H05 keeps
+  the filesystem/rootfs decision ledger; H08 owns proving whether the next win
+  is DAX cache behavior, fallback virtio-blk implementation, writable scratch,
+  VirtioFS, or RPS-adjacent I/O.
 
 ## Done
 
