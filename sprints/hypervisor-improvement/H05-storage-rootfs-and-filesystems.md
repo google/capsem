@@ -51,6 +51,11 @@ Close Linux/macOS storage gaps without breaking Capsem's product storage model.
   guest readahead behavior, EROFS DAX mount/cache behavior, KVM block fallback
   for non-DAX rootfs, host page-fault/mmap behavior for file-backed pmem, and
   whether the benchmark is measuring true cold reads or mixed cache state.
+- Guest read-ahead slice: DAX rootfs now defaults `/dev/pmem0` to 16 MiB
+  read-ahead while ordinary virtio-blk devices keep the 4 MiB default. Final
+  benchmark artifact `1780369716` showed a modest raw-throughput improvement
+  over the prior active artifact: sequential +2.8%, cold large-binary +2.4%,
+  lower metadata +2.3%, with random IOPS -3.7% and small-JS -4.7%.
 
 ## Done
 

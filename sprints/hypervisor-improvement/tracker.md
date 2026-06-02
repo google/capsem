@@ -56,10 +56,11 @@
   - [ ] Rerun EROFS tuning around the compressed lead after raw throughput
         work, including cluster size/layout tradeoffs.
   - [ ] Test EROFS zstd after bumping the guest kernel to Linux 6.11 or newer.
-  - [ ] Investigate raw/cold throughput in five slices: guest readahead,
-        EROFS DAX mount/cache behavior, KVM block fallback for non-DAX rootfs,
-        host page-fault/mmap behavior for file-backed pmem, and benchmark cache
-        purity.
+  - [x] Investigate guest rootfs readahead for the EROFS DAX pmem path and
+        land the measured 16 MiB pmem default.
+  - [ ] Continue raw/cold throughput investigation: EROFS DAX mount/cache
+        behavior, KVM block fallback for non-DAX rootfs, host page-fault/mmap
+        behavior for file-backed pmem, and benchmark cache purity.
   - [ ] Revisit Direct I/O for writable scratch and fallback rootfs-over-blk
         separately from the EROFS DAX pmem path.
 - [ ] H06: benchmark and product proof.
@@ -254,6 +255,21 @@
   small-file/random interactive profile. This is not the final tuning lock:
   revisit lz4hc cluster/layout settings, add EROFS zstd after a Linux 6.11+
   guest-kernel bump, and focus the next investigation on raw/cold throughput.
+- H05 guest readahead slice landed locally: `capsem-init` now applies a 16 MiB
+  read-ahead default to `/dev/pmem0` when `capsem.rootfs=erofs-dax`, keeps
+  ordinary virtio-blk devices at 4 MiB unless they are the mounted rootfs
+  device, and accepts explicit `capsem.rootfs_readahead_kb=` values for grid
+  sweeps. `capsem-bench storage` and the rootfs-format grid now record pmem
+  queue state.
+- H05 readahead benchmark artifact:
+  `benchmarks/kvm-rootfs-format-grid/data_1.2.1780320819_x86_64_1780369716.json`.
+  Final rerun vs prior active compressed file-backed DAX artifact `1780367616`:
+  seq read 279.0 MB/s vs 271.3 (+2.8%), random 21,707 IOPS vs 22,541 (-3.7%),
+  cold large-binary 331.1 MB/s vs 323.3 (+2.4%), small JS 548k/s vs 575k/s
+  (-4.7%), metadata 122.8k/s vs 122.7k/s (+0.2%), lower metadata 172.2k/s vs
+  168.4k/s (+2.3%). Conclusion: keep the pmem DAX read-ahead default because
+  it nudges raw throughput up without a large metadata penalty, but continue
+  the larger raw-throughput investigation.
 - crosvm epoll is still far from the committed macOS Capsem artifact: 0.13x seq
   rootfs read, 0.24x random IOPS, 0.31x cold large-binary read, 0.26x small JS,
   0.24x metadata stat, and roughly 2.8x-4.2x startup latency for the shared

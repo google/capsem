@@ -409,9 +409,13 @@ def guest_command(*, startup: bool) -> str:
         "printf 'max_segments='; cat /sys/block/vda/queue/max_segments",
         "printf 'logical_block_size='; cat /sys/block/vda/queue/logical_block_size",
         "printf 'nr_requests='; cat /sys/block/vda/queue/nr_requests",
+        "printf 'vda_read_ahead_kb='; cat /sys/block/vda/queue/read_ahead_kb 2>/dev/null || echo unavailable",
+        "printf 'vda_max_sectors_kb='; cat /sys/block/vda/queue/max_sectors_kb 2>/dev/null || echo unavailable",
         "printf 'pmem_present='; test -b /dev/pmem0 && echo yes || echo no",
         "printf 'pmem_dax='; cat /sys/block/pmem0/queue/dax 2>/dev/null || echo unavailable",
         "printf 'pmem_logical_block_size='; cat /sys/block/pmem0/queue/logical_block_size 2>/dev/null || echo unavailable",
+        "printf 'pmem_read_ahead_kb='; cat /sys/block/pmem0/queue/read_ahead_kb 2>/dev/null || echo unavailable",
+        "printf 'pmem_max_sectors_kb='; cat /sys/block/pmem0/queue/max_sectors_kb 2>/dev/null || echo unavailable",
         "echo CAPSEM_KVM_ROOTFS_SYSFS_END",
         "capsem-bench storage >/dev/null",
         "echo CAPSEM_KVM_ROOTFS_STORAGE_JSON_BEGIN",
@@ -445,12 +449,14 @@ def run_cell(
     direct_io: bool,
     pmem_dax: bool,
     pmem_file_backed: bool,
+    rootfs_read_ahead_kb: int,
 ) -> dict:
     home = TARGET / "homes" / format_name
-    cmdline_append = f"{rootfs_image['cmdline_append']} capsem.bench_lower=1"
+    read_ahead_arg = f"capsem.rootfs_readahead_kb={rootfs_read_ahead_kb}"
+    cmdline_append = f"{rootfs_image['cmdline_append']} capsem.bench_lower=1 {read_ahead_arg}"
     if pmem_dax:
         cmdline_append = (
-            f"{rootfs_image['cmdline_append']} capsem.rootfs=erofs-dax capsem.bench_lower=1"
+            f"{rootfs_image['cmdline_append']} capsem.rootfs=erofs-dax capsem.bench_lower=1 {read_ahead_arg}"
         )
     env = {
         **os.environ,
@@ -488,6 +494,7 @@ def run_cell(
         "direct_io": direct_io,
         "pmem_dax": pmem_dax,
         "pmem_file_backed": pmem_file_backed,
+        "rootfs_read_ahead_kb": rootfs_read_ahead_kb,
         "returncode": proc.returncode,
         "duration_s": round(duration, 3),
         "sysfs": extract_sysfs(combined),
@@ -506,9 +513,16 @@ def build_shapes(args: argparse.Namespace) -> list[dict[str, int]]:
     queue_counts = parse_csv_u16(args.queue_counts, name="queue-counts")
     queue_sizes = parse_csv_u16(args.queue_sizes, name="queue-sizes")
     logical_block_sizes = parse_csv_u16(args.logical_block_sizes, name="logical-block-sizes")
+    if args.rootfs_read_ahead_kbs.strip():
+        rootfs_read_ahead_kbs = parse_csv_u16(
+            args.rootfs_read_ahead_kbs,
+            name="rootfs-read-ahead-kbs",
+        )
+    else:
+        rootfs_read_ahead_kbs = [16384 if args.pmem_dax else 4096]
     shapes: list[dict[str, int]] = []
-    for queue_count, queue_size, logical_block_size in itertools.product(
-        queue_counts, queue_sizes, logical_block_sizes
+    for queue_count, queue_size, logical_block_size, rootfs_read_ahead_kb in itertools.product(
+        queue_counts, queue_sizes, logical_block_sizes, rootfs_read_ahead_kbs
     ):
         for seg_max in parse_seg_maxes(args.seg_maxes, queue_size):
             shapes.append(
@@ -517,6 +531,7 @@ def build_shapes(args: argparse.Namespace) -> list[dict[str, int]]:
                     "queue_size": queue_size,
                     "seg_max": seg_max,
                     "logical_block_size": logical_block_size,
+                    "rootfs_read_ahead_kb": rootfs_read_ahead_kb,
                 }
             )
     if args.limit is not None:
@@ -613,6 +628,11 @@ def main() -> int:
     parser.add_argument("--queue-sizes", default="128,256")
     parser.add_argument("--seg-maxes", default="auto,64")
     parser.add_argument("--logical-block-sizes", default="512,4096")
+    parser.add_argument(
+        "--rootfs-read-ahead-kbs",
+        default="",
+        help="comma-separated capsem.rootfs_readahead_kb values; defaults to 16384 for --pmem-dax and 4096 otherwise",
+    )
     parser.add_argument("--startup", action="store_true", help="also run capsem-bench startup")
     parser.add_argument(
         "--direct-io",
@@ -736,6 +756,7 @@ def main() -> int:
                 direct_io=args.direct_io,
                 pmem_dax=args.pmem_dax,
                 pmem_file_backed=args.pmem_file_backed,
+                rootfs_read_ahead_kb=shape["rootfs_read_ahead_kb"],
             )
             artifact["results"].append(result)
             if result["returncode"] != 0:

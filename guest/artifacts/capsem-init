@@ -11,16 +11,42 @@ mount -t devtmpfs devtmpfs /dev
 mkdir -p /dev/pts
 mount -t devpts   devpts   /dev/pts
 
-# Optimize block I/O: virtio performs best with 'none' scheduler (host OS handles it)
-# and a larger read-ahead buffer.
-for dev in /sys/block/vd*; do
+ROOTFS_TYPE="squashfs"
+BENCH_LOWER_ROOTFS=0
+DEFAULT_BLOCK_READ_AHEAD_KB=4096
+DEFAULT_PMEM_ROOTFS_READ_AHEAD_KB=16384
+ROOTFS_READ_AHEAD_KB=""
+ROOTFS_READ_AHEAD_EXPLICIT=0
+for arg in $(cat /proc/cmdline); do
+    case "$arg" in
+        capsem.rootfs=*) ROOTFS_TYPE="${arg#capsem.rootfs=}" ;;
+        capsem.bench_lower=1|capsem.bench_lower=true) BENCH_LOWER_ROOTFS=1 ;;
+        capsem.rootfs_readahead_kb=*) ROOTFS_READ_AHEAD_KB="${arg#capsem.rootfs_readahead_kb=}"; ROOTFS_READ_AHEAD_EXPLICIT=1 ;;
+    esac
+done
+case "$ROOTFS_READ_AHEAD_KB" in
+    *[!0-9]*) ROOTFS_READ_AHEAD_KB=""; ROOTFS_READ_AHEAD_EXPLICIT=0 ;;
+esac
+
+tune_block_queue() {
+    dev="$1"
+    read_ahead_kb="${2:-$DEFAULT_BLOCK_READ_AHEAD_KB}"
     if [ -d "$dev" ]; then
         echo none > "$dev/queue/scheduler" 2>/dev/null || true
         echo 0 > "$dev/queue/rotational" 2>/dev/null || true
-        echo 4096 > "$dev/queue/read_ahead_kb" 2>/dev/null || true
+        echo "$read_ahead_kb" > "$dev/queue/read_ahead_kb" 2>/dev/null || true
         echo 256 > "$dev/queue/nr_requests" 2>/dev/null || true
     fi
+}
+
+# Optimize block I/O: virtio performs best with 'none' scheduler (host OS handles it)
+# and a larger read-ahead buffer.
+for dev in /sys/block/vd*; do
+    tune_block_queue "$dev"
 done
+if [ -z "$ROOTFS_READ_AHEAD_KB" ]; then
+    ROOTFS_READ_AHEAD_KB="$DEFAULT_BLOCK_READ_AHEAD_KB"
+fi
 
 # Load kernel modules listed in /conf/modules (populated by initramfs-tools)
 if [ -f /conf/modules ]; then
@@ -93,25 +119,22 @@ ls /dev/pmem* 2>&1 || echo "[capsem-init] no /dev/pmem found"
 # hypervisor benchmark harness can append `capsem.rootfs=erofs` or
 # `capsem.rootfs=auto` on the kernel cmdline to compare read-only formats.
 mkdir -p /mnt/a
-ROOTFS_TYPE="squashfs"
-BENCH_LOWER_ROOTFS=0
-for arg in $(cat /proc/cmdline); do
-    case "$arg" in
-        capsem.rootfs=*) ROOTFS_TYPE="${arg#capsem.rootfs=}" ;;
-        capsem.bench_lower=1|capsem.bench_lower=true) BENCH_LOWER_ROOTFS=1 ;;
-    esac
-done
 ROOTFS_DEV=/dev/vda
 ROOTFS_MOUNT_OPTS=""
 if [ "$ROOTFS_TYPE" = "erofs-dax" ]; then
     ROOTFS_TYPE="erofs"
     ROOTFS_DEV=/dev/pmem0
     ROOTFS_MOUNT_OPTS="-o dax"
+    if [ "$ROOTFS_READ_AHEAD_EXPLICIT" = "0" ]; then
+        ROOTFS_READ_AHEAD_KB="$DEFAULT_PMEM_ROOTFS_READ_AHEAD_KB"
+    fi
     _i=0
     while [ ! -b "$ROOTFS_DEV" ] && [ "$_i" -lt 200 ]; do
         _i=$((_i + 1))
     done
 fi
+ROOTFS_SYS_NAME=$(basename "$ROOTFS_DEV")
+tune_block_queue "/sys/block/$ROOTFS_SYS_NAME" "$ROOTFS_READ_AHEAD_KB"
 echo "[capsem-init] mounting $ROOTFS_DEV ($ROOTFS_TYPE $ROOTFS_MOUNT_OPTS)..."
 if [ "$ROOTFS_TYPE" = "auto" ]; then
     if mount -t squashfs /dev/vda /mnt/a; then

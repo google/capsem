@@ -330,7 +330,7 @@ def read_block_queues(sys_block="/sys/block"):
         "io_poll",
     )
     for device in devices:
-        if not device.startswith("vd"):
+        if not (device.startswith("vd") or device.startswith("pmem")):
             continue
         queue_dir = os.path.join(sys_block, device, "queue")
         info = {}

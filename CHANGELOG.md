@@ -37,6 +37,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   candidate because it balances image size with the strongest random/small-file
   behavior. Follow-up remains open for lz4hc retuning, EROFS zstd after a Linux
   6.11+ guest-kernel bump, and raw/cold throughput investigation.
+- Tuned Linux guest rootfs read-ahead for the EROFS DAX pmem path. The initrd
+  now applies a 16 MiB default to `/dev/pmem0` rootfs mounts while keeping
+  ordinary virtio-blk devices at the existing 4 MiB default; the rootfs-format
+  grid can sweep `capsem.rootfs_readahead_kb` and records observed `vda`/`pmem`
+  queue state. The final rerun improved compressed file-backed DAX sequential
+  read 2.8%, cold large-binary read 2.4%, and lower-rootfs metadata 2.3% versus
+  the prior active artifact, while random IOPS and small-JS reads regressed
+  3.7% and 4.7%.
 - Added bounded Linux KVM virtio-blk shape knobs for queue count, queue size,
   segment limit, logical block size, and io_uring mode so rootfs/startup
   tuning can sweep coupled block-device settings instead of one-off constants.
