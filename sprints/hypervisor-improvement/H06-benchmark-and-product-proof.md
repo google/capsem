@@ -16,6 +16,9 @@ Keep the science strict and make the product surface honest.
   - rootfs format/compression/block size;
   - kernel cmdline and storage/FUSE limits;
   - git/source dirty state.
+- For DAX/rootfs experiments, record the pmem transport, guest mount options,
+  backing mode (`anonymous_copy` vs `file_mmap`), image alignment, and padding
+  bytes so Linux/macOS follow-up runs compare the actual tested path.
 - Add product-facing status proof for resource counters and hypervisor health.
 - Keep external VMM comparisons honest: Firecracker uses an official release
   binary; crosvm currently has no apt/snap/GitHub release binary on this host,

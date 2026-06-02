@@ -20,6 +20,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   EROFS DAX improved random rootfs IOPS and most AI CLI startup timings versus
   compressed EROFS DAX, while compressed DAX still led metadata, small-file,
   and large-binary throughput in the same run.
+- Added an opt-in Linux KVM file-backed EROFS DAX lane:
+  `CAPSEM_KVM_ROOTFS_PMEM_FILE_BACKED=1` maps an aligned rootfs image directly
+  with host `mmap` instead of first copying it into anonymous pmem RAM. The
+  rootfs-format grid exposes it with `--pmem-file-backed`, pads generated
+  EROFS target images to KVM's 128 MiB pmem alignment, and records the backing
+  mode plus padding metadata in the benchmark artifact.
+- Recorded the file-backed EROFS DAX benchmark artifact. Against the previous
+  anonymous-copy DAX artifact, uncompressed EROFS regressed sequential read
+  2.9%, random IOPS 3.4%, and cold large-binary read 5.6%, while lower-rootfs
+  metadata improved 5.6%. Compressed `erofs-lz4hc-c65536` regressed sequential
+  read 3.1% and cold large-binary read 4.5%, but improved random IOPS 12.5%
+  and small-JS reads 10.1%. This keeps file-backed DAX as a measured candidate,
+  not yet the default throughput answer.
 - Added bounded Linux KVM virtio-blk shape knobs for queue count, queue size,
   segment limit, logical block size, and io_uring mode so rootfs/startup
   tuning can sweep coupled block-device settings instead of one-off constants.

@@ -46,9 +46,13 @@
         rootfs/startup results before choosing defaults.
   - [x] Add a rootfs-format grid harness so uncompressed rootfs and EROFS run
         through the same block-shape matrix as the current SquashFS baseline.
-  - [ ] Test rootfs format/compression alternatives through the canonical
-        benchmark path: uncompressed rootfs, EROFS, and a DAX-capability path
-        if the current Linux/KVM transport can expose one cleanly.
+  - [x] Test rootfs format/compression alternatives through the canonical
+        benchmark path: uncompressed rootfs, EROFS, and an opt-in virtio-pmem
+        DAX-capability path.
+  - [x] Add and measure a strict file-backed EROFS DAX lane that maps aligned
+        rootfs images directly instead of copying them into anonymous pmem RAM.
+  - [ ] Revisit Direct I/O for writable scratch and fallback rootfs-over-blk
+        separately from the EROFS DAX pmem path.
 - [ ] H06: benchmark and product proof.
   - [x] Add a crosvm reference harness for the same Capsem x86_64
         rootfs/startup workload used by the Firecracker comparison.
@@ -218,6 +222,24 @@
   104,348 ops/s (+13.1%), metadata stat 48,030/s (+13.6%). Startup was similar
   or slightly better: python3 30.4 ms (+5.3%), node 243.5 ms (-0.5%), claude
   815.2 ms (+6.0%), gemini 2280.4 ms (+0.2%), codex 712.6 ms (+6.8%).
+- H05 file-backed DAX slice landed locally: `CAPSEM_KVM_ROOTFS_PMEM_FILE_BACKED=1`
+  switches KVM virtio-pmem rootfs backing from anonymous-copy mmap to strict
+  file mmap, while the rootfs-format grid `--pmem-file-backed` mode pads
+  generated EROFS target images to the 128 MiB pmem alignment and records
+  backing/padding metadata. Benchmark artifact:
+  `benchmarks/kvm-rootfs-format-grid/data_1.2.1780320819_x86_64_1780367616.json`.
+- H05 file-backed DAX result vs previous anonymous-copy DAX artifact
+  `1780366089`: uncompressed EROFS seq read 294.1 MB/s vs 302.9 (-2.9%),
+  random 37,551 IOPS vs 38,881 (-3.4%), cold large-binary 301.2 MB/s vs
+  319.2 (-5.6%), small JS 454k/s vs 465k/s (-2.4%), metadata 115.0k/s vs
+  114.8k/s (+0.1%), lower metadata 156.9k/s vs 148.6k/s (+5.6%).
+- H05 compressed file-backed DAX result vs previous anonymous-copy DAX:
+  `erofs-lz4hc-c65536` seq read 271.3 MB/s vs 279.9 (-3.1%), random 22,541
+  IOPS vs 20,042 (+12.5%), cold large-binary 323.3 MB/s vs 338.6 (-4.5%),
+  small JS 575k/s vs 522k/s (+10.1%), metadata 122.7k/s vs 123.3k/s (-0.6%),
+  lower metadata 168.4k/s vs 172.5k/s (-2.4%). Conclusion: file-backed DAX
+  helps some compressed random/small-file lanes but is not the large-read
+  throughput fix; continue with block/Direct-I/O and filesystem tuning.
 - crosvm epoll is still far from the committed macOS Capsem artifact: 0.13x seq
   rootfs read, 0.24x random IOPS, 0.31x cold large-binary read, 0.26x small JS,
   0.24x metadata stat, and roughly 2.8x-4.2x startup latency for the shared

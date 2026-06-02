@@ -99,6 +99,7 @@ const PROCESS_ENV_ALLOWLIST: &[&str] = &[
     "CAPSEM_KVM_BLK_DIRECT_IO",
     "CAPSEM_KVM_BLK_ROOTFS_DIRECT_IO",
     "CAPSEM_KVM_ROOTFS_PMEM_DAX",
+    "CAPSEM_KVM_ROOTFS_PMEM_FILE_BACKED",
 ];
 
 const SUSPEND_CONFIRM_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(90);

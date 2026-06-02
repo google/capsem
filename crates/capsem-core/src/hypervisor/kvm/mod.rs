@@ -119,13 +119,22 @@ fn irq_to_gsi(irq: u32) -> u32 {
 
 #[cfg(target_arch = "x86_64")]
 fn should_attach_pmem_rootfs(config: &VmConfig) -> bool {
-    config.disk_path.is_some()
-        && std::env::var("CAPSEM_KVM_ROOTFS_PMEM_DAX").is_ok_and(|v| {
-            matches!(
-                v.trim().to_ascii_lowercase().as_str(),
-                "1" | "true" | "yes" | "on"
-            )
-        })
+    config.disk_path.is_some() && env_truthy("CAPSEM_KVM_ROOTFS_PMEM_DAX")
+}
+
+#[cfg(target_arch = "x86_64")]
+fn should_use_file_backed_pmem_rootfs() -> bool {
+    env_truthy("CAPSEM_KVM_ROOTFS_PMEM_FILE_BACKED")
+}
+
+#[cfg(target_arch = "x86_64")]
+fn env_truthy(name: &str) -> bool {
+    std::env::var(name).is_ok_and(|v| {
+        matches!(
+            v.trim().to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        )
+    })
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -142,6 +151,11 @@ fn pmem_guest_phys_addr(ram_bytes: u64) -> u64 {
 #[cfg(target_arch = "x86_64")]
 fn pmem_region_size(image_size: u64) -> u64 {
     align_up_to(image_size, KVM_PMEM_ALIGNMENT)
+}
+
+#[cfg(target_arch = "x86_64")]
+fn is_pmem_file_backing_size(image_size: u64) -> bool {
+    image_size > 0 && image_size == pmem_region_size(image_size)
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -169,6 +183,24 @@ struct PmemMapping {
     size: u64,
     image_size: u64,
     guest_phys_addr: u64,
+    backing: PmemBacking,
+}
+
+#[cfg(target_arch = "x86_64")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PmemBacking {
+    AnonymousCopy,
+    FileMmap,
+}
+
+#[cfg(target_arch = "x86_64")]
+impl PmemBacking {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::AnonymousCopy => "anonymous_copy",
+            Self::FileMmap => "file_mmap",
+        }
+    }
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -186,6 +218,54 @@ impl PmemMapping {
             path.display()
         );
         let size = pmem_region_size(image_size);
+        if should_use_file_backed_pmem_rootfs() {
+            anyhow::ensure!(
+                is_pmem_file_backing_size(image_size),
+                "file-backed pmem rootfs image {} must be padded to {} bytes alignment; size={} aligned_size={}",
+                path.display(),
+                KVM_PMEM_ALIGNMENT,
+                image_size,
+                size
+            );
+            return Self::map_file(path, &file, image_size, guest_phys_addr);
+        }
+        Self::map_anonymous_copy(path, &mut file, image_size, size, guest_phys_addr)
+    }
+
+    fn map_file(path: &Path, file: &File, image_size: u64, guest_phys_addr: u64) -> Result<Self> {
+        let ptr = unsafe {
+            libc::mmap(
+                std::ptr::null_mut(),
+                image_size as usize,
+                libc::PROT_READ | libc::PROT_WRITE,
+                libc::MAP_PRIVATE,
+                file.as_raw_fd(),
+                0,
+            )
+        };
+        if ptr == libc::MAP_FAILED {
+            anyhow::bail!(
+                "failed to mmap file-backed pmem rootfs image {}: {}",
+                path.display(),
+                std::io::Error::last_os_error()
+            );
+        }
+        Ok(Self {
+            ptr: ptr as *mut u8,
+            size: image_size,
+            image_size,
+            guest_phys_addr,
+            backing: PmemBacking::FileMmap,
+        })
+    }
+
+    fn map_anonymous_copy(
+        path: &Path,
+        file: &mut File,
+        image_size: u64,
+        size: u64,
+        guest_phys_addr: u64,
+    ) -> Result<Self> {
         let ptr = unsafe {
             libc::mmap(
                 std::ptr::null_mut(),
@@ -208,6 +288,7 @@ impl PmemMapping {
             size,
             image_size,
             guest_phys_addr,
+            backing: PmemBacking::AnonymousCopy,
         };
         let dst = unsafe { std::slice::from_raw_parts_mut(mapping.ptr, image_size as usize) };
         if let Err(err) = file.read_exact(dst) {
@@ -297,6 +378,7 @@ impl Hypervisor for KvmHypervisor {
                 guest_phys_addr = format_args!("{:#x}", mapping.guest_phys_addr),
                 size = mapping.size,
                 image_size = mapping.image_size,
+                backing = mapping.backing.as_str(),
                 "attached read-only rootfs image as virtio-pmem backing memory"
             );
             Some(mapping)
@@ -1315,17 +1397,22 @@ mod tests {
         };
 
         std::env::remove_var("CAPSEM_KVM_ROOTFS_PMEM_DAX");
+        std::env::remove_var("CAPSEM_KVM_ROOTFS_PMEM_FILE_BACKED");
         assert!(!should_attach_pmem_rootfs(&config));
+        assert!(!should_use_file_backed_pmem_rootfs());
         assert_eq!(virtio_mmio_device_count(&config, &[]), 1);
 
         std::env::set_var("CAPSEM_KVM_ROOTFS_PMEM_DAX", "1");
+        std::env::set_var("CAPSEM_KVM_ROOTFS_PMEM_FILE_BACKED", "yes");
         assert!(!should_attach_pmem_rootfs(&config));
+        assert!(should_use_file_backed_pmem_rootfs());
 
         config.disk_path = Some("/tmp/rootfs.erofs".into());
         assert!(should_attach_pmem_rootfs(&config));
         assert_eq!(virtio_mmio_device_count(&config, &[]), 3);
 
         std::env::remove_var("CAPSEM_KVM_ROOTFS_PMEM_DAX");
+        std::env::remove_var("CAPSEM_KVM_ROOTFS_PMEM_FILE_BACKED");
     }
 
     #[cfg(target_arch = "x86_64")]
@@ -1338,6 +1425,8 @@ mod tests {
         assert!(size >= image_size);
         assert_eq!(size % KVM_PMEM_ALIGNMENT, 0);
         assert_eq!(size, 896 * 1024 * 1024);
+        assert!(!is_pmem_file_backing_size(image_size));
+        assert!(is_pmem_file_backing_size(size));
     }
 
     #[cfg(not(target_arch = "x86_64"))]

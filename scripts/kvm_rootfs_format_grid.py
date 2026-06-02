@@ -24,6 +24,7 @@ ARCH = platform.machine().replace("aarch64", "arm64")
 ARTIFACT_DIR = ROOT / "benchmarks" / "kvm-rootfs-format-grid"
 TARGET = ROOT / "target" / "kvm-rootfs-format-grid"
 SOURCE_ASSETS = ROOT / "assets"
+PMEM_ALIGNMENT_BYTES = 128 * 1024 * 1024
 
 FORMAT_PROFILES = {
     "squashfs-zstd": {
@@ -288,6 +289,37 @@ def rootfs_image_metadata(format_name: str) -> dict:
     return metadata
 
 
+def align_up(value: int, alignment: int) -> int:
+    return (value + alignment - 1) & ~(alignment - 1)
+
+
+def ensure_pmem_file_backed_image(metadata: dict) -> dict:
+    path = Path(metadata["path"])
+    size = path.stat().st_size
+    padded_size = align_up(size, PMEM_ALIGNMENT_BYTES)
+    padding = padded_size - size
+    if padding:
+        try:
+            with path.open("r+b") as f:
+                f.truncate(padded_size)
+        except PermissionError:
+            tmp = path.with_suffix(".pmem-padded.tmp")
+            tmp.unlink(missing_ok=True)
+            shutil.copyfile(path, tmp)
+            with tmp.open("r+b") as f:
+                f.truncate(padded_size)
+            tmp.chmod(0o644)
+            tmp.replace(path)
+    metadata = dict(metadata)
+    metadata["size_bytes"] = padded_size
+    metadata["pmem_file_backed"] = True
+    metadata["pmem_alignment_bytes"] = PMEM_ALIGNMENT_BYTES
+    metadata["pmem_unpadded_size_bytes"] = size
+    metadata["pmem_padded_size_bytes"] = padded_size
+    metadata["pmem_padding_bytes"] = padding
+    return metadata
+
+
 def format_profile(format_name: str) -> dict:
     if format_name in FORMAT_PROFILES:
         return FORMAT_PROFILES[format_name]
@@ -412,6 +444,7 @@ def run_cell(
     scope: str,
     direct_io: bool,
     pmem_dax: bool,
+    pmem_file_backed: bool,
 ) -> dict:
     home = TARGET / "homes" / format_name
     cmdline_append = f"{rootfs_image['cmdline_append']} capsem.bench_lower=1"
@@ -430,6 +463,8 @@ def run_cell(
         env["CAPSEM_KVM_BLK_ROOTFS_DIRECT_IO"] = "1"
     if pmem_dax:
         env["CAPSEM_KVM_ROOTFS_PMEM_DAX"] = "1"
+    if pmem_file_backed:
+        env["CAPSEM_KVM_ROOTFS_PMEM_FILE_BACKED"] = "1"
     started = time.time()
     proc = run(
         [
@@ -452,6 +487,7 @@ def run_cell(
         "shape": shape,
         "direct_io": direct_io,
         "pmem_dax": pmem_dax,
+        "pmem_file_backed": pmem_file_backed,
         "returncode": proc.returncode,
         "duration_s": round(duration, 3),
         "sysfs": extract_sysfs(combined),
@@ -589,6 +625,11 @@ def main() -> int:
         help="attach generated EROFS rootfs images as virtio-pmem and mount with -o dax",
     )
     parser.add_argument(
+        "--pmem-file-backed",
+        action="store_true",
+        help="pad EROFS images to KVM pmem alignment and mmap them directly instead of copying into anonymous memory",
+    )
+    parser.add_argument(
         "--scope",
         choices=["rootfs", "all"],
         default="rootfs",
@@ -620,6 +661,8 @@ def main() -> int:
                 "--pmem-dax requires EROFS formats; non-EROFS formats requested: "
                 + ", ".join(non_erofs)
             )
+    if args.pmem_file_backed and not args.pmem_dax:
+        raise SystemExit("--pmem-file-backed requires --pmem-dax")
     shapes = build_shapes(args)
     if args.dry_run:
         print(
@@ -629,6 +672,7 @@ def main() -> int:
                     "count": len(formats) * len(shapes),
                     "shapes": shapes,
                     "pmem_dax": args.pmem_dax,
+                    "pmem_file_backed": args.pmem_file_backed,
                 },
                 indent=2,
             )
@@ -638,7 +682,17 @@ def main() -> int:
     rootfs_images = []
     for format_name in formats:
         print(f"materializing {format_name}", flush=True)
-        rootfs_images.append(materialize_format(format_name, rebuild=args.rebuild))
+        metadata = materialize_format(format_name, rebuild=args.rebuild)
+        if args.pmem_file_backed:
+            metadata = ensure_pmem_file_backed_image(metadata)
+            print(
+                "  pmem file-backed padding: "
+                f"{metadata['pmem_unpadded_size_bytes']} -> "
+                f"{metadata['pmem_padded_size_bytes']} bytes "
+                f"(+{metadata['pmem_padding_bytes']})",
+                flush=True,
+            )
+        rootfs_images.append(metadata)
 
     artifact = {
         "schema": "capsem.kvm-rootfs-format-grid.v1",
@@ -650,6 +704,7 @@ def main() -> int:
         "startup": args.startup,
         "direct_io": args.direct_io,
         "pmem_dax": args.pmem_dax,
+        "pmem_file_backed": args.pmem_file_backed,
         "scope": args.scope,
         "formats": rootfs_images,
         "shapes": shapes,
@@ -658,6 +713,8 @@ def main() -> int:
                 "status": "enabled" if args.pmem_dax else "available_opt_in",
                 "transport": "virtio-pmem" if args.pmem_dax else None,
                 "mount": "erofs -o dax /dev/pmem0" if args.pmem_dax else None,
+                "backing": "file_mmap" if args.pmem_file_backed else ("anonymous_copy" if args.pmem_dax else None),
+                "alignment_bytes": PMEM_ALIGNMENT_BYTES if args.pmem_file_backed else None,
             }
         },
         "results": [],
@@ -678,6 +735,7 @@ def main() -> int:
                 scope=args.scope,
                 direct_io=args.direct_io,
                 pmem_dax=args.pmem_dax,
+                pmem_file_backed=args.pmem_file_backed,
             )
             artifact["results"].append(result)
             if result["returncode"] != 0:
