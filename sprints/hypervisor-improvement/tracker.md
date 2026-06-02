@@ -230,6 +230,16 @@
   (`benchmarks/mitm-load/baseline.json`: 1036.8/3042.6/3028.5/2698.9 RPS,
   zero request exceptions). Next proof needs restored DNS/network or a local
   deterministic upstream.
+- H09 deterministic MCP echo diagnostic: `just exec "capsem-bench mcp-load &&
+  cat /tmp/capsem-benchmark.json"` completed with zero errors through
+  `local__echo`, so this is valid transport evidence. Current vs
+  `benchmarks/mcp-load/baseline.json`: c=1 309.8 vs 2162.5 RPS (0.143x,
+  -85.7%), p99 3.6ms vs 1.1ms (3.21x); c=10 761.5 vs 3792.0 RPS (0.201x,
+  -79.9%), p99 15.4ms vs 4.4ms (3.48x); c=50 786.1 vs 4061.4 RPS (0.194x,
+  -80.6%), p99 82.2ms vs 17.4ms (4.72x); c=200 782.7 vs 3965.0 RPS (0.197x,
+  -80.3%), p99 296.6ms vs 70.8ms (4.19x). This fails the documented
+  `mcp-load` >2x p99 regression gate at every concurrency level and should
+  move MCP transport tracing up the H09 priority list.
 - Current highest-leverage H08 task: produce a Capsem vs Firecracker vs crosvm
   block-lifecycle mechanism table before running another long benchmark. The
   table must cover descriptor parsing, guest-memory translation, event-loop /
@@ -773,6 +783,9 @@
   `CAPSEM_BENCH_MITM_DURATION=3 capsem-bench mitm-load` through `just exec`
   (completed, but performance evidence rejected because every request path
   returned exceptions under current host DNS/network conditions),
+  `just exec "capsem-bench mcp-load && cat /tmp/capsem-benchmark.json"`
+  (completed with zero errors; valid deterministic MCP transport regression
+  proof against `benchmarks/mcp-load/baseline.json`),
   `cargo test -p capsem --bin capsem format_session_resource_lines_shows_live_metrics`,
   `cargo test -p capsem --bin capsem format_session_hypervisor_lines_shows_block_counters`,
   `cargo test -p capsem --bin capsem`,
@@ -907,4 +920,7 @@
   recorded by the canonical benchmark gate and still need a control-plane
   performance fix. The first focused `mitm-load` rerun is explicitly rejected
   as performance evidence because the environment produced request exceptions
-  and timeout tails at every concurrency level.
+  and timeout tails at every concurrency level. The `mcp-load` rerun is valid
+  evidence and needs source tracing before code changes: guest relay, framed
+  vsock stream, host MCP endpoint, aggregator dispatch, builtin stdio server,
+  and telemetry write path.

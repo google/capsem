@@ -42,6 +42,31 @@ plateaus around ~3000 rps with worse tails (cert mint + upstream pool
 contention), so the MCP path is healthier than the MITM today but both
 have ceilings the redesign needs to investigate.
 
+## H09 Linux diagnostic, 2026-06-02
+
+Focused rerun from `hypervisor-improvement` after the Linux support and H09
+attribution work:
+
+```bash
+just exec "capsem-bench mcp-load && cat /tmp/capsem-benchmark.json"
+```
+
+The run completed with zero errors, so unlike the same-day `mitm-load`
+diagnostic it is valid transport evidence. It does not depend on DNS or an
+upstream HTTP service.
+
+| concurrency | current rps | baseline rps | rps ratio | current p99 | baseline p99 | p99 ratio |
+|------------:|------------:|-------------:|----------:|------------:|-------------:|----------:|
+| 1           | 309.8       | 2162.5       | 0.143x    | 3.6 ms      | 1.1 ms       | 3.21x     |
+| 10          | 761.5       | 3792.0       | 0.201x    | 15.4 ms     | 4.4 ms       | 3.48x     |
+| 50          | 786.1       | 4061.4       | 0.194x    | 82.2 ms     | 17.4 ms      | 4.72x     |
+| 200         | 782.7       | 3965.0       | 0.197x    | 296.6 ms    | 70.8 ms      | 4.19x     |
+
+This fails the documented >2x p99 regression gate at every concurrency level.
+Treat it as an H09 source-tracing target: guest stdio relay, framed vsock
+single-stream behavior, MITM MCP endpoint parsing, aggregator dispatch,
+builtin stdio round trips, and telemetry writes.
+
 ## Capturing the baseline
 
 ```

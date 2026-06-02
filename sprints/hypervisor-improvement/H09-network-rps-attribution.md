@@ -92,11 +92,32 @@ before optimizing status/TUI polling or proxy code.
   zero request exceptions and ~1k-3k RPS. This matches the same host DNS/network
   failure that forced remote asset downloads to fail earlier, so the next RPS
   proof needs either restored DNS/network or a local deterministic upstream.
+- Deterministic MCP echo proof: `just exec "capsem-bench mcp-load && cat
+  /tmp/capsem-benchmark.json"` completed with zero errors through
+  `local__echo`. This avoids DNS/upstream variance and isolates guest stdio
+  relay -> framed vsock:5002 -> MITM MCP endpoint -> aggregator ->
+  `capsem-mcp-builtin` -> response. Current Linux numbers versus
+  `benchmarks/mcp-load/baseline.json`:
+
+| concurrency | current RPS | baseline RPS | RPS ratio | current p99 | baseline p99 | p99 ratio |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 309.8 | 2162.5 | 0.143x (-85.7%) | 3.6 ms | 1.1 ms | 3.21x |
+| 10 | 761.5 | 3792.0 | 0.201x (-79.9%) | 15.4 ms | 4.4 ms | 3.48x |
+| 50 | 786.1 | 4061.4 | 0.194x (-80.6%) | 82.2 ms | 17.4 ms | 4.72x |
+| 200 | 782.7 | 3965.0 | 0.197x (-80.3%) | 296.6 ms | 70.8 ms | 4.19x |
+
+This fails the documented `mcp-load` p99 regression gate (>2x) at every
+concurrency level. Because all rows have zero errors, this is a real MCP
+transport/dispatch bottleneck to trace next, not an upstream network failure.
 
 ## First Questions
 
 - Is the Linux RPS gap actually in KVM/vsock, or in host-side MITM/security
   processing?
+- Why did `local__echo` regress to ~0.2x baseline throughput with >3x p99
+  latency while producing zero errors? Trace guest stdio relay, framed vsock
+  single-stream behavior, host MCP endpoint parsing, aggregator dispatch, and
+  builtin stdio server round trips before changing code.
 - Does TUI/status polling add measurable endpoint contention when sessions are
   active?
 - Are weak RPS results correlated with VirtioFS workspace reads, policy-context
