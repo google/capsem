@@ -719,6 +719,69 @@ fn runtime_rule_match_accumulator_drains_recorded_security_engine_matches() {
 }
 
 #[test]
+fn pooled_runtime_security_engine_records_parallel_rule_matches() {
+    let dir = tempfile::tempdir().unwrap();
+    let session_dir = dir.path().join("session");
+    std::fs::create_dir_all(&session_dir).unwrap();
+
+    let roots = capsem_core::settings_profiles::ProfileRootSettings::default();
+    let effective = capsem_core::settings_profiles::resolve_effective_vm_settings(&roots, None)
+        .expect("default effective profile should resolve");
+    capsem_core::settings_profiles::write_vm_effective_settings(&session_dir, &effective).unwrap();
+    let snapshot = capsem_proto::ipc::RuntimeSecurityRulesSnapshot {
+        enforcement: vec![capsem_proto::ipc::RuntimeEnforcementRuleSnapshot {
+            id: "runtime.block-live".into(),
+            pack_id: Some("runtime-pack".into()),
+            condition: "http.request.host == 'live-policy.test'".into(),
+            decision: capsem_proto::ipc::RuntimeSecurityDecisionAction::Block,
+            reason: Some("live runtime block".into()),
+        }],
+        detection: Vec::new(),
+    };
+    let accumulator = RuntimeRuleMatchAccumulator::default();
+    let runtime = load_runtime_policy_state_with_runtime_rules_and_recorder(
+        &session_dir,
+        Some(&snapshot),
+        Some(accumulator.clone()),
+    );
+    let security_engine = runtime
+        .security_engine
+        .as_ref()
+        .expect("runtime rule snapshot should install a Security Engine")
+        .clone();
+
+    let handles = (0..16)
+        .map(|index| {
+            let security_engine = security_engine.clone();
+            std::thread::spawn(move || {
+                let result = security_engine
+                    .evaluate(http_event(
+                        "live-policy.test",
+                        &format!("/parallel-{index}"),
+                    ))
+                    .expect("parallel runtime security evaluation should succeed");
+                assert!(matches!(result.action, SecurityAction::Block(_)));
+            })
+        })
+        .collect::<Vec<_>>();
+    for handle in handles {
+        handle.join().unwrap();
+    }
+
+    let drained = accumulator
+        .drain()
+        .into_iter()
+        .map(|rule_match| (rule_match.rule_id.clone(), rule_match))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    let matched = drained.get("runtime.block-live").unwrap();
+    assert_eq!(matched.match_count, 16);
+    assert!(matched
+        .last_matched_event
+        .as_deref()
+        .is_some_and(|event_id| event_id.starts_with("test-http-GET-live-policy.test-")));
+}
+
+#[test]
 fn invalid_runtime_process_rule_fails_closed_with_generic_reason() {
     let dir = tempfile::tempdir().unwrap();
     let session_dir = dir.path().join("session");

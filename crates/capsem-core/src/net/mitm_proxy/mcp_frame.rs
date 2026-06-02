@@ -268,6 +268,7 @@ where
                 let mut request_decision = decision_provider.decide(&decision_request);
                 let mut runtime_block_event = None;
                 if endpoint_h.security_engine.has_engine() {
+                    let runtime_event_started = Instant::now();
                     let runtime_event = build_mcp_security_event_from_request(
                         &process_name,
                         &request,
@@ -275,9 +276,26 @@ where
                         crate::telemetry::ambient_capsem_trace_id(),
                         SystemTime::now(),
                     );
+                    record_mcp_stage_labels(
+                        "runtime_security_project",
+                        method_kind,
+                        tool_kind,
+                        "ok",
+                        runtime_event_started,
+                    );
+                    let runtime_eval_started = Instant::now();
                     match endpoint_h.security_engine.evaluate(runtime_event) {
                         Ok(runtime_result) => {
-                            if !mcp_security_result_allows_dispatch(&runtime_result) {
+                            let allows_dispatch =
+                                mcp_security_result_allows_dispatch(&runtime_result);
+                            record_mcp_stage_labels(
+                                "runtime_security_evaluate",
+                                method_kind,
+                                tool_kind,
+                                if allows_dispatch { "ok" } else { "block" },
+                                runtime_eval_started,
+                            );
+                            if !allows_dispatch {
                                 request_decision = mcp_policy_decision_from_security_result(
                                     &runtime_result,
                                     "mcp.runtime.blocked",
@@ -286,6 +304,13 @@ where
                             }
                         }
                         Err(error) => {
+                            record_mcp_stage_labels(
+                                "runtime_security_evaluate",
+                                method_kind,
+                                tool_kind,
+                                "error",
+                                runtime_eval_started,
+                            );
                             request_decision = McpEnforcementDecision {
                                 mode: McpPolicyMode::Enforce,
                                 action: McpEnforcementAction::Block,

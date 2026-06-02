@@ -341,6 +341,36 @@ transport/dispatch bottleneck to trace next, not an upstream network failure.
   accepted same-lane baseline 588.0/812.8/806.0/822.8. That is
   +1.0%/-4.8%/-1.7%/+1.7%, so keep this as cross-architecture writer hygiene,
   not an RPS breakthrough.
+- Rejected knob-only experiment: raising `CAPSEM_MCP_INFLIGHT` from the live
+  default 64 to 256 did not lift direct-vsock throughput. The scoped proof
+  measured 560.2/758.2/801.6/827.4 RPS at c=1/10/50/200, all zero errors,
+  versus the prior same-lane 593.6/773.8/792.4/836.2 after the writer cleanup.
+  The in-flight semaphore cap is not the main limiter.
+- Runtime security-engine attribution found the real high-concurrency limiter:
+  live `everyday-work` sessions install a runtime security engine, while the
+  host-only diagnostic had none. Before the fix, recorder snapshots showed
+  `runtime_security_evaluate` growing from about 1.13ms p99 at low load to
+  about 20-22ms p50/p99 under high concurrency, while parse, endpoint dispatch,
+  response enqueue, and response write stayed sub-millisecond. Root cause:
+  `capsem-process` wrapped a single mutable `SecurityEngine` in one
+  `Mutex`, serializing every concurrent MCP security evaluation.
+- Accepted runtime security-engine pool fix: `capsem-process` now installs a
+  CPU-sized pool of identical compiled `SecurityEngine` instances with a shared
+  `RuntimeRuleMatchAccumulator`. This preserves blocking, detection, and
+  rule-match telemetry while removing the single evaluator mutex queue. Unit
+  proof: `cargo test -p capsem-process mcp_runtime --bin capsem-process`
+  passed 15 tests, including parallel rule-match aggregation. MCP frame proof:
+  `cargo test -p capsem-core net::mitm_proxy::mcp_frame --lib` passed 13 tests
+  plus one ignored diagnostic, including a test that a runtime MCP block still
+  denies dispatch while recording `runtime_security_project` and
+  `runtime_security_evaluate` histograms.
+- Clean live proof after the pool fix: direct-vsock `mcp-load` measured
+  586.0/3775.4/5564.0/5661.0 RPS at c=1/10/50/200, all zero errors, versus
+  the accepted same-lane baseline 588.0/812.8/806.0/822.8. Deltas:
+  -0.3%/+364.5%/+590.3%/+588.1%. p99 improved from 2.6/13.6/105.2/341.1ms
+  to 2.0/3.6/15.4/42.3ms. Post-fix recorder proof with a 3s run showed
+  `runtime_security_evaluate` around p50 2.0ms and p99 3.1ms at high
+  concurrency instead of the previous 20-22ms queue.
 
 ## First Questions
 

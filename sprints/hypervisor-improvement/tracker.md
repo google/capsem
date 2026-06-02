@@ -321,6 +321,19 @@
           errors, versus accepted same-lane baseline
           588.0/812.8/806.0/822.8 (+1.0%/-4.8%/-1.7%/+1.7%); this is accepted
           as writer hygiene, not a measured RPS breakthrough.
+    - [x] Add runtime-security MCP stage attribution and remove the single
+          global runtime `SecurityEngine` mutex queue. Live recorder proof
+          showed `runtime_security_evaluate` growing to roughly 20-22ms p50/p99
+          at high concurrency before the fix while parse, endpoint dispatch,
+          response enqueue, and response write stayed sub-millisecond.
+          `capsem-process` now installs a CPU-sized pool of identical compiled
+          runtime security engines sharing one rule-match accumulator. Unit
+          proof: `cargo test -p capsem-process mcp_runtime --bin
+          capsem-process` passed 15 tests, and `cargo test -p capsem-core
+          net::mitm_proxy::mcp_frame --lib` passed 13 tests plus one ignored
+          diagnostic. Clean Linux direct-vsock proof improved from
+          588.0/812.8/806.0/822.8 to 586.0/3775.4/5564.0/5661.0 RPS at
+          c=1/10/50/200, zero errors (-0.3%/+364.5%/+590.3%/+588.1%).
   - [ ] Land only trace-backed RPS speedups, with before/after percentages by
         lane and canonical `just benchmark` artifacts.
 - [ ] H07: docs, changelog, release gate.
@@ -951,6 +964,9 @@
   `cargo test -p capsem-core log_mcp_call_writes_canonical_security_event`,
   `cargo test -p capsem-core log_mcp_call_writes_`,
   `cargo test -p capsem-logger mcp_`,
+  `cargo test -p capsem-core net::mitm_proxy::mcp_frame --lib`,
+  `cargo test -p capsem-process pooled_runtime_security_engine_records_parallel_rule_matches --bin capsem-process`,
+  `cargo test -p capsem-process mcp_runtime --bin capsem-process`,
   `cargo test -p capsem-core all_names_distinct`,
   `cargo test -p capsem-core describe_all_does_not_panic`,
   `cargo test -p capsem --bin capsem format_session_resource_lines_shows_live_metrics`,
@@ -1106,3 +1122,11 @@
   audit/security rows, but scoped live `mcp-load` was
   +1.0%/-4.8%/-1.7%/+1.7% versus the same-lane baseline, so it is not a
   measured RPS breakthrough.
+  The accepted runtime-security pool fix moved high-concurrency direct-vsock
+  `mcp-load` from the ~800 RPS ceiling to ~5.6k RPS while preserving runtime
+  blocking/detection and rule-match telemetry. Post-fix recorder proof shows
+  `runtime_security_evaluate` now stays around p50 2.0ms / p99 3.1ms at high
+  concurrency instead of the previous 20-22ms queue. The remaining telemetry
+  enqueue backlog appears after the response has already been sent and should
+  be treated as the next audit-throughput/flush-efficiency target, not as the
+  current guest-visible RPS ceiling.

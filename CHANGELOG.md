@@ -8,6 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- Changed runtime security-engine evaluation in `capsem-process` from one
+  global `Mutex<SecurityEngine>` to a CPU-sized pool of identical compiled
+  engines with a shared rule-match accumulator. This preserves runtime MCP/HTTP
+  blocking and detection behavior while removing evaluator lock queueing under
+  concurrent framed MCP load. Linux direct-vsock `mcp-load` improved from the
+  accepted 588.0/812.8/806.0/822.8 RPS at c=1/10/50/200 to
+  586.0/3775.4/5564.0/5661.0 RPS, with zero errors.
+- Changed framed MCP metrics to record runtime security-event projection and
+  runtime security-engine evaluation as bounded `mitm.mcp_stage_duration_ms`
+  stages, so policy/security cost is visible in the debug recorder and future
+  OTel export without bypassing enforcement.
 - Changed MCP session telemetry evidence parsing to avoid full JSON DOM
   allocation on the `DbWriter` thread when deriving `tools/call` argument
   evidence and result kind. MCP calls still write the same `mcp_calls`,

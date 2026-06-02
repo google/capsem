@@ -221,6 +221,102 @@ fn runtime_mcp_block_projects_to_pre_dispatch_policy_decision() {
     assert_eq!(decision.reason, "blocked MCP benchmark tool");
 }
 
+#[tokio::test(flavor = "current_thread")]
+async fn runtime_mcp_security_stages_are_recorded_without_bypassing_block() {
+    use metrics_util::debugging::{DebugValue, DebuggingRecorder, Snapshotter};
+
+    let recorder = DebuggingRecorder::new();
+    let snapshotter: Snapshotter = recorder.snapshotter();
+    let _guard = ::metrics::set_default_local_recorder(&recorder);
+
+    let evaluator = CelEnforcementEvaluator::compile(vec![CelEnforcementRule {
+        id: "runtime.block-mcp".into(),
+        pack_id: Some("runtime-benchmark".into()),
+        condition: "mcp.request.server_id == 'local' && mcp.request.tool_name == 'echo'".into(),
+        decision: SecurityDecisionAction::Block,
+        reason: Some("blocked MCP benchmark tool".into()),
+        mutations: Vec::new(),
+    }])
+    .unwrap();
+    let mut engine = SecurityEngine::default();
+    engine.set_enforcement(Box::new(evaluator));
+    let runtime_engine: std::sync::Arc<dyn crate::net::mitm_proxy::RuntimeSecurityEngine> =
+        std::sync::Arc::new(std::sync::Mutex::new(engine));
+
+    let dir = tempfile::tempdir().unwrap();
+    let db = std::sync::Arc::new(DbWriter::open(&dir.path().join("session.db"), 64).unwrap());
+    let (aggregator, _rx) = crate::mcp::aggregator::AggregatorClient::channel(1);
+    let endpoint = std::sync::Arc::new(McpEndpointState::new(
+        aggregator,
+        std::sync::Arc::new(tokio::sync::RwLock::new(std::sync::Arc::new(
+            McpPolicy::new(),
+        ))),
+        std::sync::Arc::new(RuntimeSecurityEngineSlot::new(Some(runtime_engine))),
+        std::sync::Arc::new(tokio::sync::Semaphore::new(1)),
+        McpTimeouts::default(),
+    ));
+    let (client, server) = tokio::io::duplex(4096);
+    let server_db = std::sync::Arc::clone(&db);
+    let server_task = tokio::spawn(async move {
+        let _ = serve_io(Vec::new(), server, endpoint, server_db).await;
+    });
+    let (mut client_reader, mut client_writer) = tokio::io::split(client);
+
+    let request = br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"local__echo","arguments":{"text":"hi"}}}"#;
+    let frame = capsem_proto::encode_mcp_frame(1, 0, "codex", request).unwrap();
+    client_writer.write_all(&frame).await.unwrap();
+    client_writer.flush().await.unwrap();
+
+    let response_frame = read_test_response_frame(&mut client_reader).await.unwrap();
+    let response: JsonRpcResponse = serde_json::from_slice(&response_frame.payload).unwrap();
+    assert!(
+        response.error.is_some(),
+        "runtime block must still deny dispatch"
+    );
+    assert!(response
+        .error
+        .as_ref()
+        .unwrap()
+        .message
+        .contains("blocked by policy"));
+
+    drop(client_writer);
+    let _ = tokio::time::timeout(Duration::from_secs(2), server_task).await;
+    db.shutdown_blocking();
+
+    let snapshot = snapshotter.snapshot().into_vec();
+    let has_project = snapshot.iter().any(|(key, _, _, value)| {
+        key.key().name() == metrics::MCP_STAGE_DURATION_MS
+            && key
+                .key()
+                .labels()
+                .any(|label| label.key() == "stage" && label.value() == "runtime_security_project")
+            && key
+                .key()
+                .labels()
+                .any(|label| label.key() == "result" && label.value() == "ok")
+            && matches!(value, DebugValue::Histogram(_))
+    });
+    let has_block = snapshot.iter().any(|(key, _, _, value)| {
+        key.key().name() == metrics::MCP_STAGE_DURATION_MS
+            && key
+                .key()
+                .labels()
+                .any(|label| label.key() == "stage" && label.value() == "runtime_security_evaluate")
+            && key
+                .key()
+                .labels()
+                .any(|label| label.key() == "result" && label.value() == "block")
+            && matches!(value, DebugValue::Histogram(_))
+    });
+
+    assert!(
+        has_project,
+        "runtime security projection histogram recorded"
+    );
+    assert!(has_block, "runtime security block histogram recorded");
+}
+
 #[tokio::test]
 async fn log_mcp_call_writes_canonical_security_event() {
     use metrics_util::debugging::{DebugValue, DebuggingRecorder, Snapshotter};

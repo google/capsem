@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 
 use capsem_core::mcp::aggregator::AggregatorClient;
 use capsem_core::mcp::policy::{
@@ -15,10 +16,9 @@ use capsem_core::vm::guest_config::{GuestConfig, GuestFile};
 use capsem_network_engine::domain_policy::{Action, DomainPolicy};
 use capsem_security_engine::{
     CelEnforcementEvaluator, CelEnforcementRule, EventMutation, SecurityDecisionAction,
-    SecurityEngine,
+    SecurityEngine, SecurityEngineError, SecurityEnginePhase, SecurityEvent, SecurityResult,
 };
 use std::collections::{BTreeMap, HashMap};
-use std::sync::Mutex;
 use tracing::{info, warn};
 
 const DEFAULT_SNAPSHOT_AUTO_MAX: usize = 10;
@@ -88,6 +88,48 @@ impl capsem_security_engine::RuleMatchRecorder for RuntimeRuleMatchAccumulator {
         stats.last_matched_event = Some(event_id.to_owned());
         stats.last_matched_unix_ms = Some(timestamp_unix_ms);
         Ok(())
+    }
+}
+
+struct PooledRuntimeSecurityEngine {
+    engines: Vec<Mutex<SecurityEngine>>,
+    next: AtomicUsize,
+}
+
+impl PooledRuntimeSecurityEngine {
+    fn new(engines: Vec<SecurityEngine>) -> Self {
+        Self {
+            engines: engines.into_iter().map(Mutex::new).collect(),
+            next: AtomicUsize::new(0),
+        }
+    }
+}
+
+impl RuntimeSecurityEngine for PooledRuntimeSecurityEngine {
+    fn evaluate(&self, event: SecurityEvent) -> Result<SecurityResult, SecurityEngineError> {
+        let len = self.engines.len();
+        if len == 0 {
+            return Err(SecurityEngineError::PhaseFailed {
+                phase: SecurityEnginePhase::Enforcement,
+                message: "runtime security engine pool is empty".into(),
+            });
+        }
+        let start = self.next.fetch_add(1, Ordering::Relaxed) % len;
+        for offset in 0..len {
+            let index = (start + offset) % len;
+            if let Ok(mut engine) = self.engines[index].try_lock() {
+                return engine.evaluate(event);
+            }
+        }
+
+        let mut engine =
+            self.engines[start]
+                .lock()
+                .map_err(|error| SecurityEngineError::PhaseFailed {
+                    phase: SecurityEnginePhase::Enforcement,
+                    message: format!("runtime security engine pool lock poisoned: {error}"),
+                })?;
+        engine.evaluate(event)
     }
 }
 
@@ -414,6 +456,32 @@ fn build_runtime_security_engine_from_rules(
         return None;
     }
 
+    let pool_size = runtime_security_engine_pool_size();
+    let mut engines = Vec::with_capacity(pool_size);
+    for _ in 0..pool_size {
+        engines.push(build_runtime_security_engine(
+            enforcement_rules.clone(),
+            detection_rules.clone(),
+            match_recorder.clone(),
+        ));
+    }
+    info!(
+        profile_id = %effective
+            .map(|effective| effective.profile_id.as_str())
+            .unwrap_or("unknown"),
+        pool_size,
+        "installed runtime security engine"
+    );
+    let runtime: Arc<dyn RuntimeSecurityEngine> =
+        Arc::new(PooledRuntimeSecurityEngine::new(engines));
+    Some(runtime)
+}
+
+fn build_runtime_security_engine(
+    enforcement_rules: Vec<CelEnforcementRule>,
+    detection_rules: Vec<capsem_security_engine::CelDetectionRule>,
+    match_recorder: Option<RuntimeRuleMatchAccumulator>,
+) -> SecurityEngine {
     let mut engine = SecurityEngine::default();
     if !enforcement_rules.is_empty() {
         let evaluator = match CelEnforcementEvaluator::compile(enforcement_rules) {
@@ -450,14 +518,14 @@ fn build_runtime_security_engine_from_rules(
     if let Some(match_recorder) = match_recorder {
         engine.set_match_recorder(Box::new(match_recorder));
     }
-    info!(
-        profile_id = %effective
-            .map(|effective| effective.profile_id.as_str())
-            .unwrap_or("unknown"),
-        "installed runtime security engine"
-    );
-    let runtime: Arc<dyn RuntimeSecurityEngine> = Arc::new(Mutex::new(engine));
-    Some(runtime)
+    engine
+}
+
+fn runtime_security_engine_pool_size() -> usize {
+    std::thread::available_parallelism()
+        .map(|parallelism| parallelism.get())
+        .unwrap_or(4)
+        .clamp(1, 32)
 }
 
 fn cel_enforcement_rule_from_snapshot(
