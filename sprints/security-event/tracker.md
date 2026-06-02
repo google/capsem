@@ -15,6 +15,8 @@
 - [ ] T4: Add abstraction-level regression tests.
   First semantic object-search regression added for HTTP, DNS, file, MCP
   arguments, model tool-call arguments, and model response bodies.
+  Compressed provider model responses now have a live MITM regression proving
+  gzip decode happens before canonical `model.response.body.text` enforcement.
 - [ ] T5: Add integration/e2e proof and telemetry/session assertions.
 - [ ] T6: Add fast and full benchmark proof for the security spine. Fast
   Criterion coverage added; full `just benchmark` artifact gate remains open.
@@ -123,6 +125,9 @@
 - T2 final slice proves OpenAI-shaped tool-result messages can block before
   upstream dispatch from the same canonical `model.request` event using parsed
   tool-result metadata at `model.response.tool_results[...]`.
+- T4 provider-body hardening now proves gzipped OpenAI SSE responses are
+  decompressed, parsed into canonical `model.response.body.text`, blocked by
+  CEL before guest delivery, and excluded from blocked response previews.
 - T0/T0a source map is complete for the current codebase. Remaining
   credential, VM, profile, conversation, and snapshot gaps are producer gaps:
   the typed contract, CEL projection, SQLite ledger, session reconstruction,
@@ -215,6 +220,13 @@ Unit/contract:
   runtime_security_engine_blocks_model_tool_result_before_upstream_dispatch`
   proves OpenAI-shaped tool-result messages block before upstream dispatch from
   canonical `model.response.tool_results[...]` on the `model.request` event.
+- `cargo test -p capsem-core
+  runtime_security_engine_blocks_gzip_model_response_before_guest_delivery`
+  proves compressed OpenAI SSE responses are decompressed before canonical
+  `model.response.body.text` CEL blocking and before guest delivery.
+- `cargo test -p capsem-core runtime_security_engine_blocks` proves the
+  neighboring live MITM request/response/model/tool-call/tool-result block
+  regressions still pass together.
 - `cargo test -p capsem-core settings_profiles::tests::` proves generated
   settings/Profile rules use canonical MCP CEL fields, including priority-0
   `allowed_tools` allow rules.
@@ -256,16 +268,18 @@ Functional:
 - Partial. Security-engine evaluator APIs are covered by focused Rust tests.
   The MITM live path has fixture-backed functional tests for canonical
   `model.request`, `model.response`, provider tool-call, and request-side tool
-  result blocking. The framed-MCP live path has fixture-backed proof for
-  canonical `mcp.request` and `mcp.response` CEL enforcement. Service
-  session-hunt tests prove persisted canonical events reconstruct into the
-  same CEL roots for detection.
+  result blocking, including a compressed OpenAI SSE model response that must
+  decode before `model.response.body.text` CEL evaluation. The framed-MCP live
+  path has fixture-backed proof for canonical `mcp.request` and `mcp.response`
+  CEL enforcement. Service session-hunt tests prove persisted canonical events
+  reconstruct into the same CEL roots for detection.
 
 Adversarial:
 - Partial. Existing policy-context tests cover missing/redacted body semantics
   and unknown-field rejection. MITM tests cover request blocking before any
-  upstream accept. Provider malformed/streaming/compressed response payloads
-  remain open under T4/T5.
+  upstream accept and compressed provider model responses blocking before guest
+  delivery. Provider malformed and multi-frame streaming hardening remain open
+  under T4/T5.
 
 E2E/VM:
 - Missing. Required once live callbacks are rewired under T2.
@@ -301,8 +315,10 @@ Missing/deferred:
 - Credential, VM, profile, conversation, and snapshot remain live producer
   gaps. They are first-party in the contract/projection/session-detection path,
   but no live emitter was found in this T0/T0a mapping pass.
-- T4/T5 provider-body hardening and real VM E2E proof are still open. Session
-  telemetry reconstruction/hunt proof exists at the service-test layer.
+- T4/T5 provider-body hardening still needs malformed and multi-frame streaming
+  provider response proof; compressed model-response enforcement is covered.
+  Real VM E2E proof is still open. Session telemetry reconstruction/hunt proof
+  exists at the service-test layer.
 - T6 still needs full benchmark artifact execution and callback/parser/hunt
   benchmark coverage.
 - The current file watcher emits file path/class/size; file content search is

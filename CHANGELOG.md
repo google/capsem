@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added live MITM enforcement proof for canonical model tool results:
   OpenAI-shaped tool-result messages now block before upstream dispatch through
   `model.response.tool_results[...]` on the canonical `model.request` event.
+- Added live MITM enforcement proof that gzipped provider model responses are
+  decompressed before canonical `model.response.body.text` CEL blocking and
+  before guest delivery.
 - Added canonical CEL policy-context roots for credential, VM, conversation,
   and snapshot security events so detection and enforcement rules can address
   those event families directly.
