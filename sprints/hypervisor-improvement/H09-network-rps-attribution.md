@@ -74,6 +74,13 @@ before optimizing status/TUI polling or proxy code.
 - Process-side vsock attribution now has low-cardinality metrics for accepted
   connections, closed connections by result, active handlers, and handler
   duration by port kind.
+- Guest-side process attribution was a concrete per-connection cost:
+  `capsem-net-proxy` read `/proc/net/tcp*` and walked `/proc/<pid>/fd` for
+  every accepted TCP connection before opening vsock. The first code-path
+  improvement replaces the per-connection fd walk with a shared throttled
+  socket-owner index. This may return `unknown` for some very short burst
+  connections between refresh windows, so the next VM proof must measure both
+  RPS and attribution quality.
 - Remaining proof: run guest HTTP/proxy throughput in a real VM and confirm
   process-side vsock metrics move alongside existing MITM/DNS metrics, then
   expose the useful subset through status/session telemetry before making an

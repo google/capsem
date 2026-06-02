@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Changed the guest `capsem-net-proxy` process-name lookup to use a shared
+  throttled socket-owner index instead of walking every `/proc/<pid>/fd`
+  directory for every proxied connection. This keeps process attribution
+  best-effort while reducing per-connection guest CPU work on HTTP/RPS bursts.
+
 ### Added
 - Added process-side vsock connection metrics with bounded port-kind labels,
   active-connection gauges, close-result counters, and handler-duration

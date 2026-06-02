@@ -21,6 +21,9 @@
         counters, and duration histograms with bounded port-kind labels so
         guest network/RPS pressure can be separated from MITM/DNS/security and
         gateway/status lanes.
+  - [x] Replace guest net-proxy per-connection `/proc/<pid>/fd` process lookup
+        with a shared throttled socket-owner index, preserving best-effort
+        process attribution while reducing burst RPS CPU work.
   - [ ] Finish the crosvm async engine and Firecracker async file-engine trace
         before choosing the first implementation slice.
   - [ ] Pick and land one coherent code-path improvement with counters and
@@ -157,6 +160,9 @@
         other proxied control-plane traffic from `/status` polling.
   - [x] Add process-side vsock metrics for terminal/control rekeys and
         auxiliary SNI proxy, DNS, audit, exec, lifecycle, and unknown ports.
+  - [x] Land the first guest-network code-path improvement: throttle the
+        expensive process-owner fd walk in `capsem-net-proxy` through a shared
+        socket-owner index.
   - [ ] Refresh canonical HTTP, proxy throughput, endpoint-latency,
         security-engine, and host-native artifacts after the working Linux
         install.
@@ -199,6 +205,12 @@
   connection, then `capsem-process` dispatches the fd to MITM/DNS/security
   handlers. Process-side vsock counters now identify connection churn and
   handler duration by port kind before we change relay or proxy code.
+- First RPS mechanism change: `capsem-net-proxy` no longer does a full
+  `/proc/<pid>/fd` walk for every accepted TCP connection. It still resolves
+  the client TCP inode from `/proc/net/tcp*`, then consults a throttled shared
+  socket-owner index. The tradeoff is measurable: very short burst connections
+  can fall back to `unknown` process names between refresh windows, so the next
+  VM proof must record attribution quality as well as RPS.
 - Current highest-leverage H08 task: produce a Capsem vs Firecracker vs crosvm
   block-lifecycle mechanism table before running another long benchmark. The
   table must cover descriptor parsing, guest-memory translation, event-loop /
@@ -736,6 +748,7 @@
   `cargo test -p capsem-gateway fetch_status_enriches_running_vm_with_info_metrics --bin capsem-gateway`,
   `cargo test -p capsem-gateway status::tests --bin capsem-gateway`,
   `cargo test -p capsem-process vsock::tests`,
+  `cargo test -p capsem-agent --bin capsem-net-proxy`,
   `cargo test -p capsem --bin capsem format_session_resource_lines_shows_live_metrics`,
   `cargo test -p capsem --bin capsem format_session_hypervisor_lines_shows_block_counters`,
   `cargo test -p capsem --bin capsem`,
@@ -810,7 +823,9 @@
   `capsem info`. H09 first vsock slice adds process-side metrics facade points
   for accepted/closed/active vsock connections and handler duration with
   bounded port-kind labels; focused tests prove recorder visibility, while
-  live VM/status/exporter proof remains open.
+  live VM/status/exporter proof remains open. H09 first guest-net-proxy slice
+  reduces per-connection process attribution overhead with a throttled
+  socket-owner index; attribution quality still needs live VM proof.
 - Performance: canonical `just benchmark` rerun completed; benchmark artifacts
   record project version, git commit, source dirty state, host metadata, and
   active Linux x86_64 results. `scripts/compare_benchmark_artifacts.py`
@@ -862,5 +877,8 @@
   disk` or `storage`, followed by a canonical `just benchmark` artifact before
   performance claims. H09 vsock metrics need real VM proof under guest HTTP
   load and a user-facing status/OTel export projection before they can support
-  a performance claim. Endpoint-latency regressions are recorded by the
-  canonical benchmark gate and still need a control-plane performance fix.
+  a performance claim. The guest net-proxy socket-owner index needs a real
+  HTTP/proxy throughput comparison and an attribution-quality check before it
+  can be accepted as a measured speedup. Endpoint-latency regressions are
+  recorded by the canonical benchmark gate and still need a control-plane
+  performance fix.

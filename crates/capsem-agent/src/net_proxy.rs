@@ -21,11 +21,14 @@ mod vsock_io;
 #[path = "procfs.rs"]
 mod procfs;
 
+use std::collections::HashMap;
 use std::io;
 use std::os::unix::io::{BorrowedFd, FromRawFd, RawFd};
 use std::pin::Pin;
 use std::process;
+use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
+use std::time::{Duration, Instant};
 
 use nix::libc;
 use tokio::io::unix::AsyncFd;
@@ -45,6 +48,7 @@ const LISTEN_PORT_HTTPS: u16 = 10443;
 /// sniff distinguishes TLS from plain HTTP, so a dedicated guest
 /// listener is just an iptables-target convenience.
 const LISTEN_PORT_HTTP: u16 = 10080;
+const PROC_SOCKET_INDEX_MIN_REFRESH: Duration = Duration::from_millis(25);
 
 // Async wrapper for vsock RawFd
 struct AsyncVsock {
@@ -136,69 +140,108 @@ impl AsyncWrite for AsyncVsock {
 // No custom Drop: inner AsyncFd<UnixStream> owns the fd via from_raw_fd
 // and closes it automatically. Manual libc::close would double-close.
 
+#[derive(Default)]
+struct ProcSocketIndex {
+    state: Mutex<ProcSocketIndexState>,
+}
+
+#[derive(Default)]
+struct ProcSocketIndexState {
+    inode_to_process: HashMap<String, String>,
+    refreshed_at: Option<Instant>,
+}
+
+impl ProcSocketIndex {
+    fn process_name_for_client_port(&self, client_port: u16) -> Option<String> {
+        let inode = tcp_inode_for_port(client_port)?;
+        let mut state = self.state.lock().ok()?;
+        let should_refresh = state
+            .refreshed_at
+            .is_none_or(|last| last.elapsed() >= PROC_SOCKET_INDEX_MIN_REFRESH);
+        if should_refresh {
+            refresh_socket_index(&mut state);
+        }
+        state.inode_to_process.get(&inode).cloned()
+    }
+}
+
+fn refresh_socket_index(state: &mut ProcSocketIndexState) {
+    state.inode_to_process.clear();
+    state.refreshed_at = Some(Instant::now());
+
+    let Ok(entries) = std::fs::read_dir("/proc") else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let pid_str = entry.file_name();
+        let pid_str = pid_str.to_string_lossy();
+        if !pid_str.chars().all(|c| c.is_ascii_digit()) {
+            continue;
+        }
+        let Ok(pid) = pid_str.parse::<u32>() else {
+            continue;
+        };
+        let fd_dir = entry.path().join("fd");
+        let Ok(fds) = std::fs::read_dir(&fd_dir) else {
+            continue;
+        };
+        let mut socket_inodes = Vec::new();
+        for fd_entry in fds.flatten() {
+            let Ok(link) = std::fs::read_link(fd_entry.path()) else {
+                continue;
+            };
+            if let Some(inode) = socket_inode_from_link_target(&link.to_string_lossy()) {
+                socket_inodes.push(inode.to_string());
+            }
+        }
+        if socket_inodes.is_empty() {
+            continue;
+        }
+        let process_name = procfs::process_name_for_pid(pid);
+        for inode in socket_inodes {
+            state
+                .inode_to_process
+                .entry(inode)
+                .or_insert_with(|| process_name.clone());
+        }
+    }
+}
+
+fn tcp_inode_for_port(client_port: u16) -> Option<String> {
+    let port_hex = format!("{:04X}", client_port);
+    for proc_path in &["/proc/net/tcp", "/proc/net/tcp6"] {
+        let Ok(content) = std::fs::read_to_string(proc_path) else {
+            continue;
+        };
+        if let Some(inode) = tcp_inode_from_table(&content, &port_hex) {
+            return Some(inode);
+        }
+    }
+    None
+}
+
+fn tcp_inode_from_table(content: &str, port_hex: &str) -> Option<String> {
+    for line in content.lines().skip(1) {
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        // Index 1 is local_address (ip:port), index 9 is inode.
+        if parts.len() >= 10 && parts[1].rsplit(':').next() == Some(port_hex) && parts[9] != "0" {
+            return Some(parts[9].to_string());
+        }
+    }
+    None
+}
+
+fn socket_inode_from_link_target(target: &str) -> Option<&str> {
+    target
+        .strip_prefix("socket:[")
+        .and_then(|rest| rest.strip_suffix(']'))
+}
+
 /// Retrieve the process name that initiated the TCP connection.
-async fn get_process_name(client_port: u16) -> Option<String> {
-    tokio::task::spawn_blocking(move || {
-        let port_hex = format!("{:04X}", client_port);
-
-        let mut inode = None;
-        // Search /proc/net/tcp and tcp6 for a socket matching our client port.
-        // Format: "local_address" is "IP:PORT" where PORT is uppercase hex.
-        // Use rsplit(':') for exact port match (ends_with could false-match
-        // if the hex port is a suffix of the IP hex).
-        for proc_path in &["/proc/net/tcp", "/proc/net/tcp6"] {
-            if inode.is_some() {
-                break;
-            }
-            if let Ok(content) = std::fs::read_to_string(proc_path) {
-                for line in content.lines().skip(1) {
-                    let parts: Vec<&str> = line.split_whitespace().collect();
-                    // Index 1 is local_address (ip:port).
-                    // Index 9 is inode.
-                    if parts.len() >= 10 {
-                        let local_addr = parts[1];
-                        if let Some(port_part) = local_addr.rsplit(':').next() {
-                            if port_part == port_hex {
-                                inode = Some(parts[9].to_string());
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        let inode = inode?;
-        let target = format!("socket:[{}]", inode);
-
-        // Search /proc/<pid>/fd/
-        if let Ok(entries) = std::fs::read_dir("/proc") {
-            for entry in entries.flatten() {
-                if let Ok(file_type) = entry.file_type() {
-                    if file_type.is_dir() {
-                        let pid_str = entry.file_name();
-                        let pid_str = pid_str.to_string_lossy();
-                        if pid_str.chars().all(|c| c.is_ascii_digit()) {
-                            let fd_dir = entry.path().join("fd");
-                            if let Ok(fds) = std::fs::read_dir(&fd_dir) {
-                                for fd_entry in fds.flatten() {
-                                    if let Ok(link) = std::fs::read_link(fd_entry.path()) {
-                                        if link.to_string_lossy() == target {
-                                            let pid: u32 = pid_str.parse().unwrap_or(0);
-                                            return Some(procfs::process_name_for_pid(pid));
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        None
-    })
-    .await
-    .unwrap_or(None)
+async fn get_process_name(client_port: u16, process_index: Arc<ProcSocketIndex>) -> Option<String> {
+    tokio::task::spawn_blocking(move || process_index.process_name_for_client_port(client_port))
+        .await
+        .unwrap_or(None)
 }
 
 fn sanitize_process_name(name: &str) -> String {
@@ -214,13 +257,13 @@ fn sanitize_process_name(name: &str) -> String {
     s
 }
 
-async fn handle_connection(mut tcp_stream: TcpStream) {
+async fn handle_connection(mut tcp_stream: TcpStream, process_index: Arc<ProcSocketIndex>) {
     let peer_addr = match tcp_stream.peer_addr() {
         Ok(addr) => addr,
         Err(_) => return,
     };
 
-    let process_name = get_process_name(peer_addr.port())
+    let process_name = get_process_name(peer_addr.port(), process_index)
         .await
         .unwrap_or_else(|| "unknown".to_string());
     let process_name = sanitize_process_name(&process_name);
@@ -267,14 +310,15 @@ async fn handle_connection(mut tcp_stream: TcpStream) {
 /// forwarded to vsock 5002 via `handle_connection`; the listen port
 /// itself is not preserved across the bridge -- the host's first-byte
 /// sniff classifies on wire bytes.
-async fn run_listener(port: u16) -> io::Result<()> {
+async fn run_listener(port: u16, process_index: Arc<ProcSocketIndex>) -> io::Result<()> {
     let listener = TcpListener::bind(("127.0.0.1", port)).await?;
     eprintln!("[capsem-net-proxy] listening on 127.0.0.1:{port}");
     loop {
         let (stream, _) = listener.accept().await?;
         let _ = stream.set_nodelay(true);
+        let process_index = Arc::clone(&process_index);
         tokio::spawn(async move {
-            handle_connection(stream).await;
+            handle_connection(stream, process_index).await;
         });
     }
 }
@@ -283,8 +327,9 @@ async fn run_listener(port: u16) -> io::Result<()> {
 async fn main() -> io::Result<()> {
     eprintln!("[capsem-net-proxy] starting (pid {})", process::id());
 
-    let https_task = tokio::spawn(run_listener(LISTEN_PORT_HTTPS));
-    let http_task = tokio::spawn(run_listener(LISTEN_PORT_HTTP));
+    let process_index = Arc::new(ProcSocketIndex::default());
+    let https_task = tokio::spawn(run_listener(LISTEN_PORT_HTTPS, Arc::clone(&process_index)));
+    let http_task = tokio::spawn(run_listener(LISTEN_PORT_HTTP, process_index));
 
     tokio::select! {
         res = https_task => {
@@ -390,6 +435,43 @@ mod tests {
         let port_part2 = parts2[1].rsplit(':').next().unwrap();
         assert_ne!(port_part2, port_hex, "should not match different port");
         assert_eq!(port_part2, "1234");
+    }
+
+    #[test]
+    fn tcp_inode_from_table_matches_exact_port() {
+        let table = "\
+  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n\
+   0: 0100007F:01BB 00000000:0000 0A 00000000:00000000 00:00000000 00000000 1000 0 12345 1\n\
+   1: 0100007F:1234 00000000:0000 0A 00000000:00000000 00:00000000 00000000 1000 0 99999 1\n";
+
+        assert_eq!(
+            tcp_inode_from_table(table, "01BB"),
+            Some("12345".to_string())
+        );
+        assert_eq!(
+            tcp_inode_from_table(table, "1234"),
+            Some("99999".to_string())
+        );
+        assert_eq!(tcp_inode_from_table(table, "001B"), None);
+    }
+
+    #[test]
+    fn tcp_inode_from_table_ignores_zero_inode() {
+        let table = "\
+  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n\
+   0: 0100007F:01BB 00000000:0000 0A 00000000:00000000 00:00000000 00000000 1000 0 0 1\n";
+
+        assert_eq!(tcp_inode_from_table(table, "01BB"), None);
+    }
+
+    #[test]
+    fn socket_inode_from_link_target_extracts_inode() {
+        assert_eq!(
+            socket_inode_from_link_target("socket:[12345]"),
+            Some("12345")
+        );
+        assert_eq!(socket_inode_from_link_target("/tmp/not-a-socket"), None);
+        assert_eq!(socket_inode_from_link_target("socket:12345"), None);
     }
 
     #[test]

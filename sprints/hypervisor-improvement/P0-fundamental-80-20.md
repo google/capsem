@@ -120,6 +120,12 @@ Capsem now records accepted/closed/active/duration metrics for
 can be separated into vsock dispatch pressure versus downstream MITM, DNS,
 security-engine, or gateway/control-plane work.
 
+First RPS mechanism change: the guest `capsem-net-proxy` process lookup no
+longer walks every `/proc/<pid>/fd` directory per connection. It now resolves
+the client TCP socket inode and consults a shared throttled socket-owner index.
+This attacks guest CPU work that is independent of KVM versus Apple VZ and must
+be validated with both throughput and process-attribution quality in a real VM.
+
 ## Immediate Next Slice
 
 Finish P0.1 by tracing the remaining details:
