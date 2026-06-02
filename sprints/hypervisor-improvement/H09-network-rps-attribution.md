@@ -326,6 +326,21 @@ transport/dispatch bottleneck to trace next, not an upstream network failure.
   c=200 p99 worsened 341.1ms -> 363.3ms. The shape suggests the bottleneck is
   not simply "request tasks keep doing audit work after response enqueue."
   Leave audit-worker fanout alone until a stronger trace points there.
+- Accepted writer-path cleanup: `DbWriter` MCP execution evidence now derives
+  request `arguments` and response JSON/text classification with borrowed
+  `serde_json::RawValue` parsing instead of allocating a full `serde_json::Value`
+  DOM on the writer thread. This preserves the same security behavior and audit
+  rows: `mcp_calls` still insert, `ai_mcp_execution_evidence` still inserts,
+  malformed previews keep the audit row/evidence row with text classification,
+  and framed MCP blocked-request security-event logging still passes. Focused
+  proof: `cargo test -p capsem-logger mcp_` passed 21 tests across logger unit
+  and roundtrip suites, and `cargo test -p capsem-core log_mcp_call_writes_`
+  passed the canonical and blocked MCP security-event logging tests. Scoped
+  live proof after the change measured direct-vsock
+  593.6/773.8/792.4/836.2 RPS at c=1/10/50/200, all zero errors, versus the
+  accepted same-lane baseline 588.0/812.8/806.0/822.8. That is
+  +1.0%/-4.8%/-1.7%/+1.7%, so keep this as cross-architecture writer hygiene,
+  not an RPS breakthrough.
 
 ## First Questions
 

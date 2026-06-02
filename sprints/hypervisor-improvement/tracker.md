@@ -309,6 +309,18 @@
           the previous scoped direct-vsock proof 572.2/806.4/811.0/842.8 RPS,
           direct-vsock moved +4.9%/-2.9%/-2.6%/-1.0%; conclusion: correct
           virtio hygiene, but not the remaining throughput limiter.
+    - [x] Remove full JSON DOM allocation from MCP session telemetry evidence
+          parsing on the `DbWriter` thread. `tools/call` argument extraction
+          and response JSON/text classification now use borrowed
+          `serde_json::RawValue` parsing, preserving the same `mcp_calls`,
+          `ai_mcp_execution_evidence`, and security-event behavior. Focused
+          proof: `cargo test -p capsem-logger mcp_` passed 21 tests and
+          `cargo test -p capsem-core log_mcp_call_writes_` passed canonical
+          plus blocked MCP security-event logging tests. Scoped live proof:
+          direct-vsock 593.6/773.8/792.4/836.2 RPS at c=1/10/50/200, zero
+          errors, versus accepted same-lane baseline
+          588.0/812.8/806.0/822.8 (+1.0%/-4.8%/-1.7%/+1.7%); this is accepted
+          as writer hygiene, not a measured RPS breakthrough.
   - [ ] Land only trace-backed RPS speedups, with before/after percentages by
         lane and canonical `just benchmark` artifacts.
 - [ ] H07: docs, changelog, release gate.
@@ -937,6 +949,8 @@
   `cargo test -p capsem-core endpoint_`,
   `cargo test -p capsem-core mcp_stage_`,
   `cargo test -p capsem-core log_mcp_call_writes_canonical_security_event`,
+  `cargo test -p capsem-core log_mcp_call_writes_`,
+  `cargo test -p capsem-logger mcp_`,
   `cargo test -p capsem-core all_names_distinct`,
   `cargo test -p capsem-core describe_all_does_not_panic`,
   `cargo test -p capsem --bin capsem format_session_resource_lines_shows_live_metrics`,
@@ -1088,3 +1102,7 @@
   562.6/781.4/811.8/840.6 (-4.6%/-3.9%/+0.7%/+2.3%) and worsened c=200 p99 to
   363.3ms, so post-response audit construction/task fanout is not the simple
   limiter.
+  MCP writer preview parsing now avoids full DOM allocation while preserving
+  audit/security rows, but scoped live `mcp-load` was
+  +1.0%/-4.8%/-1.7%/+1.7% versus the same-lane baseline, so it is not a
+  measured RPS breakthrough.

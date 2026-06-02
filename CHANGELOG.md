@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- Changed MCP session telemetry evidence parsing to avoid full JSON DOM
+  allocation on the `DbWriter` thread when deriving `tools/call` argument
+  evidence and result kind. MCP calls still write the same `mcp_calls`,
+  `ai_mcp_execution_evidence`, and resolved security-event rows, and blocked
+  MCP request logging remains covered by the framed MCP security tests.
 - Changed Linux KVM vhost-vsock queue notifications to expose the RX/TX vhost
   kick eventfds and register them with `KVM_IOEVENTFD` at the virtio-mmio
   `QUEUE_NOTIFY` register. This matches the existing virtio-blk KVM shape and

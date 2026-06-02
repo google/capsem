@@ -14,6 +14,8 @@ use capsem_security_engine::{
     StepStatus, ToolCallStatus, ToolOrigin,
 };
 use rusqlite::{params, Connection, OptionalExtension};
+use serde::Deserialize;
+use serde_json::value::RawValue;
 use tracing::warn;
 
 use crate::events::{
@@ -2131,16 +2133,7 @@ fn link_mcp_execution_evidence(
         .map(|(server, tool)| (server.to_string(), tool.to_string()))
         .unwrap_or_else(|| (call.server_name.clone(), namespaced_tool_name.to_string()));
     let mcp_call_id = mcp_row_id.to_string();
-    let result_kind = if call
-        .response_preview
-        .as_deref()
-        .and_then(|preview| serde_json::from_str::<serde_json::Value>(preview).ok())
-        .is_some()
-    {
-        AiContentKind::Json
-    } else {
-        AiContentKind::Text
-    };
+    let result_kind = mcp_result_kind(call.response_preview.as_deref());
     let request_arguments = mcp_request_arguments_json(call.request_preview.as_deref());
     let (linked_interaction_row_id, linked_interaction_id, linked_tool_call_id, link_status) =
         find_matching_model_tool_call(conn, call.trace_id.as_deref(), &normalized_tool_name)?;
@@ -2246,11 +2239,25 @@ fn find_matching_model_tool_call(
 }
 
 fn mcp_request_arguments_json(request_preview: Option<&str>) -> Option<String> {
-    let preview = request_preview?;
-    let value = serde_json::from_str::<serde_json::Value>(preview).ok()?;
-    value
-        .get("arguments")
-        .and_then(|arguments| serde_json::to_string(arguments).ok())
+    #[derive(Deserialize)]
+    struct Params<'a> {
+        #[serde(borrow)]
+        arguments: Option<&'a RawValue>,
+    }
+
+    let params = serde_json::from_str::<Params<'_>>(request_preview?).ok()?;
+    params.arguments.map(|arguments| arguments.get().to_owned())
+}
+
+fn mcp_result_kind(response_preview: Option<&str>) -> AiContentKind {
+    if response_preview
+        .and_then(|preview| serde_json::from_str::<&RawValue>(preview).ok())
+        .is_some()
+    {
+        AiContentKind::Json
+    } else {
+        AiContentKind::Text
+    }
 }
 
 fn mcp_decision_tool_status(decision: &str) -> ToolCallStatus {

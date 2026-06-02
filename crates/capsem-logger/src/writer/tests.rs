@@ -2514,6 +2514,170 @@ fn mcp_call_insert_populates_row() {
 }
 
 #[test]
+fn mcp_call_insert_populates_execution_evidence_from_borrowed_previews() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("mcp-evidence.db");
+
+    {
+        let writer = DbWriter::open(&db_path, 64).unwrap();
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            writer
+                .write(WriteOp::McpCall(crate::events::McpCall {
+                    timestamp: std::time::SystemTime::now(),
+                    server_name: "local".into(),
+                    method: "tools/call".into(),
+                    tool_name: Some("local__echo".into()),
+                    request_id: Some("r1".into()),
+                    request_preview: Some(
+                        r#"{"name":"local__echo","arguments":{"text":"hello","n":1}}"#.into(),
+                    ),
+                    response_preview: Some(
+                        r#"{"content":[{"type":"text","text":"hello"}]}"#.into(),
+                    ),
+                    decision: "allowed".into(),
+                    duration_ms: 7,
+                    error_message: None,
+                    process_name: Some("agent".into()),
+                    bytes_sent: 64,
+                    bytes_received: 128,
+                    policy_mode: Some("enforce".into()),
+                    policy_action: Some("allow".into()),
+                    policy_rule: Some("mcp.tool.local__echo".into()),
+                    policy_reason: Some("allowed by policy".into()),
+                    trace_id: None,
+                }))
+                .await;
+        });
+    }
+
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    let (server_id, tool_name, request_raw, request_json, result_kind, result_json, link_status): (
+        String,
+        String,
+        String,
+        String,
+        String,
+        String,
+        String,
+    ) = conn
+        .query_row(
+            "SELECT server_id, tool_name, request_arguments_raw, request_arguments_json,
+                    result_kind, result_json, link_status
+             FROM ai_mcp_execution_evidence",
+            [],
+            |r| {
+                Ok((
+                    r.get(0)?,
+                    r.get(1)?,
+                    r.get(2)?,
+                    r.get(3)?,
+                    r.get(4)?,
+                    r.get(5)?,
+                    r.get(6)?,
+                ))
+            },
+        )
+        .unwrap();
+
+    assert_eq!(server_id, "local");
+    assert_eq!(tool_name, "echo");
+    assert_eq!(request_raw, r#"{"text":"hello","n":1}"#);
+    assert_eq!(request_json, r#"{"text":"hello","n":1}"#);
+    assert_eq!(result_kind, "json");
+    assert_eq!(
+        result_json,
+        r#"{"content":[{"type":"text","text":"hello"}]}"#
+    );
+    assert_eq!(link_status, "unlinked_pending");
+}
+
+#[test]
+fn mcp_call_insert_keeps_audit_row_when_previews_are_not_json() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("mcp-evidence-malformed.db");
+
+    {
+        let writer = DbWriter::open(&db_path, 64).unwrap();
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            writer
+                .write(WriteOp::McpCall(crate::events::McpCall {
+                    timestamp: std::time::SystemTime::now(),
+                    server_name: "local".into(),
+                    method: "tools/call".into(),
+                    tool_name: Some("local__echo".into()),
+                    request_id: Some("r1".into()),
+                    request_preview: Some("{not-json".into()),
+                    response_preview: Some("plain text result".into()),
+                    decision: "error".into(),
+                    duration_ms: 7,
+                    error_message: Some("tool failed".into()),
+                    process_name: Some("agent".into()),
+                    bytes_sent: 64,
+                    bytes_received: 128,
+                    policy_mode: Some("enforce".into()),
+                    policy_action: Some("allow".into()),
+                    policy_rule: Some("mcp.tool.local__echo".into()),
+                    policy_reason: Some("allowed by policy".into()),
+                    trace_id: None,
+                }))
+                .await;
+        });
+    }
+
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    let call_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM mcp_calls", [], |r| r.get(0))
+        .unwrap();
+    let (request_raw, request_json, result_kind, result_json, is_error): (
+        Option<String>,
+        Option<String>,
+        String,
+        String,
+        i64,
+    ) = conn
+        .query_row(
+            "SELECT request_arguments_raw, request_arguments_json, result_kind,
+                    result_json, is_error
+             FROM ai_mcp_execution_evidence",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+        )
+        .unwrap();
+
+    assert_eq!(call_count, 1);
+    assert!(request_raw.is_none());
+    assert!(request_json.is_none());
+    assert_eq!(result_kind, "text");
+    assert_eq!(result_json, "plain text result");
+    assert_eq!(is_error, 1);
+}
+
+#[test]
+fn mcp_preview_helpers_preserve_json_contract_without_dom_allocation() {
+    assert_eq!(
+        mcp_request_arguments_json(Some(
+            r#"{"name":"local__echo","arguments":{"text":"hello","nested":{"ok":true}}}"#
+        ))
+        .as_deref(),
+        Some(r#"{"text":"hello","nested":{"ok":true}}"#)
+    );
+    assert!(mcp_request_arguments_json(Some(r#"{"name":"local__echo"}"#)).is_none());
+    assert!(mcp_request_arguments_json(Some("{not-json")).is_none());
+    assert_eq!(
+        mcp_result_kind(Some(r#"{"content":[{"type":"text","text":"hello"}]}"#)).sql_text(),
+        "json"
+    );
+    assert_eq!(mcp_result_kind(Some("plain text")).sql_text(), "text");
+    assert_eq!(mcp_result_kind(None).sql_text(), "text");
+}
+
+#[test]
 fn audit_event_insert_populates_row() {
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("audit.db");
