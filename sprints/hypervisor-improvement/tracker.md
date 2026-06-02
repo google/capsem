@@ -169,6 +169,12 @@
   - [ ] Refresh canonical HTTP, proxy throughput, endpoint-latency,
         security-engine, and host-native artifacts after the working Linux
         install.
+    - [x] Endpoint-latency release gate recalibrated to keep strict default
+          p95 budgets while giving full `/logs/{id}` audit envelopes and the
+          heavier settings/profile snapshots explicit endpoint budgets. The
+          benchmark artifact records canonical project version, git commit,
+          dirty-source state, and host CPU/RAM metadata for Linux/macOS
+          comparison.
   - [ ] Split RPS-facing paths into guest network, vsock bridge, MITM/proxy,
         DNS, security-engine evaluation, service/gateway endpoints, TUI/status
         polling, and workspace/disk dependencies.

@@ -68,6 +68,7 @@ pub fn render_app(frame: &mut Frame<'_>, app: &App, terminal: Option<&TerminalSu
     );
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_layout(
     frame: &mut Frame<'_>,
     state: &AppState,
@@ -441,6 +442,7 @@ fn terminal_color_to_ratatui(color: TerminalColor) -> Option<Color> {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_overlay(
     frame: &mut Frame<'_>,
     area: Rect,
@@ -864,7 +866,7 @@ fn help_row(
 }
 
 fn info_row(field: &'static str, value: &str, note: impl AsRef<str>) -> Line<'static> {
-    overlay_line(&format!("{field:<8} {value:<18} {}", note.as_ref()))
+    overlay_line(format!("{field:<8} {value:<18} {}", note.as_ref()))
 }
 
 fn tab_spans(state: &AppState, active_index: usize, max_width: usize) -> Vec<Span<'static>> {

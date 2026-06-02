@@ -1409,6 +1409,7 @@ impl BlockIoUring {
         self.pending.len()
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn submit_rw(
         &mut self,
         head: u16,
@@ -2011,6 +2012,7 @@ impl Drop for VirtioBlockDevice {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn block_worker_loop(
     file: std::fs::File,
     read_only: bool,
@@ -2106,6 +2108,7 @@ fn should_use_direct_io(read_only: bool) -> bool {
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn block_worker_loop_sync(
     mut file: std::fs::File,
     read_only: bool,

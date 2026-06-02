@@ -1364,10 +1364,10 @@ fn format_session_hypervisor_lines(info: &client::SessionInfo) -> Vec<String> {
     if let (Some(bytes), Some(requests)) =
         (info.block_request_bytes_total, info.block_requests_total)
     {
-        if requests > 0 {
+        if let Some(avg_bytes) = bytes.checked_div(requests) {
             lines.push(format!(
                 "  Avg Block Request:         {}",
-                format_bytes(bytes / requests)
+                format_bytes(avg_bytes)
             ));
         }
     }

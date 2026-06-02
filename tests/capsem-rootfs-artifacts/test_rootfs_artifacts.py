@@ -119,7 +119,8 @@ class TestRootfsValidationContract:
 
         assert 'echo none > "$dev/queue/scheduler"' in init_script
         assert 'echo 0 > "$dev/queue/rotational"' in init_script
-        assert 'echo 4096 > "$dev/queue/read_ahead_kb"' in init_script
+        assert "DEFAULT_BLOCK_READ_AHEAD_KB=4096" in init_script
+        assert 'echo "$read_ahead_kb" > "$dev/queue/read_ahead_kb"' in init_script
         assert 'echo 256 > "$dev/queue/nr_requests"' in init_script
 
     def test_capsem_init_keeps_network_proxies_alive_or_fails(self):

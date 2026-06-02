@@ -56,6 +56,7 @@ MCP_TO_CLI: dict[str, str | tuple[None, str]] = {
     "capsem_triage":          (None, "AI-facing host triage helper; CLI users inspect logs/support bundles directly"),
     "capsem_host_logs":       (None, "AI-facing host log reader; CLI users inspect ~/.capsem/run logs directly"),
     "capsem_timeline":        (None, "AI-facing telemetry correlation view; no CLI equivalent yet"),
+    "capsem_terminal_snapshot": (None, "AI-facing terminal/log snapshot for TUI debugging; CLI users use `capsem logs` or the TUI"),
 
     # Known drift -- possible cleanup candidate
     "capsem_stop":            (None, "MCP-only -- CLI expresses stop via suspend (persistent) or delete (ephemeral). Consider removing."),

@@ -214,19 +214,19 @@ impl QueueState {
                 self.num
             ));
         }
-        if self.desc_addr() % 16 != 0 {
+        if !self.desc_addr().is_multiple_of(16) {
             return Err(format!(
                 "queue {queue_index} descriptor table is not 16-byte aligned: {:#x}",
                 self.desc_addr()
             ));
         }
-        if self.driver_addr() % 2 != 0 {
+        if !self.driver_addr().is_multiple_of(2) {
             return Err(format!(
                 "queue {queue_index} available ring is not 2-byte aligned: {:#x}",
                 self.driver_addr()
             ));
         }
-        if self.device_addr() % 4 != 0 {
+        if !self.device_addr().is_multiple_of(4) {
             return Err(format!(
                 "queue {queue_index} used ring is not 4-byte aligned: {:#x}",
                 self.device_addr()

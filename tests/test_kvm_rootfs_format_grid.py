@@ -41,12 +41,18 @@ def test_rootfs_format_grid_dry_run_crosses_formats_and_shapes():
             "queue_size": 128,
             "seg_max": 64,
             "logical_block_size": 4096,
+            "rootfs_read_ahead_kb": 4096,
+            "pmem_madvise": "none",
+            "pmem_populate": False,
         },
         {
             "queue_count": 8,
             "queue_size": 128,
             "seg_max": 64,
             "logical_block_size": 4096,
+            "rootfs_read_ahead_kb": 4096,
+            "pmem_madvise": "none",
+            "pmem_populate": False,
         },
     ]
 

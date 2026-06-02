@@ -378,9 +378,7 @@ pub async fn stop_service() -> Result<()> {
             }
         }
 
-        let stop_ok = (!user_unit_installed || user_stopped || system_stopped)
-            && (!system_unit_installed || system_stopped)
-            && (user_stopped || system_stopped);
+        let stop_ok = system_stopped || (user_stopped && !system_unit_installed);
 
         if !stop_ok {
             if errors.is_empty() {

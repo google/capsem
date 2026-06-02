@@ -534,6 +534,7 @@ async fn log_mcp_call_writes_blocked_security_event() {
 }
 
 #[tokio::test(flavor = "current_thread")]
+#[allow(clippy::await_holding_lock)]
 async fn framed_mcp_response_is_not_held_behind_db_writer_backpressure() {
     let _guard = MCP_TIMEOUT_ENV_LOCK.lock().unwrap();
     let previous = std::env::var("CAPSEM_TEST_SLOW_DB_BATCH_MS").ok();

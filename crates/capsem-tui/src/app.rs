@@ -265,10 +265,8 @@ impl App {
         if self.is_inline_create_active() {
             return self.handle_create_key(key);
         }
-        if is_fork_key(key) {
-            if self.open_fork() {
-                return AppAction::Consumed;
-            }
+        if is_fork_key(key) && self.open_fork() {
+            return AppAction::Consumed;
         }
         if self.resume_key_is_blocked(key) {
             if let Some(reason) = self.active_resume_blocked_reason() {

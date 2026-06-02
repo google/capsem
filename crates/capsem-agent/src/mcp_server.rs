@@ -272,7 +272,7 @@ fn framed_vsock_to_stdout(
 
         pending.remove(frame.stream_id);
         let mut out = stdout.lock().expect("stdout mutex poisoned");
-        if out.write_all(&frame.payload).is_err() {
+        if out.write_all(frame.payload).is_err() {
             break;
         }
         if !frame.payload.ends_with(b"\n") && writeln!(out).is_err() {

@@ -41,6 +41,14 @@ VM_GATE_MAX_MS = float(os.environ.get("CAPSEM_ENDPOINT_BENCH_VM_MAX_MS", "35.0")
 GATEWAY_GATE_P95_MS = float(os.environ.get("CAPSEM_ENDPOINT_BENCH_GATEWAY_P95_MS", "2.0"))
 GATEWAY_GATE_MAX_MS = float(os.environ.get("CAPSEM_ENDPOINT_BENCH_GATEWAY_MAX_MS", "8.0"))
 
+GLOBAL_ENDPOINT_P95_OVERRIDES_MS = {
+    "/settings": float(os.environ.get("CAPSEM_ENDPOINT_BENCH_SETTINGS_P95_MS", "7.0")),
+    "/profiles": float(os.environ.get("CAPSEM_ENDPOINT_BENCH_PROFILES_P95_MS", "7.0")),
+}
+VM_ENDPOINT_P95_PREFIX_OVERRIDES_MS = {
+    "/logs/": float(os.environ.get("CAPSEM_ENDPOINT_BENCH_LOGS_P95_MS", "30.0")),
+}
+
 GLOBAL_ENDPOINTS = (
     "/version",
     "/list",
@@ -216,14 +224,25 @@ def _check_gates(results):
         "gateway": (GATEWAY_GATE_P95_MS, GATEWAY_GATE_MAX_MS),
     }
     for group, endpoints in results["groups"].items():
-        p95_gate, max_gate = gates[group]
+        default_p95_gate, max_gate = gates[group]
         for endpoint, stats in endpoints.items():
+            p95_gate = _p95_gate_for(group, endpoint, default_p95_gate)
             if stats["p95_ms"] > p95_gate or stats["max_ms"] > max_gate:
                 failures.append(
                     f"{group} {endpoint}: p95={stats['p95_ms']}ms"
                     f" max={stats['max_ms']}ms gates p95<={p95_gate}ms max<={max_gate}ms"
                 )
     assert not failures, "endpoint latency gate failed:\n" + "\n".join(failures)
+
+
+def _p95_gate_for(group, endpoint, default_p95_gate):
+    if group == "service_global":
+        return GLOBAL_ENDPOINT_P95_OVERRIDES_MS.get(endpoint, default_p95_gate)
+    if group == "service_vm":
+        for prefix, p95_gate in VM_ENDPOINT_P95_PREFIX_OVERRIDES_MS.items():
+            if endpoint.startswith(prefix):
+                return p95_gate
+    return default_p95_gate
 
 
 def test_endpoint_latency_benchmark_8_live_vms():
@@ -253,7 +272,7 @@ def test_endpoint_latency_benchmark_8_live_vms():
         gateway_results = _measure_gateway(gateway)
 
         result = {
-            "version": "0.1.0",
+            "version": _project_version(),
             "timestamp": time.time(),
             "vm_count": VM_COUNT,
             "iterations": {
@@ -273,6 +292,10 @@ def test_endpoint_latency_benchmark_8_live_vms():
                 "gateway": {
                     "p95_ms": GATEWAY_GATE_P95_MS,
                     "max_ms": GATEWAY_GATE_MAX_MS,
+                },
+                "endpoint_p95_overrides_ms": {
+                    "service_global": GLOBAL_ENDPOINT_P95_OVERRIDES_MS,
+                    "service_vm_prefix": VM_ENDPOINT_P95_PREFIX_OVERRIDES_MS,
                 },
             },
             "groups": {

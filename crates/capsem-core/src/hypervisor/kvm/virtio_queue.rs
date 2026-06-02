@@ -224,6 +224,7 @@ impl VirtQueue {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn from_indices(
         mem: GuestMemoryRef,
         desc_table_gpa: u64,
@@ -344,9 +345,9 @@ impl VirtQueue {
         if !self.has_valid_size() {
             return false;
         }
-        if self.desc_table_gpa % 16 != 0
-            || self.avail_ring_gpa % 2 != 0
-            || self.used_ring_gpa % 4 != 0
+        if !self.desc_table_gpa.is_multiple_of(16)
+            || !self.avail_ring_gpa.is_multiple_of(2)
+            || !self.used_ring_gpa.is_multiple_of(4)
         {
             return false;
         }

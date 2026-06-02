@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- Changed the endpoint-latency benchmark gate to keep strict default p95
+  budgets while giving `/settings`, `/profiles`, and full `/logs/{id}` audit
+  envelopes explicit endpoint budgets. The artifact now writes the real Capsem
+  package version at top level in addition to canonical `project_version`,
+  git-commit, dirty-state, and host CPU/RAM metadata.
 - Changed runtime security-engine routing to advertise event-family capability
   and skip non-applicable runtime CEL evaluation for MCP, HTTP, DNS, and
   process exec paths. Structured effective HTTP/DNS rules no longer make MCP
@@ -403,6 +408,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   service reads, per-VM detail/history/file/policy-context reads, and gateway
   health/token/status reads with committed `benchmarks/endpoint-latency/`
   results.
+
+### Known Follow-ups
+- Linux/KVM support is considered user-playable for the release branch after
+  the normal merge gates pass (`just test`, `just benchmark`, installed
+  smoke/doctor). Remaining Linux work is performance and observability, not a
+  blocker for users to try the build.
+- After the new all-CEL security engine and parser improvements merge, reassess
+  runtime event-family routing. The optimization must only survive if the new
+  engine carries explicit MCP rule scope or conservatively reports all-family
+  scope for MCP-capable rules.
+- The network branch should rerun canonical `just benchmark` and full
+  `capsem-bench mcp-load` after merging the new engine/parser work, then use
+  `CAPSEM_METRICS_DEBUG_INTERVAL_SECS=2` only for attribution if MCP regresses.
+- The macOS team should pull the same merged branch, run `just benchmark` plus
+  `capsem-bench mcp-load`, commit benchmark artifacts only, and compare with
+  Linux through `just benchmark-compare`.
+- Post-response MCP audit writes can still build a session DB backlog under
+  high load. Guest-visible responses are no longer blocked by that backlog, but
+  DB throughput, backlog visibility in status/OTel, and flush efficiency remain
+  the next durability/resource-efficiency work.
 
 ### Changed
 - Changed `capsem-bench disk` to default to `/var/tmp`, the writable
