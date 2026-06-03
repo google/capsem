@@ -98,6 +98,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added benchmark contract tests proving the canonical `just benchmark` path
   includes Criterion archiving plus the required serial artifact lanes,
   including host-native, lifecycle, fork, and VM-originated security benchmarks.
+- Added benchmark preflight proof that the default macOS LaunchAgent is booted
+  out before the dev `capsem-service` clears the shared `~/.capsem/run`
+  socket, preventing launchd KeepAlive from racing `just benchmark`.
+- Added endpoint-latency benchmark percentile proof so p95 remains distinct
+  from the separate max gate at small sample counts.
+- Fixed benchmark artifact retention so separate network-engine Criterion
+  lanes, such as provider parser and MITM pipeline, remain active together.
 - Included `capsem-bench storage` in the default `capsem-bench all` path so
   canonical Linux and macOS benchmark artifacts both record storage attribution
   for rootfs, workspace, tmpfs, overlay, and queue/FUSE metadata.

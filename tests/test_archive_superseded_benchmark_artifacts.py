@@ -61,6 +61,23 @@ def test_keeps_latest_per_security_engine_suffix(tmp_path):
     assert cel.exists()
 
 
+def test_keeps_latest_per_network_engine_suffix(tmp_path):
+    provider = tmp_path / "benchmarks" / "network-engine" / "data_1.2.1_arm64_provider_model_parser_microbench.json"
+    mitm = tmp_path / "benchmarks" / "network-engine" / "data_1.2.1_arm64_mitm_pipeline_microbench.json"
+    write_json(provider, {"project_version": "1.2.1", "arch": "arm64", "recorded_at": 10})
+    write_json(mitm, {"project_version": "1.2.1", "arch": "arm64", "recorded_at": 20})
+
+    archive_path, archived = archive_script.archive_superseded(
+        tmp_path,
+        archive_name="history.zip",
+    )
+
+    assert archive_path is None
+    assert archived == []
+    assert provider.exists()
+    assert mitm.exists()
+
+
 def test_keeps_legacy_macos_lifecycle_until_arch_scoped_lane_exists(tmp_path):
     legacy = tmp_path / "benchmarks" / "lifecycle" / "data_1.2.1.json"
     linux = tmp_path / "benchmarks" / "lifecycle" / "data_1.2.1_x86_64.json"

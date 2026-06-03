@@ -7,7 +7,6 @@ raw persistent/fresh HTTP clients instead of the curl-based correctness helpers.
 
 import http.client
 import json
-import math
 import os
 import re
 import socket
@@ -145,8 +144,15 @@ def _percentile(values, percentile):
     ordered = sorted(values)
     if not ordered:
         return 0.0
-    index = math.ceil((percentile / 100) * len(ordered)) - 1
+    index = round((len(ordered) - 1) * (percentile / 100))
     return ordered[max(0, min(index, len(ordered) - 1))]
+
+
+def test_endpoint_latency_percentile_keeps_p95_distinct_from_max():
+    samples = list(range(1, 17))
+
+    assert _percentile(samples, 95) == 15
+    assert max(samples) == 16
 
 
 def _summary(values):

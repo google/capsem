@@ -52,7 +52,7 @@ This sprint verifies that diagnosis and then removes the second path.
 | T3 | Rule Compilation Cleanup | Done | Model/MCP rules are no longer rewritten into HTTP request/response predicates. |
 | T4 | Regression Tests | Done | Tests fail if model rules only work through HTTP-body compatibility fields. |
 | T5 | Integration Proof | Done | End-to-end proof shows canonical events drive block/detect/log behavior. |
-| T6 | Benchmark Proof | In Progress | Fast and full benchmark gates cover CEL, Sigma/Detection IR, hunt, and live callback overhead. |
+| T6 | Benchmark Proof | Done | Fast and full benchmark gates cover CEL, Sigma/Detection IR, hunt, and live callback overhead. |
 | T7 | Typed Event Identity Contract | Done | Producers, callbacks, CEL guards, and SQLite storage consume `SecurityEventType`. |
 
 ## Architecture Target
@@ -95,7 +95,8 @@ Benchmark release hold:
 - The fast microbench gate must include the security-engine CEL Criterion
   bench and the security-engine Detection IR Criterion bench.
 - The full artifact gate must run `just benchmark` before any public or
-  bank-facing performance claim.
+  bank-facing performance claim. The macOS arm64 gate passed for this sprint
+  after the benchmark preflight and endpoint percentile fixes.
 - `just benchmark-compare` must be used when comparing committed artifacts.
 - Benchmark coverage must include detection and enforcement, not only one side
   of the security engine.
@@ -115,8 +116,10 @@ Benchmark release hold:
   provider parser/extractor overhead for single-frame, multi-frame, malformed,
   gzip, and tool-call streams. The fast gate now also includes MITM
   build-then-evaluate and prebuilt-event callback overhead for HTTP request,
-  HTTP response, model request, and model response events. Full
-  `just benchmark` remains a release gate before performance claims.
+  HTTP response, model request, and model response events. The full
+  `just benchmark` macOS arm64 gate passed and refreshed active artifacts after
+  proving endpoint p95 is distinct from max and `_ensure-service` stops the
+  default LaunchAgent before clearing the shared dev socket.
 - T3 removed the process-runtime `model.* -> http.*` condition lowering and the
   MITM HTTP-response `tool.arguments.*` rewrite compatibility path. Model rules
   now compile only against canonical `model.*` event guards; T2 still needs to

@@ -2,8 +2,8 @@
   "schema": "capsem.security-engine-benchmark.v1",
   "kind": "vm_originated_mcp_request_enforcement",
   "version": "1.2.1780103109",
-  "source_commit": "0a425541",
-  "timestamp": 1780149910.48114,
+  "source_commit": "f4d97a6c",
+  "timestamp": 1780520943.627711,
   "arch": "arm64",
   "host": {
     "platform": "Darwin",
@@ -30,28 +30,28 @@
   "runs": 8,
   "gate_ms": 1000,
   "rule": {
-    "id": "runtime.block-mcp-bench.22a9c133",
+    "id": "runtime.block-mcp-bench.a5c2c1da",
     "pack_id": "runtime-benchmark",
     "condition": "mcp.request.server_id == 'local' && mcp.request.tool_name == 'echo'",
     "decision": "block"
   },
   "operations": {
     "blocked_mcp_request_ms": {
-      "min": 0.174,
-      "mean": 0.251,
-      "median": 0.189,
-      "p95": 0.661,
-      "p99": 0.661,
-      "max": 0.661,
+      "min": 0.218,
+      "mean": 0.339,
+      "median": 0.249,
+      "p95": 0.981,
+      "p99": 0.981,
+      "max": 0.981,
       "values": [
-        0.661,
-        0.236,
-        0.186,
-        0.189,
-        0.18,
-        0.174,
-        0.189,
-        0.189
+        0.981,
+        0.254,
+        0.293,
+        0.243,
+        0.231,
+        0.27,
+        0.218,
+        0.222
       ]
     }
   },
@@ -60,12 +60,12 @@
       "row_count": 8,
       "distinct_event_ids": 8,
       "blocked_count": 8,
-      "vm_id": "secmcp-2f6cb4ed",
+      "vm_id": "secmcp-bad207b6",
       "profile_id": "profile-asset-boot",
       "user_id": "elie",
       "process_operation": null,
       "process_command_class": null,
-      "rule_id": "runtime.block-mcp-bench.22a9c133",
+      "rule_id": "runtime.block-mcp-bench.a5c2c1da",
       "reason": "MCP request blocked by security benchmark"
     },
     "session_db_mcp_calls": {
@@ -75,23 +75,23 @@
       "tool_name": "local__echo",
       "policy_mode": "enforce",
       "policy_action": "block",
-      "policy_rule": "runtime.block-mcp-bench.22a9c133",
+      "policy_rule": "runtime.block-mcp-bench.a5c2c1da",
       "policy_reason": "MCP request blocked by security benchmark"
     },
     "runtime_match_count": 8,
-    "runtime_last_event_id": "mcp-b93ff5c5aa69107e",
+    "runtime_last_event_id": "mcp-490a609c7a0a4cf6",
     "logs_exposed_security_decision": true
   },
   "project_version": "1.2.1780103109",
-  "recorded_at": 1780149910.48156,
-  "recorded_at_utc": "2026-05-30T14:05:10.481562+00:00",
+  "recorded_at": 1780520943.628125,
+  "recorded_at_utc": "2026-06-03T21:09:03.628127+00:00",
   "git": {
-    "commit": "0a425541fbdc03cc9821aafb238a0dd4b26ccdcd",
+    "commit": "f4d97a6c87fe07cd2adaf2258b7a5a24a1785d83",
     "dirty": true,
-    "source_dirty": false,
+    "source_dirty": true,
     "dirty_paths": [
-      "benchmarks/endpoint-latency/data_1.2.1780103109_arm64.json",
       "benchmarks/capsem-bench/data_1.2.1780103109_arm64.json",
+      "benchmarks/endpoint-latency/data_1.2.1780103109_arm64.json",
       "benchmarks/fork/data_1.2.1780103109_arm64.json",
       "benchmarks/host-native/data_1.2.1780103109_arm64.json",
       "benchmarks/lifecycle/data_1.2.1780103109_arm64.json",
@@ -99,8 +99,14 @@
       "benchmarks/security-engine/data_1.2.1780103109_arm64_cel_microbench.json",
       "benchmarks/security-engine/data_1.2.1780103109_arm64_dns_request_enforcement.json",
       "benchmarks/security-engine/data_1.2.1780103109_arm64_http_request_enforcement.json",
+      "benchmarks/security-engine/data_1.2.1780103109_arm64_mcp_request_enforcement.json",
       "benchmarks/security-engine/data_1.2.1780103109_arm64_process_enforcement.json",
-      "benchmarks/security-engine/data_1.2.1780103109_arm64_security_packs_microbench.json"
+      "justfile",
+      "tests/capsem-serial/test_endpoint_latency_benchmark.py",
+      "tests/test_benchmark_contract.py",
+      "benchmarks/network-engine/data_1.2.1780103109_arm64_mitm_pipeline_microbench.json",
+      "benchmarks/network-engine/data_1.2.1780103109_arm64_provider_model_parser_microbench.json",
+      "benchmarks/security-engine/data_1.2.1780103109_arm64_detection_ir_microbench.json"
     ]
   }
 }

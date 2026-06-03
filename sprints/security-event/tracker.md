@@ -32,9 +32,9 @@
   model-response block/rewrite and provider-emitted tool-call block/rewrite
   from guest traffic with session security-event, AI evidence, and hunt
   assertions.
-- [ ] T6: Add fast and full benchmark proof for the security spine. Fast
+- [x] T6: Add fast and full benchmark proof for the security spine. Fast
   Criterion coverage now covers CEL, Detection IR, provider parsing, and MITM
-  callback overhead; full `just benchmark` artifact gate remains open.
+  callback overhead; full `just benchmark` artifact gate passed on macOS arm64.
 - [x] T7: Add typed security-event identity contract for the network telemetry
   lane.
 - [x] Update `CHANGELOG.md` under `## [Unreleased]` when code changes begin.
@@ -167,6 +167,20 @@
   the typed contract, CEL projection, SQLite ledger, session reconstruction,
   and detection hunt support those families when rows exist, but this slice did
   not find live emitters for them.
+- T6 full-gate attempt found two benchmark infrastructure bugs before a clean
+  run: endpoint-latency p95 used nearest-rank math that made p95 equal max for
+  16 samples, and `_ensure-service` could not reliably clear the default
+  `~/.capsem/run/service.sock` while launchd `KeepAlive` respawned the
+  installed `com.capsem.service`. Both are now covered by focused tests.
+- T6 full `just benchmark` passed on macOS arm64 after `just doctor fix`
+  repaired local assets and `_ensure-service` booted out the default LaunchAgent
+  before dev-service handoff. The run archived Criterion artifacts for
+  security-engine CEL, Detection IR, network-engine provider parser, and MITM
+  pipeline, then passed all 11 VM-originated benchmark tests.
+- T6 closeout found and fixed a benchmark retention bug where the final archive
+  grouped every `network-engine` JSON into the same lane and evicted the
+  provider-parser artifact after the MITM artifact landed. Network-engine
+  Criterion suffixes are now retained like security-engine suffixes.
 
 ## Benchmark Gate
 
@@ -179,9 +193,9 @@ Fast microbench commands:
 
 Full artifact commands:
 
-- [ ] `just benchmark` (preflight currently blocked in this worktree:
-  `just doctor` reports missing `assets/*/manifest.json` and guest binaries;
-  run `just doctor fix` / build assets before artifact-grade numbers)
+- [x] `just benchmark` (passed after `just doctor fix`; final run reported
+  `11 passed, 7 deselected` for the serial benchmark marker and archived
+  Criterion artifacts)
 - [ ] `just benchmark-compare`
 
 Benchmark coverage checklist:
@@ -199,7 +213,7 @@ Benchmark coverage checklist:
   provider tool-call responses.
 - [x] Benchmark result names and commands recorded before any performance
   claim.
-- [ ] Full artifact benchmark run recorded before any performance claim.
+- [x] Full artifact benchmark run recorded before any performance claim.
 
 ## Coverage Ledger
 

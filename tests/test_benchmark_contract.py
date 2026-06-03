@@ -21,6 +21,16 @@ def test_just_benchmark_runs_full_canonical_artifact_suite():
     assert "uv run python scripts/archive_superseded_benchmark_artifacts.py" in recipe
 
 
+def test_ensure_service_stops_default_launchd_service_before_socket_cleanup():
+    justfile = (PROJECT_ROOT / "justfile").read_text()
+    recipe = justfile.split("\n# Ensure capsem-service daemon is running with the current binary.", 1)[1]
+    recipe = recipe.split("\n# Open the Capsem TUI", 1)[0]
+
+    assert "stop_default_launchd_service" in recipe
+    assert "launchctl bootout" in recipe
+    assert recipe.index("stop_default_launchd_service") < recipe.index("cleanup_runtime_processes")
+
+
 def test_capsem_bench_all_includes_storage_split_diagnostics():
     entrypoint = (PROJECT_ROOT / "guest" / "artifacts" / "capsem_bench" / "__main__.py").read_text()
 

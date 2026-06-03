@@ -1,64 +1,64 @@
 {
   "version": "0.1.0",
-  "timestamp": 1780149853.5451891,
+  "timestamp": 1780520886.306404,
   "runs": 3,
   "operations": {
     "provision_ms": {
-      "min": 847.4,
-      "mean": 849.1,
-      "max": 851.9,
+      "min": 794.2,
+      "mean": 813.4,
+      "max": 847.3,
       "values": [
-        851.9,
-        847.4,
-        847.9
+        798.7,
+        794.2,
+        847.3
       ]
     },
     "exec_ready_ms": {
-      "min": 12.9,
-      "mean": 13.0,
-      "max": 13.1,
+      "min": 12.7,
+      "mean": 13.6,
+      "max": 14.8,
       "values": [
-        13.1,
-        12.9,
-        12.9
+        13.2,
+        12.7,
+        14.8
       ]
     },
     "exec_ms": {
-      "min": 11.8,
-      "mean": 12.0,
-      "max": 12.3,
+      "min": 12.1,
+      "mean": 12.2,
+      "max": 12.5,
       "values": [
-        11.9,
-        12.3,
-        11.8
+        12.5,
+        12.1,
+        12.1
       ]
     },
     "delete_ms": {
-      "min": 61.2,
-      "mean": 61.4,
-      "max": 61.7,
+      "min": 59.7,
+      "mean": 60.6,
+      "max": 61.5,
       "values": [
-        61.7,
-        61.3,
-        61.2
+        61.5,
+        60.7,
+        59.7
       ]
     },
     "total_ms": {
-      "min": 933.8,
-      "mean": 935.4,
-      "max": 938.6,
+      "min": 879.7,
+      "mean": 899.8,
+      "max": 933.9,
       "values": [
-        938.6,
-        933.9,
-        933.8
+        885.9,
+        879.7,
+        933.9
       ]
     }
   },
   "schema": "capsem.benchmark-artifact.v1",
   "project_version": "1.2.1780103109",
   "arch": "arm64",
-  "recorded_at": 1780149853.5454772,
-  "recorded_at_utc": "2026-05-30T14:04:13.545479+00:00",
+  "recorded_at": 1780520886.306741,
+  "recorded_at_utc": "2026-06-03T21:08:06.306744+00:00",
   "command": "uv run pytest tests/capsem-serial/test_lifecycle_benchmark.py::test_lifecycle_benchmark -xvs",
   "host": {
     "platform": "Darwin",
@@ -76,15 +76,27 @@
     "memory_total_gb": 128.0
   },
   "git": {
-    "commit": "0a425541fbdc03cc9821aafb238a0dd4b26ccdcd",
+    "commit": "f4d97a6c87fe07cd2adaf2258b7a5a24a1785d83",
     "dirty": true,
-    "source_dirty": false,
+    "source_dirty": true,
     "dirty_paths": [
-      "benchmarks/endpoint-latency/data_1.2.1780103109_arm64.json",
       "benchmarks/capsem-bench/data_1.2.1780103109_arm64.json",
+      "benchmarks/endpoint-latency/data_1.2.1780103109_arm64.json",
+      "benchmarks/fork/data_1.2.1780103109_arm64.json",
       "benchmarks/host-native/data_1.2.1780103109_arm64.json",
+      "benchmarks/lifecycle/data_1.2.1780103109_arm64.json",
+      "benchmarks/parallel/data_1.2.1780103109_arm64.json",
       "benchmarks/security-engine/data_1.2.1780103109_arm64_cel_microbench.json",
-      "benchmarks/security-engine/data_1.2.1780103109_arm64_security_packs_microbench.json"
+      "benchmarks/security-engine/data_1.2.1780103109_arm64_dns_request_enforcement.json",
+      "benchmarks/security-engine/data_1.2.1780103109_arm64_http_request_enforcement.json",
+      "benchmarks/security-engine/data_1.2.1780103109_arm64_mcp_request_enforcement.json",
+      "benchmarks/security-engine/data_1.2.1780103109_arm64_process_enforcement.json",
+      "justfile",
+      "tests/capsem-serial/test_endpoint_latency_benchmark.py",
+      "tests/test_benchmark_contract.py",
+      "benchmarks/network-engine/data_1.2.1780103109_arm64_mitm_pipeline_microbench.json",
+      "benchmarks/network-engine/data_1.2.1780103109_arm64_provider_model_parser_microbench.json",
+      "benchmarks/security-engine/data_1.2.1780103109_arm64_detection_ir_microbench.json"
     ]
   }
 }

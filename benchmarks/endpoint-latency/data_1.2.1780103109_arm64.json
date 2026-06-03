@@ -1,6 +1,6 @@
 {
   "version": "0.1.0",
-  "timestamp": 1780149845.194092,
+  "timestamp": 1780520880.413443,
   "vm_count": 8,
   "iterations": {
     "service_global": 16,
@@ -25,687 +25,687 @@
     "service_global": {
       "/version": {
         "count": 16,
-        "min_ms": 0.145,
-        "p50_ms": 0.17,
-        "p95_ms": 0.245,
-        "p99_ms": 0.245,
-        "max_ms": 0.245
+        "min_ms": 0.153,
+        "p50_ms": 0.167,
+        "p95_ms": 0.195,
+        "p99_ms": 0.209,
+        "max_ms": 0.209
       },
       "/list": {
         "count": 16,
-        "min_ms": 0.577,
-        "p50_ms": 0.607,
-        "p95_ms": 0.684,
-        "p99_ms": 0.684,
-        "max_ms": 0.684
+        "min_ms": 0.587,
+        "p50_ms": 0.621,
+        "p95_ms": 0.68,
+        "p99_ms": 0.718,
+        "max_ms": 0.718
       },
       "/stats": {
         "count": 16,
-        "min_ms": 2.526,
-        "p50_ms": 2.713,
-        "p95_ms": 2.913,
-        "p99_ms": 2.913,
-        "max_ms": 2.913
+        "min_ms": 2.544,
+        "p50_ms": 2.786,
+        "p95_ms": 2.898,
+        "p99_ms": 2.917,
+        "max_ms": 2.917
       },
       "/settings": {
         "count": 16,
-        "min_ms": 1.218,
-        "p50_ms": 1.338,
-        "p95_ms": 1.474,
-        "p99_ms": 1.474,
-        "max_ms": 1.474
+        "min_ms": 1.262,
+        "p50_ms": 1.347,
+        "p95_ms": 1.444,
+        "p99_ms": 1.517,
+        "max_ms": 1.517
       },
       "/settings/presets": {
         "count": 16,
-        "min_ms": 0.86,
-        "p50_ms": 0.909,
-        "p95_ms": 1.041,
-        "p99_ms": 1.041,
-        "max_ms": 1.041
+        "min_ms": 0.853,
+        "p50_ms": 0.951,
+        "p95_ms": 1.193,
+        "p99_ms": 1.218,
+        "max_ms": 1.218
       },
       "/profiles": {
         "count": 16,
-        "min_ms": 1.713,
-        "p50_ms": 1.771,
-        "p95_ms": 2.022,
-        "p99_ms": 2.022,
-        "max_ms": 2.022
+        "min_ms": 1.781,
+        "p50_ms": 1.884,
+        "p95_ms": 2.39,
+        "p99_ms": 2.497,
+        "max_ms": 2.497
       },
       "/profiles/catalog": {
         "count": 16,
-        "min_ms": 0.252,
-        "p50_ms": 0.278,
-        "p95_ms": 0.34,
-        "p99_ms": 0.34,
-        "max_ms": 0.34
+        "min_ms": 0.255,
+        "p50_ms": 0.288,
+        "p95_ms": 0.32,
+        "p99_ms": 0.332,
+        "max_ms": 0.332
       },
       "/rules": {
         "count": 16,
-        "min_ms": 0.86,
-        "p50_ms": 0.9,
-        "p95_ms": 1.12,
-        "p99_ms": 1.12,
-        "max_ms": 1.12
+        "min_ms": 0.884,
+        "p50_ms": 0.915,
+        "p95_ms": 0.937,
+        "p99_ms": 0.965,
+        "max_ms": 0.965
       },
       "/enforcement": {
         "count": 16,
-        "min_ms": 0.288,
-        "p50_ms": 0.304,
-        "p95_ms": 0.33,
-        "p99_ms": 0.33,
-        "max_ms": 0.33
+        "min_ms": 0.342,
+        "p50_ms": 0.364,
+        "p95_ms": 0.381,
+        "p99_ms": 0.388,
+        "max_ms": 0.388
       },
       "/enforcement/stats": {
         "count": 16,
-        "min_ms": 0.698,
-        "p50_ms": 0.786,
-        "p95_ms": 0.977,
-        "p99_ms": 0.977,
-        "max_ms": 0.977
+        "min_ms": 0.813,
+        "p50_ms": 0.907,
+        "p95_ms": 1.006,
+        "p99_ms": 1.122,
+        "max_ms": 1.122
       },
       "/detection": {
         "count": 16,
-        "min_ms": 0.141,
-        "p50_ms": 0.149,
-        "p95_ms": 0.164,
-        "p99_ms": 0.164,
-        "max_ms": 0.164
+        "min_ms": 0.151,
+        "p50_ms": 0.163,
+        "p95_ms": 0.187,
+        "p99_ms": 0.191,
+        "max_ms": 0.191
       },
       "/detection/stats": {
         "count": 16,
-        "min_ms": 0.535,
-        "p50_ms": 0.6,
-        "p95_ms": 0.664,
-        "p99_ms": 0.664,
-        "max_ms": 0.664
+        "min_ms": 0.602,
+        "p50_ms": 0.628,
+        "p95_ms": 0.714,
+        "p99_ms": 0.738,
+        "max_ms": 0.738
       },
       "/confirm/pending": {
         "count": 16,
-        "min_ms": 0.151,
-        "p50_ms": 0.16,
-        "p95_ms": 0.186,
-        "p99_ms": 0.186,
-        "max_ms": 0.186
+        "min_ms": 0.145,
+        "p50_ms": 0.155,
+        "p95_ms": 0.18,
+        "p99_ms": 0.188,
+        "max_ms": 0.188
       },
       "/skills": {
         "count": 16,
-        "min_ms": 0.857,
-        "p50_ms": 0.891,
-        "p95_ms": 1.045,
-        "p99_ms": 1.045,
-        "max_ms": 1.045
+        "min_ms": 0.873,
+        "p50_ms": 0.928,
+        "p95_ms": 1.047,
+        "p99_ms": 1.114,
+        "max_ms": 1.114
       },
       "/setup/state": {
         "count": 16,
-        "min_ms": 0.169,
-        "p50_ms": 0.18,
-        "p95_ms": 0.2,
-        "p99_ms": 0.2,
-        "max_ms": 0.2
+        "min_ms": 0.173,
+        "p50_ms": 0.195,
+        "p95_ms": 0.222,
+        "p99_ms": 0.236,
+        "max_ms": 0.236
       },
       "/setup/assets": {
         "count": 16,
-        "min_ms": 0.218,
-        "p50_ms": 0.233,
-        "p95_ms": 0.26,
-        "p99_ms": 0.26,
-        "max_ms": 0.26
+        "min_ms": 0.221,
+        "p50_ms": 0.243,
+        "p95_ms": 0.267,
+        "p99_ms": 0.269,
+        "max_ms": 0.269
       },
       "/mcp/connectors": {
         "count": 16,
-        "min_ms": 0.85,
-        "p50_ms": 0.885,
-        "p95_ms": 0.92,
-        "p99_ms": 0.92,
-        "max_ms": 0.92
+        "min_ms": 0.852,
+        "p50_ms": 0.926,
+        "p95_ms": 0.994,
+        "p99_ms": 1.062,
+        "max_ms": 1.062
       }
     },
     "service_vm": {
-      "/info/epbench-a133189f-0": {
+      "/info/epbench-65316f10-0": {
         "count": 4,
-        "min_ms": 0.928,
-        "p50_ms": 0.96,
-        "p95_ms": 1.15,
-        "p99_ms": 1.15,
-        "max_ms": 1.15
+        "min_ms": 1.062,
+        "p50_ms": 1.168,
+        "p95_ms": 1.252,
+        "p99_ms": 1.252,
+        "max_ms": 1.252
       },
-      "/logs/epbench-a133189f-0": {
+      "/logs/epbench-65316f10-0": {
         "count": 4,
-        "min_ms": 3.189,
-        "p50_ms": 3.237,
-        "p95_ms": 3.275,
-        "p99_ms": 3.275,
-        "max_ms": 3.275
+        "min_ms": 3.333,
+        "p50_ms": 3.398,
+        "p95_ms": 3.433,
+        "p99_ms": 3.433,
+        "max_ms": 3.433
       },
-      "/history/epbench-a133189f-0": {
+      "/history/epbench-65316f10-0": {
         "count": 4,
-        "min_ms": 0.846,
-        "p50_ms": 0.898,
-        "p95_ms": 0.911,
-        "p99_ms": 0.911,
-        "max_ms": 0.911
-      },
-      "/history/epbench-a133189f-0/counts": {
-        "count": 4,
-        "min_ms": 0.62,
-        "p50_ms": 0.62,
-        "p95_ms": 0.696,
-        "p99_ms": 0.696,
-        "max_ms": 0.696
-      },
-      "/history/epbench-a133189f-0/processes": {
-        "count": 4,
-        "min_ms": 0.655,
-        "p50_ms": 0.688,
-        "p95_ms": 0.747,
-        "p99_ms": 0.747,
-        "max_ms": 0.747
-      },
-      "/history/epbench-a133189f-0/transcript": {
-        "count": 4,
-        "min_ms": 0.18,
-        "p50_ms": 0.18,
-        "p95_ms": 0.199,
-        "p99_ms": 0.199,
-        "max_ms": 0.199
-      },
-      "/files/epbench-a133189f-0": {
-        "count": 4,
-        "min_ms": 2.394,
-        "p50_ms": 2.471,
-        "p95_ms": 2.694,
-        "p99_ms": 2.694,
-        "max_ms": 2.694
-      },
-      "/sessions/epbench-a133189f-0/policy-contexts": {
-        "count": 4,
-        "min_ms": 2.281,
-        "p50_ms": 2.287,
-        "p95_ms": 2.411,
-        "p99_ms": 2.411,
-        "max_ms": 2.411
-      },
-      "/info/epbench-a133189f-1": {
-        "count": 4,
-        "min_ms": 0.96,
-        "p50_ms": 1.017,
-        "p95_ms": 1.081,
-        "p99_ms": 1.081,
-        "max_ms": 1.081
-      },
-      "/logs/epbench-a133189f-1": {
-        "count": 4,
-        "min_ms": 3.154,
-        "p50_ms": 3.188,
-        "p95_ms": 3.221,
-        "p99_ms": 3.221,
-        "max_ms": 3.221
-      },
-      "/history/epbench-a133189f-1": {
-        "count": 4,
-        "min_ms": 0.852,
-        "p50_ms": 0.854,
-        "p95_ms": 0.931,
-        "p99_ms": 0.931,
-        "max_ms": 0.931
-      },
-      "/history/epbench-a133189f-1/counts": {
-        "count": 4,
-        "min_ms": 0.594,
-        "p50_ms": 0.597,
-        "p95_ms": 0.61,
-        "p99_ms": 0.61,
-        "max_ms": 0.61
-      },
-      "/history/epbench-a133189f-1/processes": {
-        "count": 4,
-        "min_ms": 0.642,
-        "p50_ms": 0.649,
-        "p95_ms": 0.685,
-        "p99_ms": 0.685,
-        "max_ms": 0.685
-      },
-      "/history/epbench-a133189f-1/transcript": {
-        "count": 4,
-        "min_ms": 0.18,
-        "p50_ms": 0.183,
-        "p95_ms": 0.195,
-        "p99_ms": 0.195,
-        "max_ms": 0.195
-      },
-      "/files/epbench-a133189f-1": {
-        "count": 4,
-        "min_ms": 2.359,
-        "p50_ms": 2.456,
-        "p95_ms": 2.535,
-        "p99_ms": 2.535,
-        "max_ms": 2.535
-      },
-      "/sessions/epbench-a133189f-1/policy-contexts": {
-        "count": 4,
-        "min_ms": 2.255,
-        "p50_ms": 2.298,
-        "p95_ms": 2.487,
-        "p99_ms": 2.487,
-        "max_ms": 2.487
-      },
-      "/info/epbench-a133189f-2": {
-        "count": 4,
-        "min_ms": 0.894,
-        "p50_ms": 0.985,
-        "p95_ms": 1.024,
-        "p99_ms": 1.024,
-        "max_ms": 1.024
-      },
-      "/logs/epbench-a133189f-2": {
-        "count": 4,
-        "min_ms": 2.979,
-        "p50_ms": 3.068,
-        "p95_ms": 3.265,
-        "p99_ms": 3.265,
-        "max_ms": 3.265
-      },
-      "/history/epbench-a133189f-2": {
-        "count": 4,
-        "min_ms": 0.826,
-        "p50_ms": 0.837,
-        "p95_ms": 0.902,
-        "p99_ms": 0.902,
-        "max_ms": 0.902
-      },
-      "/history/epbench-a133189f-2/counts": {
-        "count": 4,
-        "min_ms": 0.605,
-        "p50_ms": 0.621,
-        "p95_ms": 0.677,
-        "p99_ms": 0.677,
-        "max_ms": 0.677
-      },
-      "/history/epbench-a133189f-2/processes": {
-        "count": 4,
-        "min_ms": 0.641,
-        "p50_ms": 0.65,
-        "p95_ms": 0.711,
-        "p99_ms": 0.711,
-        "max_ms": 0.711
-      },
-      "/history/epbench-a133189f-2/transcript": {
-        "count": 4,
-        "min_ms": 0.187,
-        "p50_ms": 0.192,
-        "p95_ms": 0.201,
-        "p99_ms": 0.201,
-        "max_ms": 0.201
-      },
-      "/files/epbench-a133189f-2": {
-        "count": 4,
-        "min_ms": 2.398,
-        "p50_ms": 2.404,
-        "p95_ms": 2.535,
-        "p99_ms": 2.535,
-        "max_ms": 2.535
-      },
-      "/sessions/epbench-a133189f-2/policy-contexts": {
-        "count": 4,
-        "min_ms": 2.299,
-        "p50_ms": 2.306,
-        "p95_ms": 2.338,
-        "p99_ms": 2.338,
-        "max_ms": 2.338
-      },
-      "/info/epbench-a133189f-3": {
-        "count": 4,
-        "min_ms": 0.865,
-        "p50_ms": 0.946,
+        "min_ms": 0.89,
+        "p50_ms": 0.95,
         "p95_ms": 0.993,
         "p99_ms": 0.993,
         "max_ms": 0.993
       },
-      "/logs/epbench-a133189f-3": {
+      "/history/epbench-65316f10-0/counts": {
         "count": 4,
-        "min_ms": 3.048,
-        "p50_ms": 3.164,
-        "p95_ms": 3.247,
-        "p99_ms": 3.247,
-        "max_ms": 3.247
+        "min_ms": 0.65,
+        "p50_ms": 0.699,
+        "p95_ms": 0.707,
+        "p99_ms": 0.707,
+        "max_ms": 0.707
       },
-      "/history/epbench-a133189f-3": {
+      "/history/epbench-65316f10-0/processes": {
         "count": 4,
-        "min_ms": 0.824,
-        "p50_ms": 0.841,
-        "p95_ms": 0.861,
-        "p99_ms": 0.861,
-        "max_ms": 0.861
+        "min_ms": 0.685,
+        "p50_ms": 0.701,
+        "p95_ms": 0.759,
+        "p99_ms": 0.759,
+        "max_ms": 0.759
       },
-      "/history/epbench-a133189f-3/counts": {
-        "count": 4,
-        "min_ms": 0.602,
-        "p50_ms": 0.604,
-        "p95_ms": 0.642,
-        "p99_ms": 0.642,
-        "max_ms": 0.642
-      },
-      "/history/epbench-a133189f-3/processes": {
-        "count": 4,
-        "min_ms": 0.652,
-        "p50_ms": 0.704,
-        "p95_ms": 0.721,
-        "p99_ms": 0.721,
-        "max_ms": 0.721
-      },
-      "/history/epbench-a133189f-3/transcript": {
+      "/history/epbench-65316f10-0/transcript": {
         "count": 4,
         "min_ms": 0.193,
-        "p50_ms": 0.199,
-        "p95_ms": 0.207,
-        "p99_ms": 0.207,
-        "max_ms": 0.207
+        "p50_ms": 0.208,
+        "p95_ms": 0.238,
+        "p99_ms": 0.238,
+        "max_ms": 0.238
       },
-      "/files/epbench-a133189f-3": {
+      "/files/epbench-65316f10-0": {
         "count": 4,
-        "min_ms": 2.373,
-        "p50_ms": 2.422,
-        "p95_ms": 2.456,
-        "p99_ms": 2.456,
-        "max_ms": 2.456
+        "min_ms": 2.552,
+        "p50_ms": 2.583,
+        "p95_ms": 2.817,
+        "p99_ms": 2.817,
+        "max_ms": 2.817
       },
-      "/sessions/epbench-a133189f-3/policy-contexts": {
+      "/sessions/epbench-65316f10-0/policy-contexts": {
         "count": 4,
-        "min_ms": 2.239,
-        "p50_ms": 2.286,
-        "p95_ms": 2.387,
-        "p99_ms": 2.387,
-        "max_ms": 2.387
+        "min_ms": 2.804,
+        "p50_ms": 2.847,
+        "p95_ms": 2.939,
+        "p99_ms": 2.939,
+        "max_ms": 2.939
       },
-      "/info/epbench-a133189f-4": {
+      "/info/epbench-65316f10-1": {
         "count": 4,
-        "min_ms": 0.923,
-        "p50_ms": 0.95,
-        "p95_ms": 1.015,
-        "p99_ms": 1.015,
-        "max_ms": 1.015
+        "min_ms": 0.954,
+        "p50_ms": 1.104,
+        "p95_ms": 1.123,
+        "p99_ms": 1.123,
+        "max_ms": 1.123
       },
-      "/logs/epbench-a133189f-4": {
+      "/logs/epbench-65316f10-1": {
         "count": 4,
-        "min_ms": 3.041,
-        "p50_ms": 3.061,
-        "p95_ms": 3.176,
-        "p99_ms": 3.176,
-        "max_ms": 3.176
+        "min_ms": 3.337,
+        "p50_ms": 3.466,
+        "p95_ms": 3.567,
+        "p99_ms": 3.567,
+        "max_ms": 3.567
       },
-      "/history/epbench-a133189f-4": {
+      "/history/epbench-65316f10-1": {
         "count": 4,
-        "min_ms": 0.851,
-        "p50_ms": 0.856,
-        "p95_ms": 0.897,
-        "p99_ms": 0.897,
-        "max_ms": 0.897
+        "min_ms": 0.887,
+        "p50_ms": 0.998,
+        "p95_ms": 1.024,
+        "p99_ms": 1.024,
+        "max_ms": 1.024
       },
-      "/history/epbench-a133189f-4/counts": {
+      "/history/epbench-65316f10-1/counts": {
         "count": 4,
-        "min_ms": 0.592,
-        "p50_ms": 0.61,
-        "p95_ms": 0.629,
-        "p99_ms": 0.629,
-        "max_ms": 0.629
+        "min_ms": 0.634,
+        "p50_ms": 0.703,
+        "p95_ms": 0.751,
+        "p99_ms": 0.751,
+        "max_ms": 0.751
       },
-      "/history/epbench-a133189f-4/processes": {
+      "/history/epbench-65316f10-1/processes": {
         "count": 4,
-        "min_ms": 0.669,
-        "p50_ms": 0.693,
-        "p95_ms": 0.762,
-        "p99_ms": 0.762,
-        "max_ms": 0.762
+        "min_ms": 0.695,
+        "p50_ms": 0.741,
+        "p95_ms": 0.797,
+        "p99_ms": 0.797,
+        "max_ms": 0.797
       },
-      "/history/epbench-a133189f-4/transcript": {
+      "/history/epbench-65316f10-1/transcript": {
         "count": 4,
-        "min_ms": 0.2,
-        "p50_ms": 0.203,
-        "p95_ms": 0.225,
-        "p99_ms": 0.225,
-        "max_ms": 0.225
+        "min_ms": 0.182,
+        "p50_ms": 0.201,
+        "p95_ms": 0.213,
+        "p99_ms": 0.213,
+        "max_ms": 0.213
       },
-      "/files/epbench-a133189f-4": {
+      "/files/epbench-65316f10-1": {
         "count": 4,
-        "min_ms": 2.355,
-        "p50_ms": 2.447,
-        "p95_ms": 2.57,
-        "p99_ms": 2.57,
-        "max_ms": 2.57
+        "min_ms": 2.587,
+        "p50_ms": 2.669,
+        "p95_ms": 2.671,
+        "p99_ms": 2.671,
+        "max_ms": 2.671
       },
-      "/sessions/epbench-a133189f-4/policy-contexts": {
+      "/sessions/epbench-65316f10-1/policy-contexts": {
         "count": 4,
-        "min_ms": 2.27,
-        "p50_ms": 2.317,
-        "p95_ms": 2.376,
-        "p99_ms": 2.376,
-        "max_ms": 2.376
+        "min_ms": 2.794,
+        "p50_ms": 2.847,
+        "p95_ms": 2.941,
+        "p99_ms": 2.941,
+        "max_ms": 2.941
       },
-      "/info/epbench-a133189f-5": {
+      "/info/epbench-65316f10-2": {
         "count": 4,
-        "min_ms": 0.929,
-        "p50_ms": 0.93,
-        "p95_ms": 0.943,
-        "p99_ms": 0.943,
-        "max_ms": 0.943
+        "min_ms": 0.973,
+        "p50_ms": 1.096,
+        "p95_ms": 1.279,
+        "p99_ms": 1.279,
+        "max_ms": 1.279
       },
-      "/logs/epbench-a133189f-5": {
+      "/logs/epbench-65316f10-2": {
         "count": 4,
-        "min_ms": 3.047,
-        "p50_ms": 3.093,
-        "p95_ms": 3.174,
-        "p99_ms": 3.174,
-        "max_ms": 3.174
+        "min_ms": 3.233,
+        "p50_ms": 3.324,
+        "p95_ms": 3.499,
+        "p99_ms": 3.499,
+        "max_ms": 3.499
       },
-      "/history/epbench-a133189f-5": {
+      "/history/epbench-65316f10-2": {
         "count": 4,
-        "min_ms": 0.83,
-        "p50_ms": 0.866,
-        "p95_ms": 0.968,
-        "p99_ms": 0.968,
-        "max_ms": 0.968
+        "min_ms": 0.869,
+        "p50_ms": 0.976,
+        "p95_ms": 0.997,
+        "p99_ms": 0.997,
+        "max_ms": 0.997
       },
-      "/history/epbench-a133189f-5/counts": {
+      "/history/epbench-65316f10-2/counts": {
         "count": 4,
-        "min_ms": 0.592,
-        "p50_ms": 0.619,
-        "p95_ms": 0.656,
-        "p99_ms": 0.656,
-        "max_ms": 0.656
+        "min_ms": 0.616,
+        "p50_ms": 0.675,
+        "p95_ms": 0.708,
+        "p99_ms": 0.708,
+        "max_ms": 0.708
       },
-      "/history/epbench-a133189f-5/processes": {
+      "/history/epbench-65316f10-2/processes": {
         "count": 4,
-        "min_ms": 0.657,
-        "p50_ms": 0.658,
-        "p95_ms": 0.661,
-        "p99_ms": 0.661,
-        "max_ms": 0.661
+        "min_ms": 0.693,
+        "p50_ms": 0.768,
+        "p95_ms": 0.812,
+        "p99_ms": 0.812,
+        "max_ms": 0.812
       },
-      "/history/epbench-a133189f-5/transcript": {
+      "/history/epbench-65316f10-2/transcript": {
         "count": 4,
-        "min_ms": 0.197,
-        "p50_ms": 0.198,
-        "p95_ms": 0.21,
-        "p99_ms": 0.21,
-        "max_ms": 0.21
+        "min_ms": 0.196,
+        "p50_ms": 0.214,
+        "p95_ms": 0.215,
+        "p99_ms": 0.215,
+        "max_ms": 0.215
       },
-      "/files/epbench-a133189f-5": {
+      "/files/epbench-65316f10-2": {
         "count": 4,
-        "min_ms": 2.388,
-        "p50_ms": 2.431,
-        "p95_ms": 2.518,
-        "p99_ms": 2.518,
-        "max_ms": 2.518
+        "min_ms": 2.465,
+        "p50_ms": 2.651,
+        "p95_ms": 2.651,
+        "p99_ms": 2.651,
+        "max_ms": 2.651
       },
-      "/sessions/epbench-a133189f-5/policy-contexts": {
+      "/sessions/epbench-65316f10-2/policy-contexts": {
         "count": 4,
-        "min_ms": 2.243,
-        "p50_ms": 2.317,
-        "p95_ms": 2.365,
-        "p99_ms": 2.365,
-        "max_ms": 2.365
+        "min_ms": 2.731,
+        "p50_ms": 2.936,
+        "p95_ms": 3.047,
+        "p99_ms": 3.047,
+        "max_ms": 3.047
       },
-      "/info/epbench-a133189f-6": {
+      "/info/epbench-65316f10-3": {
         "count": 4,
-        "min_ms": 0.868,
-        "p50_ms": 0.941,
-        "p95_ms": 1.028,
-        "p99_ms": 1.028,
-        "max_ms": 1.028
+        "min_ms": 1.028,
+        "p50_ms": 1.143,
+        "p95_ms": 1.187,
+        "p99_ms": 1.187,
+        "max_ms": 1.187
       },
-      "/logs/epbench-a133189f-6": {
+      "/logs/epbench-65316f10-3": {
         "count": 4,
-        "min_ms": 3.024,
-        "p50_ms": 3.084,
-        "p95_ms": 3.197,
-        "p99_ms": 3.197,
-        "max_ms": 3.197
+        "min_ms": 3.104,
+        "p50_ms": 3.676,
+        "p95_ms": 3.971,
+        "p99_ms": 3.971,
+        "max_ms": 3.971
       },
-      "/history/epbench-a133189f-6": {
+      "/history/epbench-65316f10-3": {
         "count": 4,
-        "min_ms": 0.822,
-        "p50_ms": 0.828,
-        "p95_ms": 0.883,
-        "p99_ms": 0.883,
-        "max_ms": 0.883
+        "min_ms": 0.914,
+        "p50_ms": 0.964,
+        "p95_ms": 1.04,
+        "p99_ms": 1.04,
+        "max_ms": 1.04
       },
-      "/history/epbench-a133189f-6/counts": {
+      "/history/epbench-65316f10-3/counts": {
         "count": 4,
-        "min_ms": 0.615,
-        "p50_ms": 0.642,
-        "p95_ms": 0.761,
-        "p99_ms": 0.761,
-        "max_ms": 0.761
-      },
-      "/history/epbench-a133189f-6/processes": {
-        "count": 4,
-        "min_ms": 0.664,
-        "p50_ms": 0.676,
+        "min_ms": 0.644,
+        "p50_ms": 0.671,
         "p95_ms": 0.718,
         "p99_ms": 0.718,
         "max_ms": 0.718
       },
-      "/history/epbench-a133189f-6/transcript": {
+      "/history/epbench-65316f10-3/processes": {
         "count": 4,
-        "min_ms": 0.197,
-        "p50_ms": 0.209,
-        "p95_ms": 0.217,
-        "p99_ms": 0.217,
-        "max_ms": 0.217
+        "min_ms": 0.661,
+        "p50_ms": 0.709,
+        "p95_ms": 0.717,
+        "p99_ms": 0.717,
+        "max_ms": 0.717
       },
-      "/files/epbench-a133189f-6": {
+      "/history/epbench-65316f10-3/transcript": {
         "count": 4,
-        "min_ms": 2.382,
-        "p50_ms": 2.42,
-        "p95_ms": 2.587,
-        "p99_ms": 2.587,
-        "max_ms": 2.587
+        "min_ms": 0.202,
+        "p50_ms": 0.208,
+        "p95_ms": 0.223,
+        "p99_ms": 0.223,
+        "max_ms": 0.223
       },
-      "/sessions/epbench-a133189f-6/policy-contexts": {
+      "/files/epbench-65316f10-3": {
         "count": 4,
-        "min_ms": 2.298,
-        "p50_ms": 2.343,
-        "p95_ms": 2.373,
-        "p99_ms": 2.373,
-        "max_ms": 2.373
+        "min_ms": 2.482,
+        "p50_ms": 2.521,
+        "p95_ms": 2.645,
+        "p99_ms": 2.645,
+        "max_ms": 2.645
       },
-      "/info/epbench-a133189f-7": {
+      "/sessions/epbench-65316f10-3/policy-contexts": {
         "count": 4,
-        "min_ms": 0.867,
-        "p50_ms": 0.947,
-        "p95_ms": 0.992,
-        "p99_ms": 0.992,
-        "max_ms": 0.992
+        "min_ms": 2.69,
+        "p50_ms": 2.864,
+        "p95_ms": 2.911,
+        "p99_ms": 2.911,
+        "max_ms": 2.911
       },
-      "/logs/epbench-a133189f-7": {
+      "/info/epbench-65316f10-4": {
         "count": 4,
-        "min_ms": 3.115,
-        "p50_ms": 3.13,
-        "p95_ms": 3.184,
-        "p99_ms": 3.184,
-        "max_ms": 3.184
+        "min_ms": 1.0,
+        "p50_ms": 1.017,
+        "p95_ms": 1.021,
+        "p99_ms": 1.021,
+        "max_ms": 1.021
       },
-      "/history/epbench-a133189f-7": {
+      "/logs/epbench-65316f10-4": {
         "count": 4,
-        "min_ms": 0.864,
-        "p50_ms": 0.87,
-        "p95_ms": 0.958,
-        "p99_ms": 0.958,
-        "max_ms": 0.958
+        "min_ms": 3.278,
+        "p50_ms": 3.366,
+        "p95_ms": 3.392,
+        "p99_ms": 3.392,
+        "max_ms": 3.392
       },
-      "/history/epbench-a133189f-7/counts": {
+      "/history/epbench-65316f10-4": {
         "count": 4,
-        "min_ms": 0.601,
-        "p50_ms": 0.601,
-        "p95_ms": 0.635,
-        "p99_ms": 0.635,
-        "max_ms": 0.635
+        "min_ms": 0.943,
+        "p50_ms": 1.023,
+        "p95_ms": 1.068,
+        "p99_ms": 1.068,
+        "max_ms": 1.068
       },
-      "/history/epbench-a133189f-7/processes": {
+      "/history/epbench-65316f10-4/counts": {
         "count": 4,
-        "min_ms": 0.635,
-        "p50_ms": 0.649,
-        "p95_ms": 0.676,
-        "p99_ms": 0.676,
-        "max_ms": 0.676
+        "min_ms": 0.625,
+        "p50_ms": 0.688,
+        "p95_ms": 0.707,
+        "p99_ms": 0.707,
+        "max_ms": 0.707
       },
-      "/history/epbench-a133189f-7/transcript": {
+      "/history/epbench-65316f10-4/processes": {
         "count": 4,
-        "min_ms": 0.193,
-        "p50_ms": 0.196,
-        "p95_ms": 0.218,
-        "p99_ms": 0.218,
-        "max_ms": 0.218
+        "min_ms": 0.687,
+        "p50_ms": 0.712,
+        "p95_ms": 0.855,
+        "p99_ms": 0.855,
+        "max_ms": 0.855
       },
-      "/files/epbench-a133189f-7": {
+      "/history/epbench-65316f10-4/transcript": {
         "count": 4,
-        "min_ms": 2.365,
-        "p50_ms": 2.482,
-        "p95_ms": 2.53,
-        "p99_ms": 2.53,
-        "max_ms": 2.53
+        "min_ms": 0.195,
+        "p50_ms": 0.199,
+        "p95_ms": 0.204,
+        "p99_ms": 0.204,
+        "max_ms": 0.204
       },
-      "/sessions/epbench-a133189f-7/policy-contexts": {
+      "/files/epbench-65316f10-4": {
         "count": 4,
-        "min_ms": 2.233,
-        "p50_ms": 2.3,
-        "p95_ms": 2.4,
-        "p99_ms": 2.4,
-        "max_ms": 2.4
+        "min_ms": 2.421,
+        "p50_ms": 2.614,
+        "p95_ms": 2.615,
+        "p99_ms": 2.615,
+        "max_ms": 2.615
+      },
+      "/sessions/epbench-65316f10-4/policy-contexts": {
+        "count": 4,
+        "min_ms": 2.707,
+        "p50_ms": 2.779,
+        "p95_ms": 2.908,
+        "p99_ms": 2.908,
+        "max_ms": 2.908
+      },
+      "/info/epbench-65316f10-5": {
+        "count": 4,
+        "min_ms": 1.041,
+        "p50_ms": 1.161,
+        "p95_ms": 1.175,
+        "p99_ms": 1.175,
+        "max_ms": 1.175
+      },
+      "/logs/epbench-65316f10-5": {
+        "count": 4,
+        "min_ms": 3.265,
+        "p50_ms": 3.368,
+        "p95_ms": 3.429,
+        "p99_ms": 3.429,
+        "max_ms": 3.429
+      },
+      "/history/epbench-65316f10-5": {
+        "count": 4,
+        "min_ms": 0.869,
+        "p50_ms": 0.917,
+        "p95_ms": 0.969,
+        "p99_ms": 0.969,
+        "max_ms": 0.969
+      },
+      "/history/epbench-65316f10-5/counts": {
+        "count": 4,
+        "min_ms": 0.647,
+        "p50_ms": 0.714,
+        "p95_ms": 0.725,
+        "p99_ms": 0.725,
+        "max_ms": 0.725
+      },
+      "/history/epbench-65316f10-5/processes": {
+        "count": 4,
+        "min_ms": 0.676,
+        "p50_ms": 0.729,
+        "p95_ms": 0.748,
+        "p99_ms": 0.748,
+        "max_ms": 0.748
+      },
+      "/history/epbench-65316f10-5/transcript": {
+        "count": 4,
+        "min_ms": 0.19,
+        "p50_ms": 0.199,
+        "p95_ms": 0.212,
+        "p99_ms": 0.212,
+        "max_ms": 0.212
+      },
+      "/files/epbench-65316f10-5": {
+        "count": 4,
+        "min_ms": 2.555,
+        "p50_ms": 2.657,
+        "p95_ms": 2.696,
+        "p99_ms": 2.696,
+        "max_ms": 2.696
+      },
+      "/sessions/epbench-65316f10-5/policy-contexts": {
+        "count": 4,
+        "min_ms": 2.738,
+        "p50_ms": 2.918,
+        "p95_ms": 2.96,
+        "p99_ms": 2.96,
+        "max_ms": 2.96
+      },
+      "/info/epbench-65316f10-6": {
+        "count": 4,
+        "min_ms": 0.964,
+        "p50_ms": 1.038,
+        "p95_ms": 1.068,
+        "p99_ms": 1.068,
+        "max_ms": 1.068
+      },
+      "/logs/epbench-65316f10-6": {
+        "count": 4,
+        "min_ms": 3.142,
+        "p50_ms": 3.314,
+        "p95_ms": 3.339,
+        "p99_ms": 3.339,
+        "max_ms": 3.339
+      },
+      "/history/epbench-65316f10-6": {
+        "count": 4,
+        "min_ms": 0.985,
+        "p50_ms": 1.03,
+        "p95_ms": 1.065,
+        "p99_ms": 1.065,
+        "max_ms": 1.065
+      },
+      "/history/epbench-65316f10-6/counts": {
+        "count": 4,
+        "min_ms": 0.637,
+        "p50_ms": 0.675,
+        "p95_ms": 0.737,
+        "p99_ms": 0.737,
+        "max_ms": 0.737
+      },
+      "/history/epbench-65316f10-6/processes": {
+        "count": 4,
+        "min_ms": 0.67,
+        "p50_ms": 0.733,
+        "p95_ms": 0.736,
+        "p99_ms": 0.736,
+        "max_ms": 0.736
+      },
+      "/history/epbench-65316f10-6/transcript": {
+        "count": 4,
+        "min_ms": 0.2,
+        "p50_ms": 0.212,
+        "p95_ms": 0.225,
+        "p99_ms": 0.225,
+        "max_ms": 0.225
+      },
+      "/files/epbench-65316f10-6": {
+        "count": 4,
+        "min_ms": 2.504,
+        "p50_ms": 2.678,
+        "p95_ms": 2.679,
+        "p99_ms": 2.679,
+        "max_ms": 2.679
+      },
+      "/sessions/epbench-65316f10-6/policy-contexts": {
+        "count": 4,
+        "min_ms": 2.705,
+        "p50_ms": 2.745,
+        "p95_ms": 2.904,
+        "p99_ms": 2.904,
+        "max_ms": 2.904
+      },
+      "/info/epbench-65316f10-7": {
+        "count": 4,
+        "min_ms": 0.923,
+        "p50_ms": 1.065,
+        "p95_ms": 1.257,
+        "p99_ms": 1.257,
+        "max_ms": 1.257
+      },
+      "/logs/epbench-65316f10-7": {
+        "count": 4,
+        "min_ms": 3.278,
+        "p50_ms": 3.358,
+        "p95_ms": 3.415,
+        "p99_ms": 3.415,
+        "max_ms": 3.415
+      },
+      "/history/epbench-65316f10-7": {
+        "count": 4,
+        "min_ms": 0.875,
+        "p50_ms": 0.923,
+        "p95_ms": 0.947,
+        "p99_ms": 0.947,
+        "max_ms": 0.947
+      },
+      "/history/epbench-65316f10-7/counts": {
+        "count": 4,
+        "min_ms": 0.653,
+        "p50_ms": 0.687,
+        "p95_ms": 0.703,
+        "p99_ms": 0.703,
+        "max_ms": 0.703
+      },
+      "/history/epbench-65316f10-7/processes": {
+        "count": 4,
+        "min_ms": 0.674,
+        "p50_ms": 0.733,
+        "p95_ms": 0.748,
+        "p99_ms": 0.748,
+        "max_ms": 0.748
+      },
+      "/history/epbench-65316f10-7/transcript": {
+        "count": 4,
+        "min_ms": 0.187,
+        "p50_ms": 0.192,
+        "p95_ms": 0.198,
+        "p99_ms": 0.198,
+        "max_ms": 0.198
+      },
+      "/files/epbench-65316f10-7": {
+        "count": 4,
+        "min_ms": 2.503,
+        "p50_ms": 2.623,
+        "p95_ms": 2.626,
+        "p99_ms": 2.626,
+        "max_ms": 2.626
+      },
+      "/sessions/epbench-65316f10-7/policy-contexts": {
+        "count": 4,
+        "min_ms": 2.75,
+        "p50_ms": 2.826,
+        "p95_ms": 2.911,
+        "p99_ms": 2.911,
+        "max_ms": 2.911
       }
     },
     "gateway": {
       "/health": {
         "count": 32,
-        "min_ms": 0.124,
-        "p50_ms": 0.151,
-        "p95_ms": 0.232,
-        "p99_ms": 0.259,
-        "max_ms": 0.259
+        "min_ms": 0.126,
+        "p50_ms": 0.152,
+        "p95_ms": 0.205,
+        "p99_ms": 0.232,
+        "max_ms": 0.232
       },
       "/token": {
         "count": 32,
-        "min_ms": 0.117,
-        "p50_ms": 0.13,
-        "p95_ms": 0.179,
-        "p99_ms": 0.183,
-        "max_ms": 0.183
+        "min_ms": 0.112,
+        "p50_ms": 0.127,
+        "p95_ms": 0.145,
+        "p99_ms": 0.165,
+        "max_ms": 0.165
       },
       "/status": {
         "count": 32,
-        "min_ms": 0.209,
-        "p50_ms": 0.227,
-        "p95_ms": 0.252,
-        "p99_ms": 0.261,
-        "max_ms": 0.261
+        "min_ms": 0.198,
+        "p50_ms": 0.225,
+        "p95_ms": 0.258,
+        "p99_ms": 0.311,
+        "max_ms": 0.311
       }
     }
   },
   "schema": "capsem.benchmark-artifact.v1",
   "project_version": "1.2.1780103109",
   "arch": "arm64",
-  "recorded_at": 1780149845.194512,
-  "recorded_at_utc": "2026-05-30T14:04:05.194515+00:00",
+  "recorded_at": 1780520880.413833,
+  "recorded_at_utc": "2026-06-03T21:08:00.413838+00:00",
   "command": "uv run pytest tests/capsem-serial/test_endpoint_latency_benchmark.py -xvs",
   "host": {
     "platform": "Darwin",
@@ -723,13 +723,27 @@
     "memory_total_gb": 128.0
   },
   "git": {
-    "commit": "0a425541fbdc03cc9821aafb238a0dd4b26ccdcd",
+    "commit": "f4d97a6c87fe07cd2adaf2258b7a5a24a1785d83",
     "dirty": true,
-    "source_dirty": false,
+    "source_dirty": true,
     "dirty_paths": [
       "benchmarks/capsem-bench/data_1.2.1780103109_arm64.json",
+      "benchmarks/endpoint-latency/data_1.2.1780103109_arm64.json",
+      "benchmarks/fork/data_1.2.1780103109_arm64.json",
+      "benchmarks/host-native/data_1.2.1780103109_arm64.json",
+      "benchmarks/lifecycle/data_1.2.1780103109_arm64.json",
+      "benchmarks/parallel/data_1.2.1780103109_arm64.json",
       "benchmarks/security-engine/data_1.2.1780103109_arm64_cel_microbench.json",
-      "benchmarks/security-engine/data_1.2.1780103109_arm64_security_packs_microbench.json"
+      "benchmarks/security-engine/data_1.2.1780103109_arm64_dns_request_enforcement.json",
+      "benchmarks/security-engine/data_1.2.1780103109_arm64_http_request_enforcement.json",
+      "benchmarks/security-engine/data_1.2.1780103109_arm64_mcp_request_enforcement.json",
+      "benchmarks/security-engine/data_1.2.1780103109_arm64_process_enforcement.json",
+      "justfile",
+      "tests/capsem-serial/test_endpoint_latency_benchmark.py",
+      "tests/test_benchmark_contract.py",
+      "benchmarks/network-engine/data_1.2.1780103109_arm64_mitm_pipeline_microbench.json",
+      "benchmarks/network-engine/data_1.2.1780103109_arm64_provider_model_parser_microbench.json",
+      "benchmarks/security-engine/data_1.2.1780103109_arm64_detection_ir_microbench.json"
     ]
   }
 }

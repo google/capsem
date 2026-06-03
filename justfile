@@ -124,6 +124,21 @@ _ensure-service: _sign
         local pid="$1"
         ps -p "$pid" -o command= 2>/dev/null || true
     }
+    stop_default_launchd_service() {
+        if [[ "$(uname -s)" != "Darwin" ]]; then
+            return
+        fi
+        if [ -n "${CAPSEM_RUN_DIR:-}" ] || [ "$CAPSEM_HOME_DIR" != "$HOME/.capsem" ]; then
+            return
+        fi
+        local domain="gui/$(id -u)"
+        for label in com.capsem.service com.capsem.tray; do
+            if launchctl print "$domain/$label" >/dev/null 2>&1; then
+                echo "Stopping launchd $label for dev service handoff"
+                launchctl bootout "$domain/$label" >/dev/null 2>&1 || true
+            fi
+        done
+    }
     cleanup_runtime_processes() {
         # Kill ONLY the service this pidfile tracks -- no pkill by name.
         # Killing by pattern would take down a user's locally installed capsem
@@ -168,6 +183,7 @@ _ensure-service: _sign
         fi
         rm -f "$PIDFILE" "$GATEWAY_PIDFILE" "$SOCKET" "$RUN_DIR/gateway.lock" "$RUN_DIR/gateway.token" "$RUN_DIR/gateway.port"
     }
+    stop_default_launchd_service
     cleanup_runtime_processes
     # Symlink <capsem_home>/assets -> repo assets so installed tools (MCP, CLI)
     # see the same repacked initrd as the dev service.

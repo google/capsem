@@ -98,7 +98,7 @@ def legacy_arch_for(category: str) -> str:
 
 
 def lane_suffix(category: str, filename_suffix: str | None, data: dict[str, Any]) -> str:
-    if category == "security-engine":
+    if category in {"security-engine", "network-engine"}:
         return filename_suffix or str(data.get("kind") or "default")
     return "default"
 
