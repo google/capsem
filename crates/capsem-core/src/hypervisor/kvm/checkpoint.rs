@@ -731,7 +731,7 @@ const fn arch_tag() -> [u8; 4] {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_arch = "x86_64"))]
 mod tests {
     use super::*;
 
