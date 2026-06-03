@@ -21,6 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added first-party `model.evidence.parse_status` / `model.evidence.status`
   CEL fields and live MITM enforcement proof that malformed provider model
   responses are marked partial and can block before guest delivery.
+- Added live MITM enforcement proof that multi-frame provider model responses
+  are aggregated into canonical `model.response.body.text` before CEL blocking.
 - Added canonical CEL policy-context roots for credential, VM, conversation,
   and snapshot security events so detection and enforcement rules can address
   those event families directly.

@@ -995,6 +995,82 @@ async fn runtime_security_engine_blocks_gzip_model_response_before_guest_deliver
 }
 
 #[tokio::test]
+async fn runtime_security_engine_blocks_multiframe_model_response_before_guest_delivery() {
+    let mut engine = SecurityEngine::default();
+    engine.set_enforcement(Box::new(
+        CelEnforcementEvaluator::compile(vec![CelEnforcementRule {
+            id: "block-multiframe-model-response-canonical".into(),
+            pack_id: Some("corp-enforcement".into()),
+            condition: "common.event_type == 'model.response' \
+                && model.response.provider == 'openai' \
+                && model.response.body.text.contains('streamed-model-needle')"
+                .into(),
+            decision: SecurityDecisionAction::Block,
+            reason: Some("canonical multiframe model response block".into()),
+            mutations: Vec::new(),
+        }])
+        .unwrap(),
+    ));
+    let config =
+        make_config_dev_with_security_engine(Some(Arc::new(std::sync::Mutex::new(engine))));
+    let (port, upstream_task) = spawn_http_fixture_response_owned(
+        200,
+        "OK",
+        vec![("content-type", "text/event-stream")],
+        openai_sse_text_fragments_response("gpt-test", &["streamed-", "model-", "needle"]),
+    )
+    .await;
+    let (mut sender, proxy_task, conn_task) =
+        open_direct_plain_http_request_conn(&config, "127.0.0.1", port, Some(ProviderKind::OpenAi))
+            .await;
+
+    let (status, body) =
+        send_openai_chat_completion(&mut sender, "127.0.0.1", "gpt-test", "safe").await;
+
+    assert_eq!(status, 403);
+    assert!(body.contains("canonical multiframe model response block"));
+    let upstream_request = upstream_task.await.unwrap();
+    assert!(
+        upstream_request.starts_with("POST /v1/chat/completions"),
+        "streamed model response policy must run after provider frame aggregation"
+    );
+    drop(sender);
+    conn_task.abort();
+    proxy_task.abort();
+    let _ = conn_task.await;
+    let _ = proxy_task.await;
+
+    tokio::time::sleep(std::time::Duration::from_millis(DB_FLUSH_MS)).await;
+
+    let reader = config.db.reader().unwrap();
+    let events = reader.recent_net_events(10).unwrap();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].decision, Decision::Denied);
+    assert_eq!(
+        events[0].policy_rule.as_deref(),
+        Some("block-multiframe-model-response-canonical")
+    );
+    assert!(
+        events[0]
+            .response_body_preview
+            .as_deref()
+            .is_some_and(|preview| !preview.contains("streamed-model-needle")),
+        "blocked multiframe model response body must not be journaled back through the guest response preview"
+    );
+
+    let security = reader
+        .query_raw(
+            "SELECT se.event_type, se.final_action, steps.rule_id, steps.message \
+             FROM security_events se \
+             LEFT JOIN security_event_steps steps ON steps.event_id = se.event_id",
+        )
+        .unwrap();
+    assert!(security.contains("model.response"));
+    assert!(security.contains("block"));
+    assert!(security.contains("block-multiframe-model-response-canonical"));
+}
+
+#[tokio::test]
 async fn runtime_security_engine_blocks_malformed_model_response_parse_status_before_guest_delivery(
 ) {
     let mut engine = SecurityEngine::default();
@@ -1573,6 +1649,21 @@ fn openai_sse_text_response(model: &str, content: &str) -> String {
 data: {{\"id\":\"chatcmpl-policy\",\"model\":\"{model}\",\"choices\":[{{\"index\":0,\"delta\":{{}},\"finish_reason\":\"stop\"}}]}}\n\n\
 data: [DONE]\n\n"
     )
+}
+
+fn openai_sse_text_fragments_response(model: &str, fragments: &[&str]) -> String {
+    let mut response = String::new();
+    for fragment in fragments {
+        let content = serde_json::to_string(fragment).unwrap();
+        response.push_str(&format!(
+            "data: {{\"id\":\"chatcmpl-policy\",\"model\":\"{model}\",\"choices\":[{{\"index\":0,\"delta\":{{\"content\":{content}}},\"finish_reason\":null}}]}}\n\n"
+        ));
+    }
+    response.push_str(&format!(
+        "data: {{\"id\":\"chatcmpl-policy\",\"model\":\"{model}\",\"choices\":[{{\"index\":0,\"delta\":{{}},\"finish_reason\":\"stop\"}}]}}\n\n\
+data: [DONE]\n\n"
+    ));
+    response
 }
 
 fn openai_sse_tool_call_response(

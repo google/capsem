@@ -50,7 +50,7 @@ This sprint verifies that diagnosis and then removes the second path.
 | T1 | Canonical Projection Contract | Done | Detection and enforcement CEL bindings are defined from every canonical `SecurityEvent` family. |
 | T2 | Live Enforcement Rewire | Done | MITM/provider callbacks evaluate canonical model request/response/tool events; framed MCP request/response now evaluates canonical MCP events. |
 | T3 | Rule Compilation Cleanup | Done | Model/MCP rules are no longer rewritten into HTTP request/response predicates. |
-| T4 | Regression Tests | In Progress | Tests fail if model rules only work through HTTP-body compatibility fields. |
+| T4 | Regression Tests | Done | Tests fail if model rules only work through HTTP-body compatibility fields. |
 | T5 | Integration Proof | In Progress | End-to-end proof shows canonical events drive block/detect/log behavior. |
 | T6 | Benchmark Proof | In Progress | Fast and full benchmark gates cover CEL, Sigma/Detection IR, hunt, and live callback overhead. |
 | T7 | Typed Event Identity Contract | Done | Producers, callbacks, CEL guards, and SQLite storage consume `SecurityEventType`. |
@@ -141,6 +141,9 @@ Benchmark release hold:
   first-party CEL fields. Required provider responses with missing or
   unknown-only parsed summaries are now partial, and malformed OpenAI SSE can
   block before guest delivery from that canonical evidence status.
+- T4 also proves multi-frame OpenAI SSE text deltas are aggregated into
+  canonical `model.response.body.text` before CEL enforcement and blocked
+  before guest delivery.
 - The framed MCP path no longer uses the local MCP decision provider, MCP
   condition mini-parser, or builtin domain-policy environment authority for
   live policy decisions. It builds `mcp.request` and `mcp.response` security

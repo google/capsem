@@ -12,7 +12,7 @@
   request/response enforcement are wired; request-side model tool-result
   enforcement is now proven before upstream dispatch.
 - [x] T3: Remove model/MCP-to-HTTP rule lowering.
-- [ ] T4: Add abstraction-level regression tests.
+- [x] T4: Add abstraction-level regression tests.
   First semantic object-search regression added for HTTP, DNS, file, MCP
   arguments, model tool-call arguments, and model response bodies.
   Compressed provider model responses now have a live MITM regression proving
@@ -21,6 +21,9 @@
   `model.evidence.parse_status` / `model.evidence.status` to CEL and have a
   live MITM regression proving partial parse-status blocking before guest
   delivery.
+  Multi-frame provider model responses now have a live MITM regression proving
+  streamed content deltas are aggregated into canonical
+  `model.response.body.text` before CEL enforcement.
 - [ ] T5: Add integration/e2e proof and telemetry/session assertions.
 - [ ] T6: Add fast and full benchmark proof for the security spine. Fast
   Criterion coverage added; full `just benchmark` artifact gate remains open.
@@ -136,6 +139,9 @@
   `model.evidence.parse_status` and `model.evidence.status`. Required provider
   responses with no usable parsed summary are now `partial`, and malformed
   OpenAI SSE can block before guest delivery from that canonical field.
+- T4 final provider-body slice proves multi-frame OpenAI SSE text deltas are
+  aggregated into canonical `model.response.body.text`, blocked by CEL before
+  guest delivery, and excluded from blocked response previews.
 - T0/T0a source map is complete for the current codebase. Remaining
   credential, VM, profile, conversation, and snapshot gaps are producer gaps:
   the typed contract, CEL projection, SQLite ledger, session reconstruction,
@@ -243,6 +249,10 @@ Unit/contract:
   runtime_security_engine_blocks_malformed_model_response_parse_status_before_guest_delivery`
   proves malformed OpenAI SSE responses are marked `partial` in canonical
   `model.evidence.parse_status` and can block before guest delivery.
+- `cargo test -p capsem-core
+  runtime_security_engine_blocks_multiframe_model_response_before_guest_delivery`
+  proves multi-frame OpenAI SSE text deltas are aggregated into canonical
+  `model.response.body.text` and can block before guest delivery.
 - `cargo test -p capsem-core runtime_security_engine_blocks` proves the
   neighboring live MITM request/response/model/tool-call/tool-result block
   regressions still pass together.
@@ -289,8 +299,10 @@ Functional:
   `model.request`, `model.response`, provider tool-call, and request-side tool
   result blocking, including a compressed OpenAI SSE model response that must
   decode before `model.response.body.text` CEL evaluation and a malformed
-  OpenAI SSE response that must block through `model.evidence.parse_status`.
-  The framed-MCP live path has fixture-backed proof for canonical
+  OpenAI SSE response that must block through `model.evidence.parse_status`,
+  plus a multi-frame OpenAI SSE response that must aggregate content deltas
+  before `model.response.body.text` CEL evaluation. The framed-MCP live path
+  has fixture-backed proof for canonical
   `mcp.request` and `mcp.response` CEL enforcement. Service session-hunt tests
   prove persisted canonical events reconstruct into the same CEL roots for
   detection.
@@ -300,8 +312,8 @@ Adversarial:
   and unknown-field rejection. MITM tests cover request blocking before any
   upstream accept and compressed provider model responses blocking before guest
   delivery. Malformed provider model responses are marked partial and can block
-  before guest delivery. Multi-frame streaming hardening remains open under
-  T4/T5.
+  before guest delivery. Multi-frame provider model responses aggregate
+  streamed content deltas before canonical body-text blocking.
 
 E2E/VM:
 - Missing. Required once live callbacks are rewired under T2.
@@ -337,10 +349,10 @@ Missing/deferred:
 - Credential, VM, profile, conversation, and snapshot remain live producer
   gaps. They are first-party in the contract/projection/session-detection path,
   but no live emitter was found in this T0/T0a mapping pass.
-- T4/T5 provider-body hardening still needs multi-frame streaming provider
-  response proof; compressed and malformed model-response enforcement are
-  covered. Real VM E2E proof is still open. Session telemetry
-  reconstruction/hunt proof exists at the service-test layer.
+- T4 provider-body hardening is covered at the fixture-backed MITM layer for
+  compressed, malformed, and multi-frame model responses. Real VM E2E proof is
+  still open under T5. Session telemetry reconstruction/hunt proof exists at
+  the service-test layer.
 - T6 still needs full benchmark artifact execution and callback/parser/hunt
   benchmark coverage.
 - The current file watcher emits file path/class/size; file content search is
