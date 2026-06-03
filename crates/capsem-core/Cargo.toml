@@ -110,3 +110,7 @@ harness = false
 [[bench]]
 name = "interp_anthropic"
 harness = false
+
+[[bench]]
+name = "provider_model_parser"
+harness = false

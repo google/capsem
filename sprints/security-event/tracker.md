@@ -163,6 +163,7 @@ Fast microbench commands:
 
 - [x] `cargo bench -p capsem-security-engine --bench security_engine_cel --no-run`
 - [x] `cargo bench -p capsem-security-engine --bench detection_ir --no-run`
+- [x] `cargo bench -p capsem-core --bench provider_model_parser --no-run`
 
 Full artifact commands:
 
@@ -180,10 +181,11 @@ Benchmark coverage checklist:
 - [x] Sigma/Detection IR parse, validate, lower-to-CEL, compile, and evaluate.
 - [x] Detection hunt over inline events and session-reconstructed events.
 - [ ] MITM request/response callback overhead after canonical event creation.
-- [ ] Model provider parser/extractor overhead for streamed, compressed, and
+- [x] Model provider parser/extractor overhead for streamed, compressed, and
   provider tool-call responses.
-- [ ] Benchmark result names and commands recorded before any performance
+- [x] Benchmark result names and commands recorded before any performance
   claim.
+- [ ] Full artifact benchmark run recorded before any performance claim.
 
 ## Coverage Ledger
 
@@ -354,6 +356,17 @@ Performance:
 - `security_engine_cel` now includes
   `security_engine_runtime_backtest_hunt` for enforcement backtest, detection
   backtest, and 100-rule/100-event detection hunt through the engine API.
+- `security_engine_cel` now also includes
+  `security_engine_model_response_runtime` for direct model-response body CEL
+  enforcement and full `SecurityEngine::evaluate` on the canonical
+  `model.response` path, plus a
+  `session_model_response_hunt_100_rules_100_events` bench in
+  `security_engine_runtime_backtest_hunt`.
+- `provider_model_parser` covers OpenAI response parsing for single-frame
+  text, multi-frame text, malformed unknown-only responses, provider tool
+  calls, and gzip decode plus parse.
+- The canonical `just benchmark` Criterion lane now runs and archives
+  `security_engine_cel`, `detection_ir`, and `provider_model_parser`.
 - These are harness compile gates only; no new performance numbers were
   recorded in this milestone.
 - Full artifact benchmark not run in this milestone. `just benchmark` and

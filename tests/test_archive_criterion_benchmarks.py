@@ -119,3 +119,13 @@ def test_criterion_measurements_falls_back_to_mean_when_slope_is_null(tmp_path):
     assert measurements[0]["estimate_kind"] == "mean"
     assert measurements[0]["estimate_ns"] == 110.0
     assert "slope_ns" not in measurements[0]
+
+
+def test_archive_suite_config_includes_model_response_and_provider_parser_lanes():
+    cel_suite = archive_criterion_benchmarks.SUITES["cel_microbench"]
+    assert "security_engine_model_response_runtime/" in cel_suite["prefixes"]
+
+    provider_suite = archive_criterion_benchmarks.SUITES["provider_model_parser_microbench"]
+    assert provider_suite["category"] == "network-engine"
+    assert provider_suite["command"] == "cargo bench -p capsem-core --bench provider_model_parser"
+    assert provider_suite["prefixes"] == ("provider_model_parser_openai/",)

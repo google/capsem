@@ -13,6 +13,7 @@ def test_just_benchmark_runs_full_canonical_artifact_suite():
     assert "uv run python scripts/archive_superseded_benchmark_artifacts.py --archive-current-arch" in recipe
     assert "cargo bench -p capsem-security-engine --bench security_engine_cel" in recipe
     assert "cargo bench -p capsem-security-engine --bench detection_ir" in recipe
+    assert "cargo bench -p capsem-core --bench provider_model_parser" in recipe
     assert "uv run python scripts/archive_criterion_benchmarks.py" in recipe
     assert "uv run python -m pytest tests/capsem-serial/" in recipe
     assert "-m benchmark" in recipe

@@ -903,6 +903,7 @@ benchmark: _ensure-setup _check-assets _pack-initrd _ensure-service
     echo "=== Criterion microbenchmarks ==="
     cargo bench -p capsem-security-engine --bench security_engine_cel
     cargo bench -p capsem-security-engine --bench detection_ir
+    cargo bench -p capsem-core --bench provider_model_parser
     uv run python scripts/archive_criterion_benchmarks.py
     echo "=== VM-originated and in-VM benchmark artifacts ==="
     CAPSEM_ASSETS_DIR={{assets_dir}} uv run python -m pytest tests/capsem-serial/ -v --tb=short -m benchmark

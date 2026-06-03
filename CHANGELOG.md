@@ -26,6 +26,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added session-hunt telemetry proof that blocked model-response
   `security_events` rows keep enforcement provenance and reconstruct into
   canonical `model.evidence.*` and `model.response.body.text` detection fields.
+- Added fast Criterion benchmark coverage for model-response runtime CEL,
+  session-style model-response hunts, and OpenAI provider response parsing
+  across single-frame, multi-frame, malformed, gzip, and tool-call streams.
 - Added canonical CEL policy-context roots for credential, VM, conversation,
   and snapshot security events so detection and enforcement rules can address
   those event families directly.

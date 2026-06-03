@@ -25,6 +25,10 @@ const URL_CONTAINS_GOOGLE: &str = "http.request.url.contains('google')";
 const PATH_STARTS_ADMIN: &str = "http.request.path.startsWith('/admin')";
 const HEADER_AUTH_EXISTS: &str = "http.request.header('authorization').exists()";
 const BODY_CONTAINS_SECRET: &str = "http.request.body.text.contains('secret')";
+const MODEL_RESPONSE_BODY_POLICY: &str = "\
+    common.event_type == 'model.response' \
+    && model.request.provider == 'google_gemini' \
+    && model.response.body.text.contains('calling filesystem')";
 const CANONICAL_HTTP_POLICY: &str = "\
     http.request.host.contains('google') \
     && http.request.url.contains('google') \
@@ -491,6 +495,28 @@ fn backtest_inputs(count: usize) -> Vec<BacktestEventInput> {
         .collect()
 }
 
+fn model_response_backtest_inputs(count: usize) -> Vec<BacktestEventInput> {
+    let baseline = model_tool_event();
+    (0..count)
+        .map(|index| {
+            let mut event = baseline.clone();
+            event.common.event_id = format!("evt-runtime-model-response-{index}");
+            event.common.sequence_no = Some(index as u64);
+            BacktestEventInput {
+                event_ref: Some(BacktestEventRef {
+                    corpus: "criterion-session".into(),
+                    session_id: event.common.session_id.clone(),
+                    event_id: event.common.event_id.clone(),
+                    sequence_no: event.common.sequence_no,
+                    timestamp_unix_ms: event.common.timestamp_unix_ms,
+                }),
+                event,
+                expected: Some("finding".into()),
+            }
+        })
+        .collect()
+}
+
 fn registry_with_enforcement_rules(rule_count: usize) -> RuntimeRuleRegistry {
     let mut registry = RuntimeRuleRegistry::default();
     for index in 0..rule_count {
@@ -682,6 +708,7 @@ fn bench_backtest_dedupe(c: &mut Criterion) {
 fn bench_runtime_backtest_and_hunt(c: &mut Criterion) {
     let events_10 = backtest_inputs(10);
     let events_100 = backtest_inputs(100);
+    let model_response_events_100 = model_response_backtest_inputs(100);
     let mut detection_rules = Vec::with_capacity(100);
     for index in 0..99 {
         detection_rules.push(detection_rule(
@@ -690,6 +717,17 @@ fn bench_runtime_backtest_and_hunt(c: &mut Criterion) {
         ));
     }
     detection_rules.push(detection_rule("bench-hunt-match", CANONICAL_HTTP_POLICY));
+    let mut model_response_detection_rules = Vec::with_capacity(100);
+    for index in 0..99 {
+        model_response_detection_rules.push(detection_rule(
+            format!("bench-model-hunt-no-match-{index}"),
+            "false",
+        ));
+    }
+    model_response_detection_rules.push(detection_rule(
+        "bench-model-hunt-match",
+        MODEL_RESPONSE_BODY_POLICY,
+    ));
 
     let mut group = c.benchmark_group("security_engine_runtime_backtest_hunt");
 
@@ -729,6 +767,48 @@ fn bench_runtime_backtest_and_hunt(c: &mut Criterion) {
             )
             .unwrap();
             black_box(result.total_matches)
+        });
+    });
+
+    group.bench_function("session_model_response_hunt_100_rules_100_events", |b| {
+        b.iter(|| {
+            let result = run_detection_hunt(
+                black_box(model_response_detection_rules.clone()),
+                black_box(&model_response_events_100),
+                Some(100),
+            )
+            .unwrap();
+            black_box(result.total_matches)
+        });
+    });
+
+    group.finish();
+}
+
+fn bench_model_response_runtime_paths(c: &mut Criterion) {
+    let event = model_tool_event();
+    let mut direct = evaluator(MODEL_RESPONSE_BODY_POLICY);
+    let mut engine = SecurityEngine::default();
+    engine.set_enforcement(Box::new(
+        CelEnforcementEvaluator::compile(vec![rule(
+            "bench-model-response-body",
+            MODEL_RESPONSE_BODY_POLICY,
+        )])
+        .unwrap(),
+    ));
+    let mut group = c.benchmark_group("security_engine_model_response_runtime");
+
+    group.bench_function("direct_cel_model_response_body_enforcement", |b| {
+        b.iter(|| {
+            let decision = direct.evaluate(black_box(&event)).unwrap();
+            black_box(decision.is_some())
+        });
+    });
+
+    group.bench_function("security_engine_evaluate_model_response_body", |b| {
+        b.iter(|| {
+            let result = engine.evaluate(black_box(event.clone())).unwrap();
+            black_box(result.action)
         });
     });
 
@@ -870,6 +950,7 @@ criterion_group!(
     bench_event_family_evaluate,
     bench_backtest_dedupe,
     bench_runtime_backtest_and_hunt,
+    bench_model_response_runtime_paths,
     bench_runtime_registry,
     bench_materialization,
     bench_native_lookup

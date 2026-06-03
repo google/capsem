@@ -33,6 +33,7 @@ SUITES = {
             "security_engine_detection_evaluate/",
             "security_engine_backtest_dedupe/",
             "security_engine_runtime_backtest_hunt/",
+            "security_engine_model_response_runtime/",
             "security_engine_runtime_registry/",
             "security_engine_policy_context/",
             "security_engine_native_lookup/",
@@ -55,6 +56,19 @@ SUITES = {
             "Host-side microbenchmark only.",
             "Measures Detection IR V1 JSON parse/validate, Detection IR to CEL detection-rule lowering, lower-plus-compile costs, direct matching, canonical SecurityEvent matching, and lowered-CEL matching.",
             "Does not include VM transport, service IPC, runtime registry propagation, Security Engine dispatch, or session.db journal write latency.",
+        ],
+    },
+    "provider_model_parser_microbench": {
+        "kind": "criterion_provider_model_parser_microbench",
+        "category": "network-engine",
+        "command": "cargo bench -p capsem-core --bench provider_model_parser",
+        "prefixes": (
+            "provider_model_parser_openai/",
+        ),
+        "notes": [
+            "Host-side microbenchmark only.",
+            "Measures OpenAI provider response parsing from SSE frames into canonical model summaries, including single-frame text, multi-frame text, malformed unknown-only responses, provider tool calls, and gzip decode plus parse.",
+            "Does not include socket I/O, TLS, HTTP framing, Security Engine evaluation, telemetry emission, or session.db journal write latency.",
         ],
     },
 }
@@ -129,8 +143,14 @@ def split_full_id(full_id: str) -> tuple[str, str]:
     return group, name
 
 
-def artifact_path(project_root: Path, version: str, arch: str, suffix: str) -> Path:
-    path = benchmark_output_path(project_root, "security-engine", version, arch)
+def artifact_path(
+    project_root: Path,
+    version: str,
+    arch: str,
+    suffix: str,
+    category: str = "security-engine",
+) -> Path:
+    path = benchmark_output_path(project_root, category, version, arch)
     return path.with_name(path.stem + f"_{suffix}.json")
 
 
@@ -171,7 +191,13 @@ def archive_suite(
         command=config["command"],
     )
 
-    out_path = artifact_path(project_root, version, arch, suffix)
+    out_path = artifact_path(
+        project_root,
+        version,
+        arch,
+        suffix,
+        config.get("category", "security-engine"),
+    )
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(data, indent=2) + "\n")
     return out_path
