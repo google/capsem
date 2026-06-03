@@ -121,9 +121,17 @@ def test_criterion_measurements_falls_back_to_mean_when_slope_is_null(tmp_path):
     assert "slope_ns" not in measurements[0]
 
 
-def test_archive_suite_config_includes_model_response_and_provider_parser_lanes():
+def test_archive_suite_config_includes_model_response_mitm_and_provider_parser_lanes():
     cel_suite = archive_criterion_benchmarks.SUITES["cel_microbench"]
     assert "security_engine_model_response_runtime/" in cel_suite["prefixes"]
+
+    mitm_suite = archive_criterion_benchmarks.SUITES["mitm_pipeline_microbench"]
+    assert mitm_suite["category"] == "network-engine"
+    assert mitm_suite["command"] == "cargo bench -p capsem-core --bench mitm_pipeline"
+    assert mitm_suite["prefixes"] == (
+        "mitm_security_callback_http/",
+        "mitm_security_callback_model/",
+    )
 
     provider_suite = archive_criterion_benchmarks.SUITES["provider_model_parser_microbench"]
     assert provider_suite["category"] == "network-engine"

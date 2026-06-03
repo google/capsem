@@ -113,8 +113,10 @@ Benchmark release hold:
   indexed model tool-call/result field paths. It now also covers
   model-response runtime CEL, session-style model-response hunts, and OpenAI
   provider parser/extractor overhead for single-frame, multi-frame, malformed,
-  gzip, and tool-call streams. Full `just benchmark` remains a release gate
-  before performance claims.
+  gzip, and tool-call streams. The fast gate now also includes MITM
+  build-then-evaluate and prebuilt-event callback overhead for HTTP request,
+  HTTP response, model request, and model response events. Full
+  `just benchmark` remains a release gate before performance claims.
 - T3 removed the process-runtime `model.* -> http.*` condition lowering and the
   MITM HTTP-response `tool.arguments.*` rewrite compatibility path. Model rules
   now compile only against canonical `model.*` event guards; T2 still needs to

@@ -33,7 +33,8 @@
   from guest traffic with session security-event, AI evidence, and hunt
   assertions.
 - [ ] T6: Add fast and full benchmark proof for the security spine. Fast
-  Criterion coverage added; full `just benchmark` artifact gate remains open.
+  Criterion coverage now covers CEL, Detection IR, provider parsing, and MITM
+  callback overhead; full `just benchmark` artifact gate remains open.
 - [x] T7: Add typed security-event identity contract for the network telemetry
   lane.
 - [x] Update `CHANGELOG.md` under `## [Unreleased]` when code changes begin.
@@ -173,11 +174,14 @@ Fast microbench commands:
 
 - [x] `cargo bench -p capsem-security-engine --bench security_engine_cel --no-run`
 - [x] `cargo bench -p capsem-security-engine --bench detection_ir --no-run`
+- [x] `cargo bench -p capsem-core --bench mitm_pipeline --no-run`
 - [x] `cargo bench -p capsem-core --bench provider_model_parser --no-run`
 
 Full artifact commands:
 
-- [ ] `just benchmark`
+- [ ] `just benchmark` (preflight currently blocked in this worktree:
+  `just doctor` reports missing `assets/*/manifest.json` and guest binaries;
+  run `just doctor fix` / build assets before artifact-grade numbers)
 - [ ] `just benchmark-compare`
 
 Benchmark coverage checklist:
@@ -190,7 +194,7 @@ Benchmark coverage checklist:
   100-rule cases.
 - [x] Sigma/Detection IR parse, validate, lower-to-CEL, compile, and evaluate.
 - [x] Detection hunt over inline events and session-reconstructed events.
-- [ ] MITM request/response callback overhead after canonical event creation.
+- [x] MITM request/response callback overhead after canonical event creation.
 - [x] Model provider parser/extractor overhead for streamed, compressed, and
   provider tool-call responses.
 - [x] Benchmark result names and commands recorded before any performance
@@ -344,17 +348,21 @@ Adversarial:
   streamed content deltas before canonical body-text blocking.
 
 E2E/VM:
-- Missing. Required once live callbacks are rewired under T2.
+- Real VM proof now passes for guest-origin OpenAI-compatible HTTPS traffic,
+  canonical model-response block/rewrite, provider-emitted tool-call
+  block/rewrite, persisted `security_events`, `ai_model_interactions`, and
+  session hunt over canonical model fields.
 
 Telemetry:
-- Partial. `handle_session_detection_hunt_reconstructs_core_projection_families`
+- Covered for the current model-response sprint surface.
+  `handle_session_detection_hunt_reconstructs_core_projection_families`
   proves persisted `security_events` rows reconstruct into canonical
   `PolicyContext` roots and session detection matched fields for DNS, MCP,
   model, file, process, snapshot, VM, profile, and conversation. It now also
   proves a blocked `model.response` row preserves `final_action = block`,
   enforcement step provenance, `model.evidence.*`, and
-  `model.response.body.text` through session hunt. A live VM E2E assertion that
-  the post-session DB exactly matches a real blocked run remains open.
+  `model.response.body.text` through session hunt. The real VM E2E now asserts
+  the post-session DB and hunt surface for a real blocked run.
 
 Performance:
 - Fast benchmark coverage added:
@@ -375,12 +383,26 @@ Performance:
 - `provider_model_parser` covers OpenAI response parsing for single-frame
   text, multi-frame text, malformed unknown-only responses, provider tool
   calls, and gzip decode plus parse.
+- `mitm_pipeline` now covers MITM canonical security-event construction plus
+  `SecurityEngine` callback evaluation for HTTP request, HTTP response, model
+  request, and model response events. It includes both build-then-evaluate and
+  prebuilt-event evaluation cases under `mitm_security_callback_http` and
+  `mitm_security_callback_model`.
+- Local non-artifact Criterion run completed with
+  `cargo bench -p capsem-core --bench mitm_pipeline`: HTTP callback cases
+  sampled around 29-31 us and model callback cases around 27-31 us on this
+  host. These are sanity samples only; artifact-grade claims still require
+  `just benchmark`.
 - The canonical `just benchmark` Criterion lane now runs and archives
-  `security_engine_cel`, `detection_ir`, and `provider_model_parser`.
+  `security_engine_cel`, `detection_ir`, `mitm_pipeline`, and
+  `provider_model_parser`.
 - These are harness compile gates only; no new performance numbers were
   recorded in this milestone.
 - Full artifact benchmark not run in this milestone. `just benchmark` and
-  `just benchmark-compare` remain required before any performance claim.
+  `just benchmark-compare` remain required before any performance claim. A
+  focused `just doctor` preflight currently fails because this worktree is
+  missing local VM assets and guest binaries, so the full artifact gate is
+  setup-blocked rather than code-blocked.
 
 Missing/deferred:
 - T2 live callback rewire is complete for the current fixture-backed surface:
@@ -391,11 +413,13 @@ Missing/deferred:
   gaps. They are first-party in the contract/projection/session-detection path,
   but no live emitter was found in this T0/T0a mapping pass.
 - T4 provider-body hardening is covered at the fixture-backed MITM layer for
-  compressed, malformed, and multi-frame model responses. Real VM E2E proof is
-  still open under T5. Session telemetry reconstruction/hunt proof exists at
-  the service-test layer, including blocked model-response provenance.
-- T6 still needs full benchmark artifact execution and callback/parser/hunt
-  benchmark coverage.
+  compressed, malformed, and multi-frame model responses. T5 real VM E2E proof
+  now covers canonical model-response block/rewrite, provider tool-call
+  block/rewrite, session security events, AI evidence, and hunt. Session
+  telemetry reconstruction/hunt proof also exists at the service-test layer,
+  including blocked model-response provenance.
+- T6 still needs full benchmark artifact execution. Fast callback, parser,
+  CEL, Detection IR, and hunt benchmark compile coverage is in place.
 - The current file watcher emits file path/class/size; file content search is
   available in the canonical policy context when richer file producers attach a
   content preview.

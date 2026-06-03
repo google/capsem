@@ -36,6 +36,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added fast Criterion benchmark coverage for model-response runtime CEL,
   session-style model-response hunts, and OpenAI provider response parsing
   across single-frame, multi-frame, malformed, gzip, and tool-call streams.
+- Added MITM security callback Criterion coverage and artifact archiving for
+  canonical HTTP/model request and response event construction plus
+  `SecurityEngine` evaluation.
 - Added canonical CEL policy-context roots for credential, VM, conversation,
   and snapshot security events so detection and enforcement rules can address
   those event families directly.

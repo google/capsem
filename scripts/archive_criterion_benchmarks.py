@@ -71,6 +71,20 @@ SUITES = {
             "Does not include socket I/O, TLS, HTTP framing, Security Engine evaluation, telemetry emission, or session.db journal write latency.",
         ],
     },
+    "mitm_pipeline_microbench": {
+        "kind": "criterion_mitm_pipeline_microbench",
+        "category": "network-engine",
+        "command": "cargo bench -p capsem-core --bench mitm_pipeline",
+        "prefixes": (
+            "mitm_security_callback_http/",
+            "mitm_security_callback_model/",
+        ),
+        "notes": [
+            "Host-side microbenchmark only.",
+            "Measures MITM canonical security-event construction plus SecurityEngine callback evaluation for HTTP request, HTTP response, model request, and model response events.",
+            "Does not include socket I/O, TLS, HTTP framing, provider response parsing, telemetry emission, or session.db journal write latency.",
+        ],
+    },
 }
 
 
