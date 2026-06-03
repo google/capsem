@@ -38,8 +38,9 @@
 - [x] T7: Add typed security-event identity contract for the network telemetry
   lane.
 - [x] Update `CHANGELOG.md` under `## [Unreleased]` when code changes begin.
-- [ ] Final testing gate.
-- [ ] Commit at functional milestones.
+- [x] Final testing gate for the engine lane.
+- [x] Commit at functional milestones.
+- [x] Mark engine lane done for network-team reconciliation.
 
 ## Callback-To-Event Map
 
@@ -181,6 +182,27 @@
   grouped every `network-engine` JSON into the same lane and evicted the
   provider-parser artifact after the MITM artifact landed. Network-engine
   Criterion suffixes are now retained like security-engine suffixes.
+- Engine lane is done as of commit `84e4d2ad`. This branch is a handoff branch
+  for network-team parser/runtime reconciliation, not a direct merge into the
+  current `origin/main`.
+- `origin/main` is intentionally not rebased here. After fetch, the branch is
+  behind by 118 commits, including MCP runtime/load, telemetry batching, DB
+  write/logger, network/model parser, security-engine, and benchmark-path
+  changes. Those must be reconciled as a dedicated main-integration sprint with
+  invariant tests, not accepted as merge fallout.
+
+## Network-Team Handoff
+
+- Use the typed event contract as the dependency surface:
+  `SecurityEventType`, `SecurityEventFamily`, strict parsing, `as_str()`, and
+  `family()`.
+- Parser improvements should populate canonical `SecurityEvent` fields before
+  CEL projection, not add local policy shortcuts.
+- MCP/model hot-path optimizations must still evaluate detection and
+  enforcement through `capsem-security-engine`; no second decision provider.
+- Any DB write batching or telemetry contention fix must preserve session
+  security-event persistence, event type/family checks, enforcement provenance,
+  detection hunt reconstruction, and model evidence fields.
 
 ## Benchmark Gate
 

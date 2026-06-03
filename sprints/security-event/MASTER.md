@@ -44,6 +44,12 @@ This sprint verifies that diagnosis and then removes the second path.
 
 ## Status
 
+Engine status: done and handed off for network-team reconciliation. This branch
+is intentionally not rebased onto the current `origin/main`; main integration
+is a separate sprint because the incoming branch contains large MCP runtime,
+network parser, DB write, telemetry, and benchmark-path changes that can affect
+security invariants.
+
 | Slice | Name | Status | Exit Criteria |
 | --- | --- | --- | --- |
 | T0 | Event-Flow Map | Done | Every live enforcement callback is mapped to the event shape it evaluates. |
@@ -83,6 +89,20 @@ ad-hoc bindings in MITM, MCP runtime, or provider-specific code.
 
 If a required field is missing, add it to the canonical event/projection
 contract first, then use it from enforcement.
+
+Network-team handoff:
+
+- Depend on `SecurityEventType`, `SecurityEventFamily`, and canonical
+  `SecurityEvent` construction rather than callback strings or local event-type
+  lists.
+- Emit parsed network/model/MCP evidence into canonical `SecurityEvent` fields
+  first, then let `capsem-security-engine` project to CEL.
+- Preserve the invariant that detection and enforcement evaluate the same
+  canonical event identity and field structure that is persisted to the session
+  security ledger.
+- Reconcile parser improvements into this engine lane before any `origin/main`
+  integration sprint; do not bypass the security engine for MCP/model fast
+  paths.
 
 ## Release Hold
 
@@ -190,3 +210,6 @@ Benchmark release hold:
   canonical ledger events for session detection; credential, VM, profile,
   conversation, and snapshot are supported by contract/session reconstruction
   but still need live producers.
+- Engine lane is sealed at commit `84e4d2ad`: all T0-T7 slices are done, full
+  benchmark proof passed, and the next step is a network-team reconciliation
+  branch/PR before the separate `origin/main` integration sprint.
