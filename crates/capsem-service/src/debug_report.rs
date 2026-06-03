@@ -770,16 +770,13 @@ fn disk_path_report(path: &Path) -> DiskPathReport {
     let exists = path.exists();
     let stat_path = existing_stat_path(path);
     match nix::sys::statvfs::statvfs(&stat_path) {
-        Ok(stat) => {
-            let fragment_size = stat.fragment_size();
-            DiskPathReport {
-                path: redact_path_for_report(path),
-                exists,
-                total_bytes: Some(stat.blocks().saturating_mul(fragment_size)),
-                available_bytes: Some(stat.blocks_available().saturating_mul(fragment_size)),
-                error: None,
-            }
-        }
+        Ok(stat) => DiskPathReport {
+            path: redact_path_for_report(path),
+            exists,
+            total_bytes: Some(disk_bytes(stat.blocks(), stat.fragment_size())),
+            available_bytes: Some(disk_bytes(stat.blocks_available(), stat.fragment_size())),
+            error: None,
+        },
         Err(e) => DiskPathReport {
             path: redact_path_for_report(path),
             exists,
@@ -788,6 +785,10 @@ fn disk_path_report(path: &Path) -> DiskPathReport {
             error: Some(e.to_string()),
         },
     }
+}
+
+fn disk_bytes(blocks: impl Into<u64>, fragment_size: impl Into<u64>) -> u64 {
+    blocks.into().saturating_mul(fragment_size.into())
 }
 
 fn existing_stat_path(path: &Path) -> PathBuf {
