@@ -17,6 +17,10 @@
   arguments, model tool-call arguments, and model response bodies.
   Compressed provider model responses now have a live MITM regression proving
   gzip decode happens before canonical `model.response.body.text` enforcement.
+  Malformed provider model responses now expose canonical
+  `model.evidence.parse_status` / `model.evidence.status` to CEL and have a
+  live MITM regression proving partial parse-status blocking before guest
+  delivery.
 - [ ] T5: Add integration/e2e proof and telemetry/session assertions.
 - [ ] T6: Add fast and full benchmark proof for the security spine. Fast
   Criterion coverage added; full `just benchmark` artifact gate remains open.
@@ -128,6 +132,10 @@
 - T4 provider-body hardening now proves gzipped OpenAI SSE responses are
   decompressed, parsed into canonical `model.response.body.text`, blocked by
   CEL before guest delivery, and excluded from blocked response previews.
+- T4 also exposes model evidence parse/evidence status as first-party CEL at
+  `model.evidence.parse_status` and `model.evidence.status`. Required provider
+  responses with no usable parsed summary are now `partial`, and malformed
+  OpenAI SSE can block before guest delivery from that canonical field.
 - T0/T0a source map is complete for the current codebase. Remaining
   credential, VM, profile, conversation, and snapshot gaps are producer gaps:
   the typed contract, CEL projection, SQLite ledger, session reconstruction,
@@ -178,6 +186,10 @@ Unit/contract:
   first-party policy objects support direct `contains()`, `match()`, and
   `matches()` search without CEL closure boilerplate, including file content
   when a producer supplies a content preview.
+- `cargo test -p capsem-security-engine
+  policy_context_cel_match_and_pass_smoke_covers_all_event_families` now also
+  proves `model.evidence.parse_status` and `model.evidence.status` are
+  first-party CEL fields.
 - `cargo test -p capsem-security-engine` passes the broader
   security-engine unit suite with the new canonical roots.
 - `cargo test -p capsem-security-engine runtime_` proves runtime enforcement
@@ -199,6 +211,9 @@ Unit/contract:
   `security_engine/` module compile and work together.
 - `cargo test -p capsem-file-engine` proves current file-event producers still
   emit normalized file security events with missing content by default.
+- `cargo test -p capsem-network-engine required_response_` proves model
+  interaction evidence marks response-required events with missing or
+  unknown-only provider summaries as `partial`.
 - `cargo test -p capsem-logger writer` proves resolved security-event
   persistence still accepts the expanded file subject.
 - `cargo check -p capsem-service` proves session reconstruction compiles with
@@ -224,6 +239,10 @@ Unit/contract:
   runtime_security_engine_blocks_gzip_model_response_before_guest_delivery`
   proves compressed OpenAI SSE responses are decompressed before canonical
   `model.response.body.text` CEL blocking and before guest delivery.
+- `cargo test -p capsem-core
+  runtime_security_engine_blocks_malformed_model_response_parse_status_before_guest_delivery`
+  proves malformed OpenAI SSE responses are marked `partial` in canonical
+  `model.evidence.parse_status` and can block before guest delivery.
 - `cargo test -p capsem-core runtime_security_engine_blocks` proves the
   neighboring live MITM request/response/model/tool-call/tool-result block
   regressions still pass together.
@@ -269,17 +288,20 @@ Functional:
   The MITM live path has fixture-backed functional tests for canonical
   `model.request`, `model.response`, provider tool-call, and request-side tool
   result blocking, including a compressed OpenAI SSE model response that must
-  decode before `model.response.body.text` CEL evaluation. The framed-MCP live
-  path has fixture-backed proof for canonical `mcp.request` and `mcp.response`
-  CEL enforcement. Service session-hunt tests prove persisted canonical events
-  reconstruct into the same CEL roots for detection.
+  decode before `model.response.body.text` CEL evaluation and a malformed
+  OpenAI SSE response that must block through `model.evidence.parse_status`.
+  The framed-MCP live path has fixture-backed proof for canonical
+  `mcp.request` and `mcp.response` CEL enforcement. Service session-hunt tests
+  prove persisted canonical events reconstruct into the same CEL roots for
+  detection.
 
 Adversarial:
 - Partial. Existing policy-context tests cover missing/redacted body semantics
   and unknown-field rejection. MITM tests cover request blocking before any
   upstream accept and compressed provider model responses blocking before guest
-  delivery. Provider malformed and multi-frame streaming hardening remain open
-  under T4/T5.
+  delivery. Malformed provider model responses are marked partial and can block
+  before guest delivery. Multi-frame streaming hardening remains open under
+  T4/T5.
 
 E2E/VM:
 - Missing. Required once live callbacks are rewired under T2.
@@ -315,10 +337,10 @@ Missing/deferred:
 - Credential, VM, profile, conversation, and snapshot remain live producer
   gaps. They are first-party in the contract/projection/session-detection path,
   but no live emitter was found in this T0/T0a mapping pass.
-- T4/T5 provider-body hardening still needs malformed and multi-frame streaming
-  provider response proof; compressed model-response enforcement is covered.
-  Real VM E2E proof is still open. Session telemetry reconstruction/hunt proof
-  exists at the service-test layer.
+- T4/T5 provider-body hardening still needs multi-frame streaming provider
+  response proof; compressed and malformed model-response enforcement are
+  covered. Real VM E2E proof is still open. Session telemetry
+  reconstruction/hunt proof exists at the service-test layer.
 - T6 still needs full benchmark artifact execution and callback/parser/hunt
   benchmark coverage.
 - The current file watcher emits file path/class/size; file content search is

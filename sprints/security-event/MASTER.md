@@ -137,6 +137,10 @@ Benchmark release hold:
 - T4 also proves compressed OpenAI SSE model responses are decompressed before
   canonical `model.response.body.text` CEL enforcement and blocked before guest
   delivery.
+- T4 exposes `model.evidence.parse_status` and `model.evidence.status` as
+  first-party CEL fields. Required provider responses with missing or
+  unknown-only parsed summaries are now partial, and malformed OpenAI SSE can
+  block before guest delivery from that canonical evidence status.
 - The framed MCP path no longer uses the local MCP decision provider, MCP
   condition mini-parser, or builtin domain-policy environment authority for
   live policy decisions. It builds `mcp.request` and `mcp.response` security

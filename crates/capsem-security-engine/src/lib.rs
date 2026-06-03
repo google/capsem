@@ -3,11 +3,11 @@ use capsem_proto::{
     ConversationPolicyContext, CredentialActivityPolicyContext, CredentialPolicyContext,
     DnsPolicyContext, DnsRequestPolicyContext, FileActivityPolicyContext, FilePolicyContext,
     HttpPolicyContext, HttpRequestPolicyContext, HttpResponsePolicyContext, McpPolicyContext,
-    McpRequestPolicyContext, ModelPolicyContext, ModelRequestPolicyContext,
-    ModelToolCallPolicyContext, ModelToolResultPolicyContext, PolicyContext,
-    ProcessActivityPolicyContext, ProcessIdentityPolicyContext, ProcessPolicyContext,
-    ProfileActivityPolicyContext, ProfilePolicyContext, SnapshotActivityPolicyContext,
-    SnapshotPolicyContext, VmActivityPolicyContext, VmPolicyContext,
+    McpRequestPolicyContext, ModelEvidencePolicyContext, ModelPolicyContext,
+    ModelRequestPolicyContext, ModelToolCallPolicyContext, ModelToolResultPolicyContext,
+    PolicyContext, ProcessActivityPolicyContext, ProcessIdentityPolicyContext,
+    ProcessPolicyContext, ProfileActivityPolicyContext, ProfilePolicyContext,
+    SnapshotActivityPolicyContext, SnapshotPolicyContext, VmActivityPolicyContext, VmPolicyContext,
 };
 use cel::extractors::This;
 use cel::objects::{Key, OptionalValue};
@@ -2395,6 +2395,13 @@ pub fn policy_context_from_event(event: &SecurityEvent) -> PolicyContext {
                         .map(model_tool_result_policy_contexts)
                         .unwrap_or_default(),
                 }),
+                evidence: subject
+                    .evidence
+                    .as_deref()
+                    .map(|evidence| ModelEvidencePolicyContext {
+                        parse_status: serialized_enum_string(evidence.parse_status),
+                        status: serialized_enum_string(evidence.evidence_status),
+                    }),
             };
         }
         SecurityEventSubject::File(subject) => {

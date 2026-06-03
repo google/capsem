@@ -126,6 +126,10 @@ fn sample_policy_context() -> PolicyContext {
                     parse_confidence: Some("high".to_string()),
                 }],
             }),
+            evidence: Some(ModelEvidencePolicyContext {
+                parse_status: Some("complete".to_string()),
+                status: Some("complete".to_string()),
+            }),
         },
         file: FilePolicyContext {
             activity: Some(FileActivityPolicyContext {

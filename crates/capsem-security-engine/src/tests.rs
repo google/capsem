@@ -1363,6 +1363,8 @@ fn policy_context_cel_match_and_pass_smoke_covers_all_event_families() {
         ),
         "model.request.provider == 'google_gemini' \
             && model.request.model.contains('gemini') \
+            && model.evidence.parse_status == 'complete' \
+            && model.evidence.status == 'complete' \
             && model.request.tool_calls[0].name == 'filesystem.read_file' \
             && model.request.tool_calls[0].arguments_status == 'valid_json' \
             && model.response.tool_results[0].content_kind == 'json' \

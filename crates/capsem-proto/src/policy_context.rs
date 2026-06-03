@@ -336,6 +336,17 @@ pub struct ModelPolicyContext {
     pub request: Option<ModelRequestPolicyContext>,
     #[serde(default)]
     pub response: Option<ModelResponsePolicyContext>,
+    #[serde(default)]
+    pub evidence: Option<ModelEvidencePolicyContext>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ModelEvidencePolicyContext {
+    #[serde(default)]
+    pub parse_status: Option<String>,
+    #[serde(default)]
+    pub status: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]

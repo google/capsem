@@ -22,6 +22,7 @@ pub struct ModelEvidenceInput<'a> {
     pub path: &'a str,
     pub request: &'a RequestMeta,
     pub response: Option<&'a StreamSummary>,
+    pub response_required: bool,
     pub estimated_cost_micros: Option<u64>,
     pub attribution_scope: AiAttributionScope,
     pub source_engine: SourceEngine,
@@ -45,7 +46,8 @@ pub fn build_model_interaction_evidence(input: ModelEvidenceInput<'_>) -> ModelI
         .or_else(|| extract_model_from_path(input.path))
         .unwrap_or_else(|| "unknown".to_string());
     let usage = usage_evidence(input.response, input.estimated_cost_micros);
-    let parse_status = interaction_parse_status(input.request, input.response);
+    let parse_status =
+        interaction_parse_status(input.request, input.response, input.response_required);
     let response = input.response.map(|summary| {
         response_evidence(
             input.response_id.unwrap_or(input.interaction_id),
@@ -264,6 +266,7 @@ fn normalize_tool_name(name: &str) -> String {
 fn interaction_parse_status(
     request: &RequestMeta,
     response: Option<&StreamSummary>,
+    response_required: bool,
 ) -> ParseStatus {
     let has_partial_tool_arguments = response
         .map(|summary| {
@@ -277,12 +280,26 @@ fn interaction_parse_status(
         && response
             .and_then(|summary| summary.model.as_ref())
             .is_none();
+    let missing_required_response =
+        response_required && !response.is_some_and(response_summary_has_signal);
 
-    if has_partial_tool_arguments || missing_model {
+    if has_partial_tool_arguments || missing_model || missing_required_response {
         ParseStatus::Partial
     } else {
         ParseStatus::Complete
     }
+}
+
+fn response_summary_has_signal(summary: &StreamSummary) -> bool {
+    summary.message_id.is_some()
+        || summary.model.is_some()
+        || !summary.text.is_empty()
+        || !summary.thinking.is_empty()
+        || !summary.tool_calls.is_empty()
+        || summary.input_tokens.is_some()
+        || summary.output_tokens.is_some()
+        || !summary.usage_details.is_empty()
+        || summary.stop_reason.is_some()
 }
 
 fn evidence_status(parse_status: ParseStatus) -> EvidenceStatus {
@@ -544,6 +561,60 @@ mod tests {
     }
 
     #[test]
+    fn required_response_without_provider_summary_is_partial() {
+        let request = RequestMeta {
+            model: Some("gpt-5.5".into()),
+            stream: true,
+            system_prompt_preview: None,
+            messages_count: 1,
+            tools_count: 0,
+            tool_results: Vec::new(),
+        };
+        let mut params = input(ProviderKind::OpenAi, "/v1/chat/completions", &request, None);
+        params.response_required = true;
+
+        let evidence = build_model_interaction_evidence(params);
+
+        assert_eq!(evidence.parse_status, ParseStatus::Partial);
+        assert_eq!(evidence.evidence_status, EvidenceStatus::Partial);
+    }
+
+    #[test]
+    fn required_response_with_unknown_only_summary_is_partial() {
+        let request = RequestMeta {
+            model: Some("gpt-5.5".into()),
+            stream: true,
+            system_prompt_preview: None,
+            messages_count: 1,
+            tools_count: 0,
+            tool_results: Vec::new(),
+        };
+        let summary = StreamSummary {
+            message_id: None,
+            model: None,
+            text: String::new(),
+            thinking: String::new(),
+            tool_calls: Vec::new(),
+            input_tokens: None,
+            output_tokens: None,
+            usage_details: BTreeMap::new(),
+            stop_reason: None,
+        };
+        let mut params = input(
+            ProviderKind::OpenAi,
+            "/v1/chat/completions",
+            &request,
+            Some(&summary),
+        );
+        params.response_required = true;
+
+        let evidence = build_model_interaction_evidence(params);
+
+        assert_eq!(evidence.parse_status, ParseStatus::Partial);
+        assert_eq!(evidence.evidence_status, EvidenceStatus::Partial);
+    }
+
+    #[test]
     fn argument_status_distinguishes_absent_not_json_partial_and_malformed() {
         assert_eq!(arguments_status(""), ArgumentsStatus::Absent);
         assert_eq!(arguments_status("plain"), ArgumentsStatus::NotJson);
@@ -570,6 +641,7 @@ mod tests {
             path,
             request,
             response,
+            response_required: false,
             estimated_cost_micros: Some(12),
             attribution_scope: AiAttributionScope::Vm,
             source_engine: SourceEngine::Network,
