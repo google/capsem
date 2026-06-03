@@ -24,11 +24,14 @@
   Multi-frame provider model responses now have a live MITM regression proving
   streamed content deltas are aggregated into canonical
   `model.response.body.text` before CEL enforcement.
-- [ ] T5: Add integration/e2e proof and telemetry/session assertions.
+- [x] T5: Add integration/e2e proof and telemetry/session assertions.
   Service-level session DB proof now covers blocked model-response telemetry:
   `security_events.final_action = block`, enforcement step provenance,
   canonical `model.evidence.*`, canonical `model.response.body.text`, and
-  session detection hunt matched fields. Real VM E2E remains open.
+  session detection hunt matched fields. Real VM E2E now proves canonical
+  model-response block/rewrite and provider-emitted tool-call block/rewrite
+  from guest traffic with session security-event, AI evidence, and hunt
+  assertions.
 - [ ] T6: Add fast and full benchmark proof for the security spine. Fast
   Criterion coverage added; full `just benchmark` artifact gate remains open.
 - [x] T7: Add typed security-event identity contract for the network telemetry
@@ -151,6 +154,13 @@
   it through the service session hunt path, and matches canonical
   `model.evidence.parse_status`, `model.evidence.status`, and
   `model.response.body.text`.
+- T5 real VM proof now passes for
+  `tests/capsem-e2e/test_model_policy_mitm.py::test_guest_model_response_and_tool_call_policy_with_fixture_upstream_no_leak`
+  with `CAPSEM_ASSETS_DIR=/Users/elie/.capsem/assets`. This covers guest
+  OpenAI-compatible HTTPS traffic, canonical `model.response` block/rewrite,
+  provider-emitted tool-call block/rewrite through current `model.response`
+  evidence, `security_events` enforcement provenance, `ai_model_interactions`
+  response evidence, and session detection hunt over canonical fields.
 - T0/T0a source map is complete for the current codebase. Remaining
   credential, VM, profile, conversation, and snapshot gaps are producer gaps:
   the typed contract, CEL projection, SQLite ledger, session reconstruction,

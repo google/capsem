@@ -4,7 +4,7 @@ use capsem_core::net::mitm_proxy::RuntimeSecurityEngine;
 use capsem_core::settings_profiles::{self, EffectiveRule, RuleDecision};
 use capsem_security_engine::{
     CelEnforcementEvaluator, CelEnforcementRule, EventMutation, SecurityDecisionAction,
-    SecurityEngine, SecurityEventType,
+    SecurityEngine,
 };
 use tracing::{info, warn};
 
@@ -158,12 +158,8 @@ fn confidence_from_snapshot(
 }
 
 fn runtime_enforcement_rule_from_effective(rule: &EffectiveRule) -> Option<CelEnforcementRule> {
-    let event_type = SecurityEventType::parse(&rule.callback).ok()?;
-    let condition = format!(
-        "common.event_type == '{}' && ({})",
-        event_type.as_str(),
-        runtime_rule_condition(rule)
-    );
+    let guard = settings_profiles::profile_runtime_callback_guard(&rule.callback).ok()?;
+    let condition = format!("{guard} && ({})", runtime_rule_condition(rule));
     let decision = profile_decision_to_security_action(rule.decision);
     Some(CelEnforcementRule {
         id: runtime_effective_rule_id(rule),
@@ -176,7 +172,7 @@ fn runtime_enforcement_rule_from_effective(rule: &EffectiveRule) -> Option<CelEn
 }
 
 fn runtime_rule_condition(rule: &EffectiveRule) -> String {
-    rule.condition.clone()
+    settings_profiles::normalize_profile_runtime_condition(&rule.callback, &rule.condition)
 }
 
 fn runtime_effective_rule_id(rule: &EffectiveRule) -> String {
@@ -219,7 +215,9 @@ fn runtime_rule_mutations(rule: &EffectiveRule) -> Vec<EventMutation> {
     let Some(replacement) = rule.rewrite_value.as_deref() else {
         return mutations;
     };
-    let Some((path, pattern)) = parse_rewrite_target(target) else {
+    let normalized_target =
+        settings_profiles::normalize_profile_runtime_rewrite_target(&rule.callback, target);
+    let Some((path, pattern)) = parse_rewrite_target(&normalized_target) else {
         return mutations;
     };
     mutations.push(EventMutation::ReplaceRegex {

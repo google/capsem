@@ -269,6 +269,44 @@ async fn exec_done_with_empty_stdout_resolves_without_500ms_stall() {
 }
 
 #[tokio::test]
+async fn exec_done_waits_for_delayed_stdout_deposit() {
+    use crate::job_store::{ActiveExec, JobResult, JobStore};
+    use capsem_proto::GuestToHost;
+    use std::sync::Arc;
+    use tokio::sync::oneshot;
+
+    let js = Arc::new(JobStore::new());
+    let db = Arc::new(capsem_logger::DbWriter::open_in_memory(16).unwrap());
+
+    let id: u64 = 43;
+    let (tx, rx) = oneshot::channel::<JobResult>();
+    js.jobs.lock().unwrap().insert(id, tx);
+    *js.active_exec.lock().unwrap() = Some(ActiveExec::new(id));
+
+    let js_deposit = Arc::clone(&js);
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        if let Some(ref mut active) = *js_deposit.active_exec.lock().unwrap() {
+            active.captured.extend_from_slice(b"late-ready\n");
+            active.deposited.notify_one();
+        }
+    });
+
+    handle_guest_msg(GuestToHost::ExecDone { id, exit_code: 0 }, &js, &db).await;
+
+    let result = rx.await.expect("job oneshot must resolve");
+    match result {
+        JobResult::Exec {
+            stdout, exit_code, ..
+        } => {
+            assert_eq!(stdout, b"late-ready\n");
+            assert_eq!(exit_code, 0);
+        }
+        other => panic!("expected Exec result, got {other:?}"),
+    }
+}
+
+#[tokio::test]
 async fn blocked_exec_resolves_job_without_guest_dispatch_state() {
     use crate::job_store::{ActiveExec, JobResult, JobStore};
     use std::sync::Arc;

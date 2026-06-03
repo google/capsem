@@ -8,9 +8,12 @@ use capsem_core::settings_profiles::{
 };
 use capsem_network_engine::domain_policy::Action;
 use capsem_security_engine::{
-    AiAttributionScope, AiOriginKind, Enforceability, HttpSecuritySubject, McpSecuritySubject,
-    ModelSecuritySubject, ProcessSecuritySubject, RedactionState, SecurityAction, SecurityEvent,
-    SecurityEventCommon, SecurityEventType, SourceEngine,
+    AiApiFamily, AiAttributionScope, AiOriginKind, AiProvider, ArgumentsStatus, Confidence,
+    Enforceability, EvidenceStatus, HttpSecuritySubject, McpSecuritySubject,
+    ModelInteractionEvidence, ModelRequestEvidence, ModelResponseEvidence, ModelSecuritySubject,
+    ModelToolCallEvidence, ParseStatus, ProcessSecuritySubject, RedactionState, SecurityAction,
+    SecurityEvent, SecurityEventCommon, SecurityEventType, SourceEngine, ToolCallStatus,
+    ToolOrigin,
 };
 
 use super::{
@@ -427,7 +430,6 @@ fn http_settings_default_rules_compile_and_apply_after_specific_rules() {
         editable: true,
     });
     capsem_core::settings_profiles::write_vm_effective_settings(&session_dir, &effective).unwrap();
-
     let runtime = load_security_runtime_state_from_effective(&session_dir);
     let security_engine = runtime
         .security_engine
@@ -500,7 +502,6 @@ fn dns_settings_default_rules_compile_and_apply_after_specific_rules() {
         editable: true,
     });
     capsem_core::settings_profiles::write_vm_effective_settings(&session_dir, &effective).unwrap();
-
     let runtime = load_security_runtime_state_from_effective(&session_dir);
     let security_engine = runtime
         .security_engine
@@ -665,6 +666,147 @@ fn model_profile_rules_do_not_lower_to_http_runtime_predicates() {
             .as_ref()
             .and_then(|decision| decision.rule.as_deref()),
         Some("policy.model.block-openai")
+    );
+}
+
+#[test]
+fn e2e_model_profile_rule_aliases_do_not_poison_process_exec() {
+    let dir = tempfile::tempdir().unwrap();
+    let session_dir = dir.path().join("session");
+    std::fs::create_dir_all(&session_dir).unwrap();
+
+    let roots = capsem_core::settings_profiles::ProfileRootSettings::default();
+    let mut effective = capsem_core::settings_profiles::resolve_effective_vm_settings(&roots, None)
+        .expect("default effective profile should resolve");
+    effective.rules.clear();
+    let provenance = effective.profile.provenance.clone();
+    effective.rules.push(EffectiveRule {
+        id: "model.block-e2e-response".to_string(),
+        callback: "model.response".to_string(),
+        condition: "provider == 'openai' && model == 'gpt-4o-mini' && response.text.contains('e2e-response-secret')".to_string(),
+        decision: RuleDecision::Block,
+        priority: 10,
+        rewrite_target: None,
+        rewrite_value: None,
+        strip_request_headers: Vec::new(),
+        strip_response_headers: Vec::new(),
+        reason: Some("Block model response secret".to_string()),
+        derived: false,
+        provenance: provenance.clone(),
+        owner_setting_path: None,
+        owner_setting_label: None,
+        editable: true,
+    });
+    effective.rules.push(EffectiveRule {
+        id: "model.rewrite-e2e-response".to_string(),
+        callback: "model.response".to_string(),
+        condition: "provider == 'openai' && model == 'gpt-4o-mini' && response.text.contains('e2e-response-rewrite-secret')".to_string(),
+        decision: RuleDecision::Rewrite,
+        priority: 15,
+        rewrite_target: Some("response.text =~ 'e2e-response-rewrite-secret'".to_string()),
+        rewrite_value: Some("[redacted-response]".to_string()),
+        strip_request_headers: Vec::new(),
+        strip_response_headers: Vec::new(),
+        reason: Some("Rewrite model response secret".to_string()),
+        derived: false,
+        provenance: provenance.clone(),
+        owner_setting_path: None,
+        owner_setting_label: None,
+        editable: true,
+    });
+    effective.rules.push(EffectiveRule {
+        id: "model.block-e2e-tool-call".to_string(),
+        callback: "model.tool_call".to_string(),
+        condition: "provider == 'openai' && model == 'gpt-4o-mini' && tool.name == 'search' && tool.arguments.query == 'tool-call-block-secret'".to_string(),
+        decision: RuleDecision::Block,
+        priority: 16,
+        rewrite_target: None,
+        rewrite_value: None,
+        strip_request_headers: Vec::new(),
+        strip_response_headers: Vec::new(),
+        reason: Some("Block model tool call".to_string()),
+        derived: false,
+        provenance,
+        owner_setting_path: None,
+        owner_setting_label: None,
+        editable: true,
+    });
+    capsem_core::settings_profiles::write_vm_effective_settings(&session_dir, &effective).unwrap();
+    let reloaded = capsem_core::settings_profiles::load_vm_effective_settings(&session_dir)
+        .expect("vm-effective settings should reload");
+    let reloaded_rules = super::rules::runtime_enforcement_rules_from_effective(&reloaded);
+    capsem_security_engine::CelEnforcementEvaluator::compile(reloaded_rules)
+        .expect("accepted profile model aliases should compile after vm-effective reload");
+
+    let runtime = load_security_runtime_state_from_effective(&session_dir);
+    let security_engine = runtime
+        .security_engine
+        .as_ref()
+        .expect("accepted profile model rules should install a runtime Security Engine");
+
+    let result = security_engine
+        .evaluate(process_event(
+            "exec-after-model-profile",
+            "exec",
+            Some("shell"),
+        ))
+        .expect("profile model rules should not poison process exec");
+
+    assert!(
+        !matches!(result.action, SecurityAction::Block(_)),
+        "accepted model policy aliases must not block process exec, got {:?}",
+        result.action
+    );
+
+    let blocked = security_engine
+        .evaluate(model_response_event(
+            "openai",
+            "gpt-4o-mini",
+            "fixture says e2e-response-secret",
+            Vec::new(),
+        ))
+        .expect("profile model response rule should evaluate");
+    assert!(matches!(blocked.action, SecurityAction::Block(_)));
+    assert_eq!(
+        blocked
+            .resolved_event
+            .event
+            .decision
+            .as_ref()
+            .and_then(|decision| decision.rule.as_deref()),
+        Some("policy.model.block-e2e-response")
+    );
+
+    let blocked_tool = security_engine
+        .evaluate(model_response_event(
+            "openai",
+            "gpt-4o-mini",
+            "",
+            vec![ModelToolCallEvidence {
+                tool_call_id: "call-tool-block".into(),
+                index: 0,
+                provider_call_id: Some("call-tool-block".into()),
+                raw_name: "search".into(),
+                normalized_name: "search".into(),
+                arguments_raw: Some(r#"{"query":"tool-call-block-secret"}"#.into()),
+                arguments_json: Some(r#"{"query":"tool-call-block-secret"}"#.into()),
+                arguments_status: ArgumentsStatus::ValidJson,
+                origin: ToolOrigin::NativeProviderTool,
+                linked_mcp_call_id: None,
+                status: ToolCallStatus::Proposed,
+                parse_confidence: Confidence::High,
+            }],
+        ))
+        .expect("profile provider tool-call rule should evaluate");
+    assert!(matches!(blocked_tool.action, SecurityAction::Block(_)));
+    assert_eq!(
+        blocked_tool
+            .resolved_event
+            .event
+            .decision
+            .as_ref()
+            .and_then(|decision| decision.rule.as_deref()),
+        Some("policy.model.block-e2e-tool-call")
     );
 }
 
@@ -1049,6 +1191,102 @@ fn model_event(provider: &str, model: &str) -> SecurityEvent {
             estimated_cost_micros: None,
             evidence: None,
         },
+    )
+}
+
+fn model_response_event(
+    provider: &str,
+    model: &str,
+    text: &str,
+    tool_calls: Vec<ModelToolCallEvidence>,
+) -> SecurityEvent {
+    let provider = match provider {
+        "openai" => AiProvider::Openai,
+        "google_gemini" => AiProvider::GoogleGemini,
+        other => panic!("unsupported model response fixture provider {other}"),
+    };
+    let api_family = match provider {
+        AiProvider::Openai => AiApiFamily::OpenaiChatCompletions,
+        AiProvider::GoogleGemini => AiApiFamily::GoogleGeminiContent,
+        _ => AiApiFamily::Unknown,
+    };
+    let evidence = ModelInteractionEvidence {
+        interaction_id: "interaction-model-response-test".into(),
+        trace_id: "trace-model-response-test".into(),
+        attribution_scope: AiAttributionScope::Vm,
+        source_engine: SourceEngine::Network,
+        origin_kind: AiOriginKind::GuestNetwork,
+        accounting_owner: Some("vm:test".into()),
+        profile_id: Some("coding".into()),
+        vm_id: Some("vm-test".into()),
+        session_id: Some("session-test".into()),
+        user_id: None,
+        provider,
+        api_family,
+        model: model.into(),
+        request: ModelRequestEvidence {
+            request_id: "request-model-response-test".into(),
+            provider,
+            api_family,
+            model: Some(model.into()),
+            stream: false,
+            system_prompt_preview: None,
+            message_count: 1,
+            tools_declared_count: tool_calls.len() as u64,
+            raw_shape_version: "test.model.request.v1".into(),
+            unknown_fields_present: false,
+        },
+        response: Some(ModelResponseEvidence {
+            response_id: "response-model-response-test".into(),
+            provider_response_id: None,
+            stop_reason: Some("stop".into()),
+            text_preview: Some(text.into()),
+            thinking_preview: None,
+            content_blocks: Vec::new(),
+            usage: Default::default(),
+            raw_shape_version: "test.model.response.v1".into(),
+        }),
+        tool_calls,
+        tool_results: Vec::new(),
+        mcp_executions: Vec::new(),
+        usage: Default::default(),
+        parse_status: ParseStatus::Complete,
+        evidence_status: EvidenceStatus::Complete,
+    };
+    SecurityEvent::model(
+        SecurityEventCommon {
+            event_id: format!("test-model-response-{model}"),
+            parent_event_id: None,
+            stream_id: None,
+            activity_id: None,
+            sequence_no: None,
+            source_engine: SourceEngine::Network,
+            attribution_scope: AiAttributionScope::Vm,
+            origin_kind: AiOriginKind::GuestNetwork,
+            accounting_owner: Some("vm:test".into()),
+            enforceability: Enforceability::InlineBlockable,
+            trace_id: Some("trace-model-response-test".into()),
+            span_id: None,
+            timestamp_unix_ms: 1,
+            vm_id: Some("vm-test".into()),
+            session_id: Some("session-test".into()),
+            profile_id: Some("coding".into()),
+            profile_revision: None,
+            profile_pack_ids: Vec::new(),
+            enforcement_packs: Vec::new(),
+            detection_packs: Vec::new(),
+            user_id: None,
+            process_id: None,
+            parent_process_id: None,
+            exec_id: None,
+            turn_id: None,
+            message_id: None,
+            tool_call_id: None,
+            mcp_call_id: None,
+            event_type: SecurityEventType::ModelResponse,
+            redaction_state: RedactionState::Raw,
+        },
+        ModelSecuritySubject::from_interaction_evidence(evidence),
     )
 }
 

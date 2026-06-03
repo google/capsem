@@ -4364,6 +4364,201 @@ fn renamed_callback(callback: &str) -> Option<&'static str> {
     }
 }
 
+pub fn normalize_profile_runtime_condition(callback: &str, condition: &str) -> String {
+    match callback {
+        "dns.request" => normalize_dns_profile_runtime_condition(condition),
+        "http.request" | "http.response" => normalize_http_profile_runtime_condition(condition),
+        "model.request" | "model.response" | "model.tool_call" | "model.tool_response" => {
+            normalize_model_profile_runtime_condition(callback, condition)
+        }
+        _ => condition.to_string(),
+    }
+}
+
+pub fn profile_runtime_callback_guard(
+    callback: &str,
+) -> std::result::Result<String, capsem_security_engine::SecurityEventTypeParseError> {
+    let event_type = SecurityEventType::parse(callback)?;
+    let emitted_event_type = match event_type {
+        SecurityEventType::ModelToolCallFuture | SecurityEventType::ModelToolResponseFuture => {
+            SecurityEventType::ModelResponse
+        }
+        other => other,
+    };
+    Ok(format!(
+        "common.event_type == '{}'",
+        emitted_event_type.as_str()
+    ))
+}
+
+pub fn normalize_profile_runtime_rewrite_target(callback: &str, target: &str) -> String {
+    let Some((path, pattern)) = target.split_once("=~") else {
+        return target.to_string();
+    };
+    let normalized_path = normalize_profile_runtime_path(callback, path.trim());
+    format!("{normalized_path} =~ {}", pattern.trim())
+}
+
+fn normalize_dns_profile_runtime_condition(condition: &str) -> String {
+    replace_cel_paths(condition, &[("qname", "dns.request.qname")])
+}
+
+fn normalize_http_profile_runtime_condition(condition: &str) -> String {
+    replace_cel_paths(
+        condition,
+        &[
+            ("request.host", "http.request.host"),
+            ("request.path", "http.request.path"),
+            ("request.query", "http.request.query"),
+            ("request.method", "http.request.method"),
+            ("response.text", "http.response.body.text"),
+        ],
+    )
+}
+
+fn normalize_model_profile_runtime_condition(callback: &str, condition: &str) -> String {
+    let condition = if callback == "model.tool_call" {
+        normalize_model_tool_argument_query_equality(condition)
+    } else {
+        condition.to_string()
+    };
+    replace_cel_paths(&condition, model_profile_runtime_aliases(callback))
+}
+
+fn normalize_model_tool_argument_query_equality(condition: &str) -> String {
+    let needle = "tool.arguments.query ==";
+    let mut rest = condition;
+    let mut output = String::with_capacity(condition.len());
+    while let Some(index) = rest.find(needle) {
+        output.push_str(&rest[..index]);
+        let after = rest[index + needle.len()..].trim_start();
+        let Some(quote) = after.chars().next().filter(|ch| *ch == '"' || *ch == '\'') else {
+            output.push_str(needle);
+            rest = &rest[index + needle.len()..];
+            continue;
+        };
+        let literal_start = quote.len_utf8();
+        let Some(literal_end) = after[literal_start..].find(quote) else {
+            output.push_str(needle);
+            rest = &rest[index + needle.len()..];
+            continue;
+        };
+        let literal = &after[..literal_start + literal_end + quote.len_utf8()];
+        output.push_str("model.request.tool_calls[0].arguments.contains(");
+        output.push_str(literal);
+        output.push(')');
+        rest = &after[literal_start + literal_end + quote.len_utf8()..];
+    }
+    output.push_str(rest);
+    output
+}
+
+fn normalize_profile_runtime_path(callback: &str, path: &str) -> String {
+    for (from, to) in model_profile_runtime_aliases(callback).iter().chain(
+        [
+            ("qname", "dns.request.qname"),
+            ("request.host", "http.request.host"),
+            ("request.path", "http.request.path"),
+            ("request.query", "http.request.query"),
+            ("request.method", "http.request.method"),
+            ("response.text", "http.response.body.text"),
+        ]
+        .iter(),
+    ) {
+        if path == *from {
+            return (*to).to_string();
+        }
+    }
+    path.to_string()
+}
+
+fn model_profile_runtime_aliases(callback: &str) -> &'static [(&'static str, &'static str)] {
+    match callback {
+        "model.request" => &[
+            ("provider", "model.request.provider"),
+            ("model", "model.request.model"),
+            ("request.text", "model.request.body.text"),
+        ],
+        "model.response" => &[
+            ("provider", "model.response.provider"),
+            ("model", "model.response.model"),
+            ("response.text", "model.response.body.text"),
+        ],
+        "model.tool_call" => &[
+            ("provider", "model.response.provider"),
+            ("model", "model.response.model"),
+            ("tool.name", "model.request.tool_calls[0].name"),
+            (
+                "tool.arguments.query",
+                "model.request.tool_calls[0].arguments.text",
+            ),
+            (
+                "tool.arguments",
+                "model.request.tool_calls[0].arguments.text",
+            ),
+        ],
+        "model.tool_response" => &[
+            ("provider", "model.response.provider"),
+            ("model", "model.response.model"),
+            (
+                "tool.result",
+                "model.response.tool_results[0].content_preview",
+            ),
+        ],
+        _ => &[],
+    }
+}
+
+fn replace_cel_paths(condition: &str, aliases: &[(&str, &str)]) -> String {
+    let mut normalized = condition.to_string();
+    for (from, to) in aliases {
+        normalized = replace_cel_path(&normalized, from, to);
+    }
+    normalized
+}
+
+fn replace_cel_path(condition: &str, from: &str, to: &str) -> String {
+    let mut output = String::with_capacity(condition.len());
+    let mut chars = condition.char_indices().peekable();
+    let mut quote: Option<char> = None;
+    while let Some((index, ch)) = chars.next() {
+        if matches!(quote, Some(active) if ch == active) {
+            quote = None;
+            output.push(ch);
+            continue;
+        }
+        if quote.is_none() && (ch == '"' || ch == '\'') {
+            quote = Some(ch);
+            output.push(ch);
+            continue;
+        }
+        if quote.is_none()
+            && condition[index..].starts_with(from)
+            && is_cel_path_boundary(condition[..index].chars().next_back())
+            && is_cel_path_end_boundary(condition[index + from.len()..].chars().next(), from)
+        {
+            output.push_str(to);
+            for _ in 1..from.chars().count() {
+                let _ = chars.next();
+            }
+            continue;
+        }
+        output.push(ch);
+    }
+    output
+}
+
+fn is_cel_path_boundary(ch: Option<char>) -> bool {
+    !matches!(ch, Some(value) if value.is_ascii_alphanumeric() || matches!(value, '_' | '.'))
+}
+
+fn is_cel_path_end_boundary(ch: Option<char>, from: &str) -> bool {
+    match ch {
+        Some('.') if from.contains('.') => true,
+        other => is_cel_path_boundary(other),
+    }
+}
+
 fn validate_rewrite_target_and_value(path: &str, target: &str, value: &str) -> Result<()> {
     let target = target.trim();
     if target.is_empty() {

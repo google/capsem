@@ -4110,12 +4110,18 @@ async fn wait_for_vm_ready(
         Arc::new(std::sync::atomic::AtomicBool::new(false));
     let res = capsem_core::poll::poll_until(opts, || {
         let ready = ready_path.clone();
+        let uds = uds_path.to_path_buf();
         let state = state.cloned();
         let id = id.map(|s| s.to_string());
         let died = Arc::clone(&died);
         async move {
             if ready.exists() {
-                return Some(());
+                if matches!(
+                    send_ipc_command(&uds, ServiceToProcess::Ping, Some(1)).await,
+                    Ok(ProcessToService::Pong)
+                ) {
+                    return Some(());
+                }
             }
             if let (Some(st), Some(name)) = (state.as_ref(), id.as_ref()) {
                 if !st.instances.lock().unwrap().contains_key(name) {
@@ -6453,7 +6459,7 @@ fn profile_rule_scope_origin(
 }
 
 fn profile_rule_callback_guard(callback: &str) -> Result<String, AppError> {
-    seceng::SecurityEventType::callback_guard(callback).map_err(|_| {
+    capsem_core::settings_profiles::profile_runtime_callback_guard(callback).map_err(|_| {
         AppError(
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("profile rule callback '{callback}' cannot be seeded into runtime enforcement"),
@@ -6467,30 +6473,11 @@ fn profile_rule_condition(
     let guard = profile_rule_callback_guard(&rule.callback)?;
     Ok(format!(
         "{guard} && ({})",
-        normalize_profile_runtime_condition(&rule.callback, &rule.condition)
+        capsem_core::settings_profiles::normalize_profile_runtime_condition(
+            &rule.callback,
+            &rule.condition,
+        )
     ))
-}
-
-fn normalize_profile_runtime_condition(callback: &str, condition: &str) -> String {
-    let mut normalized = condition.to_string();
-    if callback == "dns.request" {
-        normalized = normalized.replace("qname", "dns.request.qname");
-        normalized = normalized.replace("dns.request.dns.request.qname", "dns.request.qname");
-    }
-    if matches!(callback, "http.request" | "http.response") {
-        for (from, to) in [
-            ("request.host", "http.request.host"),
-            ("request.path", "http.request.path"),
-            ("request.query", "http.request.query"),
-            ("request.method", "http.request.method"),
-            ("response.text", "http.response.body.text"),
-        ] {
-            normalized = normalized.replace(from, to);
-        }
-        normalized = normalized.replace("http.http.request.", "http.request.");
-        normalized = normalized.replace("http.http.response.", "http.response.");
-    }
-    normalized
 }
 
 fn profile_seeded_enforcement_record(

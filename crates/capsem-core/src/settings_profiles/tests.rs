@@ -849,6 +849,36 @@ decision = "block"
 }
 
 #[test]
+fn profile_runtime_condition_normalizes_model_aliases_to_canonical_cel() {
+    let response = normalize_profile_runtime_condition(
+        "model.response",
+        "provider == 'openai' && model == 'gpt-4o-mini' && response.text.contains('response.text')",
+    );
+    assert_eq!(
+        response,
+        "model.response.provider == 'openai' && model.response.model == 'gpt-4o-mini' && model.response.body.text.contains('response.text')"
+    );
+
+    let tool_call = normalize_profile_runtime_condition(
+        "model.tool_call",
+        "provider == 'openai' && model == 'gpt-4o-mini' && tool.name == 'search' && tool.arguments.query == 'tool.arguments.query'",
+    );
+    assert_eq!(
+        tool_call,
+        "model.response.provider == 'openai' && model.response.model == 'gpt-4o-mini' && model.request.tool_calls[0].name == 'search' && model.request.tool_calls[0].arguments.contains('tool.arguments.query')"
+    );
+
+    assert_eq!(
+        normalize_profile_runtime_rewrite_target("model.response", r#"response.text =~ "secret""#),
+        r#"model.response.body.text =~ "secret""#
+    );
+    assert_eq!(
+        profile_runtime_callback_guard("model.tool_call").unwrap(),
+        "common.event_type == 'model.response'"
+    );
+}
+
+#[test]
 fn profile_accepts_canonical_mcp_argument_object_search() {
     let profile = Profile::from_toml_str(
         r#"

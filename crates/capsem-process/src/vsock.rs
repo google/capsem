@@ -1351,9 +1351,11 @@ async fn handle_guest_msg(msg: GuestToHost, js: &Arc<JobStore>, db: &Arc<capsem_
             // The guest closes the EXEC socket before sending ExecDone, and
             // the host's EXEC-port reader thread may still be finishing its
             // read loop + deposit. Wait on the deposit notifier so we read
-            // the actual captured buffer, not a stale empty one. Short
-            // timeout guards against lost connections (guest never opened
-            // the EXEC port) so we still return in bounded time.
+            // the actual captured buffer, not a stale empty one. The EXEC
+            // reader uses notify_one, which stores a permit when deposit wins
+            // the race, so already-deposited empty-output commands still
+            // return immediately. The timeout only bounds lost EXEC-port
+            // connections.
             let notify = js
                 .active_exec
                 .lock()
@@ -1362,8 +1364,7 @@ async fn handle_guest_msg(msg: GuestToHost, js: &Arc<JobStore>, db: &Arc<capsem_
                 .filter(|a| a.id == id)
                 .map(|a| a.deposited.clone());
             if let Some(n) = notify {
-                let _ =
-                    tokio::time::timeout(std::time::Duration::from_millis(100), n.notified()).await;
+                let _ = tokio::time::timeout(std::time::Duration::from_secs(1), n.notified()).await;
             }
             let stdout = js
                 .active_exec

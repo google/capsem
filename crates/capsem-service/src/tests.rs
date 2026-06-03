@@ -1459,31 +1459,113 @@ fn spawn_single_exec_server(
     let listener = std::os::unix::net::UnixListener::bind(&sock_path).unwrap();
     std::fs::write(sock_path.with_extension("ready"), b"ready").unwrap();
     std::thread::spawn(move || {
-        let (mut std_stream, _) = listener.accept().unwrap();
-        capsem_core::ipc_handshake::negotiate_responder(&mut std_stream, "capsem-process-test", "")
+        for stream in listener.incoming() {
+            let mut std_stream = stream.unwrap();
+            capsem_core::ipc_handshake::negotiate_responder(
+                &mut std_stream,
+                "capsem-process-test",
+                "",
+            )
             .unwrap();
+            let handled_exec = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(async move {
+                    let (tx, rx): (Sender<ProcessToService>, Receiver<ServiceToProcess>) =
+                        channel_from_std(std_stream).unwrap();
+                    match rx.recv().await.unwrap() {
+                        ServiceToProcess::Ping => {
+                            tx.send(ProcessToService::Pong).await.unwrap();
+                            false
+                        }
+                        ServiceToProcess::Exec { id, .. } => {
+                            tx.send(ProcessToService::ExecResult {
+                                id,
+                                stdout: stdout.to_vec(),
+                                stderr: Vec::new(),
+                                exit_code: 0,
+                            })
+                            .await
+                            .unwrap();
+                            true
+                        }
+                        other => panic!("unexpected command: {other:?}"),
+                    }
+                });
+            if handled_exec {
+                break;
+            }
+        }
+    })
+}
+
+fn spawn_ping_silent_server(sock_path: PathBuf) -> std::thread::JoinHandle<()> {
+    if let Some(parent) = sock_path.parent() {
+        std::fs::create_dir_all(parent).unwrap();
+    }
+    let _ = std::fs::remove_file(&sock_path);
+    let listener = std::os::unix::net::UnixListener::bind(&sock_path).unwrap();
+    listener.set_nonblocking(true).unwrap();
+    std::fs::write(sock_path.with_extension("ready"), b"ready").unwrap();
+    std::thread::spawn(move || {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        let mut std_stream = loop {
+            match listener.accept() {
+                Ok((stream, _)) => break stream,
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    if std::time::Instant::now() >= deadline {
+                        return;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+                Err(error) => panic!("accept failed: {error}"),
+            }
+        };
+        std_stream
+            .set_read_timeout(Some(std::time::Duration::from_millis(250)))
+            .unwrap();
+        std_stream
+            .set_write_timeout(Some(std::time::Duration::from_millis(250)))
+            .unwrap();
+        if capsem_core::ipc_handshake::negotiate_responder(
+            &mut std_stream,
+            "capsem-process-test",
+            "",
+        )
+        .is_err()
+        {
+            return;
+        }
         tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
             .unwrap()
             .block_on(async move {
-                let (tx, rx): (Sender<ProcessToService>, Receiver<ServiceToProcess>) =
+                let (_tx, rx): (Sender<ProcessToService>, Receiver<ServiceToProcess>) =
                     channel_from_std(std_stream).unwrap();
-                match rx.recv().await.unwrap() {
-                    ServiceToProcess::Exec { id, .. } => {
-                        tx.send(ProcessToService::ExecResult {
-                            id,
-                            stdout: stdout.to_vec(),
-                            stderr: Vec::new(),
-                            exit_code: 0,
-                        })
-                        .await
-                        .unwrap();
-                    }
-                    other => panic!("unexpected command: {other:?}"),
+                match tokio::time::timeout(std::time::Duration::from_millis(250), rx.recv()).await {
+                    Ok(Ok(ServiceToProcess::Ping)) => {}
+                    Ok(Ok(other)) => panic!("unexpected command: {other:?}"),
+                    _ => {}
                 }
             });
     })
+}
+
+#[tokio::test]
+async fn wait_for_vm_ready_rejects_ready_sentinel_without_ipc_pong() {
+    let dir = tempfile::tempdir().unwrap();
+    let sock = dir.path().join("early-ready.sock");
+    let server = spawn_ping_silent_server(sock.clone());
+
+    let result = wait_for_vm_ready(&sock, 1, None, None).await;
+
+    server.join().unwrap();
+    assert!(
+        result.is_err(),
+        "ready sentinel without IPC Pong must not make /exec ready"
+    );
 }
 
 #[test]

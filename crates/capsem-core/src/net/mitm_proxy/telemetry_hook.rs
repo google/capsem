@@ -27,7 +27,8 @@ use capsem_network_engine::http_security::{
 };
 use capsem_security_engine::{
     AiAttributionScope, AiOriginKind, Enforceability, RedactionState, ResolvedSecurityEvent,
-    SecurityEvent, SecurityEventCommon, SecurityEventType, SecurityResult, SourceEngine,
+    SecurityEvent, SecurityEventCommon, SecurityEventSubject, SecurityEventType, SecurityResult,
+    SourceEngine, ToolOrigin,
 };
 use tracing::{info, warn};
 
@@ -45,6 +46,7 @@ use capsem_network_engine::model_evidence::{build_model_interaction_evidence, Mo
 use capsem_network_engine::model_request as request_parser;
 use capsem_network_engine::model_stream::{
     collect_summary, parse_non_streaming_usage, LlmEvent, ProviderStreamParser, StopReason,
+    StreamSummary, ToolCall,
 };
 use capsem_network_engine::sse_parser::SseParser;
 
@@ -308,7 +310,105 @@ fn completed_http_records(
         &deps.pricing,
         &deps.trace_state,
     );
+    let model_call = if model_call
+        .as_ref()
+        .and_then(|call| call.ai_evidence.as_ref())
+        .and_then(|evidence| evidence.response.as_ref())
+        .and_then(|response| response.text_preview.as_ref())
+        .is_some()
+    {
+        model_call
+    } else {
+        model_call_from_runtime_model_response(req_ctx, resp_stats, &resolved_events).or(model_call)
+    };
     (net_event, resolved_events, model_call)
+}
+
+fn model_call_from_runtime_model_response(
+    req_ctx: &TelemetryRequestContext,
+    resp_stats: &TelemetryResponseStats,
+    resolved_events: &[ResolvedSecurityEvent],
+) -> Option<ModelCall> {
+    let evidence = resolved_events.iter().find_map(|resolved| {
+        if resolved.event.common.event_type != SecurityEventType::ModelResponse {
+            return None;
+        }
+        let SecurityEventSubject::Model(subject) = &resolved.event.subject else {
+            return None;
+        };
+        subject.evidence.as_deref()
+    })?;
+    let response = evidence.response.as_ref();
+    let request_body_preview = {
+        let stats = req_ctx
+            .request_body_stats
+            .lock()
+            .expect("req body stats lock");
+        if stats.preview.is_empty() {
+            None
+        } else {
+            Some(String::from_utf8_lossy(&stats.preview).into_owned())
+        }
+    };
+    Some(ModelCall {
+        timestamp: SystemTime::now(),
+        provider: evidence.provider.as_str().to_string(),
+        model: Some(evidence.model.clone()),
+        process_name: req_ctx.process_name.clone(),
+        pid: None,
+        method: req_ctx.method.clone(),
+        path: req_ctx.path.clone(),
+        stream: evidence.request.stream,
+        system_prompt_preview: evidence.request.system_prompt_preview.clone(),
+        messages_count: evidence.request.message_count as usize,
+        tools_count: evidence.request.tools_declared_count as usize,
+        request_bytes: {
+            let stats = req_ctx
+                .request_body_stats
+                .lock()
+                .expect("req body stats lock");
+            stats.bytes
+        },
+        request_body_preview,
+        message_id: response.map(|response| response.response_id.clone()),
+        status_code: req_ctx.status_code,
+        text_content: response.and_then(|response| response.text_preview.clone()),
+        thinking_content: response.and_then(|response| response.thinking_preview.clone()),
+        stop_reason: response.and_then(|response| response.stop_reason.clone()),
+        input_tokens: evidence.usage.input_tokens,
+        output_tokens: evidence.usage.output_tokens,
+        usage_details: evidence.usage.details.clone(),
+        duration_ms: req_ctx.start_time.elapsed().as_millis() as u64,
+        response_bytes: resp_stats.bytes,
+        estimated_cost_usd: evidence
+            .usage
+            .estimated_cost_micros
+            .map(|micros| micros as f64 / 1_000_000.0)
+            .unwrap_or(0.0),
+        trace_id: Some(evidence.trace_id.clone()),
+        ai_evidence: Some(evidence.clone()),
+        tool_calls: evidence
+            .tool_calls
+            .iter()
+            .map(|tool_call| ToolCallEntry {
+                call_index: tool_call.index as u32,
+                call_id: tool_call.tool_call_id.clone(),
+                tool_name: tool_call.normalized_name.clone(),
+                arguments: tool_call.arguments_json.clone(),
+                origin: logger_tool_origin(tool_call.origin).to_string(),
+                trace_id: Some(evidence.trace_id.clone()),
+            })
+            .collect(),
+        tool_responses: Vec::new(),
+    })
+}
+
+fn logger_tool_origin(origin: ToolOrigin) -> &'static str {
+    match origin {
+        ToolOrigin::NativeProviderTool | ToolOrigin::LocalBuiltinTool => "native",
+        ToolOrigin::McpTool => "mcp",
+        ToolOrigin::Unknown => "unknown",
+    }
 }
 
 /// Pure builder: assembles a `NetEvent` from the context and stats.
@@ -509,7 +609,7 @@ pub fn build_model_response_security_event(
         .preview
         .clone();
     let request = request_parser::parse_request(provider, &req_body_bytes);
-    let summary = (!llm_events.is_empty()).then(|| collect_summary(llm_events));
+    let summary = model_response_summary(provider, &resp_stats.preview, llm_events);
     let (resp_model, resp_input, resp_output, resp_details) =
         if summary.as_ref().and_then(|s| s.input_tokens).is_none()
             && !resp_stats.preview.is_empty()
@@ -651,6 +751,124 @@ pub fn parse_llm_events_from_response_body(
     llm_events
 }
 
+fn model_response_summary(
+    provider: ProviderKind,
+    response_body: &[u8],
+    llm_events: &[LlmEvent],
+) -> Option<StreamSummary> {
+    if !llm_events.is_empty() {
+        return Some(collect_summary(llm_events));
+    }
+    parse_non_streaming_response_summary(provider, response_body)
+}
+
+fn parse_non_streaming_response_summary(
+    provider: ProviderKind,
+    response_body: &[u8],
+) -> Option<StreamSummary> {
+    match provider {
+        ProviderKind::OpenAi => parse_openai_non_streaming_response_summary(response_body),
+        ProviderKind::Anthropic | ProviderKind::Google => None,
+    }
+}
+
+fn parse_openai_non_streaming_response_summary(response_body: &[u8]) -> Option<StreamSummary> {
+    let json: serde_json::Value = serde_json::from_slice(response_body).ok()?;
+    let choices = json.get("choices")?.as_array()?;
+    let mut text = String::new();
+    let mut tool_calls = Vec::new();
+    let mut stop_reason = None;
+    for choice in choices {
+        if stop_reason.is_none() {
+            stop_reason = choice
+                .get("finish_reason")
+                .and_then(|value| value.as_str())
+                .map(openai_finish_reason);
+        }
+        let Some(message) = choice.get("message") else {
+            continue;
+        };
+        if let Some(content) = openai_message_content_text(message.get("content")) {
+            text.push_str(&content);
+        }
+        if let Some(calls) = message.get("tool_calls").and_then(|value| value.as_array()) {
+            for (fallback_index, call) in calls.iter().enumerate() {
+                let Some(function) = call.get("function") else {
+                    continue;
+                };
+                let Some(name) = function.get("name").and_then(|value| value.as_str()) else {
+                    continue;
+                };
+                let arguments = function
+                    .get("arguments")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or_default()
+                    .to_string();
+                let index = call
+                    .get("index")
+                    .and_then(|value| value.as_u64())
+                    .unwrap_or(fallback_index as u64) as u32;
+                let call_id = call
+                    .get("id")
+                    .and_then(|value| value.as_str())
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| format!("openai-tool-call-{index}"));
+                tool_calls.push(ToolCall {
+                    index,
+                    call_id,
+                    name: name.to_string(),
+                    arguments,
+                });
+            }
+        }
+    }
+    if text.is_empty() && tool_calls.is_empty() {
+        return None;
+    }
+    let (model, input_tokens, output_tokens, usage_details) =
+        parse_non_streaming_usage(ProviderKind::OpenAi, response_body);
+    Some(StreamSummary {
+        message_id: json
+            .get("id")
+            .and_then(|value| value.as_str())
+            .map(str::to_owned),
+        model,
+        text,
+        thinking: String::new(),
+        tool_calls,
+        input_tokens,
+        output_tokens,
+        usage_details,
+        stop_reason,
+    })
+}
+
+fn openai_message_content_text(content: Option<&serde_json::Value>) -> Option<String> {
+    match content? {
+        serde_json::Value::String(text) => Some(text.clone()),
+        serde_json::Value::Array(parts) => {
+            let mut text = String::new();
+            for part in parts {
+                if let Some(value) = part.get("text").and_then(|value| value.as_str()) {
+                    text.push_str(value);
+                }
+            }
+            (!text.is_empty()).then_some(text)
+        }
+        _ => None,
+    }
+}
+
+fn openai_finish_reason(reason: &str) -> StopReason {
+    match reason {
+        "stop" => StopReason::EndTurn,
+        "tool_calls" | "function_call" => StopReason::ToolUse,
+        "length" => StopReason::MaxTokens,
+        "content_filter" => StopReason::ContentFilter,
+        other => StopReason::Other(other.to_string()),
+    }
+}
+
 fn http_security_input(
     req_ctx: &TelemetryRequestContext,
     response_bytes: Option<u64>,
@@ -718,11 +936,7 @@ pub fn maybe_build_model_call(
     // Parse request body for metadata (model, message count, tools, tool_results).
     let req_meta = request_parser::parse_request(provider, &req_body_bytes);
 
-    let summary = if llm_events.is_empty() {
-        None
-    } else {
-        Some(collect_summary(llm_events))
-    };
+    let summary = model_response_summary(provider, &resp_stats.preview, llm_events);
 
     // Streaming detection: explicit body field OR URL path keyword.
     let stream = req_meta.stream || req_ctx.path.contains("stream");

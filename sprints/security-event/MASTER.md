@@ -51,7 +51,7 @@ This sprint verifies that diagnosis and then removes the second path.
 | T2 | Live Enforcement Rewire | Done | MITM/provider callbacks evaluate canonical model request/response/tool events; framed MCP request/response now evaluates canonical MCP events. |
 | T3 | Rule Compilation Cleanup | Done | Model/MCP rules are no longer rewritten into HTTP request/response predicates. |
 | T4 | Regression Tests | Done | Tests fail if model rules only work through HTTP-body compatibility fields. |
-| T5 | Integration Proof | In Progress | End-to-end proof shows canonical events drive block/detect/log behavior. |
+| T5 | Integration Proof | Done | End-to-end proof shows canonical events drive block/detect/log behavior. |
 | T6 | Benchmark Proof | In Progress | Fast and full benchmark gates cover CEL, Sigma/Detection IR, hunt, and live callback overhead. |
 | T7 | Typed Event Identity Contract | Done | Producers, callbacks, CEL guards, and SQLite storage consume `SecurityEventType`. |
 
@@ -150,7 +150,12 @@ Benchmark release hold:
 - T5 service-level session proof now reconstructs a blocked `model.response`
   row from a real session DB schema, preserves enforcement-match step
   provenance, and hunts over canonical `model.evidence.*` plus
-  `model.response.body.text`. Real VM E2E remains open.
+  `model.response.body.text`.
+- T5 real VM proof now passes for guest-origin OpenAI-compatible HTTPS traffic:
+  canonical `model.response` block/rewrite, provider-emitted tool-call
+  block/rewrite through current `model.response` evidence, session
+  `security_events`, `ai_model_interactions`, and detection hunt assertions all
+  flow through the same SecurityEvent/CEL spine.
 - The framed MCP path no longer uses the local MCP decision provider, MCP
   condition mini-parser, or builtin domain-policy environment authority for
   live policy decisions. It builds `mcp.request` and `mcp.response` security

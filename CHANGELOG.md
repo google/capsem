@@ -26,6 +26,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added session-hunt telemetry proof that blocked model-response
   `security_events` rows keep enforcement provenance and reconstruct into
   canonical `model.evidence.*` and `model.response.body.text` detection fields.
+- Added real VM proof that guest-origin OpenAI-compatible model responses and
+  provider-emitted tool calls enforce through canonical `SecurityEvent`/CEL
+  fields, including block, rewrite, `security_events`, `ai_model_interactions`,
+  and session hunt assertions.
+- Added non-streaming OpenAI response evidence extraction so canonical
+  `model.response.body.text` and provider tool calls are available to
+  enforcement, rewrite, telemetry, and hunt for JSON responses as well as SSE.
 - Added fast Criterion benchmark coverage for model-response runtime CEL,
   session-style model-response hunts, and OpenAI provider response parsing
   across single-frame, multi-frame, malformed, gzip, and tool-call streams.

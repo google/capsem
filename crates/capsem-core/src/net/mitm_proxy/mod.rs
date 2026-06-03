@@ -458,24 +458,7 @@ fn evaluate_runtime_model_response_inner(
     let result = engine.evaluate(event)?;
 
     if matches!(result.action, SecurityAction::Rewrite(_)) {
-        let mut denied_ctx = input.req_ctx;
-        denied_ctx.status_code = Some(SECURITY_BLOCK_STATUS);
-        denied_ctx.decision = Decision::Denied;
-        denied_ctx.matched_rule = result
-            .resolved_event
-            .event
-            .decision
-            .as_ref()
-            .and_then(|decision| decision.rule.clone());
-        denied_ctx.policy_action = Some("block".into());
-        denied_ctx.policy_rule = denied_ctx.matched_rule.clone();
-        denied_ctx.policy_reason =
-            Some("model response rewrite requires canonical model rewriter".into());
-        denied_ctx.runtime_security_results.push(result);
-        return Ok(RuntimeHttpDecision::Reject(
-            Box::new(denied_ctx),
-            "Capsem: model response rewrite is not available on the canonical path\n".into(),
-        ));
+        return Ok(RuntimeHttpDecision::Rewrite(Box::new(result)));
     }
 
     if runtime_action_allows_transport(&result.action) {
@@ -660,7 +643,13 @@ fn apply_runtime_http_response_body_rewrite(result: &SecurityResult, body: &mut 
         else {
             continue;
         };
-        if path != "response.text" && path != "http.response.body.text" {
+        if !matches!(
+            path.as_str(),
+            "response.text"
+                | "http.response.body.text"
+                | "model.response.body.text"
+                | "model.request.tool_calls[0].arguments.text"
+        ) {
             continue;
         }
         if let Ok(regex) = regex::Regex::new(pattern) {
@@ -1975,36 +1964,25 @@ async fn handle_request(
                     }
                 }
                 Ok(RuntimeHttpDecision::Rewrite(result)) => {
-                    let reason = result
-                        .resolved_event
-                        .event
-                        .decision
-                        .as_ref()
-                        .and_then(|decision| decision.reason.clone())
-                        .unwrap_or_else(|| {
-                            "model response rewrite requires canonical model rewriter".into()
-                        });
-                    req_ctx.status_code = Some(SECURITY_BLOCK_STATUS);
-                    req_ctx.decision = Decision::Denied;
-                    req_ctx.matched_rule = result
+                    apply_runtime_http_response_body_rewrite(result.as_ref(), &mut response_body);
+                    resp_parts.headers.remove("content-length");
+                    resp_hdrs = format_headers(&resp_parts.headers);
+                    req_ctx.response_headers = Some(resp_hdrs.clone());
+                    req_ctx.policy_mode = Some("runtime".into());
+                    req_ctx.policy_action = Some("rewrite".into());
+                    req_ctx.policy_rule = result
                         .resolved_event
                         .event
                         .decision
                         .as_ref()
                         .and_then(|decision| decision.rule.clone());
-                    req_ctx.policy_mode = Some("runtime".into());
-                    req_ctx.policy_action = Some("block".into());
-                    req_ctx.policy_rule = req_ctx.matched_rule.clone();
-                    req_ctx.policy_reason = Some(reason);
+                    req_ctx.policy_reason = result
+                        .resolved_event
+                        .event
+                        .decision
+                        .as_ref()
+                        .and_then(|decision| decision.reason.clone());
                     req_ctx.runtime_security_results.push(*result);
-                    let body_text =
-                        "Capsem: model response rewrite is not available on the canonical path\n";
-                    return Ok(hyper::Response::builder()
-                        .status(SECURITY_BLOCK_STATUS)
-                        .body(
-                            synthetic_body_with_telemetry(config, body_text.into(), req_ctx).await,
-                        )
-                        .unwrap());
                 }
                 Ok(RuntimeHttpDecision::Reject(denied_ctx, body_text)) => {
                     return Ok(hyper::Response::builder()

@@ -947,6 +947,84 @@ print(json.dumps({{
                 response_row["response_body_preview"] or ""
             )
 
+            response_security_row = _wait_for_row(
+                db_path,
+                """
+                SELECT se.event_id, se.event_family, se.event_type,
+                       se.source_engine, se.final_action, se.enforceability,
+                       se.origin_kind, se.trace_id, step.kind, step.status,
+                       step.rule_id
+                FROM security_events se
+                JOIN security_event_steps step ON step.event_id = se.event_id
+                WHERE se.event_type = 'model.response'
+                ORDER BY se.id DESC, step.step_index ASC
+                """,
+                lambda row: row["rule_id"]
+                == "policy.model.block_e2e_model_response",
+                timeout=30.0,
+            )
+            assert response_security_row["event_family"] == "model"
+            assert response_security_row["event_type"] == "model.response"
+            assert response_security_row["source_engine"] == "network"
+            assert response_security_row["final_action"] == "block"
+            assert response_security_row["enforceability"] == "inline_blockable"
+            assert response_security_row["origin_kind"] == "guest_network"
+            assert response_security_row["kind"] == "enforcement_match"
+            assert response_security_row["status"] == "matched"
+            assert response_security_row["trace_id"]
+
+            response_evidence_row = _wait_for_row(
+                db_path,
+                """
+                SELECT provider, api_family, model, parse_status,
+                       evidence_status, response_text_preview, trace_id
+                FROM ai_model_interactions
+                ORDER BY id DESC
+                """,
+                lambda row: row["trace_id"] == response_security_row["trace_id"]
+                and "e2e-response-secret" in (row["response_text_preview"] or ""),
+                timeout=30.0,
+            )
+            assert response_evidence_row["provider"] == "openai"
+            assert response_evidence_row["api_family"] == "openai_chat_completions"
+            assert response_evidence_row["model"] == "gpt-4o-mini"
+            assert response_evidence_row["parse_status"] == "complete"
+            assert response_evidence_row["evidence_status"] == "complete"
+
+            hunt = svc.client().post(
+                f"/sessions/{vm}/detection/hunt",
+                {
+                    "rules": [
+                        {
+                            "id": "detect-e2e-canonical-model-response",
+                            "pack_id": "e2e-security-event",
+                            "title": "Detect E2E canonical model response",
+                            "condition": (
+                                "common.event_type == 'model.response' "
+                                "&& model.response.provider == 'openai' "
+                                "&& model.response.body.text.contains('e2e-response-secret')"
+                            ),
+                            "severity": "high",
+                            "confidence": "high",
+                            "tags": ["e2e", "security-event"],
+                        }
+                    ],
+                    "limit": 20,
+                },
+                timeout=30,
+            )
+            assert hunt["total_matches"] >= 1, hunt
+            assert any(
+                row["event_ref"]["event_id"] == response_security_row["event_id"]
+                and row["rule_id"] == "detect-e2e-canonical-model-response"
+                and any(
+                    field["path"] == "model.response.body.text"
+                    and "e2e-response-secret" in json.dumps(field["value"])
+                    for field in row["matched_fields"]
+                )
+                for row in hunt["rows"]
+            ), hunt
+
             response_rewrite_row = _wait_for_row(
                 db_path,
                 """

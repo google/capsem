@@ -9,8 +9,8 @@ use http_body_util::BodyExt;
 
 use crate::net::cert_authority::CertAuthority;
 use capsem_security_engine::{
-    CelEnforcementEvaluator, CelEnforcementRule, SecurityDecisionAction, SecurityEngine,
-    SecurityEventType,
+    CelEnforcementEvaluator, CelEnforcementRule, EventMutation, SecurityDecisionAction,
+    SecurityEngine, SecurityEventType,
 };
 
 const CA_KEY: &str = include_str!("../../../../../config/capsem-ca.key");
@@ -914,6 +914,106 @@ async fn runtime_security_engine_blocks_canonical_model_response_before_guest_de
 }
 
 #[tokio::test]
+async fn runtime_security_engine_blocks_non_streaming_model_response_before_guest_delivery() {
+    let mut engine = SecurityEngine::default();
+    engine.set_enforcement(Box::new(
+        CelEnforcementEvaluator::compile(vec![CelEnforcementRule {
+            id: "block-nonstreaming-model-response-canonical".into(),
+            pack_id: Some("corp-enforcement".into()),
+            condition: "common.event_type == 'model.response' \
+                && model.response.provider == 'openai' \
+                && model.response.body.text.contains('nonstreaming-model-needle')"
+                .into(),
+            decision: SecurityDecisionAction::Block,
+            reason: Some("canonical non-streaming model response block".into()),
+            mutations: Vec::new(),
+        }])
+        .unwrap(),
+    ));
+    let config =
+        make_config_dev_with_security_engine(Some(Arc::new(std::sync::Mutex::new(engine))));
+    let (port, upstream_task) = spawn_http_fixture_response_owned(
+        200,
+        "OK",
+        vec![("content-type", "application/json")],
+        openai_json_text_response("gpt-test", "nonstreaming-model-needle"),
+    )
+    .await;
+    let (mut sender, proxy_task, conn_task) =
+        open_direct_plain_http_request_conn(&config, "127.0.0.1", port, Some(ProviderKind::OpenAi))
+            .await;
+
+    let (status, body) =
+        send_openai_chat_completion(&mut sender, "127.0.0.1", "gpt-test", "safe").await;
+
+    assert_eq!(status, 403);
+    assert!(body.contains("canonical non-streaming model response block"));
+    let upstream_request = upstream_task.await.unwrap();
+    assert!(
+        upstream_request.starts_with("POST /v1/chat/completions"),
+        "model response policy must run after upstream response parsing"
+    );
+    drop(sender);
+    conn_task.abort();
+    proxy_task.abort();
+    let _ = conn_task.await;
+    let _ = proxy_task.await;
+}
+
+#[tokio::test]
+async fn runtime_security_engine_rewrites_non_streaming_model_response_before_guest_delivery() {
+    let mut engine = SecurityEngine::default();
+    engine.set_enforcement(Box::new(
+        CelEnforcementEvaluator::compile(vec![CelEnforcementRule {
+            id: "rewrite-nonstreaming-model-response-canonical".into(),
+            pack_id: Some("corp-enforcement".into()),
+            condition: "common.event_type == 'model.response' \
+                && model.response.provider == 'openai' \
+                && model.response.body.text.contains('nonstreaming-model-rewrite')"
+                .into(),
+            decision: SecurityDecisionAction::Rewrite,
+            reason: Some("canonical non-streaming model response rewrite".into()),
+            mutations: vec![EventMutation::ReplaceRegex {
+                path: "model.response.body.text".into(),
+                pattern: "nonstreaming-model-rewrite".into(),
+                replacement: "[redacted-model-response]".into(),
+                reason: Some("redact model response".into()),
+            }],
+        }])
+        .unwrap(),
+    ));
+    let config =
+        make_config_dev_with_security_engine(Some(Arc::new(std::sync::Mutex::new(engine))));
+    let (port, upstream_task) = spawn_http_fixture_response_owned(
+        200,
+        "OK",
+        vec![("content-type", "application/json")],
+        openai_json_text_response("gpt-test", "nonstreaming-model-rewrite"),
+    )
+    .await;
+    let (mut sender, proxy_task, conn_task) =
+        open_direct_plain_http_request_conn(&config, "127.0.0.1", port, Some(ProviderKind::OpenAi))
+            .await;
+
+    let (status, body) =
+        send_openai_chat_completion(&mut sender, "127.0.0.1", "gpt-test", "safe").await;
+
+    assert_eq!(status, 200);
+    assert!(body.contains("[redacted-model-response]"));
+    assert!(!body.contains("nonstreaming-model-rewrite"));
+    let upstream_request = upstream_task.await.unwrap();
+    assert!(
+        upstream_request.starts_with("POST /v1/chat/completions"),
+        "model response rewrite must run after upstream response parsing"
+    );
+    drop(sender);
+    conn_task.abort();
+    proxy_task.abort();
+    let _ = conn_task.await;
+    let _ = proxy_task.await;
+}
+
+#[tokio::test]
 async fn runtime_security_engine_blocks_gzip_model_response_before_guest_delivery() {
     let mut engine = SecurityEngine::default();
     engine.set_enforcement(Box::new(
@@ -1648,6 +1748,22 @@ fn openai_sse_text_response(model: &str, content: &str) -> String {
         "data: {{\"id\":\"chatcmpl-policy\",\"model\":\"{model}\",\"choices\":[{{\"index\":0,\"delta\":{{\"content\":\"{content}\"}},\"finish_reason\":null}}]}}\n\n\
 data: {{\"id\":\"chatcmpl-policy\",\"model\":\"{model}\",\"choices\":[{{\"index\":0,\"delta\":{{}},\"finish_reason\":\"stop\"}}]}}\n\n\
 data: [DONE]\n\n"
+    )
+}
+
+fn openai_json_text_response(model: &str, content: &str) -> String {
+    format!(
+        r#"{{
+            "id":"chatcmpl-policy",
+            "model":"{model}",
+            "choices":[{{
+                "index":0,
+                "message":{{"role":"assistant","content":{content}}},
+                "finish_reason":"stop"
+            }}],
+            "usage":{{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}
+        }}"#,
+        content = serde_json::to_string(content).unwrap()
     )
 }
 
