@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.1780446192] - 2026-06-03
+
 ### Changed
 - Changed the endpoint-latency benchmark gate to keep strict default p95
   budgets while giving `/settings`, `/profiles`, and full `/logs/{id}` audit
