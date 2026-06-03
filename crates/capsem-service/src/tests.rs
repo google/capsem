@@ -8917,9 +8917,99 @@ async fn handle_session_detection_hunt_reconstructs_core_projection_families() {
 
         insert_hunt_security_event_fixture(
             &conn,
+            "evt-model-blocked-response",
+            "trace-model-blocked-response",
+            1_700_000_100_004,
+            "model",
+            "model.response",
+            "network",
+        );
+        conn.execute(
+            "UPDATE security_events
+             SET final_action = 'block'
+             WHERE event_id = 'evt-model-blocked-response'",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO security_event_steps (
+                event_id, step_index, kind, status, rule_id, pack_id, message
+             ) VALUES (
+                'evt-model-blocked-response', 0, 'enforcement_match',
+                'matched', 'block-session-model-response',
+                'corp-enforcement', 'session blocked model response'
+             )",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO model_calls (
+                timestamp, provider, model, method, path, input_tokens,
+                output_tokens, trace_id
+             ) VALUES (
+                '2026-05-21T10:00:00Z', 'openai', 'gpt-test',
+                'POST', '/v1/chat/completions', 21, 5,
+                'trace-model-blocked-response'
+             )",
+            [],
+        )
+        .unwrap();
+        let blocked_model_call_row_id = conn.last_insert_rowid();
+        conn.execute(
+            "INSERT INTO ai_model_interactions (
+                model_call_id, interaction_id, trace_id,
+                attribution_scope, source_engine, origin_kind, accounting_owner,
+                profile_id, vm_id, session_id, user_id,
+                provider, api_family, model, parse_status, evidence_status,
+                request_id, request_model, request_stream,
+                request_system_prompt_preview, request_message_count,
+                request_tools_declared_count, request_raw_shape_version,
+                request_unknown_fields_present,
+                response_id, response_provider_response_id, response_stop_reason,
+                response_text_preview, response_thinking_preview,
+                response_raw_shape_version,
+                usage_input_tokens, usage_output_tokens,
+                usage_estimated_cost_micros
+             ) VALUES (
+                ?1, 'interaction-blocked-response',
+                'trace-model-blocked-response',
+                'vm', 'network', 'guest_network', 'vm:hunt-vm',
+                'coding', 'hunt-vm', 'hunt-session', 'user-1',
+                'openai', 'openai_chat_completions', 'gpt-test',
+                'partial', 'partial',
+                'model-request-blocked', 'gpt-test', 1,
+                NULL, 1, 0, 'openai.chat_completions.current', 0,
+                'model-response-blocked', 'chatcmpl-blocked', NULL,
+                'session-response-needle', NULL,
+                'openai.chat_completions.current', 21, 5, 1234
+             )",
+            rusqlite::params![blocked_model_call_row_id],
+        )
+        .unwrap();
+        let blocked_event_proof: (String, String, String) = conn
+            .query_row(
+                "SELECT se.final_action, steps.rule_id, steps.status
+                 FROM security_events se
+                 JOIN security_event_steps steps ON steps.event_id = se.event_id
+                 WHERE se.event_id = 'evt-model-blocked-response'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            blocked_event_proof,
+            (
+                "block".to_string(),
+                "block-session-model-response".to_string(),
+                "matched".to_string()
+            )
+        );
+
+        insert_hunt_security_event_fixture(
+            &conn,
             "evt-file-write",
             "trace-file-write",
-            1_700_000_100_004,
+            1_700_000_100_005,
             "file",
             "file.write",
             "file",
@@ -8939,7 +9029,7 @@ async fn handle_session_detection_hunt_reconstructs_core_projection_families() {
             &conn,
             "evt-process-exec",
             "trace-process-exec",
-            1_700_000_100_005,
+            1_700_000_100_006,
             "process",
             "process.exec",
             "process",
@@ -8959,7 +9049,7 @@ async fn handle_session_detection_hunt_reconstructs_core_projection_families() {
             &conn,
             "evt-snapshot-create",
             "trace-snapshot-create",
-            1_700_000_100_006,
+            1_700_000_100_007,
             "snapshot",
             "snapshot.create",
             "file",
@@ -8979,7 +9069,7 @@ async fn handle_session_detection_hunt_reconstructs_core_projection_families() {
             &conn,
             "evt-vm-start",
             "trace-vm-start",
-            1_700_000_100_007,
+            1_700_000_100_008,
             "vm",
             "vm.start",
             "vm",
@@ -8988,7 +9078,7 @@ async fn handle_session_detection_hunt_reconstructs_core_projection_families() {
             &conn,
             "evt-profile-update",
             "trace-profile-update",
-            1_700_000_100_008,
+            1_700_000_100_009,
             "profile",
             "profile.update",
             "profile",
@@ -8997,7 +9087,7 @@ async fn handle_session_detection_hunt_reconstructs_core_projection_families() {
             &conn,
             "evt-conversation-message",
             "trace-conversation-message",
-            1_700_000_100_009,
+            1_700_000_100_010,
             "conversation",
             "conversation.message",
             "conversation",
@@ -9025,7 +9115,7 @@ async fn handle_session_detection_hunt_reconstructs_core_projection_families() {
 
     let reader = capsem_logger::DbReader::open(&db_path).unwrap();
     let reconstructed = session_backtest_events(vm_id, &reader).unwrap();
-    assert_eq!(reconstructed.len(), 9);
+    assert_eq!(reconstructed.len(), 10);
     let event_ids = reconstructed
         .iter()
         .map(|event| event.event.common.event_id.as_str())
@@ -9033,6 +9123,7 @@ async fn handle_session_detection_hunt_reconstructs_core_projection_families() {
     assert!(event_ids.contains("evt-dns-google"));
     assert!(event_ids.contains("evt-mcp-read"));
     assert!(event_ids.contains("evt-model-gemini"));
+    assert!(event_ids.contains("evt-model-blocked-response"));
     assert!(event_ids.contains("evt-file-write"));
     assert!(event_ids.contains("evt-process-exec"));
     assert!(event_ids.contains("evt-snapshot-create"));
@@ -9100,6 +9191,41 @@ async fn handle_session_detection_hunt_reconstructs_core_projection_families() {
         Some("json")
     );
     assert_eq!(model_response.tool_results[0].returned_to_model, Some(true));
+    let blocked_model_proto = capsem_security_engine::policy_context_from_event(
+        &reconstructed
+            .iter()
+            .find(|event| event.event.common.event_id == "evt-model-blocked-response")
+            .expect("blocked model response should reconstruct from session evidence")
+            .event,
+    );
+    assert_eq!(
+        blocked_model_proto.common.event_type.as_deref(),
+        Some("model.response")
+    );
+    assert_eq!(
+        blocked_model_proto
+            .model
+            .evidence
+            .as_ref()
+            .and_then(|evidence| evidence.parse_status.as_deref()),
+        Some("partial")
+    );
+    assert_eq!(
+        blocked_model_proto
+            .model
+            .evidence
+            .as_ref()
+            .and_then(|evidence| evidence.status.as_deref()),
+        Some("partial")
+    );
+    assert_eq!(
+        blocked_model_proto
+            .model
+            .response
+            .as_ref()
+            .and_then(|response| response.body.text.as_deref()),
+        Some("session-response-needle")
+    );
 
     let Json(result) = handle_session_detection_hunt(
         Path(vm_id.into()),
@@ -9152,6 +9278,23 @@ async fn handle_session_detection_hunt_reconstructs_core_projection_families() {
                     severity: capsem_security_engine::Severity::Medium,
                     confidence: capsem_security_engine::Confidence::High,
                     tags: vec!["model".into()],
+                    enabled: true,
+                },
+                RuntimeDetectionRuleRequest {
+                    id: "detect-blocked-model-response".into(),
+                    pack_id: "runtime-detection".into(),
+                    priority: seceng::DEFAULT_RUNTIME_RULE_PRIORITY,
+                    sigma_id: Some("sigma-blocked-model-response".into()),
+                    title: "Blocked model response".into(),
+                    condition: "common.event_type == 'model.response' \
+                        && model.request.provider == 'openai' \
+                        && model.evidence.parse_status == 'partial' \
+                        && model.evidence.status == 'partial' \
+                        && model.response.body.text.contains('session-response-needle')"
+                        .into(),
+                    severity: capsem_security_engine::Severity::High,
+                    confidence: capsem_security_engine::Confidence::High,
+                    tags: vec!["model".into(), "session".into()],
                     enabled: true,
                 },
                 RuntimeDetectionRuleRequest {
@@ -9249,6 +9392,7 @@ async fn handle_session_detection_hunt_reconstructs_core_projection_families() {
         "detect-dns-google",
         "detect-mcp-read",
         "detect-model-gemini",
+        "detect-blocked-model-response",
         "detect-file-write",
         "detect-process-exec",
         "detect-snapshot-create",
@@ -9259,7 +9403,7 @@ async fn handle_session_detection_hunt_reconstructs_core_projection_families() {
     .into_iter()
     .collect::<std::collections::BTreeSet<_>>();
     assert_eq!(matched_rule_ids, expected_rule_ids);
-    assert_eq!(result.total_matches, 9);
+    assert_eq!(result.total_matches, 10);
 
     let expected_paths: serde_json::Value = serde_json::from_str(include_str!(
         "../../../data/detection/hunt-expected/session-core-projection-paths.json"
@@ -9329,6 +9473,25 @@ async fn handle_session_detection_hunt_reconstructs_core_projection_families() {
     assert!(model_row.matched_fields.iter().any(|field| {
         field.path == "model.response.tool_results[0].returned_to_model"
             && field.value == serde_json::json!(true)
+    }));
+    let blocked_model_row = result
+        .rows
+        .iter()
+        .find(|row| row.rule_id == "detect-blocked-model-response")
+        .expect("blocked model-response hunt match should be returned");
+    assert_eq!(
+        blocked_model_row.event_ref.event_id,
+        "evt-model-blocked-response"
+    );
+    assert!(blocked_model_row.matched_fields.iter().any(|field| {
+        field.path == "model.evidence.parse_status" && field.value == serde_json::json!("partial")
+    }));
+    assert!(blocked_model_row.matched_fields.iter().any(|field| {
+        field.path == "model.evidence.status" && field.value == serde_json::json!("partial")
+    }));
+    assert!(blocked_model_row.matched_fields.iter().any(|field| {
+        field.path == "model.response.body.text"
+            && field.value == serde_json::json!("session-response-needle")
     }));
 }
 

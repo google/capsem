@@ -1,6 +1,6 @@
 {
   "schema": "capsem.session-hunt-projection-expected.v1",
-  "total_matches": 9,
+  "total_matches": 10,
   "required_paths_by_rule": {
     "detect-dns-google": [
       "dns.request.qname"
@@ -14,6 +14,13 @@
       "model.request.stream",
       "model.request.tool_calls[0].name",
       "model.response.tool_results[0].returned_to_model"
+    ],
+    "detect-blocked-model-response": [
+      "common.event_type",
+      "model.request.provider",
+      "model.evidence.parse_status",
+      "model.evidence.status",
+      "model.response.body.text"
     ],
     "detect-file-write": [
       "file.activity.operation",

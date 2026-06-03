@@ -3606,6 +3606,9 @@ pub fn backtest_matched_fields(
                             value,
                         )?;
                     }
+                    if let Some(value) = &response.text_preview {
+                        push_matched_field(&mut fields, "model.response.body.text", value)?;
+                    }
                 }
                 for (index, tool_result) in evidence.tool_results.iter().enumerate() {
                     let prefix = format!("model.response.tool_results[{index}]");

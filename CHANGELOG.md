@@ -23,6 +23,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   responses are marked partial and can block before guest delivery.
 - Added live MITM enforcement proof that multi-frame provider model responses
   are aggregated into canonical `model.response.body.text` before CEL blocking.
+- Added session-hunt telemetry proof that blocked model-response
+  `security_events` rows keep enforcement provenance and reconstruct into
+  canonical `model.evidence.*` and `model.response.body.text` detection fields.
 - Added canonical CEL policy-context roots for credential, VM, conversation,
   and snapshot security events so detection and enforcement rules can address
   those event families directly.

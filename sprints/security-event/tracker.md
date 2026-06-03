@@ -25,6 +25,10 @@
   streamed content deltas are aggregated into canonical
   `model.response.body.text` before CEL enforcement.
 - [ ] T5: Add integration/e2e proof and telemetry/session assertions.
+  Service-level session DB proof now covers blocked model-response telemetry:
+  `security_events.final_action = block`, enforcement step provenance,
+  canonical `model.evidence.*`, canonical `model.response.body.text`, and
+  session detection hunt matched fields. Real VM E2E remains open.
 - [ ] T6: Add fast and full benchmark proof for the security spine. Fast
   Criterion coverage added; full `just benchmark` artifact gate remains open.
 - [x] T7: Add typed security-event identity contract for the network telemetry
@@ -142,6 +146,11 @@
 - T4 final provider-body slice proves multi-frame OpenAI SSE text deltas are
   aggregated into canonical `model.response.body.text`, blocked by CEL before
   guest delivery, and excluded from blocked response previews.
+- T5 session proof now inserts a blocked `model.response` security event with
+  enforcement-match step provenance into a real session DB schema, reconstructs
+  it through the service session hunt path, and matches canonical
+  `model.evidence.parse_status`, `model.evidence.status`, and
+  `model.response.body.text`.
 - T0/T0a source map is complete for the current codebase. Remaining
   credential, VM, profile, conversation, and snapshot gaps are producer gaps:
   the typed contract, CEL projection, SQLite ledger, session reconstruction,
@@ -288,10 +297,17 @@ Unit/contract:
   `dns.response`.
 - `cargo test -p capsem-service --no-run` proves service tests compile with
   typed session reconstruction and event construction.
-- `cargo test -p capsem-service handle_session_detection_hunt` proves the
-  session telemetry path reconstructs DNS, MCP, model, file, process,
+- `cargo test -p capsem-security-engine
+  runtime_detection_hunt_reports_model_response_body_matched_field` proves
+  detection matched-field extraction reports the same
+  `model.response.body.text` path that CEL evaluates.
+- `cargo test -p capsem-service
+  handle_session_detection_hunt_reconstructs_core_projection_families` proves
+  the session telemetry path reconstructs DNS, MCP, model, file, process,
   snapshot, VM, profile, and conversation events from `security_events`, then
-  hunts over canonical CEL fields and matched-field paths.
+  hunts over canonical CEL fields and matched-field paths, including a blocked
+  `model.response` row with enforcement step provenance and canonical
+  `model.evidence.*` / `model.response.body.text` fields.
 
 Functional:
 - Partial. Security-engine evaluator APIs are covered by focused Rust tests.
@@ -305,7 +321,7 @@ Functional:
   has fixture-backed proof for canonical
   `mcp.request` and `mcp.response` CEL enforcement. Service session-hunt tests
   prove persisted canonical events reconstruct into the same CEL roots for
-  detection.
+  detection, including blocked model-response telemetry.
 
 Adversarial:
 - Partial. Existing policy-context tests cover missing/redacted body semantics
@@ -322,9 +338,11 @@ Telemetry:
 - Partial. `handle_session_detection_hunt_reconstructs_core_projection_families`
   proves persisted `security_events` rows reconstruct into canonical
   `PolicyContext` roots and session detection matched fields for DNS, MCP,
-  model, file, process, snapshot, VM, profile, and conversation. A live VM E2E
-  assertion that the post-session DB exactly matches a real blocked run remains
-  open.
+  model, file, process, snapshot, VM, profile, and conversation. It now also
+  proves a blocked `model.response` row preserves `final_action = block`,
+  enforcement step provenance, `model.evidence.*`, and
+  `model.response.body.text` through session hunt. A live VM E2E assertion that
+  the post-session DB exactly matches a real blocked run remains open.
 
 Performance:
 - Fast benchmark coverage added:
@@ -352,7 +370,7 @@ Missing/deferred:
 - T4 provider-body hardening is covered at the fixture-backed MITM layer for
   compressed, malformed, and multi-frame model responses. Real VM E2E proof is
   still open under T5. Session telemetry reconstruction/hunt proof exists at
-  the service-test layer.
+  the service-test layer, including blocked model-response provenance.
 - T6 still needs full benchmark artifact execution and callback/parser/hunt
   benchmark coverage.
 - The current file watcher emits file path/class/size; file content search is

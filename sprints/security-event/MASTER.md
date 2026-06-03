@@ -144,6 +144,10 @@ Benchmark release hold:
 - T4 also proves multi-frame OpenAI SSE text deltas are aggregated into
   canonical `model.response.body.text` before CEL enforcement and blocked
   before guest delivery.
+- T5 service-level session proof now reconstructs a blocked `model.response`
+  row from a real session DB schema, preserves enforcement-match step
+  provenance, and hunts over canonical `model.evidence.*` plus
+  `model.response.body.text`. Real VM E2E remains open.
 - The framed MCP path no longer uses the local MCP decision provider, MCP
   condition mini-parser, or builtin domain-policy environment authority for
   live policy decisions. It builds `mcp.request` and `mcp.response` security

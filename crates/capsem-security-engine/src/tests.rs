@@ -2807,6 +2807,56 @@ fn runtime_detection_hunt_runs_inside_security_engine() {
             && field.value == serde_json::json!("http.request")));
 }
 
+#[test]
+fn runtime_detection_hunt_reports_model_response_body_matched_field() {
+    let event = SecurityEvent::model(
+        common(
+            "evt-backtest-model-response",
+            "model.response",
+            SourceEngine::Network,
+        ),
+        ModelSecuritySubject::from_interaction_evidence(model_interaction_evidence(
+            "detect-model-response-body",
+            AiAttributionScope::Vm,
+            SourceEngine::Network,
+            AiOriginKind::GuestNetwork,
+            "vm:vm-1",
+        )),
+    );
+    let result = run_detection_hunt(
+        vec![CelDetectionRule {
+            id: "detect.model-response-body".into(),
+            pack_id: "runtime-detection".into(),
+            sigma_id: Some("sigma-model-response-body".into()),
+            title: "Model response body".into(),
+            condition: "common.event_type == 'model.response' \
+                && model.response.body.text.contains('Winter Build')"
+                .into(),
+            severity: Severity::Medium,
+            confidence: Confidence::High,
+            tags: vec!["model".into()],
+        }],
+        &[BacktestEventInput {
+            event_ref: Some(BacktestEventRef {
+                corpus: "unit".into(),
+                session_id: Some("session-1".into()),
+                event_id: "evt-backtest-model-response".into(),
+                sequence_no: None,
+                timestamp_unix_ms: 42,
+            }),
+            event,
+            expected: Some("finding".into()),
+        }],
+        None,
+    )
+    .unwrap();
+
+    assert_eq!(result.total_matches, 1);
+    assert!(result.rows[0].matched_fields.iter().any(|field| {
+        field.path == "model.response.body.text" && field.value == serde_json::json!("Winter Build")
+    }));
+}
+
 struct LabelProcessor {
     name: String,
     label: String,
