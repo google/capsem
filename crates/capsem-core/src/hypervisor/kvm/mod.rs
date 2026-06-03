@@ -76,7 +76,6 @@ fn append_kvm_vsock_port_offset(cmdline: &str, offset: u32) -> String {
     format!("{cmdline} capsem.vsock_port_offset={offset}")
 }
 
-#[cfg(target_arch = "x86_64")]
 fn create_irq_eventfd() -> Result<OwnedFd> {
     let fd = unsafe { libc::eventfd(0, libc::EFD_CLOEXEC | libc::EFD_NONBLOCK) };
     anyhow::ensure!(
