@@ -40,18 +40,35 @@ commit.
 ## T0: Schema And Ownership Contract
 
 - [ ] Define canonical profile schema/profile file shape.
-- [ ] Define canonical `settings.toml` UI-settings-only shape.
-- [ ] Define canonical corp overlay shape.
+- [x] Define canonical `settings.toml` UI-settings-only shape.
+- [x] Define canonical corp overlay shape.
 - [ ] Define profile id and VM immutable profile assignment semantics.
 - [ ] Define default rules location/grouping in profile contract.
 - [ ] Define default rule override/mutation semantics.
-- [ ] Define plugin config in profile/corp contract.
-- [ ] Define credential broker profile contract, including BLAKE3 hash exposure
+- [x] Define plugin config in profile/corp contract.
+- [x] Define credential broker profile contract, including BLAKE3 hash exposure
   and OTel/status counters.
-- [ ] Add contract tests proving settings cannot own profile/VM behavior.
+- [x] Add contract tests proving settings cannot own profile/VM behavior.
 - [ ] Add contract tests proving profile owns availability, name, description,
   icon/SVG, assets, rules, MCP, skills, credentials, and VM defaults.
 - [ ] Commit T0 with tests.
+
+### T0 Notes
+
+- Added `policy_config::ownership` with public validators for
+  `settings.toml`, `profile.toml`, and `corp.toml` ownership.
+- `settings.toml` accepts only `app.*` and `appearance.*` UI/application
+  preferences and rejects profile behavior sections (`rule_files`,
+  `profiles`, `corp`, `ai`, `plugins`, tool config sources, MCP).
+- Profile-owned config writes now use
+  `batch_update_profile_settings*`; `/settings/edit` keeps
+  `batch_update_settings*` and rejects VM/security/AI/repository/credential
+  settings.
+- `cargo test -p capsem-core ownership::tests` passed with 6 ownership
+  contract tests.
+- `cargo test -p capsem-core batch_update` passed with 11 batch-writer
+  ownership/atomicity tests.
+- `cargo clippy -p capsem-core --all-targets -- -D warnings` passed.
 
 ## T1: Service And Gateway API Routes
 

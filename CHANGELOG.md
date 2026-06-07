@@ -135,6 +135,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Replaced the ambiguous `GET|POST /settings` route with
   `GET /settings/info` and `PATCH /settings/edit`; the old magic settings
   route now fails closed in the service and gateway.
+- Split core config mutation by owner: `PATCH /settings/edit` now uses the
+  UI-settings writer, while credential brokerage and host config discovery use
+  explicit profile-owned config writers for VM/security/AI/credential fields.
 - Removed retired settings utility routes `/settings/lint` and
   `/settings/validate-key`; settings now expose only `info` and `edit` until
   profile/corp validation and credential broker endpoints own those workflows.

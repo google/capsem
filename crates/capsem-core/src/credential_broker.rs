@@ -6,9 +6,9 @@ use tracing::warn;
 
 use crate::net::ai_traffic::provider::ProviderKind;
 use crate::net::policy_config::{
-    batch_update_settings_with_provider_discoveries, ProviderDiscovery, ProviderDiscoveryPatch,
-    SecurityRuleSet, SettingValue, SETTING_ANTHROPIC_API_KEY, SETTING_GITHUB_TOKEN,
-    SETTING_GOOGLE_API_KEY, SETTING_OPENAI_API_KEY,
+    batch_update_profile_settings_with_provider_discoveries, ProviderDiscovery,
+    ProviderDiscoveryPatch, SecurityRuleSet, SettingValue, SETTING_ANTHROPIC_API_KEY,
+    SETTING_GITHUB_TOKEN, SETTING_GOOGLE_API_KEY, SETTING_OPENAI_API_KEY,
 };
 use crate::security_engine::RuntimeSecurityEventType;
 
@@ -134,7 +134,7 @@ pub fn broker_to_user_settings(
         .transpose()?
         .into_iter()
         .collect::<Vec<_>>();
-    batch_update_settings_with_provider_discoveries(&changes, &provider_discoveries)?;
+    batch_update_profile_settings_with_provider_discoveries(&changes, &provider_discoveries)?;
     Ok(BrokeredCredential {
         provider: observation.provider,
         setting_id,

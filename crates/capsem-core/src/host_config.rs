@@ -181,8 +181,8 @@ pub fn detect_and_write_to_settings() -> DetectedConfigSummary {
 
     // Write all changes in one batch
     if !changes.is_empty() {
-        if let Err(e) = policy_config::batch_update_settings(&changes) {
-            tracing::warn!(error = %e, "failed to write detected config to settings");
+        if let Err(e) = policy_config::batch_update_profile_settings(&changes) {
+            tracing::warn!(error = %e, "failed to write detected profile config");
         }
     }
 

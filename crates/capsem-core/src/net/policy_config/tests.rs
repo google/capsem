@@ -3597,7 +3597,7 @@ fn batch_update_accepts_valid_changes() {
                     .into(),
             ),
         );
-        let result = loader::batch_update_settings(&changes);
+        let result = loader::batch_update_profile_settings(&changes);
         assert!(result.is_ok(), "valid changes should succeed: {:?}", result);
         let applied = result.unwrap();
         assert_eq!(applied, vec![SETTING_ANTHROPIC_API_KEY]);
@@ -3615,7 +3615,7 @@ fn batch_update_rejects_corp_locked() {
                 SETTING_ANTHROPIC_ALLOW.to_string(),
                 SettingValue::Bool(true),
             );
-            let result = loader::batch_update_settings(&changes);
+            let result = loader::batch_update_profile_settings(&changes);
             assert!(result.is_err());
             assert!(result.unwrap_err().contains("corp-locked"));
         },
@@ -3639,7 +3639,7 @@ fn batch_update_rejects_mixed_batch_atomically() {
                 SETTING_ANTHROPIC_ALLOW.to_string(),
                 SettingValue::Bool(true),
             );
-            let result = loader::batch_update_settings(&changes);
+            let result = loader::batch_update_profile_settings(&changes);
             assert!(result.is_err(), "mixed batch should be rejected");
 
             // Verify nothing was written (atomic rejection)
@@ -3660,6 +3660,20 @@ fn batch_update_rejects_unknown_setting_id() {
         let result = loader::batch_update_settings(&changes);
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("unknown setting"));
+    });
+}
+
+#[test]
+fn batch_update_settings_rejects_profile_owned_setting_ids() {
+    with_temp_configs(vec![], vec![], |_, _| {
+        let mut changes = HashMap::new();
+        changes.insert(
+            "vm.resources.cpu_count".to_string(),
+            SettingValue::Number(8),
+        );
+        let result = loader::batch_update_settings(&changes);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("profile-owned setting"));
     });
 }
 
@@ -3690,7 +3704,7 @@ fn batch_update_allows_dynamic_guest_env() {
             "guest.env.MY_VAR".to_string(),
             SettingValue::Text("hello".into()),
         );
-        let result = loader::batch_update_settings(&changes);
+        let result = loader::batch_update_profile_settings(&changes);
         assert!(result.is_ok(), "dynamic guest.env.* should be allowed");
     });
 }
@@ -4843,7 +4857,7 @@ fn batch_update_settings_json_rejects_old_policy_rule_shape_atomically() {
             }),
         );
 
-        let error = loader::batch_update_settings_json(&changes)
+        let error = loader::batch_update_profile_settings_json(&changes)
             .expect_err("old policy writes must reject");
         assert!(
             error.contains("unknown setting: policy.http.block_openai_github"),
@@ -5109,7 +5123,7 @@ fn batch_update_settings_rejects_raw_provider_credentials_atomically() {
             serde_json::json!("sk-raw-openai"),
         );
 
-        let result = loader::batch_update_settings_json(&changes);
+        let result = loader::batch_update_profile_settings_json(&changes);
         assert!(result.is_err(), "raw API key writes must be rejected");
         let loaded = loader::load_settings_file(user_path).unwrap();
         assert!(

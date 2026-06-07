@@ -4,9 +4,9 @@ use std::path::Path;
 use super::provider_profile::ProviderDiscoveryPatch;
 use super::types::{McpServerDef, McpTransport, PolicySource};
 use super::{
-    validate_stored_setting_contract, ProviderRuleProfile, ProviderStatus, SecurityRuleAction,
-    SettingValue, SettingsFile, SETTING_ANTHROPIC_API_KEY, SETTING_GOOGLE_API_KEY,
-    SETTING_OPENAI_API_KEY,
+    setting_id_owner, validate_stored_setting_contract, ConfigOwner, ProviderRuleProfile,
+    ProviderStatus, SecurityRuleAction, SettingValue, SettingsFile, SETTING_ANTHROPIC_API_KEY,
+    SETTING_GOOGLE_API_KEY, SETTING_OPENAI_API_KEY,
 };
 
 // ---------------------------------------------------------------------------
@@ -600,10 +600,28 @@ pub fn batch_update_settings(
 pub fn batch_update_settings_json(
     changes: &HashMap<String, serde_json::Value>,
 ) -> Result<Vec<String>, String> {
-    batch_update_settings_json_with_provider_discoveries(changes, &[])
+    batch_update_config_json_with_provider_discoveries(changes, &[], ConfigOwner::Settings)
 }
 
-pub fn batch_update_settings_with_provider_discoveries(
+pub fn batch_update_profile_settings(
+    changes: &HashMap<String, SettingValue>,
+) -> Result<Vec<String>, String> {
+    let mut raw = HashMap::new();
+    for (id, value) in changes {
+        let json = serde_json::to_value(value)
+            .map_err(|e| format!("failed to encode setting {id}: {e}"))?;
+        raw.insert(id.clone(), json);
+    }
+    batch_update_profile_settings_json(&raw)
+}
+
+pub fn batch_update_profile_settings_json(
+    changes: &HashMap<String, serde_json::Value>,
+) -> Result<Vec<String>, String> {
+    batch_update_config_json_with_provider_discoveries(changes, &[], ConfigOwner::Profile)
+}
+
+pub fn batch_update_profile_settings_with_provider_discoveries(
     changes: &HashMap<String, SettingValue>,
     provider_discoveries: &[ProviderDiscoveryPatch],
 ) -> Result<Vec<String>, String> {
@@ -613,12 +631,17 @@ pub fn batch_update_settings_with_provider_discoveries(
             .map_err(|e| format!("failed to encode setting {id}: {e}"))?;
         raw.insert(id.clone(), json);
     }
-    batch_update_settings_json_with_provider_discoveries(&raw, provider_discoveries)
+    batch_update_config_json_with_provider_discoveries(
+        &raw,
+        provider_discoveries,
+        ConfigOwner::Profile,
+    )
 }
 
-fn batch_update_settings_json_with_provider_discoveries(
+fn batch_update_config_json_with_provider_discoveries(
     changes: &HashMap<String, serde_json::Value>,
     provider_discoveries: &[ProviderDiscoveryPatch],
+    owner: ConfigOwner,
 ) -> Result<Vec<String>, String> {
     use super::registry::setting_definitions;
 
@@ -632,6 +655,10 @@ fn batch_update_settings_json_with_provider_discoveries(
     let corp_file = load_settings_file(&corp_path)?;
     let defs = setting_definitions();
     let mut setting_changes = HashMap::new();
+
+    if !provider_discoveries.is_empty() && owner != ConfigOwner::Profile {
+        return Err("settings.toml cannot write provider discovery records".to_string());
+    }
 
     // Validate all changes upfront
     let mut errors = Vec::new();
@@ -656,6 +683,16 @@ fn batch_update_settings_json_with_provider_discoveries(
         let def = defs.iter().find(|d| d.id == *id);
         if def.is_none() && !is_dynamic {
             errors.push(format!("unknown setting: {id}"));
+            continue;
+        }
+
+        let actual_owner = setting_id_owner(id);
+        if actual_owner != owner {
+            errors.push(format!(
+                "{} update cannot write {}-owned setting: {id}",
+                owner.as_str(),
+                actual_owner.as_str()
+            ));
             continue;
         }
 
