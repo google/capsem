@@ -1,5 +1,5 @@
-"""Settings endpoints: /settings, /settings/presets, /settings/presets/{id},
-/settings/lint, /settings/validate-key.
+"""Settings endpoints: /settings/info, /settings/edit, /settings/presets,
+/settings/presets/{id}, /settings/lint, /settings/validate-key.
 
 These endpoints read and write under CAPSEM_HOME (user.toml, corp.toml).
 The conftest's `service_env` fixture isolates CAPSEM_HOME to a tmpdir,
@@ -35,8 +35,8 @@ def isolated_client():
 class TestSettingsTree:
 
     def test_settings_response_shape(self, client):
-        """/settings returns tree + issues + presets bundled for the frontend."""
-        resp = client.get("/settings")
+        """/settings/info returns tree + issues + presets bundled for the frontend."""
+        resp = client.get("/settings/info")
         assert resp is not None
         for key in ("tree", "issues", "presets"):
             assert key in resp, f"missing '{key}': {list(resp.keys())}"
@@ -45,18 +45,18 @@ class TestSettingsTree:
         assert isinstance(resp["presets"], list) and resp["presets"], "empty presets"
 
     def test_save_settings_round_trips(self, client):
-        """POST /settings toggles a bool and GET reflects the new value.
+        """PATCH /settings/edit toggles a bool and GET reflects the new value.
 
         `app.auto_update` is a baseline bool (default: true). Flipping it
         to false and re-reading proves write-through works against the
         isolated CAPSEM_HOME user.toml. Leaves it flipped -- teardown drops
         the tmpdir with the rest of the isolated home.
         """
-        before = _find_setting_value(client.get("/settings")["tree"], "app.auto_update")
+        before = _find_setting_value(client.get("/settings/info")["tree"], "app.auto_update")
         assert before is True, f"default expected true, got {before}"
 
-        saved = client.post("/settings", {"app.auto_update": False})
-        assert saved is not None, "POST /settings returned no body"
+        saved = client.patch("/settings/edit", {"app.auto_update": False})
+        assert saved is not None, "PATCH /settings/edit returned no body"
         # Response mirrors GET: tree + issues + presets.
         assert "tree" in saved and "issues" in saved and "presets" in saved
 
@@ -64,17 +64,22 @@ class TestSettingsTree:
         assert after is False, f"save did not apply: {after}"
 
         # Fresh GET confirms persistence.
-        refetched = _find_setting_value(client.get("/settings")["tree"], "app.auto_update")
+        refetched = _find_setting_value(client.get("/settings/info")["tree"], "app.auto_update")
         assert refetched is False
 
     def test_save_settings_rejects_unknown_key(self, client):
         """Batch update is atomic -- any unknown key fails the whole batch."""
-        resp = client.post("/settings", {"totally.not.a.setting": True})
+        resp = client.patch("/settings/edit", {"totally.not.a.setting": True})
         # UdsHttpClient returns whatever the body contains on error; the
         # contract is that the batch was rejected.
         assert resp is None or "error" in resp or "unknown" in str(resp).lower(), (
             f"unknown key should reject batch: {resp}"
         )
+
+    def test_retired_magic_settings_route_is_removed(self, client):
+        """The old GET/POST /settings route must not remain as a compatibility alias."""
+        assert client.get("/settings") is None
+        assert client.post("/settings", {"app.auto_update": False}) is None
 
 
 class TestPresets:
@@ -98,7 +103,7 @@ class TestPresets:
         """
         resp = isolated_client.post("/settings/presets/high", {})
         assert resp is not None
-        # apply_preset returns the same shape as GET /settings.
+        # apply_preset returns the same shape as GET /settings/info.
         for key in ("tree", "issues", "presets"):
             assert key in resp, f"missing '{key}': {list(resp.keys())}"
 

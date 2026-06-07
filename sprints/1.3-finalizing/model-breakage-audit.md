@@ -44,7 +44,9 @@ Current service routes still expose:
   endpoints; target is `/profiles/{profile_id}/enforcement/...`.
 - `/plugins`, `/plugins/global/{plugin_id}`, `/plugins/{id}` are global or
   VM-scoped plugin authoring endpoints; target is profile-scoped plugins.
-- `/settings` owns behavior config; target settings are UI/app preferences only.
+- `/settings` owned behavior config behind a magic GET/POST route. The route is
+  now split into `GET /settings/info` and `PATCH /settings/edit`; the remaining
+  target is making the backing settings tree UI/app preferences only.
 - `/corp-config` was a single mutation endpoint; `PUT /corp/edit` is now live
   and the retired route fails closed. Remaining target routes are `/corp/info`,
   `/corp/validate`, and `/corp/reload`.

@@ -255,24 +255,25 @@ describe('api', () => {
       await api.init();
     });
 
-    it('getSettings sends GET /settings', async () => {
+    it('getSettings sends GET /settings/info', async () => {
       const mockResp = { tree: [], issues: [], presets: [] };
       mockFetch.mockReturnValueOnce(jsonResponse(mockResp));
       const result = await api.getSettings();
       expect(result).toEqual(mockResp);
       const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
-      expect(call[0]).toContain('/settings');
+      expect(call[0]).toContain('/settings/info');
       expect(call[1].method).toBeUndefined(); // GET (no method override)
     });
 
-    it('saveSettings sends POST /settings with changes', async () => {
+    it('saveSettings sends PATCH /settings/edit with changes', async () => {
       const changes = { 'vm.resources.cpu_count': 8 };
       const mockResp = { tree: [], issues: [], presets: [] };
       mockFetch.mockReturnValueOnce(jsonResponse(mockResp));
       const result = await api.saveSettings(changes);
       expect(result).toEqual(mockResp);
       const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
-      expect(call[1].method).toBe('POST');
+      expect(call[0]).toContain('/settings/edit');
+      expect(call[1].method).toBe('PATCH');
       expect(JSON.parse(call[1].body)).toEqual(changes);
     });
 

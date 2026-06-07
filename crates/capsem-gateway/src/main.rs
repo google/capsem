@@ -274,10 +274,8 @@ fn service_proxy_routes() -> Router<Arc<AppState>> {
         )
         .route("/reload-config", post(proxy::handle_proxy))
         .route("/fork/{id}", post(proxy::handle_proxy))
-        .route(
-            "/settings",
-            get(proxy::handle_proxy).post(proxy::handle_proxy),
-        )
+        .route("/settings/info", get(proxy::handle_proxy))
+        .route("/settings/edit", patch(proxy::handle_proxy))
         .route("/settings/presets", get(proxy::handle_proxy))
         .route("/settings/presets/{id}", post(proxy::handle_proxy))
         .route("/settings/lint", post(proxy::handle_proxy))
@@ -479,6 +477,8 @@ mod tests {
                 "/profiles/default/mcp/servers/local/tools/echo/call",
             ),
             ("PUT", "/corp/edit"),
+            ("GET", "/settings/info"),
+            ("PATCH", "/settings/edit"),
         ] {
             let app = service_proxy_app("/tmp/capsem-gateway-missing-service.sock");
             let resp = app
@@ -561,6 +561,24 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.status(), http::StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn gateway_does_not_forward_retired_magic_settings_route() {
+        for (method, uri) in [("GET", "/settings"), ("POST", "/settings")] {
+            let app = service_proxy_app("/tmp/capsem-gateway-must-not-connect.sock");
+            let resp = app
+                .oneshot(
+                    http::Request::builder()
+                        .method(method)
+                        .uri(uri)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), http::StatusCode::NOT_FOUND, "{method} {uri}");
+        }
     }
 
     #[tokio::test]

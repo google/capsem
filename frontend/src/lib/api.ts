@@ -609,13 +609,13 @@ export function onDownloadProgress(cb: (progress: DownloadProgress) => void): ()
 
 /** Load the merged settings tree (user + corp + defaults). */
 export async function getSettings(): Promise<SettingsResponse> {
-  const resp = await _get('/settings');
+  const resp = await _get('/settings/info');
   return await resp.json();
 }
 
 /** Save settings changes. Returns the updated settings tree. */
 export async function saveSettings(changes: Record<string, unknown>): Promise<SettingsResponse> {
-  const resp = await _post('/settings', changes);
+  const resp = await _patch('/settings/edit', changes);
   return await resp.json();
 }
 

@@ -105,7 +105,7 @@ class TestCorpConfig:
         )
 
         # Corp-locked setting must now appear as corp_locked in the tree.
-        tree = client.get("/settings")["tree"]
+        tree = client.get("/settings/info")["tree"]
         locked = _find_setting_flag(tree, "ai.openai.allow", "corp_locked")
         assert locked is True, f"corp-locked not surfaced after install: {locked}"
 

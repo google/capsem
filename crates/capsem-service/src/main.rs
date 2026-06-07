@@ -2976,13 +2976,13 @@ async fn handle_reload_config(
 // Settings endpoints
 // ---------------------------------------------------------------------------
 
-/// GET /settings -- unified settings tree + issues + presets.
+/// GET /settings/info -- unified settings tree + issues + presets.
 async fn handle_get_settings() -> Json<serde_json::Value> {
     let resp = capsem_core::net::policy_config::load_settings_response();
     Json(serde_json::to_value(resp).unwrap_or_default())
 }
 
-/// POST /settings -- batch-update settings and return the refreshed tree.
+/// PATCH /settings/edit -- batch-update settings and return the refreshed tree.
 async fn handle_save_settings(
     Json(raw): Json<HashMap<String, serde_json::Value>>,
 ) -> Result<Json<serde_json::Value>, AppError> {
@@ -5533,10 +5533,8 @@ async fn main() -> Result<()> {
         )
         .route("/reload-config", post(handle_reload_config))
         .route("/fork/{id}", post(handle_fork))
-        .route(
-            "/settings",
-            get(handle_get_settings).post(handle_save_settings),
-        )
+        .route("/settings/info", get(handle_get_settings))
+        .route("/settings/edit", patch(handle_save_settings))
         .route("/settings/presets", get(handle_get_presets))
         .route("/settings/presets/{id}", post(handle_apply_preset))
         .route("/settings/lint", post(handle_lint_config))

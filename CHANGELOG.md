@@ -95,6 +95,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Replaced the retired `/corp-config` provisioning route with
   `PUT /corp/edit`; the gateway and service now reject the old route instead
   of forwarding it.
+- Replaced the ambiguous `GET|POST /settings` route with
+  `GET /settings/info` and `PATCH /settings/edit`; the old magic settings
+  route now fails closed in the service and gateway.
 - Added `SerializableSecurityEvent` as the public evaluated-event wire DTO:
   every first-party event root is present, absent roots serialize as `null`,
   and raw credential observation buffers are excluded.
