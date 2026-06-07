@@ -150,6 +150,9 @@ UI reflection discipline:
 - Rich preview/composed widgets are fine when they improve UX, like the settings
   UI already does, but they must read/write the same backend contract fields and
   not create a second source of truth.
+- `settings.json` is the UI settings contract. The profile schema/profile
+  endpoints are the VM behavior contract. Rich profile editors/previews must
+  round-trip through profile contract fields.
 - UI settings are UI/app preferences only. Do not put VM behavior, security
   rules, MCP config, plugin config, credentials, or assets in frontend settings
   stores.

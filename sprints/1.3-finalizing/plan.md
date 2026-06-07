@@ -162,6 +162,10 @@ configuration model.
   the settings UI already does. Those widgets are allowed to choose the best UX,
   but they still read/write the same contract fields and cannot create a second
   source of truth.
+- `settings.json` is the contract for UI settings. The profile schema/profile
+  endpoints are the contract for VM behavior. The UI may compose richer profile
+  editors/previews, but profile data still round-trips through the profile
+  contract.
 - UI grouping must come from backend fields when the group has config meaning
   (`rule.group`, `rule.source`, plugin scope, MCP server id, profile id). The UI
   can choose layout, but it cannot create semantic categories that do not exist
