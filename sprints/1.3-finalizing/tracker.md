@@ -320,6 +320,8 @@ commit.
 ## T5: VM Lifecycle, Assets, Install
 
 - [x] Normalize VM lifecycle API and frontend calls around `/vms/{vm_id}/...`.
+- [ ] Execute focused snapshot restore sub-sprint:
+  `sprints/1.3-finalizing/snapshot-restore/`.
 - [ ] Ensure VM assigned profile id is immutable.
 - [ ] Implement/verify `pause`, `resume`, `save`, `fork`, and operation status.
 - [ ] Restore profile catalog/loader and remove the current `default`-only
@@ -349,6 +351,9 @@ commit.
 - [ ] Restore or Linux-team handoff the KVM/checkpoint, EROFS/LZ4HC, multi-arch,
   and benchmark proof trail. Do not close 1.3 with missing Linux evidence unless
   it is an explicit release blocker owned by Linux.
+- [ ] Treat Linux-team scoped commits as authoritative in their files; restore
+  or port them unless they directly violate the current security/profile
+  contract.
 - [ ] Restore advanced benchmark harness/artifacts/docs for EROFS/LZ4HC and
   current security-event/CEL performance.
 - [ ] Restore security pack/detection/backtest/corpus gates on the new

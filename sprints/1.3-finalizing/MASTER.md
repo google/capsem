@@ -27,6 +27,10 @@ contract reset.
 - Every security/config/API slice needs adversarial tests proving old shapes and
   bypass attempts fail closed.
 - Do not add `NetworkRouting`.
+- Linux-team scoped KVM/filesystem/EROFS/benchmark work is authoritative for
+  1.3. Restore or port those commits in their scoped files unless they directly
+  violate the current security/profile contract; do not silently drop them as
+  merge noise.
 - Network engine owns mechanics: parsing, capture, DNS/proxy mechanics, ports,
   caching, decompression, routing mechanics, provider metadata.
 - Network engine does not own security decisions.
@@ -53,6 +57,8 @@ contract reset.
 - [profile-platform-lost-work-audit.md](profile-platform-lost-work-audit.md)
   captures the profile catalog/assets/pins/launchability work that was lost or
   flattened during cleanup.
+- [snapshot-restore/MASTER.md](snapshot-restore/MASTER.md) tracks the focused
+  restore sub-sprint and commit inspection ledger.
 - [tracker.md](tracker.md) is the live execution checklist.
 
 ## Release Gate
