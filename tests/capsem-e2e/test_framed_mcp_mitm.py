@@ -603,7 +603,7 @@ reason = "test blocks local echo through security rules"
 """.lstrip(),
             encoding="utf-8",
         )
-        reload_response = svc.client().post("/reload-config", {}, timeout=15)
+        reload_response = svc.client().post("/profiles/default/reload", {}, timeout=15)
         assert reload_response["success"] is True
 
         stdout, stderr = proc.communicate(timeout=60)
@@ -645,7 +645,7 @@ reason = "test blocks builtin HTTP through security rules"
 """.lstrip(),
             encoding="utf-8",
         )
-        reload_response = svc.client().post("/reload-config", {}, timeout=15)
+        reload_response = svc.client().post("/profiles/default/reload", {}, timeout=15)
         assert reload_response["success"] is True
 
         vm = _create_vm(svc, "framed-builtin-http")

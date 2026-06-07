@@ -78,7 +78,7 @@
         headers,
         newBearerToken.trim() || null,
       );
-      await api.reloadConfig();
+      await api.reloadProfile();
       resetForm();
       await settingsStore.load();
       await mcpStore.load();
@@ -91,7 +91,7 @@
     saving = true;
     try {
       await api.removeMcpServer(name);
-      await api.reloadConfig();
+      await api.reloadProfile();
       await settingsStore.load();
       await mcpStore.load();
     } finally {
@@ -103,7 +103,7 @@
     saving = true;
     try {
       await api.setMcpServerEnabled(name, !currentlyEnabled);
-      await api.reloadConfig();
+      await api.reloadProfile();
       await settingsStore.load();
       await mcpStore.load();
     } finally {

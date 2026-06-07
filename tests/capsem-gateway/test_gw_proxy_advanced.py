@@ -99,9 +99,9 @@ class TestProxyEndpointCoverage:
         resp = gw_client.delete("/delete/vm-001")
         assert resp is not None
 
-    def test_post_reload_config(self, gw_client):
-        """POST /reload-config reloads settings."""
-        resp = gw_client.post("/reload-config", {})
+    def test_post_profile_reload(self, gw_client):
+        """POST /profiles/{profile_id}/reload reloads profile config."""
+        resp = gw_client.post("/profiles/default/reload", {})
         assert resp is not None
 
 

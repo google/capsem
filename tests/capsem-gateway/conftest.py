@@ -144,7 +144,7 @@ class MockServiceHandler(BaseHTTPRequestHandler):
         elif self.clean_path.startswith("/fork/"):
             data = json.loads(body) if body else {}
             self._send_json({"name": data.get("name", "fork"), "size_bytes": 1024})
-        elif self.clean_path == "/reload-config":
+        elif self.clean_path.startswith("/profiles/") and self.clean_path.endswith("/reload"):
             self._send_json({"ok": True})
         elif self.clean_path == "/echo":
             # Echo back the request body for proxy testing

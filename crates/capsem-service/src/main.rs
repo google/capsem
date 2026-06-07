@@ -2972,6 +2972,14 @@ async fn handle_reload_config(
     }
 }
 
+async fn handle_profile_reload(
+    State(state): State<Arc<ServiceState>>,
+    Path(profile_id): Path<String>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let _profile_id = validate_profile_route_id(profile_id)?;
+    handle_reload_config(State(state)).await
+}
+
 // ---------------------------------------------------------------------------
 // Settings endpoints
 // ---------------------------------------------------------------------------
@@ -5531,7 +5539,7 @@ async fn main() -> Result<()> {
             "/profiles/{profile_id}/plugins/{plugin_id}/edit",
             patch(handle_profile_plugin_update),
         )
-        .route("/reload-config", post(handle_reload_config))
+        .route("/profiles/{profile_id}/reload", post(handle_profile_reload))
         .route("/fork/{id}", post(handle_fork))
         .route("/settings/info", get(handle_get_settings))
         .route("/settings/edit", patch(handle_save_settings))

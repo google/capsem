@@ -609,17 +609,17 @@ describe('api', () => {
     });
   });
 
-  describe('reloadConfig', () => {
-    it('sends POST /reload-config', async () => {
+  describe('reloadProfile', () => {
+    it('sends POST /profiles/default/reload by default', async () => {
       mockFetch
         .mockReturnValueOnce(jsonResponse({ ok: true, version: '1.0.0', service_socket: '/tmp/s' }))
         .mockReturnValueOnce(jsonResponse({ token: 'tok' }));
       await api.init();
 
       mockFetch.mockReturnValueOnce(jsonResponse(null));
-      await api.reloadConfig();
+      await api.reloadProfile();
       const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
-      expect(call[0]).toContain('/reload-config');
+      expect(call[0]).toContain('/profiles/default/reload');
       expect(call[1].method).toBe('POST');
     });
   });

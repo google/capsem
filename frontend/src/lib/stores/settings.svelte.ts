@@ -1,7 +1,7 @@
 // Settings store -- thin Svelte wrapper around SettingsModel.
 // Wired to gateway settings API.
 import { SettingsModel } from '../models/settings-model';
-import { getSettings, saveSettings, applyPreset, reloadConfig } from '../api';
+import { getSettings, saveSettings, applyPreset, reloadProfile } from '../api';
 import type {
   ConfigIssue,
   SecurityPreset,
@@ -87,7 +87,7 @@ class SettingsStore {
     try {
       const response = await saveSettings(changes);
       this.model = new SettingsModel(response);
-      await reloadConfig().catch(() => {});
+      await reloadProfile().catch(() => {});
     } catch (e) {
       this.error = String(e);
     } finally {
@@ -136,7 +136,7 @@ class SettingsStore {
     try {
       const response = await applyPreset(id);
       this.model = new SettingsModel(response);
-      await reloadConfig().catch(() => {});
+      await reloadProfile().catch(() => {});
     } catch (e) {
       this.error = String(e);
     } finally {

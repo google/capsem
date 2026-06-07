@@ -272,7 +272,7 @@ fn service_proxy_routes() -> Router<Arc<AppState>> {
             "/profiles/{profile_id}/plugins/{plugin_id}/edit",
             patch(proxy::handle_proxy),
         )
-        .route("/reload-config", post(proxy::handle_proxy))
+        .route("/profiles/{profile_id}/reload", post(proxy::handle_proxy))
         .route("/fork/{id}", post(proxy::handle_proxy))
         .route("/settings/info", get(proxy::handle_proxy))
         .route("/settings/edit", patch(proxy::handle_proxy))
@@ -479,6 +479,7 @@ mod tests {
             ("PUT", "/corp/edit"),
             ("GET", "/settings/info"),
             ("PATCH", "/settings/edit"),
+            ("POST", "/profiles/default/reload"),
         ] {
             let app = service_proxy_app("/tmp/capsem-gateway-missing-service.sock");
             let resp = app
@@ -579,6 +580,22 @@ mod tests {
                 .unwrap();
             assert_eq!(resp.status(), http::StatusCode::NOT_FOUND, "{method} {uri}");
         }
+    }
+
+    #[tokio::test]
+    async fn gateway_does_not_forward_retired_global_reload_route() {
+        let app = service_proxy_app("/tmp/capsem-gateway-must-not-connect.sock");
+        let resp = app
+            .oneshot(
+                http::Request::builder()
+                    .method("POST")
+                    .uri("/reload-config")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), http::StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]

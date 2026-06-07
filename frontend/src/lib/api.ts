@@ -373,8 +373,8 @@ export async function getImages(): Promise<{ images: { name: string }[] }> {
 
 // -- Config --
 
-export async function reloadConfig(): Promise<void> {
-  await _post('/reload-config');
+export async function reloadProfile(profileId = 'default'): Promise<void> {
+  await _post(`/profiles/${encodeURIComponent(profileId)}/reload`);
 }
 
 // -- Stats --
