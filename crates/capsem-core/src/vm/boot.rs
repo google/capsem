@@ -47,8 +47,9 @@ pub fn create_net_state_with_policy(
     info!(vm_id, "loaded MITM CA");
     info!(
         vm_id,
-        "loaded network policy ({} rules)",
-        policy.rules.len()
+        http_upstream_ports = ?policy.http_upstream_ports,
+        dns_redirects = policy.dns_redirects.len(),
+        "loaded network mechanics"
     );
 
     Ok(SandboxNetworkState {

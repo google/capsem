@@ -157,6 +157,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   code now carries only mechanics such as DNS redirects, HTTP port metadata,
   and body-capture settings; HTTP/DNS allow, ask, block, and default behavior
   must come from profile/corp security rules.
+- Removed the remaining domain allow/read/write/default fields from
+  `NetworkPolicy` itself. The network object can no longer carry hidden
+  domain enforcement state; tests now assert default and provider behavior
+  through compiled `SecurityRuleSet` entries.
 - Replaced the old callback-demux rule authoring language with CEL over
   first-party event roots. Admin-visible rules use `match = ...` and typed
   actions rather than callback-local `on`/`if`/`decision` fields.

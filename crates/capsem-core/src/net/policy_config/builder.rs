@@ -11,37 +11,11 @@ use std::collections::{BTreeMap, HashMap};
 // Translation: settings -> policy objects
 // ---------------------------------------------------------------------------
 
-/// Parse a comma-separated domain list into trimmed individual entries.
-fn parse_domain_list(text: &str) -> Vec<String> {
-    text.split(',')
-        .map(|d| d.trim().to_string())
-        .filter(|d| !d.is_empty())
-        .collect()
-}
-
 fn parse_http_upstream_ports(values: &[i64]) -> Vec<u16> {
     values
         .iter()
         .filter_map(|port| u16::try_from(*port).ok())
         .collect()
-}
-
-/// Check if a candidate domain matches any corp-blocked pattern.
-/// Uses the same wildcard logic as DomainPattern: suffix match for `*.foo.com`,
-/// exact match otherwise.
-fn corp_blocked_matches(candidate: &str, corp_blocked: &[String]) -> bool {
-    let candidate = candidate.to_lowercase();
-    for pattern in corp_blocked {
-        let pattern = pattern.to_lowercase();
-        if let Some(suffix) = pattern.strip_prefix("*.") {
-            if candidate.ends_with(&format!(".{suffix}")) || candidate == suffix {
-                return true;
-            }
-        } else if candidate == pattern {
-            return true;
-        }
-    }
-    false
 }
 
 /// Extract guest config from resolved settings.
@@ -519,133 +493,12 @@ fn compile_merged_security_rules(
     Ok(SecurityRuleSet::new(by_rule_id.into_values().collect()))
 }
 
-/// Build a `NetworkPolicy` from resolved settings (pure, no I/O).
+/// Build network mechanics from resolved settings (pure, no I/O).
 ///
-/// Bridges settings into per-domain read/write rules:
-/// - Disabled toggles with domains get read=false, write=false
-/// - Enabled toggles with domains get read=true, write=true
-/// - Default action maps to default_allow_read and default_allow_write
+/// Security allow/block/default behavior compiles into `SecurityRuleSet`.
+/// This builder carries only non-decision mechanics used by the network engine.
 pub fn build_network_policy(resolved: &[ResolvedSetting]) -> crate::net::policy::NetworkPolicy {
-    use crate::net::policy::{DomainMatcher, NetworkPolicy, PolicyRule};
-
-    let mut rules = Vec::new();
-
-    // Build rules from settings with domain metadata (registries)
-    for s in resolved {
-        if s.metadata.domains.is_empty() || s.setting_type != SettingType::Bool {
-            continue;
-        }
-        let enabled = s.effective_value.as_bool().unwrap_or(false);
-        for domain in &s.metadata.domains {
-            rules.push(PolicyRule {
-                matcher: DomainMatcher::parse(domain),
-                allow_read: enabled,
-                allow_write: enabled,
-            });
-        }
-    }
-
-    // Build network mechanics from .domains text settings (AI providers).
-    // Security allow/block decisions live in SecurityRuleSet.
-    let mut corp_blocked: Vec<String> = Vec::new();
-    for s in resolved {
-        if !s.id.ends_with(".domains") || s.setting_type != SettingType::Text {
-            continue;
-        }
-        let toggle_id = s.id.replace(".domains", ".allow");
-        let toggle = resolved.iter().find(|t| t.id == toggle_id);
-        let corp_locked_off = match toggle {
-            Some(t) => t.corp_locked && !t.effective_value.as_bool().unwrap_or(false),
-            None => false,
-        };
-        if corp_locked_off {
-            let defaults = parse_domain_list(s.default_value.as_text().unwrap_or(""));
-            let effective = parse_domain_list(s.effective_value.as_text().unwrap_or(""));
-            let mut all: Vec<String> = defaults;
-            for d in effective {
-                if !all.contains(&d) {
-                    all.push(d);
-                }
-            }
-            for domain in &all {
-                rules.push(PolicyRule {
-                    matcher: DomainMatcher::parse(domain),
-                    allow_read: false,
-                    allow_write: false,
-                });
-            }
-            corp_blocked.extend(all);
-        }
-    }
-    for s in resolved {
-        if !s.id.ends_with(".domains") || s.setting_type != SettingType::Text {
-            continue;
-        }
-        let toggle_id = s.id.replace(".domains", ".allow");
-        let toggle = resolved.iter().find(|t| t.id == toggle_id);
-        let corp_locked_off = match toggle {
-            Some(t) => t.corp_locked && !t.effective_value.as_bool().unwrap_or(false),
-            None => false,
-        };
-        if corp_locked_off {
-            continue;
-        }
-        let toggle_on = toggle
-            .and_then(|t| t.effective_value.as_bool())
-            .unwrap_or(false);
-        let domains = parse_domain_list(s.effective_value.as_text().unwrap_or(""));
-        for domain in &domains {
-            let blocked = corp_blocked_matches(domain, &corp_blocked);
-            let enabled = toggle_on && !blocked;
-            rules.push(PolicyRule {
-                matcher: DomainMatcher::parse(domain),
-                allow_read: enabled,
-                allow_write: enabled,
-            });
-        }
-    }
-
-    // Custom allow/block network mechanics mirror the settings state.
-    let custom_allow_text = resolved
-        .iter()
-        .find(|s| s.id == "security.web.custom_allow")
-        .and_then(|s| s.effective_value.as_text())
-        .unwrap_or("");
-    let custom_block_text = resolved
-        .iter()
-        .find(|s| s.id == "security.web.custom_block")
-        .and_then(|s| s.effective_value.as_text())
-        .unwrap_or("");
-    let custom_allow_domains = parse_domain_list(custom_allow_text);
-    let custom_block_domains = parse_domain_list(custom_block_text);
-
-    for domain in &custom_allow_domains {
-        let blocked = corp_blocked_matches(domain, &corp_blocked)
-            || corp_blocked_matches(domain, &custom_block_domains);
-        rules.push(PolicyRule {
-            matcher: DomainMatcher::parse(domain),
-            allow_read: !blocked,
-            allow_write: !blocked,
-        });
-    }
-    for domain in &custom_block_domains {
-        rules.push(PolicyRule {
-            matcher: DomainMatcher::parse(domain),
-            allow_read: false,
-            allow_write: false,
-        });
-    }
-
-    let default_allow_read = resolved
-        .iter()
-        .find(|s| s.id == "security.web.allow_read")
-        .and_then(|s| s.effective_value.as_bool())
-        .unwrap_or(false);
-    let default_allow_write = resolved
-        .iter()
-        .find(|s| s.id == "security.web.allow_write")
-        .and_then(|s| s.effective_value.as_bool())
-        .unwrap_or(false);
+    use crate::net::policy::NetworkPolicy;
 
     let log_bodies = resolved
         .iter()
@@ -659,7 +512,7 @@ pub fn build_network_policy(resolved: &[ResolvedSetting]) -> crate::net::policy:
         .and_then(|s| s.effective_value.as_number())
         .unwrap_or(4096) as usize;
 
-    let mut policy = NetworkPolicy::new(rules, default_allow_read, default_allow_write);
+    let mut policy = NetworkPolicy::new();
     if let Some(ports) = resolved
         .iter()
         .find(|s| s.id == "security.web.http_upstream_ports")
@@ -695,90 +548,4 @@ pub fn load_merged_vm_settings() -> VmSettings {
 pub fn load_merged_settings() -> Vec<ResolvedSetting> {
     let (user, corp) = load_settings_files();
     resolve_settings(&user, &corp)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    // -----------------------------------------------------------------------
-    // parse_domain_list
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn parse_domain_list_basic() {
-        let result = parse_domain_list("foo.com, bar.com, baz.com");
-        assert_eq!(result, vec!["foo.com", "bar.com", "baz.com"]);
-    }
-
-    #[test]
-    fn parse_domain_list_trims_whitespace() {
-        let result = parse_domain_list("  foo.com  ,  bar.com  ");
-        assert_eq!(result, vec!["foo.com", "bar.com"]);
-    }
-
-    #[test]
-    fn parse_domain_list_empty_string() {
-        let result = parse_domain_list("");
-        assert!(result.is_empty());
-    }
-
-    #[test]
-    fn parse_domain_list_skips_empty_entries() {
-        let result = parse_domain_list("foo.com,,bar.com,,");
-        assert_eq!(result, vec!["foo.com", "bar.com"]);
-    }
-
-    #[test]
-    fn parse_domain_list_single() {
-        let result = parse_domain_list("single.com");
-        assert_eq!(result, vec!["single.com"]);
-    }
-
-    #[test]
-    fn parse_domain_list_wildcards() {
-        let result = parse_domain_list("*.example.com, api.test.com");
-        assert_eq!(result, vec!["*.example.com", "api.test.com"]);
-    }
-
-    // -----------------------------------------------------------------------
-    // corp_blocked_matches
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn corp_blocked_exact_match() {
-        let blocked = vec!["evil.com".to_string()];
-        assert!(corp_blocked_matches("evil.com", &blocked));
-        assert!(!corp_blocked_matches("good.com", &blocked));
-    }
-
-    #[test]
-    fn corp_blocked_wildcard_match() {
-        let blocked = vec!["*.evil.com".to_string()];
-        assert!(corp_blocked_matches("sub.evil.com", &blocked));
-        assert!(corp_blocked_matches("deep.sub.evil.com", &blocked));
-        assert!(corp_blocked_matches("evil.com", &blocked)); // bare domain matches *.
-        assert!(!corp_blocked_matches("notevil.com", &blocked));
-    }
-
-    #[test]
-    fn corp_blocked_case_insensitive() {
-        let blocked = vec!["Evil.Com".to_string()];
-        assert!(corp_blocked_matches("evil.com", &blocked));
-        assert!(corp_blocked_matches("EVIL.COM", &blocked));
-    }
-
-    #[test]
-    fn corp_blocked_empty_list() {
-        let blocked: Vec<String> = vec![];
-        assert!(!corp_blocked_matches("anything.com", &blocked));
-    }
-
-    #[test]
-    fn corp_blocked_multiple_patterns() {
-        let blocked = vec!["evil.com".to_string(), "*.bad.org".to_string()];
-        assert!(corp_blocked_matches("evil.com", &blocked));
-        assert!(corp_blocked_matches("sub.bad.org", &blocked));
-        assert!(!corp_blocked_matches("good.com", &blocked));
-    }
 }

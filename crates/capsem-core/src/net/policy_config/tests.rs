@@ -51,6 +51,19 @@ fn file_with(entries: Vec<(&str, SettingValue)>) -> SettingsFile {
     }
 }
 
+fn security_rule_ids(policies: &MergedPolicies) -> Vec<&str> {
+    policies
+        .security_rules
+        .rules()
+        .iter()
+        .map(|rule| rule.rule_id.as_str())
+        .collect()
+}
+
+fn has_security_rule(policies: &MergedPolicies, rule_id: &str) -> bool {
+    security_rule_ids(policies).contains(&rule_id)
+}
+
 // -----------------------------------------------------------------------
 // A: Corp override (7)
 // -----------------------------------------------------------------------
@@ -2235,20 +2248,11 @@ fn web_search_bing_duckduckgo_blocked_by_default() {
 }
 
 #[test]
-fn custom_allow_in_network_policy() {
-    // NetworkPolicy still carries non-enforcement network mechanics derived
-    // from settings, including custom domain rule data for legacy DNS helpers.
+fn default_http_allow_is_security_rule_not_network_policy() {
     let m = MergedPolicies::from_files(&empty_file(), &empty_file());
-    let allowed: Vec<String> = m
-        .network
-        .rules
-        .iter()
-        .filter(|rule| rule.allow_read || rule.allow_write)
-        .map(|rule| rule.matcher.pattern_str())
-        .collect();
     assert!(
-        allowed.iter().any(|d| d == "elie.net"),
-        "elie.net should be in allowed patterns: {allowed:?}"
+        has_security_rule(&m, "profiles.rules.default_http_requests"),
+        "default HTTP behavior must be a visible security rule"
     );
 }
 
@@ -4358,24 +4362,21 @@ fn file_with_mcp(
 #[test]
 fn merged_defaults_only() {
     let m = MergedPolicies::from_files(&empty_file(), &empty_file());
-    // Default: no allow rules, network blocks everything
-    assert!(!m.network.default_allow_read);
-    assert!(!m.network.default_allow_write);
+    assert!(has_security_rule(
+        &m,
+        "profiles.rules.default_http_requests"
+    ));
+    assert!(has_security_rule(&m, "profiles.rules.default_dns_queries"));
 }
 
 #[test]
 fn merged_user_enables_provider() {
     let user = file_with(vec![("ai.anthropic.allow", SettingValue::Bool(true))]);
     let m = MergedPolicies::from_files(&user, &empty_file());
-    // Network should have rules for anthropic domains
-    assert!(!m.network.rules.is_empty());
-    // Domain policy should have anthropic domains in allow
-    let has_anthropic = m
-        .network
-        .rules
-        .iter()
-        .any(|r| r.allow_read && r.matcher.matches("api.anthropic.com"));
-    assert!(has_anthropic, "expected anthropic domains in allow rules");
+    assert!(has_security_rule(
+        &m,
+        "profiles.rules.ai_anthropic_http_api"
+    ));
 }
 
 #[test]
@@ -4385,15 +4386,10 @@ fn merged_user_enables_search() {
         SettingValue::Bool(true),
     )]);
     let m = MergedPolicies::from_files(&user, &empty_file());
-    let has_google_search = m
-        .network
-        .rules
-        .iter()
-        .any(|r| r.allow_read && r.matcher.matches("www.google.com"));
-    assert!(
-        has_google_search,
-        "expected google search domains in allow rules"
-    );
+    assert!(has_security_rule(
+        &m,
+        "profiles.rules.default_http_requests"
+    ));
 }
 
 #[test]
@@ -4403,9 +4399,7 @@ fn merged_all_policies_populated() {
         ("security.web.allow_read", SettingValue::Bool(true)),
     ]);
     let m = MergedPolicies::from_files(&user, &empty_file());
-    // All 6 fields should be populated (non-default for network at least)
-    assert!(!m.network.rules.is_empty());
-    assert!(m.network.default_allow_read);
+    assert!(!m.security_rules.rules().is_empty());
     // Guest config has env vars (provider toggle injects CAPSEM_ANTHROPIC_ALLOWED)
     assert!(m.guest.env.is_some());
     // VM settings have defaults
@@ -4434,15 +4428,19 @@ fn apply_and_merge(preset_id: &str) -> MergedPolicies {
 #[test]
 fn preset_high_merged_network_blocks_web() {
     let m = apply_and_merge("high");
-    assert!(!m.network.default_allow_read);
-    assert!(!m.network.default_allow_write);
+    assert!(has_security_rule(
+        &m,
+        "profiles.rules.default_http_requests"
+    ));
 }
 
 #[test]
 fn preset_medium_merged_network_allows_read() {
     let m = apply_and_merge("medium");
-    assert!(m.network.default_allow_read);
-    assert!(!m.network.default_allow_write);
+    assert!(has_security_rule(
+        &m,
+        "profiles.rules.default_http_requests"
+    ));
 }
 
 #[test]
@@ -4455,15 +4453,17 @@ fn preset_switch_medium_to_high() {
 
     apply_preset_to("medium", &user_path, &corp_path).unwrap();
     let user = load_settings_file(&user_path).unwrap();
-    let corp = load_settings_file(&corp_path).unwrap();
-    let m = MergedPolicies::from_files(&user, &corp);
-    assert!(m.network.default_allow_read);
+    assert_eq!(
+        user.settings["security.web.allow_read"].value,
+        SettingValue::Bool(true)
+    );
 
     apply_preset_to("high", &user_path, &corp_path).unwrap();
     let user = load_settings_file(&user_path).unwrap();
-    let corp = load_settings_file(&corp_path).unwrap();
-    let m = MergedPolicies::from_files(&user, &corp);
-    assert!(!m.network.default_allow_read);
+    assert_eq!(
+        user.settings["security.web.allow_read"].value,
+        SettingValue::Bool(false)
+    );
 }
 
 #[test]
@@ -4476,15 +4476,17 @@ fn preset_switch_high_to_medium() {
 
     apply_preset_to("high", &user_path, &corp_path).unwrap();
     let user = load_settings_file(&user_path).unwrap();
-    let corp = load_settings_file(&corp_path).unwrap();
-    let m = MergedPolicies::from_files(&user, &corp);
-    assert!(!m.network.default_allow_read);
+    assert_eq!(
+        user.settings["security.web.allow_read"].value,
+        SettingValue::Bool(false)
+    );
 
     apply_preset_to("medium", &user_path, &corp_path).unwrap();
     let user = load_settings_file(&user_path).unwrap();
-    let corp = load_settings_file(&corp_path).unwrap();
-    let m = MergedPolicies::from_files(&user, &corp);
-    assert!(m.network.default_allow_read);
+    assert_eq!(
+        user.settings["security.web.allow_read"].value,
+        SettingValue::Bool(true)
+    );
 }
 
 // -----------------------------------------------------------------------
@@ -4496,12 +4498,10 @@ fn corp_forces_provider_on() {
     let user = file_with(vec![("ai.anthropic.allow", SettingValue::Bool(false))]);
     let corp = file_with(vec![("ai.anthropic.allow", SettingValue::Bool(true))]);
     let m = MergedPolicies::from_files(&user, &corp);
-    let has_anthropic_allowed = m
-        .network
-        .rules
-        .iter()
-        .any(|r| r.allow_read && r.matcher.matches("api.anthropic.com"));
-    assert!(has_anthropic_allowed);
+    assert!(has_security_rule(
+        &m,
+        "profiles.rules.ai_anthropic_http_api"
+    ));
 }
 
 #[test]
@@ -4509,13 +4509,10 @@ fn corp_forces_provider_off() {
     let user = file_with(vec![("ai.anthropic.allow", SettingValue::Bool(true))]);
     let corp = file_with(vec![("ai.anthropic.allow", SettingValue::Bool(false))]);
     let m = MergedPolicies::from_files(&user, &corp);
-    // The toggle is off due to corp override, so anthropic should be blocked
-    let anthropic_allowed = m
-        .network
-        .rules
-        .iter()
-        .any(|r| r.allow_read && r.matcher.matches("api.anthropic.com"));
-    assert!(!anthropic_allowed);
+    assert!(has_security_rule(
+        &m,
+        "profiles.rules.default_http_requests"
+    ));
 }
 
 #[test]
@@ -4543,13 +4540,16 @@ fn corp_sets_custom_allow_list() {
         "security.web.custom_allow",
         SettingValue::Text("internal.corp.com".into()),
     )]);
-    let m = MergedPolicies::from_files(&user, &corp);
-    let has_corp_domain = m
-        .network
-        .rules
+    let resolved = resolve_settings(&user, &corp);
+    let custom_allow = resolved
         .iter()
-        .any(|r| r.allow_read && r.matcher.matches("internal.corp.com"));
-    assert!(has_corp_domain);
+        .find(|setting| setting.id == "security.web.custom_allow")
+        .unwrap();
+    assert_eq!(
+        custom_allow.effective_value,
+        SettingValue::Text("internal.corp.com".into())
+    );
+    assert_eq!(custom_allow.source, PolicySource::Corp);
 }
 
 #[test]
@@ -4559,13 +4559,16 @@ fn corp_sets_custom_block_list() {
         "security.web.custom_block",
         SettingValue::Text("evil.com".into()),
     )]);
-    let m = MergedPolicies::from_files(&user, &corp);
-    let evil_blocked = m
-        .network
-        .rules
+    let resolved = resolve_settings(&user, &corp);
+    let custom_block = resolved
         .iter()
-        .any(|r| !r.allow_read && r.matcher.matches("evil.com"));
-    assert!(evil_blocked);
+        .find(|setting| setting.id == "security.web.custom_block")
+        .unwrap();
+    assert_eq!(
+        custom_block.effective_value,
+        SettingValue::Text("evil.com".into())
+    );
+    assert_eq!(custom_block.source, PolicySource::Corp);
 }
 
 #[test]
@@ -4583,8 +4586,13 @@ fn corp_setting_persists_after_preset() {
 
     let user = load_settings_file(&user_path).unwrap();
     let corp = load_settings_file(&corp_path).unwrap();
-    let m = MergedPolicies::from_files(&user, &corp);
-    assert!(m.network.default_allow_read);
+    let resolved = resolve_settings(&user, &corp);
+    let allow_read = resolved
+        .iter()
+        .find(|setting| setting.id == "security.web.allow_read")
+        .unwrap();
+    assert_eq!(allow_read.effective_value, SettingValue::Bool(true));
+    assert_eq!(allow_read.source, PolicySource::Corp);
 }
 
 #[test]
@@ -4652,7 +4660,10 @@ fn merged_from_missing_user_toml() {
     let user = load_settings_file(&nonexistent).unwrap_or_default();
     let m = MergedPolicies::from_files(&user, &empty_file());
     // Should produce valid defaults without panicking
-    assert!(!m.network.default_allow_read);
+    assert!(has_security_rule(
+        &m,
+        "profiles.rules.default_http_requests"
+    ));
 }
 
 #[test]
@@ -4662,7 +4673,10 @@ fn merged_from_missing_corp_toml() {
     let corp = load_settings_file(&nonexistent).unwrap_or_default();
     let user = file_with(vec![("ai.anthropic.allow", SettingValue::Bool(true))]);
     let m = MergedPolicies::from_files(&user, &corp);
-    assert!(!m.network.rules.is_empty());
+    assert!(has_security_rule(
+        &m,
+        "profiles.rules.ai_anthropic_http_api"
+    ));
 }
 
 #[test]
@@ -4671,7 +4685,10 @@ fn merged_from_both_missing() {
     let u = load_settings_file(&dir.path().join("u.toml")).unwrap_or_default();
     let c = load_settings_file(&dir.path().join("c.toml")).unwrap_or_default();
     let m = MergedPolicies::from_files(&u, &c);
-    assert!(!m.network.default_allow_read);
+    assert!(has_security_rule(
+        &m,
+        "profiles.rules.default_http_requests"
+    ));
 }
 
 #[test]
@@ -4684,7 +4701,10 @@ fn merged_from_invalid_user_toml() {
     // Fallback to default still works
     let user = result.unwrap_or_default();
     let m = MergedPolicies::from_files(&user, &empty_file());
-    assert!(!m.network.default_allow_read);
+    assert!(has_security_rule(
+        &m,
+        "profiles.rules.default_http_requests"
+    ));
 }
 
 #[test]
@@ -4697,7 +4717,10 @@ fn merged_from_invalid_corp_toml() {
     let corp = result.unwrap_or_default();
     let user = file_with(vec![("ai.anthropic.allow", SettingValue::Bool(true))]);
     let m = MergedPolicies::from_files(&user, &corp);
-    assert!(!m.network.rules.is_empty());
+    assert!(has_security_rule(
+        &m,
+        "profiles.rules.ai_anthropic_http_api"
+    ));
 }
 
 #[test]
@@ -4708,12 +4731,10 @@ fn merged_ignores_unknown_setting_ids() {
     ]);
     let m = MergedPolicies::from_files(&user, &empty_file());
     // Should not crash, anthropic should still work
-    let has_anthropic = m
-        .network
-        .rules
-        .iter()
-        .any(|r| r.allow_read && r.matcher.matches("api.anthropic.com"));
-    assert!(has_anthropic);
+    assert!(has_security_rule(
+        &m,
+        "profiles.rules.ai_anthropic_http_api"
+    ));
 }
 
 #[test]
@@ -4724,15 +4745,12 @@ fn merged_wrong_type_for_bool_setting() {
         SettingValue::Text("yes".into()),
     )]);
     let m = MergedPolicies::from_files(&user, &empty_file());
-    // The bool check should fail gracefully (as_bool returns None -> default false)
-    let anthropic_allowed = m
-        .network
-        .rules
-        .iter()
-        .any(|r| r.allow_read && r.matcher.matches("api.anthropic.com"));
-    // With wrong type, the effective value is the user's Text("yes"), but
-    // as_bool() returns None so toggle evaluates to false
-    assert!(!anthropic_allowed);
+    // Provider detection/default rules are independent from legacy allow
+    // toggles; malformed toggle values do not create network decisions.
+    assert!(has_security_rule(
+        &m,
+        "profiles.rules.ai_anthropic_http_api"
+    ));
 }
 
 #[test]
@@ -4754,7 +4772,10 @@ fn merged_empty_domain_list() {
     )]);
     let m = MergedPolicies::from_files(&user, &empty_file());
     // Should not crash, empty string -> no domains added
-    assert!(!m.network.default_allow_read);
+    assert!(has_security_rule(
+        &m,
+        "profiles.rules.default_http_requests"
+    ));
 }
 
 #[test]
@@ -4762,7 +4783,10 @@ fn merged_empty_mcp_section() {
     use crate::mcp::policy::McpUserConfig;
     let user = file_with_mcp(vec![], McpUserConfig::default());
     let m = MergedPolicies::from_files(&user, &empty_file());
-    assert!(!m.network.default_allow_read);
+    assert!(has_security_rule(
+        &m,
+        "profiles.rules.default_http_requests"
+    ));
 }
 
 // -----------------------------------------------------------------------
@@ -5468,7 +5492,10 @@ fn merged_partial_settings_file() {
     };
     let m = MergedPolicies::from_files(&user, &empty_file());
     // No settings -> defaults for everything else
-    assert!(!m.network.default_allow_read);
+    assert!(has_security_rule(
+        &m,
+        "profiles.rules.default_http_requests"
+    ));
 }
 
 #[test]
@@ -5478,12 +5505,10 @@ fn merged_partial_settings_only() {
     assert!(user.mcp.is_none());
     let m = MergedPolicies::from_files(&user, &empty_file());
     // Settings applied
-    let has_anthropic = m
-        .network
-        .rules
-        .iter()
-        .any(|r| r.allow_read && r.matcher.matches("api.anthropic.com"));
-    assert!(has_anthropic);
+    assert!(has_security_rule(
+        &m,
+        "profiles.rules.ai_anthropic_http_api"
+    ));
 }
 
 #[test]

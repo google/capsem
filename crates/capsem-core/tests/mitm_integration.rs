@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use capsem_core::net::cert_authority::CertAuthority;
 use capsem_core::net::mitm_proxy::{self, MitmProxyConfig};
-use capsem_core::net::policy::{DomainMatcher, NetworkPolicy, PolicyRule};
+use capsem_core::net::policy::NetworkPolicy;
 use capsem_logger::{DbWriter, Decision};
 use http_body_util::{BodyExt, Full};
 use hyper::body::Bytes;
@@ -137,22 +137,7 @@ fn make_proxy_config_full(
     http_ports: &[u16],
 ) -> (Arc<MitmProxyConfig>, Arc<DbWriter>) {
     let ca = Arc::new(CertAuthority::load(CA_KEY, CA_CERT).unwrap());
-    let mut rules = Vec::new();
-    for pattern in blocked {
-        rules.push(PolicyRule {
-            matcher: DomainMatcher::parse(pattern),
-            allow_read: false,
-            allow_write: false,
-        });
-    }
-    for pattern in allowed {
-        rules.push(PolicyRule {
-            matcher: DomainMatcher::parse(pattern),
-            allow_read: true,
-            allow_write: true,
-        });
-    }
-    let mut policy_inner = NetworkPolicy::new(rules, default_allow, default_allow);
+    let mut policy_inner = NetworkPolicy::new();
     policy_inner.http_upstream_ports = http_ports.to_vec();
     let policy = Arc::new(std::sync::RwLock::new(Arc::new(policy_inner)));
     let dir = tempfile::tempdir().unwrap();

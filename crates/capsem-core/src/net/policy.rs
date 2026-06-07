@@ -50,16 +50,6 @@ impl DomainMatcher {
     }
 }
 
-/// A single policy rule: domain pattern + read/write permissions.
-#[derive(Debug, Clone)]
-pub struct PolicyRule {
-    pub matcher: DomainMatcher,
-    /// Allow read methods (GET, HEAD, OPTIONS).
-    pub allow_read: bool,
-    /// Allow write methods (POST, PUT, DELETE, PATCH).
-    pub allow_write: bool,
-}
-
 /// A DNS-level redirect rule (T3.d). When the DNS handler sees a
 /// query whose qname matches `matcher` and (if set) whose qtype
 /// matches `qtype`, the answer is synthesized locally from `answers`
@@ -102,16 +92,10 @@ impl DnsRedirect {
 
 /// Network mechanics derived from profile/corp config.
 ///
-/// Security decisions live in the security-rule engine. The domain rule fields
-/// remain as derived metadata while the profile contract is being finalized;
-/// runtime allow/ask/block must not call back into this type.
+/// Security decisions live in the security-rule engine. This type must not
+/// carry allow/ask/block/default semantics.
 #[derive(Debug, Clone)]
 pub struct NetworkPolicy {
-    pub rules: Vec<PolicyRule>,
-    /// Allow read methods (GET, HEAD, OPTIONS) by default.
-    pub default_allow_read: bool,
-    /// Allow write methods (POST, PUT, DELETE, PATCH) by default.
-    pub default_allow_write: bool,
     /// Whether to log request/response body previews.
     pub log_bodies: bool,
     /// Maximum bytes of body preview to capture in telemetry.
@@ -140,16 +124,9 @@ const DEFAULT_MAX_BODY_CAPTURE: usize = 4096;
 const DEFAULT_HTTP_UPSTREAM_PORTS: &[u16] = &[80, 11434];
 
 impl NetworkPolicy {
-    /// Create a policy with explicit rules and defaults.
-    pub fn new(
-        rules: Vec<PolicyRule>,
-        default_allow_read: bool,
-        default_allow_write: bool,
-    ) -> Self {
+    /// Create network mechanics with default capture and upstream-port settings.
+    pub fn new() -> Self {
         Self {
-            rules,
-            default_allow_read,
-            default_allow_write,
             log_bodies: true,
             max_body_capture: DEFAULT_MAX_BODY_CAPTURE,
             http_upstream_ports: DEFAULT_HTTP_UPSTREAM_PORTS.to_vec(),
@@ -172,40 +149,7 @@ impl NetworkPolicy {
 
     /// Create a policy with hardcoded defaults for development.
     pub fn default_dev() -> Self {
-        let rules = vec![
-            // Blocked: AI providers (all verbs)
-            rule("api.openai.com", false, false),
-            rule("api.anthropic.com", false, false),
-            // Full access: code hosting
-            rule("github.com", true, true),
-            rule("*.github.com", true, true),
-            rule("*.githubusercontent.com", true, true),
-            // Read-only: package registries
-            rule("registry.npmjs.org", true, false),
-            rule("*.npmjs.org", true, false),
-            rule("pypi.org", true, false),
-            rule("files.pythonhosted.org", true, false),
-            rule("crates.io", true, false),
-            rule("static.crates.io", true, false),
-            // Read-only: OS packages
-            rule("deb.debian.org", true, false),
-            rule("security.debian.org", true, false),
-            // Full access: Gemini (testing)
-            rule("generativelanguage.googleapis.com", true, true),
-            // Full access: dev
-            rule("elie.net", true, true),
-            rule("*.elie.net", true, true),
-        ];
-        Self::new(rules, true, false)
-    }
-}
-
-/// Helper to build a rule from a pattern string.
-fn rule(pattern: &str, allow_read: bool, allow_write: bool) -> PolicyRule {
-    PolicyRule {
-        matcher: DomainMatcher::parse(pattern),
-        allow_read,
-        allow_write,
+        Self::new()
     }
 }
 
@@ -259,7 +203,7 @@ mod tests {
 
     #[test]
     fn find_redirect_exact_match_a_qtype() {
-        let mut p = NetworkPolicy::new(vec![], true, true);
+        let mut p = NetworkPolicy::new();
         p.dns_redirects.push(redirect(
             "anthropic.com",
             Some(1),
@@ -273,7 +217,7 @@ mod tests {
 
     #[test]
     fn find_redirect_qtype_filter_misses() {
-        let mut p = NetworkPolicy::new(vec![], true, true);
+        let mut p = NetworkPolicy::new();
         p.dns_redirects.push(redirect(
             "anthropic.com",
             Some(1), // A only
@@ -285,7 +229,7 @@ mod tests {
 
     #[test]
     fn find_redirect_any_qtype_matches_aaaa() {
-        let mut p = NetworkPolicy::new(vec![], true, true);
+        let mut p = NetworkPolicy::new();
         p.dns_redirects.push(redirect(
             "anthropic.com",
             None, // any qtype
@@ -299,7 +243,7 @@ mod tests {
 
     #[test]
     fn find_redirect_wildcard_subdomain_match() {
-        let mut p = NetworkPolicy::new(vec![], true, true);
+        let mut p = NetworkPolicy::new();
         p.dns_redirects.push(redirect(
             "*.openai.com",
             None,
@@ -313,7 +257,7 @@ mod tests {
 
     #[test]
     fn find_redirect_first_match_wins() {
-        let mut p = NetworkPolicy::new(vec![], true, true);
+        let mut p = NetworkPolicy::new();
         p.dns_redirects.push(redirect(
             "anthropic.com",
             None,
@@ -330,7 +274,7 @@ mod tests {
 
     #[test]
     fn find_redirect_no_match_returns_none() {
-        let mut p = NetworkPolicy::new(vec![], true, true);
+        let mut p = NetworkPolicy::new();
         p.dns_redirects.push(redirect(
             "anthropic.com",
             Some(1),
@@ -341,13 +285,13 @@ mod tests {
 
     #[test]
     fn find_redirect_empty_list_returns_none() {
-        let p = NetworkPolicy::new(vec![], true, true);
+        let p = NetworkPolicy::new();
         assert!(p.find_dns_redirect("anything.com", 1).is_none());
     }
 
     #[test]
     fn dns_redirects_default_empty() {
-        let p = NetworkPolicy::new(vec![], true, true);
+        let p = NetworkPolicy::new();
         assert!(p.dns_redirects.is_empty());
         let p2 = NetworkPolicy::default_dev();
         assert!(p2.dns_redirects.is_empty());
@@ -357,7 +301,7 @@ mod tests {
     fn dns_redirect_empty_answers_is_legal() {
         // Empty `answers` is the "name exists, no record of that
         // type" signal -- still a valid policy entry.
-        let mut p = NetworkPolicy::new(vec![], true, true);
+        let mut p = NetworkPolicy::new();
         p.dns_redirects
             .push(redirect("nodata.example.com", None, vec![]));
         let r = p.find_dns_redirect("nodata.example.com", 1).unwrap();

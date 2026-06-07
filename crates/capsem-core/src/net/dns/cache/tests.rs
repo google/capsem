@@ -24,7 +24,7 @@ fn build_answer(qname: &str, ttl: u32, ip: [u8; 4]) -> Vec<u8> {
 }
 
 fn allow_all() -> NetworkPolicy {
-    NetworkPolicy::new(vec![], true, true)
+    NetworkPolicy::new()
 }
 
 #[test]
@@ -73,7 +73,7 @@ fn invalidated_when_policy_now_redirects() {
     let bytes = build_answer("anthropic.com.", 60, [10, 0, 0, 1]);
     cache.insert("anthropic.com", 1, 1, &bytes);
 
-    let mut redirect_policy = NetworkPolicy::new(vec![], true, true);
+    let mut redirect_policy = NetworkPolicy::new();
     redirect_policy.dns_redirects.push(DnsRedirect::new(
         "anthropic.com",
         Some(1),

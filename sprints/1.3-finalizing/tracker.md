@@ -108,6 +108,9 @@ commit.
 - [x] Remove NetworkPolicy allow/block decision behavior from security path.
 - [x] Keep network mechanics in network engine: parsing, capture, routing,
   DNS/proxy mechanics, ports, caching, decompression, provider metadata.
+- [x] Remove `PolicyRule`, `NetworkPolicy.rules`,
+  `NetworkPolicy.default_allow_read`, and `NetworkPolicy.default_allow_write`
+  so network mechanics cannot carry hidden domain decisions.
 - [ ] Ensure HTTP/DNS/domain decisions evaluate through `SecurityRuleSet`.
 - [ ] Ensure model/file/process/credential/snapshot decisions evaluate through
   `SecurityRuleSet`.
@@ -385,9 +388,9 @@ invariant sweep before release verification.
 
 ## Coverage Ledger
 
-- Unit/contract: `cargo test -p capsem-core net::policy_config::security_rule_profile --lib`; `cargo test -p capsem-core net::policy_config::provider_profile --lib`; `cargo test -p capsem-core net::policy_config --lib`; `cargo test -p capsem-core mcp:: --lib`; `cargo test -p capsem-core net::policy --lib`; `cargo test -p capsem-core net::dns::cache --lib`.
+- Unit/contract: `cargo test -p capsem-core net::policy_config::security_rule_profile --lib`; `cargo test -p capsem-core net::policy_config::provider_profile --lib`; `cargo test -p capsem-core net::policy_config --lib`; `cargo test -p capsem-core mcp:: --lib`; `cargo test -p capsem-core net::policy --lib`; `cargo test -p capsem-core net::dns::cache --lib`; `cargo test -p capsem-core net::dns --lib`.
 - Functional API: `cargo check -p capsem-service -p capsem-gateway -p capsem`; `uv run python -m pytest tests/capsem-service/test_svc_mcp_api.py -q`.
-- Adversarial: `/mcp/policy` removed from service route table and gateway forwarding, with `tests/capsem-service/test_svc_mcp_api.py::TestMcpPolicy::test_policy_endpoint_is_burned` and `cargo test -p capsem-gateway gateway_`; retired `mcp.global_policy`, `mcp.default_tool_permission`, and `mcp.tool_permissions` rejected by `load_settings_file_rejects_retired_mcp_policy_keys`; `rg -n "NetworkPolicy::evaluate|\\.evaluate\\(\\\"|is_fully_blocked|PolicyDecision|read allowed by default|write denied by default|fully blocked|blocked domain stays NXDOMAIN" crates/capsem-core/src/net crates/capsem-core/src/net/policy_config/tests.rs -g '*.rs'` returned no matches after burning network allow/block APIs.
+- Adversarial: `/mcp/policy` removed from service route table and gateway forwarding, with `tests/capsem-service/test_svc_mcp_api.py::TestMcpPolicy::test_policy_endpoint_is_burned` and `cargo test -p capsem-gateway gateway_`; retired `mcp.global_policy`, `mcp.default_tool_permission`, and `mcp.tool_permissions` rejected by `load_settings_file_rejects_retired_mcp_policy_keys`; `rg -n "NetworkPolicy::evaluate|\\.evaluate\\(\\\"|is_fully_blocked|PolicyDecision|read allowed by default|write denied by default|fully blocked|blocked domain stays NXDOMAIN" crates/capsem-core/src/net crates/capsem-core/src/net/policy_config/tests.rs -g '*.rs'` returned no matches after burning network allow/block APIs; `rg -n "PolicyRule|NetworkPolicy::evaluate|PolicyDecision|is_fully_blocked|default_allow_read|default_allow_write|network\\.rules|allow_read|allow_write" crates/capsem-core/src crates/capsem-core/tests crates/capsem-service/src crates/capsem-gateway/src -g '*.rs'` has no active domain-decision type/field hits outside retired setting ids/tests.
 - E2E/VM: pending.
 - Telemetry/session DB: pending.
 - Frontend: `pnpm --dir frontend test src/lib/__tests__/api.test.ts src/lib/__tests__/mcp-store.test.ts`; `pnpm --dir frontend check`.
