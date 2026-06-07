@@ -33,7 +33,9 @@ const mockTools: McpToolInfo[] = [
 
 vi.mock('../api', () => ({
   getMcpServers: vi.fn(async () => mockServers),
-  getMcpTools: vi.fn(async () => mockTools),
+  getMcpTools: vi.fn(async (_profileId: string, serverId: string) =>
+    mockTools.filter((tool) => tool.server_name === serverId)
+  ),
   setMcpServerEnabled: vi.fn(async () => {}),
   addMcpServer: vi.fn(async () => {}),
   removeMcpServer: vi.fn(async () => {}),
@@ -107,23 +109,24 @@ describe('mcpStore', () => {
 
   it('approveTool calls API and reloads', async () => {
     await mcpStore.load();
-    await mcpStore.approveTool('bash');
+    await mcpStore.approveTool('builtin__http_get');
     const { approveMcpTool } = await import('../api');
-    expect(approveMcpTool).toHaveBeenCalledWith('bash');
+    expect(approveMcpTool).toHaveBeenCalledWith('default', 'builtin', 'http_get');
   });
 
   it('refresh with server calls API', async () => {
     await mcpStore.load();
     await mcpStore.refresh('builtin');
     const { refreshMcpTools } = await import('../api');
-    expect(refreshMcpTools).toHaveBeenCalledWith('builtin');
+    expect(refreshMcpTools).toHaveBeenCalledWith('default', 'builtin');
   });
 
-  it('refresh without server calls API', async () => {
+  it('refresh without server refreshes each loaded server', async () => {
     await mcpStore.load();
     await mcpStore.refresh();
     const { refreshMcpTools } = await import('../api');
-    expect(refreshMcpTools).toHaveBeenCalledWith(undefined);
+    expect(refreshMcpTools).toHaveBeenCalledWith('default', 'builtin');
+    expect(refreshMcpTools).toHaveBeenCalledWith('default', 'external');
   });
 
   it('handles load error', async () => {

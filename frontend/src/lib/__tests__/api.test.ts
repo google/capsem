@@ -406,21 +406,23 @@ describe('api', () => {
       await api.init();
     });
 
-    it('getMcpServers sends GET /mcp/servers', async () => {
+    it('getMcpServers sends GET /profiles/{profile_id}/mcp/servers/list', async () => {
       const servers = [{ name: 'srv', url: 'http://x', enabled: true }];
       mockFetch.mockReturnValueOnce(jsonResponse(servers));
-      const result = await api.getMcpServers();
+      const result = await api.getMcpServers('default');
       expect(result).toEqual(servers);
+      const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
+      expect(call[0]).toContain('/profiles/default/mcp/servers/list');
     });
 
     it('getMcpServers returns [] when disconnected', async () => {
       mockFetch.mockRejectedValueOnce(new Error('fail'));
       await api.init(); // disconnect
-      const result = await api.getMcpServers();
+      const result = await api.getMcpServers('default');
       expect(result).toEqual([]);
     });
 
-    it('getMcpTools sends GET /mcp/tools', async () => {
+    it('getMcpTools sends GET /profiles/{profile_id}/mcp/servers/{server_id}/tools/list', async () => {
       // Re-connect after the disconnected test above.
       mockFetch
         .mockReturnValueOnce(jsonResponse({ ok: true, version: '1.0.0', service_socket: '/tmp/s' }))
@@ -429,44 +431,49 @@ describe('api', () => {
 
       const tools = [{ namespaced_name: 'bash', server_name: 'system' }];
       mockFetch.mockReturnValueOnce(jsonResponse(tools));
-      const result = await api.getMcpTools();
+      const result = await api.getMcpTools('default', 'system');
       expect(result).toEqual(tools);
+      const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
+      expect(call[0]).toContain('/profiles/default/mcp/servers/system/tools/list');
     });
 
-    it('refreshMcpTools sends POST /mcp/tools/refresh', async () => {
+    it('refreshMcpTools sends POST /profiles/{profile_id}/mcp/servers/{server_id}/refresh', async () => {
       mockFetch
         .mockReturnValueOnce(jsonResponse({ ok: true, version: '1.0.0', service_socket: '/tmp/s' }))
         .mockReturnValueOnce(jsonResponse({ token: 'tok' }));
       await api.init();
 
       mockFetch.mockReturnValueOnce(jsonResponse(null));
-      await api.refreshMcpTools('my-server');
+      await api.refreshMcpTools('default', 'my-server');
       const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
-      expect(call[0]).toContain('/mcp/tools/refresh');
-      expect(JSON.parse(call[1].body)).toEqual({ server: 'my-server' });
+      expect(call[0]).toContain('/profiles/default/mcp/servers/my-server/refresh');
     });
 
-    it('approveMcpTool sends POST /mcp/tools/{name}/approve', async () => {
+    it('approveMcpTool sends PATCH /profiles/{profile_id}/mcp/servers/{server_id}/tools/{tool_id}/edit', async () => {
       mockFetch
         .mockReturnValueOnce(jsonResponse({ ok: true, version: '1.0.0', service_socket: '/tmp/s' }))
         .mockReturnValueOnce(jsonResponse({ token: 'tok' }));
       await api.init();
 
       mockFetch.mockReturnValueOnce(jsonResponse(null));
-      await api.approveMcpTool('bash');
+      await api.approveMcpTool('default', 'local', 'bash');
       const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
-      expect(call[0]).toContain('/mcp/tools/bash/approve');
+      expect(call[0]).toContain('/profiles/default/mcp/servers/local/tools/bash/edit');
+      expect(call[1].method).toBe('PATCH');
+      expect(JSON.parse(call[1].body)).toEqual({ approved: true });
     });
 
-    it('callMcpTool sends POST /mcp/tools/{name}/call', async () => {
+    it('callMcpTool sends POST /profiles/{profile_id}/mcp/servers/{server_id}/tools/{tool_id}/call', async () => {
       mockFetch
         .mockReturnValueOnce(jsonResponse({ ok: true, version: '1.0.0', service_socket: '/tmp/s' }))
         .mockReturnValueOnce(jsonResponse({ token: 'tok' }));
       await api.init();
 
       mockFetch.mockReturnValueOnce(jsonResponse({ result: 'ok' }));
-      const result = await api.callMcpTool('bash', { command: 'ls' });
+      const result = await api.callMcpTool('default', 'local', 'bash', { command: 'ls' });
       expect(result).toEqual({ result: 'ok' });
+      const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
+      expect(call[0]).toContain('/profiles/default/mcp/servers/local/tools/bash/call');
     });
   });
 

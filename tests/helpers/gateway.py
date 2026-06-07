@@ -162,6 +162,9 @@ class TcpHttpClient:
     def post(self, path, body=None, timeout=60, use_auth=True):
         return self._curl("POST", path, body, timeout=timeout, use_auth=use_auth)
 
+    def patch(self, path, body=None, timeout=60, use_auth=True):
+        return self._curl("PATCH", path, body, timeout=timeout, use_auth=use_auth)
+
     def delete(self, path, timeout=30, use_auth=True):
         return self._curl("DELETE", path, timeout=timeout, use_auth=use_auth)
 

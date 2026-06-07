@@ -111,6 +111,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   frontend fixtures, guest diagnostics, and integration fixtures. Network
   settings now expose only mechanics such as `security.web.http_upstream_ports`;
   HTTP/DNS allow/block behavior belongs to profile security rules.
+- Replaced global MCP service/gateway/frontend routes with profile/server
+  routes: servers live under `/profiles/{profile_id}/mcp/servers/list`, tools
+  live under `/profiles/{profile_id}/mcp/servers/{server_id}/tools/list`, and
+  tool edit/call/refresh operations are scoped to the same profile/server path.
 - Routed explicit file import/export/read/write boundaries through the
   process-owned security-event emitter so `fs_events` and
   `security_rule_events` share the same primary event id without a service-side

@@ -8,10 +8,10 @@ contract reset.
 | Stream | Status | Notes |
 | --- | --- | --- |
 | T0 Schema and ownership | Not Started | Profile/settings/corp schemas, immutable VM profile id, defaults/plugin/credential contract. |
-| T1 Service/gateway API | In Progress | Profile plugin routes are live; retired plugin global/VM routes fail closed at gateway. Other authoring routes still need profile burn-down. |
+| T1 Service/gateway API | In Progress | Profile plugin and MCP server/tool routes are live; retired plugin global/VM and global MCP routes fail closed. Other authoring routes still need profile burn-down. |
 | T2 Security rail burn-down | In Progress | Network web decision settings and MCP policy objects burned; remaining work is route/authoring/profile completion plus full invariant sweep. |
 | T3 Profile/settings/corp UI/API split | Not Started | Settings UI-only, profile behavior profile-backed, one editor writes one contract. |
-| T4 MCP/plugins/credentials/skills UI | In Progress | Plugin UI/API now call profile-scoped plugin routes with enum controls; MCP/credentials/skills remain. |
+| T4 MCP/plugins/credentials/skills UI | In Progress | Plugin UI/API use profile routes; MCP tools now load under profile/server routes. MCP resources/prompts, credentials, and skills remain. |
 | T5 VM lifecycle/assets/install | Not Started | `/vms/{id}` lifecycle, pause/resume/save/fork/status, immutable profile id, install readiness/assets status. |
 | T6 Docs/changelog/skills | Not Started | Full docs pass, changelog, skills, benchmark docs. |
 | T6.5 Invariant review | Not Started | Full pre-verification review of every master contract invariant. |

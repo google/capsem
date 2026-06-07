@@ -16,6 +16,8 @@ use std::sync::Arc;
 use tokio::net::UnixStream;
 use tracing::{error, info};
 
+const DEFAULT_PROFILE_ID: &str = "default";
+
 /// Case-insensitive line-level grep over a block of text.
 fn grep_lines(text: &str, pattern: &str) -> String {
     let pat = pattern.to_lowercase();
@@ -954,7 +956,11 @@ impl CapsemHandler {
     async fn mcp_servers(&self) -> Result<String, String> {
         let resp: Vec<Value> = self
             .client
-            .request("GET", "/mcp/servers", None::<&()>)
+            .request(
+                "GET",
+                &format!("/profiles/{}/mcp/servers/list", DEFAULT_PROFILE_ID),
+                None::<&()>,
+            )
             .await
             .map_err(|e| e.to_string())?;
         serde_json::to_string_pretty(&resp).map_err(|e| e.to_string())
@@ -968,13 +974,38 @@ impl CapsemHandler {
         &self,
         Parameters(params): Parameters<McpToolsParams>,
     ) -> Result<String, String> {
-        let mut tools: Vec<Value> = self
-            .client
-            .request("GET", "/mcp/tools", None::<&()>)
-            .await
-            .map_err(|e| e.to_string())?;
-        if let Some(ref filter) = params.server {
-            tools.retain(|t| t["server_name"].as_str() == Some(filter));
+        let server_names = if let Some(ref filter) = params.server {
+            vec![filter.clone()]
+        } else {
+            let servers: Vec<Value> = self
+                .client
+                .request(
+                    "GET",
+                    &format!("/profiles/{}/mcp/servers/list", DEFAULT_PROFILE_ID),
+                    None::<&()>,
+                )
+                .await
+                .map_err(|e| e.to_string())?;
+            servers
+                .into_iter()
+                .filter_map(|server| server["name"].as_str().map(ToOwned::to_owned))
+                .collect()
+        };
+        let mut tools = Vec::new();
+        for server_name in server_names {
+            let mut server_tools: Vec<Value> = self
+                .client
+                .request(
+                    "GET",
+                    &format!(
+                        "/profiles/{}/mcp/servers/{}/tools/list",
+                        DEFAULT_PROFILE_ID, server_name
+                    ),
+                    None::<&()>,
+                )
+                .await
+                .map_err(|e| e.to_string())?;
+            tools.append(&mut server_tools);
         }
         serde_json::to_string_pretty(&tools).map_err(|e| e.to_string())
     }
@@ -987,12 +1018,18 @@ impl CapsemHandler {
         &self,
         Parameters(params): Parameters<McpCallParams>,
     ) -> Result<String, String> {
+        let (server_name, tool_name) = params.name.split_once("__").ok_or_else(|| {
+            "MCP tool calls must use namespaced names like server__tool".to_string()
+        })?;
         let args = params.arguments.unwrap_or(json!({}));
         let resp: Value = self
             .client
             .request(
                 "POST",
-                &format!("/mcp/tools/{}/call", params.name),
+                &format!(
+                    "/profiles/{}/mcp/servers/{}/tools/{}/call",
+                    DEFAULT_PROFILE_ID, server_name, tool_name
+                ),
                 Some(&args),
             )
             .await

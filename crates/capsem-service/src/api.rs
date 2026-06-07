@@ -283,7 +283,7 @@ pub struct ErrorResponse {
 
 // ── MCP API types ──────────────────────────────────────────────────
 
-/// Response for GET /mcp/servers.
+/// Response for GET /profiles/{profile_id}/mcp/servers/list.
 #[derive(Serialize, Deserialize, Debug)]
 pub struct McpServerInfoResponse {
     pub name: String,
@@ -297,7 +297,7 @@ pub struct McpServerInfoResponse {
     pub is_stdio: bool,
 }
 
-/// Response for GET /mcp/tools.
+/// Response for GET /profiles/{profile_id}/mcp/servers/{server_id}/tools/list.
 #[derive(Serialize, Deserialize, Debug)]
 pub struct McpToolInfoResponse {
     pub namespaced_name: String,

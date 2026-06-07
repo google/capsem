@@ -275,11 +275,26 @@ fn service_proxy_routes() -> Router<Arc<AppState>> {
         .route("/assets/status", get(proxy::handle_proxy))
         .route("/assets/ensure", post(proxy::handle_proxy))
         .route("/corp-config", post(proxy::handle_proxy))
-        .route("/mcp/servers", get(proxy::handle_proxy))
-        .route("/mcp/tools", get(proxy::handle_proxy))
-        .route("/mcp/tools/refresh", post(proxy::handle_proxy))
-        .route("/mcp/tools/{name}/approve", post(proxy::handle_proxy))
-        .route("/mcp/tools/{name}/call", post(proxy::handle_proxy))
+        .route(
+            "/profiles/{profile_id}/mcp/servers/list",
+            get(proxy::handle_proxy),
+        )
+        .route(
+            "/profiles/{profile_id}/mcp/servers/{server_id}/tools/list",
+            get(proxy::handle_proxy),
+        )
+        .route(
+            "/profiles/{profile_id}/mcp/servers/{server_id}/refresh",
+            post(proxy::handle_proxy),
+        )
+        .route(
+            "/profiles/{profile_id}/mcp/servers/{server_id}/tools/{tool_id}/edit",
+            patch(proxy::handle_proxy),
+        )
+        .route(
+            "/profiles/{profile_id}/mcp/servers/{server_id}/tools/{tool_id}/call",
+            post(proxy::handle_proxy),
+        )
         .route("/history/{id}", get(proxy::handle_proxy))
         .route("/history/{id}/processes", get(proxy::handle_proxy))
         .route("/history/{id}/counts", get(proxy::handle_proxy))
@@ -436,6 +451,17 @@ mod tests {
             ("GET", "/profiles/default/plugins/list"),
             ("GET", "/profiles/default/plugins/dummy_pre_eicar/info"),
             ("PATCH", "/profiles/default/plugins/dummy_pre_eicar/edit"),
+            ("GET", "/profiles/default/mcp/servers/list"),
+            ("GET", "/profiles/default/mcp/servers/local/tools/list"),
+            ("POST", "/profiles/default/mcp/servers/local/refresh"),
+            (
+                "PATCH",
+                "/profiles/default/mcp/servers/local/tools/echo/edit",
+            ),
+            (
+                "POST",
+                "/profiles/default/mcp/servers/local/tools/echo/call",
+            ),
         ] {
             let app = service_proxy_app("/tmp/capsem-gateway-missing-service.sock");
             let resp = app
@@ -483,17 +509,27 @@ mod tests {
 
     #[tokio::test]
     async fn gateway_does_not_forward_retired_mcp_policy_route() {
-        let app = service_proxy_app("/tmp/capsem-gateway-must-not-connect.sock");
-        let resp = app
-            .oneshot(
-                http::Request::builder()
-                    .uri("/mcp/policy")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(resp.status(), http::StatusCode::NOT_FOUND);
+        for (method, uri) in [
+            ("GET", "/mcp/policy"),
+            ("GET", "/mcp/servers"),
+            ("GET", "/mcp/tools"),
+            ("POST", "/mcp/tools/refresh"),
+            ("POST", "/mcp/tools/local__echo/approve"),
+            ("POST", "/mcp/tools/local__echo/call"),
+        ] {
+            let app = service_proxy_app("/tmp/capsem-gateway-must-not-connect.sock");
+            let resp = app
+                .oneshot(
+                    http::Request::builder()
+                        .method(method)
+                        .uri(uri)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), http::StatusCode::NOT_FOUND, "{method} {uri}");
+        }
     }
 
     #[tokio::test]

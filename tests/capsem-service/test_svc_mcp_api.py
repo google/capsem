@@ -1,12 +1,11 @@
-"""MCP API endpoints: /mcp/servers, /mcp/tools,
-/mcp/tools/refresh, /mcp/tools/{name}/approve, /mcp/tools/{name}/call.
+"""MCP API endpoints under /profiles/{profile_id}/mcp/servers/{server_id}.
 
 These endpoints read from CAPSEM_HOME (user.toml, corp.toml,
-mcp_tool_cache.json) and for /mcp/tools/{name}/call route through a running
-capsem-process over IPC. Without a running VM, /mcp/tools/{name}/call hits
-the "no running sessions" path -- the fixture tests that error branch; full
-happy-path coverage would need a downstream MCP aggregator in the guest
-(tracked as a follow-up, same as test_mcp_call.py in tests/capsem-mcp/).
+mcp_tool_cache.json) and tool calls route through a running capsem-process over
+IPC. Without a running VM, tool calls hit the "no running sessions" path -- the
+fixture tests that error branch; full happy-path coverage would need a
+downstream MCP aggregator in the guest (tracked as a follow-up, same as
+test_mcp_call.py in tests/capsem-mcp/).
 """
 
 import json
@@ -18,12 +17,15 @@ from helpers.service import wait_exec_ready, vm_name
 
 pytestmark = pytest.mark.integration
 
+PROFILE = "default"
+SERVER = "local"
+
 
 class TestMcpServers:
 
     def test_servers_returns_list(self, client):
-        """/mcp/servers returns the merged server list (possibly empty)."""
-        resp = client.get("/mcp/servers")
+        """Profile MCP servers endpoint returns the merged server list."""
+        resp = client.get(f"/profiles/{PROFILE}/mcp/servers/list")
         assert isinstance(resp, list), f"/mcp/servers did not return list: {resp!r}"
         for server in resp:
             for key in (
@@ -40,8 +42,8 @@ class TestMcpServers:
 class TestMcpTools:
 
     def test_tools_returns_list(self, client):
-        """/mcp/tools returns the isolated tool cache shape."""
-        resp = client.get("/mcp/tools")
+        """Profile/server MCP tools endpoint returns the isolated tool cache shape."""
+        resp = client.get(f"/profiles/{PROFILE}/mcp/servers/{SERVER}/tools/list")
         assert isinstance(resp, list), f"/mcp/tools did not return list: {resp!r}"
         if not resp:
             return
@@ -61,21 +63,31 @@ class TestMcpTools:
 
 class TestMcpPolicy:
 
-    def test_policy_endpoint_is_burned(self, client):
-        """/mcp/policy must not expose a second MCP decision engine."""
-        resp = client.get("/mcp/policy")
-        assert resp is None or "not found" in str(resp).lower() or "error" in resp
+    def test_retired_mcp_endpoints_are_burned(self, client):
+        """Retired global MCP endpoints must not expose alternate authoring."""
+        for method, path in [
+            ("get", "/mcp/policy"),
+            ("get", "/mcp/servers"),
+            ("get", "/mcp/tools"),
+            ("post", "/mcp/tools/refresh"),
+            ("post", "/mcp/tools/local__echo/approve"),
+            ("post", "/mcp/tools/local__echo/call"),
+        ]:
+            call = getattr(client, method)
+            resp = call(path, {}) if method == "post" else call(path)
+            assert resp is None or "not found" in str(resp).lower() or "error" in resp
 
 
 class TestMcpToolsRefresh:
 
     def test_refresh_no_instances_succeeds(self, client):
-        """/mcp/tools/refresh with zero running VMs returns instances=0."""
+        """Profile/server refresh with zero running VMs returns instances=0."""
         # Ensure no VMs so the loop is over an empty list.
         client.post("/purge", {"all": True})
-        resp = client.post("/mcp/tools/refresh", {})
+        resp = client.post(f"/profiles/{PROFILE}/mcp/servers/{SERVER}/refresh", {})
         assert resp is not None, "refresh returned no body"
         assert resp.get("success") is True, f"refresh failed: {resp}"
+        assert resp.get("server_id") == SERVER
         assert resp.get("instances") == 0, (
             f"expected 0 instances, got {resp.get('instances')}: {resp}"
         )
@@ -85,7 +97,10 @@ class TestMcpApprove:
 
     def test_approve_unknown_tool_rejected(self, client):
         """Approving a tool that is not in the cache must 404."""
-        resp = client.post("/mcp/tools/not-a-real-tool/approve", {})
+        resp = client.patch(
+            f"/profiles/{PROFILE}/mcp/servers/{SERVER}/tools/not-a-real-tool/edit",
+            {"approved": True},
+        )
         # 404 from AppError gives a body like {"error": "tool not found: ..."}.
         assert resp is None or "error" in resp or "not found" in str(resp).lower(), (
             f"unknown tool should 404: {resp}"
@@ -104,7 +119,10 @@ class TestMcpCall:
         (same follow-up as test_mcp_call.py on the MCP side).
         """
         client.post("/purge", {"all": True})
-        resp = client.post("/mcp/tools/some-tool/call", {})
+        resp = client.post(
+            f"/profiles/{PROFILE}/mcp/servers/{SERVER}/tools/some-tool/call",
+            {},
+        )
         assert resp is None or "error" in resp or "no running" in str(resp).lower(), (
             f"no-session call should 503: {resp}"
         )
@@ -123,7 +141,10 @@ class TestMcpCall:
             assert wait_exec_ready(client, name, timeout=EXEC_READY_TIMEOUT), (
                 f"{name} never exec-ready"
             )
-            resp = client.post("/mcp/tools/definitely-not-a-real-tool/call", {})
+            resp = client.post(
+                f"/profiles/{PROFILE}/mcp/servers/{SERVER}/tools/definitely-not-a-real-tool/call",
+                {},
+            )
             # Either the aggregator reports "unknown tool" or we get an
             # AppError body. Both are acceptable negative outcomes.
             assert resp is None or "error" in resp or "unknown" in json.dumps(resp).lower(), (

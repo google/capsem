@@ -691,10 +691,10 @@ export async function removeMcpServer(name: string): Promise<void> {
 // -- MCP runtime --
 
 /** List configured MCP servers with tool counts (runtime). */
-export async function getMcpServers(): Promise<McpServerInfo[]> {
+export async function getMcpServers(profileId: string): Promise<McpServerInfo[]> {
   if (!_connected) return [];
   try {
-    const resp = await _get('/mcp/servers');
+    const resp = await _get(`/profiles/${encodeURIComponent(profileId)}/mcp/servers/list`);
     return await resp.json();
   } catch (err) {
     if (isNetworkError(err)) return [];
@@ -703,10 +703,12 @@ export async function getMcpServers(): Promise<McpServerInfo[]> {
 }
 
 /** List discovered MCP tools with cache/approval status (runtime). */
-export async function getMcpTools(): Promise<McpToolInfo[]> {
+export async function getMcpTools(profileId: string, serverId: string): Promise<McpToolInfo[]> {
   if (!_connected) return [];
   try {
-    const resp = await _get('/mcp/tools');
+    const resp = await _get(
+      `/profiles/${encodeURIComponent(profileId)}/mcp/servers/${encodeURIComponent(serverId)}/tools/list`,
+    );
     return await resp.json();
   } catch (err) {
     if (isNetworkError(err)) return [];
@@ -715,18 +717,35 @@ export async function getMcpTools(): Promise<McpToolInfo[]> {
 }
 
 /** Re-discover tools from MCP servers. */
-export async function refreshMcpTools(server?: string): Promise<void> {
-  await _post('/mcp/tools/refresh', server ? { server } : undefined);
+export async function refreshMcpTools(profileId: string, serverId: string): Promise<void> {
+  await _post(
+    `/profiles/${encodeURIComponent(profileId)}/mcp/servers/${encodeURIComponent(serverId)}/refresh`,
+  );
 }
 
-/** Approve an MCP tool (writes tool cache). */
-export async function approveMcpTool(name: string): Promise<void> {
-  await _post(`/mcp/tools/${encodeURIComponent(name)}/approve`);
+/** Edit MCP tool mechanics such as cache approval. */
+export async function approveMcpTool(
+  profileId: string,
+  serverId: string,
+  toolId: string,
+): Promise<void> {
+  await _patch(
+    `/profiles/${encodeURIComponent(profileId)}/mcp/servers/${encodeURIComponent(serverId)}/tools/${encodeURIComponent(toolId)}/edit`,
+    { approved: true },
+  );
 }
 
 /** Call a built-in MCP file tool. */
-export async function callMcpTool(name: string, args: Record<string, unknown>): Promise<unknown> {
-  const resp = await _post(`/mcp/tools/${encodeURIComponent(name)}/call`, args);
+export async function callMcpTool(
+  profileId: string,
+  serverId: string,
+  toolId: string,
+  args: Record<string, unknown>,
+): Promise<unknown> {
+  const resp = await _post(
+    `/profiles/${encodeURIComponent(profileId)}/mcp/servers/${encodeURIComponent(serverId)}/tools/${encodeURIComponent(toolId)}/call`,
+    args,
+  );
   return await resp.json();
 }
 

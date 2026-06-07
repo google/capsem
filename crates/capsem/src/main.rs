@@ -9,7 +9,7 @@ mod support_bundle;
 mod uninstall;
 mod update;
 
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use clap::builder::styling::{AnsiColor, Color, Style, Styles};
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
@@ -20,6 +20,8 @@ use client::{
     HistoryResponse, ListResponse, LogsResponse, PersistRequest, ProvisionRequest,
     ProvisionResponse, PurgeRequest, PurgeResponse, RunRequest, SessionInfo, UdsClient,
 };
+
+const DEFAULT_PROFILE_ID: &str = "default";
 
 const fn cli_styles() -> Styles {
     Styles::styled()
@@ -1630,7 +1632,12 @@ async fn main() -> Result<()> {
             println!("{}", resumed.id);
         }
         Commands::Mcp(McpCommands::Servers) => {
-            let resp: ApiResponse<Vec<serde_json::Value>> = client.get("/mcp/servers").await?;
+            let resp: ApiResponse<Vec<serde_json::Value>> = client
+                .get(&format!(
+                    "/profiles/{}/mcp/servers/list",
+                    DEFAULT_PROFILE_ID
+                ))
+                .await?;
             let servers = resp.into_result()?;
             if servers.is_empty() {
                 println!("No MCP servers configured.");
@@ -1659,10 +1666,29 @@ async fn main() -> Result<()> {
             }
         }
         Commands::Mcp(McpCommands::Tools { server }) => {
-            let resp: ApiResponse<Vec<serde_json::Value>> = client.get("/mcp/tools").await?;
-            let mut tools = resp.into_result()?;
-            if let Some(ref server_filter) = server {
-                tools.retain(|t| t["server_name"].as_str() == Some(server_filter));
+            let server_names: Vec<String> = if let Some(server_filter) = server {
+                vec![server_filter.clone()]
+            } else {
+                let resp: ApiResponse<Vec<serde_json::Value>> = client
+                    .get(&format!(
+                        "/profiles/{}/mcp/servers/list",
+                        DEFAULT_PROFILE_ID
+                    ))
+                    .await?;
+                resp.into_result()?
+                    .into_iter()
+                    .filter_map(|server| server["name"].as_str().map(ToOwned::to_owned))
+                    .collect()
+            };
+            let mut tools = Vec::new();
+            for server_name in server_names {
+                let resp: ApiResponse<Vec<serde_json::Value>> = client
+                    .get(&format!(
+                        "/profiles/{}/mcp/servers/{}/tools/list",
+                        DEFAULT_PROFILE_ID, server_name
+                    ))
+                    .await?;
+                tools.extend(resp.into_result()?);
             }
             if tools.is_empty() {
                 println!("No MCP tools discovered.");
@@ -1692,17 +1718,42 @@ async fn main() -> Result<()> {
             }
         }
         Commands::Mcp(McpCommands::Refresh) => {
-            let resp: ApiResponse<serde_json::Value> = client
-                .post("/mcp/tools/refresh", &serde_json::json!({}))
+            let resp: ApiResponse<Vec<serde_json::Value>> = client
+                .get(&format!(
+                    "/profiles/{}/mcp/servers/list",
+                    DEFAULT_PROFILE_ID
+                ))
                 .await?;
-            resp.into_result()?;
+            for server in resp.into_result()? {
+                if let Some(server_name) = server["name"].as_str() {
+                    let refresh: ApiResponse<serde_json::Value> = client
+                        .post(
+                            &format!(
+                                "/profiles/{}/mcp/servers/{}/refresh",
+                                DEFAULT_PROFILE_ID, server_name
+                            ),
+                            &serde_json::json!({}),
+                        )
+                        .await?;
+                    refresh.into_result()?;
+                }
+            }
             println!("MCP tools refreshed.");
         }
         Commands::Mcp(McpCommands::Call { name, args }) => {
+            let (server_name, tool_name) = name.split_once("__").ok_or_else(|| {
+                anyhow!("MCP tool calls must use namespaced names like server__tool; got {name}")
+            })?;
             let arguments: serde_json::Value =
                 serde_json::from_str(args).context("invalid JSON arguments")?;
             let resp: ApiResponse<serde_json::Value> = client
-                .post(&format!("/mcp/tools/{}/call", name), &arguments)
+                .post(
+                    &format!(
+                        "/profiles/{}/mcp/servers/{}/tools/{}/call",
+                        DEFAULT_PROFILE_ID, server_name, tool_name
+                    ),
+                    &arguments,
+                )
                 .await?;
             let result = resp.into_result()?;
             println!("{}", serde_json::to_string_pretty(&result)?);

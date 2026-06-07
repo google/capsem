@@ -204,6 +204,12 @@ struct PluginUpdate {
     detection_level: Option<DetectionLevel>,
 }
 
+#[derive(Debug, Deserialize)]
+struct McpToolEditRequest {
+    #[serde(default)]
+    approved: Option<bool>,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 struct EnforcementEvaluateRequest {
     profile_id: String,
@@ -3320,8 +3326,42 @@ async fn handle_corp_config(
 // MCP API Handlers
 // ---------------------------------------------------------------------------
 
-/// GET /mcp/servers -- list configured MCP servers with status.
-async fn handle_mcp_servers() -> Json<serde_json::Value> {
+fn validate_profile_route_id(profile_id: String) -> Result<String, AppError> {
+    if profile_id.is_empty() {
+        Err(AppError(
+            StatusCode::BAD_REQUEST,
+            "profile id must not be empty".to_string(),
+        ))
+    } else {
+        Ok(profile_id)
+    }
+}
+
+fn resolve_mcp_tool_id(server_id: &str, tool_id: &str) -> Result<String, AppError> {
+    if server_id.is_empty() || tool_id.is_empty() {
+        return Err(AppError(
+            StatusCode::BAD_REQUEST,
+            "server id and tool id must not be empty".to_string(),
+        ));
+    }
+    if let Some((prefix, _)) = tool_id.split_once("__") {
+        if prefix != server_id {
+            return Err(AppError(
+                StatusCode::BAD_REQUEST,
+                format!("tool id {tool_id} does not belong to MCP server {server_id}"),
+            ));
+        }
+        Ok(tool_id.to_string())
+    } else {
+        Ok(format!("{server_id}__{tool_id}"))
+    }
+}
+
+/// GET /profiles/:profile_id/mcp/servers/list -- list profile MCP servers with status.
+async fn handle_profile_mcp_servers(
+    Path(profile_id): Path<String>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let _profile_id = validate_profile_route_id(profile_id)?;
     use capsem_core::mcp::policy::McpUserConfig;
     use capsem_core::mcp::{build_server_list_with_builtin, load_tool_cache};
 
@@ -3358,16 +3398,26 @@ async fn handle_mcp_servers() -> Json<serde_json::Value> {
             }
         })
         .collect();
-    Json(serde_json::to_value(resp).unwrap_or_default())
+    Ok(Json(serde_json::to_value(resp).unwrap_or_default()))
 }
 
-/// GET /mcp/tools -- list discovered MCP tools with pin/approval status.
-async fn handle_mcp_tools() -> Json<serde_json::Value> {
+/// GET /profiles/:profile_id/mcp/servers/:server_id/tools/list -- list one server's tools.
+async fn handle_profile_mcp_server_tools(
+    Path((profile_id, server_id)): Path<(String, String)>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let _profile_id = validate_profile_route_id(profile_id)?;
+    if server_id.is_empty() {
+        return Err(AppError(
+            StatusCode::BAD_REQUEST,
+            "MCP server id must not be empty".to_string(),
+        ));
+    }
     use capsem_core::mcp::load_tool_cache;
 
     let cache = load_tool_cache();
     let resp: Vec<api::McpToolInfoResponse> = cache
         .iter()
+        .filter(|entry| entry.server_name == server_id)
         .map(|entry| {
             api::McpToolInfoResponse {
                 namespaced_name: entry.namespaced_name.clone(),
@@ -3381,13 +3431,21 @@ async fn handle_mcp_tools() -> Json<serde_json::Value> {
             }
         })
         .collect();
-    Json(serde_json::to_value(resp).unwrap_or_default())
+    Ok(Json(serde_json::to_value(resp).unwrap_or_default()))
 }
 
-/// POST /mcp/tools/refresh -- reload MCP servers from config.
-async fn handle_mcp_refresh(
+/// POST /profiles/:profile_id/mcp/servers/:server_id/refresh -- refresh one server's tool discovery.
+async fn handle_profile_mcp_server_refresh(
     State(state): State<Arc<ServiceState>>,
+    Path((profile_id, server_id)): Path<(String, String)>,
 ) -> Result<Json<serde_json::Value>, AppError> {
+    let _profile_id = validate_profile_route_id(profile_id)?;
+    if server_id.is_empty() {
+        return Err(AppError(
+            StatusCode::BAD_REQUEST,
+            "MCP server id must not be empty".to_string(),
+        ));
+    }
     // Send McpRefreshTools to all running instances.
     let uds_paths = {
         let instances = state.instances.lock().unwrap();
@@ -3402,35 +3460,52 @@ async fn handle_mcp_refresh(
             send_ipc_command(uds_path, ServiceToProcess::McpRefreshTools { id }, Some(30)).await;
     }
     Ok(Json(
-        serde_json::json!({"success": true, "instances": uds_paths.len()}),
+        serde_json::json!({"success": true, "server_id": server_id, "instances": uds_paths.len()}),
     ))
 }
 
-/// POST /mcp/tools/:name/approve -- approve a tool (mark approved in cache).
-async fn handle_mcp_approve(Path(name): Path<String>) -> Result<Json<serde_json::Value>, AppError> {
+/// PATCH /profiles/:profile_id/mcp/servers/:server_id/tools/:tool_id/edit -- edit tool mechanics.
+async fn handle_profile_mcp_tool_edit(
+    Path((profile_id, server_id, tool_id)): Path<(String, String, String)>,
+    Json(update): Json<McpToolEditRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let _profile_id = validate_profile_route_id(profile_id)?;
+    let namespaced_name = resolve_mcp_tool_id(&server_id, &tool_id)?;
     use capsem_core::mcp::{load_tool_cache, save_tool_cache};
 
     let mut cache = load_tool_cache();
-    let found = cache.iter_mut().find(|e| e.namespaced_name == name);
+    let found = cache.iter_mut().find(|entry| {
+        entry.server_name == server_id
+            && (entry.namespaced_name == namespaced_name || entry.original_name == tool_id)
+    });
     match found {
         Some(entry) => {
-            entry.approved = true;
+            if let Some(approved) = update.approved {
+                entry.approved = approved;
+            }
             save_tool_cache(&cache).map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
-            Ok(Json(serde_json::json!({"approved": true})))
+            Ok(Json(serde_json::json!({
+                "server_id": server_id,
+                "tool_id": tool_id,
+                "namespaced_name": namespaced_name,
+                "approved": update.approved,
+            })))
         }
         None => Err(AppError(
             StatusCode::NOT_FOUND,
-            format!("tool not found: {name}"),
+            format!("tool not found: {server_id}/{tool_id}"),
         )),
     }
 }
 
-/// POST /mcp/tools/:name/call -- call an MCP tool via a running VM's aggregator.
-async fn handle_mcp_call(
+/// POST /profiles/:profile_id/mcp/servers/:server_id/tools/:tool_id/call -- call a tool via a VM aggregator.
+async fn handle_profile_mcp_tool_call(
     State(state): State<Arc<ServiceState>>,
-    Path(name): Path<String>,
+    Path((profile_id, server_id, tool_id)): Path<(String, String, String)>,
     Json(arguments): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, AppError> {
+    let _profile_id = validate_profile_route_id(profile_id)?;
+    let namespaced_name = resolve_mcp_tool_id(&server_id, &tool_id)?;
     // Find any running instance to route the call through.
     let uds_path = {
         let instances = state.instances.lock().unwrap();
@@ -3447,7 +3522,7 @@ async fn handle_mcp_call(
         .map_err(|e| AppError(StatusCode::BAD_REQUEST, format!("invalid arguments: {e}")))?;
     let msg = ServiceToProcess::McpCallTool {
         id: state.next_job_id(),
-        namespaced_name: name.clone(),
+        namespaced_name,
         arguments_json,
     };
     let resp = send_ipc_command(&uds_path, msg, Some(60))
@@ -5455,11 +5530,26 @@ async fn main() -> Result<()> {
         .route("/assets/status", get(handle_assets_status))
         .route("/assets/ensure", post(handle_assets_ensure))
         .route("/corp-config", post(handle_corp_config))
-        .route("/mcp/servers", get(handle_mcp_servers))
-        .route("/mcp/tools", get(handle_mcp_tools))
-        .route("/mcp/tools/refresh", post(handle_mcp_refresh))
-        .route("/mcp/tools/{name}/approve", post(handle_mcp_approve))
-        .route("/mcp/tools/{name}/call", post(handle_mcp_call))
+        .route(
+            "/profiles/{profile_id}/mcp/servers/list",
+            get(handle_profile_mcp_servers),
+        )
+        .route(
+            "/profiles/{profile_id}/mcp/servers/{server_id}/tools/list",
+            get(handle_profile_mcp_server_tools),
+        )
+        .route(
+            "/profiles/{profile_id}/mcp/servers/{server_id}/refresh",
+            post(handle_profile_mcp_server_refresh),
+        )
+        .route(
+            "/profiles/{profile_id}/mcp/servers/{server_id}/tools/{tool_id}/edit",
+            patch(handle_profile_mcp_tool_edit),
+        )
+        .route(
+            "/profiles/{profile_id}/mcp/servers/{server_id}/tools/{tool_id}/call",
+            post(handle_profile_mcp_tool_call),
+        )
         .route("/history/{id}", get(handle_history))
         .route("/history/{id}/processes", get(handle_history_processes))
         .route("/history/{id}/counts", get(handle_history_counts))

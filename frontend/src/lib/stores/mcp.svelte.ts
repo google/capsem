@@ -10,6 +10,8 @@ import {
 } from '../api';
 import type { McpServerInfo, McpToolInfo } from '../types';
 
+const PROFILE_ID = 'default';
+
 class McpStore {
   servers = $state<McpServerInfo[]>([]);
   tools = $state<McpToolInfo[]>([]);
@@ -39,12 +41,12 @@ class McpStore {
     this.loading = true;
     this.error = null;
     try {
-      const [servers, tools] = await Promise.all([
-        getMcpServers(),
-        getMcpTools(),
-      ]);
+      const servers = await getMcpServers(PROFILE_ID);
+      const toolLists = await Promise.all(
+        servers.map((server) => getMcpTools(PROFILE_ID, server.name)),
+      );
       this.servers = servers;
-      this.tools = tools;
+      this.tools = toolLists.flat();
     } catch (e) {
       console.error('Failed to load MCP data:', e);
       this.error = String(e);
@@ -68,13 +70,18 @@ class McpStore {
     await this.load();
   }
 
-  async approveTool(tool: string) {
-    await approveMcpTool(tool);
+  async approveTool(tool: McpToolInfo | string) {
+    const target = typeof tool === 'string'
+      ? this.tools.find((candidate) => candidate.namespaced_name === tool || candidate.original_name === tool)
+      : tool;
+    if (!target) throw new Error(`MCP tool not loaded: ${tool}`);
+    await approveMcpTool(PROFILE_ID, target.server_name, target.original_name);
     await this.load();
   }
 
   async refresh(server?: string) {
-    await refreshMcpTools(server);
+    const serverIds = server ? [server] : this.servers.map((entry) => entry.name);
+    await Promise.all(serverIds.map((serverId) => refreshMcpTools(PROFILE_ID, serverId)));
     await this.load();
   }
 }
