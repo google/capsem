@@ -296,7 +296,15 @@ the guarantee or explicitly burn it.
 
 ## S2: Runtime Profile Assets And Pins
 
-- [ ] Restore profile catalog/loader and remove `default`-only route validation.
+- [ ] Restore profile catalog/loader and remove all `default`-only profile code
+  paths.
+- [ ] Represent default/built-in profiles as real catalog/profile entries using
+  the same loader/status/asset machinery as every other profile.
+- [ ] Restore service profile inventory/status surface: profile id,
+  name/description/icon, revision, catalog status, installed status,
+  launchability, asset readiness, reconcile/download state, and errors.
+- [ ] Restore profile list/info/status/reload/reconcile/assets-ensure routes
+  needed by UI, TUI, CLI, and install checks.
 - [ ] Restore per-arch profile asset declarations with URL/hash/signature/size.
 - [ ] Restore profile-aware asset supervisor/reconcile/status/ensure.
 - [ ] Ensure VM create requires and persists immutable `profile_id`.

@@ -75,6 +75,13 @@ vm.profile_id
 Required capabilities:
 
 - Profile catalog/loader replaces `default`-only route validation.
+- Default-only profile code is removed. A default profile can exist only as a
+  real catalog/profile entry.
+- Service status/profile routes expose the profile inventory: profile id,
+  name/description/icon from profile, revision, catalog status, installed
+  status, launchability, asset readiness, reconcile/download state, and errors.
+- Profile routes support list/info/status/reload/reconcile/asset ensure flows
+  needed by UI, TUI, CLI, and install checks.
 - Per-arch profile asset declarations include URL/hash/signature/size metadata.
 - Profile-aware asset reconcile/status/ensure returns profile-specific truth.
 - VM creation stores immutable profile id.

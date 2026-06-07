@@ -103,6 +103,12 @@ These are not optional:
 - `just`/CI/release using the typed admin rail instead of shell-only ad hoc
   asset builds.
 - Profile catalog/loader/revision trust.
+- No default-only profile code path. Built-in/default profiles may exist as real
+  catalog entries, but they must travel through the same loader/status/asset
+  machinery as every other profile.
+- Capsem service status must report profile inventory and readiness: which
+  profiles exist, their revision/status, asset readiness, download/reconcile
+  progress, and errors.
 - Profile-aware asset supervisor/reconcile/status/ensure.
 - Persistent VM profile/base-asset pins and fail-closed resume/fork/save.
 - TUI-backed `capsem shell`, functionally equivalent to the lost multi-VM TUI:
