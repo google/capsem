@@ -1,6 +1,5 @@
 use super::*;
-use crate::net::policy_config::PolicyCallback;
-use crate::security_engine::{ModelSecurityEvent, SecurityEvent};
+use crate::security_engine::{ModelSecurityEvent, RuntimeSecurityEventType, SecurityEvent};
 
 const RULE_FIXTURE: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -82,7 +81,7 @@ fn sigma_fixture_evaluates_against_security_event_roots() {
     let rules = SecurityRuleSet::compile_profile(&profile, SecurityRuleSource::User)
         .expect("sigma-derived rules compile");
 
-    let rogue = SecurityEvent::new(PolicyCallback::HookDecision)
+    let rogue = SecurityEvent::new(RuntimeSecurityEventType::SecurityRule)
         .with_model(ModelSecurityEvent {
             provider: Some("openai".to_string()),
             ..Default::default()
@@ -91,7 +90,7 @@ fn sigma_fixture_evaluates_against_security_event_roots() {
             host: Some("proxy.internal".to_string()),
             ..Default::default()
         });
-    let approved = SecurityEvent::new(PolicyCallback::HookDecision)
+    let approved = SecurityEvent::new(RuntimeSecurityEventType::SecurityRule)
         .with_model(ModelSecurityEvent {
             provider: Some("openai".to_string()),
             ..Default::default()
@@ -306,10 +305,11 @@ match = 'has(model.request.body)'
     assert_eq!(compiled[0].provider, "profiles");
     assert_eq!(compiled[0].priority, 0);
 
-    let event = SecurityEvent::new(PolicyCallback::ModelRequest).with_model(ModelSecurityEvent {
-        request_body: Some("hello".to_string()),
-        ..Default::default()
-    });
+    let event =
+        SecurityEvent::new(RuntimeSecurityEventType::ModelCall).with_model(ModelSecurityEvent {
+            request_body: Some("hello".to_string()),
+            ..Default::default()
+        });
     assert!(
         compiled[0].matches_security_event(&event).unwrap(),
         "compiled rules must evaluate without reparsing their CEL string"
@@ -321,7 +321,7 @@ fn compiled_rule_set_evaluates_once_over_security_event() {
     let profile = SecurityRuleProfile::parse_toml(RULE_FIXTURE).expect("fixture parses");
     let rules = SecurityRuleSet::compile_profile(&profile, SecurityRuleSource::BuiltinDefault)
         .expect("rule set compiles");
-    let event = SecurityEvent::new(PolicyCallback::HttpRequest).with_http(
+    let event = SecurityEvent::new(RuntimeSecurityEventType::HttpRequest).with_http(
         crate::security_engine::HttpSecurityEvent {
             host: Some("api.openai.com".to_string()),
             ..Default::default()
@@ -378,10 +378,11 @@ match = 'http.host == "api.openai.com" || model.provider == "openai"'
     .expect("cross-root rule parses");
     let rules = SecurityRuleSet::compile_profile(&profile, SecurityRuleSource::BuiltinDefault)
         .expect("rule set compiles");
-    let event = SecurityEvent::new(PolicyCallback::ModelRequest).with_model(ModelSecurityEvent {
-        provider: Some("openai".to_string()),
-        ..Default::default()
-    });
+    let event =
+        SecurityEvent::new(RuntimeSecurityEventType::ModelCall).with_model(ModelSecurityEvent {
+            provider: Some("openai".to_string()),
+            ..Default::default()
+        });
 
     let evaluation = rules.evaluate(&event).expect("rule set evaluates");
 
@@ -500,7 +501,7 @@ match = 'http.host == "example.com"'
     }
 
     let compiled = SecurityRuleSet::compile_profile(&profile, SecurityRuleSource::User).unwrap();
-    let event = SecurityEvent::new(PolicyCallback::HookDecision)
+    let event = SecurityEvent::new(RuntimeSecurityEventType::SecurityRule)
         .with_model(ModelSecurityEvent {
             request_body: Some("secret".to_string()),
             ..Default::default()

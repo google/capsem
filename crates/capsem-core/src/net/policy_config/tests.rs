@@ -5004,8 +5004,7 @@ priority = 10
     .expect_err("old policy tables must not deserialize");
 
     assert!(
-        error.to_string().contains("unknown field")
-            || error.to_string().contains("policy"),
+        error.to_string().contains("unknown field") || error.to_string().contains("policy"),
         "{error}"
     );
 }
@@ -5674,23 +5673,6 @@ fn load_settings_response_exposes_provider_rules_without_policy_payload() {
         "settings response should expose provider status, not a retired policy map"
     );
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 #[test]
 fn merged_partial_settings_file() {

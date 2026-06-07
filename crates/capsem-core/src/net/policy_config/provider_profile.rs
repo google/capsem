@@ -632,6 +632,5 @@ match = 'model.provider == "openai"'
             10,
             Some("pii")
         )));
-
     }
 }

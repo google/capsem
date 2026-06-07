@@ -19,9 +19,8 @@ use uuid::Uuid;
 use crate::credential_broker::{BrokeredUpstreamCredentials, CredentialObservation};
 use crate::net::ai_traffic::provider::ProviderKind;
 use crate::net::policy_config::{
-    CompiledSecurityRule, DetectionLevel, PolicyActionId, PolicyCallback, PolicySubject,
-    PolicySubjectValue, SecurityPluginConfig, SecurityPluginMode, SecurityRuleAction,
-    SecurityRuleSet,
+    CompiledSecurityRule, DetectionLevel, PolicyActionId, PolicySubject, PolicySubjectValue,
+    SecurityPluginConfig, SecurityPluginMode, SecurityRuleAction, SecurityRuleSet,
 };
 
 pub const SECURITY_EVENT_EMIT_SPAN: &str = "capsem.security_event.emit";
@@ -190,43 +189,6 @@ impl RuntimeSecurityEventType {
             WriteOp::SecurityDecisionEvent(_) => Self::SecurityRule,
         }
     }
-
-    /// Runtime events that are intentionally enforceable through the
-    /// security-event CEL callback rail today. Values not listed here must be documented as
-    /// emit-only until their boundary has a pre-operation subject and gate.
-    pub const fn policy_callback(self) -> Option<PolicyCallback> {
-        match self {
-            RuntimeSecurityEventType::HttpRequest => Some(PolicyCallback::HttpRequest),
-            RuntimeSecurityEventType::ModelCall => Some(PolicyCallback::ModelRequest),
-            RuntimeSecurityEventType::McpToolCall => Some(PolicyCallback::McpRequest),
-            RuntimeSecurityEventType::DnsQuery => Some(PolicyCallback::DnsQuery),
-            RuntimeSecurityEventType::FileImport => Some(PolicyCallback::FileImport),
-            RuntimeSecurityEventType::FileExport => Some(PolicyCallback::FileExport),
-            RuntimeSecurityEventType::McpToolList
-            | RuntimeSecurityEventType::McpEvent
-            | RuntimeSecurityEventType::FileEvent
-            | RuntimeSecurityEventType::ProcessExec
-            | RuntimeSecurityEventType::ProcessExecComplete
-            | RuntimeSecurityEventType::ProcessAudit
-            | RuntimeSecurityEventType::CredentialSubstitution
-            | RuntimeSecurityEventType::SnapshotEvent
-            | RuntimeSecurityEventType::SecurityRule
-            | RuntimeSecurityEventType::SecurityAsk => None,
-        }
-    }
-
-    pub const fn policy_callback_status(self) -> PolicyCallbackStatus {
-        match self.policy_callback() {
-            Some(callback) => PolicyCallbackStatus::Enforceable(callback),
-            None => PolicyCallbackStatus::EmitOnly,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PolicyCallbackStatus {
-    Enforceable(PolicyCallback),
-    EmitOnly,
 }
 
 impl TryFrom<&str> for RuntimeSecurityEventType {
@@ -512,7 +474,7 @@ pub fn security_event_from_file_event(event: &FileEvent) -> SecurityEvent {
             file.export_ext = ext;
         }
     }
-    let security_event = SecurityEvent::new(PolicyCallback::HookDecision).with_file(file);
+    let security_event = SecurityEvent::new(runtime_file_event_type(event.action)).with_file(file);
     match event.trace_id.clone() {
         Some(trace_id) => security_event.with_trace_id(trace_id),
         None => security_event,
@@ -571,7 +533,7 @@ pub fn security_event_from_explicit_file_event(event: &ExplicitFileSecurityEvent
             file.export_content = content;
         }
     }
-    let security_event = SecurityEvent::new(PolicyCallback::HookDecision).with_file(file);
+    let security_event = SecurityEvent::new(runtime_file_event_type(event.action)).with_file(file);
     match event.trace_id.clone() {
         Some(trace_id) => security_event.with_trace_id(trace_id),
         None => security_event,
@@ -701,15 +663,16 @@ pub async fn emit_substitution_security_write_and_rules(
 }
 
 pub fn security_event_from_exec_event(event: &ExecEvent) -> SecurityEvent {
-    let security_event =
-        SecurityEvent::new(PolicyCallback::HookDecision).with_process(ProcessSecurityEvent {
+    let security_event = SecurityEvent::new(RuntimeSecurityEventType::ProcessExec).with_process(
+        ProcessSecurityEvent {
             exec_id: Some(event.exec_id.to_string()),
             exec_path: None,
             command: Some(event.command.clone()),
             exit_code: None,
             stdout: None,
             stderr: None,
-        });
+        },
+    );
     match event.trace_id.clone() {
         Some(trace_id) => security_event.with_trace_id(trace_id),
         None => security_event,
@@ -717,26 +680,29 @@ pub fn security_event_from_exec_event(event: &ExecEvent) -> SecurityEvent {
 }
 
 pub fn security_event_from_exec_complete_event(event: &ExecEventComplete) -> SecurityEvent {
-    SecurityEvent::new(PolicyCallback::HookDecision).with_process(ProcessSecurityEvent {
-        exec_id: Some(event.exec_id.to_string()),
-        exec_path: None,
-        command: None,
-        exit_code: Some(event.exit_code.to_string()),
-        stdout: event.stdout_preview.clone(),
-        stderr: event.stderr_preview.clone(),
-    })
+    SecurityEvent::new(RuntimeSecurityEventType::ProcessExecComplete).with_process(
+        ProcessSecurityEvent {
+            exec_id: Some(event.exec_id.to_string()),
+            exec_path: None,
+            command: None,
+            exit_code: Some(event.exit_code.to_string()),
+            stdout: event.stdout_preview.clone(),
+            stderr: event.stderr_preview.clone(),
+        },
+    )
 }
 
 pub fn security_event_from_audit_event(event: &AuditEvent) -> SecurityEvent {
-    let security_event =
-        SecurityEvent::new(PolicyCallback::HookDecision).with_process(ProcessSecurityEvent {
+    let security_event = SecurityEvent::new(RuntimeSecurityEventType::ProcessAudit).with_process(
+        ProcessSecurityEvent {
             exec_id: event.audit_id.clone(),
             exec_path: Some(event.exe.clone()),
             command: Some(event.argv.clone()),
             exit_code: None,
             stdout: None,
             stderr: None,
-        });
+        },
+    );
     match event.trace_id.clone() {
         Some(trace_id) => security_event.with_trace_id(trace_id),
         None => security_event,
@@ -744,10 +710,11 @@ pub fn security_event_from_audit_event(event: &AuditEvent) -> SecurityEvent {
 }
 
 pub fn security_event_from_snapshot_event(event: &SnapshotEvent) -> SecurityEvent {
-    let security_event =
-        SecurityEvent::new(PolicyCallback::HookDecision).with_snapshot(SnapshotSecurityEvent {
+    let security_event = SecurityEvent::new(RuntimeSecurityEventType::SnapshotEvent).with_snapshot(
+        SnapshotSecurityEvent {
             action: Some(event.origin.clone()),
-        });
+        },
+    );
     match event.trace_id.clone() {
         Some(trace_id) => security_event.with_trace_id(trace_id),
         None => security_event,
@@ -755,8 +722,8 @@ pub fn security_event_from_snapshot_event(event: &SnapshotEvent) -> SecurityEven
 }
 
 pub fn security_event_from_substitution_event(event: &SubstitutionEvent) -> SecurityEvent {
-    let security_event =
-        SecurityEvent::new(PolicyCallback::HookDecision).with_credential(CredentialSecurityEvent {
+    let security_event = SecurityEvent::new(RuntimeSecurityEventType::CredentialSubstitution)
+        .with_credential(CredentialSecurityEvent {
             provider: event.provider.clone(),
             reference: Some(event.substitution_ref.clone()),
         });
@@ -1661,7 +1628,7 @@ pub enum SecurityDetectionSource {
 /// transport should hang off `SecurityEventEmitter`, not protocol side writes.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SecurityEvent {
-    pub event_type: PolicyCallback,
+    pub event_type: RuntimeSecurityEventType,
     pub trace_id: Option<String>,
     pub credential_ref: Option<String>,
     pub credential_observations: Vec<CredentialObservation>,
@@ -1723,7 +1690,7 @@ impl From<&SecurityEvent> for SerializableSecurityEvent {
 }
 
 impl SecurityEvent {
-    pub fn new(event_type: PolicyCallback) -> Self {
+    pub fn new(event_type: RuntimeSecurityEventType) -> Self {
         Self {
             event_type,
             trace_id: None,

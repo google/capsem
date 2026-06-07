@@ -304,61 +304,6 @@ pub struct SettingEntry {
     pub modified: String,
 }
 
-// ---------------------------------------------------------------------------
-// callback policy named rule config
-// ---------------------------------------------------------------------------
-
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum PolicyCallback {
-    #[serde(rename = "mcp.request")]
-    McpRequest,
-    #[serde(rename = "mcp.response")]
-    McpResponse,
-    #[serde(rename = "http.request")]
-    HttpRequest,
-    #[serde(rename = "http.response")]
-    HttpResponse,
-    #[serde(rename = "dns.query")]
-    DnsQuery,
-    #[serde(rename = "dns.response")]
-    DnsResponse,
-    #[serde(rename = "model.request")]
-    ModelRequest,
-    #[serde(rename = "model.response")]
-    ModelResponse,
-    #[serde(rename = "model.tool_call")]
-    ModelToolCall,
-    #[serde(rename = "model.tool_response")]
-    ModelToolResponse,
-    #[serde(rename = "file.import")]
-    FileImport,
-    #[serde(rename = "file.export")]
-    FileExport,
-    #[serde(rename = "hook.decision")]
-    HookDecision,
-}
-
-impl PolicyCallback {
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            PolicyCallback::McpRequest => "mcp.request",
-            PolicyCallback::McpResponse => "mcp.response",
-            PolicyCallback::HttpRequest => "http.request",
-            PolicyCallback::HttpResponse => "http.response",
-            PolicyCallback::DnsQuery => "dns.query",
-            PolicyCallback::DnsResponse => "dns.response",
-            PolicyCallback::ModelRequest => "model.request",
-            PolicyCallback::ModelResponse => "model.response",
-            PolicyCallback::ModelToolCall => "model.tool_call",
-            PolicyCallback::ModelToolResponse => "model.tool_response",
-            PolicyCallback::FileImport => "file.import",
-            PolicyCallback::FileExport => "file.export",
-            PolicyCallback::HookDecision => "hook.decision",
-        }
-    }
-
-}
-
 /// A registered action that can run after a policy rule matches.
 ///
 /// Matching belongs to CEL/Sigma policy rules. Actions are typed plugin

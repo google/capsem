@@ -2038,7 +2038,7 @@ mod tests {
                  ) VALUES
                     (1789000000000, '111111111111', 'http.request', 'allow_github',
                      'allow', 'none', '{\"name\":\"allow_github\"}', '{\"http\":{\"host\":\"api.github.com\"}}'),
-                    (1789000000001, '222222222222', 'model.request', 'block_openai',
+                    (1789000000001, '222222222222', 'model.call', 'block_openai',
                      'block', 'critical', '{\"name\":\"block_openai\"}', '{\"model\":{\"provider\":\"openai\"}}')",
             )
             .unwrap();
@@ -2062,9 +2062,9 @@ mod tests {
                     timestamp_unix_ms, event_id, event_type, rule_id,
                     rule_action, detection_level, rule_json, event_json
                  ) VALUES
-                    (1789000000000, '111111111111', 'model.request', 'block_openai',
+                    (1789000000000, '111111111111', 'model.call', 'block_openai',
                      'block', 'critical', '{}', '{}'),
-                    (1789000000001, '222222222222', 'model.request', 'block_openai',
+                    (1789000000001, '222222222222', 'model.call', 'block_openai',
                      'block', 'critical', '{}', '{}'),
                     (1789000000002, '333333333333', 'http.request', 'allow_github',
                      'allow', 'none', '{}', '{}')",
@@ -2080,7 +2080,7 @@ mod tests {
         assert!(stats
             .by_event_type
             .iter()
-            .any(|entry| entry.event_type == "model.request" && entry.count == 2));
+            .any(|entry| entry.event_type == "model.call" && entry.count == 2));
         let block = stats
             .by_rule
             .iter()

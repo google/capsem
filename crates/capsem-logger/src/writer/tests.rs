@@ -588,14 +588,14 @@ async fn security_rule_event_roundtrip_preserves_forensic_snapshot() {
             crate::events::SecurityRuleEvent {
                 timestamp_unix_ms: 1_789_000_000_000,
                 event_id: "abcdef123456".into(),
-                event_type: "model.request".into(),
+                event_type: "model.call".into(),
                 rule_id: "openai_api_block".into(),
                 rule_action: crate::events::SecurityRuleAction::Block,
                 detection_level: crate::events::SecurityDetectionLevel::Critical,
                 rule_json: r#"{"name":"openai_api_block","match":"model.provider == \"openai\""}"#
                     .into(),
                 event_json:
-                    r#"{"common":{"event_type":"model.request"},"model":{"provider":"openai"}}"#
+                    r#"{"common":{"event_type":"model.call"},"model":{"provider":"openai"}}"#
                         .into(),
                 trace_id: Some("trace_abc".into()),
             },
@@ -607,7 +607,7 @@ async fn security_rule_event_roundtrip_preserves_forensic_snapshot() {
     let events = reader.recent_security_rule_events(10).unwrap();
     assert_eq!(events.len(), 1);
     assert_eq!(events[0].event_id, "abcdef123456");
-    assert_eq!(events[0].event_type, "model.request");
+    assert_eq!(events[0].event_type, "model.call");
     assert_eq!(events[0].rule_id, "openai_api_block");
     assert_eq!(
         events[0].rule_action,
@@ -618,7 +618,7 @@ async fn security_rule_event_roundtrip_preserves_forensic_snapshot() {
         crate::events::SecurityDetectionLevel::Critical
     );
     assert!(events[0].rule_json.contains("openai_api_block"));
-    assert!(events[0].event_json.contains("model.request"));
+    assert!(events[0].event_json.contains("model.call"));
 }
 
 #[tokio::test]
@@ -756,7 +756,7 @@ async fn security_rule_stats_are_regenerated_from_session_db() {
                     event_type: if idx == 3 {
                         "http.request".into()
                     } else {
-                        "model.request".into()
+                        "model.call".into()
                     },
                     rule_id: if idx == 3 {
                         "github_api_allow".into()
@@ -784,7 +784,7 @@ async fn security_rule_stats_are_regenerated_from_session_db() {
     assert!(stats
         .by_event_type
         .iter()
-        .any(|entry| entry.event_type == "model.request" && entry.count == 2));
+        .any(|entry| entry.event_type == "model.call" && entry.count == 2));
     let block = stats
         .by_rule
         .iter()
@@ -1325,7 +1325,7 @@ fn dns_event_insert_populates_row() {
                     policy_mode: Some("enforce".into()),
                     policy_action: Some("block".into()),
                     policy_rule: Some("policy.dns.block_example".into()),
-                    policy_reason: Some("DNS block from Policy V2".into()),
+                    policy_reason: Some("DNS block from security rule".into()),
                     credential_ref: None,
                 }))
                 .await;
@@ -1394,7 +1394,7 @@ fn dns_event_insert_populates_row() {
     assert_eq!(mode.as_deref(), Some("enforce"));
     assert_eq!(action.as_deref(), Some("block"));
     assert_eq!(rule.as_deref(), Some("policy.dns.block_example"));
-    assert_eq!(reason.as_deref(), Some("DNS block from Policy V2"));
+    assert_eq!(reason.as_deref(), Some("DNS block from security rule"));
 }
 
 #[test]

@@ -8,12 +8,12 @@ use axum::{
 use capsem_core::poll::{poll_until, PollOpts};
 use capsem_core::{
     net::policy_config::{
-        DetectionLevel, PolicyCallback, SecurityPluginConfig, SecurityPluginMode, SecurityRule,
-        SecurityRuleGroup, SecurityRuleProfile, SecurityRuleSet, SecurityRuleSource, SettingsFile,
+        DetectionLevel, SecurityPluginConfig, SecurityPluginMode, SecurityRule, SecurityRuleGroup,
+        SecurityRuleProfile, SecurityRuleSet, SecurityRuleSource, SettingsFile,
     },
     security_engine::{
-        FileSecurityEvent, SecurityActionRegistry, SecurityEmitError, SecurityEvent,
-        SecurityEventEmitter, SecurityEventEngine, SerializableSecurityEvent,
+        FileSecurityEvent, RuntimeSecurityEventType, SecurityActionRegistry, SecurityEmitError,
+        SecurityEvent, SecurityEventEmitter, SecurityEventEngine, SerializableSecurityEvent,
     },
 };
 use capsem_proto::ipc::{FileBoundaryAction, ProcessToService, ServiceToProcess};
@@ -4146,18 +4146,16 @@ fn validate_user_profile_rules(settings: &SettingsFile) -> Result<(), AppError> 
 impl EnforcementEventInput {
     fn into_security_event(self) -> Result<SecurityEvent, AppError> {
         match self.event_type.as_str() {
-            "file.import" => Ok(SecurityEvent::new(PolicyCallback::FileImport).with_file(
-                FileSecurityEvent {
+            "file.import" => Ok(SecurityEvent::new(RuntimeSecurityEventType::FileImport)
+                .with_file(FileSecurityEvent {
                     import_content: self.file_import_content,
                     ..Default::default()
-                },
-            )),
-            "http.request" => Ok(SecurityEvent::new(PolicyCallback::HttpRequest).with_http(
-                capsem_core::security_engine::HttpSecurityEvent {
+                })),
+            "http.request" => Ok(SecurityEvent::new(RuntimeSecurityEventType::HttpRequest)
+                .with_http(capsem_core::security_engine::HttpSecurityEvent {
                     host: self.http_host,
                     ..Default::default()
-                },
-            )),
+                })),
             other => Err(AppError(
                 StatusCode::BAD_REQUEST,
                 format!("unsupported enforcement event_type: {other}"),

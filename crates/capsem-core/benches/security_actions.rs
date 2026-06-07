@@ -8,12 +8,10 @@ use capsem_core::credential_broker::{
     broker_to_user_settings, CredentialObservation, CredentialProvider,
 };
 use capsem_core::net::ai_traffic::provider::ProviderKind;
-use capsem_core::net::policy_config::{
-    PolicyActionId, PolicyCallback, PolicyConfig, PolicyDecisionKind, PolicyRuleConfig,
-};
+use capsem_core::net::policy_config::{SecurityRuleProfile, SecurityRuleSet, SecurityRuleSource};
 use capsem_core::security_engine::{
-    materialize_http_request_for_upstream, HttpRequestSecurityEvent, RuntimeSecurityEvent,
-    SecurityActionRegistry, SecurityEvent,
+    materialize_http_request_for_upstream, HttpRequestSecurityEvent, HttpSecurityEvent,
+    RuntimeSecurityEvent, RuntimeSecurityEventType, SecurityActionRegistry, SecurityEvent,
 };
 use capsem_logger::{Decision, McpCall, ModelCall, NetEvent, WriteOp};
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
@@ -44,39 +42,33 @@ impl Drop for EnvVarGuard {
     }
 }
 
-fn action_rule(actions: Vec<PolicyActionId>) -> PolicyRuleConfig {
-    PolicyRuleConfig {
-        on: PolicyCallback::HttpRequest,
-        condition: "request.host == \"api.anthropic.com\"".to_string(),
-        decision: PolicyDecisionKind::Action,
-        priority: 0,
-        reason: None,
-        actions,
-        rewrite_target: None,
-        rewrite_value: None,
-        strip_request_headers: Vec::new(),
-        strip_response_headers: Vec::new(),
-    }
+fn security_rules(toml_text: &str) -> SecurityRuleSet {
+    let profile = SecurityRuleProfile::parse_toml(toml_text).expect("bench rules parse");
+    SecurityRuleSet::compile_profile(&profile, SecurityRuleSource::User)
+        .expect("bench rules compile")
 }
 
-fn decision_policy() -> PolicyConfig {
-    let mut policy = PolicyConfig::default();
-    policy.http.insert(
-        "allow_anthropic".to_string(),
-        PolicyRuleConfig {
-            on: PolicyCallback::HttpRequest,
-            condition: "request.host == \"api.anthropic.com\"".to_string(),
-            decision: PolicyDecisionKind::Allow,
-            priority: 10,
-            reason: None,
-            actions: Vec::new(),
-            rewrite_target: None,
-            rewrite_value: None,
-            strip_request_headers: Vec::new(),
-            strip_response_headers: Vec::new(),
-        },
-    );
-    policy
+fn rule_match_set() -> SecurityRuleSet {
+    security_rules(
+        r#"
+[profiles.rules.allow_anthropic]
+name = "allow_anthropic"
+action = "allow"
+match = 'http.host == "api.anthropic.com"'
+"#,
+    )
+}
+
+fn plugin_rule_set(plugin: &str) -> SecurityRuleSet {
+    security_rules(&format!(
+        r#"
+[profiles.rules.plugin_rule]
+name = "plugin_rule"
+action = "preprocess"
+plugin = "{plugin}"
+match = 'http.host == "api.anthropic.com"'
+"#
+    ))
 }
 
 fn brokered_header_event() -> (SecurityEvent, tempfile::TempDir, EnvVarGuard) {
@@ -100,7 +92,7 @@ fn brokered_header_event() -> (SecurityEvent, tempfile::TempDir, EnvVarGuard) {
         http::HeaderValue::from_str(&brokered.credential_ref).unwrap(),
     );
 
-    let event = SecurityEvent::new(PolicyCallback::HttpRequest).with_http_request(
+    let event = SecurityEvent::new(RuntimeSecurityEventType::HttpRequest).with_http_request(
         HttpRequestSecurityEvent::new(
             "api.anthropic.com",
             Some(ProviderKind::Anthropic),
@@ -205,54 +197,42 @@ fn mcp_write() -> WriteOp {
 }
 
 fn bench_rule_match(c: &mut Criterion) {
-    let policy = decision_policy();
-    let subject = serde_json::json!({
-        "request": {
-            "host": "api.anthropic.com"
-        }
-    });
+    let rules = rule_match_set();
+    let event =
+        SecurityEvent::new(RuntimeSecurityEventType::HttpRequest).with_http(HttpSecurityEvent {
+            host: Some("api.anthropic.com".to_string()),
+            method: Some("POST".to_string()),
+            path: Some("/v1/messages".to_string()),
+            status: None,
+            body: None,
+        });
 
-    c.bench_function("security_action_rule_match_noop", |b| {
+    c.bench_function("security_rule_set_match_allow", |b| {
         b.iter(|| {
-            let matched = policy
-                .find_matching_decision_rule(PolicyCallback::HttpRequest, black_box(&subject))
-                .unwrap();
-            black_box(matched);
+            let evaluation = rules.evaluate(black_box(&event)).unwrap();
+            black_box(evaluation.enforcement_rules());
         });
     });
 }
 
 fn bench_action_chain(c: &mut Criterion) {
     let registry = SecurityActionRegistry::with_builtin_actions();
-    for (label, actions) in [
+    for (label, plugin) in [
         (
-            "security_action_chain_1",
-            vec![PolicyActionId::CredentialBrokerCapture],
+            "security_action_plugin_credential_broker",
+            "credential_broker",
         ),
-        (
-            "security_action_chain_2",
-            vec![
-                PolicyActionId::CredentialBrokerCapture,
-                PolicyActionId::CredentialBrokerSubstitute,
-            ],
-        ),
-        (
-            "security_action_chain_4",
-            vec![
-                PolicyActionId::CredentialBrokerCapture,
-                PolicyActionId::CredentialBrokerSubstitute,
-                PolicyActionId::CredentialBrokerCapture,
-                PolicyActionId::CredentialBrokerSubstitute,
-            ],
-        ),
+        ("security_action_plugin_dummy_pre", "dummy_pre"),
+        ("security_action_plugin_dummy_post", "dummy_post"),
     ] {
-        let rule = action_rule(actions);
+        let rules = plugin_rule_set(plugin);
+        let rule = rules.rules().first().expect("bench rule");
         c.bench_function(label, |b| {
             b.iter(|| {
                 let event = registry
-                    .apply_rule_actions(
-                        black_box(&rule),
-                        SecurityEvent::new(PolicyCallback::HttpRequest),
+                    .apply_security_rule_plugin(
+                        black_box(rule),
+                        SecurityEvent::new(RuntimeSecurityEventType::HttpRequest),
                     )
                     .unwrap();
                 black_box(event);
@@ -263,13 +243,14 @@ fn bench_action_chain(c: &mut Criterion) {
 
 fn bench_broker_substitute(c: &mut Criterion) {
     let registry = SecurityActionRegistry::with_builtin_actions();
-    let rule = action_rule(vec![PolicyActionId::CredentialBrokerSubstitute]);
+    let rules = plugin_rule_set("credential_broker");
+    let rule = rules.rules().first().expect("bench rule");
     let (event, _tmp, _guard) = brokered_header_event();
 
     c.bench_function("security_action_broker_substitute_header_ref", |b| {
         b.iter(|| {
             let event = registry
-                .apply_rule_actions(black_box(&rule), black_box(event.clone()))
+                .apply_security_rule_plugin(black_box(rule), black_box(event.clone()))
                 .unwrap();
             let materialized = materialize_http_request_for_upstream(&event).unwrap();
             black_box(materialized);

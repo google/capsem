@@ -15,7 +15,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tracing::{debug, warn};
 
 use crate::mcp::types::{parse_namespaced, parse_resource_uri, JsonRpcRequest, JsonRpcResponse};
-use crate::net::policy_config::{PolicyCallback, SecurityRuleSet};
+use crate::net::policy_config::SecurityRuleSet;
 use crate::security_engine::{
     emit_matching_security_rules, emit_security_write, evaluate_security_boundary,
     McpSecurityEvent, RuntimeSecurityEventType, SecurityEnforcementAction,
@@ -134,11 +134,12 @@ where
             }
 
             let summary = interpret_mcp_method(&request);
+            let runtime_event_type = runtime_mcp_event_type(&summary.method);
             record_method_metric(&summary);
             let request_decision = evaluate_mcp_security_event(
                 &endpoint,
                 mcp_security_event_from_summary(
-                    PolicyCallback::McpRequest,
+                    runtime_event_type,
                     &summary,
                     &process_name,
                     None,
@@ -234,7 +235,7 @@ where
                 let response_decision = evaluate_mcp_security_event(
                     &endpoint_h,
                     mcp_security_event_from_summary(
-                        PolicyCallback::McpResponse,
+                        runtime_mcp_event_type(&summary_h.method),
                         &summary_h,
                         &process_name_h,
                         Some(&response),
@@ -567,7 +568,7 @@ async fn log_mcp_call_with_policy(
 
 fn security_event_from_mcp_call(call: &McpCall) -> SecurityEvent {
     let security_event =
-        SecurityEvent::new(PolicyCallback::McpRequest).with_mcp(McpSecurityEvent {
+        SecurityEvent::new(RuntimeSecurityEventType::McpToolCall).with_mcp(McpSecurityEvent {
             method: Some(call.method.clone()),
             server_name: Some(call.server_name.clone()),
             tool_call_name: call.tool_name.clone(),
@@ -599,7 +600,7 @@ fn current_unix_ms() -> i64 {
 }
 
 fn mcp_security_event_from_summary(
-    callback: PolicyCallback,
+    event_type: RuntimeSecurityEventType,
     summary: &McpMethodSummary,
     process_name: &str,
     response: Option<&JsonRpcResponse>,
@@ -609,7 +610,7 @@ fn mcp_security_event_from_summary(
     } else {
         None
     };
-    let event = SecurityEvent::new(callback).with_mcp(McpSecurityEvent {
+    let event = SecurityEvent::new(event_type).with_mcp(McpSecurityEvent {
         method: Some(summary.method.clone()),
         server_name: summary
             .server_name

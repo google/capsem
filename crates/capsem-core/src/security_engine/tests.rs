@@ -144,7 +144,7 @@ impl SecurityEventEmitter for RecordingEmitter {
 #[test]
 fn security_event_emitter_is_the_auditable_event_boundary() {
     let emitter = RecordingEmitter::new();
-    let mut event = SecurityEvent::new(PolicyCallback::HttpResponse);
+    let mut event = SecurityEvent::new(RuntimeSecurityEventType::HttpRequest);
     event.credential_ref = Some(
         "credential:blake3:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
             .to_string(),
@@ -181,10 +181,11 @@ priority = 10
 match = 'http.host == "example.com"'
 "#,
     );
-    let event = SecurityEvent::new(PolicyCallback::HttpRequest).with_http(HttpSecurityEvent {
-        host: Some("example.com".to_string()),
-        ..Default::default()
-    });
+    let event =
+        SecurityEvent::new(RuntimeSecurityEventType::HttpRequest).with_http(HttpSecurityEvent {
+            host: Some("example.com".to_string()),
+            ..Default::default()
+        });
 
     let returned = engine.apply_matching_rules_and_emit(&rules, event).unwrap();
 
@@ -215,10 +216,11 @@ action = "postprocess"
 match = 'http.host == "example.com"'
 "#,
     );
-    let event = SecurityEvent::new(PolicyCallback::HttpRequest).with_http(HttpSecurityEvent {
-        host: Some("api.openai.com".to_string()),
-        ..Default::default()
-    });
+    let event =
+        SecurityEvent::new(RuntimeSecurityEventType::HttpRequest).with_http(HttpSecurityEvent {
+            host: Some("api.openai.com".to_string()),
+            ..Default::default()
+        });
 
     let returned = engine
         .apply_matching_rules_and_emit(&rules, event.clone())
@@ -252,10 +254,11 @@ action = "postprocess"
 match = 'credential.reference.contains("marked")'
 "#,
     );
-    let event = SecurityEvent::new(PolicyCallback::HttpRequest).with_http(HttpSecurityEvent {
-        host: Some("example.com".to_string()),
-        ..Default::default()
-    });
+    let event =
+        SecurityEvent::new(RuntimeSecurityEventType::HttpRequest).with_http(HttpSecurityEvent {
+            host: Some("example.com".to_string()),
+            ..Default::default()
+        });
 
     let returned = engine.apply_matching_rules_and_emit(&rules, event).unwrap();
 
@@ -281,10 +284,11 @@ action = "rewrite"
 match = 'http.host == "example.com"'
 "#,
     );
-    let event = SecurityEvent::new(PolicyCallback::HttpRequest).with_http(HttpSecurityEvent {
-        host: Some("example.com".to_string()),
-        ..Default::default()
-    });
+    let event =
+        SecurityEvent::new(RuntimeSecurityEventType::HttpRequest).with_http(HttpSecurityEvent {
+            host: Some("example.com".to_string()),
+            ..Default::default()
+        });
 
     let rewrite_registry = SecurityActionRegistry::new()
         .with_plugin_policy(BTreeMap::from([(
@@ -367,10 +371,11 @@ priority = 20
 match = 'security.decision == "block"'
 "#,
     );
-    let event = SecurityEvent::new(PolicyCallback::HttpRequest).with_http(HttpSecurityEvent {
-        host: Some("example.com".to_string()),
-        ..Default::default()
-    });
+    let event =
+        SecurityEvent::new(RuntimeSecurityEventType::HttpRequest).with_http(HttpSecurityEvent {
+            host: Some("example.com".to_string()),
+            ..Default::default()
+        });
 
     let returned = engine.apply_matching_rules_and_emit(&rules, event).unwrap();
 
@@ -420,10 +425,11 @@ priority = 20
 match = 'security.decision == "block"'
 "#,
     );
-    let event = SecurityEvent::new(PolicyCallback::FileImport).with_file(FileSecurityEvent {
-        import_content: Some(DUMMY_EICAR_TEST_STRING.to_string()),
-        ..Default::default()
-    });
+    let event =
+        SecurityEvent::new(RuntimeSecurityEventType::FileImport).with_file(FileSecurityEvent {
+            import_content: Some(DUMMY_EICAR_TEST_STRING.to_string()),
+            ..Default::default()
+        });
 
     let returned = engine.apply_matching_rules_and_emit(&rules, event).unwrap();
 
@@ -499,10 +505,11 @@ action = "postprocess"
 match = 'http.host == "example.com"'
 "#,
     );
-    let event = SecurityEvent::new(PolicyCallback::HttpRequest).with_http(HttpSecurityEvent {
-        host: Some("example.com".to_string()),
-        ..Default::default()
-    });
+    let event =
+        SecurityEvent::new(RuntimeSecurityEventType::HttpRequest).with_http(HttpSecurityEvent {
+            host: Some("example.com".to_string()),
+            ..Default::default()
+        });
 
     let error = engine
         .apply_matching_rules_and_emit(&rules, event)
@@ -540,7 +547,7 @@ action = "postprocess"
 match = 'http.host == "github.com"'
 "#,
     );
-    let event = SecurityEvent::new(PolicyCallback::HttpResponse)
+    let event = SecurityEvent::new(RuntimeSecurityEventType::HttpRequest)
         .with_http(HttpSecurityEvent {
             host: Some("github.com".to_string()),
             ..Default::default()
@@ -583,16 +590,17 @@ http.host.matches("(^|.*\.)openai\.com$")
 || file.import.path.endsWith(".env")
 "#;
 
-    let http_event = SecurityEvent::new(PolicyCallback::HttpRequest).with_http(HttpSecurityEvent {
-        host: Some("api.openai.com".to_string()),
-        ..Default::default()
-    });
+    let http_event =
+        SecurityEvent::new(RuntimeSecurityEventType::HttpRequest).with_http(HttpSecurityEvent {
+            host: Some("api.openai.com".to_string()),
+            ..Default::default()
+        });
     assert!(
         crate::net::policy_config::evaluate_security_event_match(condition, &http_event).unwrap()
     );
 
     let model_event =
-        SecurityEvent::new(PolicyCallback::ModelRequest).with_model(ModelSecurityEvent {
+        SecurityEvent::new(RuntimeSecurityEventType::ModelCall).with_model(ModelSecurityEvent {
             provider: Some("openai".to_string()),
             ..Default::default()
         });
@@ -600,10 +608,11 @@ http.host.matches("(^|.*\.)openai\.com$")
         crate::net::policy_config::evaluate_security_event_match(condition, &model_event).unwrap()
     );
 
-    let file_event = SecurityEvent::new(PolicyCallback::HttpRequest).with_file(FileSecurityEvent {
-        import_path: Some("/workspace/.env".to_string()),
-        ..Default::default()
-    });
+    let file_event =
+        SecurityEvent::new(RuntimeSecurityEventType::HttpRequest).with_file(FileSecurityEvent {
+            import_path: Some("/workspace/.env".to_string()),
+            ..Default::default()
+        });
     assert!(
         crate::net::policy_config::evaluate_security_event_match(condition, &file_event).unwrap()
     );
@@ -611,11 +620,12 @@ http.host.matches("(^|.*\.)openai\.com$")
 
 #[test]
 fn security_event_cel_credential_name_is_not_exposed_without_parser() {
-    let event =
-        SecurityEvent::new(PolicyCallback::HttpRequest).with_credential(CredentialSecurityEvent {
+    let event = SecurityEvent::new(RuntimeSecurityEventType::HttpRequest).with_credential(
+        CredentialSecurityEvent {
             reference: Some("credential:blake3:test".to_string()),
             ..Default::default()
-        });
+        },
+    );
 
     assert!(
         !crate::net::policy_config::evaluate_security_event_match(
@@ -634,10 +644,11 @@ http.host.matches("(^|.*\.)openai\.com$")
 || model.provider == "openai"
 || file.import.path.endsWith(".env")
 "#;
-    let dns_event = SecurityEvent::new(PolicyCallback::DnsQuery).with_dns(DnsSecurityEvent {
-        qname: Some("example.com".to_string()),
-        qtype: Some("A".to_string()),
-    });
+    let dns_event =
+        SecurityEvent::new(RuntimeSecurityEventType::DnsQuery).with_dns(DnsSecurityEvent {
+            qname: Some("example.com".to_string()),
+            qtype: Some("A".to_string()),
+        });
 
     assert!(
         !crate::net::policy_config::evaluate_security_event_match(condition, &dns_event).unwrap()
@@ -646,7 +657,7 @@ http.host.matches("(^|.*\.)openai\.com$")
 
 #[test]
 fn security_event_cel_exposes_all_first_party_roots() {
-    let event = SecurityEvent::new(PolicyCallback::HttpRequest)
+    let event = SecurityEvent::new(RuntimeSecurityEventType::HttpRequest)
         .with_http(HttpSecurityEvent {
             host: Some("example.com".to_string()),
             ..Default::default()
@@ -771,7 +782,7 @@ fn security_event_cel_exposes_all_first_party_roots() {
 
 #[test]
 fn serializable_security_event_exposes_stable_first_party_wire_shape_without_raw_observations() {
-    let mut event = SecurityEvent::new(PolicyCallback::FileImport)
+    let mut event = SecurityEvent::new(RuntimeSecurityEventType::FileImport)
         .with_trace_id("trace_wire")
         .with_file(FileSecurityEvent {
             import_path: Some("/workspace/eicar.txt".to_string()),
@@ -857,56 +868,6 @@ fn runtime_security_event_type_roundtrips_and_maps_family() {
 
     assert!(RuntimeSecurityEventType::try_from("mcp.request").is_err());
     assert!(RuntimeSecurityEventType::try_from("dns.response").is_err());
-}
-
-#[test]
-fn runtime_security_event_policy_callback_bridge_is_explicit() {
-    let cases = [
-        (
-            RuntimeSecurityEventType::HttpRequest,
-            Some(PolicyCallback::HttpRequest),
-        ),
-        (
-            RuntimeSecurityEventType::ModelCall,
-            Some(PolicyCallback::ModelRequest),
-        ),
-        (
-            RuntimeSecurityEventType::McpToolCall,
-            Some(PolicyCallback::McpRequest),
-        ),
-        (
-            RuntimeSecurityEventType::DnsQuery,
-            Some(PolicyCallback::DnsQuery),
-        ),
-        (RuntimeSecurityEventType::McpToolList, None),
-        (RuntimeSecurityEventType::McpEvent, None),
-        (RuntimeSecurityEventType::FileEvent, None),
-        (
-            RuntimeSecurityEventType::FileImport,
-            Some(PolicyCallback::FileImport),
-        ),
-        (
-            RuntimeSecurityEventType::FileExport,
-            Some(PolicyCallback::FileExport),
-        ),
-        (RuntimeSecurityEventType::ProcessExec, None),
-        (RuntimeSecurityEventType::ProcessExecComplete, None),
-        (RuntimeSecurityEventType::ProcessAudit, None),
-        (RuntimeSecurityEventType::CredentialSubstitution, None),
-        (RuntimeSecurityEventType::SnapshotEvent, None),
-        (RuntimeSecurityEventType::SecurityRule, None),
-        (RuntimeSecurityEventType::SecurityAsk, None),
-    ];
-
-    assert_eq!(cases.len(), RuntimeSecurityEventType::ALL.len());
-    for (event_type, expected_callback) in cases {
-        assert_eq!(
-            event_type.policy_callback(),
-            expected_callback,
-            "{} policy callback bridge drifted",
-            event_type.as_str()
-        );
-    }
 }
 
 #[test]
@@ -1111,7 +1072,7 @@ reason = "corp block"
         .iter()
         .find(|rule| rule.rule_id == "profiles.rules.block_openai")
         .unwrap();
-    let event = SecurityEvent::new(PolicyCallback::HttpRequest)
+    let event = SecurityEvent::new(RuntimeSecurityEventType::HttpRequest)
         .with_trace_id("trace_deadbeef")
         .with_http(HttpSecurityEvent {
             host: Some("api.openai.com".into()),
@@ -1214,7 +1175,7 @@ match = 'file.read.path.contains("skills/") && file.read.name.endsWith(".md")'
     let event_id = emit_security_write(&writer, file_write(None))
         .await
         .expect("file event must receive a primary event id");
-    let event = SecurityEvent::new(PolicyCallback::HttpRequest)
+    let event = SecurityEvent::new(RuntimeSecurityEventType::HttpRequest)
         .with_trace_id("trace_file_skill")
         .with_file(FileSecurityEvent {
             read_path: Some("/root/.codex/skills/example/SKILL.md".into()),
@@ -1280,7 +1241,7 @@ match = 'http.path.startsWith("/v1/")'
     let event_id = emit_security_write(&writer, net_write(None))
         .await
         .expect("primary HTTP event must receive an id");
-    let event = SecurityEvent::new(PolicyCallback::HttpRequest)
+    let event = SecurityEvent::new(RuntimeSecurityEventType::HttpRequest)
         .with_trace_id("trace_http_rules")
         .with_http(HttpSecurityEvent {
             host: Some("api.openai.com".into()),
@@ -1370,12 +1331,13 @@ match = 'model.provider == "openai"'
     let event_id = emit_security_write(&writer, net_write(None))
         .await
         .expect("primary HTTP event must receive an id");
-    let event = SecurityEvent::new(PolicyCallback::HttpRequest).with_http(HttpSecurityEvent {
-        host: Some("api.openai.com".into()),
-        method: Some("POST".into()),
-        path: Some("/v1/responses".into()),
-        ..Default::default()
-    });
+    let event =
+        SecurityEvent::new(RuntimeSecurityEventType::HttpRequest).with_http(HttpSecurityEvent {
+            host: Some("api.openai.com".into()),
+            method: Some("POST".into()),
+            path: Some("/v1/responses".into()),
+            ..Default::default()
+        });
 
     let emission = emit_matching_security_rules_with_decision(
         &writer,
@@ -1483,10 +1445,11 @@ match = 'file.read.name == "SKILL.md"'
     let event_id = emit_security_write(&writer, file_write(None))
         .await
         .expect("primary file event must receive an id");
-    let event = SecurityEvent::new(PolicyCallback::HttpRequest).with_file(FileSecurityEvent {
-        read_name: Some("SKILL.md".into()),
-        ..Default::default()
-    });
+    let event =
+        SecurityEvent::new(RuntimeSecurityEventType::HttpRequest).with_file(FileSecurityEvent {
+            read_name: Some("SKILL.md".into()),
+            ..Default::default()
+        });
 
     let emission = emit_matching_security_rules_with_decision(
         &writer,
@@ -1521,7 +1484,7 @@ match = 'http.host == "api.openai.com"'
     let event_id = emit_security_write(&writer, net_write(None))
         .await
         .expect("primary HTTP event must receive an id");
-    let event = SecurityEvent::new(PolicyCallback::HttpRequest)
+    let event = SecurityEvent::new(RuntimeSecurityEventType::HttpRequest)
         .with_trace_id("trace_ask")
         .with_http(HttpSecurityEvent {
             host: Some("api.openai.com".into()),
@@ -1648,7 +1611,7 @@ match = 'http.host == "github.com"'
     let github_event_id = emit_security_write(&writer, net_write(None))
         .await
         .expect("primary HTTP event must receive an id");
-    let github_event = SecurityEvent::new(PolicyCallback::HttpRequest)
+    let github_event = SecurityEvent::new(RuntimeSecurityEventType::HttpRequest)
         .with_trace_id("trace_github")
         .with_http(HttpSecurityEvent {
             host: Some("github.com".into()),
@@ -1689,7 +1652,7 @@ match = 'http.host == "api.openai.com"'
     let ask_event_id = emit_security_write(&writer, net_write(None))
         .await
         .expect("primary HTTP event must receive an id");
-    let ask_event = SecurityEvent::new(PolicyCallback::HttpRequest)
+    let ask_event = SecurityEvent::new(RuntimeSecurityEventType::HttpRequest)
         .with_trace_id("trace_openai_ask")
         .with_http(HttpSecurityEvent {
             host: Some("api.openai.com".into()),
@@ -1844,7 +1807,7 @@ fn denied_ask_resolution_blocks_like_block() {
     .with_resolver("tester")
     .with_reason("denied for test");
     let resolved = decision.with_ask_resolution(&denied).unwrap();
-    let event = SecurityEvent::new(PolicyCallback::HttpRequest).with_http_request(
+    let event = SecurityEvent::new(RuntimeSecurityEventType::HttpRequest).with_http_request(
         HttpRequestSecurityEvent::new(
             "api.openai.com",
             Some(ProviderKind::OpenAi),
@@ -2263,10 +2226,11 @@ match = 'http.host.contains("openai.com")'
     let event_id = emit_security_write(&writer, net_write(None))
         .await
         .expect("primary HTTP event must receive an id");
-    let event = SecurityEvent::new(PolicyCallback::HttpRequest).with_http(HttpSecurityEvent {
-        host: Some("example.com".into()),
-        ..Default::default()
-    });
+    let event =
+        SecurityEvent::new(RuntimeSecurityEventType::HttpRequest).with_http(HttpSecurityEvent {
+            host: Some("example.com".into()),
+            ..Default::default()
+        });
 
     let emitted = emit_matching_security_rules(
         &writer,
@@ -2526,7 +2490,7 @@ fn brokered_anthropic_header_event() -> (
         http::header::AUTHORIZATION,
         http::HeaderValue::from_str(&brokered.credential_ref).unwrap(),
     );
-    let event = SecurityEvent::new(PolicyCallback::HttpRequest).with_http_request(
+    let event = SecurityEvent::new(RuntimeSecurityEventType::HttpRequest).with_http_request(
         HttpRequestSecurityEvent::new(
             "api.anthropic.com",
             Some(ProviderKind::Anthropic),
@@ -2564,7 +2528,7 @@ fn http_materializer_without_substitute_action_keeps_reference() {
 
 #[test]
 fn http_materializer_requires_allow_enforcement_decision() {
-    let event = SecurityEvent::new(PolicyCallback::HttpRequest).with_http_request(
+    let event = SecurityEvent::new(RuntimeSecurityEventType::HttpRequest).with_http_request(
         HttpRequestSecurityEvent::new(
             "api.openai.com",
             Some(ProviderKind::OpenAi),

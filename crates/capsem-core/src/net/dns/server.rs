@@ -34,9 +34,10 @@ use crate::net::parsers::dns_parser::{
     build_nxdomain, build_redirect_response, build_servfail, parse_query, DnsQuery,
 };
 use crate::net::policy::NetworkPolicy;
-use crate::net::policy_config::{PolicyCallback, SecurityPluginConfig, SecurityRuleSet};
+use crate::net::policy_config::{SecurityPluginConfig, SecurityRuleSet};
 use crate::security_engine::{
-    evaluate_security_boundary, DnsSecurityEvent, SecurityEnforcementDecision, SecurityEvent,
+    evaluate_security_boundary, DnsSecurityEvent, RuntimeSecurityEventType,
+    SecurityEnforcementDecision, SecurityEvent,
 };
 
 /// Result of handling one DNS query. The answer bytes are always
@@ -321,7 +322,7 @@ impl DnsHandler {
         };
 
         let dns_security_event =
-            SecurityEvent::new(PolicyCallback::DnsQuery).with_dns(DnsSecurityEvent {
+            SecurityEvent::new(RuntimeSecurityEventType::DnsQuery).with_dns(DnsSecurityEvent {
                 qname: Some(query.qname.clone()),
                 qtype: Some(query.qtype.to_string()),
             });

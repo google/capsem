@@ -43,6 +43,8 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_rustls::TlsAcceptor;
 use tracing::{debug, warn, Instrument};
 
+use crate::security_engine::RuntimeSecurityEventType;
+
 trait TokioReadWrite: AsyncRead + AsyncWrite {}
 
 impl<T> TokioReadWrite for T where T: AsyncRead + AsyncWrite {}
@@ -211,13 +213,13 @@ impl SecurityBoundaryDecisionFields {
 }
 
 fn model_security_event(
-    callback: crate::net::policy_config::PolicyCallback,
+    event_type: RuntimeSecurityEventType,
     provider: ProviderKind,
     model: Option<String>,
     request_body: Option<&[u8]>,
     response_body: Option<&[u8]>,
 ) -> SecurityEvent {
-    SecurityEvent::new(callback).with_model(ModelSecurityEvent {
+    SecurityEvent::new(event_type).with_model(ModelSecurityEvent {
         provider: Some(provider.as_str().to_string()),
         name: model,
         request_body: request_body.map(|body| String::from_utf8_lossy(body).to_string()),
@@ -1063,22 +1065,21 @@ async fn handle_request(
             .unwrap()
     };
 
-    let http_security_event = crate::security_engine::SecurityEvent::new(
-        crate::net::policy_config::PolicyCallback::HttpRequest,
-    )
-    .with_http(crate::security_engine::HttpSecurityEvent {
-        host: Some(domain.to_string()),
-        method: Some(method.clone()),
-        path: Some(path.clone()),
-        status: None,
-        body: None,
-    })
-    .with_http_request(crate::security_engine::HttpRequestSecurityEvent::new(
-        domain,
-        ai_provider,
-        original_headers.clone(),
-        query.clone(),
-    ));
+    let http_security_event =
+        crate::security_engine::SecurityEvent::new(RuntimeSecurityEventType::HttpRequest)
+            .with_http(crate::security_engine::HttpSecurityEvent {
+                host: Some(domain.to_string()),
+                method: Some(method.clone()),
+                path: Some(path.clone()),
+                status: None,
+                body: None,
+            })
+            .with_http_request(crate::security_engine::HttpRequestSecurityEvent::new(
+                domain,
+                ai_provider,
+                original_headers.clone(),
+                query.clone(),
+            ));
     let rules = config.telemetry.security_rules.read().unwrap().clone();
     let actions_span = tracing::debug_span!(
         target: "capsem.mitm",
@@ -1292,7 +1293,7 @@ async fn handle_request(
             let request_meta =
                 crate::net::ai_traffic::request_parser::parse_request(provider, &body_bytes);
             let model_event = model_security_event(
-                crate::net::policy_config::PolicyCallback::ModelRequest,
+                RuntimeSecurityEventType::ModelCall,
                 provider,
                 request_meta.model.clone(),
                 Some(&body_bytes),
@@ -1787,7 +1788,7 @@ async fn handle_request(
             let request_meta =
                 crate::net::ai_traffic::request_parser::parse_request(provider, &request_preview);
             let model_event = model_security_event(
-                crate::net::policy_config::PolicyCallback::ModelResponse,
+                RuntimeSecurityEventType::ModelCall,
                 provider,
                 request_meta.model,
                 Some(&request_preview),

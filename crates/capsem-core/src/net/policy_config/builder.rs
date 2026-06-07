@@ -782,5 +782,4 @@ mod tests {
         assert!(corp_blocked_matches("sub.bad.org", &blocked));
         assert!(!corp_blocked_matches("good.com", &blocked));
     }
-
 }

@@ -14,10 +14,11 @@ use serde_json::Value;
 
 use capsem_logger::{DbWriter, Decision, NetEvent, WriteOp};
 
-use crate::net::policy_config::{PolicyCallback, SecurityPluginConfig, SecurityRuleSet};
+use crate::net::policy_config::{SecurityPluginConfig, SecurityRuleSet};
 use crate::security_engine::{
     evaluate_security_boundary, HttpRequestSecurityEvent, HttpSecurityEvent,
-    SecurityEnforcementAction, SecurityEnforcementDecision, SecurityEvent,
+    RuntimeSecurityEventType, SecurityEnforcementAction, SecurityEnforcementDecision,
+    SecurityEvent,
 };
 
 use super::types::{JsonRpcResponse, McpToolDef, ToolAnnotations};
@@ -769,7 +770,7 @@ fn evaluate_builtin_http_request(
         .host_str()
         .ok_or_else(|| "URL has no host".to_string())?
         .to_string();
-    let mut event = SecurityEvent::new(PolicyCallback::HttpRequest)
+    let mut event = SecurityEvent::new(RuntimeSecurityEventType::HttpRequest)
         .with_http(HttpSecurityEvent {
             host: Some(domain.clone()),
             method: Some(method.to_string()),

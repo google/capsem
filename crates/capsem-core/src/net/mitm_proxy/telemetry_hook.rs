@@ -38,7 +38,7 @@ use crate::net::ai_traffic::events::{collect_summary, parse_non_streaming_usage,
 use crate::net::ai_traffic::pricing::PricingTable;
 use crate::net::ai_traffic::provider::{extract_model_from_path, tool_origin, ProviderKind};
 use crate::net::ai_traffic::{request_parser, TraceState};
-use crate::net::policy_config::{PolicyCallback, SecurityRuleSet};
+use crate::net::policy_config::SecurityRuleSet;
 use crate::security_engine::{
     emit_matching_security_rules, emit_security_write, HttpSecurityEvent, ModelSecurityEvent,
     RuntimeSecurityEventType, SecurityEvent,
@@ -331,7 +331,7 @@ pub fn build_net_event(
 
 fn security_event_from_net_event(event: &NetEvent) -> SecurityEvent {
     let security_event =
-        SecurityEvent::new(PolicyCallback::HttpRequest).with_http(HttpSecurityEvent {
+        SecurityEvent::new(RuntimeSecurityEventType::HttpRequest).with_http(HttpSecurityEvent {
             host: Some(event.domain.clone()),
             method: event.method.clone(),
             path: event.path.clone(),
@@ -343,7 +343,7 @@ fn security_event_from_net_event(event: &NetEvent) -> SecurityEvent {
 
 fn security_event_from_model_call(call: &ModelCall) -> SecurityEvent {
     let security_event =
-        SecurityEvent::new(PolicyCallback::ModelRequest).with_model(ModelSecurityEvent {
+        SecurityEvent::new(RuntimeSecurityEventType::ModelCall).with_model(ModelSecurityEvent {
             provider: Some(call.provider.clone()),
             name: call.model.clone(),
             request_body: call.request_body_preview.clone(),

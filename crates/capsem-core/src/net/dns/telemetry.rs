@@ -14,8 +14,7 @@ use std::time::SystemTime;
 use capsem_logger::events::DnsEvent;
 
 use crate::net::dns::server::DnsHandlerResult;
-use crate::net::policy_config::PolicyCallback;
-use crate::security_engine::{DnsSecurityEvent, SecurityEvent};
+use crate::security_engine::{DnsSecurityEvent, RuntimeSecurityEventType, SecurityEvent};
 
 /// Build a `DnsEvent` row for one query.
 ///
@@ -57,10 +56,11 @@ pub fn build_dns_event(
 }
 
 pub fn security_event_from_dns_event(event: &DnsEvent) -> SecurityEvent {
-    let security_event = SecurityEvent::new(PolicyCallback::DnsQuery).with_dns(DnsSecurityEvent {
-        qname: Some(event.qname.clone()),
-        qtype: Some(event.qtype.to_string()),
-    });
+    let security_event =
+        SecurityEvent::new(RuntimeSecurityEventType::DnsQuery).with_dns(DnsSecurityEvent {
+            qname: Some(event.qname.clone()),
+            qtype: Some(event.qtype.to_string()),
+        });
     match event.trace_id.clone() {
         Some(trace_id) => security_event.with_trace_id(trace_id),
         None => security_event,
