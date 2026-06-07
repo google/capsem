@@ -8,9 +8,9 @@ use axum::{
 use capsem_core::poll::{poll_until, PollOpts};
 use capsem_core::{
     net::policy_config::{
-        CompiledSecurityRule, DetectionLevel, ProviderRuleProfile, SecurityPluginConfig,
-        SecurityPluginMode, SecurityRule, SecurityRuleGroup, SecurityRuleProfile, SecurityRuleSet,
-        SecurityRuleSource, SettingsFile,
+        CompiledSecurityRule, DetectionLevel, ProfileConfigFile, ProviderRuleProfile,
+        SecurityPluginConfig, SecurityPluginMode, SecurityRule, SecurityRuleGroup,
+        SecurityRuleProfile, SecurityRuleSet, SecurityRuleSource, SettingsFile,
     },
     security_engine::{
         FileSecurityEvent, RuntimeSecurityEventType, SecurityActionRegistry, SecurityEmitError,
@@ -3528,9 +3528,9 @@ fn build_default_profile_summary(
     corp: &SettingsFile,
     plugin_count: usize,
 ) -> api::ProfileSummary {
-    let builtin = ProviderRuleProfile::builtin_security_defaults();
-    let default_rule_count = security_rule_group_len(&builtin.profiles)
-        + builtin
+    let manifest = ProfileConfigFile::builtin_default();
+    let default_rule_count = security_rule_group_len(&manifest.profiles)
+        + manifest
             .ai
             .values()
             .map(|provider| provider.rules.len())
@@ -3556,9 +3556,9 @@ fn build_default_profile_summary(
         + corp.mcp.as_ref().map_or(0, |mcp| mcp.servers.len());
 
     api::ProfileSummary {
-        id: DEFAULT_PROFILE_ID.to_string(),
-        name: "Default".to_string(),
-        description: "Current effective profile from user and corp configuration".to_string(),
+        id: manifest.id,
+        name: manifest.name,
+        description: manifest.description,
         source: "effective".to_string(),
         rule_count: profile_rule_count,
         default_rule_count,
@@ -4172,7 +4172,7 @@ fn list_plugins_for_scope(
 ) -> Result<Json<PluginListResponse>, AppError> {
     let mut plugins = Vec::new();
     for plugin_id in plugin_catalog().keys() {
-        plugins.push(plugin_info_for(&state, plugin_id, scope.clone())?);
+        plugins.push(plugin_info_for(state, plugin_id, scope.clone())?);
     }
     Ok(Json(PluginListResponse { scope, plugins }))
 }
@@ -4225,7 +4225,7 @@ fn update_plugin_for_scope(
         .entry(scope.profile_id.clone())
         .or_default()
         .insert(plugin_id.clone(), config);
-    Ok(Json(plugin_info_for(&state, &plugin_id, scope)?))
+    Ok(Json(plugin_info_for(state, &plugin_id, scope)?))
 }
 
 #[derive(Debug, Default)]

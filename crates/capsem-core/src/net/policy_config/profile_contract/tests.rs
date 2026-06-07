@@ -106,6 +106,26 @@ allowed_overlays = ["mcp_injection", "broker_placeholders", "endpoint_selection"
 }
 
 #[test]
+fn builtin_default_profile_manifest_is_valid_and_erofs_backed() {
+    let profile = ProfileConfigFile::builtin_default();
+
+    profile
+        .validate()
+        .expect("builtin default profile validates");
+    assert_eq!(profile.id, "default");
+    assert_eq!(profile.name, "Default");
+    assert_eq!(profile.assets.rootfs, "rootfs.erofs");
+    assert!(profile.availability.web);
+    assert!(profile.availability.shell);
+    assert!(profile.credentials.broker_enabled);
+    assert!(profile
+        .profiles
+        .defaults
+        .contains_key("default_http_requests"));
+    assert!(profile.plugins.contains_key("credential_broker"));
+}
+
+#[test]
 fn profile_config_rejects_ui_settings_soup() {
     let error = toml::from_str::<ProfileConfigFile>(
         r#"

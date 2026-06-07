@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use super::provider_profile::AiProviderProfile;
+use super::provider_profile::{AiProviderProfile, ProviderRuleProfile};
 use super::security_rule_profile::{SecurityPluginConfig, SecurityRuleGroup, SecurityRuleProfile};
 use super::types::{RuleFileReferences, ToolConfigSourceRecord};
 
@@ -130,6 +130,27 @@ impl Default for ProfileCredentialConfig {
 }
 
 impl ProfileConfigFile {
+    pub fn builtin_default() -> Self {
+        let defaults = ProviderRuleProfile::builtin_security_defaults();
+        Self {
+            id: "default".to_string(),
+            name: "Default".to_string(),
+            description: "Built-in Capsem developer profile.".to_string(),
+            icon_svg: None,
+            availability: ProfileAvailability::default(),
+            assets: ProfileAssetConfig::default(),
+            vm: ProfileVmDefaults::default(),
+            rule_files: RuleFileReferences::default(),
+            profiles: defaults.profiles,
+            ai: defaults.ai,
+            plugins: defaults.plugins,
+            mcp: None,
+            skills: ProfileSkills::default(),
+            credentials: ProfileCredentialConfig::default(),
+            tool_config_sources: BTreeMap::new(),
+        }
+    }
+
     pub fn validate(&self) -> Result<(), String> {
         validate_profile_id(&self.id)?;
         validate_non_empty("profile.name", &self.name)?;

@@ -143,6 +143,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   VM defaults, rule files/default rules, plugins, MCP servers, skills,
   credential broker defaults, AI/provider convenience rules, and tool config
   source metadata.
+- Profile inventory now sources the built-in `default` profile summary from
+  the profile manifest contract instead of service-local placeholder text.
 - Removed retired settings utility routes `/settings/lint` and
   `/settings/validate-key`; settings now expose only `info` and `edit` until
   profile/corp validation and credential broker endpoints own those workflows.

@@ -66,7 +66,7 @@ commit.
   settings.
 - `cargo test -p capsem-core ownership::tests` passed with 6 ownership
   contract tests.
-- `cargo test -p capsem-core profile_contract::tests` passed with 3 profile
+- `cargo test -p capsem-core profile_contract::tests` passed with 4 profile
   manifest contract tests covering identity, description, icon SVG,
   availability, EROFS assets, VM defaults, rules/defaults, AI/provider rules,
   plugins, MCP, skills, credentials, and tool config sources.
@@ -126,9 +126,10 @@ commit.
   `PATCH /profiles/{profile_id}/plugins/{plugin_id}/edit` in service,
   gateway, and frontend API.
 - [x] Add profile inventory routes in service, gateway, and frontend API:
-  `GET /profiles/list` and `GET /profiles/{profile_id}/info`. Until T0 defines
-  real independent profile files, only `default` is accepted and fake profile
-  IDs fail closed.
+  `GET /profiles/list` and `GET /profiles/{profile_id}/info`. The built-in
+  `default` summary is now sourced from `ProfileConfigFile::builtin_default()`;
+  fake profile IDs fail closed while independent profile file loading remains
+  a later route slice.
 - [x] Add adversarial gateway tests proving retired `/plugins`,
   `/plugins/{vm_id}`, and `/plugins/global/{plugin_id}` routes are not
   forwarded.

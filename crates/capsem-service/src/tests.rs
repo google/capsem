@@ -228,6 +228,7 @@ fn default_profile_summary_reflects_effective_contract() {
 
     assert_eq!(summary.id, "default");
     assert_eq!(summary.name, "Default");
+    assert_eq!(summary.description, "Built-in Capsem developer profile.");
     assert_eq!(summary.source, "effective");
     assert_eq!(summary.plugin_count, 3);
     assert!(
