@@ -587,6 +587,37 @@ describe('api', () => {
     });
   });
 
+  describe('runtime ledger', () => {
+    beforeEach(async () => {
+      mockFetch
+        .mockReturnValueOnce(jsonResponse({ ok: true, version: '1.0.0', service_socket: '/tmp/s' }))
+        .mockReturnValueOnce(jsonResponse({ token: 'tok' }));
+      await api.init();
+    });
+
+    it('uses service-wide security, enforcement, and detection ledger routes', async () => {
+      mockFetch.mockReturnValue(jsonResponse({ total: 0, sessions: [] }));
+
+      await api.getSecurityLatest();
+      expect(mockFetch.mock.calls[mockFetch.mock.calls.length - 1][0]).toContain('/security/latest');
+
+      await api.getSecurityStatus();
+      expect(mockFetch.mock.calls[mockFetch.mock.calls.length - 1][0]).toContain('/security/status');
+
+      await api.getEnforcementLatest();
+      expect(mockFetch.mock.calls[mockFetch.mock.calls.length - 1][0]).toContain('/enforcement/latest');
+
+      await api.getEnforcementStatus();
+      expect(mockFetch.mock.calls[mockFetch.mock.calls.length - 1][0]).toContain('/enforcement/status');
+
+      await api.getDetectionLatest();
+      expect(mockFetch.mock.calls[mockFetch.mock.calls.length - 1][0]).toContain('/detection/latest');
+
+      await api.getDetectionStatus();
+      expect(mockFetch.mock.calls[mockFetch.mock.calls.length - 1][0]).toContain('/detection/status');
+    });
+  });
+
   // ---- Plugins ----
 
   describe('plugins', () => {

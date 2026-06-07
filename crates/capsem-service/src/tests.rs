@@ -445,6 +445,38 @@ async fn profile_mcp_info_summarizes_profile_mcp_config() {
 }
 
 #[tokio::test]
+async fn service_wide_ledger_routes_are_db_backed_and_empty_without_session_dbs() {
+    let state = make_test_state();
+
+    let Json(latest) = handle_service_security_latest(
+        State(Arc::clone(&state)),
+        Query(SecurityLedgerQuery { limit: Some(10) }),
+    )
+    .await
+    .expect("service security latest should return an empty ledger");
+    assert!(latest.is_empty());
+
+    let Json(status) = handle_service_security_status(State(Arc::clone(&state)))
+        .await
+        .expect("service security status should return empty DB aggregate");
+    assert_eq!(status["total"], 0);
+    assert!(status["sessions"].as_array().unwrap().is_empty());
+
+    let Json(detections) = handle_service_detection_latest(
+        State(Arc::clone(&state)),
+        Query(SecurityLedgerQuery { limit: Some(10) }),
+    )
+    .await
+    .expect("service detection latest should return an empty ledger");
+    assert!(detections.is_empty());
+
+    let Json(detection_status) = handle_service_detection_status(State(state))
+        .await
+        .expect("service detection status should return empty DB aggregate");
+    assert_eq!(detection_status["total"], 0);
+}
+
+#[tokio::test]
 async fn handle_enforcement_rules_list_returns_compiled_profile_rules() {
     let _env_lock = SETTINGS_ENV_LOCK.lock().await;
 

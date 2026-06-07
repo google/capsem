@@ -98,6 +98,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added profile-scoped assets `info|edit`, plugins `info`, and MCP `info`
   routes. Info routes summarize existing profile/config state; asset edits
   fail explicitly until profile persistence lands.
+- Added service-wide runtime ledger routes `/security/latest|status`,
+  `/enforcement/latest|status`, and `/detection/latest|status`. These aggregate
+  per-VM `session.db` security-rule ledger rows through `DbReader`; detection
+  routes filter to rows with an explicit detection level.
 
 ### Added (security event rule spine)
 - Replaced callback-shaped Policy V2 authoring with one native rule contract

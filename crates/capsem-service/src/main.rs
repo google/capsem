@@ -4287,6 +4287,161 @@ async fn handle_security_info(
     Ok(Json(stats))
 }
 
+fn service_session_dirs(state: &ServiceState) -> Vec<(String, PathBuf)> {
+    let mut sessions = BTreeMap::new();
+    {
+        let instances = state.instances.lock().unwrap();
+        for (id, info) in instances.iter() {
+            sessions.insert(id.clone(), info.session_dir.clone());
+        }
+    }
+    {
+        let registry = state.persistent_registry.lock().unwrap();
+        for (id, entry) in registry.data.vms.iter() {
+            sessions
+                .entry(id.clone())
+                .or_insert_with(|| entry.session_dir.clone());
+        }
+    }
+    sessions.into_iter().collect()
+}
+
+fn is_detection_rule_event(event: &capsem_logger::SecurityRuleEvent) -> bool {
+    event.detection_level != capsem_logger::SecurityDetectionLevel::None
+}
+
+async fn handle_service_security_latest(
+    State(state): State<Arc<ServiceState>>,
+    Query(params): Query<SecurityLedgerQuery>,
+) -> Result<Json<Vec<serde_json::Value>>, AppError> {
+    let limit = params.limit.unwrap_or(100).min(2000);
+    let mut rows = Vec::new();
+    for (vm_id, session_dir) in service_session_dirs(&state) {
+        let db_path = session_dir.join("session.db");
+        if !db_path.exists() {
+            continue;
+        }
+        let reader = capsem_logger::DbReader::open(&db_path).map_err(|e| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("failed to open DB for {vm_id}: {e}"),
+            )
+        })?;
+        for event in reader.recent_security_rule_events(limit).map_err(|e| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("query failed for {vm_id}: {e}"),
+            )
+        })? {
+            rows.push(json!({ "vm_id": vm_id, "event": event }));
+        }
+    }
+    rows.sort_by(|left, right| {
+        right["event"]["timestamp_unix_ms"]
+            .as_i64()
+            .cmp(&left["event"]["timestamp_unix_ms"].as_i64())
+    });
+    rows.truncate(limit);
+    Ok(Json(rows))
+}
+
+async fn handle_service_detection_latest(
+    State(state): State<Arc<ServiceState>>,
+    Query(params): Query<SecurityLedgerQuery>,
+) -> Result<Json<Vec<serde_json::Value>>, AppError> {
+    let limit = params.limit.unwrap_or(100).min(2000);
+    let mut rows = Vec::new();
+    for (vm_id, session_dir) in service_session_dirs(&state) {
+        let db_path = session_dir.join("session.db");
+        if !db_path.exists() {
+            continue;
+        }
+        let reader = capsem_logger::DbReader::open(&db_path).map_err(|e| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("failed to open DB for {vm_id}: {e}"),
+            )
+        })?;
+        for event in reader.recent_security_rule_events(limit).map_err(|e| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("query failed for {vm_id}: {e}"),
+            )
+        })? {
+            if is_detection_rule_event(&event) {
+                rows.push(json!({ "vm_id": vm_id, "event": event }));
+            }
+        }
+    }
+    rows.sort_by(|left, right| {
+        right["event"]["timestamp_unix_ms"]
+            .as_i64()
+            .cmp(&left["event"]["timestamp_unix_ms"].as_i64())
+    });
+    rows.truncate(limit);
+    Ok(Json(rows))
+}
+
+async fn handle_service_security_status(
+    State(state): State<Arc<ServiceState>>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let mut total = 0_u64;
+    let mut sessions = Vec::new();
+    for (vm_id, session_dir) in service_session_dirs(&state) {
+        let db_path = session_dir.join("session.db");
+        if !db_path.exists() {
+            continue;
+        }
+        let reader = capsem_logger::DbReader::open(&db_path).map_err(|e| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("failed to open DB for {vm_id}: {e}"),
+            )
+        })?;
+        let stats = reader.security_rule_stats().map_err(|e| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("query failed for {vm_id}: {e}"),
+            )
+        })?;
+        total += stats.total;
+        sessions.push(json!({ "vm_id": vm_id, "stats": stats }));
+    }
+    Ok(Json(json!({ "total": total, "sessions": sessions })))
+}
+
+async fn handle_service_detection_status(
+    State(state): State<Arc<ServiceState>>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let mut total = 0_u64;
+    let mut sessions = Vec::new();
+    for (vm_id, session_dir) in service_session_dirs(&state) {
+        let db_path = session_dir.join("session.db");
+        if !db_path.exists() {
+            continue;
+        }
+        let reader = capsem_logger::DbReader::open(&db_path).map_err(|e| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("failed to open DB for {vm_id}: {e}"),
+            )
+        })?;
+        let events = reader.recent_security_rule_events(2000).map_err(|e| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("query failed for {vm_id}: {e}"),
+            )
+        })?;
+        let count = events
+            .iter()
+            .filter(|event| is_detection_rule_event(event))
+            .count() as u64;
+        total += count;
+        sessions.push(json!({ "vm_id": vm_id, "total": count }));
+    }
+    Ok(Json(json!({ "total": total, "sessions": sessions })))
+}
+
 fn default_plugin_config(mode: SecurityPluginMode) -> SecurityPluginConfig {
     SecurityPluginConfig {
         mode,
@@ -6217,6 +6372,12 @@ async fn main() -> Result<()> {
         .route("/vms/{id}/detection/status", get(handle_security_info))
         .route("/vms/{id}/enforcement/latest", get(handle_security_latest))
         .route("/vms/{id}/enforcement/status", get(handle_security_info))
+        .route("/security/latest", get(handle_service_security_latest))
+        .route("/security/status", get(handle_service_security_status))
+        .route("/enforcement/latest", get(handle_service_security_latest))
+        .route("/enforcement/status", get(handle_service_security_status))
+        .route("/detection/latest", get(handle_service_detection_latest))
+        .route("/detection/status", get(handle_service_detection_status))
         .route("/profiles/list", get(handle_profiles_list))
         .route("/profiles/create", post(handle_profile_create))
         .route("/profiles/{profile_id}/info", get(handle_profile_info))

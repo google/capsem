@@ -86,34 +86,34 @@ commit.
   - `[x] /profiles/{profile_id}/assets/status|ensure`
   - `[x] /profiles/{profile_id}/enforcement/info|reload|evaluate`
   - `[x] /profiles/{profile_id}/enforcement/rules/list`
-  - `/profiles/{profile_id}/enforcement/rules/{rule_id}/edit|delete`
+  - `[x] /profiles/{profile_id}/enforcement/rules/{rule_id}/edit|delete`
   - `[x] /profiles/{profile_id}/detection/info|reload|evaluate`
   - `[x] /profiles/{profile_id}/detection/rules/list`
   - `[x] /profiles/{profile_id}/detection/rules/{rule_id}/edit|delete`
   - `[x] /profiles/{profile_id}/plugins/info|list`
-  - `/profiles/{profile_id}/plugins/{plugin_id}/info|edit`
+  - `[x] /profiles/{profile_id}/plugins/{plugin_id}/info|edit`
   - `[x] /profiles/{profile_id}/mcp/info`
-  - `/profiles/{profile_id}/mcp/servers/list`
-  - `/profiles/{profile_id}/mcp/servers/{server_id}/...`
+  - `[x] /profiles/{profile_id}/mcp/servers/list`
+  - `[x] /profiles/{profile_id}/mcp/servers/{server_id}/...`
   - `[x] /profiles/{profile_id}/skills/info|list|add`
   - `[x] /profiles/{profile_id}/skills/{skill_id}/edit|delete`
   - `[x] /profiles/{profile_id}/credentials/info|status|list|reload`
   - `[x] /profiles/{profile_id}/credentials/{credential_id}/info|delete`
-- [ ] Add approved VM routes:
-  - `/vms/list|create`
-  - `/vms/{vm_id}/info|status|edit|delete`
-  - `/vms/{vm_id}/start|resume|pause|stop|restart|save|fork|reload-profile`
-  - `/vms/{vm_id}/save/status`
-  - `/vms/{vm_id}/fork/status`
+- [x] Add approved VM routes:
+  - `[x] /vms/list|create`
+  - `[x] /vms/{vm_id}/info|status|edit|delete`
+  - `[x] /vms/{vm_id}/start|resume|pause|stop|restart|save|fork|reload-profile`
+  - `[x] /vms/{vm_id}/save/status`
+  - `[x] /vms/{vm_id}/fork/status`
 - [x] Add approved corp routes:
   - `/corp/info|edit|validate|reload`
-- [ ] Add approved settings routes:
-  - `/settings/info|edit`
-- [ ] Add approved runtime ledger routes:
-  - `/security/latest|status`
-  - `/enforcement/latest|status`
-  - `/detection/latest|status`
-  - VM/profile filtered `latest` routes.
+- [x] Add approved settings routes:
+  - `[x] /settings/info|edit`
+- [x] Add approved runtime ledger routes:
+  - `[x] /security/latest|status`
+  - `[x] /enforcement/latest|status`
+  - `[x] /detection/latest|status`
+  - `[x] VM/profile filtered latest routes`
 - [ ] Make gateway expose the exact same route contract as service.
 - [ ] Add route conformance tests for HTTP/UDS parity.
 - [ ] Burn old global authoring routes; do not leave compatibility aliases.
@@ -173,6 +173,9 @@ commit.
 - [x] Add profile-owned assets info/edit, plugins info, and MCP info routes in
   service, gateway, and frontend API. Info routes summarize typed profile/config
   state; asset edits fail explicitly until profile persistence lands.
+- [x] Add service-wide runtime ledger routes in service, gateway, and frontend
+  API. Routes aggregate session DB rows through `DbReader`; detection filters to
+  rows with non-`none` detection level.
 - [x] Replace the retired `/corp-config` mutation route with `PUT /corp/edit`
   in service and gateway, with regression tests proving the old route is not
   forwarded.

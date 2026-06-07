@@ -840,6 +840,38 @@ export async function getDetectionInfo(profileId: string): Promise<DetectionInfo
   return await resp.json();
 }
 
+// -- Runtime ledger --
+
+export async function getSecurityLatest(): Promise<unknown> {
+  const resp = await _get('/security/latest');
+  return await resp.json();
+}
+
+export async function getSecurityStatus(): Promise<unknown> {
+  const resp = await _get('/security/status');
+  return await resp.json();
+}
+
+export async function getEnforcementLatest(): Promise<unknown> {
+  const resp = await _get('/enforcement/latest');
+  return await resp.json();
+}
+
+export async function getEnforcementStatus(): Promise<unknown> {
+  const resp = await _get('/enforcement/status');
+  return await resp.json();
+}
+
+export async function getDetectionLatest(): Promise<unknown> {
+  const resp = await _get('/detection/latest');
+  return await resp.json();
+}
+
+export async function getDetectionStatus(): Promise<unknown> {
+  const resp = await _get('/detection/status');
+  return await resp.json();
+}
+
 // -- Plugins --
 
 export async function listPlugins(profileId: string): Promise<PluginListResponse> {
