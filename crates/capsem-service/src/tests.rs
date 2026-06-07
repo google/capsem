@@ -477,6 +477,63 @@ async fn service_wide_ledger_routes_are_db_backed_and_empty_without_session_dbs(
 }
 
 #[tokio::test]
+async fn t1_adversarial_route_inputs_fail_closed() {
+    let unknown_profile =
+        handle_profile_plugins_info(State(make_test_state()), Path("strict".to_string()))
+            .await
+            .unwrap_err();
+    assert_eq!(unknown_profile.0, StatusCode::NOT_FOUND);
+
+    let unknown_vm = handle_vm_edit(
+        State(make_test_state()),
+        Path("missing-vm".to_string()),
+        Json(api::VmEditRequest {
+            ram_mb: Some(2048),
+            ..Default::default()
+        }),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(unknown_vm.0, StatusCode::NOT_FOUND);
+
+    let bad_rule = capsem_core::net::policy_config::SecurityRule {
+        name: "bad_rule".to_string(),
+        action: capsem_core::net::policy_config::SecurityRuleAction::Allow,
+        condition: "file.read.path.contains(\"tmp\")".to_string(),
+        detection_level: None,
+        priority: None,
+        corp_locked: false,
+        reason: None,
+        plugin: None,
+        plugin_config: BTreeMap::new(),
+    };
+    let malformed_rule_id = handle_enforcement_rule_upsert(
+        Path(("default".to_string(), "Bad Rule".to_string())),
+        Json(bad_rule),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(malformed_rule_id.0, StatusCode::BAD_REQUEST);
+
+    let invalid_enum = serde_json::from_value::<PluginUpdate>(json!({
+        "mode": "teleport",
+    }));
+    assert!(invalid_enum.is_err());
+
+    let immutable_profile = handle_vm_edit(
+        State(make_test_state()),
+        Path("missing-vm".to_string()),
+        Json(api::VmEditRequest {
+            profile_id: Some("strict".to_string()),
+            ..Default::default()
+        }),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(immutable_profile.0, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
 async fn handle_enforcement_rules_list_returns_compiled_profile_rules() {
     let _env_lock = SETTINGS_ENV_LOCK.lock().await;
 

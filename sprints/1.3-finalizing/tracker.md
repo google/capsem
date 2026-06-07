@@ -76,7 +76,7 @@ commit.
 
 ## T1: Service And Gateway API Routes
 
-- [ ] Add approved service routes:
+- [x] Add approved service routes:
   - `[x] /profiles/list`
   - `[x] /profiles/create`
   - `[x] /profiles/{profile_id}/info`
@@ -106,7 +106,7 @@ commit.
   - `[x] /vms/{vm_id}/save/status`
   - `[x] /vms/{vm_id}/fork/status`
 - [x] Add approved corp routes:
-  - `/corp/info|edit|validate|reload`
+  - `[x] /corp/info|edit|validate|reload`
 - [x] Add approved settings routes:
   - `[x] /settings/info|edit`
 - [x] Add approved runtime ledger routes:
@@ -114,10 +114,10 @@ commit.
   - `[x] /enforcement/latest|status`
   - `[x] /detection/latest|status`
   - `[x] VM/profile filtered latest routes`
-- [ ] Make gateway expose the exact same route contract as service.
-- [ ] Add route conformance tests for HTTP/UDS parity.
-- [ ] Burn old global authoring routes; do not leave compatibility aliases.
-- [ ] Add adversarial regression tests proving old global authoring routes fail:
+- [x] Make gateway expose the exact same route contract as service.
+- [x] Add route conformance tests for HTTP/UDS parity.
+- [x] Burn old global authoring routes; do not leave compatibility aliases.
+- [x] Add adversarial regression tests proving old global authoring routes fail:
   `/enforcements/list`, `/plugins/global/*`, `/mcp/policy`, `/mcp/tools`.
 - [x] Burn `/mcp/policy` from service, gateway, CLI, frontend API/store, and
   settings UI. Runtime MCP servers/tools remain as mechanics only.
@@ -229,9 +229,9 @@ commit.
   and tests; gateway regression tests prove old `/exec`, `/logs`, `/inspect`,
   `/timeline`, `/history`, `/read_file`, `/write_file`, and `/files` routes
   are not forwarded.
-- [ ] Add adversarial tests for wrong profile ids, wrong VM ids, malformed
+- [x] Add adversarial tests for wrong profile ids, wrong VM ids, malformed
   rule ids, invalid enum values, and attempts to mutate immutable VM profile id.
-- [ ] Commit T1 with tests.
+- [x] Commit T1 with tests.
 
 ## T2: Security Rail Burn-Down
 
