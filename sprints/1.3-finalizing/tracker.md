@@ -48,11 +48,11 @@ commit.
 - [x] Define default rules location/grouping in profile contract.
 - [x] Define default rule override/mutation semantics.
 - [x] Define plugin config in profile/corp contract.
-- [x] Define credential broker profile contract, including BLAKE3 hash exposure
-  and OTel/status counters.
+- [x] Define credential broker plugin runtime contract, including opaque
+  BLAKE3 hash exposure and OTel/status counters.
 - [x] Add contract tests proving settings cannot own profile/VM behavior.
 - [x] Add contract tests proving profile owns availability, name, description,
-  icon/SVG, assets, rules, MCP, skills, credentials, and VM defaults.
+  icon/SVG, assets, rules, MCP, skills, plugin config, and VM defaults.
 - [x] Commit T0 with tests.
 
 ### T0 Notes
@@ -71,7 +71,7 @@ commit.
 - `cargo test -p capsem-core profile_contract::tests` passed with 4 profile
   manifest contract tests covering identity, description, icon SVG,
   availability, EROFS assets, VM defaults, rules/defaults, AI/provider rules,
-  plugins, MCP, skills, credentials, and tool config sources.
+  plugins, MCP, skills, and tool config sources.
 - `cargo test -p capsem-core batch_update` passed with 11 batch-writer
   ownership/atomicity tests.
 - `cargo clippy -p capsem-core --all-targets -- -D warnings` passed.
@@ -99,8 +99,6 @@ commit.
   - `[x] /profiles/{profile_id}/mcp/servers/{server_id}/...`
   - `[x] /profiles/{profile_id}/skills/info|list|add`
   - `[x] /profiles/{profile_id}/skills/{skill_id}/edit|delete`
-  - `[x] /profiles/{profile_id}/credentials/info|status|list|reload`
-  - `[x] /profiles/{profile_id}/credentials/{credential_id}/info|delete`
 - [x] Add approved VM routes:
   - `[x] /vms/list|create`
   - `[x] /vms/{vm_id}/info|status|edit|delete`
@@ -168,10 +166,9 @@ commit.
   `/profiles/{profile_id}/assets/status` and
   `/profiles/{profile_id}/assets/ensure` in service, gateway, frontend API,
   CLI, and service integration tests. Old global asset routes fail closed.
-- [x] Add profile-owned skills and credentials routes in service, gateway, and
-  frontend API. Manifest-backed info/list routes are real; mutations and
-  per-credential inventory operations fail explicitly until profile/credential
-  persistence lands.
+- [x] Add profile-owned skills routes in service, gateway, and frontend API.
+  Credential profile routes were later burned; credential broker state is
+  plugin-owned runtime status/stats.
 - [x] Add profile-owned assets info/edit, plugins info, and MCP info routes in
   service, gateway, and frontend API. Info routes summarize typed profile/config
   state; asset edits fail explicitly until profile persistence lands.
@@ -321,9 +318,8 @@ commit.
   gap.
 - [x] Plugin UI reads profile plugin metadata and edits enable/disable, mode,
   and detection logging level through profile endpoints.
-- [ ] Credential UI lists brokered credential refs and BLAKE3 hashes only.
-- [ ] Credential status UI shows broker counters from endpoint/OTel-derived
-  status.
+- [ ] Credential UI reads only credential-broker plugin runtime status/stats and
+  lists brokered refs/BLAKE3 hashes from that plugin-owned state.
 - [ ] Skill UI can add/edit/remove profile skills through profile endpoints.
 - [ ] Ensure no provider API object remains in UI for 1.3.
 - [ ] Add adversarial tests for plugin disable/enable invalid modes, invalid
@@ -466,7 +462,8 @@ invariant sweep before release verification.
 - [ ] Profile owns detection rules.
 - [ ] Profile owns MCP config.
 - [ ] Profile owns skills.
-- [ ] Profile owns credentials/plugins.
+- [ ] Profile owns plugin config; credential broker secrets/state are plugin
+  runtime state.
 - [ ] Profile owns availability.
 - [ ] Profile owns name, description, and icon/SVG.
 - [ ] `settings.toml` owns UI/application preferences only.
@@ -474,7 +471,7 @@ invariant sweep before release verification.
 - [ ] Settings do not own security rules.
 - [ ] Settings do not own MCP config.
 - [ ] Settings do not own plugin config.
-- [ ] Settings do not own credentials.
+- [ ] Settings do not own credential broker config/state.
 - [ ] Settings do not own profile identity or availability.
 - [ ] Corp owns constraints, locks, reporting, and integrations over profiles.
 
@@ -510,7 +507,7 @@ invariant sweep before release verification.
 - [ ] Plugin names/descriptions come from backend fields and docs links.
 - [ ] MCP server/tool/resource/prompt names come from backend fields.
 - [ ] Skill names/descriptions come from backend fields.
-- [ ] Credential ids/hashes come from backend fields.
+- [ ] Brokered credential hashes/status come from plugin runtime fields.
 - [ ] Asset names/status come from backend fields.
 - [ ] Direct boolean editors use boolean controls.
 - [ ] Direct enum editors use enum controls.
@@ -549,7 +546,8 @@ invariant sweep before release verification.
   - terminal works,
   - assets status/ensure works,
   - package UI failure states are visible.
-- [ ] Manual UI sanity pass for settings/profile/policy/plugins/MCP/credentials.
+- [ ] Manual UI sanity pass for settings/profile/policy/plugins/MCP and
+  credential broker plugin status.
 - [ ] Benchmark run or explicit note if unchanged:
   - startup,
   - DB write/ledger,

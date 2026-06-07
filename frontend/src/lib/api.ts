@@ -141,8 +141,6 @@ export interface EnforcementRuleInfo {
   priority: number;
   corp_locked: boolean;
   reason?: string;
-  plugin?: string;
-  plugin_config?: Record<string, unknown>;
 }
 
 export interface EnforcementRuleListResponse {
@@ -156,7 +154,6 @@ export interface EnforcementInfoResponse {
   default_rule_count: number;
   custom_rule_count: number;
   detection_rule_count: number;
-  plugin_rule_count: number;
   corp_locked_rule_count: number;
   source_counts: Record<string, number>;
   action_counts: Record<string, number>;
@@ -758,40 +755,6 @@ export async function editProfileSkill(
 export async function deleteProfileSkill(profileId: string, skillId: string): Promise<unknown> {
   const resp = await _delete(
     `/profiles/${encodeURIComponent(profileId)}/skills/${encodeURIComponent(skillId)}/delete`,
-  );
-  return await resp.json();
-}
-
-export async function getProfileCredentialsInfo(profileId: string): Promise<unknown> {
-  const resp = await _get(`/profiles/${encodeURIComponent(profileId)}/credentials/info`);
-  return await resp.json();
-}
-
-export async function getProfileCredentialsStatus(profileId: string): Promise<unknown> {
-  const resp = await _get(`/profiles/${encodeURIComponent(profileId)}/credentials/status`);
-  return await resp.json();
-}
-
-export async function listProfileCredentials(profileId: string): Promise<unknown> {
-  const resp = await _get(`/profiles/${encodeURIComponent(profileId)}/credentials/list`);
-  return await resp.json();
-}
-
-export async function reloadProfileCredentials(profileId: string): Promise<unknown> {
-  const resp = await _post(`/profiles/${encodeURIComponent(profileId)}/credentials/reload`, {});
-  return await resp.json();
-}
-
-export async function getProfileCredentialInfo(profileId: string, credentialId: string): Promise<unknown> {
-  const resp = await _get(
-    `/profiles/${encodeURIComponent(profileId)}/credentials/${encodeURIComponent(credentialId)}/info`,
-  );
-  return await resp.json();
-}
-
-export async function deleteProfileCredential(profileId: string, credentialId: string): Promise<unknown> {
-  const resp = await _delete(
-    `/profiles/${encodeURIComponent(profileId)}/credentials/${encodeURIComponent(credentialId)}/delete`,
   );
   return await resp.json();
 }

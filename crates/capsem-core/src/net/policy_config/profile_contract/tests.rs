@@ -76,9 +76,6 @@ enabled = true
 [skills]
 paths = ["/root/.codex/skills/security/SKILL.md"]
 
-[credentials]
-broker_enabled = true
-
 [tool_config_sources.codex]
 tool_id = "codex"
 guest_path = "/root/.codex/config.toml"
@@ -102,7 +99,6 @@ allowed_overlays = ["mcp_injection", "broker_placeholders", "endpoint_selection"
     assert!(profile.ai.contains_key("openai"));
     assert!(profile.plugins.contains_key("dummy_pre_eicar"));
     assert_eq!(profile.mcp.unwrap().servers[0].name, "filesystem");
-    assert!(profile.credentials.broker_enabled);
 }
 
 #[test]
@@ -117,12 +113,27 @@ fn builtin_default_profile_manifest_is_valid_and_erofs_backed() {
     assert_eq!(profile.assets.rootfs, "rootfs.erofs");
     assert!(profile.availability.web);
     assert!(profile.availability.shell);
-    assert!(profile.credentials.broker_enabled);
     assert!(profile
         .profiles
         .defaults
         .contains_key("default_http_requests"));
     assert!(profile.plugins.contains_key("credential_broker"));
+}
+
+#[test]
+fn profile_config_rejects_credential_broker_settings() {
+    let error = toml::from_str::<ProfileConfigFile>(
+        r#"
+id = "developer"
+name = "Developer"
+description = "Default developer VM profile."
+
+[credentials]
+broker_enabled = true
+"#,
+    )
+    .expect_err("credential broker config is plugin-owned, not a profile credential block");
+    assert!(error.to_string().contains("unknown field `credentials`"));
 }
 
 #[test]

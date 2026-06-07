@@ -7,11 +7,11 @@ contract reset.
 
 | Stream | Status | Notes |
 | --- | --- | --- |
-| T0 Schema and ownership | Not Started | Profile/settings/corp schemas, immutable VM profile id, defaults/plugin/credential contract. |
+| T0 Schema and ownership | Not Started | Profile/settings/corp schemas, immutable VM profile id, defaults/plugin contract, and credential broker plugin runtime state. |
 | T1 Service/gateway API | In Progress | Profile plugin, MCP server/tool, enforcement authoring, full `/corp/info|edit|validate|reload`, `/settings/info|edit`, profile reload, VM ledger routes, VM core/lifecycle routes, and VM utility routes now live under `/vms...`; retired plugin global/VM, global MCP, global enforcement authoring, `/corp-config`, `GET|POST /settings`, `/settings/lint`, `/settings/validate-key`, `/settings/presets`, `/reload-config`, old ledger routes, and old top-level VM routes fail closed. Other authoring routes still need profile burn-down. |
 | T2 Security rail burn-down | In Progress | Network web decision settings and MCP policy objects burned; remaining work is route/authoring/profile completion plus full invariant sweep. |
 | T3 Profile/settings/corp UI/API split | Not Started | Settings UI-only, profile behavior profile-backed, one editor writes one contract. |
-| T4 MCP/plugins/credentials/skills UI | In Progress | Plugin UI/API use profile routes; MCP tools now load under profile/server routes. MCP resources/prompts, credentials, and skills remain. |
+| T4 MCP/plugins/skills UI | In Progress | Plugin UI/API use profile routes; credential broker state is plugin-owned runtime status/stats; MCP tools now load under profile/server routes. MCP resources/prompts and skills remain. |
 | T5 VM lifecycle/assets/install | Blocked | Snapshot loss must be repaired: profile catalog/assets/pins, `capsem-admin`, profile-derived EROFS/LZ4HC asset builds, TUI/terminal shell, Linux/KVM proof, and security corpus/benchmark gates all need restore/port decisions before 1.3 can close. See `profile-platform-lost-work-audit.md`. |
 | T6 Docs/changelog/skills | Not Started | Full docs pass, changelog, skills, benchmark docs. |
 | T6.5 Invariant review | Not Started | Full pre-verification review of every master contract invariant. |
@@ -42,7 +42,8 @@ contract reset.
   default engine.
 - A VM executes one immutable profile id.
 - Profile owns VM behavior: assets, VM config, rules, detections, MCP, skills,
-  credentials/plugins, availability, name, description, icon/SVG.
+  plugin config, availability, name, description, icon/SVG. Credential broker
+  secrets/state are plugin-owned runtime state, not profile credentials.
 - `settings.toml` owns UI/application preferences only.
 - Corp owns constraints, locks, reporting, and integrations over profiles.
 - One UI editor surface writes one backing contract.

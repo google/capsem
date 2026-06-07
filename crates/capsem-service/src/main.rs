@@ -3747,59 +3747,6 @@ async fn handle_profile_skill_delete(
     Err(profile_persistence_not_implemented("profile skill delete"))
 }
 
-async fn handle_profile_credentials_info(
-    Path(profile_id): Path<String>,
-) -> Result<Json<serde_json::Value>, AppError> {
-    let manifest = default_profile_manifest_for_route(profile_id)?;
-    Ok(Json(json!({
-        "profile_id": manifest.id,
-        "broker_enabled": manifest.credentials.broker_enabled,
-    })))
-}
-
-async fn handle_profile_credentials_status(
-    Path(profile_id): Path<String>,
-) -> Result<Json<serde_json::Value>, AppError> {
-    let manifest = default_profile_manifest_for_route(profile_id)?;
-    Ok(Json(json!({
-        "profile_id": manifest.id,
-        "broker_enabled": manifest.credentials.broker_enabled,
-        "credential_count": 0,
-    })))
-}
-
-async fn handle_profile_credentials_list(
-    Path(profile_id): Path<String>,
-) -> Result<Json<serde_json::Value>, AppError> {
-    let manifest = default_profile_manifest_for_route(profile_id)?;
-    Ok(Json(json!({
-        "profile_id": manifest.id,
-        "credentials": [],
-    })))
-}
-
-async fn handle_profile_credentials_reload(
-    State(state): State<Arc<ServiceState>>,
-    Path(profile_id): Path<String>,
-) -> Result<Json<serde_json::Value>, AppError> {
-    let _profile_id = validate_profile_route_id(profile_id)?;
-    handle_reload_config(State(state)).await
-}
-
-async fn handle_profile_credential_info(
-    Path((profile_id, _credential_id)): Path<(String, String)>,
-) -> Result<Json<serde_json::Value>, AppError> {
-    let _profile_id = validate_profile_route_id(profile_id)?;
-    Err(profile_persistence_not_implemented("credential info"))
-}
-
-async fn handle_profile_credential_delete(
-    Path((profile_id, _credential_id)): Path<(String, String)>,
-) -> Result<Json<serde_json::Value>, AppError> {
-    let _profile_id = validate_profile_route_id(profile_id)?;
-    Err(profile_persistence_not_implemented("credential delete"))
-}
-
 fn resolve_mcp_tool_id(server_id: &str, tool_id: &str) -> Result<String, AppError> {
     if server_id.is_empty() || tool_id.is_empty() {
         return Err(AppError(
@@ -4708,17 +4655,6 @@ fn enforcement_rule_info(
         priority: rule.priority,
         corp_locked: rule.corp_locked,
         reason: rule.reason,
-        plugin: rule.plugin,
-        plugin_config: rule
-            .plugin_config
-            .into_iter()
-            .map(|(key, value)| {
-                (
-                    key,
-                    serde_json::to_value(value).unwrap_or(serde_json::Value::Null),
-                )
-            })
-            .collect(),
     }
 }
 
@@ -4811,7 +4747,6 @@ fn enforcement_info_for_rules(
             .iter()
             .filter(|rule| rule.detection_level.is_some())
             .count(),
-        plugin_rule_count: rules.iter().filter(|rule| rule.plugin.is_some()).count(),
         corp_locked_rule_count: rules.iter().filter(|rule| rule.corp_locked).count(),
         source_counts,
         action_counts,
@@ -6494,30 +6429,6 @@ async fn main() -> Result<()> {
         .route(
             "/profiles/{profile_id}/skills/{skill_id}/delete",
             delete(handle_profile_skill_delete),
-        )
-        .route(
-            "/profiles/{profile_id}/credentials/info",
-            get(handle_profile_credentials_info),
-        )
-        .route(
-            "/profiles/{profile_id}/credentials/status",
-            get(handle_profile_credentials_status),
-        )
-        .route(
-            "/profiles/{profile_id}/credentials/list",
-            get(handle_profile_credentials_list),
-        )
-        .route(
-            "/profiles/{profile_id}/credentials/reload",
-            post(handle_profile_credentials_reload),
-        )
-        .route(
-            "/profiles/{profile_id}/credentials/{credential_id}/info",
-            get(handle_profile_credential_info),
-        )
-        .route(
-            "/profiles/{profile_id}/credentials/{credential_id}/delete",
-            delete(handle_profile_credential_delete),
         )
         .route("/corp/info", get(handle_corp_info))
         .route("/corp/edit", put(handle_corp_config))

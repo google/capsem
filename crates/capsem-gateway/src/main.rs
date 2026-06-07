@@ -368,30 +368,6 @@ fn service_proxy_routes() -> Router<Arc<AppState>> {
             "/profiles/{profile_id}/skills/{skill_id}/delete",
             delete(proxy::handle_proxy),
         )
-        .route(
-            "/profiles/{profile_id}/credentials/info",
-            get(proxy::handle_proxy),
-        )
-        .route(
-            "/profiles/{profile_id}/credentials/status",
-            get(proxy::handle_proxy),
-        )
-        .route(
-            "/profiles/{profile_id}/credentials/list",
-            get(proxy::handle_proxy),
-        )
-        .route(
-            "/profiles/{profile_id}/credentials/reload",
-            post(proxy::handle_proxy),
-        )
-        .route(
-            "/profiles/{profile_id}/credentials/{credential_id}/info",
-            get(proxy::handle_proxy),
-        )
-        .route(
-            "/profiles/{profile_id}/credentials/{credential_id}/delete",
-            delete(proxy::handle_proxy),
-        )
         .route("/corp/info", get(proxy::handle_proxy))
         .route("/corp/edit", put(proxy::handle_proxy))
         .route("/corp/validate", post(proxy::handle_proxy))
@@ -639,12 +615,6 @@ mod tests {
             ("POST", "/profiles/default/skills/add"),
             ("PATCH", "/profiles/default/skills/build/edit"),
             ("DELETE", "/profiles/default/skills/build/delete"),
-            ("GET", "/profiles/default/credentials/info"),
-            ("GET", "/profiles/default/credentials/status"),
-            ("GET", "/profiles/default/credentials/list"),
-            ("POST", "/profiles/default/credentials/reload"),
-            ("GET", "/profiles/default/credentials/openai/info"),
-            ("DELETE", "/profiles/default/credentials/openai/delete"),
             ("GET", "/profiles/default/plugins/list"),
             ("GET", "/profiles/default/plugins/info"),
             ("GET", "/profiles/default/plugins/dummy_pre_eicar/info"),
@@ -738,6 +708,31 @@ mod tests {
             ("POST", "/plugins/test-vm/dummy_pre_eicar"),
             ("GET", "/plugins/global/dummy_pre_eicar"),
             ("POST", "/plugins/global/dummy_pre_eicar"),
+        ] {
+            let app = service_proxy_app("/tmp/capsem-gateway-must-not-connect.sock");
+            let resp = app
+                .oneshot(
+                    http::Request::builder()
+                        .method(method)
+                        .uri(uri)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), http::StatusCode::NOT_FOUND, "{method} {uri}");
+        }
+    }
+
+    #[tokio::test]
+    async fn gateway_does_not_forward_retired_profile_credential_routes() {
+        for (method, uri) in [
+            ("GET", "/profiles/default/credentials/info"),
+            ("GET", "/profiles/default/credentials/status"),
+            ("GET", "/profiles/default/credentials/list"),
+            ("POST", "/profiles/default/credentials/reload"),
+            ("GET", "/profiles/default/credentials/openai/info"),
+            ("DELETE", "/profiles/default/credentials/openai/delete"),
         ] {
             let app = service_proxy_app("/tmp/capsem-gateway-must-not-connect.sock");
             let resp = app

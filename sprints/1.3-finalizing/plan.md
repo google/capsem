@@ -61,7 +61,8 @@ ownership posture:
 - Profile authoring is profile-addressed. Anything that changes VM behavior
   belongs under `/profiles/{profile_id}/...`.
 - Settings are UI/application preferences only. Settings must not own assets,
-  VM config, enforcement, detection, MCP, skills, plugins, or credentials.
+  VM config, enforcement, detection, MCP, skills, plugins, or credential broker
+  config/state.
 - Corp owns constraints, locks, and reporting endpoints over profiles.
 - Service-global endpoints are runtime/reporting only:
   - daemon health/status,
@@ -141,7 +142,7 @@ configuration model.
   - plugin names/descriptions,
   - MCP server/tool/resource/prompt names,
   - skill names/descriptions,
-  - credential ids/hashes,
+  - brokered credential hashes/status from plugin runtime state,
   - asset names/status.
 - The UI does not invent explanatory text for backend-owned config. Backend
   `name`, `reason`, `description`, `status`, `source`, `group`, and validation
@@ -172,9 +173,9 @@ configuration model.
   or disallowed in web, shell, or mobile surfaces, that is profile-backed
   metadata, not UI settings.
 - Profile-owned identity and meaning stay in the profile contract: name,
-  description, icon/SVG, availability, assets, rules, MCP, skills, credentials,
-  VM defaults, and other behavior/identity fields. Settings must not rename,
-  redescribe, or replace profile-owned fields.
+  description, icon/SVG, availability, assets, rules, MCP, skills, plugin
+  config, VM defaults, and other behavior/identity fields. Settings must not
+  rename, redescribe, or replace profile-owned fields.
 - One UI part edits one underlying contract. A settings panel edits
   `settings.toml`; a profile editor edits profile-backed data; a corp panel
   edits corp-backed data; runtime/ledger views read runtime/DB-backed data.
@@ -186,8 +187,8 @@ configuration model.
   can choose layout, but it cannot create semantic categories that do not exist
   in the contract.
 - UI settings are UI/app preferences only. A frontend settings store must not
-  carry VM behavior, security rules, MCP policy, plugin config, credentials, or
-  assets.
+  carry VM behavior, security rules, MCP policy, plugin config, credential
+  broker config/state, or assets.
 - Frontend tests should assert rendered security/profile text comes from API
   fixtures, not hard-coded UI copy.
 

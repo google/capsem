@@ -356,38 +356,6 @@ async fn profile_skills_routes_reflect_manifest_and_gate_mutations() {
 }
 
 #[tokio::test]
-async fn profile_credentials_routes_reflect_manifest_and_gate_inventory_mutations() {
-    let Json(info) = handle_profile_credentials_info(Path("default".to_string()))
-        .await
-        .expect("credentials info should reflect profile manifest");
-    assert_eq!(info["profile_id"], "default");
-    assert_eq!(info["broker_enabled"], true);
-
-    let Json(status) = handle_profile_credentials_status(Path("default".to_string()))
-        .await
-        .expect("credentials status should reflect profile manifest");
-    assert_eq!(status["profile_id"], "default");
-    assert_eq!(status["credential_count"], 0);
-
-    let Json(list) = handle_profile_credentials_list(Path("default".to_string()))
-        .await
-        .expect("credentials list should be explicit");
-    assert_eq!(list["profile_id"], "default");
-    assert!(list["credentials"].as_array().unwrap().is_empty());
-
-    let info = handle_profile_credential_info(Path(("default".to_string(), "openai".to_string())))
-        .await
-        .unwrap_err();
-    assert_eq!(info.0, StatusCode::NOT_IMPLEMENTED);
-
-    let delete =
-        handle_profile_credential_delete(Path(("default".to_string(), "openai".to_string())))
-            .await
-            .unwrap_err();
-    assert_eq!(delete.0, StatusCode::NOT_IMPLEMENTED);
-}
-
-#[tokio::test]
 async fn profile_assets_info_reflects_manifest_and_edit_is_gated() {
     let Json(info) = handle_profile_assets_info(Path("default".to_string()))
         .await
@@ -504,7 +472,6 @@ async fn t1_adversarial_route_inputs_fail_closed() {
         priority: None,
         corp_locked: false,
         reason: None,
-        plugin: None,
         plugin_config: BTreeMap::new(),
     };
     let malformed_rule_id = handle_enforcement_rule_upsert(
@@ -550,7 +517,6 @@ async fn handle_enforcement_rules_list_returns_compiled_profile_rules() {
             priority: None,
             corp_locked: false,
             reason: Some("record skill file reads".to_string()),
-            plugin: None,
             plugin_config: BTreeMap::new(),
         },
     );
@@ -610,7 +576,6 @@ async fn handle_enforcement_info_summarizes_compiled_rules() {
             priority: None,
             corp_locked: false,
             reason: Some("record skill file reads".to_string()),
-            plugin: None,
             plugin_config: BTreeMap::new(),
         },
     );
@@ -657,7 +622,6 @@ async fn handle_detection_rules_list_returns_detection_rules_only() {
             priority: None,
             corp_locked: false,
             reason: Some("record skill file reads".to_string()),
-            plugin: None,
             plugin_config: BTreeMap::new(),
         },
     );
@@ -671,7 +635,6 @@ async fn handle_detection_rules_list_returns_detection_rules_only() {
             priority: None,
             corp_locked: false,
             reason: Some("block example without reporting".to_string()),
-            plugin: None,
             plugin_config: BTreeMap::new(),
         },
     );
@@ -716,7 +679,6 @@ async fn handle_detection_info_summarizes_detection_rules_only() {
             priority: None,
             corp_locked: false,
             reason: Some("record skill file reads".to_string()),
-            plugin: None,
             plugin_config: BTreeMap::new(),
         },
     );
@@ -742,7 +704,6 @@ async fn handle_detection_rule_upsert_requires_detection_level() {
         priority: None,
         corp_locked: false,
         reason: Some("block without reporting".to_string()),
-        plugin: None,
         plugin_config: BTreeMap::new(),
     };
 
@@ -907,7 +868,6 @@ async fn enforcement_rule_endpoints_add_delete_reload_and_reject_invalid_rules_a
         priority: Some(capsem_core::net::policy_config::SecurityRulePriority::Explicit(10)),
         corp_locked: false,
         reason: Some("debug EICAR fixture must block".to_string()),
-        plugin: None,
         plugin_config: BTreeMap::new(),
     };
 

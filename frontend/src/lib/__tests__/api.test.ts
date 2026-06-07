@@ -434,30 +434,6 @@ describe('api', () => {
       expect(mockFetch.mock.calls[mockFetch.mock.calls.length - 1][1].method).toBe('DELETE');
     });
 
-    it('profile credential helpers use profile-scoped routes', async () => {
-      mockFetch.mockReturnValue(jsonResponse({ ok: true }));
-
-      await api.getProfileCredentialsInfo('default');
-      expect(mockFetch.mock.calls[mockFetch.mock.calls.length - 1][0]).toContain('/profiles/default/credentials/info');
-
-      await api.getProfileCredentialsStatus('default');
-      expect(mockFetch.mock.calls[mockFetch.mock.calls.length - 1][0]).toContain('/profiles/default/credentials/status');
-
-      await api.listProfileCredentials('default');
-      expect(mockFetch.mock.calls[mockFetch.mock.calls.length - 1][0]).toContain('/profiles/default/credentials/list');
-
-      await api.reloadProfileCredentials('default');
-      expect(mockFetch.mock.calls[mockFetch.mock.calls.length - 1][0]).toContain('/profiles/default/credentials/reload');
-      expect(mockFetch.mock.calls[mockFetch.mock.calls.length - 1][1].method).toBe('POST');
-
-      await api.getProfileCredentialInfo('default', 'openai');
-      expect(mockFetch.mock.calls[mockFetch.mock.calls.length - 1][0]).toContain('/profiles/default/credentials/openai/info');
-
-      await api.deleteProfileCredential('default', 'openai');
-      expect(mockFetch.mock.calls[mockFetch.mock.calls.length - 1][0]).toContain('/profiles/default/credentials/openai/delete');
-      expect(mockFetch.mock.calls[mockFetch.mock.calls.length - 1][1].method).toBe('DELETE');
-    });
-
     it('profile asset, plugin, and mcp info helpers use profile-scoped routes', async () => {
       mockFetch.mockReturnValue(jsonResponse({ ok: true }));
 
@@ -519,7 +495,6 @@ describe('api', () => {
         default_rule_count: 7,
         custom_rule_count: 1,
         detection_rule_count: 2,
-        plugin_rule_count: 1,
         corp_locked_rule_count: 0,
         source_counts: { builtin_default: 7, profile: 1 },
         action_counts: { allow: 7, block: 1 },
@@ -574,7 +549,6 @@ describe('api', () => {
         default_rule_count: 1,
         custom_rule_count: 1,
         detection_rule_count: 2,
-        plugin_rule_count: 0,
         corp_locked_rule_count: 0,
         source_counts: { builtin_default: 1, profile: 1 },
         action_counts: { allow: 2 },

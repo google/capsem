@@ -38,8 +38,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   resolve through the manifest contract, and the UI waits on the service rather
   than opening against a dead daemon.
 - Removed the old setup/onboarding authority path. Provider credentials are now
-  discovered or brokered through runtime security events and settings references
-  instead of being copied through a setup wizard.
+  discovered or brokered by the credential broker plugin through runtime
+  security events and broker-owned references instead of being copied through a
+  setup wizard.
 
 ### Changed (service/API)
 - Moved VM APIs under the explicit `/vms/...` contract. VM creation, listing,
@@ -72,12 +73,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   persistence is implemented instead of writing through settings.
 - Added `GET /profiles/{profile_id}/enforcement/rules/list`, returning the
   compiled profile rule inventory with source, default-rule, priority, action,
-  detection level, plugin, and lock metadata so the UI can reflect backend rule
+  detection level, and lock metadata so the UI can reflect backend rule
   truth instead of inventing grouping state.
 - Added `GET /profiles/{profile_id}/enforcement/info`, returning compiled
   enforcement configuration counts by source/action plus default/custom,
-  detection, plugin, and corp-lock totals. Runtime counters remain table-backed
-  under VM enforcement status.
+  detection, and corp-lock totals. Runtime counters remain table-backed under
+  VM enforcement status.
 - Added profile-scoped detection rule routes
   `/profiles/{profile_id}/detection/info`,
   `/profiles/{profile_id}/detection/rules/list`,
@@ -91,10 +92,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `/profiles/{profile_id}/assets/status` and
   `/profiles/{profile_id}/assets/ensure`; retired global `/assets/status` and
   `/assets/ensure` so asset selection stays under the profile contract.
-- Added profile-scoped skills and credentials route surfaces. Skills
-  `info|list` and credentials `info|status|list` reflect the typed profile
-  manifest; add/edit/delete and per-credential operations fail explicitly until
-  profile persistence and credential inventory listing are implemented.
+- Added profile-scoped skills route surfaces. Skills `info|list` reflect the
+  typed profile manifest; add/edit/delete fail explicitly until profile
+  persistence is implemented.
+- Removed the profile credential API surface before release: there is no
+  `/profiles/{profile_id}/credentials/*` route and no `[credentials]` profile
+  block. Credential capture/substitution state belongs to the credential broker
+  plugin runtime contract.
 - Added profile-scoped assets `info|edit`, plugins `info`, and MCP `info`
   routes. Info routes summarize existing profile/config state; asset edits
   fail explicitly until profile persistence lands.
@@ -125,21 +129,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rule names, invalid priorities, invalid plugin shapes, and atomic rejection
   now fail closed before settings are written.
 - Added strict CEL validation against first-party `SecurityEvent` roots
-  (`http`, `dns`, `mcp`, `model`, `file`, `process`, `credential`, and
-  `snapshot`, and `security`) so stale callback-local fields fail before rules
-  persist.
-- Added a security-event engine that runs matched preprocess plugins before
+  (`http`, `dns`, `mcp`, `model`, `file`, `process`, and `security`) so stale
+  callback-local fields fail before rules persist. Credential substitution and
+  snapshot lifecycle writes remain ledger event types, not fake CEL roots.
+- Added a security-event engine that runs configured preprocess plugins before
   detection/enforcement, evaluates CEL once against the canonical event, then
-  runs matched postprocess plugins only after the decision allows
+  runs configured postprocess plugins only after the decision allows
   materialization.
-- Added the typed plugin contract `plugin(rule, SecurityEvent) ->
-  SecurityEvent`; plugin failures fail closed, and matched plugin metadata is
-  recorded in the security rule ledger.
+- Added the typed plugin contract `plugin(SecurityEvent) -> SecurityEvent`;
+  plugins own their filtering and runtime state, plugin failures fail closed,
+  and plugin effects are recorded in the security rule ledger.
 - Added typed profile/corp plugin policy with `mode` and `detection_level`.
-  Enabled rule plugins append `SecurityDetectionEvent` records onto
+  Enabled plugins append `SecurityDetectionEvent` records onto
   `SecurityEvent.detections`, rules with `detection_level` append the same
-  reporting vector, and `rewrite` is the canonical mutation mode with
-  `redact`, `mutate`, and `neutralize` accepted as aliases.
+  reporting vector, and `rewrite` is the canonical mutation mode.
 - Added the plugin/detection/enforcement endpoint taxonomy:
   `/profiles/{profile_id}/plugins/list`,
   `/profiles/{profile_id}/plugins/{plugin_id}/info`, and
@@ -166,13 +169,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `GET /settings/info` and `PATCH /settings/edit`; the old magic settings
   route now fails closed in the service and gateway.
 - Split core config mutation by owner: `PATCH /settings/edit` now uses the
-  UI-settings writer, while credential brokerage and host config discovery use
-  explicit profile-owned config writers for VM/security/AI/credential fields.
+  UI-settings writer, while VM/security/AI behavior uses profile-owned config
+  writers. Credential brokerage state belongs to the broker plugin runtime
+  contract.
 - Added a first-class profile manifest contract covering profile identity,
   description, icon SVG, web/shell/mobile availability, VM asset selection,
   VM defaults, rule files/default rules, plugins, MCP servers, skills,
-  credential broker defaults, AI/provider convenience rules, and tool config
-  source metadata.
+  AI/provider convenience rules, and tool config source metadata.
 - Profile inventory now sources the built-in `default` profile summary from
   the profile manifest contract instead of service-local placeholder text.
 - Removed retired settings utility routes `/settings/lint` and
@@ -189,8 +192,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   every first-party event root is present, absent roots serialize as `null`,
   and raw credential observation buffers are excluded.
 - Added credential broker plugin support with Keychain-backed storage on macOS
-  and BLAKE3 `credential:blake3:<hex>` references in settings, logs, and
-  `session.db`; raw credentials stay broker-private.
+  and BLAKE3 `credential:blake3:<hex>` references in broker runtime status,
+  logs, and `session.db`; raw credentials stay broker-private.
 - Added brokered credential capture from observed HTTP headers/body responses
   and `.env` files, plus upstream-only substitution of broker references for
   allowed HTTP materialization.
@@ -202,9 +205,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   request/response, MCP built-in HTTP tools, and DNS query blocking now enforce
   through the canonical `SecurityEvent` + CEL rule path before dispatch.
 - Added contract tests proving built-in default rules match HTTP, DNS, MCP,
-  model, file, process, credential, and snapshot security events as ordinary
-  late-priority CEL rules; specific rules run first, and editing a default rule
-  changes evaluation without any hidden network fallback.
+  model, file, and process security events as ordinary late-priority CEL rules;
+  specific rules run first, and editing a default rule changes evaluation
+  without any hidden network fallback.
 - Removed retired web decision settings (`security.web.allow_read`,
   `security.web.allow_write`, `security.web.custom_allow`, and
   `security.web.custom_block`) from defaults, presets, builder schemas,
@@ -267,11 +270,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   latency, batch writes, shutdown flushes, and coalesced event pressure.
 
 ### Changed (security policy enforcement)
-- Unified HTTP, DNS, MCP, model, file, process, credential, and snapshot
-  detection/enforcement on the security-event rule engine. Producers now emit
-  canonical security events, evaluate the active `SecurityRuleSet`, and write
-  matched rule rows with the same primary event id as the underlying
-  `session.db` event.
+- Unified HTTP, DNS, MCP, model, file, and process detection/enforcement on
+  the security-event rule engine. Producers now emit canonical security events,
+  evaluate the active `SecurityRuleSet`, and write matched rule rows with the
+  same primary event id as the underlying `session.db` event. Credential
+  substitution and snapshot lifecycle writes remain canonical ledger event
+  types, not fake rule roots.
 - Removed the global MCP policy API/UI/CLI surface (`/mcp/policy`,
   `capsem mcp policy`, and frontend MCP policy mutators). MCP runtime endpoints
   now report mechanics only; MCP decisions must be expressed as security rules.
@@ -301,8 +305,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   process exec/audit/completion, credential substitution, and snapshot events
   all pass through the shared security-event emitter and rule ledger.
 - Added VM and integration coverage proving configured security rules block,
-  ask, or log HTTP, DNS, MCP, model, file, process, credential, and snapshot
-  events without leaking denied request/response payloads into previews.
+  ask, or log HTTP, DNS, MCP, model, file, and process events without leaking
+  denied request/response payloads into previews.
 - Updated the policy product surface and docs around the new
   `SecurityEvent` rule contract, Sigma import, DB-backed latest/info
   endpoints, and forensic `session.db` ledger instead of generated

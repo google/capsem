@@ -35,8 +35,6 @@ pub struct ProfileConfigFile {
     pub mcp: Option<crate::mcp::policy::McpUserConfig>,
     #[serde(default)]
     pub skills: ProfileSkills,
-    #[serde(default)]
-    pub credentials: ProfileCredentialConfig,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub tool_config_sources: BTreeMap<String, ToolConfigSourceRecord>,
 }
@@ -114,21 +112,6 @@ pub struct ProfileSkills {
     pub paths: Vec<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ProfileCredentialConfig {
-    #[serde(default = "default_true")]
-    pub broker_enabled: bool,
-}
-
-impl Default for ProfileCredentialConfig {
-    fn default() -> Self {
-        Self {
-            broker_enabled: true,
-        }
-    }
-}
-
 impl ProfileConfigFile {
     pub fn builtin_default() -> Self {
         let defaults = ProviderRuleProfile::builtin_security_defaults();
@@ -146,7 +129,6 @@ impl ProfileConfigFile {
             plugins: defaults.plugins,
             mcp: None,
             skills: ProfileSkills::default(),
-            credentials: ProfileCredentialConfig::default(),
             tool_config_sources: BTreeMap::new(),
         }
     }

@@ -391,7 +391,7 @@ the guarantee or explicitly burn it.
   `crates/capsem-core/src/net/policy_config/security_rule_profile/tests.rs`,
   `crates/capsem-core/src/net/policy_config/provider_profile.rs`,
   and `crates/capsem-logger/src/schema.rs`.
-- [ ] Delete `/profiles/{profile_id}/credentials/*` service and gateway routes,
+- [x] Delete `/profiles/{profile_id}/credentials/*` service and gateway routes,
   handlers, and tests. Credential state is opaque plugin runtime state exposed
   through `/vms/{vm_id}/plugins/credential_broker/status|stats`.
 - [ ] Burn stale settings/defaults `settings.ai.*` and credential injection
@@ -403,7 +403,7 @@ the guarantee or explicitly burn it.
 - [ ] Burn `default_credentials` / `[default.credential]`; brokered credential
   references are evidence on real security events, not a standalone default
   traffic family.
-- [ ] Delete `ProfileCredentialConfig` / `credentials.broker_enabled` parser
+- [x] Delete `ProfileCredentialConfig` / `credentials.broker_enabled` parser
   support and add a rejection test for `[credentials]`.
 - [ ] Delete or reshape static `ProfileConfigFile.ai` / `[ai.*]` parser support
   so provider UI/status cannot be invented from metadata without allow/configured

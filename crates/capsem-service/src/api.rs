@@ -256,10 +256,6 @@ pub struct EnforcementRuleInfo {
     pub corp_locked: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub plugin: Option<String>,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub plugin_config: BTreeMap<String, serde_json::Value>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -275,7 +271,6 @@ pub struct EnforcementInfoResponse {
     pub default_rule_count: usize,
     pub custom_rule_count: usize,
     pub detection_rule_count: usize,
-    pub plugin_rule_count: usize,
     pub corp_locked_rule_count: usize,
     pub source_counts: BTreeMap<String, usize>,
     pub action_counts: BTreeMap<String, usize>,

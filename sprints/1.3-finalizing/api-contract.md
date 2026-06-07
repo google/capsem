@@ -25,9 +25,10 @@ are reading configuration or runtime state.
 Capsem has one service, many profiles, and VMs execute profiles.
 
 - **Profile owns behavior.** Assets, VM config, enforcement rules, detection
-  rules, plugins, MCP servers/tools/resources/prompts, skills, credentials, and
-  any other setting that changes what a VM can do or what Capsem observes or
-  enforces.
+  rules, plugins, MCP servers/tools/resources/prompts, skills, and any other
+  setting that changes what a VM can do or what Capsem observes or enforces.
+  Credential broker secrets/state are plugin-owned runtime state, not profile
+  credentials.
 - **Settings own UI preferences only.** Appearance, notifications, UI density,
   and local app preferences. If it changes VM behavior, it is not a setting.
 - **Corp owns constraints and reporting.** Corp can lock profile behavior,
@@ -80,7 +81,6 @@ Core fields:
 | `priority` | Integer `[-1000, 1000]` or the sentinel string `default`. User-authored priority defaults to `10`; default catch-all rules use `default`. |
 | `corp_locked` | Corp-owned lock marker. User profiles cannot set negative locked corp semantics. |
 | `detection_level` | Enum: `none`, `informational`, `low`, `medium`, `high`, `critical`. Default `none`. |
-| `plugin` | Optional plugin id. Required for plugin-backed preprocess/postprocess/rewrite behavior. |
 | `reason` | Human/audit reason. Required for shipped defaults and corp rules. |
 | `group` | Backend grouping hint for UI: `corp`, `profile`, `default`, `mcp`, `credential`, `imported_sigma`, etc. It does not change evaluation semantics. |
 | `source` | Source descriptor: profile enforcement TOML, profile detection Sigma YAML, corp overlay, built-in default, or generated convenience rule. |
@@ -89,6 +89,10 @@ All rule actions are enums in Rust. No stringly verbs in runtime code.
 
 Default rules are normal rules. There is no `/defaults` endpoint and no special
 default engine. `priority = "default"` only means "last catch-all tier".
+
+Rules do not name plugins. If behavior requires plugin code, the plugin is
+configured as a plugin, owns its filtering, and mutates/annotates matching
+security events through the plugin contract.
 
 ### Plugin Object
 
@@ -102,11 +106,13 @@ site under `/plugins/...`; it is not an API endpoint.
 | `description` | Backend-owned short description. |
 | `mode` | Enum: `allow`, `ask`, `block`, `rewrite`, `disabled`. |
 | `detection_level` | Same enum as rules; default `informational` when enabled unless plugin says otherwise. |
-| `required_by_rules` | Rule ids that reference this plugin. |
+| `stage` | Enum: `pre_decision` or `post_decision`. |
+| `filter` | Plugin-owned filter metadata/status; not a rule expression. |
 | `scope` | `profile` or `corp`. |
 
-Invariant: every real enabled profile plugin must be referenced by at least one
-effective rule. `dummy_*` debug plugins are exempt and only exist for tests.
+Invariant: every real enabled profile plugin must be declared in the profile or
+corp plugin config and must publish metadata/status/counters. `dummy_*` debug
+plugins are exempt and only exist for tests.
 
 ## Profile Authoring Plane
 
@@ -124,7 +130,7 @@ effective rule. `dummy_*` debug plugins are exempt and only exist for tests.
 | `POST` | `/profiles/{profile_id}/reload` | Re-read/apply the profile contract and push to running VMs using it where applicable. |
 
 Profile-owned VM defaults, including CPU, memory, disk sizing, selected assets,
-network mechanics, capture limits, MCP, skills, credentials, detection, and
+network mechanics, capture limits, MCP, skills, plugin config, detection, and
 enforcement, are part of `/profiles/{profile_id}/info` and
 `/profiles/{profile_id}/edit`. Do not add vague profile subresources such as
 `/vm/network/edit`; if a field is profile behavior, it belongs in the profile
@@ -226,21 +232,11 @@ matching file events.
 ### Credentials
 
 There is no provider API in 1.3. Provider behavior is detected through network,
-model, file, and credential events, then governed by rules. The profile-owned
-authoring object is credential/broker configuration and saved credential
-references.
-
-| Method | Path | Purpose |
-| --- | --- | --- |
-| `GET` | `/profiles/{profile_id}/credentials/info` | Read credential broker config summary for this profile. |
-| `GET` | `/profiles/{profile_id}/credentials/status` | Runtime counters for broker captures, substitutions, failures, and per-credential use counts from OTel/ledger counters. |
-| `GET` | `/profiles/{profile_id}/credentials/list` | List brokered credential references and BLAKE3 hashes, not secret values. |
-| `GET` | `/profiles/{profile_id}/credentials/{credential_id}/info` | Read one brokered credential reference and BLAKE3 hash metadata. |
-| `DELETE` | `/profiles/{profile_id}/credentials/{credential_id}/delete` | Remove one brokered credential reference. |
-| `POST` | `/profiles/{profile_id}/credentials/reload` | Re-read credential broker config for this profile. |
-
-Credential capture/substitution is implemented by profile rules plus the
-credential broker plugin. Secret values do not appear in API responses.
+model, and file events, then governed by rules and plugin config. There is no
+profile credential API and no `[credentials]` profile block. Credential
+capture/substitution is implemented by the credential broker plugin, which owns
+its opaque state, filtering, BLAKE3 references, status, and stats. Secret values
+do not appear in API responses.
 
 ## Corp Plane
 
@@ -384,8 +380,9 @@ These are not final 1.3 contracts:
 | `/exec/{id}`, `/logs/{id}`, `/inspect/{id}`, `/timeline/{id}` | Burn. Use `/vms/{vm_id}/exec`, `/vms/{vm_id}/logs`, `/vms/{vm_id}/inspect`, and `/vms/{vm_id}/timeline`. |
 | `/read_file/{id}`, `/write_file/{id}`, `/files/{id}`, `/files/{id}/content`, `/history/{id}` | Burn. Use `/vms/{vm_id}/files/read`, `/vms/{vm_id}/files/write`, `/vms/{vm_id}/files/list`, `/vms/{vm_id}/files/content`, and `/vms/{vm_id}/history`. |
 | `/providers` | Burn. Provider is not a profile API object in 1.3. |
+| `/profiles/{profile_id}/credentials/*` | Burn. Credential broker state is plugin-owned runtime status/stats, not profile credential inventory. |
 | MCP permission mutation in settings | Move to profile MCP config plus profile rules. |
-| Provider/model config in settings | Burn/reshape as profile credentials plus rules. |
+| Provider/model config in settings | Burn/reshape as profile rules plus plugin-owned credential brokering. |
 | Asset selection in settings | Move to profile assets. |
 | VM behavior in settings | Move to profile VM config. |
 | Any domain/default/MCP decision provider endpoint | Burn. Single CEL/security-rule rail only. |
