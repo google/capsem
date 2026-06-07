@@ -103,13 +103,13 @@ describe('settingsStore', () => {
     it('staging multiple keys tracks all', () => {
       settingsStore.stage('vm.resources.cpu_count', 8);
       settingsStore.stage('vm.resources.ram_gb', 16);
-      settingsStore.stage('security.web.allow_read', true);
+      settingsStore.stage('security.services.search.bing.allow', true);
       expect(settingsStore.model!.pendingChanges.size).toBe(3);
     });
 
     it('staging a boolean value works', () => {
-      settingsStore.stage('security.web.allow_read', true);
-      expect(settingsStore.model!.pendingChanges.get('security.web.allow_read')).toBe(true);
+      settingsStore.stage('security.services.search.bing.allow', true);
+      expect(settingsStore.model!.pendingChanges.get('security.services.search.bing.allow')).toBe(true);
     });
 
     it('staging a string value works', () => {
@@ -188,16 +188,16 @@ describe('settingsStore', () => {
 
   describe('updateImmediate', () => {
     it('applies and saves in one call', async () => {
-      const before = settingsStore.findLeaf('security.web.allow_read')?.effective_value;
-      await settingsStore.updateImmediate('security.web.allow_read', !before);
-      const after = settingsStore.findLeaf('security.web.allow_read')?.effective_value;
+      const before = settingsStore.findLeaf('security.services.search.bing.allow')?.effective_value;
+      await settingsStore.updateImmediate('security.services.search.bing.allow', !before);
+      const after = settingsStore.findLeaf('security.services.search.bing.allow')?.effective_value;
       expect(after).toBe(!before);
       expect(settingsStore.isDirty).toBe(false);
     });
 
     it('does not leave other staged changes', async () => {
       settingsStore.stage('vm.resources.cpu_count', 8);
-      await settingsStore.updateImmediate('security.web.allow_read', true);
+      await settingsStore.updateImmediate('security.services.search.bing.allow', true);
       // The cpu_count was also saved (updateImmediate calls save)
       expect(settingsStore.isDirty).toBe(false);
     });
@@ -251,8 +251,8 @@ describe('settingsStore', () => {
   describe('presets', () => {
     it('applySecurityPreset changes settings', async () => {
       await settingsStore.applySecurityPreset('medium');
-      const webRead = settingsStore.findLeaf('security.web.allow_read');
-      expect(webRead!.effective_value).toBe(true);
+      const bing = settingsStore.findLeaf('security.services.search.bing.allow');
+      expect(bing!.effective_value).toBe(true);
     });
 
     it('applySecurityPreset clears applying flag', async () => {

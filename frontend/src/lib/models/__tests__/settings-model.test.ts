@@ -269,7 +269,7 @@ describe('SettingsModel', () => {
       const model = loadModel();
       model.stage('vm.resources.cpu_count', 8);
       model.stage('vm.resources.ram_gb', 16);
-      model.stage('security.web.allow_read', true);
+      model.stage('security.services.search.bing.allow', true);
       model.clearPending();
       expect(model.isDirty).toBe(false);
       expect(model.pendingChanges.size).toBe(0);

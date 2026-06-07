@@ -289,12 +289,8 @@ class WebServiceConfig(BaseModel):
 class WebSecurityConfig(BaseModel):
     """Web security config from security/web.toml."""
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
-    allow_read: bool = False
-    allow_write: bool = False
-    custom_allow: list[str] = Field(default_factory=list)
-    custom_block: list[str] = Field(default_factory=list)
     http_upstream_ports: list[int] = Field(default_factory=lambda: [80, 11434])
     search: dict[str, WebServiceConfig] = Field(default_factory=dict)
     registry: dict[str, WebServiceConfig] = Field(default_factory=dict)

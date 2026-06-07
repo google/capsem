@@ -396,38 +396,8 @@
         "action": "preset_select"
       },
       "web": {
-        "name": "Web",
-        "description": "Default actions for unknown domains",
-        "allow_read": {
-          "name": "Allow read requests",
-          "description": "Allow GET/HEAD/OPTIONS for domains not in any allow/block list.",
-          "type": "bool",
-          "default": false
-        },
-        "allow_write": {
-          "name": "Allow write requests",
-          "description": "Allow POST/PUT/DELETE/PATCH for domains not in any allow/block list.",
-          "type": "bool",
-          "default": false
-        },
-        "custom_allow": {
-          "name": "Allowed domains",
-          "description": "Comma-separated domain patterns to allow. Wildcards supported (*.example.com).",
-          "type": "text",
-          "default": "elie.net, *.elie.net, en.wikipedia.org, *.wikipedia.org",
-          "meta": {
-            "format": "domain_list"
-          }
-        },
-        "custom_block": {
-          "name": "Blocked domains",
-          "description": "Comma-separated domain patterns to block. Takes priority over custom allow list.",
-          "type": "text",
-          "default": "",
-          "meta": {
-            "format": "domain_list"
-          }
-        },
+        "name": "Network Mechanics",
+        "description": "Network engine mechanics. HTTP/DNS decisions are profile security rules.",
         "http_upstream_ports": {
           "name": "Allowed plain HTTP upstream ports",
           "description": "Plain HTTP upstream ports the MITM may dial after guest traffic reaches the local proxy.",

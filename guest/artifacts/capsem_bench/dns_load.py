@@ -9,7 +9,7 @@ Measures DNS resolution rps + tail latency through the full path:
     -> vsock 5007 framed envelope
     -> capsem-process serve_dns_session (T3.2 + T3.3)
     -> DnsHandler::handle (T3.1 / T3.d)
-    -> NetworkPolicy::is_fully_blocked OR find_dns_redirect OR
+    -> SecurityRuleSet evaluation OR find_dns_redirect OR
        UdpSocket forward to 1.1.1.1:53
     -> response wire bytes back over the same path
 
@@ -38,11 +38,9 @@ share machinery:
     ]
   }
 
-Default qname is `api.openai.com` -- a fully-blocked domain in the
-dev policy, so every query hits the NXDOMAIN short-circuit path
-and we measure the proxy's per-query cost without depending on a
-real upstream resolver. Override via `CAPSEM_BENCH_DNS_QNAME` to
-benchmark the upstream-forward path (e.g. `elie.net`).
+Default qname is `api.openai.com` so the benchmark exercises the
+security-rule evaluation path. Override via `CAPSEM_BENCH_DNS_QNAME`
+to benchmark another domain or the upstream-forward path (e.g. `elie.net`).
 """
 
 import os

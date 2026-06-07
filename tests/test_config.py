@@ -122,10 +122,6 @@ enabled = true
 
 WEB_SECURITY_TOML = """\
 [web]
-allow_read = false
-allow_write = false
-custom_allow = ["elie.net", "*.elie.net"]
-custom_block = []
 
 [web.search.google]
 name = "Google"
@@ -278,7 +274,7 @@ class TestLoadGuestConfigMinimal:
         assert cfg.ai_providers == {}
         assert cfg.package_sets == {}
         assert cfg.mcp_servers == {}
-        assert cfg.web_security.allow_read is False
+        assert cfg.web_security.http_upstream_ports == [80, 11434]
         assert cfg.vm_resources.cpu_count == 4
         assert cfg.vm_environment.shell.term == "xterm-256color"
 
@@ -334,7 +330,7 @@ class TestLoadGuestConfigFull:
     def test_web_security_loaded(self, guest_full):
         cfg = load_guest_config(guest_full)
         ws = cfg.web_security
-        assert ws.custom_allow == ["elie.net", "*.elie.net"]
+        assert ws.http_upstream_ports == [80, 11434]
         assert "google" in ws.search
         assert ws.search["google"].allow_get is True
         assert "pypi" in ws.registry
@@ -539,8 +535,8 @@ class TestGenerateDefaultsJsonStructure:
         result = generate_defaults_json(cfg)
         sec = result["settings"]["security"]
         assert "web" in sec
-        assert sec["web"]["allow_read"]["type"] == "bool"
-        assert sec["web"]["allow_read"]["default"] is False
+        assert sec["web"]["http_upstream_ports"]["type"] == "int_list"
+        assert sec["web"]["http_upstream_ports"]["default"] == [80, 11434]
 
     def test_vm_resources_structure(self, guest_full):
         cfg = load_guest_config(guest_full)

@@ -408,34 +408,8 @@ def generate_defaults_json(config: GuestImageConfig) -> dict:
             "action": "preset_select",
         },
         "web": {
-            "name": "Web",
-            "description": "Default actions for unknown domains",
-            "allow_read": {
-                "name": "Allow read requests",
-                "description": "Allow GET/HEAD/OPTIONS for domains not in any allow/block list.",
-                "type": "bool",
-                "default": ws.allow_read,
-            },
-            "allow_write": {
-                "name": "Allow write requests",
-                "description": "Allow POST/PUT/DELETE/PATCH for domains not in any allow/block list.",
-                "type": "bool",
-                "default": ws.allow_write,
-            },
-            "custom_allow": {
-                "name": "Allowed domains",
-                "description": "Comma-separated domain patterns to allow. Wildcards supported (*.example.com).",
-                "type": "text",
-                "default": ", ".join(ws.custom_allow),
-                "meta": {"format": "domain_list"},
-            },
-            "custom_block": {
-                "name": "Blocked domains",
-                "description": "Comma-separated domain patterns to block. Takes priority over custom allow list.",
-                "type": "text",
-                "default": ", ".join(ws.custom_block) if ws.custom_block else "",
-                "meta": {"format": "domain_list"},
-            },
+            "name": "Network Mechanics",
+            "description": "Network engine mechanics. HTTP/DNS decisions are profile security rules.",
             "http_upstream_ports": {
                 "name": "Allowed plain HTTP upstream ports",
                 "description": "Plain HTTP upstream ports the MITM may dial after guest traffic reaches the local proxy.",
@@ -831,7 +805,6 @@ def generate_mock_ts(
     - buildMockTree(): returns the SettingsNode tree
     - MOCK_MCP_SERVERS: from defaults.json mcp section
     - MOCK_MCP_TOOLS: from mcp-tools.json (Rust-exported tool defs)
-    - MOCK_MCP_POLICY: default allow policy
     """
     settings_obj = defaults.get("settings", {})
 
@@ -846,7 +819,7 @@ def generate_mock_ts(
         "// Regenerate: just run (or just test)",
         "",
         "import type { ResolvedSetting, SettingsNode, McpServerInfo,"
-        " McpToolInfo, McpPolicyInfo } from './types';",
+        " McpToolInfo } from './types';",
         "",
         "// Helper: creates a mock setting with sensible defaults for empty fields.",
         "function ms(overrides: Partial<ResolvedSetting> & {"
@@ -990,15 +963,6 @@ def generate_mock_ts(
         lines.append(f"    pin_changed: false,")
         lines.append("  },")
     lines.append("];")
-    lines.append("")
-
-    # MOCK_MCP_POLICY
-    lines.append("export const MOCK_MCP_POLICY: McpPolicyInfo = {")
-    lines.append("  global_policy: 'allow',")
-    lines.append("  default_tool_permission: 'allow',")
-    lines.append("  blocked_servers: [],")
-    lines.append("  tool_permissions: {},")
-    lines.append("};")
     lines.append("")
 
     return "\n".join(lines)

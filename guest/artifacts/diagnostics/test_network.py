@@ -392,15 +392,11 @@ def test_ca_env_var_set(var):
 def test_denied_domain_rejected():
     """HTTPS to an unconditionally denied domain must be rejected.
 
-    ``api.openai.com`` is allowlist-gated by ``CAPSEM_OPENAI_ALLOWED`` and will
-    return 401 (real upstream auth failure) when enabled -- see
+    ``api.openai.com`` is allowlist-gated by provider rules and will return
+    401 (real upstream auth failure) when enabled -- see
     ``test_ai_provider_domain_blocked`` for that matrix. This test uses a
-    domain that no rule ever matches; when ``CAPSEM_WEB_ALLOW_READ=1`` the
-    default-read fallback makes every unknown domain reachable, so the
-    assertion is only meaningful with the default-deny posture.
+    domain that no rule ever matches.
     """
-    if os.environ.get("CAPSEM_WEB_ALLOW_READ") == "1":
-        pytest.skip("security.web.allow_read=true -- unknown domains allowed by policy")
     result = run("curl -skI --connect-timeout 5 https://evil-never-allowed.invalid 2>&1", timeout=15)
     assert result.returncode != 0 or "403" in result.stdout, \
         f"curl to denied domain should fail or return 403: {result.stdout}"
@@ -490,7 +486,7 @@ def test_direct_ip_no_route():
 # ---------------------------------------------------------------
 
 # cdn.elie.net 301-redirects to elie.net, so curl needs -L and both hosts
-# must be on the custom_allow list.
+# must be allowed by the active profile security rules.
 _THROUGHPUT_URL = "https://cdn.elie.net/static/files/i-am-a-legend/i-am-a-legend-slides.pdf"
 _THROUGHPUT_DOMAIN = "cdn.elie.net"
 _MIN_SPEED_MBPS = 0.5
@@ -526,7 +522,7 @@ def test_proxy_download_throughput():
             timeout=20,
         )
         if probe.returncode != 0 or "403" in probe.stdout:
-            pytest.skip(f"{_THROUGHPUT_DOMAIN} not in allow list (add to network.custom_allow to run)")
+            pytest.skip(f"{_THROUGHPUT_DOMAIN} not allowed by current security rules")
 
         result = run(
             f"curl -sL -o /dev/null"

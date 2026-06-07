@@ -389,42 +389,6 @@ name = "Security Preset"
 description = "Predefined security configurations"
 action = "preset_select"
 
-# -- Security > Web ----------------------------------------------------------
-
-[settings.security.web]
-name = "Web"
-description = "Default actions for unknown domains"
-
-[settings.security.web.allow_read]
-name = "Allow read requests"
-description = "Allow GET/HEAD/OPTIONS for domains not in any allow/block list."
-type = "bool"
-default = false
-
-[settings.security.web.allow_write]
-name = "Allow write requests"
-description = "Allow POST/PUT/DELETE/PATCH for domains not in any allow/block list."
-type = "bool"
-default = false
-
-[settings.security.web.custom_allow]
-name = "Allowed domains"
-description = "Comma-separated domain patterns to allow. Wildcards supported (*.example.com)."
-type = "text"
-default = "elie.net, *.elie.net, en.wikipedia.org, *.wikipedia.org"
-
-[settings.security.web.custom_allow.meta]
-format = "domain_list"
-
-[settings.security.web.custom_block]
-name = "Blocked domains"
-description = "Comma-separated domain patterns to block. Takes priority over custom allow list."
-type = "text"
-default = ""
-
-[settings.security.web.custom_block.meta]
-format = "domain_list"
-
 # -- Security > Services -----------------------------------------------------
 
 [settings.security.services]

@@ -71,10 +71,6 @@ enabled = true
 
 WEB_SECURITY_TOML = """\
 [web]
-allow_read = false
-allow_write = false
-custom_allow = []
-custom_block = []
 
 [web.search.google]
 name = "Google"
@@ -265,7 +261,7 @@ class TestFindTomlLine:
         assert find_toml_line(text, "nonexistent") is None
 
     def test_finds_table_key(self):
-        text = "[web]\nallow_read = true\n\n[web.search.google]\nname = 'Google'\n"
+        text = "[web]\nhttp_upstream_ports = [80]\n\n[web.search.google]\nname = 'Google'\n"
         assert find_toml_line(text, "web.search.google") == 4
 
     def test_finds_first_occurrence(self):
@@ -462,8 +458,6 @@ class TestE006:
     def test_domain_with_port(self, guest_valid):
         (guest_valid / "config" / "security" / "web.toml").write_text(textwrap.dedent("""\
             [web]
-            allow_read = false
-            allow_write = false
 
             [web.search.google]
             name = "Google"
@@ -815,13 +809,11 @@ class TestW001:
     def test_provider_no_registry(self, guest_valid):
         (guest_valid / "config" / "security" / "web.toml").write_text(textwrap.dedent("""\
             [web]
-            allow_read = false
-            allow_write = false
 
             [web.search.google]
             name = "Google"
             enabled = true
-            domains = ["google.com"]
+            domains = ["*.com"]
             allow_get = true
 
             [web.repository.github]
@@ -944,73 +936,24 @@ class TestW004:
 
 
 # ---------------------------------------------------------------------------
-# W005: Allow/block overlap
+# Retired web decision config
 # ---------------------------------------------------------------------------
 
 
-class TestW005:
-    def test_overlapping_allow_block(self, guest_valid):
+class TestRetiredWebDecisionConfig:
+    def test_allow_block_fields_fail_closed(self, guest_valid):
         (guest_valid / "config" / "security" / "web.toml").write_text(textwrap.dedent("""\
             [web]
-            allow_read = false
-            allow_write = false
-            custom_allow = ["example.com", "evil.com"]
+            allow_read = true
+            allow_write = true
+            custom_allow = ["example.com"]
             custom_block = ["evil.com"]
-
-            [web.search.google]
-            name = "Google"
-            enabled = true
-            domains = ["google.com"]
-            allow_get = true
-
-            [web.registry.pypi]
-            name = "PyPI"
-            enabled = true
-            domains = ["pypi.org"]
-            allow_get = true
-
-            [web.repository.github]
-            name = "GitHub"
-            enabled = true
-            domains = ["github.com"]
-            allow_get = true
         """))
         diags = validate_guest(guest_valid)
-        assert _has_code(diags, "W005")
-        d = _diag_for(diags, "W005")
-        assert "evil.com" in d.message
-
-    def test_multiple_overlaps(self, guest_valid):
-        (guest_valid / "config" / "security" / "web.toml").write_text(textwrap.dedent("""\
-            [web]
-            allow_read = false
-            allow_write = false
-            custom_allow = ["a.com", "b.com", "c.com"]
-            custom_block = ["a.com", "c.com"]
-
-            [web.search.google]
-            name = "Google"
-            enabled = true
-            domains = ["google.com"]
-            allow_get = true
-
-            [web.registry.pypi]
-            name = "PyPI"
-            enabled = true
-            domains = ["pypi.org"]
-            allow_get = true
-
-            [web.repository.github]
-            name = "GitHub"
-            enabled = true
-            domains = ["github.com"]
-            allow_get = true
-        """))
-        diags = validate_guest(guest_valid)
-        assert _has_code(diags, "W005")
-        d = _diag_for(diags, "W005")
-        assert "a.com" in d.message
-        assert "c.com" in d.message
+        errors = _errors(diags)
+        assert len(errors) == 4
+        for field in ["allow_read", "allow_write", "custom_allow", "custom_block"]:
+            assert any(field in diag.message for diag in errors), field
 
 
 # ---------------------------------------------------------------------------
@@ -1070,14 +1013,11 @@ class TestW007:
     def test_broad_domain_in_web_security(self, guest_valid):
         (guest_valid / "config" / "security" / "web.toml").write_text(textwrap.dedent("""\
             [web]
-            allow_read = false
-            allow_write = false
-            custom_allow = ["*.com"]
 
             [web.search.google]
             name = "Google"
             enabled = true
-            domains = ["google.com"]
+            domains = ["*.com"]
             allow_get = true
 
             [web.registry.pypi]
@@ -1199,76 +1139,6 @@ class TestW010:
     def test_path_has_essentials_ok(self, guest_valid):
         diags = validate_guest(guest_valid)
         assert not _has_code(diags, "W010")
-
-
-# ---------------------------------------------------------------------------
-# W011: Wide-open network policy
-# ---------------------------------------------------------------------------
-
-
-class TestW011:
-    def test_fully_open_policy(self, guest_valid):
-        (guest_valid / "config" / "security" / "web.toml").write_text(textwrap.dedent("""\
-            [web]
-            allow_read = true
-            allow_write = true
-            custom_allow = []
-            custom_block = []
-
-            [web.search.google]
-            name = "Google"
-            enabled = true
-            domains = ["google.com"]
-            allow_get = true
-
-            [web.registry.pypi]
-            name = "PyPI"
-            enabled = true
-            domains = ["pypi.org"]
-            allow_get = true
-
-            [web.repository.github]
-            name = "GitHub"
-            enabled = true
-            domains = ["github.com"]
-            allow_get = true
-        """))
-        diags = validate_guest(guest_valid)
-        assert _has_code(diags, "W011")
-
-    def test_read_only_not_flagged(self, guest_valid):
-        """allow_read=true alone (no allow_write) is fine."""
-        diags = validate_guest(guest_valid)
-        assert not _has_code(diags, "W011")
-
-    def test_open_with_block_list_not_flagged(self, guest_valid):
-        """allow_read+allow_write with a block list is intentional, no warning."""
-        (guest_valid / "config" / "security" / "web.toml").write_text(textwrap.dedent("""\
-            [web]
-            allow_read = true
-            allow_write = true
-            custom_block = ["evil.com"]
-
-            [web.search.google]
-            name = "Google"
-            enabled = true
-            domains = ["google.com"]
-            allow_get = true
-
-            [web.registry.pypi]
-            name = "PyPI"
-            enabled = true
-            domains = ["pypi.org"]
-            allow_get = true
-
-            [web.repository.github]
-            name = "GitHub"
-            enabled = true
-            domains = ["github.com"]
-            allow_get = true
-        """))
-        diags = validate_guest(guest_valid)
-        assert not _has_code(diags, "W011")
 
 
 # ---------------------------------------------------------------------------

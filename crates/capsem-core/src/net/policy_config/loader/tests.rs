@@ -165,7 +165,7 @@ sigma = "profiles/base/detection.yaml"
 }
 
 #[test]
-fn migrate_setting_ids_renames_old_keys() {
+fn migrate_setting_ids_does_not_resurrect_retired_web_decision_keys() {
     let mut file = SettingsFile::default();
     file.settings.insert(
         "web.defaults.allow_read".into(),
@@ -175,35 +175,27 @@ fn migrate_setting_ids_renames_old_keys() {
         },
     );
     migrate_setting_ids(&mut file);
-    assert!(!file.settings.contains_key("web.defaults.allow_read"));
-    assert!(file.settings.contains_key("security.web.allow_read"));
+    assert!(file.settings.contains_key("web.defaults.allow_read"));
+    assert!(!file.settings.contains_key("security.web.allow_read"));
 }
 
 #[test]
-fn migrate_setting_ids_does_not_clobber_new() {
+fn migrate_setting_ids_still_renames_live_service_keys() {
     let mut file = SettingsFile::default();
-    // Both old and new key exist -- new key should be preserved
     file.settings.insert(
-        "web.defaults.allow_read".into(),
+        "web.search.google.allow".into(),
         crate::net::policy_config::types::SettingEntry {
             value: SettingValue::Bool(false),
             modified: "old".into(),
         },
     );
-    file.settings.insert(
-        "security.web.allow_read".into(),
-        crate::net::policy_config::types::SettingEntry {
-            value: SettingValue::Bool(true),
-            modified: "new".into(),
-        },
-    );
     migrate_setting_ids(&mut file);
-    // New key retains its value
-    let val = file.settings["security.web.allow_read"]
+    assert!(!file.settings.contains_key("web.search.google.allow"));
+    let val = file.settings["security.services.search.google.allow"]
         .value
         .as_bool()
         .unwrap();
-    assert!(val); // true from the new key, not false from old
+    assert!(!val);
 }
 
 #[test]

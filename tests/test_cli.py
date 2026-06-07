@@ -90,10 +90,6 @@ enabled = true
 
 WEB_SECURITY_TOML = """\
 [web]
-allow_read = false
-allow_write = false
-custom_allow = []
-custom_block = []
 
 [web.search.google]
 name = "Google"

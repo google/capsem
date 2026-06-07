@@ -467,18 +467,6 @@ def _validate_warnings(
                 file=f"config/packages/{key}.toml",
             ))
 
-    # W005: Overlapping allow and block lists
-    allow_set = set(ws.custom_allow)
-    block_set = set(ws.custom_block)
-    overlap = allow_set & block_set
-    if overlap:
-        diags.append(Diagnostic(
-            code="W005",
-            severity=Severity.WARNING,
-            message=f"Domains in both allow and block lists: {', '.join(sorted(overlap))}",
-            file="config/security/web.toml",
-        ))
-
     # W006: Placeholder file content
     for key, prov in config.ai_providers.items():
         for file_key, file_cfg in prov.files.items():
@@ -514,15 +502,6 @@ def _validate_warnings(
             severity=Severity.WARNING,
             message="PATH is missing /usr/bin and /bin",
             file="config/vm/environment.toml",
-        ))
-
-    # W011: Wide-open network policy (both allow_read and allow_write, no block list)
-    if ws.allow_read and ws.allow_write and not ws.custom_block:
-        diags.append(Diagnostic(
-            code="W011",
-            severity=Severity.WARNING,
-            message="Network policy is wide open: allow_read and allow_write both true with no block list",
-            file="config/security/web.toml",
         ))
 
     # W012: Unknown rust_target (not a known musl target)
@@ -567,16 +546,7 @@ def _check_broad_wildcards(config: GuestImageConfig, diags: list[Diagnostic]) ->
                     message=f"Overly broad wildcard domain '{domain}' in ai.{key}",
                     file=f"config/ai/{key}.toml",
                 ))
-    # Web security custom_allow
     ws = config.web_security
-    for domain in ws.custom_allow:
-        if _is_broad_wildcard(domain):
-            diags.append(Diagnostic(
-                code="W007",
-                severity=Severity.WARNING,
-                message=f"Overly broad wildcard domain '{domain}' in custom_allow",
-                file="config/security/web.toml",
-            ))
     # Web security service domains
     for section_name, section in [("search", ws.search), ("registry", ws.registry), ("repository", ws.repository)]:
         for key, svc in section.items():

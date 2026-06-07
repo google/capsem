@@ -82,15 +82,21 @@ fn corp_override_bool() {
 }
 
 #[test]
-fn corp_override_bool_web_defaults() {
-    let user = file_with(vec![("security.web.allow_read", SettingValue::Bool(true))]);
-    let corp = file_with(vec![("security.web.allow_read", SettingValue::Bool(false))]);
+fn corp_override_network_mechanics_ports() {
+    let user = file_with(vec![(
+        "security.web.http_upstream_ports",
+        SettingValue::IntList(vec![80, 11434]),
+    )]);
+    let corp = file_with(vec![(
+        "security.web.http_upstream_ports",
+        SettingValue::IntList(vec![80]),
+    )]);
     let resolved = resolve_settings(&user, &corp);
     let s = resolved
         .iter()
-        .find(|s| s.id == "security.web.allow_read")
+        .find(|s| s.id == "security.web.http_upstream_ports")
         .unwrap();
-    assert_eq!(s.effective_value, SettingValue::Bool(false));
+    assert_eq!(s.effective_value, SettingValue::IntList(vec![80]));
     assert_eq!(s.source, PolicySource::Corp);
 }
 
@@ -242,15 +248,21 @@ fn user_cannot_enable_blocked_provider() {
 }
 
 #[test]
-fn user_cannot_change_corp_web_defaults() {
-    let user = file_with(vec![("security.web.allow_read", SettingValue::Bool(true))]);
-    let corp = file_with(vec![("security.web.allow_read", SettingValue::Bool(false))]);
+fn user_cannot_change_corp_network_mechanics_ports() {
+    let user = file_with(vec![(
+        "security.web.http_upstream_ports",
+        SettingValue::IntList(vec![80, 11434]),
+    )]);
+    let corp = file_with(vec![(
+        "security.web.http_upstream_ports",
+        SettingValue::IntList(vec![80]),
+    )]);
     let resolved = resolve_settings(&user, &corp);
     let s = resolved
         .iter()
-        .find(|s| s.id == "security.web.allow_read")
+        .find(|s| s.id == "security.web.http_upstream_ports")
         .unwrap();
-    assert_eq!(s.effective_value, SettingValue::Bool(false));
+    assert_eq!(s.effective_value, SettingValue::IntList(vec![80]));
     assert!(s.corp_locked);
 }
 
@@ -399,17 +411,14 @@ fn default_registries_allowed() {
 fn default_web_session_appearance() {
     let resolved = resolve_settings(&empty_file(), &empty_file());
 
-    let ar = resolved
+    let ports = resolved
         .iter()
-        .find(|s| s.id == "security.web.allow_read")
+        .find(|s| s.id == "security.web.http_upstream_ports")
         .unwrap();
-    assert_eq!(ar.effective_value, SettingValue::Bool(false));
-
-    let aw = resolved
-        .iter()
-        .find(|s| s.id == "security.web.allow_write")
-        .unwrap();
-    assert_eq!(aw.effective_value, SettingValue::Bool(false));
+    assert_eq!(
+        ports.effective_value,
+        SettingValue::IntList(vec![80, 11434])
+    );
 
     let lb = resolved
         .iter()
@@ -496,18 +505,13 @@ fn ai_providers_have_domains_settings() {
 }
 
 #[test]
-fn web_defaults_are_bool_settings() {
+fn web_mechanics_ports_are_int_list_setting() {
     let defs = setting_definitions();
-    let ar = defs
+    let ports = defs
         .iter()
-        .find(|d| d.id == "security.web.allow_read")
+        .find(|d| d.id == "security.web.http_upstream_ports")
         .unwrap();
-    assert_eq!(ar.setting_type, SettingType::Bool);
-    let aw = defs
-        .iter()
-        .find(|d| d.id == "security.web.allow_write")
-        .unwrap();
-    assert_eq!(aw.setting_type, SettingType::Bool);
+    assert_eq!(ports.setting_type, SettingType::IntList);
 }
 
 // -----------------------------------------------------------------------
@@ -751,7 +755,7 @@ fn parse_toml_mixed_value_types() {
 [settings]
 "vm.resources.log_bodies" = { value = true, modified = "2026-01-01T00:00:00Z" }
 "vm.resources.max_body_capture" = { value = 8192, modified = "2026-01-01T00:00:00Z" }
-"security.web.allow_read" = { value = false, modified = "2026-01-01T00:00:00Z" }
+"security.web.http_upstream_ports" = { value = [80, 11434], modified = "2026-01-01T00:00:00Z" }
 "appearance.font_size" = { value = 16, modified = "2026-01-01T00:00:00Z" }
 "#;
     let file: SettingsFile = toml::from_str(toml_str).expect("should parse mixed types");
@@ -764,8 +768,8 @@ fn parse_toml_mixed_value_types() {
         SettingValue::Number(8192)
     );
     assert_eq!(
-        file.settings["security.web.allow_read"].value,
-        SettingValue::Bool(false)
+        file.settings["security.web.http_upstream_ports"].value,
+        SettingValue::IntList(vec![80, 11434])
     );
     assert_eq!(
         file.settings["appearance.font_size"].value,
@@ -2555,15 +2559,15 @@ fn toml_registry_meta_fields() {
         "github toggle should have domain metadata"
     );
 
-    // security.web.allow_read should be a bool
-    let ar = defs
+    // security.web.http_upstream_ports should be network mechanics, not a decision toggle.
+    let ports = defs
         .iter()
-        .find(|d| d.id == "security.web.allow_read")
+        .find(|d| d.id == "security.web.http_upstream_ports")
         .unwrap();
     assert_eq!(
-        ar.setting_type,
-        SettingType::Bool,
-        "allow_read should be bool"
+        ports.setting_type,
+        SettingType::IntList,
+        "http_upstream_ports should be an int list"
     );
 
     // API key settings should have env_vars
@@ -3328,7 +3332,7 @@ fn settings_tree_groups_have_expected_names() {
     for expected in &[
         "AI Providers",
         "Security",
-        "Web",
+        "Network Mechanics",
         "Services",
         "Search Engines",
         "Package Registries",
@@ -3656,6 +3660,25 @@ fn batch_update_rejects_unknown_setting_id() {
         let result = loader::batch_update_settings(&changes);
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("unknown setting"));
+    });
+}
+
+#[test]
+fn batch_update_rejects_retired_web_decision_setting_ids() {
+    with_temp_configs(vec![], vec![], |_, _| {
+        let mut changes = HashMap::new();
+        for retired_id in [
+            "security.web.allow_read",
+            "security.web.allow_write",
+            "security.web.custom_allow",
+            "security.web.custom_block",
+        ] {
+            changes.insert(retired_id.to_string(), SettingValue::Bool(true));
+            let result = loader::batch_update_settings(&changes);
+            assert!(result.is_err(), "{retired_id} should be rejected");
+            assert!(result.unwrap_err().contains("unknown setting"));
+            changes.clear();
+        }
     });
 }
 
@@ -4092,14 +4115,8 @@ fn preset_definitions_load_correctly() {
 fn preset_medium_has_correct_settings() {
     let presets = security_presets();
     let medium = presets.iter().find(|p| p.id == "medium").unwrap();
-    assert_eq!(
-        medium.settings["security.web.allow_read"],
-        SettingValue::Bool(true)
-    );
-    assert_eq!(
-        medium.settings["security.web.allow_write"],
-        SettingValue::Bool(false)
-    );
+    assert!(!medium.settings.contains_key("security.web.allow_read"));
+    assert!(!medium.settings.contains_key("security.web.allow_write"));
     assert_eq!(
         medium.settings["security.services.search.google.allow"],
         SettingValue::Bool(true)
@@ -4118,14 +4135,8 @@ fn preset_medium_has_correct_settings() {
 fn preset_high_has_correct_settings() {
     let presets = security_presets();
     let high = presets.iter().find(|p| p.id == "high").unwrap();
-    assert_eq!(
-        high.settings["security.web.allow_read"],
-        SettingValue::Bool(false)
-    );
-    assert_eq!(
-        high.settings["security.web.allow_write"],
-        SettingValue::Bool(false)
-    );
+    assert!(!high.settings.contains_key("security.web.allow_read"));
+    assert!(!high.settings.contains_key("security.web.allow_write"));
     assert_eq!(
         high.settings["security.services.search.google.allow"],
         SettingValue::Bool(true)
@@ -4168,12 +4179,12 @@ fn apply_preset_medium_writes_user_toml() {
 
     let loaded = load_settings_file(&user_path).unwrap();
     assert_eq!(
-        loaded.settings["security.web.allow_read"].value,
+        loaded.settings["security.services.search.google.allow"].value,
         SettingValue::Bool(true)
     );
     assert_eq!(
-        loaded.settings["security.web.allow_write"].value,
-        SettingValue::Bool(false)
+        loaded.settings["security.services.search.bing.allow"].value,
+        SettingValue::Bool(true)
     );
 }
 
@@ -4188,10 +4199,8 @@ fn apply_preset_high_writes_user_toml() {
     assert!(skipped.is_empty());
 
     let loaded = load_settings_file(&user_path).unwrap();
-    assert_eq!(
-        loaded.settings["security.web.allow_read"].value,
-        SettingValue::Bool(false)
-    );
+    assert!(!loaded.settings.contains_key("security.web.allow_read"));
+    assert!(!loaded.settings.contains_key("security.web.allow_write"));
     assert_eq!(
         loaded.settings["security.services.search.bing.allow"].value,
         SettingValue::Bool(false)
@@ -4204,14 +4213,19 @@ fn apply_preset_skips_corp_locked() {
     let user_path = dir.path().join("user.toml");
     let corp_path = dir.path().join("corp.toml");
     write_settings_file(&user_path, &SettingsFile::default()).unwrap();
-    let corp = file_with(vec![("security.web.allow_read", SettingValue::Bool(false))]);
+    let corp = file_with(vec![(
+        "security.services.search.google.allow",
+        SettingValue::Bool(false),
+    )]);
     write_settings_file(&corp_path, &corp).unwrap();
 
     let skipped = apply_preset_to("medium", &user_path, &corp_path).unwrap();
-    assert!(skipped.contains(&"security.web.allow_read".to_string()));
+    assert!(skipped.contains(&"security.services.search.google.allow".to_string()));
 
     let loaded = load_settings_file(&user_path).unwrap();
-    assert!(!loaded.settings.contains_key("security.web.allow_read"));
+    assert!(!loaded
+        .settings
+        .contains_key("security.services.search.google.allow"));
 }
 
 #[test]
@@ -4243,7 +4257,7 @@ fn apply_preset_does_not_clobber_unrelated_settings() {
         )
     );
     assert_eq!(
-        loaded.settings["security.web.allow_read"].value,
+        loaded.settings["security.services.search.google.allow"].value,
         SettingValue::Bool(true)
     );
 }
@@ -4265,13 +4279,16 @@ fn apply_preset_overwrites_previous_user_values() {
     let dir = tempfile::tempdir().unwrap();
     let user_path = dir.path().join("user.toml");
     let corp_path = dir.path().join("corp.toml");
-    let initial = file_with(vec![("security.web.allow_read", SettingValue::Bool(true))]);
+    let initial = file_with(vec![(
+        "security.services.search.bing.allow",
+        SettingValue::Bool(true),
+    )]);
     write_settings_file(&user_path, &initial).unwrap();
 
     apply_preset_to("high", &user_path, &corp_path).unwrap();
     let loaded = load_settings_file(&user_path).unwrap();
     assert_eq!(
-        loaded.settings["security.web.allow_read"].value,
+        loaded.settings["security.services.search.bing.allow"].value,
         SettingValue::Bool(false)
     );
 }
@@ -4291,20 +4308,14 @@ fn migrate_old_setting_ids() {
     migrate_setting_ids(&mut file);
 
     // Old keys removed
-    assert!(!file.settings.contains_key("web.defaults.allow_read"));
-    assert!(!file.settings.contains_key("web.custom_allow"));
+    assert!(file.settings.contains_key("web.defaults.allow_read"));
+    assert!(file.settings.contains_key("web.custom_allow"));
     assert!(!file.settings.contains_key("registry.npm.allow"));
     assert!(!file.settings.contains_key("web.search.google.allow"));
 
-    // New keys present with same values
-    assert_eq!(
-        file.settings["security.web.allow_read"].value,
-        SettingValue::Bool(true)
-    );
-    assert_eq!(
-        file.settings["security.web.custom_allow"].value,
-        SettingValue::Text("example.com".into())
-    );
+    // Live service keys still migrate; retired web decision keys do not.
+    assert!(!file.settings.contains_key("security.web.allow_read"));
+    assert!(!file.settings.contains_key("security.web.custom_allow"));
     assert_eq!(
         file.settings["security.services.registry.npm.allow"].value,
         SettingValue::Bool(false)
@@ -4319,14 +4330,14 @@ fn migrate_old_setting_ids() {
 fn migrate_does_not_clobber_existing_new_keys() {
     let mut file = SettingsFile::default();
     file.settings.insert(
-        "web.defaults.allow_read".to_string(),
+        "web.search.google.allow".to_string(),
         SettingEntry {
             value: SettingValue::Bool(true),
             modified: now_str(),
         },
     );
     file.settings.insert(
-        "security.web.allow_read".to_string(),
+        "security.services.search.google.allow".to_string(),
         SettingEntry {
             value: SettingValue::Bool(false),
             modified: now_str(),
@@ -4336,10 +4347,10 @@ fn migrate_does_not_clobber_existing_new_keys() {
 
     // New key keeps its value, old key is dropped
     assert_eq!(
-        file.settings["security.web.allow_read"].value,
+        file.settings["security.services.search.google.allow"].value,
         SettingValue::Bool(false)
     );
-    assert!(!file.settings.contains_key("web.defaults.allow_read"));
+    assert!(!file.settings.contains_key("web.search.google.allow"));
 }
 
 // -----------------------------------------------------------------------
@@ -4390,10 +4401,7 @@ fn merged_user_enables_search() {
 
 #[test]
 fn merged_all_policies_populated() {
-    let user = file_with(vec![
-        ("ai.anthropic.allow", SettingValue::Bool(true)),
-        ("security.web.allow_read", SettingValue::Bool(true)),
-    ]);
+    let user = file_with(vec![("ai.anthropic.allow", SettingValue::Bool(true))]);
     let m = MergedPolicies::from_files(&user, &empty_file());
     assert!(!m.security_rules.rules().is_empty());
     // Guest config has env vars (provider toggle injects CAPSEM_ANTHROPIC_ALLOWED)
@@ -4431,7 +4439,7 @@ fn preset_high_merged_network_blocks_web() {
 }
 
 #[test]
-fn preset_medium_merged_network_allows_read() {
+fn preset_medium_merged_keeps_default_http_rule() {
     let m = apply_and_merge("medium");
     assert!(has_security_rule(
         &m,
@@ -4450,14 +4458,14 @@ fn preset_switch_medium_to_high() {
     apply_preset_to("medium", &user_path, &corp_path).unwrap();
     let user = load_settings_file(&user_path).unwrap();
     assert_eq!(
-        user.settings["security.web.allow_read"].value,
+        user.settings["security.services.search.bing.allow"].value,
         SettingValue::Bool(true)
     );
 
     apply_preset_to("high", &user_path, &corp_path).unwrap();
     let user = load_settings_file(&user_path).unwrap();
     assert_eq!(
-        user.settings["security.web.allow_read"].value,
+        user.settings["security.services.search.bing.allow"].value,
         SettingValue::Bool(false)
     );
 }
@@ -4473,14 +4481,14 @@ fn preset_switch_high_to_medium() {
     apply_preset_to("high", &user_path, &corp_path).unwrap();
     let user = load_settings_file(&user_path).unwrap();
     assert_eq!(
-        user.settings["security.web.allow_read"].value,
+        user.settings["security.services.search.bing.allow"].value,
         SettingValue::Bool(false)
     );
 
     apply_preset_to("medium", &user_path, &corp_path).unwrap();
     let user = load_settings_file(&user_path).unwrap();
     assert_eq!(
-        user.settings["security.web.allow_read"].value,
+        user.settings["security.services.search.bing.allow"].value,
         SettingValue::Bool(true)
     );
 }
@@ -4530,41 +4538,47 @@ fn corp_sets_api_key() {
 }
 
 #[test]
-fn corp_sets_custom_allow_list() {
+fn corp_sets_network_mechanics_ports() {
     let user = empty_file();
     let corp = file_with(vec![(
-        "security.web.custom_allow",
-        SettingValue::Text("internal.corp.com".into()),
+        "security.web.http_upstream_ports",
+        SettingValue::IntList(vec![80]),
     )]);
     let resolved = resolve_settings(&user, &corp);
-    let custom_allow = resolved
+    let ports = resolved
         .iter()
-        .find(|setting| setting.id == "security.web.custom_allow")
+        .find(|setting| setting.id == "security.web.http_upstream_ports")
         .unwrap();
-    assert_eq!(
-        custom_allow.effective_value,
-        SettingValue::Text("internal.corp.com".into())
-    );
-    assert_eq!(custom_allow.source, PolicySource::Corp);
+    assert_eq!(ports.effective_value, SettingValue::IntList(vec![80]));
+    assert_eq!(ports.source, PolicySource::Corp);
 }
 
 #[test]
-fn corp_sets_custom_block_list() {
-    let user = file_with(vec![("security.web.allow_read", SettingValue::Bool(true))]);
-    let corp = file_with(vec![(
+fn retired_web_decision_settings_are_not_resolved() {
+    let user = file_with(vec![
+        ("security.web.allow_read", SettingValue::Bool(true)),
+        ("security.web.allow_write", SettingValue::Bool(true)),
+        (
+            "security.web.custom_allow",
+            SettingValue::Text("internal.corp.com".into()),
+        ),
+        (
+            "security.web.custom_block",
+            SettingValue::Text("evil.com".into()),
+        ),
+    ]);
+    let resolved = resolve_settings(&user, &empty_file());
+    for retired_id in [
+        "security.web.allow_read",
+        "security.web.allow_write",
+        "security.web.custom_allow",
         "security.web.custom_block",
-        SettingValue::Text("evil.com".into()),
-    )]);
-    let resolved = resolve_settings(&user, &corp);
-    let custom_block = resolved
-        .iter()
-        .find(|setting| setting.id == "security.web.custom_block")
-        .unwrap();
-    assert_eq!(
-        custom_block.effective_value,
-        SettingValue::Text("evil.com".into())
-    );
-    assert_eq!(custom_block.source, PolicySource::Corp);
+    ] {
+        assert!(
+            resolved.iter().all(|setting| setting.id != retired_id),
+            "{retired_id} must not be a resolved setting"
+        );
+    }
 }
 
 #[test]
@@ -4573,22 +4587,25 @@ fn corp_setting_persists_after_preset() {
     let user_path = dir.path().join("user.toml");
     let corp_path = dir.path().join("corp.toml");
     write_settings_file(&user_path, &SettingsFile::default()).unwrap();
-    let corp = file_with(vec![("security.web.allow_read", SettingValue::Bool(true))]);
+    let corp = file_with(vec![(
+        "security.services.search.bing.allow",
+        SettingValue::Bool(true),
+    )]);
     write_settings_file(&corp_path, &corp).unwrap();
 
-    // High preset wants allow_read=false, but corp locks it to true
+    // High preset wants Bing false, but corp locks it to true.
     let skipped = apply_preset_to("high", &user_path, &corp_path).unwrap();
-    assert!(skipped.contains(&"security.web.allow_read".to_string()));
+    assert!(skipped.contains(&"security.services.search.bing.allow".to_string()));
 
     let user = load_settings_file(&user_path).unwrap();
     let corp = load_settings_file(&corp_path).unwrap();
     let resolved = resolve_settings(&user, &corp);
-    let allow_read = resolved
+    let bing = resolved
         .iter()
-        .find(|setting| setting.id == "security.web.allow_read")
+        .find(|setting| setting.id == "security.services.search.bing.allow")
         .unwrap();
-    assert_eq!(allow_read.effective_value, SettingValue::Bool(true));
-    assert_eq!(allow_read.source, PolicySource::Corp);
+    assert_eq!(bing.effective_value, SettingValue::Bool(true));
+    assert_eq!(bing.source, PolicySource::Corp);
 }
 
 #[test]
@@ -4597,22 +4614,23 @@ fn corp_locks_multiple_all_skipped() {
     let user_path = dir.path().join("user.toml");
     let corp_path = dir.path().join("corp.toml");
     write_settings_file(&user_path, &SettingsFile::default()).unwrap();
-    // Corp locks 3 of the 5 settings in the high preset
+    // Corp locks two live settings in the high preset.
     let corp = file_with(vec![
-        ("security.web.allow_read", SettingValue::Bool(true)),
-        ("security.web.allow_write", SettingValue::Bool(true)),
         (
             "security.services.search.google.allow",
             SettingValue::Bool(false),
+        ),
+        (
+            "security.services.search.bing.allow",
+            SettingValue::Bool(true),
         ),
     ]);
     write_settings_file(&corp_path, &corp).unwrap();
 
     let skipped = apply_preset_to("high", &user_path, &corp_path).unwrap();
-    assert_eq!(skipped.len(), 3);
-    assert!(skipped.contains(&"security.web.allow_read".to_string()));
-    assert!(skipped.contains(&"security.web.allow_write".to_string()));
+    assert_eq!(skipped.len(), 2);
     assert!(skipped.contains(&"security.services.search.google.allow".to_string()));
+    assert!(skipped.contains(&"security.services.search.bing.allow".to_string()));
 }
 
 #[test]
@@ -4761,7 +4779,7 @@ fn merged_wrong_type_for_number_setting() {
 }
 
 #[test]
-fn merged_empty_domain_list() {
+fn merged_retired_custom_allow_setting_is_ignored() {
     let user = file_with(vec![(
         "security.web.custom_allow",
         SettingValue::Text("".into()),

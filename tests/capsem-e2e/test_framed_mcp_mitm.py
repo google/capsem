@@ -633,17 +633,18 @@ def test_framed_guest_mcp_builtin_http_policy_writes_mcp_and_net_rows():
     svc = _start_service()
     vm = None
     try:
-        saved = svc.client().post(
-            "/settings",
-            {
-                "security.web.allow_read": False,
-                "security.web.allow_write": False,
-                "security.web.custom_allow": "example.com",
-                "security.web.custom_block": "blocked-builtin-http.invalid",
-            },
-            timeout=15,
+        config_path = svc.tmp_dir / "user.toml"
+        config_path.write_text(
+            """
+[profiles.rules.block_builtin_http]
+name = "block_builtin_http"
+action = "block"
+priority = 10
+match = 'http.host == "blocked-builtin-http.invalid"'
+reason = "test blocks builtin HTTP through security rules"
+""".lstrip(),
+            encoding="utf-8",
         )
-        assert "error" not in saved, saved
         reload_response = svc.client().post("/reload-config", {}, timeout=15)
         assert reload_response["success"] is True
 

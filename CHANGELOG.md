@@ -103,6 +103,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   legacy domain bridge. HTTP request, model request/response, framed MCP
   request/response, MCP built-in HTTP tools, and DNS query blocking now enforce
   through the canonical `SecurityEvent` + CEL rule path before dispatch.
+- Removed retired web decision settings (`security.web.allow_read`,
+  `security.web.allow_write`, `security.web.custom_allow`, and
+  `security.web.custom_block`) from defaults, presets, builder schemas,
+  frontend fixtures, guest diagnostics, and integration fixtures. Network
+  settings now expose only mechanics such as `security.web.http_upstream_ports`;
+  HTTP/DNS allow/block behavior belongs to profile security rules.
 - Routed explicit file import/export/read/write boundaries through the
   process-owned security-event emitter so `fs_events` and
   `security_rule_events` share the same primary event id without a service-side

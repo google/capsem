@@ -138,10 +138,6 @@ def _write_local_benchmark_policy(capsem_home, base_url):
     capsem_home.mkdir(parents=True, exist_ok=True)
     (capsem_home / "user.toml").write_text(
         f"""
-[settings."security.web.custom_allow"]
-value = "127.0.0.1"
-modified = "2026-06-06T00:00:00Z"
-
 [settings."security.web.http_upstream_ports"]
 value = [80, 11434, {port}]
 modified = "2026-06-06T00:00:00Z"

@@ -579,10 +579,7 @@ class TestWebServiceConfig:
 class TestWebSecurityConfig:
     def test_defaults(self):
         w = WebSecurityConfig()
-        assert w.allow_read is False
-        assert w.allow_write is False
-        assert w.custom_allow == []
-        assert w.custom_block == []
+        assert w.http_upstream_ports == [80, 11434]
         assert w.search == {}
         assert w.registry == {}
         assert w.repository == {}
@@ -601,18 +598,18 @@ class TestWebSecurityConfig:
         assert "google" in w.search
         assert "pypi" in w.registry
 
-    def test_custom_allow_block(self):
-        w = WebSecurityConfig(
-            custom_allow=["elie.net", "*.elie.net"],
-            custom_block=["evil.com"],
-        )
-        assert len(w.custom_allow) == 2
-        assert w.custom_block == ["evil.com"]
+    def test_retired_decision_fields_forbidden(self):
+        with pytest.raises(ValidationError):
+            WebSecurityConfig(
+                allow_read=True,
+                allow_write=True,
+                custom_allow=["elie.net", "*.elie.net"],
+                custom_block=["evil.com"],
+            )
 
     def test_roundtrip(self):
         w = WebSecurityConfig(
-            allow_read=True,
-            custom_allow=["a.com"],
+            http_upstream_ports=[80],
             search={"g": WebServiceConfig(name="G", domains=["g.com"])},
         )
         data = w.model_dump()
@@ -738,7 +735,7 @@ class TestGuestImageConfig:
         assert g.ai_providers == {}
         assert g.package_sets == {}
         assert g.mcp_servers == {}
-        assert g.web_security.allow_read is False
+        assert g.web_security.http_upstream_ports == [80, 11434]
         assert g.vm_resources.cpu_count == 4
         assert g.vm_environment.shell.term == "xterm-256color"
 
@@ -751,7 +748,7 @@ class TestGuestImageConfig:
                 install_cmd="uv pip install", packages=["pytest"],
             )},
             mcp_servers={"capsem": _mcp_stdio(name="Capsem")},
-            web_security=WebSecurityConfig(allow_read=True),
+            web_security=WebSecurityConfig(http_upstream_ports=[80]),
             vm_resources=VmResourcesConfig(cpu_count=8),
             vm_environment=VmEnvironmentConfig(
                 shell=ShellConfig(term="screen"),
@@ -760,7 +757,7 @@ class TestGuestImageConfig:
         assert "google" in g.ai_providers
         assert "python" in g.package_sets
         assert "capsem" in g.mcp_servers
-        assert g.web_security.allow_read is True
+        assert g.web_security.http_upstream_ports == [80]
         assert g.vm_resources.cpu_count == 8
         assert g.vm_environment.shell.term == "screen"
 

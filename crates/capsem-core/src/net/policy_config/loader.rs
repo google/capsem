@@ -190,10 +190,6 @@ pub fn load_referenced_sigma_rules(
 
 /// Migration map: old setting IDs -> new setting IDs.
 const SETTING_ID_MIGRATIONS: &[(&str, &str)] = &[
-    ("web.defaults.allow_read", "security.web.allow_read"),
-    ("web.defaults.allow_write", "security.web.allow_write"),
-    ("web.custom_allow", "security.web.custom_allow"),
-    ("web.custom_block", "security.web.custom_block"),
     (
         "web.search.google.allow",
         "security.services.search.google.allow",
