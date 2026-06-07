@@ -23,7 +23,7 @@ def test_session_dir_removed_after_delete(cleanup_env):
     sessions_dir = cleanup_env.tmp_dir / "sessions" / name
     # Session dir may or may not exist depending on implementation
 
-    client.delete(f"/delete/{name}")
+    client.delete(f"/vms/{name}/delete")
 
     import time
     time.sleep(2)

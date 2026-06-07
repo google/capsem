@@ -24,7 +24,7 @@ def test_socket_removed_after_delete(cleanup_env):
     instances_dir = cleanup_env.tmp_dir / "instances"
     instance_sock = instances_dir / f"{name}.sock" if instances_dir.exists() else None
 
-    client.delete(f"/delete/{name}")
+    client.delete(f"/vms/{name}/delete")
 
     import time
     time.sleep(2)

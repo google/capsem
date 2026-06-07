@@ -91,7 +91,7 @@ class TestGuestShutdownPersistent:
         assert stopped, f"Persistent VM {name} did not reach Stopped after guest shutdown"
 
         # Resume and verify file survived
-        resume_resp = client.post(f"/resume/{name}", {})
+        resume_resp = client.post(f"/vms/{name}/resume", {})
         assert resume_resp is not None
         resumed_id = resume_resp.get("id", name)
         assert wait_exec_ready(client, resumed_id, timeout=EXEC_READY_TIMEOUT), \
@@ -103,7 +103,7 @@ class TestGuestShutdownPersistent:
         assert marker in read_resp["content"], \
             f"File did not survive guest shutdown + resume: {read_resp}"
 
-        client.delete(f"/delete/{resumed_id}")
+        client.delete(f"/vms/{resumed_id}/delete")
 
 
 class TestVmIdentity:
@@ -121,7 +121,7 @@ class TestVmIdentity:
             assert vm_id, "CAPSEM_VM_ID is empty"
             assert len(vm_id) > 0
         finally:
-            client.delete(f"/delete/{name}")
+            client.delete(f"/vms/{name}/delete")
 
     def test_capsem_vm_name_env_var(self, client):
         """CAPSEM_VM_NAME must be set to the VM name for persistent VMs."""
@@ -136,7 +136,7 @@ class TestVmIdentity:
             assert vm_name_val == name, \
                 f"CAPSEM_VM_NAME={vm_name_val!r}, expected {name!r}"
         finally:
-            client.delete(f"/delete/{name}")
+            client.delete(f"/vms/{name}/delete")
 
     def test_hostname_reflects_vm_name(self, client):
         """Hostname inside the VM must match the VM name."""
@@ -151,7 +151,7 @@ class TestVmIdentity:
             assert hostname == name, \
                 f"hostname={hostname!r}, expected {name!r}"
         finally:
-            client.delete(f"/delete/{name}")
+            client.delete(f"/vms/{name}/delete")
 
     def test_ephemeral_vm_has_id_as_hostname(self, client):
         """Ephemeral VMs should get CAPSEM_VM_ID as hostname."""
@@ -167,7 +167,7 @@ class TestVmIdentity:
             assert hostname == capsem_id, \
                 f"ephemeral hostname={hostname!r} != CAPSEM_VM_ID={capsem_id!r}"
         finally:
-            client.delete(f"/delete/{vm_id}")
+            client.delete(f"/vms/{vm_id}/delete")
 
 
 class TestStopResumeE2E:
@@ -190,7 +190,7 @@ class TestStopResumeE2E:
         client.post(f"/stop/{name}", {})
 
         # Resume
-        resume_resp = client.post(f"/resume/{name}", {})
+        resume_resp = client.post(f"/vms/{name}/resume", {})
         assert resume_resp is not None
         resumed_id = resume_resp.get("id", name)
         assert wait_exec_ready(client, resumed_id, timeout=EXEC_READY_TIMEOUT)
@@ -200,7 +200,7 @@ class TestStopResumeE2E:
         assert marker in str(read_resp), \
             f"File did not survive stop + resume: {read_resp}"
 
-        client.delete(f"/delete/{resumed_id}")
+        client.delete(f"/vms/{resumed_id}/delete")
 
     def test_env_survives_stop_resume(self, client):
         """E2E: create with env -> stop -> resume -> verify env -> delete."""
@@ -222,7 +222,7 @@ class TestStopResumeE2E:
         client.post(f"/stop/{name}", {})
 
         # Resume
-        resume_resp = client.post(f"/resume/{name}", {})
+        resume_resp = client.post(f"/vms/{name}/resume", {})
         assert resume_resp is not None
         resumed_id = resume_resp.get("id", name)
         assert wait_exec_ready(client, resumed_id, timeout=EXEC_READY_TIMEOUT)
@@ -232,7 +232,7 @@ class TestStopResumeE2E:
         assert env_val in resp2["stdout"], \
             f"{env_key} did not survive stop + resume: {resp2['stdout']}"
 
-        client.delete(f"/delete/{resumed_id}")
+        client.delete(f"/vms/{resumed_id}/delete")
 
 
 class TestSuspendResume:
@@ -254,7 +254,7 @@ class TestSuspendResume:
         })
 
         # Suspend via service API
-        suspend_resp = client.post(f"/suspend/{name}", {}, timeout=EXEC_READY_TIMEOUT)
+        suspend_resp = client.post(f"/vms/{name}/pause", {}, timeout=EXEC_READY_TIMEOUT)
         assert suspend_resp is not None and suspend_resp.get("success") is True, \
             f"Suspend failed: {suspend_resp}"
 
@@ -265,7 +265,7 @@ class TestSuspendResume:
         assert vm["status"] == "Suspended", f"Expected Suspended, got {vm['status']}"
 
         # Resume (warm restore)
-        resume_resp = client.post(f"/resume/{name}", {})
+        resume_resp = client.post(f"/vms/{name}/resume", {})
         assert resume_resp is not None
         resumed_id = resume_resp.get("id", name)
         assert wait_exec_ready(client, resumed_id, timeout=EXEC_READY_TIMEOUT), \
@@ -276,7 +276,7 @@ class TestSuspendResume:
         assert marker in str(read_resp), \
             f"File did not survive suspend + resume: {read_resp}"
 
-        client.delete(f"/delete/{resumed_id}")
+        client.delete(f"/vms/{resumed_id}/delete")
 
     def test_suspend_ephemeral_rejected(self, client):
         """Suspending an ephemeral VM must fail."""
@@ -284,10 +284,10 @@ class TestSuspendResume:
         vm_id = resp["id"]
         try:
             assert wait_exec_ready(client, vm_id, timeout=EXEC_READY_TIMEOUT)
-            suspend_resp = client.post(f"/suspend/{vm_id}", {})
+            suspend_resp = client.post(f"/vms/{vm_id}/pause", {})
             # Should fail (400 or error in response)
             assert suspend_resp is None or "error" in str(suspend_resp).lower() \
                 or "cannot" in str(suspend_resp).lower(), \
                 f"Expected error for ephemeral suspend, got: {suspend_resp}"
         finally:
-            client.delete(f"/delete/{vm_id}")
+            client.delete(f"/vms/{vm_id}/delete")

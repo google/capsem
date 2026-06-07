@@ -93,7 +93,7 @@ def _run_lifecycle(client):
     assert resp is not None and "ok" in resp.get("stdout", "")
 
     t0 = time.monotonic()
-    client.delete(f"/delete/{name}")
+    client.delete(f"/vms/{name}/delete")
     delete_ms = (time.monotonic() - t0) * 1000
 
     return {
@@ -134,7 +134,7 @@ def _run_fork_benchmark(client):
 
         # Fork -- time it
         t0 = time.monotonic()
-        fork_resp = client.post(f"/fork/{src}", {"name": img})
+        fork_resp = client.post(f"/vms/{src}/fork", {"name": img})
         fork_ms = (time.monotonic() - t0) * 1000
 
         size_bytes = fork_resp.get("size_bytes", 0)
@@ -173,7 +173,7 @@ def _run_fork_benchmark(client):
     finally:
         for v in [dst, src, img]:
             try:
-                client.delete(f"/delete/{v}")
+                client.delete(f"/vms/{v}/delete")
             except Exception:
                 pass
 

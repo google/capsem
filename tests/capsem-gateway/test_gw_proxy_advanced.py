@@ -62,8 +62,8 @@ class TestProxyEndpointCoverage:
         assert resp is not None
 
     def test_post_persist(self, gw_client):
-        """POST /persist/{id} converts ephemeral to persistent."""
-        resp = gw_client.post("/persist/vm-001", {"name": "saved"})
+        """POST /vms/{id}/save converts ephemeral to persistent."""
+        resp = gw_client.post("/vms/vm-001/save", {"name": "saved"})
         assert resp is not None
 
     def test_post_purge(self, gw_client):
@@ -78,13 +78,13 @@ class TestProxyEndpointCoverage:
         assert "stdout" in resp
 
     def test_post_resume(self, gw_client):
-        """POST /resume/{name} resumes a persistent VM."""
-        resp = gw_client.post("/resume/dev", {})
+        """POST /vms/{id}/resume resumes a persistent VM."""
+        resp = gw_client.post("/vms/dev/resume", {})
         assert resp is not None
 
     def test_post_fork(self, gw_client):
-        """POST /fork/{id} creates a fork image."""
-        resp = gw_client.post("/fork/vm-001", {"name": "snapshot1"})
+        """POST /vms/{id}/fork creates a fork image."""
+        resp = gw_client.post("/vms/vm-001/fork", {"name": "snapshot1"})
         assert resp is not None
         assert resp.get("name") == "snapshot1"
 
@@ -95,8 +95,8 @@ class TestProxyEndpointCoverage:
         assert "logs" in resp
 
     def test_delete_vm(self, gw_client):
-        """DELETE /delete/{id} destroys a VM."""
-        resp = gw_client.delete("/delete/vm-001")
+        """DELETE /vms/{id}/delete destroys a VM."""
+        resp = gw_client.delete("/vms/vm-001/delete")
         assert resp is not None
 
     def test_post_profile_reload(self, gw_client):

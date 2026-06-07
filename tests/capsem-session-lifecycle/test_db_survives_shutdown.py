@@ -49,7 +49,7 @@ def test_db_survives_clean_shutdown():
             shutil.copy2(str(db_path), copy_path)
 
             # Delete the VM
-            client.delete(f"/delete/{vm_name}")
+            client.delete(f"/vms/{vm_name}/delete")
 
             # Verify the copy is valid SQLite
             conn = sqlite3.connect(copy_path)
@@ -62,7 +62,7 @@ def test_db_survives_clean_shutdown():
             assert len(tables) > 0, "Copied session.db has no tables"
     finally:
         try:
-            client.delete(f"/delete/{vm_name}")
+            client.delete(f"/vms/{vm_name}/delete")
         except Exception:
             pass
         svc.stop()

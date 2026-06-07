@@ -133,15 +133,15 @@ class MockServiceHandler(BaseHTTPRequestHandler):
             self._send_json({"content": "mock file content"})
         elif self.clean_path.startswith("/inspect/"):
             self._send_json({"columns": [], "rows": []})
-        elif self.clean_path.startswith("/persist/"):
+        elif self.clean_path.startswith("/vms/") and self.clean_path.endswith("/save"):
             self._send_json({"ok": True})
         elif self.clean_path == "/purge":
             self._send_json({"purged": 0, "persistent_purged": 0, "ephemeral_purged": 0})
         elif self.clean_path == "/run":
             self._send_json({"stdout": "mock run output\n", "stderr": "", "exit_code": 0})
-        elif self.clean_path.startswith("/resume/"):
+        elif self.clean_path.startswith("/vms/") and self.clean_path.endswith("/resume"):
             self._send_json({"id": "vm-resumed"})
-        elif self.clean_path.startswith("/fork/"):
+        elif self.clean_path.startswith("/vms/") and self.clean_path.endswith("/fork"):
             data = json.loads(body) if body else {}
             self._send_json({"name": data.get("name", "fork"), "size_bytes": 1024})
         elif self.clean_path.startswith("/profiles/") and self.clean_path.endswith("/reload"):
@@ -157,7 +157,7 @@ class MockServiceHandler(BaseHTTPRequestHandler):
             self._send_error(404, f"unknown endpoint: {self.clean_path}")
 
     def do_DELETE(self):
-        if self.clean_path.startswith("/delete/"):
+        if self.clean_path.startswith("/vms/") and self.clean_path.endswith("/delete"):
             self._send_json({"ok": True})
         elif self.clean_path.startswith("/images/"):
             self._send_json({"ok": True})

@@ -31,7 +31,7 @@ def test_create_delete_reuse_name():
             assert f"cycle-{cycle}" in exec_resp.get("stdout", ""), \
                 f"Cycle {cycle}: exec output wrong"
 
-            client.delete(f"/delete/{name}")
+            client.delete(f"/vms/{name}/delete")
 
         # After all cycles, name should not appear in list
         list_resp = client.get("/list")
@@ -40,7 +40,7 @@ def test_create_delete_reuse_name():
 
     finally:
         try:
-            client.delete(f"/delete/{name}")
+            client.delete(f"/vms/{name}/delete")
         except Exception:
             pass
         svc.stop()
@@ -61,7 +61,7 @@ def test_service_healthy_after_mass_delete():
 
         # Delete all
         for name in vms:
-            client.delete(f"/delete/{name}")
+            client.delete(f"/vms/{name}/delete")
 
         # Service should still be healthy
         resp = client.get("/list")
@@ -73,7 +73,7 @@ def test_service_healthy_after_mass_delete():
     finally:
         for name in vms:
             try:
-                client.delete(f"/delete/{name}")
+                client.delete(f"/vms/{name}/delete")
             except Exception:
                 pass
         svc.stop()

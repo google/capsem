@@ -226,10 +226,10 @@ fn service_proxy_routes() -> Router<Arc<AppState>> {
         .route("/write_file/{id}", post(proxy::handle_proxy))
         .route("/read_file/{id}", post(proxy::handle_proxy))
         .route("/stop/{id}", post(proxy::handle_proxy))
-        .route("/suspend/{id}", post(proxy::handle_proxy))
-        .route("/delete/{id}", delete(proxy::handle_proxy))
-        .route("/resume/{name}", post(proxy::handle_proxy))
-        .route("/persist/{id}", post(proxy::handle_proxy))
+        .route("/vms/{id}/pause", post(proxy::handle_proxy))
+        .route("/vms/{id}/delete", delete(proxy::handle_proxy))
+        .route("/vms/{id}/resume", post(proxy::handle_proxy))
+        .route("/vms/{id}/save", post(proxy::handle_proxy))
         .route("/purge", post(proxy::handle_proxy))
         .route("/run", post(proxy::handle_proxy))
         .route("/stats", get(proxy::handle_proxy))
@@ -273,7 +273,7 @@ fn service_proxy_routes() -> Router<Arc<AppState>> {
             patch(proxy::handle_proxy),
         )
         .route("/profiles/{profile_id}/reload", post(proxy::handle_proxy))
-        .route("/fork/{id}", post(proxy::handle_proxy))
+        .route("/vms/{id}/fork", post(proxy::handle_proxy))
         .route("/settings/info", get(proxy::handle_proxy))
         .route("/settings/edit", patch(proxy::handle_proxy))
         .route("/assets/status", get(proxy::handle_proxy))
@@ -452,6 +452,11 @@ mod tests {
             ("GET", "/vms/test-vm/detection/status"),
             ("GET", "/vms/test-vm/enforcement/latest"),
             ("GET", "/vms/test-vm/enforcement/status"),
+            ("POST", "/vms/test-vm/pause"),
+            ("DELETE", "/vms/test-vm/delete"),
+            ("POST", "/vms/test-vm/resume"),
+            ("POST", "/vms/test-vm/save"),
+            ("POST", "/vms/test-vm/fork"),
             ("POST", "/profiles/default/enforcement/evaluate"),
             (
                 "PUT",
@@ -500,6 +505,30 @@ mod tests {
                 http::StatusCode::BAD_GATEWAY,
                 "{method} {uri}"
             );
+        }
+    }
+
+    #[tokio::test]
+    async fn gateway_does_not_forward_retired_vm_lifecycle_routes() {
+        for (method, uri) in [
+            ("POST", "/suspend/test-vm"),
+            ("DELETE", "/delete/test-vm"),
+            ("POST", "/resume/test-vm"),
+            ("POST", "/persist/test-vm"),
+            ("POST", "/fork/test-vm"),
+        ] {
+            let app = service_proxy_app("/tmp/capsem-gateway-must-not-connect.sock");
+            let resp = app
+                .oneshot(
+                    http::Request::builder()
+                        .method(method)
+                        .uri(uri)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), http::StatusCode::NOT_FOUND, "{method} {uri}");
         }
     }
 

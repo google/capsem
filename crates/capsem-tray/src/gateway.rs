@@ -162,17 +162,17 @@ impl GatewayClient {
     }
 
     pub async fn delete_vm(&self, id: &str) -> Result<()> {
-        self.delete_req(&format!("/delete/{id}")).await?;
+        self.delete_req(&format!("/vms/{id}/delete")).await?;
         Ok(())
     }
 
     pub async fn suspend_vm(&self, id: &str) -> Result<()> {
-        self.post(&format!("/suspend/{id}")).await?;
+        self.post(&format!("/vms/{id}/pause")).await?;
         Ok(())
     }
 
     pub async fn resume_vm(&self, id: &str) -> Result<()> {
-        self.post(&format!("/resume/{id}")).await?;
+        self.post(&format!("/vms/{id}/resume")).await?;
         Ok(())
     }
 
@@ -422,30 +422,33 @@ mod tests {
 
     #[tokio::test]
     async fn delete_vm_sends_delete() {
-        let (base, captures, handle) = spawn_http_probe("DELETE", "/delete/vm-42", 200, "{}").await;
+        let (base, captures, handle) =
+            spawn_http_probe("DELETE", "/vms/vm-42/delete", 200, "{}").await;
         let client = GatewayClient::new_with_base_url(base, "tok".into());
         client.delete_vm("vm-42").await.unwrap();
         handle.await.unwrap();
         let req = captures.lock().unwrap().first().cloned().unwrap();
-        assert!(req.starts_with("DELETE /delete/vm-42 "));
+        assert!(req.starts_with("DELETE /vms/vm-42/delete "));
     }
 
     #[tokio::test]
     async fn suspend_vm_sends_post() {
-        let (base, captures, handle) = spawn_http_probe("POST", "/suspend/vm-42", 200, "{}").await;
+        let (base, captures, handle) =
+            spawn_http_probe("POST", "/vms/vm-42/pause", 200, "{}").await;
         let client = GatewayClient::new_with_base_url(base, "tok".into());
         client.suspend_vm("vm-42").await.unwrap();
         handle.await.unwrap();
-        assert!(captures.lock().unwrap()[0].starts_with("POST /suspend/vm-42 "));
+        assert!(captures.lock().unwrap()[0].starts_with("POST /vms/vm-42/pause "));
     }
 
     #[tokio::test]
     async fn resume_vm_sends_post() {
-        let (base, captures, handle) = spawn_http_probe("POST", "/resume/vm-42", 200, "{}").await;
+        let (base, captures, handle) =
+            spawn_http_probe("POST", "/vms/vm-42/resume", 200, "{}").await;
         let client = GatewayClient::new_with_base_url(base, "tok".into());
         client.resume_vm("vm-42").await.unwrap();
         handle.await.unwrap();
-        assert!(captures.lock().unwrap()[0].starts_with("POST /resume/vm-42 "));
+        assert!(captures.lock().unwrap()[0].starts_with("POST /vms/vm-42/resume "));
     }
 
     #[tokio::test]

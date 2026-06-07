@@ -37,8 +37,8 @@ class TestProxyForwarding:
         assert "echo hello" in resp.get("stdout", "")
 
     def test_delete_through_gateway(self, gw_client):
-        """DELETE /delete/{id} returns success."""
-        resp = gw_client.delete("/delete/vm-001")
+        """DELETE /vms/{id}/delete returns success."""
+        resp = gw_client.delete("/vms/vm-001/delete")
         assert resp is not None
 
     def test_preserves_query_string(self, gw_client):

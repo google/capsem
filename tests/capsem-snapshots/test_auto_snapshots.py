@@ -27,7 +27,7 @@ def snapshot_vm():
     yield client, name, svc.tmp_dir
 
     try:
-        client.delete(f"/delete/{name}")
+        client.delete(f"/vms/{name}/delete")
     except Exception:
         pass
     svc.stop()

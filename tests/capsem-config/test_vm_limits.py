@@ -40,7 +40,7 @@ def test_provision_at_limit_rejected():
     finally:
         for vm_id in created:
             try:
-                client.delete(f"/delete/{vm_id}")
+                client.delete(f"/vms/{vm_id}/delete")
             except Exception:
                 pass
         svc.stop()
@@ -63,7 +63,7 @@ def test_delete_frees_slot():
 
         # Delete one
         deleted = created.pop()
-        client.delete(f"/delete/{deleted}")
+        client.delete(f"/vms/{deleted}/delete")
 
         # Should be able to create one more
         name = f"slot-new-{uuid.uuid4().hex[:6]}"
@@ -76,7 +76,7 @@ def test_delete_frees_slot():
     finally:
         for vm_id in created:
             try:
-                client.delete(f"/delete/{vm_id}")
+                client.delete(f"/vms/{vm_id}/delete")
             except Exception:
                 pass
         svc.stop()

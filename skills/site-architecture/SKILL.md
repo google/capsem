@@ -74,15 +74,15 @@ Tray app  -> capsem-gateway (TCP)-> HTTP/UDS -> capsem-service
 | POST | `/exec/{id}` | Execute command, return stdout/stderr/exit_code |
 | POST | `/run` | One-shot: provision temp VM, exec command, destroy, return output |
 | POST | `/stop/{id}` | Stop VM (persistent: preserve state; ephemeral: destroy) |
-| POST | `/resume/{name}` | Resume a stopped persistent VM |
-| POST | `/persist/{id}` | Convert running ephemeral VM to persistent |
+| POST | `/vms/{id}/resume` | Resume a stopped persistent VM |
+| POST | `/vms/{id}/save` | Convert running ephemeral VM to persistent |
 | POST | `/purge` | Kill all temp VMs (set `all: true` to include persistent) |
 | POST | `/write_file/{id}` | Write file to guest |
 | GET | `/read_file/{id}?path=...` | Read file from guest |
 | GET | `/logs/{id}` | Serial/boot logs |
 | POST | `/inspect/{id}` | Raw SQL query against session.db |
-| DELETE | `/delete/{id}` | Destroy VM and wipe all state |
-| POST | `/fork/{id}` | Fork a VM into a reusable image |
+| DELETE | `/vms/{id}/delete` | Destroy VM and wipe all state |
+| POST | `/vms/{id}/fork` | Fork a VM into a reusable image |
 | GET | `/images` | List all user images |
 | GET | `/images/{name}` | Inspect a specific image |
 | DELETE | `/images/{name}` | Delete an image |

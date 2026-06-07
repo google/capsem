@@ -113,7 +113,7 @@ uv run pytest tests/capsem-serial/test_lifecycle_benchmark.py -xvs
 | provision | HTTP POST `/provision` to service (VM creation + process spawn) |
 | exec_ready | First `echo ready` exec succeeds (VM boot + vsock handshake) |
 | exec | Simple `echo ok` on a running VM |
-| delete | HTTP DELETE `/delete/{name}` (VM teardown + cleanup) |
+| delete | HTTP DELETE `/vms/{name}/delete` (VM teardown + cleanup) |
 
 ### Output
 
@@ -137,7 +137,7 @@ uv run pytest tests/capsem-serial/test_lifecycle_benchmark.py::test_fork_benchma
 
 | Metric | What it measures | Gate |
 |--------|-----------------|------|
-| fork | `POST /fork/{id}` — APFS clonefile of rootfs overlay + workspace | < 500ms |
+| fork | `POST /vms/{id}/fork` — APFS clonefile of rootfs overlay + workspace | < 500ms |
 | image_size | Actual disk usage of forked image (blocks, not logical size) | < 12MB |
 | boot_provision | `POST /provision` with `image` param — clone image into new session | < 1200ms |
 | boot_ready | First exec succeeds on the image-booted VM | < 1200ms |

@@ -98,7 +98,7 @@ def test_persistent_preserved_on_process_death(cleanup_env):
     # (or it may have been cleaned from instances but still in registry)
 
     # Explicit cleanup
-    client.delete(f"/delete/{name}")
+    client.delete(f"/vms/{name}/delete")
 
 
 def test_explicit_delete_always_works(cleanup_env):
@@ -112,5 +112,5 @@ def test_explicit_delete_always_works(cleanup_env):
     })
     wait_exec_ready(client, name, timeout=EXEC_READY_TIMEOUT)
 
-    client.delete(f"/delete/{name}")
+    client.delete(f"/vms/{name}/delete")
     assert not _vm_in_list(client, name), f"VM {name} still in list after explicit delete"

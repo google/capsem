@@ -34,7 +34,7 @@ def test_boot_under_30_seconds():
 
     finally:
         try:
-            client.delete(f"/delete/{name}")
+            client.delete(f"/vms/{name}/delete")
         except Exception:
             pass
         svc.stop()
@@ -62,7 +62,7 @@ def test_exec_latency_under_1_5_seconds():
 
     finally:
         try:
-            client.delete(f"/delete/{name}")
+            client.delete(f"/vms/{name}/delete")
         except Exception:
             pass
         svc.stop()
@@ -85,7 +85,7 @@ def test_avg_exec_latency_3_runs():
             assert ready, f"VM {i+1} never became exec-ready after {elapsed:.1f}s"
             times.append(elapsed)
             print(f"  run {i+1}: {elapsed:.2f}s")
-            client.delete(f"/delete/{name}")
+            client.delete(f"/vms/{name}/delete")
 
         avg = sum(times) / len(times)
         print(f"Average exec latency: {avg:.2f}s (gate: {EXEC_LATENCY_GATE}s)")
@@ -122,7 +122,7 @@ def test_avg_exec_latency_3_concurrent_vms():
     finally:
         for name in names:
             try:
-                client.delete(f"/delete/{name}")
+                client.delete(f"/vms/{name}/delete")
             except Exception:
                 pass
         svc.stop()

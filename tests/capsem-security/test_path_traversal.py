@@ -45,6 +45,6 @@ def test_virtiofs_path_traversal(client):
     finally:
         # Cleanup
         try:
-            client.delete(f"/delete/{vm_name}")
+            client.delete(f"/vms/{vm_name}/delete")
         except Exception:
             pass

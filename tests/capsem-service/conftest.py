@@ -40,7 +40,7 @@ def fresh_vm(client):
 
     for vm_id in created:
         try:
-            client.delete(f"/delete/{vm_id}")
+            client.delete(f"/vms/{vm_id}/delete")
         except Exception:
             pass
 
@@ -54,6 +54,6 @@ def ready_vm(service_env):
     assert wait_exec_ready(client, name, timeout=EXEC_READY_TIMEOUT), f"VM {name} never exec-ready"
     yield client, name
     try:
-        client.delete(f"/delete/{name}")
+        client.delete(f"/vms/{name}/delete")
     except Exception:
         pass

@@ -25,7 +25,7 @@ fn proxy_app(uds_path: &str) -> Router {
         .route("/count", any(handle_proxy))
         .route("/created", any(handle_proxy))
         .route("/custom", any(handle_proxy))
-        .route("/delete/{id}", any(handle_proxy))
+        .route("/vms/{id}/delete", any(handle_proxy))
         .route("/echo", any(handle_proxy))
         .route("/empty", any(handle_proxy))
         .route("/err", any(handle_proxy))
@@ -101,7 +101,7 @@ async fn returns_502_for_post_when_uds_missing() {
 async fn returns_502_for_delete_when_uds_missing() {
     let app = proxy_app("/tmp/capsem-gw-test-nonexistent.sock");
     assert_eq!(
-        status_of(app, "DELETE", "/delete/abc").await,
+        status_of(app, "DELETE", "/vms/abc/delete").await,
         StatusCode::BAD_GATEWAY
     );
 }

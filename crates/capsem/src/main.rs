@@ -1248,7 +1248,7 @@ async fn main() -> Result<()> {
                 description: description.clone(),
             };
             let resp: ApiResponse<ForkResponse> =
-                client.post(&format!("/fork/{}", session), &req).await?;
+                client.post(&format!("/vms/{}/fork", session), &req).await?;
             let info = resp.into_result()?;
             let size_mb = info.size_bytes as f64 / 1024.0 / 1024.0;
             println!(
@@ -1259,7 +1259,7 @@ async fn main() -> Result<()> {
         Commands::Session(SessionCommands::Resume { name }) => {
             client::validate_id(name)?;
             let resp: ApiResponse<ProvisionResponse> = client
-                .post(&format!("/resume/{}", name), &serde_json::json!({}))
+                .post(&format!("/vms/{}/resume", name), &serde_json::json!({}))
                 .await?;
             let info = resp.into_result()?;
             println!("{}", info.id);
@@ -1268,7 +1268,7 @@ async fn main() -> Result<()> {
             client::validate_id(session)?;
             println!("Suspending session: {}", session);
             let resp: ApiResponse<serde_json::Value> = client
-                .post(&format!("/suspend/{}", session), &serde_json::json!({}))
+                .post(&format!("/vms/{}/pause", session), &serde_json::json!({}))
                 .await?;
             resp.into_result()?;
             println!("Session suspended.");
@@ -1320,7 +1320,7 @@ async fn main() -> Result<()> {
                     let shell_result = run_shell(&info.id, &run_dir).await;
                     // Ephemeral: auto-destroy on disconnect
                     let _: Result<ApiResponse<serde_json::Value>, _> =
-                        client.delete(&format!("/delete/{}", info.id)).await;
+                        client.delete(&format!("/vms/{}/delete", info.id)).await;
                     shell_result?;
                 }
             }
@@ -1428,7 +1428,7 @@ async fn main() -> Result<()> {
             client::validate_id(session)?;
             println!("Deleting session: {}", session);
             let resp: ApiResponse<serde_json::Value> =
-                client.delete(&format!("/delete/{}", session)).await?;
+                client.delete(&format!("/vms/{}/delete", session)).await?;
             resp.into_result()?;
             println!("Session deleted.");
         }
@@ -1436,7 +1436,7 @@ async fn main() -> Result<()> {
             client::validate_id(session)?;
             let req = PersistRequest { name: name.clone() };
             let resp: ApiResponse<serde_json::Value> =
-                client.post(&format!("/persist/{}", session), &req).await?;
+                client.post(&format!("/vms/{}/save", session), &req).await?;
             resp.into_result()?;
             println!(
                 "[*] Session \"{}\" is now persistent as \"{}\"",
@@ -1626,7 +1626,7 @@ async fn main() -> Result<()> {
                 .into_result()
                 .context("failed to stop session during restart")?;
             let resp: ApiResponse<ProvisionResponse> = client
-                .post(&format!("/resume/{}", name), &serde_json::json!({}))
+                .post(&format!("/vms/{}/resume", name), &serde_json::json!({}))
                 .await?;
             let resumed = resp.into_result()?;
             println!("{}", resumed.id);
@@ -1797,7 +1797,7 @@ async fn main() -> Result<()> {
             // Helper: always delete the session, even on Ctrl-C or error
             async fn delete_vm(client: &UdsClient, vm_id: &str) {
                 let _: Result<ApiResponse<serde_json::Value>, _> =
-                    client.delete(&format!("/delete/{}", vm_id)).await;
+                    client.delete(&format!("/vms/{}/delete", vm_id)).await;
             }
 
             let ctrl_c = tokio::signal::ctrl_c();

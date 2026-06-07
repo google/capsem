@@ -94,7 +94,7 @@ def test_capsem_bench_baseline():
         _save(data)
     finally:
         try:
-            client.delete(f"/delete/{name}")
+            client.delete(f"/vms/{name}/delete")
         except Exception:
             pass
         svc.stop()

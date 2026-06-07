@@ -26,7 +26,7 @@ def test_wal_absent_after_clean_shutdown():
         client.post(f"/exec/{name}", {"command": "echo wal-test"})
 
         # Clean shutdown
-        client.delete(f"/delete/{name}")
+        client.delete(f"/vms/{name}/delete")
 
         # Check WAL state
         db_path = svc.tmp_dir / "sessions" / name / "session.db"

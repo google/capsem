@@ -158,16 +158,16 @@ The service exposes a REST API over UDS. The gateway proxies this transparently.
 | POST | `/exec/{id}` | Execute command, return stdout/stderr/exit_code |
 | POST | `/run` | One-shot: provision + exec + destroy |
 | POST | `/stop/{id}` | Stop VM (persistent: preserve; ephemeral: destroy) |
-| POST | `/resume/{name}` | Resume a stopped persistent VM |
-| POST | `/persist/{id}` | Convert ephemeral to persistent |
+| POST | `/vms/{id}/resume` | Resume a stopped persistent VM |
+| POST | `/vms/{id}/save` | Convert ephemeral to persistent |
 | POST | `/purge` | Kill all temp VMs (`all: true` includes persistent) |
 | POST | `/write_file/{id}` | Write file to guest |
 | POST | `/read_file/{id}` | Read file from guest |
 | GET | `/logs/{id}` | Serial/boot logs |
 | POST | `/inspect/{id}` | SQL query against session.db |
-| DELETE | `/delete/{id}` | Destroy VM and wipe state |
-| POST | `/suspend/{id}` | Suspend VM to disk (persistent only) |
-| POST | `/fork/{id}` | Fork VM into reusable image |
+| DELETE | `/vms/{id}/delete` | Destroy VM and wipe state |
+| POST | `/vms/{id}/pause` | Suspend VM to disk (persistent only) |
+| POST | `/vms/{id}/fork` | Fork VM into reusable image |
 | GET | `/stats` | Full telemetry dump (all sessions) |
 | POST | `/reload-config` | Hot-reload settings from disk |
 

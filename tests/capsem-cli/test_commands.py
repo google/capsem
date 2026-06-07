@@ -176,7 +176,7 @@ class TestPurge:
         ids = [s["id"] for s in listing["sandboxes"]]
         assert name in ids, f"Persistent VM {name} was destroyed despite user saying 'n'"
         # Cleanup
-        client.delete(f"/delete/{name}")
+        client.delete(f"/vms/{name}/delete")
 
     def test_purge_all_confirmed_destroys(self, uds_path):
         """capsem purge --all with 'y' should destroy persistent VMs."""

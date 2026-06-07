@@ -24,7 +24,7 @@ def test_custom_cpu_count(config_svc):
         assert nproc == 2, f"Expected 2 CPUs, got {nproc}"
     finally:
         try:
-            client.delete(f"/delete/{name}")
+            client.delete(f"/vms/{name}/delete")
         except Exception:
             pass
 
@@ -44,6 +44,6 @@ def test_custom_ram(config_svc):
         assert total_mb < 2500, f"Got {total_mb}MB, expected ~2048MB"
     finally:
         try:
-            client.delete(f"/delete/{name}")
+            client.delete(f"/vms/{name}/delete")
         except Exception:
             pass

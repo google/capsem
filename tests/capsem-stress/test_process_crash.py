@@ -41,7 +41,7 @@ def test_service_survives_process_kill():
 
         # Clean up the dead VM
         try:
-            client.delete(f"/delete/{name}")
+            client.delete(f"/vms/{name}/delete")
         except Exception:
             pass
 
@@ -49,7 +49,7 @@ def test_service_survives_process_kill():
         name2 = f"after-crash-{uuid.uuid4().hex[:8]}"
         resp = client.post("/provision", {"name": name2, "ram_mb": 1024, "cpus": 1})
         assert resp is not None, "Could not create VM after process crash"
-        client.delete(f"/delete/{name2}")
+        client.delete(f"/vms/{name2}/delete")
 
     finally:
         svc.stop()

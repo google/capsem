@@ -96,7 +96,7 @@ def test_parallel_benchmark():
         print("Cleaning up VMs...")
         for vm_name in vms:
             try:
-                client.delete(f"/delete/{vm_name}")
+                client.delete(f"/vms/{vm_name}/delete")
             except Exception:
                 pass
         svc.stop()

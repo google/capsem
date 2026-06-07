@@ -270,23 +270,23 @@ export async function stopVm(id: string): Promise<void> {
 }
 
 export async function suspendVm(id: string): Promise<void> {
-  await _post(`/suspend/${encodeURIComponent(id)}`);
+  await _post(`/vms/${encodeURIComponent(id)}/pause`);
 }
 
 export async function deleteVm(id: string): Promise<void> {
-  await _delete(`/delete/${encodeURIComponent(id)}`);
+  await _delete(`/vms/${encodeURIComponent(id)}/delete`);
 }
 
 export async function resumeVm(name: string): Promise<void> {
-  await _post(`/resume/${encodeURIComponent(name)}`);
+  await _post(`/vms/${encodeURIComponent(name)}/resume`);
 }
 
 export async function persistVm(id: string, name: string): Promise<void> {
-  await _post(`/persist/${encodeURIComponent(id)}`, { name });
+  await _post(`/vms/${encodeURIComponent(id)}/save`, { name });
 }
 
 export async function forkVm(id: string, opts: ForkRequest): Promise<ForkResponse> {
-  const resp = await _post(`/fork/${encodeURIComponent(id)}`, opts);
+  const resp = await _post(`/vms/${encodeURIComponent(id)}/fork`, opts);
   return await resp.json();
 }
 

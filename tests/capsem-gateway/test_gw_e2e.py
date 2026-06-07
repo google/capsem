@@ -66,7 +66,7 @@ class TestGatewayE2E:
 
         # Stop + Delete
         e2e_client.post(f"/stop/{vm_id}", {})
-        e2e_client.delete(f"/delete/{vm_id}")
+        e2e_client.delete(f"/vms/{vm_id}/delete")
 
         # Verify removed
         listing = e2e_client.get("/list")
@@ -91,7 +91,7 @@ class TestGatewayE2E:
             assert rs is not None
             assert rs.get("running_count", 0) >= 1
         finally:
-            e2e_client.delete(f"/delete/{vm_id}")
+            e2e_client.delete(f"/vms/{vm_id}/delete")
 
     def test_404_for_nonexistent_vm(self, e2e_client):
         """Error for nonexistent VM is proxied correctly."""
@@ -126,7 +126,7 @@ class TestGatewayE2E:
             )
             assert exec_resp.get("exit_code") == 0
         finally:
-            e2e_client.delete(f"/delete/{vm_id}")
+            e2e_client.delete(f"/vms/{vm_id}/delete")
 
     def test_health_while_vm_running(self, e2e_env):
         """Health endpoint works even with VMs running."""
@@ -169,7 +169,7 @@ class TestGatewayFileIO:
             assert read_resp is not None
             assert "gateway file io test" in str(read_resp)
         finally:
-            e2e_client.delete(f"/delete/{vm_id}")
+            e2e_client.delete(f"/vms/{vm_id}/delete")
 
     def test_write_binary_content(self, e2e_client):
         """Write a file with special characters."""
@@ -194,7 +194,7 @@ class TestGatewayFileIO:
             # Should have 2-3 lines
             assert exec_resp.get("exit_code") == 0
         finally:
-            e2e_client.delete(f"/delete/{vm_id}")
+            e2e_client.delete(f"/vms/{vm_id}/delete")
 
 
 class TestGatewayPersistence:
@@ -224,7 +224,7 @@ class TestGatewayPersistence:
             time.sleep(2)
 
             # Resume
-            resume_resp = e2e_client.post(f"/resume/{name}", {})
+            resume_resp = e2e_client.post(f"/vms/{name}/resume", {})
             assert resume_resp is not None
 
             # Wait for exec ready again
@@ -238,7 +238,7 @@ class TestGatewayPersistence:
             assert exec_resp is not None
             assert "survived-restart" in exec_resp.get("stdout", "")
         finally:
-            e2e_client.delete(f"/delete/{vm_id}")
+            e2e_client.delete(f"/vms/{vm_id}/delete")
 
     def test_purge_through_gateway(self, e2e_client):
         """POST /purge kills ephemeral VMs through gateway."""
@@ -275,7 +275,7 @@ class TestGatewayLogs:
             assert logs_resp is not None
             assert "logs" in logs_resp
         finally:
-            e2e_client.delete(f"/delete/{vm_id}")
+            e2e_client.delete(f"/vms/{vm_id}/delete")
 
 
 class TestGatewayEnvVars:
@@ -299,7 +299,7 @@ class TestGatewayEnvVars:
             assert exec_resp is not None
             assert "hello-from-gateway" in exec_resp.get("stdout", "")
         finally:
-            e2e_client.delete(f"/delete/{vm_id}")
+            e2e_client.delete(f"/vms/{vm_id}/delete")
 
 
 def wait_exec_ready_tcp(client, vm_id, timeout=EXEC_READY_TIMEOUT):

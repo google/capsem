@@ -23,7 +23,7 @@ def test_process_killed_after_delete(cleanup_env):
     info = client.get(f"/info/{name}")
     pid = info.get("pid") if info else None
 
-    client.delete(f"/delete/{name}")
+    client.delete(f"/vms/{name}/delete")
 
     if pid:
         # Give process time to exit

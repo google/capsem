@@ -26,7 +26,7 @@ class TestCpuLimits:
         resp = client.post("/provision", {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": 0})
         assert resp is None or "error" in str(resp).lower(), f"cpus=0 should be rejected: {resp}"
         try:
-            client.delete(f"/delete/{name}")
+            client.delete(f"/vms/{name}/delete")
         except Exception:
             pass
 
@@ -36,7 +36,7 @@ class TestCpuLimits:
         resp = client.post("/provision", {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": 99})
         assert resp is None or "error" in str(resp).lower(), f"cpus=99 should be rejected: {resp}"
         try:
-            client.delete(f"/delete/{name}")
+            client.delete(f"/vms/{name}/delete")
         except Exception:
             pass
 
@@ -45,7 +45,7 @@ class TestCpuLimits:
         name = f"cpuok-{uuid.uuid4().hex[:6]}"
         resp = client.post("/provision", {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": 4})
         assert resp is not None
-        client.delete(f"/delete/{name}")
+        client.delete(f"/vms/{name}/delete")
 
 
 class TestRamLimits:
@@ -56,7 +56,7 @@ class TestRamLimits:
         resp = client.post("/provision", {"name": name, "ram_mb": 0, "cpus": DEFAULT_CPUS})
         assert resp is None or "error" in str(resp).lower(), f"ram=0 should be rejected: {resp}"
         try:
-            client.delete(f"/delete/{name}")
+            client.delete(f"/vms/{name}/delete")
         except Exception:
             pass
 
@@ -66,7 +66,7 @@ class TestRamLimits:
         resp = client.post("/provision", {"name": name, "ram_mb": 999999, "cpus": DEFAULT_CPUS})
         assert resp is None or "error" in str(resp).lower(), f"ram=999999 should be rejected: {resp}"
         try:
-            client.delete(f"/delete/{name}")
+            client.delete(f"/vms/{name}/delete")
         except Exception:
             pass
 
@@ -75,4 +75,4 @@ class TestRamLimits:
         name = f"ramok-{uuid.uuid4().hex[:6]}"
         resp = client.post("/provision", {"name": name, "ram_mb": 4096, "cpus": DEFAULT_CPUS})
         assert resp is not None
-        client.delete(f"/delete/{name}")
+        client.delete(f"/vms/{name}/delete")

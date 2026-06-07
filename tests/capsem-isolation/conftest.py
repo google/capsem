@@ -30,7 +30,7 @@ def multi_vm_env():
 
     for vm in (vm_a, vm_b):
         try:
-            client.delete(f"/delete/{vm}")
+            client.delete(f"/vms/{vm}/delete")
         except Exception:
             pass
     svc.stop()

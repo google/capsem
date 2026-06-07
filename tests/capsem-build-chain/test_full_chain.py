@@ -31,7 +31,7 @@ def test_full_chain_boot_exec_delete(signed_binaries):
             f"Expected 'chain-works' in stdout, got: {resp}"
         )
 
-        client.delete(f"/delete/{name}")
+        client.delete(f"/vms/{name}/delete")
 
         # Verify deleted
         list_resp = client.get("/list")
@@ -40,7 +40,7 @@ def test_full_chain_boot_exec_delete(signed_binaries):
 
     finally:
         try:
-            client.delete(f"/delete/{name}")
+            client.delete(f"/vms/{name}/delete")
         except Exception:
             pass
         svc.stop()

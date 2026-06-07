@@ -20,7 +20,7 @@ class TestProvision:
         assert resp is not None
         vm_id = resp.get("id")
         assert vm_id, f"No ID in response: {resp}"
-        client.delete(f"/delete/{vm_id}")
+        client.delete(f"/vms/{vm_id}/delete")
 
     def test_create_with_custom_resources(self, fresh_vm, client):
         name, _ = fresh_vm("res", ram_mb=4096, cpus=4)
@@ -58,7 +58,7 @@ class TestPersistence:
         assert info is not None
         # Default VMs are ephemeral (not persistent)
         assert info.get("persistent", False) is False
-        client.delete(f"/delete/{vm_id}")
+        client.delete(f"/vms/{vm_id}/delete")
 
 
 class TestList:
@@ -101,7 +101,7 @@ class TestDelete:
     def test_delete_removes_from_list(self, client):
         name = vm_name("del")
         client.post("/provision", {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
-        client.delete(f"/delete/{name}")
+        client.delete(f"/vms/{name}/delete")
         resp = client.get("/list")
         ids = [s["id"] for s in resp["sandboxes"]]
         assert name not in ids
@@ -109,10 +109,10 @@ class TestDelete:
     def test_delete_twice(self, client):
         name = vm_name("del2x")
         client.post("/provision", {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
-        client.delete(f"/delete/{name}")
-        resp = client.delete(f"/delete/{name}")
+        client.delete(f"/vms/{name}/delete")
+        resp = client.delete(f"/vms/{name}/delete")
         assert resp is None or "error" in str(resp).lower() or "not found" in str(resp).lower()
 
     def test_delete_nonexistent(self, client):
-        resp = client.delete("/delete/no-such-vm-xyz")
+        resp = client.delete("/vms/no-such-vm-xyz/delete")
         assert resp is None or "error" in str(resp).lower() or "not found" in str(resp).lower()

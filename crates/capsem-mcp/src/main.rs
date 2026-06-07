@@ -186,7 +186,7 @@ fn build_run_body(params: &RunParams) -> Value {
     body
 }
 
-/// Body for POST /fork/{id}.
+/// Body for POST /vms/{id}/fork.
 fn build_fork_body(params: &ForkParams) -> Value {
     json!({
         "name": params.name,
@@ -194,7 +194,7 @@ fn build_fork_body(params: &ForkParams) -> Value {
     })
 }
 
-/// Body for POST /persist/{id}.
+/// Body for POST /vms/{id}/save.
 fn build_persist_body(params: &PersistParams) -> Value {
     json!({ "name": params.name })
 }
@@ -831,7 +831,7 @@ impl CapsemHandler {
     async fn delete(&self, Parameters(params): Parameters<IdParams>) -> Result<String, String> {
         let resp = self
             .client
-            .request::<Value, Value>("DELETE", &format!("/delete/{}", params.id), None)
+            .request::<Value, Value>("DELETE", &format!("/vms/{}/delete", params.id), None)
             .await;
         format_service_response(resp)
     }
@@ -855,7 +855,11 @@ impl CapsemHandler {
     async fn suspend(&self, Parameters(params): Parameters<IdParams>) -> Result<String, String> {
         let resp = self
             .client
-            .request::<Value, Value>("POST", &format!("/suspend/{}", params.id), Some(json!({})))
+            .request::<Value, Value>(
+                "POST",
+                &format!("/vms/{}/pause", params.id),
+                Some(json!({})),
+            )
             .await;
         format_service_response(resp)
     }
@@ -867,7 +871,11 @@ impl CapsemHandler {
     async fn resume(&self, Parameters(params): Parameters<NameParams>) -> Result<String, String> {
         let resp = self
             .client
-            .request::<Value, Value>("POST", &format!("/resume/{}", params.name), Some(json!({})))
+            .request::<Value, Value>(
+                "POST",
+                &format!("/vms/{}/resume", params.name),
+                Some(json!({})),
+            )
             .await;
         format_service_response(resp)
     }
@@ -883,7 +891,7 @@ impl CapsemHandler {
         let body = build_persist_body(&params);
         let resp = self
             .client
-            .request::<Value, Value>("POST", &format!("/persist/{}", params.id), Some(body))
+            .request::<Value, Value>("POST", &format!("/vms/{}/save", params.id), Some(body))
             .await;
         format_service_response(resp)
     }
@@ -923,7 +931,7 @@ impl CapsemHandler {
         let body = build_fork_body(&params);
         let resp = self
             .client
-            .request::<Value, Value>("POST", &format!("/fork/{}", params.id), Some(body))
+            .request::<Value, Value>("POST", &format!("/vms/{}/fork", params.id), Some(body))
             .await;
         format_service_response(resp)
     }

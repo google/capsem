@@ -154,6 +154,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added DB-backed security endpoints: `/vms/{vm_id}/security/latest` returns
   full stored rule ledger rows and `/vms/{vm_id}/security/status` regenerates
   counters from `session.db`.
+- Replaced retired top-level VM lifecycle routes with the profile-era VM
+  namespace across service, gateway, CLI, MCP, tray, frontend, and tests:
+  `POST /vms/{vm_id}/pause`, `DELETE /vms/{vm_id}/delete`,
+  `POST /vms/{vm_id}/resume`, `POST /vms/{vm_id}/save`, and
+  `POST /vms/{vm_id}/fork`. The gateway now rejects the old
+  `/suspend`, `/delete`, `/resume`, `/persist`, and `/fork` route family.
 - Added built-in provider-owned AI rules for OpenAI/Codex, Anthropic/Claude,
   Google/Gemini, and Ollama. The rules live under `[ai.<provider>.rules.*]`,
   merge as defaults < user < corp, enforce corp-only negative priorities, and

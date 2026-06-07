@@ -8,11 +8,11 @@ contract reset.
 | Stream | Status | Notes |
 | --- | --- | --- |
 | T0 Schema and ownership | Not Started | Profile/settings/corp schemas, immutable VM profile id, defaults/plugin/credential contract. |
-| T1 Service/gateway API | In Progress | Profile plugin, MCP server/tool, enforcement authoring, full `/corp/info|edit|validate|reload`, `/settings/info|edit`, profile reload, and VM ledger routes are live; retired plugin global/VM, global MCP, global enforcement authoring, `/corp-config`, `GET|POST /settings`, `/settings/lint`, `/settings/validate-key`, `/settings/presets`, `/reload-config`, and old ledger routes fail closed. Other authoring routes still need profile burn-down. |
+| T1 Service/gateway API | In Progress | Profile plugin, MCP server/tool, enforcement authoring, full `/corp/info|edit|validate|reload`, `/settings/info|edit`, profile reload, VM ledger routes, and VM lifecycle `/vms/{id}/pause|delete|resume|save|fork` are live; retired plugin global/VM, global MCP, global enforcement authoring, `/corp-config`, `GET|POST /settings`, `/settings/lint`, `/settings/validate-key`, `/settings/presets`, `/reload-config`, old ledger routes, and old top-level lifecycle routes fail closed. Other authoring routes still need profile burn-down. |
 | T2 Security rail burn-down | In Progress | Network web decision settings and MCP policy objects burned; remaining work is route/authoring/profile completion plus full invariant sweep. |
 | T3 Profile/settings/corp UI/API split | Not Started | Settings UI-only, profile behavior profile-backed, one editor writes one contract. |
 | T4 MCP/plugins/credentials/skills UI | In Progress | Plugin UI/API use profile routes; MCP tools now load under profile/server routes. MCP resources/prompts, credentials, and skills remain. |
-| T5 VM lifecycle/assets/install | Not Started | `/vms/{id}` lifecycle, pause/resume/save/fork/status, immutable profile id, install readiness/assets status. |
+| T5 VM lifecycle/assets/install | In Progress | Public lifecycle routes now use `/vms/{id}/pause|delete|resume|save|fork`; immutable profile id, operation status, and install/assets cleanup remain. |
 | T6 Docs/changelog/skills | Not Started | Full docs pass, changelog, skills, benchmark docs. |
 | T6.5 Invariant review | Not Started | Full pre-verification review of every master contract invariant. |
 | T7 Release verification | Not Started | Focused tests, full smoke, full test cycle, full install cycle, UI sanity, benchmark check. |

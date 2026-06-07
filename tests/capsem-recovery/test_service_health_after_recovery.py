@@ -38,7 +38,7 @@ def test_service_healthy_after_orphan_cleanup():
 
             # Clean up orphan
             try:
-                client2.delete(f"/delete/{name1}")
+                client2.delete(f"/vms/{name1}/delete")
             except Exception:
                 pass
 
@@ -53,7 +53,7 @@ def test_service_healthy_after_orphan_cleanup():
             exec_resp = client2.post(f"/exec/{name2}", {"command": "echo recovered"})
             assert "recovered" in exec_resp.get("stdout", ""), "Exec should work after recovery"
 
-            client2.delete(f"/delete/{name2}")
+            client2.delete(f"/vms/{name2}/delete")
 
         finally:
             svc2.stop()

@@ -35,6 +35,6 @@ def test_blocked_domain_denied(config_svc):
 
     finally:
         try:
-            client.delete(f"/delete/{name}")
+            client.delete(f"/vms/{name}/delete")
         except Exception:
             pass

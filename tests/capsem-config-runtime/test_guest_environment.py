@@ -28,7 +28,7 @@ def test_env_var_injected(config_svc):
 
     finally:
         try:
-            client.delete(f"/delete/{name}")
+            client.delete(f"/vms/{name}/delete")
         except Exception:
             pass
 
@@ -48,7 +48,7 @@ def test_guest_has_python3(config_svc):
 
     finally:
         try:
-            client.delete(f"/delete/{name}")
+            client.delete(f"/vms/{name}/delete")
         except Exception:
             pass
 
@@ -74,6 +74,6 @@ def test_guest_arch_matches_host(config_svc):
 
     finally:
         try:
-            client.delete(f"/delete/{name}")
+            client.delete(f"/vms/{name}/delete")
         except Exception:
             pass

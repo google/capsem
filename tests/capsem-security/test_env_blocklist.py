@@ -35,7 +35,7 @@ def security_vm():
     yield client, name
 
     try:
-        client.delete(f"/delete/{name}")
+        client.delete(f"/vms/{name}/delete")
     except Exception:
         pass
     svc.stop()

@@ -33,7 +33,7 @@ def test_resume_after_neighbor_delete():
         })
 
         # Delete VM-B
-        client.delete(f"/delete/{vm_b}")
+        client.delete(f"/vms/{vm_b}/delete")
 
         # VM-A file should still be there
         resp = client.post(f"/read_file/{vm_a}", {"path": "/root/resume-test.txt"})
@@ -52,7 +52,7 @@ def test_resume_after_neighbor_delete():
     finally:
         for vm in (vm_a, vm_b):
             try:
-                client.delete(f"/delete/{vm}")
+                client.delete(f"/vms/{vm}/delete")
             except Exception:
                 pass
         svc.stop()

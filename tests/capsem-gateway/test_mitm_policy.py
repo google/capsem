@@ -78,6 +78,6 @@ def test_mitm_policy_telemetry(service_env, client):
             
     finally:
         try:
-            client.delete(f"/delete/{vm_name}")
+            client.delete(f"/vms/{vm_name}/delete")
         except Exception:
             pass

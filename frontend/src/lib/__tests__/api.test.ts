@@ -168,11 +168,11 @@ describe('api', () => {
       expect(call[0]).toContain('/stop/vm-1');
     });
 
-    it('deleteVm sends DELETE /delete/{id}', async () => {
+    it('deleteVm sends DELETE /vms/{id}/delete', async () => {
       mockFetch.mockReturnValueOnce(jsonResponse(null));
       await api.deleteVm('vm-1');
       const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
-      expect(call[0]).toContain('/delete/vm-1');
+      expect(call[0]).toContain('/vms/vm-1/delete');
       expect(call[1].method).toBe('DELETE');
     });
 
@@ -180,21 +180,21 @@ describe('api', () => {
       mockFetch.mockReturnValueOnce(jsonResponse(null));
       await api.suspendVm('vm-1');
       const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
-      expect(call[0]).toContain('/suspend/vm-1');
+      expect(call[0]).toContain('/vms/vm-1/pause');
     });
 
     it('resumeVm sends POST', async () => {
       mockFetch.mockReturnValueOnce(jsonResponse(null));
       await api.resumeVm('my-vm');
       const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
-      expect(call[0]).toContain('/resume/my-vm');
+      expect(call[0]).toContain('/vms/my-vm/resume');
     });
 
     it('persistVm sends POST', async () => {
       mockFetch.mockReturnValueOnce(jsonResponse(null));
       await api.persistVm('vm-1');
       const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
-      expect(call[0]).toContain('/persist/vm-1');
+      expect(call[0]).toContain('/vms/vm-1/save');
     });
 
     it('forkVm sends POST with body', async () => {

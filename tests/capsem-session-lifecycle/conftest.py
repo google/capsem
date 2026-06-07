@@ -28,7 +28,7 @@ def lifecycle_env():
     yield client, vm_name, svc.tmp_dir, svc
 
     try:
-        client.delete(f"/delete/{vm_name}")
+        client.delete(f"/vms/{vm_name}/delete")
     except Exception:
         pass
     svc.stop()

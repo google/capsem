@@ -46,7 +46,7 @@ class TestExecImmediatelyAfterProvision:
         )
         assert exec_resp.get("exit_code") == 0
 
-        client.delete(f"/delete/{vm_id}")
+        client.delete(f"/vms/{vm_id}/delete")
 
     def test_write_file_immediately_after_provision(self, service_env):
         """POST /write_file/{id} must succeed right after POST /provision."""
@@ -65,7 +65,7 @@ class TestExecImmediatelyAfterProvision:
         assert write_resp is not None, "write_file returned None"
         assert write_resp.get("success") is True, f"write_file failed: {write_resp}"
 
-        client.delete(f"/delete/{vm_id}")
+        client.delete(f"/vms/{vm_id}/delete")
 
     def test_read_file_immediately_after_provision(self, service_env):
         """POST /write_file + /read_file must succeed right after POST /provision."""
@@ -91,14 +91,14 @@ class TestExecImmediatelyAfterProvision:
         assert read_resp is not None, "read_file returned None"
         assert "content" in read_resp, f"read_file missing content: {read_resp}"
 
-        client.delete(f"/delete/{vm_id}")
+        client.delete(f"/vms/{vm_id}/delete")
 
 
 class TestExecImmediatelyAfterResume:
     """Stop a persistent VM, resume it, then immediately exec."""
 
     def test_exec_immediately_after_resume(self, service_env):
-        """POST /exec/{name} must succeed right after POST /resume/{name}."""
+        """POST /exec/{name} must succeed right after POST /vms/{id}/resume."""
         client = service_env.client()
         name = vm_name("rs")
 
@@ -123,7 +123,7 @@ class TestExecImmediatelyAfterResume:
         client.post(f"/stop/{name}", {})
 
         # 3. Resume -- returns immediately, process not yet listening.
-        resume_resp = client.post(f"/resume/{name}", {})
+        resume_resp = client.post(f"/vms/{name}/resume", {})
         assert resume_resp is not None, "resume failed"
 
         # 4. Immediately exec -- no wait_exec_ready, no sleep.
@@ -138,4 +138,4 @@ class TestExecImmediatelyAfterResume:
         )
         assert exec_resp.get("exit_code") == 0
 
-        client.delete(f"/delete/{name}")
+        client.delete(f"/vms/{name}/delete")

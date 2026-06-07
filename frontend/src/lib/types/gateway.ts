@@ -138,7 +138,7 @@ export interface WriteFileRequest {
   content: string;
 }
 
-// POST /fork/{id}
+// POST /vms/{id}/fork
 export interface ForkRequest {
   name: string;
   description?: string;

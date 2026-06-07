@@ -41,7 +41,7 @@ def test_orphaned_vm_cleanup_on_restart():
 
             # Try to clean up -- should not hang or crash
             try:
-                client2.delete(f"/delete/{name}")
+                client2.delete(f"/vms/{name}/delete")
             except Exception:
                 pass  # May already be gone
 

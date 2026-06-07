@@ -27,7 +27,7 @@ def serial_env():
     yield client, vm_name
 
     try:
-        client.delete(f"/delete/{vm_name}")
+        client.delete(f"/vms/{vm_name}/delete")
     except Exception:
         pass
     svc.stop()

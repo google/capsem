@@ -63,7 +63,7 @@ def _vm_name(prefix: str) -> str:
 
 def _delete_vm(svc: ServiceInstance, vm: str) -> None:
     try:
-        svc.client().delete(f"/delete/{vm}", timeout=60)
+        svc.client().delete(f"/vms/{vm}/delete", timeout=60)
     except Exception:
         pass
 

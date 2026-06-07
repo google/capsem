@@ -84,7 +84,7 @@ class TestResumePathPersistence:
             client.post(f"/stop/{name}", {})
 
             # Resume.
-            resume_resp = client.post(f"/resume/{name}", {})
+            resume_resp = client.post(f"/vms/{name}/resume", {})
             assert resume_resp is not None, "resume returned None"
             resumed_id = resume_resp.get("id", name)
             assert wait_exec_ready(client, resumed_id, timeout=EXEC_READY_TIMEOUT), \
@@ -96,7 +96,7 @@ class TestResumePathPersistence:
                 + "\n".join(f"  {p}: exit={ec} out={out!r}" for p, ec, out in missing)
             )
         finally:
-            client.delete(f"/delete/{name}")
+            client.delete(f"/vms/{name}/delete")
 
     def test_files_survive_suspend_resume_across_paths(self, client):
         """Same coverage as the stop test, but using the warm suspend/resume path."""
@@ -113,10 +113,10 @@ class TestResumePathPersistence:
             self._write_markers(client, name, marker)
 
             # Suspend (warm checkpoint via Apple VZ saveMachineState).
-            client.post(f"/suspend/{name}", {})
+            client.post(f"/vms/{name}/pause", {})
 
             # Resume (restores from checkpoint).
-            resume_resp = client.post(f"/resume/{name}", {})
+            resume_resp = client.post(f"/vms/{name}/resume", {})
             assert resume_resp is not None, "resume returned None"
             resumed_id = resume_resp.get("id", name)
             assert wait_exec_ready(client, resumed_id, timeout=EXEC_READY_TIMEOUT), \
@@ -128,7 +128,7 @@ class TestResumePathPersistence:
                 + "\n".join(f"  {p}: exit={ec} out={out!r}" for p, ec, out in missing)
             )
         finally:
-            client.delete(f"/delete/{name}")
+            client.delete(f"/vms/{name}/delete")
 
     def test_files_survive_back_to_back_stop_resume(self, client):
         """Two stop/resume cycles on the same VM, accumulating writes."""
@@ -143,7 +143,7 @@ class TestResumePathPersistence:
             marker_a = f"cycle-a-{uuid.uuid4().hex[:6]}"
             self._write_markers(client, name, marker_a)
             client.post(f"/stop/{name}", {})
-            client.post(f"/resume/{name}", {})
+            client.post(f"/vms/{name}/resume", {})
             assert wait_exec_ready(client, name, timeout=EXEC_READY_TIMEOUT)
             assert not self._check_markers(client, name, marker_a), \
                 "first resume lost files written before first stop"
@@ -151,7 +151,7 @@ class TestResumePathPersistence:
             marker_b = f"cycle-b-{uuid.uuid4().hex[:6]}"
             self._write_markers(client, name, marker_b)
             client.post(f"/stop/{name}", {})
-            client.post(f"/resume/{name}", {})
+            client.post(f"/vms/{name}/resume", {})
             assert wait_exec_ready(client, name, timeout=EXEC_READY_TIMEOUT)
             # Both A (from before first stop) and B (from before second stop)
             # must still be there.
@@ -162,4 +162,4 @@ class TestResumePathPersistence:
                     + "\n".join(f"  {p}: exit={ec} out={out!r}" for p, ec, out in missing)
                 )
         finally:
-            client.delete(f"/delete/{name}")
+            client.delete(f"/vms/{name}/delete")

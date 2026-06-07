@@ -59,7 +59,7 @@ def _create_vm(svc: ServiceInstance, prefix: str, *, persistent: bool = False) -
 
 def _delete_vm(svc: ServiceInstance, vm: str) -> None:
     try:
-        svc.client().delete(f"/delete/{vm}", timeout=60)
+        svc.client().delete(f"/vms/{vm}/delete", timeout=60)
     except Exception:
         pass
 
@@ -1172,7 +1172,7 @@ def test_framed_guest_mcp_reconnects_after_persistent_resume():
 
         stop_response = svc.client().post(f"/stop/{vm}", {}, timeout=90)
         assert stop_response["success"] is True
-        resume_response = svc.client().post(f"/resume/{vm}", {}, timeout=120)
+        resume_response = svc.client().post(f"/vms/{vm}/resume", {}, timeout=120)
         assert resume_response["id"] == vm
         if not wait_exec_ready(svc.client(), vm):
             pytest.fail(f"VM {vm} never became exec-ready after resume")

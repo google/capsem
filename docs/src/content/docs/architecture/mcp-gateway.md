@@ -73,12 +73,12 @@ sequenceDiagram
 | `capsem_read_file` | Read file from guest filesystem | `GET /read_file/{id}` |
 | `capsem_write_file` | Write file to guest filesystem | `POST /write_file/{id}` |
 | `capsem_stop` | Stop VM (persistent: preserve, ephemeral: destroy) | `POST /stop/{id}` |
-| `capsem_suspend` | Suspend VM (save RAM/CPU state) | `POST /suspend/{id}` |
-| `capsem_resume` | Resume stopped persistent VM | `POST /resume/{name}` |
-| `capsem_persist` | Convert ephemeral VM to persistent | `POST /persist/{id}` |
-| `capsem_delete` | Permanently destroy VM and all state | `DELETE /delete/{id}` |
+| `capsem_suspend` | Suspend VM (save RAM/CPU state) | `POST /vms/{id}/pause` |
+| `capsem_resume` | Resume stopped persistent VM | `POST /vms/{id}/resume` |
+| `capsem_persist` | Convert ephemeral VM to persistent | `POST /vms/{id}/save` |
+| `capsem_delete` | Permanently destroy VM and all state | `DELETE /vms/{id}/delete` |
 | `capsem_purge` | Kill all temp VMs (all=true includes persistent) | `POST /purge` |
-| `capsem_fork` | Fork VM into reusable image | `POST /fork/{id}` |
+| `capsem_fork` | Fork VM into reusable image | `POST /vms/{id}/fork` |
 | `capsem_vm_logs` | Get serial/process logs (grep + tail params) | `GET /logs/{id}` |
 | `capsem_service_logs` | Get service logs (grep + tail params) | Service log file |
 | `capsem_host_logs` | Get an allowlisted host log by symbolic name | `GET /host-logs/{name}` |

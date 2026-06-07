@@ -99,10 +99,10 @@ class TestLoopDeviceAfterResume:
             r = _exec(client, name, churn)
             assert r.get("exit_code") == 0, f"churn write failed: {r}"
 
-            sus = client.post(f"/suspend/{name}", {})
+            sus = client.post(f"/vms/{name}/pause", {})
             assert sus and sus.get("success"), f"suspend failed: {sus}"
 
-            res = client.post(f"/resume/{name}", {})
+            res = client.post(f"/vms/{name}/resume", {})
             assert res is not None, "resume returned None"
             resumed = res.get("id", name)
             assert wait_exec_ready(client, resumed, timeout=EXEC_READY_TIMEOUT), \
@@ -121,4 +121,4 @@ class TestLoopDeviceAfterResume:
                 + "\n".join(f"  {l}" for l in new_errors[:10])
             )
         finally:
-            client.delete(f"/delete/{name}")
+            client.delete(f"/vms/{name}/delete")

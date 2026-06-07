@@ -32,7 +32,7 @@ class TestPersistentCreate:
             info = client.get(f"/info/{name}")
             assert info["persistent"] is True
         finally:
-            client.delete(f"/delete/{name}")
+            client.delete(f"/vms/{name}/delete")
 
     def test_unnamed_vm_is_ephemeral(self, client):
         """Unnamed VMs should have persistent=false."""
@@ -42,7 +42,7 @@ class TestPersistentCreate:
             info = client.get(f"/info/{vm_id}")
             assert info["persistent"] is False
         finally:
-            client.delete(f"/delete/{vm_id}")
+            client.delete(f"/vms/{vm_id}/delete")
 
     def test_create_duplicate_persistent_rejected(self, client):
         """Creating a persistent VM with an existing name must fail."""
@@ -58,7 +58,7 @@ class TestPersistentCreate:
                 f"Expected error for duplicate persistent name, got: {resp}"
             )
         finally:
-            client.delete(f"/delete/{name}")
+            client.delete(f"/vms/{name}/delete")
 
 
 class TestStopSemantics:
@@ -79,7 +79,7 @@ class TestStopSemantics:
         assert vm["persistent"] is True
 
         # Cleanup
-        client.delete(f"/delete/{name}")
+        client.delete(f"/vms/{name}/delete")
 
     def test_stop_ephemeral_removes_from_list(self, client):
         """Stopping an ephemeral VM should destroy it completely."""
@@ -119,7 +119,7 @@ class TestResumeLifecycle:
         client.post(f"/stop/{name}", {})
 
         # 5. Resume
-        resume_resp = client.post(f"/resume/{name}", {})
+        resume_resp = client.post(f"/vms/{name}/resume", {})
         assert resume_resp is not None
         resumed_id = resume_resp.get("id", name)
         wait_exec_ready(client, resumed_id, timeout=EXEC_READY_TIMEOUT)
@@ -131,11 +131,11 @@ class TestResumeLifecycle:
         )
 
         # Cleanup
-        client.delete(f"/delete/{resumed_id}")
+        client.delete(f"/vms/{resumed_id}/delete")
 
     def test_resume_nonexistent_fails(self, client):
         """Resuming a VM that doesn't exist should fail."""
-        resp = client.post("/resume/no-such-vm-xyz", {})
+        resp = client.post("/vms/no-such-vm-xyz/resume", {})
         assert resp is None or "error" in str(resp).lower()
 
     def test_resume_running_returns_id(self, client):
@@ -147,11 +147,11 @@ class TestResumeLifecycle:
         wait_exec_ready(client, name, timeout=EXEC_READY_TIMEOUT)
 
         # Resume while running
-        resp = client.post(f"/resume/{name}", {})
+        resp = client.post(f"/vms/{name}/resume", {})
         assert resp is not None
         assert resp.get("id") == name
 
-        client.delete(f"/delete/{name}")
+        client.delete(f"/vms/{name}/delete")
 
 
 class TestPersistConvert:
@@ -163,7 +163,7 @@ class TestPersistConvert:
         wait_exec_ready(client, vm_id, timeout=EXEC_READY_TIMEOUT)
 
         new_name = vm_name("conv")
-        persist_resp = client.post(f"/persist/{vm_id}", {"name": new_name})
+        persist_resp = client.post(f"/vms/{vm_id}/save", {"name": new_name})
         assert persist_resp is not None
         assert "success" in str(persist_resp).lower() or new_name in str(persist_resp)
 
@@ -172,7 +172,7 @@ class TestPersistConvert:
         assert info is not None
         assert info["persistent"] is True
 
-        client.delete(f"/delete/{new_name}")
+        client.delete(f"/vms/{new_name}/delete")
 
     def test_persist_rejects_duplicate_name(self, client):
         """Converting to a name that already exists should fail."""
@@ -188,11 +188,11 @@ class TestPersistConvert:
 
         try:
             # Try to persist with the taken name
-            persist_resp = client.post(f"/persist/{vm_id}", {"name": taken})
+            persist_resp = client.post(f"/vms/{vm_id}/save", {"name": taken})
             assert persist_resp is None or "error" in str(persist_resp).lower()
         finally:
-            client.delete(f"/delete/{vm_id}")
-            client.delete(f"/delete/{taken}")
+            client.delete(f"/vms/{vm_id}/delete")
+            client.delete(f"/vms/{taken}/delete")
 
 
 class TestPurge:
@@ -214,7 +214,7 @@ class TestPurge:
         assert persistent_name in ids, "Persistent VM was killed by purge without --all"
         assert eph_id not in ids, "Ephemeral VM survived purge"
 
-        client.delete(f"/delete/{persistent_name}")
+        client.delete(f"/vms/{persistent_name}/delete")
 
     def test_purge_all_destroys_persistent(self, client):
         """Purge with all=true should destroy persistent VMs too."""
@@ -246,7 +246,7 @@ class TestPurge:
         ids = [s["id"] for s in listing["sandboxes"]]
         assert persistent_name in ids, "Persistent VM was killed by purge with default all=false"
 
-        client.delete(f"/delete/{persistent_name}")
+        client.delete(f"/vms/{persistent_name}/delete")
 
 
 class TestRunEndpoint:
@@ -288,7 +288,7 @@ class TestListPersistence:
         assert vm["status"] == "Stopped"
         assert vm["pid"] == 0
 
-        client.delete(f"/delete/{name}")
+        client.delete(f"/vms/{name}/delete")
 
     def test_list_persistent_field(self, client):
         """List should include the persistent field for all VMs."""
@@ -303,4 +303,4 @@ class TestListPersistence:
             assert "persistent" in vm
             assert vm["persistent"] is True
         finally:
-            client.delete(f"/delete/{name}")
+            client.delete(f"/vms/{name}/delete")

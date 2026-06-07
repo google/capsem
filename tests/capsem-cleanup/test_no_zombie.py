@@ -21,7 +21,7 @@ def test_no_zombie_after_bulk_delete(cleanup_env):
         vms.append(name)
 
     for name in vms:
-        client.delete(f"/delete/{name}")
+        client.delete(f"/vms/{name}/delete")
 
     import time
     time.sleep(3)
