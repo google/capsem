@@ -81,6 +81,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `/profiles/{profile_id}/detection/reload`. They reuse the same compiled
   security-rule contract as enforcement and only list/write rules with an
   explicit `detection_level`.
+- Moved asset readiness/reconciliation to profile-owned routes
+  `/profiles/{profile_id}/assets/status` and
+  `/profiles/{profile_id}/assets/ensure`; retired global `/assets/status` and
+  `/assets/ensure` so asset selection stays under the profile contract.
 
 ### Added (security event rule spine)
 - Replaced callback-shaped Policy V2 authoring with one native rule contract

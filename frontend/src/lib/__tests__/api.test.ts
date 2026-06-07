@@ -775,6 +775,34 @@ describe('api', () => {
     });
   });
 
+  describe('profile assets', () => {
+    beforeEach(async () => {
+      mockFetch
+        .mockReturnValueOnce(jsonResponse({ ok: true, version: '1.0.0', service_socket: '/tmp/s' }))
+        .mockReturnValueOnce(jsonResponse({ token: 'tok' }));
+      await api.init();
+    });
+
+    it('getAssetsStatus sends GET /profiles/{profile_id}/assets/status', async () => {
+      const response = { ready: true, assets: [], missing: [] };
+      mockFetch.mockReturnValueOnce(jsonResponse(response));
+      const result = await api.getAssetsStatus('default');
+      expect(result).toEqual(response);
+      const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
+      expect(call[0]).toContain('/profiles/default/assets/status');
+    });
+
+    it('ensureAssets sends POST /profiles/{profile_id}/assets/ensure', async () => {
+      const response = { ready: true, ensured: true, downloaded: 0, assets: [], missing: [] };
+      mockFetch.mockReturnValueOnce(jsonResponse(response));
+      const result = await api.ensureAssets('default');
+      expect(result).toEqual(response);
+      const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
+      expect(call[0]).toContain('/profiles/default/assets/ensure');
+      expect(call[1].method).toBe('POST');
+    });
+  });
+
   describe('getImages', () => {
     it('sends GET /images', async () => {
       mockFetch

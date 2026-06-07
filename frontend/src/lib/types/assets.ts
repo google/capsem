@@ -1,11 +1,11 @@
-/** Per-asset status in GET /assets/status response. */
+/** Per-asset status in GET /profiles/{profile_id}/assets/status response. */
 export interface AssetEntry {
   name: string;
   path?: string;
   status: 'present' | 'missing' | 'corrupted' | 'downloading';
 }
 
-/** Response from GET /assets/status and POST /assets/ensure. */
+/** Response from profile asset status and ensure routes. */
 export interface AssetStatusResponse {
   ready: boolean;
   downloading: boolean;

@@ -831,14 +831,14 @@ export async function callMcpTool(
 import type { AssetStatusResponse } from './types/assets';
 
 /** Get first-class VM asset status. */
-export async function getAssetsStatus(): Promise<AssetStatusResponse> {
-  const resp = await _get('/assets/status');
+export async function getAssetsStatus(profileId = 'default'): Promise<AssetStatusResponse> {
+  const resp = await _get(`/profiles/${encodeURIComponent(profileId)}/assets/status`);
   return await resp.json();
 }
 
 /** Ensure missing/corrupt VM assets, then return refreshed status. */
-export async function ensureAssets(): Promise<AssetStatusResponse> {
-  const resp = await _post('/assets/ensure', {});
+export async function ensureAssets(profileId = 'default'): Promise<AssetStatusResponse> {
+  const resp = await _post(`/profiles/${encodeURIComponent(profileId)}/assets/ensure`, {});
   return await resp.json();
 }
 

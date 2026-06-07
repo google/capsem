@@ -317,8 +317,14 @@ fn service_proxy_routes() -> Router<Arc<AppState>> {
         .route("/vms/{id}/fork", post(proxy::handle_proxy))
         .route("/settings/info", get(proxy::handle_proxy))
         .route("/settings/edit", patch(proxy::handle_proxy))
-        .route("/assets/status", get(proxy::handle_proxy))
-        .route("/assets/ensure", post(proxy::handle_proxy))
+        .route(
+            "/profiles/{profile_id}/assets/status",
+            get(proxy::handle_proxy),
+        )
+        .route(
+            "/profiles/{profile_id}/assets/ensure",
+            post(proxy::handle_proxy),
+        )
         .route("/corp/info", get(proxy::handle_proxy))
         .route("/corp/edit", put(proxy::handle_proxy))
         .route("/corp/validate", post(proxy::handle_proxy))
@@ -545,6 +551,8 @@ mod tests {
             ),
             ("POST", "/profiles/default/detection/reload"),
             ("GET", "/profiles/default/detection/rules/list"),
+            ("GET", "/profiles/default/assets/status"),
+            ("POST", "/profiles/default/assets/ensure"),
             ("GET", "/profiles/default/plugins/list"),
             ("GET", "/profiles/default/plugins/dummy_pre_eicar/info"),
             ("PATCH", "/profiles/default/plugins/dummy_pre_eicar/edit"),
@@ -714,6 +722,24 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.status(), http::StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn gateway_does_not_forward_retired_global_asset_routes() {
+        for (method, uri) in [("GET", "/assets/status"), ("POST", "/assets/ensure")] {
+            let app = service_proxy_app("/tmp/capsem-gateway-must-not-connect.sock");
+            let resp = app
+                .oneshot(
+                    http::Request::builder()
+                        .method(method)
+                        .uri(uri)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), http::StatusCode::NOT_FOUND, "{method} {uri}");
+        }
     }
 
     #[tokio::test]

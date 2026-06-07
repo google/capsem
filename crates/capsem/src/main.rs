@@ -1193,7 +1193,8 @@ async fn main() -> Result<()> {
 
     match cli.command.as_ref().unwrap() {
         Commands::Assets(AssetsCommands::Status { json }) => {
-            let resp: ApiResponse<AssetStatusResponse> = client.get("/assets/status").await?;
+            let resp: ApiResponse<AssetStatusResponse> =
+                client.get("/profiles/default/assets/status").await?;
             let status = resp.into_result()?;
             if *json {
                 println!("{}", serde_json::to_string_pretty(&status)?);
@@ -1202,8 +1203,9 @@ async fn main() -> Result<()> {
             }
         }
         Commands::Assets(AssetsCommands::Ensure { json }) => {
-            let resp: ApiResponse<AssetStatusResponse> =
-                client.post("/assets/ensure", serde_json::json!({})).await?;
+            let resp: ApiResponse<AssetStatusResponse> = client
+                .post("/profiles/default/assets/ensure", serde_json::json!({}))
+                .await?;
             let status = resp.into_result()?;
             if *json {
                 println!("{}", serde_json::to_string_pretty(&status)?);

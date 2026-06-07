@@ -82,7 +82,8 @@ commit.
   - `[x] /profiles/{profile_id}/info`
   - `[ ] /profiles/{profile_id}/edit|delete|clone|validate`
   - `[x] /profiles/{profile_id}/reload`
-  - `/profiles/{profile_id}/assets/info|edit|status|ensure`
+  - `/profiles/{profile_id}/assets/info|edit`
+  - `[x] /profiles/{profile_id}/assets/status|ensure`
   - `[x] /profiles/{profile_id}/enforcement/info|reload|evaluate`
   - `[x] /profiles/{profile_id}/enforcement/rules/list`
   - `/profiles/{profile_id}/enforcement/rules/{rule_id}/edit|delete`
@@ -157,6 +158,10 @@ commit.
   frontend API. Detection routes reuse the enforcement rule DTO/engine, filter
   inventory to rules with `detection_level`, and reject detection writes that
   would not emit a detection.
+- [x] Replace global asset status/ensure routes with profile-owned
+  `/profiles/{profile_id}/assets/status` and
+  `/profiles/{profile_id}/assets/ensure` in service, gateway, frontend API,
+  CLI, and service integration tests. Old global asset routes fail closed.
 - [x] Replace the retired `/corp-config` mutation route with `PUT /corp/edit`
   in service and gateway, with regression tests proving the old route is not
   forwarded.

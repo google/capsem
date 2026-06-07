@@ -103,7 +103,8 @@ struct ServiceState {
     manifest: Option<Arc<capsem_core::asset_manager::ManifestV2>>,
     current_version: String,
     /// In-memory asset reconciliation progress. Service startup and explicit
-    /// /assets/ensure share this single rail so status can explain both.
+    /// /profiles/{profile_id}/assets/ensure shares this single rail with
+    /// status so status can explain both.
     asset_reconcile: Mutex<AssetReconcileState>,
     asset_reconcile_inflight: AtomicBool,
     asset_status_path: PathBuf,
@@ -3379,14 +3380,23 @@ async fn ensure_assets_for_state(state: Arc<ServiceState>) -> Result<usize, Stri
     result
 }
 
-/// GET /assets/status -- query VM asset readiness.
-async fn handle_assets_status(State(state): State<Arc<ServiceState>>) -> Json<serde_json::Value> {
-    Json(asset_status_value(&state))
+/// GET /profiles/{profile_id}/assets/status -- query profile VM asset readiness.
+async fn handle_profile_assets_status(
+    Path(profile_id): Path<String>,
+    State(state): State<Arc<ServiceState>>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let _profile_id = validate_profile_route_id(profile_id)?;
+    Ok(Json(asset_status_value(&state)))
 }
 
-/// POST /assets/ensure -- download missing/corrupt assets when a manifest is
-/// available, then return the refreshed status shape.
-async fn handle_assets_ensure(State(state): State<Arc<ServiceState>>) -> Json<serde_json::Value> {
+/// POST /profiles/{profile_id}/assets/ensure -- download missing/corrupt
+/// profile assets when a manifest is available, then return the refreshed
+/// status shape.
+async fn handle_profile_assets_ensure(
+    Path(profile_id): Path<String>,
+    State(state): State<Arc<ServiceState>>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let _profile_id = validate_profile_route_id(profile_id)?;
     let ensure_result = ensure_assets_for_state(Arc::clone(&state)).await;
     let mut status = asset_status_value(&state);
     if let Some(obj) = status.as_object_mut() {
@@ -3402,7 +3412,7 @@ async fn handle_assets_ensure(State(state): State<Arc<ServiceState>>) -> Json<se
             }
         }
     }
-    Json(status)
+    Ok(Json(status))
 }
 
 /// PUT /corp/edit -- apply corporate config from URL or inline TOML.
@@ -6048,8 +6058,14 @@ async fn main() -> Result<()> {
         .route("/vms/{id}/fork", post(handle_fork))
         .route("/settings/info", get(handle_get_settings))
         .route("/settings/edit", patch(handle_save_settings))
-        .route("/assets/status", get(handle_assets_status))
-        .route("/assets/ensure", post(handle_assets_ensure))
+        .route(
+            "/profiles/{profile_id}/assets/status",
+            get(handle_profile_assets_status),
+        )
+        .route(
+            "/profiles/{profile_id}/assets/ensure",
+            post(handle_profile_assets_ensure),
+        )
         .route("/corp/info", get(handle_corp_info))
         .route("/corp/edit", put(handle_corp_config))
         .route("/corp/validate", post(handle_corp_validate))

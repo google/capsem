@@ -137,8 +137,8 @@ contract.
 | `GET` | `/profiles/{profile_id}/assets/status` | Runtime/cache status for assets required by this profile. |
 | `POST` | `/profiles/{profile_id}/assets/ensure` | Download/build/install missing assets required by this profile. |
 
-Service-wide asset cache status can exist separately, but profile asset
-selection is profile-owned.
+Profile asset selection is profile-owned. Service-wide status may report
+runtime readiness, but asset authoring and reconciliation are profile-routed.
 
 ### Enforcement
 
@@ -325,8 +325,6 @@ runtime facts. They do not mutate profile behavior.
 | --- | --- | --- |
 | `GET` | `/health/status` | Daemon health. |
 | `GET` | `/status` | Daemon status, VM summary, and install readiness. |
-| `GET` | `/assets/status` | Service-wide asset cache/install status. |
-| `POST` | `/assets/ensure` | Ensure service cache has required shared assets. |
 | `GET` | `/security/latest` | Latest security ledger rows across the service. |
 | `GET` | `/security/status` | Security ledger counters/stats across the service. |
 | `GET` | `/detection/latest` | Latest detection ledger rows across the service. |

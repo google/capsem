@@ -31,12 +31,16 @@ class TestSetupRoutesRemoved:
     def test_retired_corp_config_route_is_removed(self, client):
         assert client.post("/corp-config", {}) is None
 
+    def test_retired_global_asset_routes_are_removed(self, client):
+        assert client.get("/assets/status") is None
+        assert client.post("/assets/ensure", {}) is None
+
 
 class TestAssets:
 
     def test_assets_lists_three_expected_artifacts(self, client):
-        """GET /assets/status enumerates vmlinuz, initrd.img, and rootfs."""
-        resp = client.get("/assets/status")
+        """Profile asset status enumerates vmlinuz, initrd.img, and rootfs."""
+        resp = client.get("/profiles/default/assets/status")
         assert resp is not None
         # Handler either returns {ready, downloading, asset_version, assets}
         # or {ready: false, downloading: false, error, assets: []}.
@@ -65,7 +69,7 @@ class TestAssets:
         If assets haven't been built yet, we accept ready=false but still
         verify the invariant.
         """
-        resp = client.get("/assets/status")
+        resp = client.get("/profiles/default/assets/status")
         assert resp is not None
         if resp.get("error"):
             # No asset manifest -- skip the invariant but keep shape assertion.
@@ -76,8 +80,8 @@ class TestAssets:
         )
 
     def test_assets_ensure_returns_status_shape(self, client):
-        """POST /assets/ensure returns the same status shape after reconcile."""
-        resp = client.post("/assets/ensure", {})
+        """Profile asset ensure returns the same status shape after reconcile."""
+        resp = client.post("/profiles/default/assets/ensure", {})
         assert resp is not None
         assert "ready" in resp and "assets" in resp, f"missing keys: {resp}"
         assert resp.get("ensured") is True or resp.get("error") is not None
