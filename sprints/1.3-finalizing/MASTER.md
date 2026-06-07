@@ -1,34 +1,58 @@
 # 1.3 Finalizing Master
 
-This is the coordination page for closing 1.3 after the security-rule/defaults
-discussion.
+This is the coordination page for closing 1.3 after the profile/API/security
+contract reset.
 
 ## Workstreams
 
 | Stream | Status | Notes |
 | --- | --- | --- |
-| Security rule defaults | Paused | Need final decision on `profiles.defaults` and override semantics. |
-| Plugin contract | Paused | Need exact required built-in plugin list and reachability invariant. |
-| Profile contract | Paused | Need canonical profile schema: VM executes profile; settings are UI-only; corp constrains/reporting. |
-| Enforcement/detection API | Paused | Must become profile-addressed; global `/enforcements/list` is not the final model. |
-| Policy UI | Paused | Must reflect backend rule names/reasons; no invented copy. |
-| Old policy burn pass | Pending | Re-check old domain/MCP decision remnants after defaults settle. |
-| Release verification | Pending | Tests, smoke, docs, changelog, Linux handoff. |
+| T0 Schema and ownership | Not Started | Profile/settings/corp schemas, immutable VM profile id, defaults/plugin/credential contract. |
+| T1 Service/gateway API | Not Started | Approved endpoint posture, HTTP/UDS parity, burn old global authoring routes. |
+| T2 Security rail burn-down | Not Started | Remove MCP/network decision engines from final security decisions; defaults stay real rules. |
+| T3 Profile/settings/corp UI/API split | Not Started | Settings UI-only, profile behavior profile-backed, one editor writes one contract. |
+| T4 MCP/plugins/credentials/skills UI | Not Started | Profile/server-scoped MCP, plugin modes/detection levels, credential BLAKE3 refs/counters, skills add/edit/remove. |
+| T5 VM lifecycle/assets/install | Not Started | `/vms/{id}` lifecycle, pause/resume/save/fork/status, immutable profile id, install readiness/assets status. |
+| T6 Docs/changelog/skills | Not Started | Full docs pass, changelog, skills, benchmark docs. |
+| T7 Release verification | Not Started | Focused tests, full smoke, full test cycle, full install cycle, UI sanity, benchmark check. |
 
 ## Ground Rules
 
 - Current main/worktree truth stays authoritative.
 - Do not resurrect old policy-v2 paths.
 - Do not add `NetworkRouting`.
-- Network cache, parsing, DNS redirects, port mechanics, and body capture remain network-engine mechanics.
-- Allow/ask/block decisions remain rule/CEL decisions.
-- UI reflects backend contracts and does not invent rule/plugin descriptions.
-- A VM executes a profile.
-- Profile owns VM behavior: assets, VM/runtime config, rules, detections, MCP, skills, provider/model config.
-- Settings are UI/application preferences only.
+- Network engine owns mechanics: parsing, capture, DNS/proxy mechanics, ports,
+  caching, decompression, routing mechanics, provider metadata.
+- Network engine does not own security decisions.
+- MCP owns server/tool/resource/prompt config and discovery mechanics.
+- MCP does not own security decisions.
+- Allow/ask/block/rewrite/preprocess/postprocess decisions remain CEL/security
+  rule decisions over typed security events.
+- Default rules are visible real rules in the same `SecurityRuleSet`; no second
+  default engine.
+- A VM executes one immutable profile id.
+- Profile owns VM behavior: assets, VM config, rules, detections, MCP, skills,
+  credentials/plugins, availability, name, description, icon/SVG.
+- `settings.toml` owns UI/application preferences only.
 - Corp owns constraints, locks, reporting, and integrations over profiles.
-- Only service-global endpoints may be global.
+- One UI editor surface writes one backing contract.
+- UI reflects backend contracts and does not invent config copy.
+- Service-global endpoints may only report runtime/service/ledger state.
 
-## Contract Draft
+## Contract Drafts
 
 - [api-contract.md](api-contract.md) is the current endpoint contract draft.
+- [plan.md](plan.md) contains the required end posture and security/UI contracts.
+- [model-breakage-audit.md](model-breakage-audit.md) captures the initial breakage audit.
+- [tracker.md](tracker.md) is the live execution checklist.
+
+## Release Gate
+
+Release is blocked until:
+
+- T0-T6 implementation/docs slices are complete and committed.
+- T7 verification passes.
+- Changelog matches implemented behavior.
+- Full smoke, full tests, full install cycle, and UI sanity pass are recorded.
+- Linux-only validation items are either passed by the Linux team or explicitly
+  documented as Linux handoff blockers.
