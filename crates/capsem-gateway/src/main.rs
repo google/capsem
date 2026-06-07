@@ -278,8 +278,6 @@ fn service_proxy_routes() -> Router<Arc<AppState>> {
         .route("/settings/edit", patch(proxy::handle_proxy))
         .route("/settings/presets", get(proxy::handle_proxy))
         .route("/settings/presets/{id}", post(proxy::handle_proxy))
-        .route("/settings/lint", post(proxy::handle_proxy))
-        .route("/settings/validate-key", post(proxy::handle_proxy))
         .route("/assets/status", get(proxy::handle_proxy))
         .route("/assets/ensure", post(proxy::handle_proxy))
         .route("/corp/edit", put(proxy::handle_proxy))
@@ -593,6 +591,27 @@ mod tests {
     #[tokio::test]
     async fn gateway_does_not_forward_retired_magic_settings_route() {
         for (method, uri) in [("GET", "/settings"), ("POST", "/settings")] {
+            let app = service_proxy_app("/tmp/capsem-gateway-must-not-connect.sock");
+            let resp = app
+                .oneshot(
+                    http::Request::builder()
+                        .method(method)
+                        .uri(uri)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), http::StatusCode::NOT_FOUND, "{method} {uri}");
+        }
+    }
+
+    #[tokio::test]
+    async fn gateway_does_not_forward_retired_settings_utility_routes() {
+        for (method, uri) in [
+            ("POST", "/settings/lint"),
+            ("POST", "/settings/validate-key"),
+        ] {
             let app = service_proxy_app("/tmp/capsem-gateway-must-not-connect.sock");
             let resp = app
                 .oneshot(

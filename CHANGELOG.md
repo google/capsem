@@ -99,6 +99,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Replaced the ambiguous `GET|POST /settings` route with
   `GET /settings/info` and `PATCH /settings/edit`; the old magic settings
   route now fails closed in the service and gateway.
+- Removed retired settings utility routes `/settings/lint` and
+  `/settings/validate-key`; settings now expose only `info` and `edit` until
+  profile/corp validation and credential broker endpoints own those workflows.
 - Replaced the global `POST /reload-config` route with
   `POST /profiles/{profile_id}/reload`; the old global reload route now fails
   closed in the service and gateway.

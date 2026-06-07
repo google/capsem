@@ -292,12 +292,6 @@ describe('api', () => {
       expect(call[1].method).toBe('POST');
     });
 
-    it('lintConfig sends POST /settings/lint', async () => {
-      const issues = [{ id: 'k', severity: 'warning', message: 'oops' }];
-      mockFetch.mockReturnValueOnce(jsonResponse(issues));
-      const result = await api.lintConfig();
-      expect(result).toEqual(issues);
-    });
   });
 
   // ---- MCP config (via settings) ----

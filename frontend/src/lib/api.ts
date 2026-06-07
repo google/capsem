@@ -17,7 +17,6 @@ import type {
 import type {
   SettingsResponse,
   SecurityPreset,
-  ConfigIssue,
 } from './types/settings';
 import type {
   DownloadProgress,
@@ -628,12 +627,6 @@ export async function getPresets(): Promise<SecurityPreset[]> {
 /** Apply a security preset by ID. Returns updated settings. */
 export async function applyPreset(id: string): Promise<SettingsResponse> {
   const resp = await _post(`/settings/presets/${encodeURIComponent(id)}`);
-  return await resp.json();
-}
-
-/** Validate config and return issues. */
-export async function lintConfig(): Promise<ConfigIssue[]> {
-  const resp = await _post('/settings/lint');
   return await resp.json();
 }
 

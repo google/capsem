@@ -394,12 +394,6 @@ pub struct TranscriptResponse {
 // ---------------------------------------------------------------------------
 
 #[derive(Deserialize, Debug)]
-pub struct ValidateKeyRequest {
-    pub provider: String,
-    pub key: String,
-}
-
-#[derive(Deserialize, Debug)]
 pub struct CorpConfigRequest {
     /// URL to fetch corp config from (e.g. https://corp.example.com/capsem.toml)
     pub source: Option<String>,

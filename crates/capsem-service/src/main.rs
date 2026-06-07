@@ -3014,22 +3014,6 @@ async fn handle_apply_preset(Path(id): Path<String>) -> Result<Json<serde_json::
     Ok(Json(serde_json::to_value(resp).unwrap_or_default()))
 }
 
-/// POST /settings/lint -- validate config and return issues.
-async fn handle_lint_config() -> Json<serde_json::Value> {
-    let issues = capsem_core::net::policy_config::load_merged_lint();
-    Json(serde_json::to_value(issues).unwrap_or_default())
-}
-
-/// POST /settings/validate-key -- validate an API key against a provider endpoint.
-async fn handle_validate_key(
-    Json(payload): Json<ValidateKeyRequest>,
-) -> Result<Json<serde_json::Value>, AppError> {
-    let result = capsem_core::host_config::validate_api_key(&payload.provider, &payload.key)
-        .await
-        .map_err(|e| AppError(StatusCode::BAD_REQUEST, e))?;
-    Ok(Json(serde_json::to_value(result).unwrap_or_default()))
-}
-
 fn asset_status_value(state: &ServiceState) -> serde_json::Value {
     let reconcile = state
         .asset_reconcile
@@ -5545,8 +5529,6 @@ async fn main() -> Result<()> {
         .route("/settings/edit", patch(handle_save_settings))
         .route("/settings/presets", get(handle_get_presets))
         .route("/settings/presets/{id}", post(handle_apply_preset))
-        .route("/settings/lint", post(handle_lint_config))
-        .route("/settings/validate-key", post(handle_validate_key))
         .route("/assets/status", get(handle_assets_status))
         .route("/assets/ensure", post(handle_assets_ensure))
         .route("/corp/edit", put(handle_corp_config))

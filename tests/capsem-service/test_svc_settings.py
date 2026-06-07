@@ -1,5 +1,5 @@
 """Settings endpoints: /settings/info, /settings/edit, /settings/presets,
-/settings/presets/{id}, /settings/lint, /settings/validate-key.
+/settings/presets/{id}.
 
 These endpoints read and write under CAPSEM_HOME (user.toml, corp.toml).
 The conftest's `service_env` fixture isolates CAPSEM_HOME to a tmpdir,
@@ -115,56 +115,16 @@ class TestPresets:
         )
 
 
-class TestLint:
+class TestRetiredSettingsUtilityRoutes:
 
-    def test_lint_returns_array(self, client):
-        """POST /settings/lint returns the issues array (possibly empty)."""
-        resp = client.post("/settings/lint", {})
-        assert isinstance(resp, list), f"lint did not return list: {resp!r}"
+    def test_lint_route_is_removed(self, client):
+        assert client.post("/settings/lint", {}) is None
 
-
-class TestValidateKey:
-
-    def test_validate_key_unknown_provider_rejected(self, client):
-        """Unknown provider must 400; don't issue a network call."""
-        resp = client.post("/settings/validate-key", {
-            "provider": "not-a-real-provider",
-            "key": "whatever",
-        })
-        assert resp is None or "error" in resp or "unknown" in str(resp).lower(), (
-            f"unknown provider should reject: {resp}"
-        )
-
-    def test_validate_key_empty_key_not_valid(self, client):
-        """Empty key short-circuits before the network call and reports invalid."""
-        resp = client.post("/settings/validate-key", {
+    def test_validate_key_route_is_removed(self, client):
+        assert client.post("/settings/validate-key", {
             "provider": "anthropic",
-            "key": "",
-        })
-        assert resp is not None, "validate-key returned no body"
-        assert resp.get("valid") is False, f"expected valid=false for empty key: {resp}"
-        assert isinstance(resp.get("message"), str) and resp["message"], (
-            f"missing message: {resp}"
-        )
-
-    def test_validate_key_bogus_anthropic_returns_invalid(self, client):
-        """A syntactically-plausible-but-wrong key returns valid=false via real HTTP.
-
-        This makes a live call to api.anthropic.com. If there's no network
-        (CI, air-gapped), the handler still returns a KeyValidation with
-        valid=false and a "Connection failed"/"Network error" message --
-        so the shape assertion holds either way.
-        """
-        resp = client.post(
-            "/settings/validate-key",
-            {"provider": "anthropic", "key": "sk-ant-not-a-real-key-xyz"},
-            timeout=30,
-        )
-        assert resp is not None, "validate-key returned no body"
-        assert resp.get("valid") is False, f"bogus key reported valid: {resp}"
-        assert isinstance(resp.get("message"), str) and resp["message"], (
-            f"missing message: {resp}"
-        )
+            "key": "sk-ant-not-a-real-key-xyz",
+        }) is None
 
 
 def _find_setting_value(tree, dotted_id):

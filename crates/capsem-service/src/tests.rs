@@ -1831,12 +1831,6 @@ async fn handle_get_presets_returns_list() {
 }
 
 #[tokio::test]
-async fn handle_lint_config_returns_array() {
-    let Json(val) = handle_lint_config().await;
-    assert!(val.is_array(), "lint response should be an array");
-}
-
-#[tokio::test]
 async fn handle_save_settings_rejects_unknown_key() {
     let mut changes = HashMap::new();
     changes.insert("nonexistent.setting.xyz".into(), serde_json::json!("value"));
