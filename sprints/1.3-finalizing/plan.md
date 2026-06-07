@@ -173,6 +173,12 @@ configuration model.
   description, icon/SVG, availability, assets, rules, MCP, skills, credentials,
   VM defaults, and other behavior/identity fields. Settings must not rename,
   redescribe, or replace profile-owned fields.
+- One UI part edits one underlying contract. A settings panel edits
+  `settings.toml`; a profile editor edits profile-backed data; a corp panel
+  edits corp-backed data; runtime/ledger views read runtime/DB-backed data.
+  Do not build mixed editor surfaces that write settings, profile, corp, and
+  runtime state together. Cross-source dashboards may exist only as read-only
+  views that clearly label their source data.
 - UI grouping must come from backend fields when the group has config meaning
   (`rule.group`, `rule.source`, plugin scope, MCP server id, profile id). The UI
   can choose layout, but it cannot create semantic categories that do not exist

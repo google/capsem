@@ -155,6 +155,10 @@ UI reflection discipline:
   editors/previews must round-trip through profile contract fields.
 - Profile availability for web, shell, mobile, or other surfaces is
   profile-backed metadata, not UI settings.
+- One UI editor surface writes one underlying contract: settings, profile, corp,
+  or runtime. Do not build mixed editor surfaces that write multiple ownership
+  planes. Read-only dashboards may combine sources only when source labels are
+  explicit.
 - UI settings are UI/app preferences only. Do not put VM behavior, security
   rules, MCP config, plugin config, credentials, or assets in frontend settings
   stores.
