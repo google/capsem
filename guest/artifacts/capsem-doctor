@@ -12,11 +12,6 @@ set -o pipefail
 # Do NOT override PATH here -- capsem-doctor must run with the same PATH
 # that the interactive shell sees, otherwise it masks PATH bugs.
 
-if [ "${1:-}" = "--version" ]; then
-    echo "2026.05.20"
-    exit 0
-fi
-
 TESTS_DIR="/usr/local/lib/capsem-tests"
 
 # T4: --bundle [PATH] flag. Strip it from "$@" before invoking pytest so

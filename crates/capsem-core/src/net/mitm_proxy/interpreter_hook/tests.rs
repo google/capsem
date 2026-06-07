@@ -15,6 +15,7 @@ fn anthropic_conn() -> ConnMeta {
         domain: "api.anthropic.com".into(),
         port: 443,
         process_name: None,
+        ai_provider: Some(ProviderKind::Anthropic),
         ..Default::default()
     }
 }
@@ -24,6 +25,7 @@ fn openai_conn() -> ConnMeta {
         domain: "api.openai.com".into(),
         port: 443,
         process_name: None,
+        ai_provider: Some(ProviderKind::OpenAi),
         ..Default::default()
     }
 }
@@ -43,6 +45,7 @@ fn google_conn() -> ConnMeta {
         domain: "generativelanguage.googleapis.com".into(),
         port: 443,
         process_name: None,
+        ai_provider: Some(ProviderKind::Google),
         ..Default::default()
     }
 }
@@ -98,7 +101,7 @@ fn anthropic_pipeline_produces_llm_events_with_provider_tag() {
     );
 
     // Sanity: collect_summary works against the accumulated events.
-    let summary = capsem_network_engine::model_stream::collect_summary(&llm.events);
+    let summary = crate::net::ai_traffic::events::collect_summary(&llm.events);
     assert_eq!(summary.message_id.as_deref(), Some("msg_1"));
     assert_eq!(summary.model.as_deref(), Some("claude-test"));
     assert_eq!(summary.text, "hello");
@@ -120,7 +123,7 @@ fn anthropic_hook_skips_on_wrong_domain() {
             trace_id: None,
         };
         let s = c.state::<SseEventStream>(SseEventStream::default);
-        s.events.push(capsem_network_engine::sse_parser::SseEvent {
+        s.events.push(crate::net::parsers::sse_parser::SseEvent {
             event_type: Some("message_start".into()),
             data: "{}".into(),
         });
@@ -136,6 +139,46 @@ fn anthropic_hook_skips_on_wrong_domain() {
     assert_eq!(sse_stream.events.len(), 1);
     // No LlmEventStream allocated.
     assert!(state.peek::<LlmEventStream>().is_none());
+}
+
+#[test]
+fn cloud_domain_without_runtime_provider_metadata_is_not_interpreted() {
+    let interp = OpenAiInterpreterHook::new();
+    let mut state = HookState::default();
+    let conn = ConnMeta {
+        domain: "api.openai.com".into(),
+        port: 443,
+        process_name: None,
+        ..Default::default()
+    };
+
+    {
+        let mut c = ChunkCtx {
+            state: &mut state,
+            conn: &conn,
+            trace_id: None,
+        };
+        let s = c.state::<SseEventStream>(SseEventStream::default);
+        s.events.push(crate::net::parsers::sse_parser::SseEvent {
+            event_type: None,
+            data: "{\"id\":\"chatcmpl-1\",\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}".into(),
+        });
+    }
+
+    {
+        let mut ctx = ctx_for(&mut state, &conn);
+        interp.on_response_chunk(&mut Bytes::new(), &mut ctx);
+    }
+
+    assert!(state.peek::<LlmEventStream>().is_none());
+    assert_eq!(
+        state
+            .peek::<SseEventStream>()
+            .expect("sse queue remains")
+            .events
+            .len(),
+        1
+    );
 }
 
 /// OpenAI provider routes through OpenAiInterpreterHook on its domain.

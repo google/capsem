@@ -63,7 +63,53 @@ pub struct TelemetryConfig {
 /// passes to spawned children should be built using
 /// [`with_subsys_targets`] to keep the list in one place.
 pub const SUBSYS_TARGETS: &str =
-    "suspend=info,fs=info,ipc=info,host=info,handshake=info,vsock=info,security=info,security.process=info";
+    "suspend=info,fs=info,ipc=info,host=info,handshake=info,vsock=info";
+
+/// Enables local debug spans/metrics for benchmark and release triage.
+///
+/// Accepted true values: `1`, `true`, `yes`, `on`, `local`, `debug`.
+/// This switch widens local tracing filters only; it does not create an OTLP
+/// exporter.
+pub const DEBUG_TELEMETRY_ENV: &str = "CAPSEM_DEBUG_TELEMETRY";
+
+/// Explicit escape hatch for future lab-only upstream OTEL exporter work.
+///
+/// This is intentionally not a normal user-facing knob. Without it, OTLP
+/// endpoint/exporter env vars are reported as blocked and ignored by Capsem's
+/// telemetry bootstrap.
+pub const ALLOW_UPSTREAM_OTEL_ENV: &str = "CAPSEM_ALLOW_UPSTREAM_OTEL";
+
+/// Local debug tracing directives used when [`DEBUG_TELEMETRY_ENV`] is enabled.
+pub const DEBUG_TELEMETRY_TARGETS: &str = concat!(
+    "capsem.mitm=debug,",
+    "capsem.security_event=debug,",
+    "capsem.db=debug,",
+    "capsem.launch=debug,",
+    "mitm.hook=debug,",
+    "mitm.hook.chunk=debug"
+);
+
+pub const LAUNCH_SERVICE_SPAN: &str = "capsem.launch.service";
+pub const LAUNCH_GATEWAY_SPAN: &str = "capsem.launch.gateway";
+pub const LAUNCH_PROCESS_SPAWN_SPAN: &str = "capsem.launch.process_spawn";
+pub const LAUNCH_VM_BOOT_SPAN: &str = "capsem.launch.vm_boot";
+pub const LAUNCH_VSOCK_READY_SPAN: &str = "capsem.launch.vsock_ready";
+pub const LAUNCH_FIRST_NETWORK_READY_SPAN: &str = "capsem.launch.first_network_ready";
+
+const UPSTREAM_OTEL_ENV_VARS: &[&str] = &[
+    "OTEL_EXPORTER_OTLP_ENDPOINT",
+    "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
+    "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",
+    "OTEL_TRACES_EXPORTER",
+    "OTEL_METRICS_EXPORTER",
+];
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DebugTelemetryPolicy {
+    pub local_debug_enabled: bool,
+    pub upstream_export_allowed: bool,
+    pub blocked_upstream_env: Vec<String>,
+}
 
 /// Compose a filter string by appending [`SUBSYS_TARGETS`] to a base.
 /// Use for `TelemetryConfig::default_filter` and for `RUST_LOG=...` env
@@ -91,12 +137,6 @@ pub struct TelemetryGuard {
 /// unset (CLI invocations and top-level binaries).
 static PARENT_TRACEPARENT: OnceLock<String> = OnceLock::new();
 
-pub const CAPSEM_VM_ID_ENV: &str = "CAPSEM_VM_ID";
-pub const CAPSEM_SESSION_ID_ENV: &str = "CAPSEM_SESSION_ID";
-pub const CAPSEM_PROFILE_ID_ENV: &str = "CAPSEM_PROFILE_ID";
-pub const CAPSEM_PROFILE_REVISION_ENV: &str = "CAPSEM_PROFILE_REVISION";
-pub const CAPSEM_USER_ID_ENV: &str = "CAPSEM_USER_ID";
-
 /// Initialize tracing. Call exactly once per binary, in `main()`, before
 /// any `tracing::info!` macro fires.
 ///
@@ -110,12 +150,15 @@ pub fn init(cfg: TelemetryConfig) -> std::io::Result<TelemetryGuard> {
         }
     }
 
+    let debug_policy = current_debug_telemetry_policy();
+    let default_filter = default_filter_with_debug_telemetry(cfg.default_filter, &debug_policy);
+
     // Prepend `service=info` so the synthetic `service.start` line below
     // always reaches the sink, even when callers pass a narrow default
     // filter like `"capsem_gateway=info,tower_http=debug,hyper=info"`. A
     // user override via the `RUST_LOG` env var keeps full control.
     let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new(format!("service=info,{}", cfg.default_filter)));
+        .unwrap_or_else(|_| EnvFilter::new(format!("service=info,{default_filter}")));
 
     let registry = tracing_subscriber::registry().with(filter);
     let mut file_guard: Option<tracing_appender::non_blocking::WorkerGuard> = None;
@@ -166,8 +209,18 @@ pub fn init(cfg: TelemetryConfig) -> std::io::Result<TelemetryGuard> {
         protocol_version = capsem_proto::PROTOCOL_VERSION,
         schema_hash = format!("{:016x}", capsem_proto::SCHEMA_HASH),
         parent_traceparent = current_parent_traceparent(),
+        debug_telemetry_local = debug_policy.local_debug_enabled,
         "service.start",
     );
+    if !debug_policy.blocked_upstream_env.is_empty() {
+        tracing::warn!(
+            target: "service",
+            service = cfg.service,
+            blocked_env = ?debug_policy.blocked_upstream_env,
+            allow_env = ALLOW_UPSTREAM_OTEL_ENV,
+            "upstream OTEL exporter env ignored; Capsem debug telemetry is local-only by default",
+        );
+    }
 
     Ok(TelemetryGuard { file_guard })
 }
@@ -185,6 +238,57 @@ pub fn current_parent_traceparent() -> &'static str {
     PARENT_TRACEPARENT.get().map(String::as_str).unwrap_or("")
 }
 
+pub fn current_debug_telemetry_policy() -> DebugTelemetryPolicy {
+    debug_telemetry_policy_from_pairs(std::env::vars())
+}
+
+pub fn debug_telemetry_policy_from_pairs<I, K, V>(vars: I) -> DebugTelemetryPolicy
+where
+    I: IntoIterator<Item = (K, V)>,
+    K: AsRef<str>,
+    V: AsRef<str>,
+{
+    let vars: std::collections::HashMap<String, String> = vars
+        .into_iter()
+        .map(|(key, value)| (key.as_ref().to_string(), value.as_ref().to_string()))
+        .collect();
+    let local_debug_enabled = vars
+        .get(DEBUG_TELEMETRY_ENV)
+        .is_some_and(|value| env_truthy(value));
+    let upstream_export_allowed = vars
+        .get(ALLOW_UPSTREAM_OTEL_ENV)
+        .is_some_and(|value| env_truthy(value));
+    let blocked_upstream_env = if upstream_export_allowed {
+        Vec::new()
+    } else {
+        UPSTREAM_OTEL_ENV_VARS
+            .iter()
+            .filter(|key| vars.get(**key).is_some_and(|value| !value.is_empty()))
+            .map(|key| (*key).to_string())
+            .collect()
+    };
+    DebugTelemetryPolicy {
+        local_debug_enabled,
+        upstream_export_allowed,
+        blocked_upstream_env,
+    }
+}
+
+pub fn default_filter_with_debug_telemetry(base: &str, policy: &DebugTelemetryPolicy) -> String {
+    if policy.local_debug_enabled {
+        format!("{base},{DEBUG_TELEMETRY_TARGETS}")
+    } else {
+        base.to_string()
+    }
+}
+
+fn env_truthy(value: &str) -> bool {
+    matches!(
+        value.trim().to_ascii_lowercase().as_str(),
+        "1" | "true" | "yes" | "on" | "local" | "debug"
+    )
+}
+
 /// Extract just the trace-id (16 hex chars, the lower half of the W3C
 /// trace-id) from the parent traceparent. Returns `None` if no parent.
 ///
@@ -193,24 +297,12 @@ pub fn current_parent_traceparent() -> &'static str {
 /// with the existing `CAPSEM_TRACE_ID` 16-hex convention -- one fewer
 /// representation to remember when grepping.
 pub fn ambient_capsem_trace_id() -> Option<String> {
-    let env_trace_id = std::env::var("CAPSEM_TRACE_ID").ok();
-    ambient_capsem_trace_id_from_inputs(
-        env_trace_id.as_deref(),
-        PARENT_TRACEPARENT.get().map(String::as_str),
-    )
-}
-
-fn ambient_capsem_trace_id_from_inputs(
-    env_trace_id: Option<&str>,
-    parent_traceparent: Option<&str>,
-) -> Option<String> {
-    if let Some(env) = env_trace_id {
+    if let Ok(env) = std::env::var("CAPSEM_TRACE_ID") {
         if !env.is_empty() {
-            return Some(env.to_string());
+            return Some(env);
         }
     }
-
-    let tp = parent_traceparent?;
+    let tp = PARENT_TRACEPARENT.get()?;
     let mut parts = tp.split('-');
     let _version = parts.next()?;
     let trace_id = parts.next()?;
@@ -235,7 +327,7 @@ fn ambient_capsem_trace_id_from_inputs(
 /// 16-hex span_id and a 32-hex trace_id derived from `vm_id` + a random
 /// suffix so each VM gets a deterministic-looking trace anchor.
 pub fn child_trace_env(vm_id: &str) -> Vec<(String, String)> {
-    let mut out = vec![(CAPSEM_VM_ID_ENV.to_string(), vm_id.to_string())];
+    let mut out = vec![("CAPSEM_VM_ID".to_string(), vm_id.to_string())];
 
     if let Some(parent_tp) = PARENT_TRACEPARENT.get() {
         // Parent already provided a traceparent -- propagate verbatim.
@@ -260,74 +352,6 @@ pub fn child_trace_env(vm_id: &str) -> Vec<(String, String)> {
     out.push(("TRACEPARENT".to_string(), traceparent));
     out.push(("TRACESTATE".to_string(), String::new()));
     out
-}
-
-/// Build the child-process identity + trace environment.
-///
-/// `CAPSEM_SESSION_ID`, `CAPSEM_PROFILE_ID`, `CAPSEM_PROFILE_REVISION`, and
-/// `CAPSEM_USER_ID` are host telemetry facts for the child process. They are
-/// not forwarded into the guest unless a caller also passes them through
-/// `--env`.
-pub fn child_identity_env(vm_id: &str, profile_id: &str, user_id: &str) -> Vec<(String, String)> {
-    child_identity_env_with_revision(vm_id, profile_id, None, user_id)
-}
-
-pub fn child_identity_env_with_revision(
-    vm_id: &str,
-    profile_id: &str,
-    profile_revision: Option<&str>,
-    user_id: &str,
-) -> Vec<(String, String)> {
-    let mut out = child_trace_env(vm_id);
-    out.push((CAPSEM_SESSION_ID_ENV.to_string(), vm_id.to_string()));
-    out.push((CAPSEM_PROFILE_ID_ENV.to_string(), profile_id.to_string()));
-    if let Some(profile_revision) = profile_revision {
-        out.push((
-            CAPSEM_PROFILE_REVISION_ENV.to_string(),
-            profile_revision.to_string(),
-        ));
-    }
-    out.push((CAPSEM_USER_ID_ENV.to_string(), user_id.to_string()));
-    out
-}
-
-/// Resolve the local user id recorded in session telemetry.
-///
-/// Prefer an explicit `CAPSEM_USER_ID` override for tests/service managers,
-/// then the common host username env vars, then the effective UID.
-pub fn host_user_id() -> String {
-    host_user_id_from_inputs(
-        std::env::var(CAPSEM_USER_ID_ENV).ok().as_deref(),
-        std::env::var("USER").ok().as_deref(),
-        std::env::var("USERNAME").ok().as_deref(),
-        effective_uid(),
-    )
-}
-
-fn host_user_id_from_inputs(
-    explicit: Option<&str>,
-    user: Option<&str>,
-    username: Option<&str>,
-    uid: Option<u32>,
-) -> String {
-    for candidate in [explicit, user, username].into_iter().flatten() {
-        let candidate = candidate.trim();
-        if !candidate.is_empty() {
-            return candidate.to_string();
-        }
-    }
-    uid.map(|uid| format!("uid:{uid}"))
-        .unwrap_or_else(|| "unknown".to_string())
-}
-
-#[cfg(unix)]
-fn effective_uid() -> Option<u32> {
-    Some(unsafe { libc::geteuid() as u32 })
-}
-
-#[cfg(not(unix))]
-fn effective_uid() -> Option<u32> {
-    None
 }
 
 /// Cheap 16-hex-char id derived from a seed. Uses blake3 for a stable,

@@ -4,8 +4,6 @@ use capsem_core::session::{
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-use crate::registry::{SavedVmBaseAssets, SavedVmProfilePin};
-
 /// Response for GET /stats -- full main.db dump in one call.
 #[derive(Serialize, Debug)]
 pub struct StatsResponse {
@@ -20,7 +18,7 @@ pub struct StatsResponse {
 pub struct ProvisionRequest {
     pub name: Option<String>,
     /// RAM in megabytes. If absent, service resolves from merged VM settings
-    /// (vm.resources.ram_gb, default 8 GiB).
+    /// (vm.resources.ram_gb, default 4 GiB).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ram_mb: Option<u64>,
     /// CPU count. If absent, service resolves from merged VM settings
@@ -37,13 +35,6 @@ pub struct ProvisionRequest {
     /// be cloned from this existing persistent sandbox.
     #[serde(default, skip_serializing_if = "Option::is_none", alias = "image")]
     pub from: Option<String>,
-    /// Profile id to resolve for a fresh VM. Clones inherit the source VM's
-    /// profile pin instead.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub profile_id: Option<String>,
-    /// Optional exact installed profile revision to require for a fresh VM.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub profile_revision: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -68,16 +59,6 @@ pub struct ProvisionResponse {
     /// would exceed SUN_LEN. See capsem_core::uds::instance_socket_path.
     #[serde(default)]
     pub uds_path: Option<std::path::PathBuf>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub profile_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub profile_revision: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub profile_status: Option<VmProfileStatus>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub profile_pin: Option<SavedVmProfilePin>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub asset_health: Option<AssetHealth>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -96,10 +77,6 @@ pub struct SandboxInfo {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub base_assets: Option<SavedVmBaseAssets>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub profile_pin: Option<SavedVmProfilePin>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub forked_from: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
@@ -109,16 +86,6 @@ pub struct SandboxInfo {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub size_bytes: Option<u64>,
     // -- Telemetry (populated for /info, omitted when absent) --
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub vm_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub profile_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub profile_revision: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub profile_status: Option<VmProfileStatus>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub user_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub created_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -140,39 +107,9 @@ pub struct SandboxInfo {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub denied_requests: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub total_dns_queries: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub denied_dns_queries: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub total_file_events: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub process_event_count: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub process_exec_count: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub model_call_count: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub security_events_total: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub enforcement_decisions_total: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub detection_findings_total: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub blocks_total: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub latest_block_event_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub latest_block_rule_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub latest_block_reason: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub latest_detection_event_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub latest_detection_rule_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub latest_detection_title: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub latest_detection_severity: Option<String>,
     /// Short tail of `process.log` from the last failed boot. Populated
     /// only when `status == "Defunct"`. Renders in `capsem list` /
     /// `capsem status` so a crashed VM tells the user *why* without
@@ -193,16 +130,9 @@ impl SandboxInfo {
             ram_mb: None,
             cpus: None,
             version: None,
-            base_assets: None,
-            profile_pin: None,
             forked_from: None,
             description: None,
             size_bytes: None,
-            vm_id: None,
-            profile_id: None,
-            profile_revision: None,
-            profile_status: None,
-            user_id: None,
             created_at: None,
             uptime_secs: None,
             total_input_tokens: None,
@@ -213,37 +143,11 @@ impl SandboxInfo {
             total_requests: None,
             allowed_requests: None,
             denied_requests: None,
-            total_dns_queries: None,
-            denied_dns_queries: None,
             total_file_events: None,
-            process_event_count: None,
-            process_exec_count: None,
             model_call_count: None,
-            security_events_total: None,
-            enforcement_decisions_total: None,
-            detection_findings_total: None,
-            blocks_total: None,
-            latest_block_event_id: None,
-            latest_block_rule_id: None,
-            latest_block_reason: None,
-            latest_detection_event_id: None,
-            latest_detection_rule_id: None,
-            latest_detection_title: None,
-            latest_detection_severity: None,
             last_error: None,
         }
     }
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum VmProfileStatus {
-    Current,
-    NeedsUpdate,
-    Deprecated,
-    Revoked,
-    Corrupted,
-    Unknown,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -269,14 +173,8 @@ pub struct RunRequest {
     pub command: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeout_secs: Option<u64>,
-    /// Profile id to resolve for the temporary VM.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub profile_id: Option<String>,
-    /// Optional exact installed profile revision to require for the temporary VM.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub profile_revision: Option<String>,
     /// Guest RAM in MiB. Falls back to merged VM settings
-    /// (vm.resources.ram_gb, default 8 GiB).
+    /// (vm.resources.ram_gb, default 4 GiB).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ram_mb: Option<u64>,
     /// Guest CPU count. Falls back to merged VM settings
@@ -288,82 +186,12 @@ pub struct RunRequest {
     pub env: Option<HashMap<String, String>>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum AssetHealthState {
-    Checking,
-    Updating,
-    Ready,
-    Error,
-}
-
-impl AssetHealthState {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Checking => "checking",
-            Self::Updating => "updating",
-            Self::Ready => "ready",
-            Self::Error => "error",
-        }
-    }
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
-pub struct AssetProgress {
-    pub logical_name: String,
-    pub bytes_done: u64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub bytes_total: Option<u64>,
-    pub done: bool,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
-pub struct SavedVmAssetDependency {
-    pub vm: String,
-    pub asset_version: String,
-    pub arch: String,
-    pub missing: Vec<String>,
-    pub recovery_hint: String,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
-pub struct ProfileAssetProvenance {
-    pub logical_name: String,
-    pub hash: String,
-    pub source_url: String,
-    pub size: u64,
-    pub content_type: String,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct AssetHealth {
     pub ready: bool,
-    pub state: AssetHealthState,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub profile_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub profile_revision: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub profile_payload_hash: Option<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub profile_assets: Vec<ProfileAssetProvenance>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub arch: Option<String>,
     pub missing: Vec<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub progress: Option<AssetProgress>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
-    #[serde(default)]
-    pub retry_count: u32,
-    #[serde(default)]
-    pub retryable: bool,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub saved_vm_dependencies: Vec<SavedVmAssetDependency>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub checked_at_unix_secs: Option<u64>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -385,6 +213,12 @@ pub struct ExecResponse {
     pub stdout: String,
     pub stderr: String,
     pub exit_code: i32,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct WriteFileRequest {
+    pub path: String,
+    pub content: String, // Base64 or plain text? For now let's assume plain text or base64 if we detect it.
 }
 
 // ── Files API types (host-side VirtioFS) ─────────────────────────────
@@ -415,10 +249,22 @@ pub struct FileListResponse {
 }
 
 /// Response for POST /files/{id}/content (upload).
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Debug)]
 pub struct UploadResponse {
     pub success: bool,
     pub size: u64,
+}
+
+// ── Legacy vsock file I/O types ──────────────────────────────────────
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct ReadFileRequest {
+    pub path: String,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct ReadFileResponse {
+    pub content: String,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -428,13 +274,49 @@ pub struct LogsResponse {
     pub serial_logs: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub process_logs: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub security_logs: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ErrorResponse {
     pub error: String,
+}
+
+// ── MCP API types ──────────────────────────────────────────────────
+
+/// Response for GET /mcp/servers.
+#[derive(Serialize, Deserialize, Debug)]
+pub struct McpServerInfoResponse {
+    pub name: String,
+    pub url: String,
+    pub has_bearer_token: bool,
+    pub custom_header_count: usize,
+    pub source: String,
+    pub enabled: bool,
+    pub running: bool,
+    pub tool_count: usize,
+    pub is_stdio: bool,
+}
+
+/// Response for GET /mcp/tools.
+#[derive(Serialize, Deserialize, Debug)]
+pub struct McpToolInfoResponse {
+    pub namespaced_name: String,
+    pub original_name: String,
+    pub description: Option<String>,
+    pub server_name: String,
+    pub annotations: Option<serde_json::Value>,
+    pub pin_hash: Option<String>,
+    pub approved: bool,
+    pub pin_changed: bool,
+}
+
+/// Response for GET /mcp/policy.
+#[derive(Serialize, Deserialize, Debug)]
+pub struct McpPolicyInfoResponse {
+    pub global_policy: Option<String>,
+    pub default_tool_permission: String,
+    pub blocked_servers: Vec<String>,
+    pub tool_permissions: HashMap<String, String>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -574,17 +456,6 @@ mod tests {
     }
 
     #[test]
-    fn provision_request_with_profile_selection() {
-        let json = json!({
-            "profile_id": "coding",
-            "profile_revision": "2026.0520.1"
-        });
-        let r: ProvisionRequest = serde_json::from_value(json).unwrap();
-        assert_eq!(r.profile_id.as_deref(), Some("coding"));
-        assert_eq!(r.profile_revision.as_deref(), Some("2026.0520.1"));
-    }
-
-    #[test]
     fn provision_request_env_omitted() {
         let r = ProvisionRequest {
             name: None,
@@ -593,8 +464,6 @@ mod tests {
             persistent: false,
             env: None,
             from: None,
-            profile_id: None,
-            profile_revision: None,
         };
         let json = serde_json::to_string(&r).unwrap();
         assert!(!json.contains("env"));
@@ -628,11 +497,6 @@ mod tests {
         let r = ProvisionResponse {
             id: "vm-123".into(),
             uds_path: Some(std::path::PathBuf::from("/tmp/r/instances/vm-123.sock")),
-            profile_id: Some("everyday-work".into()),
-            profile_revision: Some("2026.0520.1".into()),
-            profile_status: Some(VmProfileStatus::Current),
-            profile_pin: None,
-            asset_health: None,
         };
         let json = serde_json::to_string(&r).unwrap();
         let r2: ProvisionResponse = serde_json::from_str(&json).unwrap();
@@ -641,9 +505,6 @@ mod tests {
             r2.uds_path.as_deref(),
             Some(std::path::Path::new("/tmp/r/instances/vm-123.sock"))
         );
-        assert_eq!(r2.profile_id.as_deref(), Some("everyday-work"));
-        assert_eq!(r2.profile_revision.as_deref(), Some("2026.0520.1"));
-        assert_eq!(r2.profile_status, Some(VmProfileStatus::Current));
     }
 
     // -----------------------------------------------------------------------
@@ -743,26 +604,15 @@ mod tests {
         let r: RunRequest = serde_json::from_value(json).unwrap();
         assert_eq!(r.command, "echo hello");
         assert_eq!(r.timeout_secs, None);
-        assert_eq!(r.profile_id, None);
-        assert_eq!(r.profile_revision, None);
         assert_eq!(r.ram_mb, None);
         assert_eq!(r.cpus, None);
     }
 
     #[test]
     fn run_request_custom() {
-        let json = json!({
-            "command": "ls",
-            "timeout_secs": 120,
-            "profile_id": "coding",
-            "profile_revision": "2026.0520.1",
-            "ram_mb": 4096,
-            "cpus": 4
-        });
+        let json = json!({"command": "ls", "timeout_secs": 120, "ram_mb": 4096, "cpus": 4});
         let r: RunRequest = serde_json::from_value(json).unwrap();
         assert_eq!(r.timeout_secs, Some(120));
-        assert_eq!(r.profile_id.as_deref(), Some("coding"));
-        assert_eq!(r.profile_revision.as_deref(), Some("2026.0520.1"));
         assert_eq!(r.ram_mb, Some(4096));
         assert_eq!(r.cpus, Some(4));
     }
@@ -800,19 +650,25 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Files API
+    // File I/O
     // -----------------------------------------------------------------------
 
     #[test]
-    fn upload_response_roundtrip() {
-        let r = UploadResponse {
-            success: true,
-            size: 4,
+    fn write_file_request_roundtrip() {
+        let json = json!({"path": "/tmp/f.txt", "content": "data"});
+        let r: WriteFileRequest = serde_json::from_value(json).unwrap();
+        assert_eq!(r.path, "/tmp/f.txt");
+        assert_eq!(r.content, "data");
+    }
+
+    #[test]
+    fn read_file_response_roundtrip() {
+        let r = ReadFileResponse {
+            content: "file contents".into(),
         };
         let json = serde_json::to_string(&r).unwrap();
-        let r2: UploadResponse = serde_json::from_str(&json).unwrap();
-        assert!(r2.success);
-        assert_eq!(r2.size, 4);
+        let r2: ReadFileResponse = serde_json::from_str(&json).unwrap();
+        assert_eq!(r2.content, "file contents");
     }
 
     // -----------------------------------------------------------------------
@@ -848,7 +704,6 @@ mod tests {
             logs: "Linux boot...\n".into(),
             serial_logs: None,
             process_logs: None,
-            security_logs: None,
         };
         let json = serde_json::to_string(&r).unwrap();
         let r2: LogsResponse = serde_json::from_str(&json).unwrap();

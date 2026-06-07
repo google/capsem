@@ -68,19 +68,6 @@
     return issues;
   }
 
-  /** Check if a provider has any required API key fields that are empty. */
-  function hasMissingApiKey(children: SettingsNode[]): boolean {
-    for (const child of children) {
-      if (child.kind === 'leaf' && child.setting_type === 'apikey') {
-        const val = child.effective_value;
-        if (typeof val === 'string' && val.length === 0) return true;
-      } else if (child.kind === 'group') {
-        if (hasMissingApiKey(child.children)) return true;
-      }
-    }
-    return false;
-  }
-
   function resolveWidget(leaf: SettingsLeaf): Widget {
     return settingsStore.model?.getWidget(leaf) ?? Widget.TextInput;
   }
@@ -127,6 +114,21 @@
         <p class="text-xs text-muted-foreground-1 mb-2">{a.description}</p>
       {/if}
       <PresetSection />
+    </div>
+  {:else if a.action === ActionKind.CheckUpdate}
+    <div class="flex items-center justify-between py-3">
+      <div>
+        <span class="text-sm font-medium text-foreground">{a.name}</span>
+        {#if a.description}
+          <p class="text-xs text-muted-foreground-1 mt-0.5">{a.description}</p>
+        {/if}
+      </div>
+      <button
+        type="button"
+        class="py-2 px-4 text-sm font-medium rounded-lg border border-line-2 bg-layer text-foreground hover:bg-layer-hover transition-colors"
+      >
+        Check now
+      </button>
     </div>
   {/if}
 {/snippet}
@@ -178,7 +180,6 @@
 
     {#if hasToggle}
       {@const headerIssues = groupIssues(child.children)}
-      {@const missingKey = isOn && hasMissingApiKey(child.children)}
       <!-- Toggle-gated group: polished card with darker header -->
       <div class="bg-card border border-card-line rounded-xl overflow-hidden mb-3">
         <!-- Header: bg-background-1 = slightly darker, matching Appearance section headers -->
@@ -214,8 +215,8 @@
               <span class="text-xs text-muted-foreground-1 ml-2">{child.description}</span>
             {/if}
           </button>
-          <!-- Warning badge when collapsed and issues/missing key -->
-          {#if !isExpanded && (headerIssues.length > 0 || missingKey)}
+          <!-- Warning badge when collapsed and lint issues exist. -->
+          {#if !isExpanded && headerIssues.length > 0}
             <span class="text-warning" title="{headerIssues.length} issue{headerIssues.length === 1 ? '' : 's'}">
               <WarningCircle size={18} weight="fill" />
             </span>

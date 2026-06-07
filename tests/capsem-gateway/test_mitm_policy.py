@@ -29,16 +29,15 @@ def client(service_env):
 def test_mitm_policy_telemetry(service_env, client):
     """Blocked domain access attempts are logged in session DB."""
     vm_name = f"mitm-telemetry-{uuid.uuid4().hex[:8]}"
-    blocked_domain = "blocked-mitm-policy.invalid"
-
-    # The shared Profile V2 asset fixture owns this denial rule so the
-    # gateway path exercises signed profile policy, not ad hoc legacy config.
-
+    
     # Provision VM
     client.post("/provision", {"name": vm_name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
     
     try:
         assert wait_exec_ready(client, vm_name, timeout=EXEC_READY_TIMEOUT)
+        
+        # Try to access a domain that should be blocked by default policy
+        blocked_domain = "malware.example.com"
         
         # Run curl in guest
         client.post(f"/exec/{vm_name}", {

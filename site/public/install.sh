@@ -1,12 +1,11 @@
 #!/bin/sh
 # Capsem installer -- downloads the latest release and installs it.
-#   macOS: downloads .pkg, installs with the native installer
+#   macOS: downloads .pkg, opens the native installer GUI
 #   Linux: downloads .deb, installs via apt
 # Usage: curl -fsSL https://capsem.org/install.sh | sh
 set -eu
 
 REPO="google/capsem"
-MANIFEST_PUBKEY='RWSbrIiyy3Cgk9Ax/nqK4QNjnClKlsaXunBHFFgVo4POGZHTkrrvwVr1'
 
 # -- Testable functions ------------------------------------------------------
 # These functions can be unit-tested by sourcing this script with
@@ -55,123 +54,15 @@ find_asset_url() {
     _arch="$3"
     case "$_os" in
         darwin)
-            _pattern='/Capsem-[^/"]+\.pkg"'
+            _pattern='\.pkg"'
             ;;
         linux)
-            _pattern="/Capsem_[^/\"]+_${_arch}\.deb\""
+            _pattern="_${_arch}\.deb\""
             ;;
     esac
-    ASSET_URL="$(echo "$_release_json" | grep '"browser_download_url"' | grep -E "$_pattern" | head -1 | sed 's/.*"browser_download_url": *"//;s/".*//')"
+    ASSET_URL="$(echo "$_release_json" | grep '"browser_download_url"' | grep "$_pattern" | head -1 | sed 's/.*"browser_download_url": *"//;s/".*//')"
     if [ -z "$ASSET_URL" ]; then
         echo "Error: no matching asset found for $_os/$_arch in this release." >&2
-        return 1
-    fi
-}
-
-find_named_asset_url() {
-    _release_json="$1"
-    _asset_name="$2"
-    ASSET_URL="$(echo "$_release_json" | grep '"browser_download_url"' | grep "/${_asset_name}\"" | head -1 | sed 's/.*"browser_download_url": *"//;s/".*//')"
-    if [ -z "$ASSET_URL" ]; then
-        echo "Error: no ${_asset_name} asset found in this release." >&2
-        return 1
-    fi
-}
-
-asset_name_from_url() {
-    _url="$1"
-    _name="${_url##*/}"
-    printf '%s\n' "${_name%%\?*}"
-}
-
-write_manifest_pubkey() {
-    _path="$1"
-    {
-        echo "untrusted comment: minisign public key 93A070CBB288AC9B"
-        echo "$MANIFEST_PUBKEY"
-    } > "$_path"
-}
-
-sha256_file() {
-    _path="$1"
-    if command -v shasum >/dev/null 2>&1; then
-        shasum -a 256 "$_path" | awk '{print $1}'
-    elif command -v sha256sum >/dev/null 2>&1; then
-        sha256sum "$_path" | awk '{print $1}'
-    else
-        echo "Error: shasum or sha256sum is required to verify package hashes." >&2
-        return 1
-    fi
-}
-
-manifest_expected_sha() {
-    _manifest="$1"
-    _asset_name="$2"
-    if ! command -v python3 >/dev/null 2>&1; then
-        echo "Error: python3 is required to read the release manifest." >&2
-        return 1
-    fi
-    python3 - "$_manifest" "$_asset_name" <<'PY'
-import json
-import sys
-from pathlib import Path
-
-manifest = Path(sys.argv[1])
-asset_name = sys.argv[2]
-data = json.loads(manifest.read_text())
-current = data.get("binaries", {}).get("current")
-files = data.get("binaries", {}).get("releases", {}).get(current, {}).get("files", [])
-for item in files:
-    if item.get("name") == asset_name:
-        print(item["sha256"])
-        raise SystemExit(0)
-raise SystemExit(f"{asset_name} not found in manifest binaries.releases[{current}]")
-PY
-}
-
-download_release_manifest() {
-    _release_json="$1"
-    _dest="$2"
-
-    find_named_asset_url "$_release_json" "manifest.json"
-    _manifest_url="$ASSET_URL"
-    find_named_asset_url "$_release_json" "manifest.json.minisig"
-    _manifest_sig_url="$ASSET_URL"
-
-    curl -fSL --progress-bar -o "$_dest/manifest.json" "$_manifest_url"
-    curl -fSL --progress-bar -o "$_dest/manifest.json.minisig" "$_manifest_sig_url"
-}
-
-verify_release_manifest() {
-    _manifest="$1"
-    _manifest_sig="$2"
-
-    if ! command -v minisign >/dev/null 2>&1; then
-        echo "Warning: minisign not found; skipping manifest signature verification." >&2
-        return 0
-    fi
-
-    _pubkey="${_manifest}.pub"
-    write_manifest_pubkey "$_pubkey"
-    minisign -Vm "$_manifest" -x "$_manifest_sig" -p "$_pubkey" >/dev/null
-    rm -f "$_pubkey"
-}
-
-verify_asset_hash() {
-    _manifest="$1"
-    _asset_path="$2"
-    _asset_name="$3"
-
-    if ! command -v python3 >/dev/null 2>&1; then
-        echo "Warning: python3 not found; skipping package hash verification." >&2
-        return 0
-    fi
-    _expected="$(manifest_expected_sha "$_manifest" "$_asset_name")"
-    _actual="$(sha256_file "$_asset_path")"
-    if [ "$_actual" != "$_expected" ]; then
-        echo "Error: package hash mismatch for $_asset_name" >&2
-        echo "  expected: $_expected" >&2
-        echo "  actual:   $_actual" >&2
         return 1
     fi
 }
@@ -181,8 +72,7 @@ install_macos() {
     _version="$2"
 
     TMPDIR_INSTALL="$(mktemp -d)"
-    PKG_NAME="$(asset_name_from_url "$_pkg_url")"
-    PKG_PATH="${TMPDIR_INSTALL}/${PKG_NAME}"
+    PKG_PATH="${TMPDIR_INSTALL}/Capsem.pkg"
 
     cleanup_macos() {
         rm -rf "$TMPDIR_INSTALL"
@@ -192,23 +82,13 @@ install_macos() {
     echo "Downloading $_pkg_url..."
     curl -fSL --progress-bar -o "$PKG_PATH" "$_pkg_url"
 
-    download_release_manifest "$RELEASE_JSON" "$TMPDIR_INSTALL"
-    verify_release_manifest "$TMPDIR_INSTALL/manifest.json" "$TMPDIR_INSTALL/manifest.json.minisig"
-    verify_asset_hash "$TMPDIR_INSTALL/manifest.json" "$PKG_PATH" "$PKG_NAME"
-
-    if command -v pkgutil >/dev/null 2>&1; then
-        pkgutil --check-signature "$PKG_PATH" >/dev/null
-    fi
-
-    echo "Installing .pkg package (may prompt for sudo password)..."
-    sudo installer -pkg "$PKG_PATH" -target /
-    if command -v open >/dev/null 2>&1; then
-        open -a Capsem >/dev/null 2>&1 || true
-    fi
+    echo "Opening installer..."
+    open "$PKG_PATH"
 
     echo ""
-    echo "Capsem $_version installed."
-    echo "Open a new terminal and run: capsem shell"
+    echo "Capsem $_version installer launched."
+    echo "Follow the installer GUI to complete installation."
+    echo "After install, open a new terminal and run: capsem shell"
 }
 
 install_linux() {
@@ -216,8 +96,7 @@ install_linux() {
     _version="$2"
 
     TMPDIR_INSTALL="$(mktemp -d)"
-    DEB_NAME="$(asset_name_from_url "$_deb_url")"
-    DEB_PATH="${TMPDIR_INSTALL}/${DEB_NAME}"
+    DEB_PATH="${TMPDIR_INSTALL}/capsem.deb"
 
     cleanup_linux() {
         rm -rf "$TMPDIR_INSTALL"
@@ -226,10 +105,6 @@ install_linux() {
 
     echo "Downloading $_deb_url..."
     curl -fSL --progress-bar -o "$DEB_PATH" "$_deb_url"
-
-    download_release_manifest "$RELEASE_JSON" "$TMPDIR_INSTALL"
-    verify_release_manifest "$TMPDIR_INSTALL/manifest.json" "$TMPDIR_INSTALL/manifest.json.minisig"
-    verify_asset_hash "$TMPDIR_INSTALL/manifest.json" "$DEB_PATH" "$DEB_NAME"
 
     echo "Installing .deb package (may prompt for sudo password)..."
     sudo apt install -y "$DEB_PATH"

@@ -5,72 +5,21 @@ sidebar:
   order: 20
 ---
 
-Capsem has two schema families. Service Settings V2 is the service/app control
-plane contract used by corp admins and `capsem-admin`. The guest/UI descriptor
-schema is the build-time contract for generated setting descriptors and frontend
-rendering. They are intentionally separate.
+The settings schema is the structural contract between guest TOML configs, the Rust backend, and the TypeScript frontend. Pydantic models in Python are the single source of truth. JSON Schema is generated from them. Three languages -- Python, Rust, TypeScript -- must parse settings identically.
 
 Key files:
 
 | File | Role |
 |---|---|
-| `src/capsem/builder/service_settings.py` | Pydantic Service Settings V2 admin model |
-| `schemas/capsem.service-settings.v2.schema.json` | Generated JSON Schema for `capsem.service-settings.v2` |
-| `schemas/fixtures/service-settings-v2-*.json` | Valid, invalid, and defaults contract fixtures shared with Rust/Python tests |
-| `crates/capsem-core/src/settings_profiles/mod.rs` | Rust `ServiceSettings` runtime model and validation |
-| `src/capsem/admin/cli.py` | `capsem-admin settings schema/validate/doctor` |
-| `src/capsem/builder/schema.py` | Guest/UI descriptor Pydantic models |
-| `config/settings-schema.json` | Guest/UI descriptor JSON Schema |
+| `src/capsem/builder/schema.py` | Pydantic models (canonical schema) |
+| `config/settings-schema.json` | Generated JSON Schema |
+| `config/defaults.json` | Generated defaults from guest TOML configs |
+| `crates/capsem-core/src/net/policy_config/types.rs` | Rust settings and Policy serde contract |
 | `frontend/src/lib/types/settings.ts` | TypeScript settings and Policy wire types |
 | `crates/capsem-core/tests/settings_spec.rs` | Rust conformance tests |
 | `frontend/src/lib/__tests__/settings_spec.test.ts` | TypeScript conformance tests |
 | `tests/test_settings_spec.py` | Python schema + conformance tests |
 | `tests/settings_spec/golden.json` | Golden fixture (shared by all three) |
-
-## Service Settings V2
-
-Service settings configure the service control plane:
-
-| Section | Purpose |
-|---|---|
-| `app` | Host app behavior and appearance defaults |
-| `profiles` | Built-in, corp, and user profile roots plus selected default profile |
-| `assets` | Service asset/cache locations and optional download base URL |
-| `credentials` | Credential backend and credential references |
-| `telemetry` | Export endpoint, headers, retry, redaction, and failure mode |
-| `remote_policy` | Remote policy plugin endpoint, timeout, token reference, and failure behavior |
-| `profile_catalog` | Signed profile catalog URL, payload public key, and check interval |
-| `corp_directives` | Corp-applied profile overrides after profile inheritance |
-
-The schema id is `capsem.service-settings.v2`; the artifact is
-`schemas/capsem.service-settings.v2.schema.json`.
-
-Admin validation is through `capsem-admin`:
-
-```bash
-capsem-admin settings schema
-capsem-admin settings validate service.toml
-capsem-admin settings validate service.toml --json
-capsem-admin settings doctor service.toml --json
-```
-
-JSON input uses Pydantic `model_validate_json()`. JSON output uses
-`model_dump_json()`. TOML is parsed once and immediately validated through the
-same model. Raw nested JSON or TOML dictionaries are not a public admin API.
-
-Cross-runtime drift is pinned by:
-
-| Test | Proof |
-|---|---|
-| `tests/test_service_settings.py` | Python validates/dumps fixtures and checks schema/default stability |
-| `crates/capsem-core/src/settings_profiles/tests.rs` | Rust parses the same fixtures and rejects the same invalid shapes |
-| `schemas/fixtures/service-settings-v2-defaults.json` | Shared defaults contract; Python dumps it and Rust compares it to `ServiceSettings::default()` |
-
-## Guest/UI Descriptor Schema
-
-The remaining sections describe the guest/UI descriptor schema. It is not the
-Service Settings V2 runtime contract and is not a compatibility layer for old
-v1 service settings.
 
 ## Two-Node-Type Design
 
@@ -119,7 +68,7 @@ graph TD
 | `metadata` | SettingMetadata | no | Extra fields (defaults to empty) |
 | `history` | HistoryEntry[] | no | Audit trail of value changes |
 
-Actions (`check_update`, `preset_select`, `rerun_wizard`) and MCP tools are SettingNode variants. They use `setting_type="action"` or `setting_type="mcp_tool"` with the relevant metadata fields. Consumers check `setting_type`, not `kind`.
+Actions (`check_update`, `preset_select`) and MCP tools are SettingNode variants. They use `setting_type="action"` or `setting_type="mcp_tool"` with the relevant metadata fields. Consumers check `setting_type`, not `kind`.
 
 ## SettingType Enum
 
@@ -171,7 +120,7 @@ All metadata lives in a single `SettingMetadata` object. Most fields are optiona
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `action` | ActionKind | `null` | Action identifier (`check_update`, `preset_select`, `rerun_wizard`) |
+| `action` | ActionKind | `null` | Action identifier (`check_update`, `preset_select`) |
 
 ### MCP tool-specific
 
@@ -179,7 +128,7 @@ All metadata lives in a single `SettingMetadata` object. Most fields are optiona
 |---|---|---|---|
 | `origin` | McpToolOrigin | `null` | Where the tool runs (`builtin`, `remote`, `in_vm`) |
 
-### MCP server-specific
+### MCP server-specific (legacy)
 
 | Field | Type | Default | Description |
 |---|---|---|---|
@@ -190,36 +139,46 @@ All metadata lives in a single `SettingMetadata` object. Most fields are optiona
 | `env` | dict | `{}` | Environment variables for the server process |
 | `headers` | dict | `{}` | HTTP headers (sse transport) |
 
-## Security Rules
+## Security Rule Schema
 
-Settings/profile rule storage is now structural input to the Security Engine.
-Runtime HTTP, DNS, MCP, model, file, and process decisions no longer flow
-through the removed named `PolicyConfig` evaluator. Author rules through the
-typed `enforcement` and `detection` APIs and schemas; settings saves only carry
-profile-owned configuration that those APIs can validate and compile. The
-TypeScript model preserves profile rule objects during export/import and stages
-them without flattening them into setting leaves.
+Security-event rules are loaded from `corp.rules`, `profiles.rules`, provider
+convenience blocks under `ai.<provider>.rules`, and referenced rule files:
 
-See [Rule Authoring](/security/rules/) for the rule body schema and examples.
+```toml
+[rule_files]
+enforcement = "profiles/base/enforcement.toml"
+sigma = "profiles/base/detection.yaml"
+```
+
+They are not ordinary settings leaves. The Rust loader validates the rule id,
+mandatory `name`, enum-backed `action`, optional `detection_level`, priority
+discipline, plugin requirements, and CEL fields against the first-party
+`SecurityEvent` roots.
+
+Old callback-shaped fields such as `on`, `if`, `decision`, `actions`, and
+`level` are rejected by the rule parser. See [Policy](/security/policy/) for
+the current TOML and Sigma rule formats.
 
 ## JSON Schema Generation
 
-The schema generation pipeline runs from Pydantic models to the guest/UI
-descriptor schema:
+The schema generation pipeline runs from Pydantic models to two output files:
 
 ```mermaid
 flowchart LR
     PM["schema.py\nPydantic models"] --> MSJ["model_json_schema()"]
     MSJ --> SCH["config/settings-schema.json"]
+    GC["guest/config/*.toml"] --> GD["generate_defaults_json()"]
+    GD --> DEF["config/defaults.json"]
 ```
 
-`just schema` regenerates the descriptor schema:
+`just schema` regenerates both files:
 
 ```
 just schema
 # Runs: uv run python scripts/generate_schema.py
 # Outputs:
 #   config/settings-schema.json  (JSON Schema from Pydantic)
+#   config/defaults.json         (defaults from guest TOML configs)
 ```
 
 The JSON Schema is derived from `SettingsRoot.model_json_schema()`. It contains `$defs` for all model types (GroupNode, SettingNode, SettingMetadata, enums) and a `properties.settings` array at the root.
@@ -267,32 +226,21 @@ Any schema change requires updating the golden fixture, expected.json, and all t
 
 ## Data Flow
 
-Three typed paths define settings/profile behavior. Service Settings V2 is the
-runtime control-plane contract, Profile V2 is the VM/session contract, and the
-guest/UI descriptor schema is a development-time rendering contract. The
-descriptor schema is not runtime authority and does not inject settings into
-VMs.
+Two parallel paths connect guest TOML configs to the running application:
 
 ```mermaid
 flowchart TD
-    subgraph "Service Settings Path"
-        SPM["service_settings.py\nPydantic model"] --> SSJ["model_json_schema()"]
-        SSJ --> SSS["schemas/capsem.service-settings.v2.schema.json"]
-        SPM --> SSA["capsem-admin settings validate"]
-        SSA --> SSR["Rust ServiceSettings validation"]
-    end
-
-    subgraph "Profile Path"
-        PPM["profile Pydantic models"] --> PSJ["model_json_schema()"]
-        PSJ --> PSS["schemas/capsem.profile.v2.schema.json"]
-        PPM --> PVA["capsem-admin profile validate"]
-        PVA --> PIN["VM profile/revision/asset pin"]
-    end
-
-    subgraph "Guest/UI Descriptor Path"
+    subgraph "Schema Path (dev time)"
         PM["schema.py\nPydantic models"] --> JSG["model_json_schema()"]
         JSG --> SCHEMA["config/settings-schema.json"]
         SCHEMA --> TESTS["Conformance tests\n(Python + Rust + TypeScript)"]
+    end
+
+    subgraph "Data Path (build time)"
+        TOML["guest/config/*.toml\n(ai, mcp, security, vm)"] --> GEN["generate_defaults_json()"]
+        GEN --> DEF["config/defaults.json"]
+        DEF --> RUST["Rust include_str!()\nregistry.rs"]
+        RUST --> BOOT["Boot-time config\ninjection"]
     end
 
     subgraph "Golden Fixture Path (test time)"
@@ -302,15 +250,9 @@ flowchart TD
     end
 ```
 
-The service and profile paths use Pydantic for admin validation and JSON Schema
-publication, then Rust validates the same typed contract. JSON input and output
-must pass through Pydantic `model_validate_json()` /
-`TypeAdapter.validate_json()` and `model_dump_json()` boundaries. Raw JSON
-dictionaries are not an admin or runtime API.
+The data path: guest TOML configs are processed by `generate_defaults_json()` into `config/defaults.json`. Rust embeds this file at compile time via `include_str!()` in `registry.rs`. At boot, the registry resolves settings (corp > user > defaults) and injects the result into the VM.
 
-The descriptor path remains useful for UI rendering and cross-language fixture
-tests. It does not resurrect v1 defaults, standalone MCP settings, or generated
-runtime authority.
+The schema path: Pydantic models generate JSON Schema for documentation and validation. The conformance tests ensure all three languages agree on parsing.
 
 ## Design Decision: Two Node Types
 
@@ -338,6 +280,4 @@ The four-type design forced consumers to match on `kind` with four arms, even th
 
 Consumers match on `kind` (two arms: group vs. setting), then check `setting_type` when they need type-specific behavior. MCP servers are GroupNodes containing server config settings and MCP tool SettingNodes as children. Tool categories (snapshots, network) are nested sub-groups within the server GroupNode.
 
-The Rust conformance tests use local test-only structs with the two-node
-schema. Runtime settings/profile authority is the typed Service Settings V2 and
-Profile V2 model, not a compatibility enum or generated defaults file.
+The Rust conformance tests use local test-only structs with the two-node schema. The live app's `SettingsNode` in `capsem-core` still uses the old four-variant enum for backward compatibility -- migration is tracked separately.

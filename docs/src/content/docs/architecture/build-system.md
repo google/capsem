@@ -5,79 +5,65 @@ sidebar:
   order: 30
 ---
 
-Capsem image builds are profile driven. `capsem-admin` is the enterprise-facing
-CLI for profile creation, validation, image planning, asset verification, and
-manifest generation. `capsem-builder` is the lower-level Python build engine it
-uses to validate build inputs, render Jinja2 Dockerfiles, and produce
-per-architecture VM assets.
-
-The source of truth is the signed Profile V2 payload. Repo-local TOML under
-`guest/config/` is a developer input used to generate and test built-in
-profiles; it is not the corporate release authority and it is not loaded by the
-service at runtime.
+capsem-builder is a Python CLI that reads TOML configs from `guest/config/`, validates them through Pydantic models, renders Jinja2 Dockerfiles, and produces per-architecture VM assets. It also generates the `defaults.json` consumed by the Rust binary at compile time.
 
 ## Architecture
 
 ```mermaid
 flowchart TD
   subgraph Input["Source of Truth"]
-    PROFILE["Profile V2 payload\n(packages, tools, controls,\nVM assets, locks)"]
-    DEV["guest/config/*.toml\n(developer input for\nbuilt-in profiles)"]
+    TOML["guest/config/*.toml\n(AI providers, packages,\nsecurity, VM resources)"]
   end
 
   subgraph Validation["Validation Layer"]
-    Admin["capsem-admin\nprofile/image commands"]
-    Models["Pydantic models\n(Profile, PackageContract,\nImagePlan, Manifest)"]
+    Config["config.py\nTOML loader"]
+    Models["models.py\nPydantic models\n(PackageManager, InstallConfig,\nAiProviderConfig, ...)"]
     Validate["validate.py\nLinter (E001-E402, W001-W012)"]
   end
 
   subgraph Generation["Code Generation"]
     Context["docker.py\n_rootfs_context()\n_kernel_context()"]
     Jinja["Jinja2 Templates\nDockerfile.rootfs.j2\nDockerfile.kernel.j2"]
+    Defaults["config.py\ngenerate_defaults_json()"]
   end
 
   subgraph Output["Build Outputs"]
     Docker["Docker Build"]
     Assets["assets/{arch}/\nvmlinuz, initrd.img,\nrootfs.squashfs"]
-    BOM["asset manifest\nhashes + signatures + SBOM"]
+    JSON["config/defaults.json\n(consumed by Rust)"]
+    BOM["manifest.json\n+ B3SUMS"]
   end
 
-  DEV --> Admin
-  PROFILE --> Admin
-  Admin --> Models
+  TOML --> Config
+  Config --> Models
   Models --> Validate
   Models --> Context
+  Models --> Defaults
   Context --> Jinja
   Jinja --> Docker
   Docker --> Assets
   Assets --> BOM
+  Defaults --> JSON
 ```
 
 ### Data flow
 
-Profile payloads are the source of truth. The data flows through four layers:
+TOML configs are the single source of truth. The data flows through four layers:
 
-1. **Profile V2 payloads** -- signed, typed declarations for packages, tools,
-   controls, VM assets, and editable sections. Developer TOML can derive these
-   profiles, but operators do not hand-edit image settings in `guest/config`.
-2. **Pydantic models** -- type-safe validation with enums, frozen models, and
-   cross-field validators.
+1. **TOML configs** (`guest/config/`) -- user-facing, declarative definitions for AI providers, packages, security policy, and VM resources.
+2. **Pydantic models** (`models.py`) -- type-safe validation with enums (`PackageManager`: apt, uv, pip, npm, curl), frozen models, and cross-field validators.
 3. **Context dicts** (`docker.py`) -- template variables assembled from the validated config. Each template type (`rootfs`, `kernel`) has its own context builder that collects packages by manager type.
 4. **Jinja2 templates** -- Dockerfile output parameterized per architecture.
 
 Three outputs are produced:
 
-1. **Rendered Dockerfiles** -- Jinja2 templates (`Dockerfile.rootfs.j2`, `Dockerfile.kernel.j2`) parameterized per architecture.
-2. **Verified VM assets** -- `vmlinuz`, `initrd.img`, and `rootfs.squashfs`
-   with hashes/signatures recorded in the profile catalog path.
-3. **SBOM / asset manifests** -- package versions, BLAKE3 hashes, and
-   vulnerability findings used by release verification.
+1. **defaults.json** -- settings interchange consumed by Rust via `include_str!`, validated against `settings-schema.json`.
+2. **Rendered Dockerfiles** -- Jinja2 templates (`Dockerfile.rootfs.j2`, `Dockerfile.kernel.j2`) parameterized per architecture.
+3. **manifest.json** -- bill-of-materials with package versions, BLAKE3 hashes, and vulnerability findings.
 
-## Developer TOML Structure
+## TOML Config Structure
 
-Built-in profile development still uses repo-local TOML under `guest/config/`.
-Each file maps to a Pydantic model and feeds profile/image generation. This is
-not an operator-facing configuration surface.
+All config lives under `guest/config/`. Each file maps to a Pydantic model.
 
 | File | Model | Purpose | Key Fields |
 |------|-------|---------|------------|
@@ -87,7 +73,7 @@ not an operator-facing configuration surface.
 | `packages/apt.toml` | `PackageSetConfig` | Apt package set | `manager`, `install_cmd`, `packages`, `network` |
 | `packages/python.toml` | `PackageSetConfig` | Python package set | `manager`, `install_cmd`, `packages` |
 | `mcp/*.toml` | `McpServerConfig` | MCP server definitions | `transport`, `command`, `url`, `args`, `env` |
-| `security/*.toml` | Security control models | Developer seed inputs for built-in enforcement/detection profile packs | canonical rule roots, pack ids, fixtures |
+| `security/web.toml` | `WebSecurityConfig` | Domain allow/block policy | `allow_read`, `allow_write`, `custom_allow`, `search`, `registry`, `repository` |
 | `vm/resources.toml` | `VmResourcesConfig` | CPU, RAM, disk limits | `cpu_count`, `ram_gb`, `scratch_disk_size_gb` |
 | `vm/environment.toml` | `VmEnvironmentConfig` | Shell, PATH, TLS | `shell.term`, `shell.home`, `shell.path`, `tls.ca_bundle` |
 | `kernel/defconfig.*` | (raw) | Kernel configs per arch | Linux kernel defconfig files |
@@ -99,11 +85,16 @@ Example `build.toml`:
 compression = "zstd"
 compression_level = 15
 
+[build.erofs]
+enabled = true
+compression = "lz4hc"
+compression_level = 12
+
 [build.architectures.arm64]
 base_image = "debian:bookworm-slim"
 docker_platform = "linux/arm64"
 rust_target = "aarch64-unknown-linux-musl"
-kernel_branch = "6.6"
+kernel_branch = "7.0"
 kernel_image = "arch/arm64/boot/Image"
 defconfig = "kernel/defconfig.arm64"
 node_major = 24
@@ -135,10 +126,7 @@ packages = ["https://claude.ai/install.sh"]
 
 ## Validation Pipeline
 
-`capsem-admin profile validate`, `capsem-admin image plan`, and the lower-level
-`capsem-builder validate` path run compiler-style diagnostics with error
-codes, severity levels, and file:line references. Errors block the build;
-warnings are informational.
+`capsem-builder validate` runs compiler-style diagnostics with error codes, severity levels, and file:line references. Errors block the build; warnings are informational.
 
 ### Error Codes
 
@@ -196,13 +184,11 @@ assets/
     initrd.img
     rootfs.squashfs
     tool-versions.txt
-    image-inventory.json
   x86_64/
     vmlinuz
     initrd.img
     rootfs.squashfs
     tool-versions.txt
-    image-inventory.json
   manifest.json
   B3SUMS
 ```
@@ -219,8 +205,10 @@ flowchart TD
   Render --> Context["Assemble build context\n(CA cert, bashrc, diagnostics, binaries)"]
   Context --> Build["Docker build"]
   Build --> Export["Export container filesystem"]
-  Export --> Squash["mksquashfs (zstd compression)"]
+  Export --> Squash["mksquashfs fallback (zstd)"]
+  Export --> Erofs["mkfs.erofs primary (lz4hc level 12)"]
   Squash --> Versions["Extract tool versions"]
+  Erofs --> Versions
   Versions --> Checksums["Generate B3SUMS + manifest.json"]
 ```
 
@@ -261,7 +249,7 @@ colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8
 # sudo apt install docker.io
 ```
 
-`just doctor` and `capsem-admin doctor` both check these resources automatically and fail if below minimum.
+`just doctor` and `capsem-builder doctor` both check these resources automatically and fail if below minimum.
 
 ## Install Manager Types
 
@@ -362,44 +350,38 @@ Usage:
 uv run capsem-builder validate guest
 
 # Dry-run: render Dockerfiles without building
-uv run capsem-admin image build config/profiles/base/coding.profile.toml --dry-run --json
+uv run capsem-builder build --dry-run --json
 
 # Build rootfs for arm64 only
-uv run capsem-admin image build config/profiles/base/coding.profile.toml --arch arm64
+uv run capsem-builder build --arch arm64
 
 # Build kernel for all architectures
-uv run capsem-admin image build config/profiles/base/coding.profile.toml --template kernel
+uv run capsem-builder build --template kernel
 
 # Scaffold a new image config
 uv run capsem-builder new my-image --from guest
 ```
 
-## Settings And Schema Artifacts
+## Settings JSON Generation
 
-The builder/admin tooling publishes schema artifacts for validation and docs.
-Those artifacts are not runtime defaults authority.
+The builder bridges Python config and Rust runtime through a JSON interchange layer.
 
 ```mermaid
 flowchart LR
-  Profile["Profile Pydantic models"] --> PS["capsem.profile.v2 schema"]
-  Settings["Service settings Pydantic model"] --> SS["capsem.service-settings.v2 schema"]
-  Descriptor["Guest/UI descriptor Pydantic models"] --> DS["settings-schema.json"]
-  PS --> CV["Cross-language\nconformance tests"]
-  SS --> CV
-  DS --> CV
+  TOML["guest/config/*.toml"] --> Py["generate_defaults_json()"]
+  Py --> DJ["config/defaults.json"]
+  DJ --> Rust["include_str! in Rust"]
+  Py --> Schema["settings-schema.json"]
+  Schema --> CV["Cross-language\nconformance tests"]
+  DJ --> CV
 ```
 
-`capsem-admin` validates profile and service-settings JSON/TOML through
-Pydantic first, then emits structured JSON reports. Rust validates the same
-closed contracts at runtime. The guest/UI descriptor schema describes renderable
-settings nodes for the UI and tests.
+`generate_defaults_json()` transforms a `GuestImageConfig` into the hierarchical JSON tree consumed by the Rust settings registry. This JSON defines every setting's name, description, type, default value, and metadata (env vars, domain rules, UI hints).
 
-Cross-language conformance tests verify that:
+The schema is generated from `SettingsRoot.model_json_schema()` (Pydantic) and written to `config/settings-schema.json`. Cross-language conformance tests verify that:
 
-1. Python and Rust agree on Service Settings V2 defaults and invalid shapes.
-2. Profile payload fixtures round-trip through the typed model and reject
-   unknown fields.
-3. UI descriptor fixtures remain parseable in Python, Rust, and TypeScript.
+1. The generated `defaults.json` validates against the JSON schema.
+2. Rust's compiled-in defaults match the Python-generated output.
+3. Every setting referenced in Rust code exists in the schema.
 
-This keeps Python tooling, Rust runtime contracts, and frontend rendering in
-lockstep without reviving generated runtime defaults.
+This ensures the Python build tooling and Rust runtime never drift.

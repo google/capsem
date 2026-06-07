@@ -1,7 +1,5 @@
 """Boot timing regression gates: provision to exec-ready."""
 
-import os
-import platform
 import time
 import uuid
 
@@ -12,28 +10,7 @@ from helpers.service import ServiceInstance, wait_exec_ready
 
 pytestmark = pytest.mark.serial
 
-def _float_env(name, default):
-    try:
-        return float(os.environ.get(name, default))
-    except ValueError:
-        return default
-
-
-def _linux_kvm_default_gate():
-    # Linux KVM currently returns from /provision when the per-VM process is
-    # booted enough to accept the first exec; on this path, the measured time is
-    # provision-to-ready, not steady-state exec latency.
-    return 3.5 if platform.system() == "Linux" else 1.5
-
-
-PROVISION_READY_GATE = _float_env(
-    "CAPSEM_PROVISION_READY_GATE_SECS",
-    _linux_kvm_default_gate(),
-)
-CONCURRENT_PROVISION_READY_GATE = _float_env(
-    "CAPSEM_CONCURRENT_PROVISION_READY_GATE_SECS",
-    3.5 if platform.system() == "Linux" else 1.2,
-)
+EXEC_LATENCY_GATE = 1.5  # seconds -- provision to first exec must be under this
 
 
 def test_boot_under_30_seconds():
@@ -64,7 +41,7 @@ def test_boot_under_30_seconds():
 
 
 def test_exec_latency_under_1_5_seconds():
-    """Provision a VM and first exec-ready probe must complete within gate."""
+    """Provision a VM and first exec must complete in < 1.5s."""
     svc = ServiceInstance()
     svc.start()
     client = svc.client()
@@ -78,10 +55,10 @@ def test_exec_latency_under_1_5_seconds():
         elapsed = time.time() - start
 
         assert ready, f"VM never became exec-ready after {elapsed:.1f}s"
-        assert elapsed < PROVISION_READY_GATE, (
-            f"Provision-to-ready latency {elapsed:.2f}s exceeds {PROVISION_READY_GATE}s gate"
+        assert elapsed < EXEC_LATENCY_GATE, (
+            f"Exec latency {elapsed:.2f}s exceeds {EXEC_LATENCY_GATE}s gate"
         )
-        print(f"Provision-to-ready latency: {elapsed:.2f}s (gate: {PROVISION_READY_GATE}s)")
+        print(f"Exec latency: {elapsed:.2f}s (gate: {EXEC_LATENCY_GATE}s)")
 
     finally:
         try:
@@ -92,7 +69,7 @@ def test_exec_latency_under_1_5_seconds():
 
 
 def test_avg_exec_latency_3_runs():
-    """Provision+delete 3 VMs sequentially; average provision-to-ready is gated."""
+    """Provision+delete 3 VMs sequentially; average provision-to-exec must be < 1.5s."""
     svc = ServiceInstance()
     svc.start()
     client = svc.client()
@@ -111,16 +88,16 @@ def test_avg_exec_latency_3_runs():
             client.delete(f"/delete/{name}")
 
         avg = sum(times) / len(times)
-        print(f"Average provision-to-ready latency: {avg:.2f}s (gate: {PROVISION_READY_GATE}s)")
-        assert avg < PROVISION_READY_GATE, (
-            f"Average provision-to-ready latency {avg:.2f}s exceeds {PROVISION_READY_GATE}s gate"
+        print(f"Average exec latency: {avg:.2f}s (gate: {EXEC_LATENCY_GATE}s)")
+        assert avg < EXEC_LATENCY_GATE, (
+            f"Average exec latency {avg:.2f}s exceeds {EXEC_LATENCY_GATE}s gate"
         )
     finally:
         svc.stop()
 
 
 def test_avg_exec_latency_3_concurrent_vms():
-    """Boot 3 VMs on the same service; average provision-to-ready is gated."""
+    """Boot 3 VMs on the same service; average provision-to-exec < 1.2s."""
     svc = ServiceInstance()
     svc.start()
     client = svc.client()
@@ -138,13 +115,9 @@ def test_avg_exec_latency_3_concurrent_vms():
             print(f"  vm {i+1}: {elapsed:.2f}s")
 
         avg = sum(times) / len(times)
-        print(
-            "Average provision-to-ready latency: "
-            f"{avg:.2f}s (gate: {CONCURRENT_PROVISION_READY_GATE}s)"
-        )
-        assert avg < CONCURRENT_PROVISION_READY_GATE, (
-            f"Average provision-to-ready latency {avg:.2f}s exceeds "
-            f"{CONCURRENT_PROVISION_READY_GATE}s gate"
+        print(f"Average exec latency: {avg:.2f}s (gate: 1.2s)")
+        assert avg < 1.2, (
+            f"Average exec latency {avg:.2f}s exceeds 1.2s gate"
         )
     finally:
         for name in names:

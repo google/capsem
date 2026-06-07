@@ -4,9 +4,8 @@
 //! virtio-console device to the SerialConsole trait. A background thread
 //! reads from the guest-output pipe and broadcasts via tokio broadcast.
 
-use std::io::{Read, Write};
+use std::io::Read;
 use std::os::unix::io::{FromRawFd, RawFd};
-use std::path::PathBuf;
 
 use tokio::sync::broadcast;
 use tracing::{debug, warn};
@@ -46,18 +45,12 @@ impl KvmSerialConsole {
 
     /// Spawn a background thread that reads from the pipe and broadcasts.
     pub fn spawn_reader(&self) {
-        self.spawn_reader_with_log(None);
-    }
-
-    /// Spawn a background thread that reads from the pipe, optionally mirrors
-    /// bytes to a durable serial log, and broadcasts chunks to subscribers.
-    pub fn spawn_reader_with_log(&self, log_path: Option<PathBuf>) {
         let read_fd = self.read_fd;
         let tx = self.tx.clone();
         std::thread::Builder::new()
             .name("kvm-serial-reader".to_string())
             .spawn(move || {
-                read_loop(read_fd, &tx, log_path);
+                read_loop(read_fd, &tx);
             })
             .expect("failed to spawn serial reader thread");
     }
@@ -74,19 +67,8 @@ impl crate::hypervisor::SerialConsole for KvmSerialConsole {
 }
 
 /// Core read loop: reads bytes from fd and sends through broadcast.
-fn read_loop(fd: RawFd, tx: &broadcast::Sender<Vec<u8>>, log_path: Option<PathBuf>) {
+fn read_loop(fd: RawFd, tx: &broadcast::Sender<Vec<u8>>) {
     let mut file = unsafe { std::fs::File::from_raw_fd(fd) };
-    let mut log_file = log_path.and_then(|path| {
-        std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&path)
-            .map_err(|e| {
-                warn!(error = %e, path = %path.display(), "failed to open KVM serial log file");
-                e
-            })
-            .ok()
-    });
     let mut buf = [0u8; 4096];
 
     loop {
@@ -96,9 +78,6 @@ fn read_loop(fd: RawFd, tx: &broadcast::Sender<Vec<u8>>, log_path: Option<PathBu
                 break;
             }
             Ok(n) => {
-                if let Some(log_file) = log_file.as_mut() {
-                    let _ = log_file.write_all(&buf[..n]);
-                }
                 let _ = tx.send(buf[..n].to_vec());
             }
             Err(e) => {
@@ -147,25 +126,6 @@ mod tests {
 
         let all = collect_all(&mut rx);
         assert_eq!(all, b"hello world\nsecond line\n");
-    }
-
-    #[test]
-    fn reader_mirrors_bytes_to_serial_log() {
-        let dir = tempfile::tempdir().unwrap();
-        let log_path = dir.path().join("serial.log");
-        let (read_fd, write_fd) = make_pipe();
-        let console = KvmSerialConsole::new(read_fd, -1);
-        let mut rx = console.subscribe();
-        console.spawn_reader_with_log(Some(log_path.clone()));
-        drop(console);
-
-        let mut writer = unsafe { std::fs::File::from_raw_fd(write_fd) };
-        writer.write_all(b"boot line\n").unwrap();
-        drop(writer);
-
-        let all = collect_all(&mut rx);
-        assert_eq!(all, b"boot line\n");
-        assert_eq!(std::fs::read(&log_path).unwrap(), b"boot line\n");
     }
 
     #[test]

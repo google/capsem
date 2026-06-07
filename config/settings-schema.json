@@ -4,8 +4,7 @@
       "description": "Action identifier for action-type settings.",
       "enum": [
         "check_update",
-        "preset_select",
-        "rerun_wizard"
+        "preset_select"
       ],
       "title": "ActionKind",
       "type": "string"
@@ -194,7 +193,7 @@
       "type": "string"
     },
     "SettingMetadata": {
-      "description": "Structured metadata for a setting.\n\nContains fields for all setting types:\n- Common: domains, choices, min, max, rules, env_vars, mask, validator, etc.\n- Action-specific: action (ActionKind)\n- MCP tool-specific: origin (McpToolOrigin)\n- MCP server-specific: transport, command, url, args, env, headers",
+      "description": "Structured metadata for a setting.\n\nContains fields for all setting types:\n- Common: domains, choices, min, max, rules, env_vars, mask, validator, etc.\n- Action-specific: action (ActionKind)\n- MCP tool-specific: origin (McpToolOrigin)\n- MCP server-specific (legacy): transport, command, url, args, env, headers",
       "properties": {
         "domains": {
           "items": {

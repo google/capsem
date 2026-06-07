@@ -1,4 +1,4 @@
-"""VM lifecycle diagnostics -- sysutil suspend, identity, and hostname."""
+"""VM lifecycle diagnostics -- sysutil symlinks, identity, and hostname."""
 
 import os
 
@@ -10,24 +10,19 @@ from conftest import run
 # -- Lifecycle binary symlinks --
 
 
-REMOVED_SHUTDOWN_LINKS = [
-    "/sbin/shutdown",
-    "/sbin/halt",
-    "/sbin/poweroff",
-    "/sbin/reboot",
+SYSUTIL_SYMLINKS = [
+    ("/sbin/shutdown", "/run/capsem-sysutil"),
+    ("/sbin/halt", "/run/capsem-sysutil"),
+    ("/sbin/poweroff", "/run/capsem-sysutil"),
+    ("/sbin/reboot", "/run/capsem-sysutil"),
+    ("/usr/local/bin/suspend", "/run/capsem-sysutil"),
 ]
 
 
-@pytest.mark.parametrize("link", REMOVED_SHUTDOWN_LINKS, ids=REMOVED_SHUTDOWN_LINKS)
-def test_shutdown_symlinks_are_not_installed(link):
-    """Guest shutdown commands must not be wired to capsem-sysutil."""
-    assert not os.path.lexists(link), f"{link} should not be installed"
-
-
-def test_suspend_symlink_exists():
-    """The suspend symlink must point to capsem-sysutil."""
-    link = "/usr/local/bin/suspend"
-    target = "/run/capsem-sysutil"
+@pytest.mark.parametrize("link,target", SYSUTIL_SYMLINKS,
+                         ids=[p for p, _ in SYSUTIL_SYMLINKS])
+def test_sysutil_symlink_exists(link, target):
+    """Lifecycle symlinks must point to capsem-sysutil."""
     assert os.path.islink(link), f"{link} is not a symlink"
     actual = os.readlink(link)
     assert actual == target, f"{link} -> {actual}, expected {target}"
@@ -46,11 +41,12 @@ def test_capsem_sysutil_not_writable():
     assert writable == 0, f"/run/capsem-sysutil has write bits set (mode={oct(mode)})"
 
 
-def test_shutdown_command_is_disabled():
-    """Direct capsem-sysutil shutdown must fail instead of stopping the VM."""
-    result = run("/run/capsem-sysutil shutdown")
-    assert result.returncode != 0, "capsem-sysutil shutdown should fail"
-    assert "disabled" in result.stderr.lower(), result.stderr
+def test_shutdown_help():
+    """shutdown --help should print capsem help text."""
+    result = run("shutdown --help")
+    assert result.returncode == 0, f"shutdown --help failed: {result.stderr}"
+    assert "capsem" in result.stdout.lower() or "sandbox" in result.stdout.lower(), \
+        f"shutdown --help output doesn't mention capsem: {result.stdout}"
 
 
 # -- VM identity --

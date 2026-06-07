@@ -27,13 +27,16 @@ def test_resume_after_neighbor_delete():
         assert wait_exec_ready(client, vm_b), f"VM-B never exec-ready"
 
         # Write a file in VM-A
-        client.write_file(vm_a, "/root/resume-test.txt", "still-here")
+        client.post(f"/write_file/{vm_a}", {
+            "path": "/root/resume-test.txt",
+            "content": "still-here",
+        })
 
         # Delete VM-B
         client.delete(f"/delete/{vm_b}")
 
         # VM-A file should still be there
-        resp = client.read_file(vm_a, "/root/resume-test.txt")
+        resp = client.post(f"/read_file/{vm_a}", {"path": "/root/resume-test.txt"})
         assert resp.get("content") == "still-here"
 
         # VM-A exec should still work

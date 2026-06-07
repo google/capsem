@@ -62,15 +62,7 @@ async fn main() -> Result<()> {
     // panicking.
     let vm_id = std::env::var("CAPSEM_VM_ID").unwrap_or_else(|_| "unknown".into());
     let trace_id = std::env::var("CAPSEM_TRACE_ID").unwrap_or_else(|_| "unknown".into());
-    let profile_id = std::env::var("CAPSEM_PROFILE_ID").unwrap_or_else(|_| "unknown".into());
-    let user_id = std::env::var("CAPSEM_USER_ID").unwrap_or_else(|_| "unknown".into());
-    let root_span = tracing::info_span!(
-        "aggregator",
-        vm_id = %vm_id,
-        profile_id = %profile_id,
-        user_id = %user_id,
-        trace_id = %trace_id
-    );
+    let root_span = tracing::info_span!("aggregator", vm_id = %vm_id, trace_id = %trace_id);
     let _root_span_guard = root_span.enter();
 
     let args = Args::parse();
@@ -366,22 +358,14 @@ async fn handle_request(
             // Build and initialize the replacement manager off the lock,
             // then swap it in under a brief write guard.
             let mut new_mgr = McpServerManager::new(servers, reqwest::Client::new());
-            let refresh_error = new_mgr.initialize_all_strict().await.err();
+            if let Err(e) = new_mgr.initialize_all().await {
+                warn!(error = %e, "some servers failed during refresh");
+            }
             *manager.write().expect("manager rwlock poisoned") = new_mgr;
 
-            if let Some(e) = refresh_error {
-                warn!(error = %e, "some servers failed during refresh");
-                AggregatorResponse {
-                    id,
-                    body: AggregatorResult::Error {
-                        error: e.to_string(),
-                    },
-                }
-            } else {
-                AggregatorResponse {
-                    id,
-                    body: AggregatorResult::Ok { ok: true },
-                }
+            AggregatorResponse {
+                id,
+                body: AggregatorResult::Ok { ok: true },
             }
         }
 

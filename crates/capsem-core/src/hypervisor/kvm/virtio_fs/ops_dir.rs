@@ -85,10 +85,7 @@ impl FuseProcessor {
             };
             buf.extend_from_slice(fuse::as_bytes(&dirent));
             buf.extend_from_slice(&entry.name);
-            buf.extend(std::iter::repeat_n(
-                0u8,
-                entry_size - dirent_hdr - entry.name.len(),
-            ));
+            buf.extend(std::iter::repeat(0u8).take(entry_size - dirent_hdr - entry.name.len()));
         }
 
         fuse::success_response(header.unique, &buf)
@@ -113,10 +110,15 @@ impl FuseProcessor {
             Some(n) => n,
             None => return fuse::error_response(header.unique, -libc::EINVAL),
         };
-        let child_path = match self.inodes.child_path(header.nodeid, name) {
-            Some(p) => p,
-            None => return fuse::error_response(header.unique, -libc::EINVAL),
+        let name_str = match std::str::from_utf8(name) {
+            Ok(s) => s,
+            Err(_) => return fuse::error_response(header.unique, -libc::EINVAL),
         };
+        let parent = match self.inodes.get(header.nodeid) {
+            Some(p) => p.clone(),
+            None => return fuse::error_response(header.unique, -libc::ENOENT),
+        };
+        let child_path = parent.join(name_str);
 
         if let Err(e) = std::fs::create_dir(&child_path) {
             return fuse::error_response(header.unique, -fuse::io_error_to_errno(&e));
@@ -150,15 +152,15 @@ impl FuseProcessor {
         if self.read_only {
             return fuse::error_response(header.unique, -libc::EROFS);
         }
-        let name = match fuse::extract_name(body) {
-            Some(n) => n,
+        let name_str = match fuse::extract_name(body).and_then(|n| std::str::from_utf8(n).ok()) {
+            Some(s) => s,
             None => return fuse::error_response(header.unique, -libc::EINVAL),
         };
-        let path = match self.inodes.child_path(header.nodeid, name) {
-            Some(p) => p,
-            None => return fuse::error_response(header.unique, -libc::EINVAL),
+        let parent = match self.inodes.get(header.nodeid) {
+            Some(p) => p.clone(),
+            None => return fuse::error_response(header.unique, -libc::ENOENT),
         };
-        match std::fs::remove_file(path) {
+        match std::fs::remove_file(parent.join(name_str)) {
             Ok(()) => fuse::success_response(header.unique, &[]),
             Err(e) => fuse::error_response(header.unique, -fuse::io_error_to_errno(&e)),
         }
@@ -168,15 +170,15 @@ impl FuseProcessor {
         if self.read_only {
             return fuse::error_response(header.unique, -libc::EROFS);
         }
-        let name = match fuse::extract_name(body) {
-            Some(n) => n,
+        let name_str = match fuse::extract_name(body).and_then(|n| std::str::from_utf8(n).ok()) {
+            Some(s) => s,
             None => return fuse::error_response(header.unique, -libc::EINVAL),
         };
-        let path = match self.inodes.child_path(header.nodeid, name) {
-            Some(p) => p,
-            None => return fuse::error_response(header.unique, -libc::EINVAL),
+        let parent = match self.inodes.get(header.nodeid) {
+            Some(p) => p.clone(),
+            None => return fuse::error_response(header.unique, -libc::ENOENT),
         };
-        match std::fs::remove_dir(path) {
+        match std::fs::remove_dir(parent.join(name_str)) {
             Ok(()) => fuse::success_response(header.unique, &[]),
             Err(e) => fuse::error_response(header.unique, -fuse::io_error_to_errno(&e)),
         }
@@ -212,24 +214,29 @@ impl FuseProcessor {
         )
     }
 
-    fn rename_impl(&mut self, header: &FuseInHeader, newdir: u64, names_buf: &[u8]) -> Vec<u8> {
+    fn rename_impl(&self, header: &FuseInHeader, newdir: u64, names_buf: &[u8]) -> Vec<u8> {
         let (old_name, new_name) = match fuse::extract_two_names(names_buf) {
             Some(n) => n,
             None => return fuse::error_response(header.unique, -libc::EINVAL),
         };
-        let old_path = match self.inodes.child_path(header.nodeid, old_name) {
-            Some(p) => p,
-            None => return fuse::error_response(header.unique, -libc::EINVAL),
+        let old_str = match std::str::from_utf8(old_name) {
+            Ok(s) => s,
+            Err(_) => return fuse::error_response(header.unique, -libc::EINVAL),
         };
-        let new_path = match self.inodes.child_path(newdir, new_name) {
-            Some(p) => p,
-            None => return fuse::error_response(header.unique, -libc::EINVAL),
+        let new_str = match std::str::from_utf8(new_name) {
+            Ok(s) => s,
+            Err(_) => return fuse::error_response(header.unique, -libc::EINVAL),
         };
-        match std::fs::rename(&old_path, &new_path) {
-            Ok(()) => {
-                self.inodes.rename_path(&old_path, &new_path);
-                fuse::success_response(header.unique, &[])
-            }
+        let old_parent = match self.inodes.get(header.nodeid) {
+            Some(p) => p.clone(),
+            None => return fuse::error_response(header.unique, -libc::ENOENT),
+        };
+        let new_parent = match self.inodes.get(newdir) {
+            Some(p) => p.clone(),
+            None => return fuse::error_response(header.unique, -libc::ENOENT),
+        };
+        match std::fs::rename(old_parent.join(old_str), new_parent.join(new_str)) {
+            Ok(()) => fuse::success_response(header.unique, &[]),
             Err(e) => fuse::error_response(header.unique, -fuse::io_error_to_errno(&e)),
         }
     }
@@ -246,10 +253,15 @@ impl FuseProcessor {
             Some(n) => n,
             None => return fuse::error_response(header.unique, -libc::EINVAL),
         };
-        let child_path = match self.inodes.child_path(header.nodeid, name) {
-            Some(p) => p,
-            None => return fuse::error_response(header.unique, -libc::EINVAL),
+        let name_str = match std::str::from_utf8(name) {
+            Ok(s) => s,
+            Err(_) => return fuse::error_response(header.unique, -libc::EINVAL),
         };
+        let parent = match self.inodes.get(header.nodeid) {
+            Some(p) => p.clone(),
+            None => return fuse::error_response(header.unique, -libc::ENOENT),
+        };
+        let child_path = parent.join(name_str);
         let c_path = match std::ffi::CString::new(child_path.as_os_str().as_encoded_bytes()) {
             Ok(c) => c,
             Err(_) => return fuse::error_response(header.unique, -libc::EINVAL),
@@ -286,23 +298,25 @@ impl FuseProcessor {
             Some(n) => n,
             None => return fuse::error_response(header.unique, -libc::EINVAL),
         };
+        let name_str = match std::str::from_utf8(name) {
+            Ok(s) => s,
+            Err(_) => return fuse::error_response(header.unique, -libc::EINVAL),
+        };
         let target_str = match std::str::from_utf8(target) {
             Ok(s) => s,
             Err(_) => return fuse::error_response(header.unique, -libc::EINVAL),
         };
-        let link_path = match self.inodes.child_path(header.nodeid, name) {
-            Some(p) => p,
-            None => return fuse::error_response(header.unique, -libc::EINVAL),
+        let parent = match self.inodes.get(header.nodeid) {
+            Some(p) => p.clone(),
+            None => return fuse::error_response(header.unique, -libc::ENOENT),
         };
+        let link_path = parent.join(name_str);
         if let Err(e) = std::os::unix::fs::symlink(target_str, &link_path) {
             return fuse::error_response(header.unique, -fuse::io_error_to_errno(&e));
         }
         let ino = match self.inodes.lookup(header.nodeid, name) {
             Some(i) => i,
-            None => {
-                let _ = std::fs::remove_file(&link_path);
-                return fuse::error_response(header.unique, -libc::EINVAL);
-            }
+            None => return fuse::error_response(header.unique, -libc::EIO),
         };
         let meta = match std::fs::symlink_metadata(&link_path) {
             Ok(m) => m,
@@ -343,14 +357,19 @@ impl FuseProcessor {
             Some(n) => n,
             None => return fuse::error_response(header.unique, -libc::EINVAL),
         };
+        let name_str = match std::str::from_utf8(name) {
+            Ok(s) => s,
+            Err(_) => return fuse::error_response(header.unique, -libc::EINVAL),
+        };
         let old_path = match self.inodes.get(link_in.oldnodeid) {
             Some(p) => p.clone(),
             None => return fuse::error_response(header.unique, -libc::ENOENT),
         };
-        let new_path = match self.inodes.child_path(header.nodeid, name) {
-            Some(p) => p,
-            None => return fuse::error_response(header.unique, -libc::EINVAL),
+        let new_parent = match self.inodes.get(header.nodeid) {
+            Some(p) => p.clone(),
+            None => return fuse::error_response(header.unique, -libc::ENOENT),
         };
+        let new_path = new_parent.join(name_str);
         if let Err(e) = std::fs::hard_link(&old_path, &new_path) {
             return fuse::error_response(header.unique, -fuse::io_error_to_errno(&e));
         }

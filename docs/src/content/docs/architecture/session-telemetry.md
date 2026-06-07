@@ -5,12 +5,7 @@ sidebar:
   order: 20
 ---
 
-Every Capsem VM gets its own SQLite database (`session.db`) that records canonical security events, network requests, DNS queries, AI model calls, MCP tool invocations, exec activity, kernel audit events, file changes, and snapshots. The database lives in the session directory and is destroyed with the VM (ephemeral) or preserved (persistent/forked).
-
-Each database also carries one `session_identity` row. That row is the durable
-identity envelope for the event stream: the VM id, the resolved profile id, and
-the local user id that launched the VM. Event rows keep their hot-path shape and
-join to this identity at export/status time.
+Every Capsem VM gets its own SQLite database (`session.db`) that records network requests, DNS queries, AI model calls, MCP tool invocations, exec activity, kernel audit events, file changes, and snapshots. The database lives in the session directory and is destroyed with the VM (ephemeral) or preserved (persistent/forked).
 
 ## Schema overview
 
@@ -18,6 +13,7 @@ join to this identity at export/status time.
 erDiagram
     net_events {
         int id PK
+        text event_id
         text domain
         text decision
         text method
@@ -26,53 +22,6 @@ erDiagram
         int bytes_sent
         int bytes_received
         int duration_ms
-    }
-    session_identity {
-        int id PK
-        text updated_at
-        text vm_id
-        text profile_id
-        text user_id
-    }
-    security_events {
-        int id PK
-        text event_id
-        text event_family
-        text event_type
-        text source_engine
-        text final_action
-        text trace_id
-        text vm_id
-        text profile_id
-        text user_id
-    }
-    security_event_steps {
-        int id PK
-        text event_id FK
-        int step_index
-        text kind
-        text status
-        text rule_id
-    }
-    detection_findings {
-        int id PK
-        text finding_id
-        text event_id FK
-        text rule_id
-        text pack_id
-        text severity
-        text confidence
-    }
-    detection_finding_tags {
-        text finding_id FK
-        int tag_index
-        text tag
-    }
-    security_event_links {
-        int id PK
-        text event_id FK
-        text linked_event_id
-        text link_type
     }
     model_calls {
         int id PK
@@ -98,21 +47,40 @@ erDiagram
     }
     mcp_calls {
         int id PK
+        text event_id
         text server_name
         text method
         text tool_name
         text decision
-        text policy_action
-        text policy_rule
         int duration_ms
     }
     dns_events {
         int id PK
+        text event_id
         text qname
         int qtype
         int rcode
         text decision
-        text matched_rule
+    }
+    security_rule_events {
+        int id PK
+        text event_id
+        text event_type
+        text rule_id
+        text rule_action
+        text detection_level
+        text rule_json
+        text event_json
+    }
+    security_ask_events {
+        int id PK
+        text ask_id
+        text event_id
+        text event_type
+        text rule_id
+        text status
+        text rule_json
+        text event_json
     }
     exec_events {
         int id PK
@@ -144,93 +112,14 @@ erDiagram
 
     model_calls ||--o{ tool_calls : "has"
     model_calls ||--o{ tool_responses : "has"
-    security_events ||--o{ security_event_steps : "has"
-    security_events ||--o{ detection_findings : "has"
-    detection_findings ||--o{ detection_finding_tags : "has"
-    security_events ||--o{ security_event_links : "links"
     snapshot_events }o--o{ fs_events : "references range"
+    net_events ||--o{ security_rule_events : "event_id"
+    mcp_calls ||--o{ security_rule_events : "event_id"
+    dns_events ||--o{ security_rule_events : "event_id"
+    security_rule_events ||--o{ security_ask_events : "event_id"
 ```
 
 ## Tables
-
-### session_identity
-
-One durable identity row for the VM/session that owns this database.
-
-| Column | Type | Description |
-|--------|------|-------------|
-| `id` | INTEGER PK | Always `1` |
-| `updated_at` | TEXT | ISO 8601 time when identity was last attached |
-| `vm_id` | TEXT | Capsem VM/session id |
-| `profile_id` | TEXT | Resolved Profile V2 id pinned to the session |
-| `user_id` | TEXT | Local host user id recorded by the service/process boundary |
-
-### security_events
-
-The canonical journal row for a resolved Security Engine event. Domain tables
-remain useful projections, but this table is the normalized place to read final
-decisions, attribution, and cross-engine identity.
-
-| Column | Type | Description |
-|--------|------|-------------|
-| `id` | INTEGER PK | Auto-increment |
-| `event_id` | TEXT UNIQUE | Stable event id |
-| `timestamp` | TEXT | ISO 8601 timestamp derived from the event |
-| `timestamp_unix_ms` | INTEGER | Millisecond timestamp used by replay/tests |
-| `event_family` | TEXT | `dns`, `http`, `mcp`, `model`, `file`, `process`, `credential`, `vm`, `profile`, `conversation`, or `snapshot` |
-| `event_type` | TEXT | Typed event name such as `http.request` |
-| `source_engine` | TEXT | Engine that emitted the event |
-| `final_action` | TEXT | `continue`, `ask`, `rewrite`, `block`, `throttle`, `quarantine`, `restore`, `drop_connection`, `observe_only`, or `error` |
-| `enforceability` | TEXT | `inline_blockable`, `observe_only`, or `remediation_only` |
-| `attribution_scope` | TEXT | `host`, `vm`, `profile`, `session`, or `unknown` |
-| `origin_kind` | TEXT | Where the activity originated, for example `guest_network` or `host_service` |
-| `accounting_owner` | TEXT | Counter/quota owner, such as `vm:<id>` or `host:<id>` |
-| `trace_id` | TEXT | Cross-table correlation id |
-| `vm_id`, `session_id`, `profile_id`, `user_id` | TEXT | Durable ownership fields |
-| `process_id`, `turn_id`, `message_id`, `tool_call_id`, `mcp_call_id` | TEXT | Optional correlation ids |
-| `redaction_state` | TEXT | `raw`, `redacted`, or `summary-only` |
-| `label_count`, `mutation_count`, `finding_count` | INTEGER | Compact summary counters |
-
-### security_event_steps
-
-Ordered processing steps for a security event: preprocessors, plugin callbacks,
-enforcement matches, confirmation, rate-limit checks, detection matches,
-postprocessors, and emitter delivery.
-
-| Column | Type | Description |
-|--------|------|-------------|
-| `event_id` | TEXT FK | Linked `security_events.event_id` |
-| `step_index` | INTEGER | Stable order within the resolved event |
-| `kind` | TEXT | Processing step kind |
-| `status` | TEXT | `applied`, `matched`, `skipped`, or `error` |
-| `rule_id` | TEXT | Matching rule, when present |
-| `pack_id` | TEXT | Rule/plugin pack, when present |
-| `message` | TEXT | Short diagnostic |
-
-### detection_findings
-
-Detection findings produced by the Security Engine before telemetry/logging
-sinks run.
-
-| Column | Type | Description |
-|--------|------|-------------|
-| `finding_id` | TEXT UNIQUE | Stable finding id |
-| `event_id` | TEXT FK | Linked `security_events.event_id` |
-| `rule_id` | TEXT | Detection rule id |
-| `pack_id` | TEXT | Detection pack id |
-| `sigma_id` | TEXT | Optional Sigma rule id |
-| `title` | TEXT | Finding title |
-| `severity` | TEXT | `info`, `low`, `medium`, `high`, or `critical` |
-| `confidence` | TEXT | `low`, `medium`, or `high` |
-
-Finding tags live in `detection_finding_tags` as one row per tag so hunting and
-timeline filters can index them without parsing JSON.
-
-### security_event_links
-
-Correlation edges between events. Examples include parent event links,
-trace-history links, context-history links, model-to-tool links, process-to-file
-links, and future snapshot/file relationships.
 
 ### net_events
 
@@ -239,6 +128,7 @@ Every HTTP request through the MITM proxy, whether allowed or denied.
 | Column | Type | Description |
 |--------|------|-------------|
 | `id` | INTEGER PK | Auto-increment |
+| `event_id` | TEXT | 12-hex primary event id for `security_rule_events` joins |
 | `timestamp` | TEXT | ISO 8601 |
 | `domain` | TEXT | Target domain |
 | `port` | INTEGER | Default 443 |
@@ -252,16 +142,16 @@ Every HTTP request through the MITM proxy, whether allowed or denied.
 | `bytes_sent` | INTEGER | Request body size |
 | `bytes_received` | INTEGER | Response body size |
 | `duration_ms` | INTEGER | End-to-end latency |
-| `matched_rule` | TEXT | Which enforcement rule matched |
+| `matched_rule` | TEXT | Legacy/domain policy helper; security rule truth is in `security_rule_events` |
 | `request_headers` | TEXT | Request headers (when body logging enabled) |
 | `response_headers` | TEXT | Response headers |
 | `request_body_preview` | TEXT | First 4 KB of request body |
 | `response_body_preview` | TEXT | First 4 KB of response body |
 | `conn_type` | TEXT | Default `https`, `https-mitm` for proxied |
 | `policy_mode` | TEXT | Policy engine mode, when set |
-| `policy_action` | TEXT | Typed policy action (`allow`, `ask`, `block`, `rewrite`) |
-| `policy_rule` | TEXT | Matching enforcement rule key |
-| `policy_reason` | TEXT | Optional audit reason or fail-closed detail |
+| `policy_action` | TEXT | Legacy helper; use `security_rule_events.rule_action` for security rules |
+| `policy_rule` | TEXT | Legacy helper; use `security_rule_events.rule_id` for security rules |
+| `policy_reason` | TEXT | Legacy helper; use `security_rule_events.rule_json` for rule reason |
 | `trace_id` | TEXT | Cross-table correlation ID |
 
 ### model_calls
@@ -271,6 +161,7 @@ AI provider API calls with parsed response metadata.
 | Column | Type | Description |
 |--------|------|-------------|
 | `id` | INTEGER PK | Auto-increment |
+| `event_id` | TEXT | 12-hex primary event id for `security_rule_events` joins |
 | `timestamp` | TEXT | ISO 8601 |
 | `provider` | TEXT | `anthropic`, `openai`, `google` |
 | `model` | TEXT | e.g. `claude-opus-4` |
@@ -310,7 +201,7 @@ Tool invocations extracted from model responses. One row per `tool_use` content 
 | `tool_name` | TEXT | Tool name |
 | `arguments` | TEXT | JSON arguments |
 | `origin` | TEXT | `native`, `local`, `mcp_proxy` |
-| `mcp_call_id` | INTEGER | Optional FK to `mcp_calls`; current model traffic does not populate it |
+| `mcp_call_id` | INTEGER | FK to `mcp_calls` (reserved, not yet populated) |
 | `trace_id` | TEXT | Cross-table correlation ID |
 
 ### tool_responses
@@ -346,10 +237,10 @@ MCP JSON-RPC tool invocations through the guest MCP relay and host MITM MCP endp
 | `process_name` | TEXT | Guest process |
 | `bytes_sent` | INTEGER | Request size |
 | `bytes_received` | INTEGER | Response size |
-| `policy_mode` | TEXT | Policy engine mode (`audit_only` or `enforce`) |
-| `policy_action` | TEXT | Typed policy action (`allow`, `ask`, `block`, `rewrite`) |
-| `policy_rule` | TEXT | Matching rule key, for example `policy.mcp.block_prod_token` |
-| `policy_reason` | TEXT | Optional audit reason |
+| `policy_mode` | TEXT | Legacy MCP policy mode, when used |
+| `policy_action` | TEXT | Legacy helper; use `security_rule_events.rule_action` for security rules |
+| `policy_rule` | TEXT | Legacy helper; use `security_rule_events.rule_id` for security rules |
+| `policy_reason` | TEXT | Legacy helper; use `security_rule_events.rule_json` for rule reason |
 | `trace_id` | TEXT | Cross-table correlation ID |
 
 ### dns_events
@@ -359,23 +250,64 @@ DNS queries handled by the host DNS proxy.
 | Column | Type | Description |
 |--------|------|-------------|
 | `id` | INTEGER PK | Auto-increment |
+| `event_id` | TEXT | 12-hex primary event id for `security_rule_events` joins |
 | `timestamp` | TEXT | ISO 8601 |
 | `qname` | TEXT | Queried name |
 | `qtype` | INTEGER | DNS record type |
 | `qclass` | INTEGER | DNS class |
 | `rcode` | INTEGER | DNS response code |
 | `decision` | TEXT | `allowed`, `denied`, `redirected`, or `error` |
-| `matched_rule` | TEXT | Domain or Policy DNS rule that matched |
+| `matched_rule` | TEXT | Legacy/domain policy helper; security rule truth is in `security_rule_events` |
 | `source_proto` | TEXT | DNS transport source |
 | `process_name` | TEXT | Guest process, when known |
 | `upstream_resolver_ms` | INTEGER | Upstream resolver latency |
 | `trace_id` | TEXT | Cross-table correlation ID |
 | `policy_mode` | TEXT | Policy engine mode, when set |
-| `policy_action` | TEXT | Typed policy action (`allow`, `ask`, `block`, `rewrite`) |
-| `policy_rule` | TEXT | Matching enforcement rule key |
-| `policy_reason` | TEXT | Optional audit reason or fail-closed detail |
+| `policy_action` | TEXT | Legacy helper; use `security_rule_events.rule_action` for security rules |
+| `policy_rule` | TEXT | Legacy helper; use `security_rule_events.rule_id` for security rules |
+| `policy_reason` | TEXT | Legacy helper; use `security_rule_events.rule_json` for rule reason |
 
-| `endpoint_id` | TEXT | Hook endpoint identifier |
+### security_rule_events
+
+Every matched security rule, across HTTP, DNS, MCP, model, file, process,
+credential, and snapshot events.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | INTEGER PK | Auto-increment |
+| `timestamp_unix_ms` | INTEGER | Match timestamp |
+| `event_id` | TEXT | 12-hex primary event id from the protocol/event table |
+| `event_type` | TEXT | Canonical security event type such as `http.request`, `mcp.tool_call`, or `file.read` |
+| `rule_id` | TEXT | Stable rule id such as `profiles.rules.skill_loaded` |
+| `rule_action` | TEXT | `allow`, `ask`, `block`, `preprocess`, or `postprocess` |
+| `detection_level` | TEXT | `none`, `informational`, `low`, `medium`, `high`, or `critical` |
+| `rule_json` | TEXT | JSON rule snapshot at match time |
+| `event_json` | TEXT | JSON normalized `SecurityEvent` payload matched by the rule |
+| `trace_id` | TEXT | Cross-table correlation ID |
+
+This table is the forensic rule ledger. Runtime `/latest` and `/info` style
+views must be regeneratable from these rows and the primary event tables.
+
+### security_ask_events
+
+Append-only lifecycle rows for `ask` decisions.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | INTEGER PK | Auto-increment |
+| `timestamp_unix_ms` | INTEGER | Ask lifecycle timestamp |
+| `ask_id` | TEXT | 12-hex ask id |
+| `event_id` | TEXT | 12-hex primary event id |
+| `event_type` | TEXT | Canonical security event type |
+| `rule_id` | TEXT | Rule that requested ask |
+| `rule_name` | TEXT | Rule telemetry name |
+| `status` | TEXT | `pending`, `approved`, or `denied` |
+| `rule_json` | TEXT | JSON rule snapshot |
+| `event_json` | TEXT | JSON normalized `SecurityEvent` payload |
+| `resolver` | TEXT | Approver/resolver identity, when present |
+| `reason` | TEXT | Resolution reason, when present |
+| `trace_id` | TEXT | Cross-table correlation ID |
+
 ### exec_events
 
 Commands executed through Capsem service APIs and MCP tools.
@@ -462,7 +394,6 @@ graph LR
         AUDIT["Guest audit stream<br/>(vsock:5006)"]
         FS["VirtioFS<br/>(file watcher)"]
         SNAP["Snapshot scheduler"]
-        HOOK["Policy Hook client"]
     end
 
     subgraph "Writer Pipeline"
@@ -494,119 +425,85 @@ graph LR
 | `WriteOp::FileEvent` | VirtioFS watcher | `fs_events` |
 | `WriteOp::SnapshotEvent` | Snapshot scheduler | `snapshot_events` |
 | `WriteOp::DnsEvent` | DNS proxy | `dns_events` |
+| `WriteOp::SecurityRuleEvent` | Security engine | `security_rule_events` |
+| `WriteOp::SecurityAskEvent` | Security engine | `security_ask_events` |
 
-## Policy Decision Audit
+## Security Rule Audit
 
-Use `just query-session` to prove that a policy decision happened at the
-intended boundary and that blocked or rewritten payloads did not leak.
+Use `just query-session` to prove that a security rule matched, which primary
+event it matched, and which normalized payload the rule saw. The ledger is
+`security_rule_events`; protocol tables provide the boundary-specific details.
 
-### MCP
+### Latest Rule Matches
 
 ```bash
 just query-session "
-SELECT timestamp, tool_name, decision, policy_action, policy_rule, policy_reason, error_message
-FROM mcp_calls
-WHERE policy_rule IS NOT NULL
-ORDER BY id DESC
+SELECT event_id, event_type, rule_id, rule_action, detection_level, trace_id
+FROM security_rule_events
+ORDER BY timestamp_unix_ms DESC
 LIMIT 20;"
 ```
 
-For no-dispatch checks, pair the policy row with the expected error response:
+For forensic review, inspect the stored rule and event snapshots:
 
 ```bash
 just query-session "
-SELECT tool_name, policy_action, policy_rule, response_preview
-FROM mcp_calls
-WHERE policy_action IN ('ask', 'block', 'rewrite')
-ORDER BY id DESC
+SELECT rule_id, rule_json, event_json
+FROM security_rule_events
+WHERE event_id = '<event_id>'
+ORDER BY id DESC;"
+```
+
+### HTTP Join
+
+```bash
+just query-session "
+SELECT n.event_id, n.domain, n.method, n.path, n.decision,
+       s.rule_id, s.rule_action, s.detection_level
+FROM net_events n
+JOIN security_rule_events s ON s.event_id = n.event_id
+ORDER BY n.id DESC
 LIMIT 20;"
 ```
 
-MCP Security Engine enforcement blocks use `policy_action = 'block'`. The
-coarse `mcp_calls.decision` field still uses `denied` for denied JSON-RPC
-outcomes.
-
-### HTTP
+### DNS Join
 
 ```bash
 just query-session "
-SELECT timestamp, domain, method, path, decision, matched_rule, status_code
-     , policy_action, policy_rule, policy_reason
-FROM net_events
-WHERE matched_rule IS NOT NULL OR policy_rule IS NOT NULL
-ORDER BY id DESC
+SELECT d.event_id, d.qname, d.qtype, d.rcode, d.decision,
+       s.rule_id, s.rule_action, s.detection_level
+FROM dns_events d
+JOIN security_rule_events s ON s.event_id = d.event_id
+ORDER BY d.id DESC
 LIMIT 20;"
 ```
 
-Header-strip rules should be checked against the captured headers:
+### MCP Join
 
 ```bash
 just query-session "
-SELECT domain, request_headers, response_headers
-FROM net_events
-WHERE matched_rule = 'security.rules.http.strip_credentials'
-ORDER BY id DESC
-LIMIT 5;"
-```
-
-The stripped header names may appear as keys depending on capture settings,
-but stripped secret values must not appear in header or body preview fields.
-
-### DNS
-
-```bash
-just query-session "
-SELECT timestamp, qname, qtype, rcode, decision, matched_rule, process_name
-     , policy_action, policy_rule, policy_reason
-FROM dns_events
-WHERE matched_rule IS NOT NULL OR policy_rule IS NOT NULL OR decision != 'allowed'
-ORDER BY id DESC
+SELECT m.event_id, m.server_name, m.method, m.tool_name, m.decision,
+       s.rule_id, s.rule_action, s.detection_level, m.error_message
+FROM mcp_calls m
+JOIN security_rule_events s ON s.event_id = m.event_id
+ORDER BY m.id DESC
 LIMIT 20;"
 ```
 
-DNS block rows prove no upstream resolution happened when
-`upstream_resolver_ms = 0`. DNS rewrite rows should carry the enforcement rule and
-`policy_action = 'rewrite'`; synthetic answer payloads are not stored in
-session telemetry.
-
-### Model and Tool Traffic
-
-Model enforcement uses the existing parsed AI rows plus enforcement rule metadata as
-the enforcement slice lands. Today, use these rows to prove the subject and
-no-leak side of model enforcement tests:
+### Ask Lifecycle
 
 ```bash
 just query-session "
-SELECT id, provider, model, path, trace_id, request_body_preview, text_content
-FROM model_calls
-ORDER BY id DESC
-LIMIT 10;"
-```
-
-```bash
-just query-session "
-SELECT tc.tool_name, tc.origin, tc.arguments, tr.content_preview, tc.trace_id
-FROM tool_calls tc
-LEFT JOIN tool_responses tr
-  ON tr.call_id = tc.call_id AND tr.trace_id = tc.trace_id
-ORDER BY tc.id DESC
+SELECT ask_id, event_id, rule_id, rule_name, status, resolver, reason
+FROM security_ask_events
+ORDER BY timestamp_unix_ms DESC
 LIMIT 20;"
 ```
 
-Model request policy records no-leak decisions on the associated `net_events`
-row. Model response, tool-call, and tool-response enforcement use the same
-rule, decision, and reason vocabulary on `net_events`; response-side rewrites
-must show only the rewritten preview.
-
-For model-extracted tool calls, `tool_calls.origin` uses `native`, `local`, or
-`mcp_proxy`. The `tool_calls.mcp_call_id` column exists for future direct
-correlation, but the current model telemetry path does not populate it.
-
-decision, rule id, reason, latency, timeout/schema/transport error text,
-fail-closed fallback decision, audit tags, `trace_id`, and `session_id`.
-Hook tests should also query the downstream boundary row (`mcp_calls`,
-`net_events`, `dns_events`, or `model_calls`) when proving no-dispatch and
-no-leak behavior.
+For no-dispatch checks, pair an `ask` or `block` rule row with the primary
+event row and the expected boundary result. The rule decision is
+`security_rule_events.rule_action`; the primary table's `decision` remains the
+transport outcome at that boundary.
 
 ## Writer Architecture
 

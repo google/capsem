@@ -610,48 +610,96 @@ pub fn handle_revert_file(
     request_id: Option<Value>,
     db: Option<&Arc<capsem_logger::DbWriter>>,
 ) -> JsonRpcResponse {
+    handle_revert_file_with_rules(arguments, scheduler, workspace_root, request_id, db, None)
+}
+
+pub fn handle_revert_file_with_rules(
+    arguments: &Value,
+    scheduler: &AutoSnapshotScheduler,
+    workspace_root: &Path,
+    request_id: Option<Value>,
+    db: Option<&Arc<capsem_logger::DbWriter>>,
+    security_rules: Option<&crate::net::policy_config::SecurityRuleSet>,
+) -> JsonRpcResponse {
+    let (resp, file_event) =
+        handle_revert_file_with_security_event(arguments, scheduler, workspace_root, request_id);
+    if let (Some(db), Some(file_event)) = (db, file_event) {
+        let empty_rules;
+        let rules = match security_rules {
+            Some(rules) => rules,
+            None => {
+                empty_rules = crate::net::policy_config::SecurityRuleSet::new(Vec::new());
+                &empty_rules
+            }
+        };
+        crate::security_engine::emit_file_security_write_and_rules_blocking(db, rules, file_event);
+    }
+    resp
+}
+
+pub fn handle_revert_file_with_security_event(
+    arguments: &Value,
+    scheduler: &AutoSnapshotScheduler,
+    workspace_root: &Path,
+    request_id: Option<Value>,
+) -> (JsonRpcResponse, Option<capsem_logger::FileEvent>) {
     let raw_path = match arguments.get("path").and_then(|v| v.as_str()) {
         Some(p) => p,
-        None => return JsonRpcResponse::err(request_id, -32602, "missing 'path' argument"),
+        None => {
+            return (
+                JsonRpcResponse::err(request_id, -32602, "missing 'path' argument"),
+                None,
+            );
+        }
     };
 
     // Normalize and validate path (strips /root/ prefix if present).
     let path_str = match normalize_path(raw_path) {
         Ok(p) => p,
-        Err(e) => return JsonRpcResponse::err(request_id, -32602, format!("invalid path: {e}")),
+        Err(e) => {
+            return (
+                JsonRpcResponse::err(request_id, -32602, format!("invalid path: {e}")),
+                None,
+            );
+        }
     };
 
     // Resolve checkpoint: explicit or auto-select newest containing the file.
-    let (slot, cp_str_owned) = if let Some(cp_str) =
-        arguments.get("checkpoint").and_then(|v| v.as_str())
-    {
-        let slot = match parse_checkpoint(cp_str) {
-            Ok(s) => s,
-            Err(e) => return JsonRpcResponse::err(request_id, -32602, e),
-        };
-        (slot, cp_str.to_string())
-    } else {
-        // Auto-select: scan snapshots newest-first, find first containing the file.
-        let snapshots = scheduler.list_snapshots();
-        let found = snapshots
-            .iter()
-            .find(|s| s.workspace_path.join(&path_str).symlink_metadata().is_ok());
-        match found {
-            Some(s) => (s.slot, format!("cp-{}", s.slot)),
-            None => {
-                return JsonRpcResponse::err(request_id, -32602, "no snapshot contains this file");
+    let (slot, cp_str_owned) =
+        if let Some(cp_str) = arguments.get("checkpoint").and_then(|v| v.as_str()) {
+            let slot = match parse_checkpoint(cp_str) {
+                Ok(s) => s,
+                Err(e) => return (JsonRpcResponse::err(request_id, -32602, e), None),
+            };
+            (slot, cp_str.to_string())
+        } else {
+            // Auto-select: scan snapshots newest-first, find first containing the file.
+            let snapshots = scheduler.list_snapshots();
+            let found = snapshots
+                .iter()
+                .find(|s| s.workspace_path.join(&path_str).symlink_metadata().is_ok());
+            match found {
+                Some(s) => (s.slot, format!("cp-{}", s.slot)),
+                None => {
+                    return (
+                        JsonRpcResponse::err(request_id, -32602, "no snapshot contains this file"),
+                        None,
+                    );
+                }
             }
-        }
-    };
+        };
 
     // Get snapshot.
     let snap = match scheduler.get_snapshot(slot) {
         Some(s) => s,
         None => {
-            return JsonRpcResponse::err(
-                request_id,
-                -32602,
-                format!("checkpoint {} not found", cp_str_owned),
+            return (
+                JsonRpcResponse::err(
+                    request_id,
+                    -32602,
+                    format!("checkpoint {} not found", cp_str_owned),
+                ),
+                None,
             )
         }
     };
@@ -667,10 +715,13 @@ pub fn handle_revert_file(
             (parent.canonicalize(), workspace_root.canonicalize())
         {
             if !resolved_parent.starts_with(&resolved_root) {
-                return JsonRpcResponse::err(
-                    request_id,
-                    -32602,
-                    "path resolves outside workspace (symlink escape)",
+                return (
+                    JsonRpcResponse::err(
+                        request_id,
+                        -32602,
+                        "path resolves outside workspace (symlink escape)",
+                    ),
+                    None,
                 );
             }
         }
@@ -699,18 +750,24 @@ pub fn handle_revert_file(
                 _ => true, // can't read metadata, assume same
             };
             if snap_bytes == cur_bytes && same_perms {
-                return JsonRpcResponse::err(
-                    request_id,
-                    -32602,
-                    "file already matches snapshot (already current)",
+                return (
+                    JsonRpcResponse::err(
+                        request_id,
+                        -32602,
+                        "file already matches snapshot (already current)",
+                    ),
+                    None,
                 );
             }
         }
     } else if !snap_exists && !current_exists {
-        return JsonRpcResponse::err(
-            request_id,
-            -32602,
-            "file does not exist in snapshot or workspace",
+        return (
+            JsonRpcResponse::err(
+                request_id,
+                -32602,
+                "file does not exist in snapshot or workspace",
+            ),
+            None,
         );
     }
 
@@ -719,10 +776,13 @@ pub fn handle_revert_file(
         action = "restored";
         if let Some(parent) = current_file.parent() {
             if let Err(e) = std::fs::create_dir_all(parent) {
-                return JsonRpcResponse::err(
-                    request_id,
-                    -32603,
-                    format!("failed to create parent directory: {e}"),
+                return (
+                    JsonRpcResponse::err(
+                        request_id,
+                        -32603,
+                        format!("failed to create parent directory: {e}"),
+                    ),
+                    None,
                 );
             }
         }
@@ -738,18 +798,24 @@ pub fn handle_revert_file(
             match std::fs::read_link(&snap_file) {
                 Ok(link_target) => {
                     if let Err(e) = std::os::unix::fs::symlink(&link_target, &current_file) {
-                        return JsonRpcResponse::err(
-                            request_id,
-                            -32603,
-                            format!("failed to restore symlink: {e}"),
+                        return (
+                            JsonRpcResponse::err(
+                                request_id,
+                                -32603,
+                                format!("failed to restore symlink: {e}"),
+                            ),
+                            None,
                         );
                     }
                 }
                 Err(e) => {
-                    return JsonRpcResponse::err(
-                        request_id,
-                        -32603,
-                        format!("failed to read symlink from snapshot: {e}"),
+                    return (
+                        JsonRpcResponse::err(
+                            request_id,
+                            -32603,
+                            format!("failed to read symlink from snapshot: {e}"),
+                        ),
+                        None,
                     );
                 }
             }
@@ -764,10 +830,13 @@ pub fn handle_revert_file(
             let snap_data = match std::fs::read(&snap_file) {
                 Ok(d) => d,
                 Err(e) => {
-                    return JsonRpcResponse::err(
-                        request_id,
-                        -32603,
-                        format!("failed to read snapshot file: {e}"),
+                    return (
+                        JsonRpcResponse::err(
+                            request_id,
+                            -32603,
+                            format!("failed to read snapshot file: {e}"),
+                        ),
+                        None,
                     );
                 }
             };
@@ -776,18 +845,24 @@ pub fn handle_revert_file(
                 let mut f = match std::fs::File::create(&current_file) {
                     Ok(f) => f,
                     Err(e) => {
-                        return JsonRpcResponse::err(
-                            request_id,
-                            -32603,
-                            format!("failed to create restored file: {e}"),
+                        return (
+                            JsonRpcResponse::err(
+                                request_id,
+                                -32603,
+                                format!("failed to create restored file: {e}"),
+                            ),
+                            None,
                         );
                     }
                 };
                 if let Err(e) = f.write_all(&snap_data) {
-                    return JsonRpcResponse::err(
-                        request_id,
-                        -32603,
-                        format!("failed to write restored file: {e}"),
+                    return (
+                        JsonRpcResponse::err(
+                            request_id,
+                            -32603,
+                            format!("failed to write restored file: {e}"),
+                        ),
+                        None,
                     );
                 }
                 let _ = f.sync_all();
@@ -808,70 +883,50 @@ pub fn handle_revert_file(
         action = "deleted";
         if current_file.exists() {
             if let Err(e) = std::fs::remove_file(&current_file) {
-                return JsonRpcResponse::err(
-                    request_id,
-                    -32603,
-                    format!("failed to delete file: {e}"),
+                return (
+                    JsonRpcResponse::err(request_id, -32603, format!("failed to delete file: {e}")),
+                    None,
                 );
             }
         }
     }
 
-    // Log the revert as a file event in the session DB.
-    if let Some(db) = db {
-        let file_action = if action == "restored" {
-            capsem_logger::FileAction::Restored
-        } else {
-            capsem_logger::FileAction::Deleted
-        };
-        let size = if action == "restored" {
-            std::fs::symlink_metadata(&current_file)
-                .ok()
-                .map(|m| m.len())
-        } else {
-            None
-        };
-        let event = capsem_logger::FileEvent {
-            timestamp: SystemTime::now(),
-            action: file_action,
-            path: format!("{} (from {})", path_str, cp_str_owned),
-            size,
-            trace_id: crate::telemetry::ambient_capsem_trace_id(),
-        };
-        let resolved_event = capsem_file_engine::build_file_resolved_security_event(
-            &event,
-            &capsem_file_engine::FileEngineIdentity {
-                vm_id: non_empty_env(crate::telemetry::CAPSEM_VM_ID_ENV),
-                session_id: non_empty_env(crate::telemetry::CAPSEM_SESSION_ID_ENV),
-                profile_id: non_empty_env(crate::telemetry::CAPSEM_PROFILE_ID_ENV),
-                profile_revision: non_empty_env(crate::telemetry::CAPSEM_PROFILE_REVISION_ENV),
-                user_id: non_empty_env(crate::telemetry::CAPSEM_USER_ID_ENV),
-            },
-        );
-        db.try_write(capsem_logger::WriteOp::FileEvent(event));
-        db.try_write(capsem_logger::WriteOp::ResolvedSecurityEvent(
-            resolved_event,
-        ));
-    }
+    let file_action = if action == "restored" {
+        capsem_logger::FileAction::Restored
+    } else {
+        capsem_logger::FileAction::Deleted
+    };
+    let size = if action == "restored" {
+        std::fs::symlink_metadata(&current_file)
+            .ok()
+            .map(|m| m.len())
+    } else {
+        None
+    };
+    let file_event = capsem_logger::FileEvent {
+        event_id: None,
+        timestamp: SystemTime::now(),
+        action: file_action,
+        path: format!("{} (from {})", path_str, cp_str_owned),
+        size,
+        trace_id: crate::telemetry::ambient_capsem_trace_id(),
+        credential_ref: None,
+    };
 
-    JsonRpcResponse::ok(
-        request_id,
-        serde_json::json!({
-            "content": [{"type": "text", "text": serde_json::json!({
-                "reverted": true,
-                "path": path_str,
-                "action": action,
-                "checkpoint": cp_str_owned,
-            }).to_string()}]
-        }),
+    (
+        JsonRpcResponse::ok(
+            request_id,
+            serde_json::json!({
+                "content": [{"type": "text", "text": serde_json::json!({
+                    "reverted": true,
+                    "path": path_str,
+                    "action": action,
+                    "checkpoint": cp_str_owned,
+                }).to_string()}]
+            }),
+        ),
+        Some(file_event),
     )
-}
-
-fn non_empty_env(key: &str) -> Option<String> {
-    std::env::var(key)
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
 }
 
 /// Summarize changes as compact "+N, ~N, -N" string.

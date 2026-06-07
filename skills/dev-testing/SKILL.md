@@ -208,28 +208,28 @@ Composite recipe: `just test-vm` runs build-chain + guest + cleanup + codesign +
 
 ## Test matrix: what runs where
 
-### Rust crate CI matrix
+### Rust crate CI coverage
 
 | Crate | Tests | CI macOS | CI Linux | Smoke | Full |
 |-------|------:|:--------:|:--------:|:-----:|:----:|
-| capsem-core | ~1695 | Yes | Compile/no-run + non-live-KVM | No | Yes |
-| capsem-agent | ~71 | Yes | Compile/no-run | No | Yes |
-| capsem-logger | ~47 | Yes | Compile/no-run | No | Yes |
-| capsem-proto | ~132 | Yes | Compile/no-run | No | Yes |
-| capsem-gateway | ~38 | Yes | Compile/no-run | No | Yes |
-| capsem-service | ~109 | Yes | Compile/no-run | No | Yes |
-| capsem (CLI) | ~140 | Yes | Compile/no-run | No | Yes |
-| capsem-mcp | ~67 | Yes | Compile/no-run | No | Yes |
+| capsem-core | ~1695 | Yes | Yes | No | Yes |
+| capsem-agent | ~71 | Yes | No | No | Yes |
+| capsem-logger | ~47 | Yes | Yes | No | Yes |
+| capsem-proto | ~132 | Yes | Yes | No | Yes |
+| capsem-gateway | ~38 | Yes | No | No | Yes |
+| capsem-service | ~109 | Yes | Yes | No | Yes |
+| capsem (CLI) | ~140 | Yes | Yes | No | Yes |
+| capsem-mcp | ~67 | Yes | Yes | No | Yes |
 | capsem-tray | ~47 | Yes | No | No | Yes |
-| capsem-process | ~62 | Yes | Compile/no-run | No | Yes |
+| capsem-process | ~62 | Yes | No | No | Yes |
 | capsem-app | ~35 | Check | No | No | Yes |
 
 ### Python integration suite tier map
 
 | Suite | Marker | VM? | CI | Smoke | Full |
 |-------|--------|:---:|:--:|:-----:|:----:|
-| capsem-bootstrap | `bootstrap` | No | Collect; run in full gate after assets exist | No | Yes |
-| capsem-codesign | `codesign` | No | Collect; run in full gate after signing | No | Yes |
+| capsem-bootstrap | `bootstrap` | No | Run | No | Yes |
+| capsem-codesign | `codesign` | No | Run | No | Yes |
 | capsem-rootfs-artifacts | `rootfs` | No | Run | No | Yes |
 | capsem-mcp | `mcp` | Yes | Collect | Yes | Yes |
 | capsem-service | `integration` | Yes | Collect | Yes | Yes |
@@ -254,15 +254,14 @@ Composite recipe: `just test-vm` runs build-chain + guest + cleanup + codesign +
 | capsem-recipes | `recipe` | No | Run | No | Yes |
 | capsem-install | `install` | No | Yes (Docker) | No | Yes |
 
-"Run" = tests execute in PR CI. "Collect" = imports verified (`--collect-only`) but tests do not execute in that PR lane. Artifact-dependent no-VM suites still execute in the full `just test` gate after their build/sign prerequisites exist. "Yes (Docker)" = runs in dedicated Docker+systemd CI job.
+"Run" = tests execute in CI. "Collect" = imports verified (`--collect-only`) but tests skip (need VM). "Yes (Docker)" = runs in dedicated Docker+systemd CI job.
 
 ### Coverage targets
 
 | Component | Floor | Enforced | Where |
 |-----------|------:|:--------:|-------|
-| Rust workspace | 65% | `--fail-under-lines 65` | CI (`cargo llvm-cov`), `just test` |
-| Python top-level contracts | 89% | `--cov-fail-under=89` | PR CI (`tests/test_*.py`) |
-| Python full suite | 90% | `--cov-fail-under=90` | `just test` |
+| Rust workspace | 70% | `--fail-under-lines 70` | CI (`cargo llvm-cov`), `just test` |
+| Python builder | 90% | `--cov-fail-under=90` | CI (`pytest`), `just test` |
 | capsem-service | 80% | Codecov component | `codecov.yml` |
 | capsem-mcp | 80% | Codecov component | `codecov.yml` |
 | capsem-gateway | 80% | Codecov component | `codecov.yml` |
@@ -270,8 +269,8 @@ Composite recipe: `just test-vm` runs build-chain + guest + cleanup + codesign +
 
 ## Coverage
 
-- Rust: `cargo llvm-cov` via `just test` (floor: 65% line coverage)
-- Python: PR top-level contract lane uses 89%; full `just test` uses 90%.
+- Rust: `cargo llvm-cov` via `just test` (floor: 70% line coverage)
+- Python: `--cov-fail-under=90`
 - `codecov.yml` maps components to code paths. Update it when files or directories are added, moved, or renamed.
 
 ## Fast debug with capsem MCP tools
@@ -321,7 +320,7 @@ When the capsem MCP server is configured, Claude Code has direct VM control via 
 | Verify telemetry was recorded correctly | `capsem_inspect` with SQL query |
 | Full regression suite | `just test` |
 | Build + boot + validate in one shot | `just smoke` |
-| Benchmark performance | `just benchmark` |
+| Benchmark performance | `just bench` |
 
 MCP tools are for fast, targeted checks during development. Just recipes are for comprehensive validation before committing.
 

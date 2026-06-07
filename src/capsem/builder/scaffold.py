@@ -25,7 +25,11 @@ _BUILD_TOML = """\
 [build]
 compression = "zstd"
 compression_level = 15
-squashfs_block_size = "128K"
+
+[build.erofs]
+enabled = true
+compression = "lz4hc"
+compression_level = 12
 
 [build.architectures.arm64]
 base_image = "debian:bookworm-slim"

@@ -14,15 +14,15 @@ graph TD
     subgraph "Session Commands"
         CREATE["create"]
         SHELL["shell"]
-        RESUME["resume"]
+        RESUME["resume / attach"]
         SUSPEND["suspend"]
         RESTART["restart"]
         EXEC["exec"]
         RUN["run"]
-        LIST["list"]
+        LIST["list / ls"]
         INFO["info"]
         LOGS["logs"]
-        DELETE["delete"]
+        DELETE["delete / rm"]
         FORK["fork"]
         PERSIST["persist"]
         PURGE["purge"]
@@ -49,38 +49,39 @@ graph TD
 
 ### create
 
-Create and boot a new session. Sessions are ephemeral by default. Pass a positional name to make it persistent.
+Create and boot a new session. Sessions are ephemeral by default. Use `-n <name>` to make it persistent.
 
 ```sh
 capsem create                          # ephemeral session
-capsem create mybox                    # persistent session
-capsem create mybox --ram 8 --cpu 4    # custom resources
+capsem create -n mybox                 # persistent session
+capsem create -n mybox --ram 8 --cpu 4 # custom resources
 capsem create --from template          # clone from existing session
 capsem create -e API_KEY=sk-...        # with environment variables
 ```
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `[NAME]` | -- | Name for the session (makes it persistent) |
+| `-n, --name <NAME>` | -- | Name for the session (makes it persistent) |
 | `--ram <GB>` | 4 | RAM in GB |
 | `--cpu <CORES>` | 4 | CPU cores |
 | `-e, --env <KEY=VALUE>` | -- | Environment variables (repeatable) |
-| `--from <NAME>` | -- | Clone state from existing persistent session |
+| `--from <NAME>` | -- | Clone state from existing persistent session (alias: `--image`) |
 
 ### shell
 
-Open the Capsem TUI. With no arguments, opens the home/create flow. Pass a
-session name or ID to focus the TUI on that session.
+Open an interactive shell. With no arguments, creates a temporary session that is destroyed on exit.
 
 ```sh
-capsem shell              # open the TUI
-capsem shell mybox        # open focused on a named session
-capsem shell abc123       # open focused on an ID
+capsem shell              # temp session (destroyed on exit)
+capsem shell mybox        # attach to existing session
+capsem shell -n mybox     # find by name
+capsem shell abc123       # find by ID
 ```
 
-| Arg | Description |
-|-----|-------------|
-| `[SESSION]` | Optional name or ID to focus in the TUI |
+| Flag | Description |
+|------|-------------|
+| `-n, --name <NAME>` | Find by name (persistent sessions) |
+| `[SESSION]` | Name or ID of an existing session |
 
 ### resume
 
@@ -88,6 +89,7 @@ Resume a suspended session or attach to a running one.
 
 ```sh
 capsem resume mybox
+capsem attach mybox       # alias
 ```
 
 | Arg | Description |
@@ -155,6 +157,7 @@ List all sessions (running + suspended persistent).
 
 ```sh
 capsem list
+capsem ls                 # alias
 capsem list -q            # IDs only (for scripting)
 ```
 
@@ -200,6 +203,7 @@ Delete a session and all its state permanently.
 
 ```sh
 capsem delete mybox
+capsem rm mybox           # alias
 ```
 
 | Arg | Description |
@@ -261,24 +265,6 @@ The background service (`capsem-service`) runs as a daemon. It auto-starts on lo
 | `capsem stop` | Stop the background service |
 
 ## Misc commands
-
-### setup
-
-Run the first-time setup wizard. Auto-runs on first CLI use if not previously completed.
-
-```sh
-capsem setup
-capsem setup --non-interactive --preset medium
-capsem setup --corp-config https://internal.corp/capsem.toml
-```
-
-| Flag | Description |
-|------|-------------|
-| `--non-interactive` | Run without prompts (accept defaults) |
-| `--preset <PRESET>` | Security preset: `medium` or `high` |
-| `--force` | Re-run all steps even if previously completed |
-| `--accept-detected` | Auto-accept detected credentials |
-| `--corp-config <URL\|FILE>` | Provision corporate config |
 
 ### update
 
@@ -343,7 +329,7 @@ stateDiagram-v2
 | Concept | Description |
 |---------|-------------|
 | **Ephemeral** | Default. Destroyed on delete. Created by `create` (no name) or `shell` (no args) |
-| **Persistent** | Survives suspend/resume. Created by `create <name>` or `persist` |
+| **Persistent** | Survives suspend/resume. Created by `create -n <name>` or `persist` |
 | **Suspended** | RAM + CPU state saved to disk. Resume with `resume` |
 | **Forked** | Point-in-time copy. Use as template with `create --from` |
 

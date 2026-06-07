@@ -72,19 +72,10 @@ class GatewayStore {
       // Just probe health to detect disconnection
       const ok = await api.healthCheck();
       if (!ok) {
-        const status = await api.getStatus();
-        if (status.service === 'running') {
-          this.connected = true;
-          this.reachable = true;
-          this.version = status.gateway_version || this.version;
-          this.error = null;
-          this.#failCount = 0;
-        } else {
-          this.connected = false;
-          this.reachable = false;
-          this.error = 'Gateway connection lost';
-          this.#failCount = 1;
-        }
+        this.connected = false;
+        this.reachable = false;
+        this.error = 'Gateway connection lost';
+        this.#failCount = 1;
       }
     }
 

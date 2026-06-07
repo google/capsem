@@ -3,6 +3,7 @@ allow_read = false
 allow_write = false
 custom_allow = ["elie.net", "*.elie.net", "en.wikipedia.org", "*.wikipedia.org"]
 custom_block = []
+http_upstream_ports = [80, 11434]
 
 [web.search.google]
 name = "Google"

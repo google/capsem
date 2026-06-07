@@ -7,11 +7,8 @@
 //! second `Cargo.toml` change.
 
 pub mod api;
-pub mod asset_supervisor;
-pub mod debug_report;
 pub mod errors;
 pub mod fs_utils;
 pub mod naming;
 pub mod registry;
-pub mod saved_vm_assets;
 pub mod triage;

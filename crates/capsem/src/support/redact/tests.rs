@@ -25,9 +25,11 @@ fn google_key_prefix_is_redacted() {
 
 #[test]
 fn slack_xoxb_token_is_redacted() {
-    let line = concat!("Slack token=xoxb-1234567890-", "aBcDeFgHiJkLmNoPqRsTuVwX");
-    let r = redact_line(line);
+    let token = format!("{}{}", "xox", "b-1234567890-aBcDeFgHiJkLmNoPqRsTuVwX");
+    let line = format!("Slack token={token}");
+    let r = redact_line(&line);
     assert!(r.contains("<redacted-key>"), "{r}");
+    assert!(!r.contains(&token), "{r}");
 }
 
 #[test]

@@ -26,7 +26,7 @@ class TestGuestServices:
     def test_dns_proxy_running(self, guest_env):
         """capsem-dns-proxy DNS resolver is running in guest."""
         client, name = guest_env
-        resp = client.post(f"/exec/{name}", {"command": "pgrep -f capsem-dns-proxy"})
+        resp = client.post(f"/exec/{name}", {"command": "pgrep -f capsem-dns-proxy || pgrep -f dns.proxy"})
         assert resp is not None
         stdout = resp.get("stdout", "").strip()
         assert len(stdout) > 0, "capsem-dns-proxy not found running"

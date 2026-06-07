@@ -19,8 +19,7 @@ class TestLogs:
         client, name = ready_vm
         resp = client.get(f"/logs/{name}")
         logs = resp.get("logs", "")
-        boot_markers = ("linux", "console", "capsem", "making ai agents safe")
-        assert any(marker in logs.lower() for marker in boot_markers), (
+        assert "Linux" in logs or "console" in logs or "capsem" in logs.lower(), (
             f"Expected boot output in logs, got: {logs[:200]}"
         )
 

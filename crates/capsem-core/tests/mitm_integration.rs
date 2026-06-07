@@ -3,15 +3,17 @@
 /// These tests spin up the MITM proxy on a local TCP socket (simulating vsock),
 /// connect a real TLS client through it, and verify:
 /// - Allowed domains complete a full HTTPS request/response cycle
+/// - Denied domains are rejected before TLS handshake completes
 /// - Telemetry records correct decisions, methods, and status codes
 ///
 /// Requires internet access (the proxy connects upstream to real servers).
-use std::ffi::OsString;
+use std::collections::BTreeMap;
 use std::os::unix::io::IntoRawFd;
 use std::sync::Arc;
 
 use capsem_core::net::cert_authority::CertAuthority;
 use capsem_core::net::mitm_proxy::{self, MitmProxyConfig};
+use capsem_core::net::policy::{DomainMatcher, NetworkPolicy, PolicyRule};
 use capsem_logger::{DbWriter, Decision};
 use http_body_util::{BodyExt, Full};
 use hyper::body::Bytes;
@@ -23,30 +25,11 @@ use tokio_rustls::TlsConnector;
 const CA_KEY: &str = include_str!("../../../config/capsem-ca.key");
 const CA_CERT: &str = include_str!("../../../config/capsem-ca.crt");
 
-struct EnvVarGuard {
-    key: &'static str,
-    previous: Option<OsString>,
-}
-
-impl EnvVarGuard {
-    fn set(key: &'static str, value: String) -> Self {
-        let previous = std::env::var_os(key);
-        std::env::set_var(key, value);
-        Self { key, previous }
-    }
-}
-
-impl Drop for EnvVarGuard {
-    fn drop(&mut self) {
-        if let Some(previous) = self.previous.take() {
-            std::env::set_var(self.key, previous);
-        } else {
-            std::env::remove_var(self.key);
-        }
-    }
-}
-
-/// Build a proxy config for integration tests.
+/// Build a proxy config from allow/block lists for integration tests.
+///
+/// Enforcement intent is compiled into `SecurityRuleSet` so tests exercise the
+/// same security-event/CEL rail as production. `NetworkPolicy` remains present
+/// for non-enforcement proxy settings such as body capture and HTTP port gates.
 fn make_proxy_config(
     allowed: &[&str],
     blocked: &[&str],
@@ -55,36 +38,151 @@ fn make_proxy_config(
     make_proxy_config_full(allowed, blocked, default_allow, &[80])
 }
 
-/// Like `make_proxy_config`; legacy allow/block arguments are retained at
-/// call sites that still describe their upstream target, but HTTP policy
-/// enforcement now flows through the Security Engine path rather than the
-/// removed MITM HTTP policy hook.
+fn host_pattern_condition(pattern: &str) -> Option<String> {
+    let pattern = pattern.trim();
+    if pattern.is_empty() {
+        return None;
+    }
+    if let Some(suffix) = pattern.strip_prefix("*.") {
+        let escaped = regex::escape(suffix);
+        return Some(format!("http.host.matches(\"(^|.*\\\\.){escaped}$\")"));
+    }
+    Some(format!("http.host == \"{}\"", pattern.replace('"', "\\\"")))
+}
+
+fn host_pattern_negative_condition(pattern: &str) -> Option<String> {
+    let pattern = pattern.trim();
+    if pattern.is_empty() {
+        return None;
+    }
+    if let Some(suffix) = pattern.strip_prefix("*.") {
+        let escaped = regex::escape(suffix);
+        return Some(format!(
+            "http.host.matches(\"(^|.*\\\\.){escaped}$\") == false"
+        ));
+    }
+    Some(format!("http.host != \"{}\"", pattern.replace('"', "\\\"")))
+}
+
+fn security_rules_for_proxy(
+    allowed: &[&str],
+    blocked: &[&str],
+    default_allow: bool,
+) -> capsem_core::net::policy_config::SecurityRuleSet {
+    let mut toml = String::new();
+    let blocked_conditions: Vec<String> = blocked
+        .iter()
+        .filter_map(|pattern| host_pattern_condition(pattern))
+        .collect();
+    if !blocked_conditions.is_empty() {
+        toml.push_str(
+            r#"
+[profiles.rules.block_test_hosts]
+name = "block_test_hosts"
+action = "block"
+reason = "test blocked host"
+match = '''
+"#,
+        );
+        toml.push_str(&blocked_conditions.join("\n|| "));
+        toml.push_str(
+            r#"
+'''
+"#,
+        );
+    }
+
+    if !default_allow {
+        let allowed_conditions: Vec<String> = allowed
+            .iter()
+            .filter_map(|pattern| host_pattern_negative_condition(pattern))
+            .collect();
+        toml.push_str(
+            r#"
+[profiles.rules.block_test_default_deny]
+name = "block_test_default_deny"
+action = "block"
+reason = "test default deny"
+match = '''
+"#,
+        );
+        if allowed_conditions.is_empty() {
+            toml.push_str("http.host != \"\"");
+        } else {
+            toml.push_str(&allowed_conditions.join("\n&& "));
+        }
+        toml.push_str(
+            r#"
+'''
+"#,
+        );
+    }
+
+    let profile = capsem_core::net::policy_config::SecurityRuleProfile::parse_toml(&toml)
+        .expect("test security rule profile");
+    capsem_core::net::policy_config::SecurityRuleSet::compile_profile(
+        &profile,
+        capsem_core::net::policy_config::SecurityRuleSource::User,
+    )
+    .expect("test security rules")
+}
+
+/// Like `make_proxy_config` but lets the caller override the
+/// `http_upstream_ports` allowlist (T2.2). Used by T2.3's Ollama-shape
+/// test that runs a fake upstream on an OS-assigned port.
 fn make_proxy_config_full(
-    _allowed: &[&str],
-    _blocked: &[&str],
-    _default_allow: bool,
-    _http_ports: &[u16],
+    allowed: &[&str],
+    blocked: &[&str],
+    default_allow: bool,
+    http_ports: &[u16],
 ) -> (Arc<MitmProxyConfig>, Arc<DbWriter>) {
     let ca = Arc::new(CertAuthority::load(CA_KEY, CA_CERT).unwrap());
+    let mut rules = Vec::new();
+    for pattern in blocked {
+        rules.push(PolicyRule {
+            matcher: DomainMatcher::parse(pattern),
+            allow_read: false,
+            allow_write: false,
+        });
+    }
+    for pattern in allowed {
+        rules.push(PolicyRule {
+            matcher: DomainMatcher::parse(pattern),
+            allow_read: true,
+            allow_write: true,
+        });
+    }
+    let mut policy_inner = NetworkPolicy::new(rules, default_allow, default_allow);
+    policy_inner.http_upstream_ports = http_ports.to_vec();
+    let policy = Arc::new(std::sync::RwLock::new(Arc::new(policy_inner)));
     let dir = tempfile::tempdir().unwrap();
     let db = Arc::new(DbWriter::open(&dir.path().join("test.db"), 256).unwrap());
     // Leak the tempdir so it lives for the test
     std::mem::forget(dir);
+    let security_rules = security_rules_for_proxy(allowed, blocked, default_allow);
     let telemetry = Arc::new(mitm_proxy::telemetry_hook::TelemetryDeps {
         db: db.clone(),
         pricing: Arc::new(capsem_core::net::ai_traffic::pricing::PricingTable::load()),
         trace_state: Arc::new(std::sync::Mutex::new(
             capsem_core::net::ai_traffic::TraceState::new(),
         )),
+        security_rules: Arc::new(std::sync::RwLock::new(Arc::new(security_rules))),
+        plugin_policy: Arc::new(std::sync::RwLock::new(BTreeMap::new())),
     });
-    let pipeline = mitm_proxy::make_production_pipeline(Arc::clone(&telemetry));
+    let pipeline =
+        mitm_proxy::make_production_pipeline(Arc::clone(&policy), Arc::clone(&telemetry));
     let config = Arc::new(MitmProxyConfig {
         ca,
+        policy,
+        model_endpoints: Arc::new(std::sync::RwLock::new(Arc::new(
+            capsem_core::net::policy_config::ProviderRuleProfile::builtin_defaults()
+                .endpoint_registry()
+                .expect("builtin provider endpoint registry"),
+        ))),
         db: db.clone(),
         upstream_tls: mitm_proxy::make_upstream_tls_config(),
         telemetry,
         pipeline,
-        security_engine: Arc::new(mitm_proxy::RuntimeSecurityEngineSlot::default()),
         mcp_endpoint: None,
     });
     (config, db)
@@ -178,6 +276,91 @@ async fn mitm_proxy_allows_elie_net() {
     assert_eq!(events[0].method.as_deref(), Some("HEAD"));
     assert!(events[0].status_code.is_some());
     assert_eq!(events[0].conn_type.as_deref(), Some("https-mitm"));
+}
+
+#[tokio::test]
+async fn mitm_proxy_denies_forbidden_domain() {
+    let (config, db) = make_proxy_config(&[], &["example.com"], false);
+    let (proxy_task, addr) = spawn_proxy(config).await;
+
+    let tcp = tokio::net::TcpStream::connect(addr).await.unwrap();
+    let connector = TlsConnector::from(Arc::new(make_tls_client_config()));
+    let domain = ServerName::try_from("example.com").unwrap();
+    let tls = connector
+        .connect(domain, tcp)
+        .await
+        .expect("TLS handshake should succeed (denial happens at HTTP level)");
+
+    let io = TokioIo::new(tls);
+    let (mut sender, conn) = hyper::client::conn::http1::handshake(io).await.unwrap();
+    tokio::spawn(conn);
+
+    let req = hyper::Request::builder()
+        .method("GET")
+        .uri("/test")
+        .header("host", "example.com")
+        .body(Full::new(Bytes::new()))
+        .unwrap();
+    let resp = sender.send_request(req).await.unwrap();
+    assert_eq!(
+        resp.status().as_u16(),
+        403,
+        "denied domain should return 403"
+    );
+
+    drop(sender);
+    proxy_task.await.unwrap();
+
+    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+    let reader = db.reader().unwrap();
+    let events = reader.recent_net_events(10).unwrap();
+    assert!(!events.is_empty(), "should have recorded denial event");
+    assert_eq!(events[0].domain, "example.com");
+    assert_eq!(events[0].decision, Decision::Denied);
+    assert_eq!(events[0].method.as_deref(), Some("GET"));
+    assert_eq!(events[0].path.as_deref(), Some("/test"));
+    assert_eq!(events[0].status_code, Some(403));
+}
+
+#[tokio::test]
+async fn mitm_proxy_denies_default_deny_unlisted_domain() {
+    let (config, db) = make_proxy_config(&[], &[], false);
+    let (proxy_task, addr) = spawn_proxy(config).await;
+
+    let tcp = tokio::net::TcpStream::connect(addr).await.unwrap();
+    let connector = TlsConnector::from(Arc::new(make_tls_client_config()));
+    let domain = ServerName::try_from("unlisted-domain.test").unwrap();
+    let tls = connector
+        .connect(domain, tcp)
+        .await
+        .expect("TLS handshake should succeed (denial happens at HTTP level)");
+
+    let io = TokioIo::new(tls);
+    let (mut sender, conn) = hyper::client::conn::http1::handshake(io).await.unwrap();
+    tokio::spawn(conn);
+
+    let req = hyper::Request::builder()
+        .method("POST")
+        .uri("/api/data")
+        .header("host", "unlisted-domain.test")
+        .body(Full::new(Bytes::new()))
+        .unwrap();
+    let resp = sender.send_request(req).await.unwrap();
+    assert_eq!(resp.status().as_u16(), 403);
+
+    drop(sender);
+    proxy_task.await.unwrap();
+
+    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+    let reader = db.reader().unwrap();
+    let events = reader.recent_net_events(10).unwrap();
+    assert!(!events.is_empty());
+    assert_eq!(events[0].domain, "unlisted-domain.test");
+    assert_eq!(events[0].decision, Decision::Denied);
+    assert_eq!(events[0].method.as_deref(), Some("POST"));
+    assert_eq!(events[0].path.as_deref(), Some("/api/data"));
 }
 
 #[tokio::test]
@@ -292,9 +475,89 @@ async fn mitm_proxy_handles_garbage_data() {
     }
 }
 
+/// T2.2: a plain-HTTP request to a non-allowlisted domain reaches
+/// the security-event boundary and is denied with 403 -- proving the plain-HTTP path
+/// now serves through the same hyper pipeline as TLS, with the same
+/// policy gates. (T2.1 would have stopped at the sniff with an
+/// Error connection event.)
+#[tokio::test]
+async fn mitm_proxy_plain_http_denies_disallowed_host() {
+    let (config, db) = make_proxy_config(&["elie.net"], &[], false);
+    let (proxy_task, addr) = spawn_proxy(config).await;
+
+    // Plain HTTP/1.1 request directly on the TCP socket, no TLS,
+    // no \0CAPSEM_META prefix. Host is not on the allowlist (which
+    // is "elie.net" only); default-deny applies -> 403 from
+    // the security-event boundary.
+    let mut tcp = tokio::net::TcpStream::connect(addr).await.unwrap();
+    tcp.write_all(b"GET / HTTP/1.1\r\nHost: example.com\r\n\r\n")
+        .await
+        .unwrap();
+
+    // Drain the response (a 403 produced by the security-event boundary).
+    let mut buf = vec![0u8; 4096];
+    let _ = tcp.read(&mut buf).await;
+    drop(tcp);
+
+    proxy_task.await.unwrap();
+    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+    let reader = db.reader().unwrap();
+    let events = reader.recent_net_events(10).unwrap();
+    assert!(!events.is_empty(), "plain HTTP path must record a NetEvent");
+    assert_eq!(events[0].decision, Decision::Denied);
+    assert_eq!(events[0].status_code, Some(403));
+    assert_eq!(events[0].domain, "example.com");
+    assert_eq!(events[0].method.as_deref(), Some("GET"));
+    assert_eq!(
+        events[0].port, 80,
+        "plain HTTP defaults to upstream port 80"
+    );
+}
+
+/// T2.2: a plain-HTTP request whose Host carries a port not on the
+/// `http_upstream_ports` allowlist is rejected with 403 before the
+/// upstream dial. Default allowlist is `[80]`.
+#[tokio::test]
+async fn mitm_proxy_plain_http_denies_port_not_in_allowlist() {
+    // Allow elie.net (so the domain policy passes) but keep the
+    // default port allowlist = [80]. The request explicitly
+    // targets port 8080, which must be denied at the port gate.
+    let (config, db) = make_proxy_config(&["elie.net"], &[], false);
+    let (proxy_task, addr) = spawn_proxy(config).await;
+
+    let mut tcp = tokio::net::TcpStream::connect(addr).await.unwrap();
+    tcp.write_all(b"GET / HTTP/1.1\r\nHost: elie.net:8080\r\n\r\n")
+        .await
+        .unwrap();
+
+    let mut buf = vec![0u8; 4096];
+    let _ = tcp.read(&mut buf).await;
+    drop(tcp);
+
+    proxy_task.await.unwrap();
+    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+    let reader = db.reader().unwrap();
+    let events = reader.recent_net_events(10).unwrap();
+    assert!(
+        !events.is_empty(),
+        "port-denied path must record a NetEvent"
+    );
+    assert_eq!(events[0].decision, Decision::Denied);
+    assert_eq!(events[0].status_code, Some(403));
+    assert_eq!(events[0].port, 8080);
+    let reason = events[0].matched_rule.as_deref().unwrap_or("");
+    assert!(
+        reason.contains("http-port-not-allowlisted"),
+        "expected port-not-allowlisted marker, got matched_rule={reason:?}"
+    );
+}
+
 /// T2.3: Ollama-shaped end-to-end. A fake plain-HTTP upstream binds
-/// on `127.0.0.1:0`; the proxy is configured with `127.0.0.1` on
-/// the Policy allowlist. We send `POST /api/generate` with the typical Ollama
+/// on `127.0.0.1:0`; the proxy is configured with that port on its
+/// `http_upstream_ports` allowlist and `127.0.0.1` on the domain
+/// allowlist. We send `POST /api/generate` with the typical Ollama
 /// request shape through the proxy and verify the response is
 /// forwarded verbatim from the upstream and `NetEvent` records
 /// method/path/status/port/conn_type correctly.
@@ -769,7 +1032,7 @@ async fn mitm_proxy_plain_http_preserves_host_header_to_upstream() {
 async fn mitm_proxy_plain_http_unresolvable_upstream_emits_502_netevent() {
     // Reserved domain (RFC 6761) that DNS will NXDOMAIN. Default-deny
     // policy + explicit allow on the .invalid host so we get past
-    // Policy into the upstream dial.
+    // the security-event boundary into the upstream dial.
     let (config, db) = make_proxy_config_full(&["nonexistent.invalid"], &[], false, &[80, 11434]);
     let (proxy_task, proxy_addr) = spawn_proxy(config).await;
 
@@ -1504,54 +1767,25 @@ async fn mitm_proxy_classifies_unknown_first_byte() {
 
 #[tokio::test]
 async fn mitm_proxy_streams_large_payload() {
-    const DOMAIN: &str = "large-payload.capsem.test";
-    let payload_size = 1024 * 1024;
-    let large_body = vec![b'A'; payload_size];
-    let expected_body = large_body.clone();
-
-    let (upstream_port, upstream_task) = spawn_fake_upstream(move |mut sock| {
-        Box::pin(async move {
-            let bytes = read_http11_request(&mut sock).await;
-            let head_end = bytes
-                .windows(4)
-                .position(|w| w == b"\r\n\r\n")
-                .map(|i| i + 4)
-                .unwrap_or(0);
-            assert_eq!(
-                &bytes[head_end..],
-                expected_body.as_slice(),
-                "local upstream received truncated or mutated request body",
-            );
-            sock.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
-                .await
-                .unwrap();
-            let _ = sock.shutdown().await;
-            bytes
-        })
-    })
-    .await;
-
-    let _override_guard = EnvVarGuard::set(
-        "CAPSEM_TEST_UPSTREAM_OVERRIDES",
-        format!("{DOMAIN}:443=http://127.0.0.1:{upstream_port}"),
-    );
-
-    let (config, db) = make_proxy_config(&[DOMAIN], &[], false);
+    let (config, db) = make_proxy_config(&["httpbin.org"], &[], false);
     let (proxy_task, addr) = spawn_proxy(config).await;
 
     let tcp = tokio::net::TcpStream::connect(addr).await.unwrap();
     let connector = TlsConnector::from(Arc::new(make_tls_client_config()));
-    let domain = ServerName::try_from(DOMAIN).unwrap();
+    let domain = ServerName::try_from("httpbin.org").unwrap();
     let tls = connector.connect(domain, tcp).await.unwrap();
 
     let io = TokioIo::new(tls);
     let (mut sender, conn) = hyper::client::conn::http1::handshake(io).await.unwrap();
     tokio::spawn(conn);
 
+    let payload_size = 1024 * 1024;
+    let large_body = vec![b'A'; payload_size];
+
     let req = hyper::Request::builder()
         .method("POST")
         .uri("/post")
-        .header("host", DOMAIN)
+        .header("host", "httpbin.org")
         .body(Full::new(Bytes::from(large_body)))
         .unwrap();
 
@@ -1564,7 +1798,6 @@ async fn mitm_proxy_streams_large_payload() {
     let _ = resp.into_body().collect().await;
 
     drop(sender);
-    upstream_task.await.unwrap();
     proxy_task.await.unwrap();
 
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;

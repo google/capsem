@@ -21,7 +21,8 @@ Register the server in your AI CLI settings. For Claude Code:
 }
 ```
 
-The binary is installed to `~/.capsem/bin/capsem-mcp` by `capsem setup`.
+The binary is installed to `~/.capsem/bin/capsem-mcp` by the platform package
+or source install flow.
 
 ## Session lifecycle
 
@@ -53,12 +54,12 @@ The binary is installed to `~/.capsem/bin/capsem-mcp` by `capsem setup`.
 |------|-----------|-------------|
 | `capsem_inspect_schema` | -- | Get CREATE TABLE statements for all session telemetry tables. Call before `capsem_inspect` to know what columns are available. |
 | `capsem_inspect` | `id`, `sql` | Run a read-only SQL query against a session's telemetry database. Returns columns and rows. |
-| `capsem_vm_logs` | `id`, `grep?`, `tail?` | Security, process, and serial logs for a session. `grep` filters lines, `tail` limits to last N lines. |
+| `capsem_vm_logs` | `id`, `grep?`, `tail?` | Serial + process logs for a session. `grep` filters lines, `tail` limits to last N lines. |
 | `capsem_service_logs` | `grep?`, `tail?` | Latest `capsem-service` logs (last ~100 KB). `grep` + `tail` filters. |
 | `capsem_host_logs` | `name`, `grep?`, `tail?`, `maxBytes?` | Read an allowlisted host log by symbolic name: `service`, `mcp`, `gateway`, `tray`, or `app`. |
 | `capsem_panics` | `since?`, `limit?`, `id?` | Extract structured Rust panics and backtraces from recent host logs. |
 | `capsem_triage` | `since?`, `limit?`, `id?` | Summarize recent panics, dropped IPC frames, server errors, and slow operations. |
-| `capsem_timeline` | `id`, `traceId?`, `since?`, `limit?`, `layers?` | Render a time-ordered session timeline across exec, MCP, network, security, filesystem, and model events. |
+| `capsem_timeline` | `id`, `traceId?`, `since?`, `limit?`, `layers?` | Render a time-ordered session timeline across exec, MCP, network, filesystem, and model events. |
 
 ## MCP aggregator
 
@@ -68,9 +69,9 @@ telemetry) without having to drive `capsem_exec` by hand.
 
 | Tool | Parameters | Description |
 |------|-----------|-------------|
-| `capsem_mcp_connectors` | `profile?` | List Profile V2 `mcpServers` entries for the selected or requested profile. |
-| `capsem_mcp_add` | `id`, `profile?`, `disabled?`, `type?`, `command?`, `args?`, `env?`, `url?`, `headers?`, `bearerToken?`, `credential_refs?`, `allowed_tools?` | Add a standard MCP server entry plus Capsem governance metadata to a user profile. |
-| `capsem_mcp_delete` | `id`, `profile?` | Delete a direct user Profile V2 MCP server entry. |
+| `capsem_mcp_servers` | -- | List configured MCP servers with connection status and tool counts. |
+| `capsem_mcp_tools` | `server?` | List discovered MCP tools across all connected servers. Filter by `server` name to scope to one. |
+| `capsem_mcp_call` | `name`, `arguments?` | Call an MCP tool by namespaced name (e.g. `github__search_repos`) with JSON arguments. |
 
 ## Diagnostics
 

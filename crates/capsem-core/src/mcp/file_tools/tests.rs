@@ -206,6 +206,48 @@ fn revert_file_roundtrip_content_preserved() {
     );
 }
 
+#[tokio::test]
+async fn revert_file_security_event_emits_from_async_runtime() {
+    let (_tmp, session, mut sched) = setup();
+
+    std::fs::write(session.join("workspace/important.txt"), "baseline").unwrap();
+    sched.take_snapshot().unwrap();
+    std::fs::write(session.join("workspace/important.txt"), "changed").unwrap();
+
+    let args = serde_json::json!({"path": "important.txt", "checkpoint": "cp-0"});
+    let (resp, file_event) = handle_revert_file_with_security_event(
+        &args,
+        &sched,
+        &session.join("workspace"),
+        Some(serde_json::json!(1)),
+    );
+
+    assert!(resp.error.is_none());
+    let file_event = file_event.expect("successful revert must produce file event");
+    assert_eq!(file_event.action, capsem_logger::FileAction::Restored);
+    assert_eq!(file_event.path, "important.txt (from cp-0)");
+
+    let db_path = session.join("session.db");
+    let writer = capsem_logger::DbWriter::open(&db_path, 16).unwrap();
+    let rules = crate::net::policy_config::SecurityRuleSet::new(Vec::new());
+    let event_id =
+        crate::security_engine::emit_file_security_write_and_rules(&writer, &rules, file_event)
+            .await
+            .expect("async file event emit must produce event id");
+    writer.shutdown_blocking();
+
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    let row: (String, String, String) = conn
+        .query_row("SELECT event_id, action, path FROM fs_events", [], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+        })
+        .unwrap();
+    assert_eq!(row.0, event_id.as_str());
+    assert_eq!(row.0.len(), 12);
+    assert_eq!(row.1, "restored");
+    assert_eq!(row.2, "important.txt (from cp-0)");
+}
+
 #[test]
 fn revert_file_deletes_created_file() {
     let (_tmp, session, mut sched) = setup();

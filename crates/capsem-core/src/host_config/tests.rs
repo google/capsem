@@ -404,11 +404,16 @@ async fn validate_github_token_invalid() {
 
 // Real-key validation tests -- skipped when credentials are unavailable.
 
-/// Read a Profile V2 credential value from `<capsem_home>/service.toml`.
-fn read_service_credential(id: &str) -> Option<String> {
-    let path = crate::paths::capsem_home_opt()?.join("service.toml");
-    let settings = crate::settings_profiles::load_service_settings(path).ok()?;
-    let value = settings.credentials.items.get(id)?.value.trim();
+/// Read a setting value from `<capsem_home>/user.toml` by dotted setting id.
+/// e.g. "repository.providers.github.token" looks up
+/// [settings."repository.providers.github.token"] -> value
+fn read_user_toml_setting(id: &str) -> Option<String> {
+    let path = crate::paths::capsem_home_opt()?.join("user.toml");
+    let content = std::fs::read_to_string(path).ok()?;
+    let doc: toml::Value = content.parse().ok()?;
+    let settings = doc.get("settings")?;
+    let entry = settings.get(id)?;
+    let value = entry.get("value")?.as_str()?;
     if value.is_empty() {
         None
     } else {
@@ -416,19 +421,19 @@ fn read_service_credential(id: &str) -> Option<String> {
     }
 }
 
-/// Try env var first, then the Profile V2 service credential.
-fn real_key(env_var: &str, credential_id: &str) -> Option<String> {
+/// Try env var first, then user.toml setting.
+fn real_key(env_var: &str, toml_id: &str) -> Option<String> {
     if let Ok(k) = std::env::var(env_var) {
         if !k.is_empty() {
             return Some(k);
         }
     }
-    read_service_credential(credential_id)
+    read_user_toml_setting(toml_id)
 }
 
 #[tokio::test]
 async fn validate_anthropic_key_real() {
-    let key = match real_key("ANTHROPIC_API_KEY", "anthropic-api-key") {
+    let key = match real_key("ANTHROPIC_API_KEY", "ai.anthropic.api_key") {
         Some(k) => k,
         None => return,
     };
@@ -438,7 +443,7 @@ async fn validate_anthropic_key_real() {
 
 #[tokio::test]
 async fn validate_google_key_real() {
-    let key = match real_key("GEMINI_API_KEY", "google-api-key") {
+    let key = match real_key("GEMINI_API_KEY", "ai.google.api_key") {
         Some(k) => k,
         None => return,
     };
@@ -448,7 +453,7 @@ async fn validate_google_key_real() {
 
 #[tokio::test]
 async fn validate_openai_key_real() {
-    let key = match real_key("OPENAI_API_KEY", "openai-api-key") {
+    let key = match real_key("OPENAI_API_KEY", "ai.openai.api_key") {
         Some(k) => k,
         None => return,
     };
@@ -458,7 +463,7 @@ async fn validate_openai_key_real() {
 
 #[tokio::test]
 async fn validate_github_token_real() {
-    // Only use env var -- stored tokens can expire silently,
+    // Only use env var -- tokens stored in user.toml can expire silently,
     // causing spurious test failures.
     let key = match std::env::var("GITHUB_TOKEN").ok().filter(|k| !k.is_empty()) {
         Some(k) => k,

@@ -106,7 +106,7 @@ struct TestMetadata {
     // MCP tool-specific
     #[serde(default)]
     origin: Option<String>,
-    // MCP server-specific
+    // MCP server-specific (legacy)
     #[serde(default)]
     transport: Option<String>,
     #[serde(default)]

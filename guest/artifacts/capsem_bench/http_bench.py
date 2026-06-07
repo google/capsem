@@ -8,7 +8,9 @@ from rich.text import Text
 
 from .helpers import (
     DEFAULT_HTTP_C, DEFAULT_HTTP_N, DEFAULT_HTTP_URL,
-    console, fmt_bytes, percentile,
+    LOCAL_DEBUG_UPSTREAM_ENV, PUBLIC_HTTP_URL,
+    console, fmt_bytes, local_debug_upstream_url, percentile,
+    public_network_allowed,
 )
 
 
@@ -36,9 +38,24 @@ def do_request(url, session):
 
 def http_bench(url=None, total_requests=None, concurrency=None):
     """Run HTTP benchmarks (ab-style concurrent GETs)."""
+    url = url or _default_http_url()
+    if not url:
+        stats = {
+            "skipped": True,
+            "reason": (
+                f"set {LOCAL_DEBUG_UPSTREAM_ENV} for local lab or "
+                "CAPSEM_BENCH_ALLOW_PUBLIC_NETWORK=1 for explicit public smoke"
+            ),
+        }
+        table = Table(title=Text("HTTP Benchmark"))
+        table.add_column("Metric", style="bold")
+        table.add_column("Value", justify="right")
+        table.add_row("Skipped", stats["reason"])
+        console.print(table)
+        return stats
+
     import requests as req
 
-    url = url or DEFAULT_HTTP_URL
     total_requests = total_requests or DEFAULT_HTTP_N
     concurrency = concurrency or DEFAULT_HTTP_C
 
@@ -126,3 +143,14 @@ def http_bench(url=None, total_requests=None, concurrency=None):
 
     console.print(table)
     return stats
+
+
+def _default_http_url():
+    if DEFAULT_HTTP_URL:
+        return DEFAULT_HTTP_URL
+    local_url = local_debug_upstream_url("/tiny")
+    if local_url:
+        return local_url
+    if public_network_allowed():
+        return PUBLIC_HTTP_URL
+    return None

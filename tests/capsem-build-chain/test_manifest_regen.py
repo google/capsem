@@ -25,7 +25,6 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 ASSETS_DIR = PROJECT_ROOT / "assets"
-JUSTFILE = PROJECT_ROOT / "justfile"
 
 HASH_TAG_RE = re.compile(r"^(?P<stem>[A-Za-z0-9_]+)-(?P<hex>[0-9a-f]{16})(?P<ext>\.[A-Za-z0-9_.]+)?$")
 
@@ -34,15 +33,6 @@ pytestmark = pytest.mark.build_chain
 
 def _host_arch() -> str:
     return "arm64" if os.uname().machine == "arm64" else "x86_64"
-
-
-def _just_recipe(name: str) -> str:
-    text = JUSTFILE.read_text()
-    start = text.index(f"{name}:")
-    following = re.search(r"(?m)^[A-Za-z0-9_][A-Za-z0-9_-]*:", text[start + len(name) + 1:])
-    if following:
-        return text[start:start + len(name) + 1 + following.start()]
-    return text[start:]
 
 
 @pytest.fixture
@@ -130,11 +120,3 @@ def test_no_extra_assets(manifest_and_arch_assets):
     suspicious = {n for n in actual if HASH_TAG_RE.match(n) or n in arch_assets}
     extra = suspicious - allowed
     assert not extra, f"unlisted manifest-scope files: {extra}"
-
-
-def test_pack_initrd_regenerates_b3sums_for_all_arch_dirs():
-    """Local initrd repacks must not rewrite manifest.json from host arch only."""
-    recipe = _just_recipe("_pack-initrd")
-    assert 'for arch_dir in "$ASSETS"/*' in recipe
-    assert 'b3sum "$arch_name/vmlinuz" "$arch_name/initrd.img" "$arch_name/rootfs.squashfs" >> B3SUMS' in recipe
-    assert 'b3sum "$arch/vmlinuz" "$arch/initrd.img" "$arch/rootfs.squashfs" > B3SUMS' not in recipe

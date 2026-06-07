@@ -14,6 +14,7 @@ fn anthropic_conn() -> ConnMeta {
         domain: "api.anthropic.com".into(),
         port: 443,
         process_name: None,
+        ai_provider: Some(crate::net::ai_traffic::provider::ProviderKind::Anthropic),
         ..Default::default()
     }
 }
@@ -99,7 +100,7 @@ fn multiple_events_accumulate_for_consumer() {
     assert_eq!(kinds, vec!["a", "b", "c"]);
 }
 
-/// Non-AI domain bypasses the parser entirely -- no slot allocation.
+/// Connections without runtime model metadata bypass the parser entirely.
 #[test]
 fn non_ai_domain_is_skipped() {
     let hook = SseParserHook::new();
@@ -107,6 +108,26 @@ fn non_ai_domain_is_skipped() {
     let conn = other_conn();
 
     let mut chunk = Bytes::from("event: message_start\ndata: hi\n\n");
+    {
+        let mut ctx = ctx_for(&mut state, &conn);
+        hook.on_response_chunk(&mut chunk, &mut ctx);
+    }
+
+    assert!(state.peek::<SseEventStream>().is_none());
+}
+
+#[test]
+fn cloud_domain_without_runtime_provider_metadata_is_skipped() {
+    let hook = SseParserHook::new();
+    let mut state = HookState::default();
+    let conn = ConnMeta {
+        domain: "api.openai.com".into(),
+        port: 443,
+        process_name: None,
+        ..Default::default()
+    };
+
+    let mut chunk = Bytes::from("data: hello\n\n");
     {
         let mut ctx = ctx_for(&mut state, &conn);
         hook.on_response_chunk(&mut chunk, &mut ctx);
@@ -152,6 +173,7 @@ fn openai_done_sentinel_is_filtered() {
         domain: "api.openai.com".into(),
         port: 443,
         process_name: None,
+        ai_provider: Some(crate::net::ai_traffic::provider::ProviderKind::OpenAi),
         ..Default::default()
     };
 

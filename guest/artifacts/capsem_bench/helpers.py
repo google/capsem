@@ -18,10 +18,28 @@ DEFAULT_SIZE_MB = 256
 RAND_IO_SIZE_MB = 64
 RAND_IO_COUNT = 10000
 
-# HTTP benchmark defaults
-DEFAULT_HTTP_URL = "https://www.google.com/"
+# Local/public network benchmark selection.
+LOCAL_DEBUG_UPSTREAM_ENV = "CAPSEM_BENCH_MITM_LOCAL_BASE_URL"
+ALLOW_PUBLIC_NETWORK_ENV = "CAPSEM_BENCH_ALLOW_PUBLIC_NETWORK"
+PUBLIC_HTTP_URL = "https://www.google.com/"
+
+# HTTP benchmark defaults. The public URL is only used when
+# CAPSEM_BENCH_ALLOW_PUBLIC_NETWORK=1; default release gates should use the
+# deterministic local lab or skip cleanly.
+DEFAULT_HTTP_URL = None
 DEFAULT_HTTP_N = 50
 DEFAULT_HTTP_C = 5
+
+
+def local_debug_upstream_url(path):
+    base_url = os.environ.get(LOCAL_DEBUG_UPSTREAM_ENV)
+    if not base_url:
+        return None
+    return f"{base_url.rstrip('/')}/{path.lstrip('/')}"
+
+
+def public_network_allowed():
+    return os.environ.get(ALLOW_PUBLIC_NETWORK_ENV) == "1"
 
 
 def percentile(sorted_values, pct):

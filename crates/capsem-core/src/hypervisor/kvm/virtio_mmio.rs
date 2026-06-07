@@ -4,15 +4,10 @@
 //! feature negotiation, queue setup, and activation. Dispatches
 //! device-specific operations to the VirtioDevice trait.
 
-use std::os::fd::{AsRawFd, OwnedFd};
-use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::{Arc, Mutex};
-
-use anyhow::{bail, Result};
+use std::sync::Mutex;
 
 use super::memory::GuestMemoryRef;
 use super::mmio::MmioDevice;
-use super::virtio_queue::VIRTIO_RING_F_EVENT_IDX;
 
 // ---------------------------------------------------------------------------
 // Virtio MMIO register offsets
@@ -31,7 +26,6 @@ const QUEUE_NUM_MAX: u64 = 0x034;
 const QUEUE_NUM: u64 = 0x038;
 const QUEUE_READY: u64 = 0x044;
 const QUEUE_NOTIFY: u64 = 0x050;
-pub(super) const QUEUE_NOTIFY_OFFSET: u64 = QUEUE_NOTIFY;
 const INTERRUPT_STATUS: u64 = 0x060;
 const INTERRUPT_ACK: u64 = 0x064;
 const STATUS: u64 = 0x070;
@@ -71,8 +65,6 @@ pub(super) struct QueueConfig {
     pub driver_addr: u64,
     pub device_addr: u64,
     pub size: u16,
-    pub warm_restore: bool,
-    pub event_idx: bool,
 }
 
 /// Device-specific behavior for a virtio device.
@@ -93,20 +85,7 @@ pub(super) trait VirtioDevice: Send {
     /// descriptor table, available ring, and used ring addresses.
     fn activate(&mut self, mem: GuestMemoryRef, queues: &[QueueConfig]);
     /// Called when a queue is notified (guest wrote to QUEUE_NOTIFY).
-    ///
-    /// Returns whether the transport should raise the used-buffer interrupt
-    /// for devices that use the MMIO interrupt path. Devices that own their
-    /// interrupt delivery can return false.
-    fn queue_notify(&mut self, queue_index: u32) -> bool;
-    /// Called while vCPUs are paused before checkpointing device/guest state.
-    fn quiesce(&mut self) -> Result<()> {
-        Ok(())
-    }
-    /// Whether the transport should raise the virtio-mmio used-buffer IRQ
-    /// after queue processing. Vhost-backed devices wire their own callfd.
-    fn uses_mmio_interrupt(&self) -> bool {
-        false
-    }
+    fn queue_notify(&mut self, queue_index: u32);
 }
 
 // ---------------------------------------------------------------------------
@@ -122,31 +101,6 @@ struct QueueState {
     driver_hi: u32,
     device_lo: u32,
     device_hi: u32,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct QueueSnapshot {
-    pub num: u16,
-    pub ready: bool,
-    pub desc_lo: u32,
-    pub desc_hi: u32,
-    pub driver_lo: u32,
-    pub driver_hi: u32,
-    pub device_lo: u32,
-    pub device_hi: u32,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct VirtioMmioSnapshot {
-    pub status: u32,
-    pub features_sel: u32,
-    pub driver_features: u64,
-    pub driver_features_sel: u32,
-    pub queue_sel: u32,
-    pub queues: Vec<QueueSnapshot>,
-    pub interrupt_status: u32,
-    pub config_generation: u32,
-    pub activated: bool,
 }
 
 impl QueueState {
@@ -174,32 +128,6 @@ impl QueueState {
     fn device_addr(&self) -> u64 {
         (self.device_hi as u64) << 32 | self.device_lo as u64
     }
-
-    fn snapshot(&self) -> QueueSnapshot {
-        QueueSnapshot {
-            num: self.num,
-            ready: self.ready,
-            desc_lo: self.desc_lo,
-            desc_hi: self.desc_hi,
-            driver_lo: self.driver_lo,
-            driver_hi: self.driver_hi,
-            device_lo: self.device_lo,
-            device_hi: self.device_hi,
-        }
-    }
-
-    fn restore(snapshot: &QueueSnapshot) -> Self {
-        Self {
-            num: snapshot.num,
-            ready: snapshot.ready,
-            desc_lo: snapshot.desc_lo,
-            desc_hi: snapshot.desc_hi,
-            driver_lo: snapshot.driver_lo,
-            driver_hi: snapshot.driver_hi,
-            device_lo: snapshot.device_lo,
-            device_hi: snapshot.device_hi,
-        }
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -214,11 +142,10 @@ struct TransportState {
     driver_features_sel: u32,
     queue_sel: u32,
     queues: Vec<QueueState>,
-    interrupt_status: Arc<AtomicU32>,
+    interrupt_status: u32,
     config_generation: u32,
     activated: bool,
     mem: GuestMemoryRef,
-    interrupt_fd: Option<OwnedFd>,
 }
 
 /// Virtio MMIO transport wrapping a specific device.
@@ -240,122 +167,18 @@ impl VirtioMmioTransport {
                 driver_features_sel: 0,
                 queue_sel: 0,
                 queues,
-                interrupt_status: Arc::new(AtomicU32::new(0)),
+                interrupt_status: 0,
                 config_generation: 0,
                 activated: false,
                 mem,
-                interrupt_fd: None,
             }),
         }
-    }
-
-    pub fn new_with_interrupt(
-        device: Box<dyn VirtioDevice>,
-        mem: GuestMemoryRef,
-        interrupt_fd: OwnedFd,
-    ) -> Self {
-        let transport = Self::new(device, mem);
-        transport.state.lock().unwrap().interrupt_fd = Some(interrupt_fd);
-        transport
-    }
-
-    pub fn new_with_interrupt_status(
-        device: Box<dyn VirtioDevice>,
-        mem: GuestMemoryRef,
-        interrupt_fd: OwnedFd,
-        interrupt_status: Arc<AtomicU32>,
-    ) -> Self {
-        let transport = Self::new_with_interrupt(device, mem, interrupt_fd);
-        transport.state.lock().unwrap().interrupt_status = interrupt_status;
-        transport
-    }
-
-    pub fn new_with_shared_interrupt_status(
-        device: Box<dyn VirtioDevice>,
-        mem: GuestMemoryRef,
-        interrupt_status: Arc<AtomicU32>,
-    ) -> Self {
-        let transport = Self::new(device, mem);
-        transport.state.lock().unwrap().interrupt_status = interrupt_status;
-        transport
-    }
-
-    #[cfg(target_arch = "x86_64")]
-    pub fn snapshot(&self) -> VirtioMmioSnapshot {
-        let state = self.state.lock().unwrap();
-        VirtioMmioSnapshot {
-            status: state.status,
-            features_sel: state.features_sel,
-            driver_features: state.driver_features,
-            driver_features_sel: state.driver_features_sel,
-            queue_sel: state.queue_sel,
-            queues: state.queues.iter().map(QueueState::snapshot).collect(),
-            interrupt_status: state.interrupt_status.load(Ordering::SeqCst),
-            config_generation: state.config_generation,
-            activated: state.activated,
-        }
-    }
-
-    #[cfg(target_arch = "x86_64")]
-    pub fn quiesce(&self) -> Result<()> {
-        let mut state = self.state.lock().unwrap();
-        state.device.quiesce()
-    }
-
-    #[cfg(target_arch = "x86_64")]
-    pub fn restore(&self, snapshot: &VirtioMmioSnapshot) -> Result<()> {
-        let mut state = self.state.lock().unwrap();
-        if snapshot.queues.len() != state.queues.len() {
-            bail!(
-                "virtio-mmio queue count mismatch: checkpoint={}, device={}",
-                snapshot.queues.len(),
-                state.queues.len()
-            );
-        }
-
-        state.status = snapshot.status;
-        state.features_sel = snapshot.features_sel;
-        state.driver_features = snapshot.driver_features;
-        state.driver_features_sel = snapshot.driver_features_sel;
-        state.queue_sel = snapshot.queue_sel;
-        state.queues = snapshot.queues.iter().map(QueueState::restore).collect();
-        state
-            .interrupt_status
-            .store(snapshot.interrupt_status, Ordering::SeqCst);
-        state.config_generation = snapshot.config_generation;
-        state.activated = snapshot.activated;
-
-        if state.activated {
-            let mem = state.mem.clone();
-            let queue_configs: Vec<QueueConfig> = state
-                .queues
-                .iter()
-                .map(|q| QueueConfig {
-                    desc_addr: q.desc_addr(),
-                    driver_addr: q.driver_addr(),
-                    device_addr: q.device_addr(),
-                    size: q.num,
-                    warm_restore: true,
-                    event_idx: snapshot.driver_features & VIRTIO_RING_F_EVENT_IDX != 0,
-                })
-                .collect();
-            state.device.activate(mem, &queue_configs);
-            tracing::info!(
-                event_name = "virtio.mmio.restore_activate",
-                device_type = state.device.device_type(),
-                queues = queue_configs.len(),
-                "virtio-mmio device restored and activated"
-            );
-        }
-
-        Ok(())
     }
 }
 
 impl MmioDevice for VirtioMmioTransport {
     fn read(&self, offset: u64, data: &mut [u8]) {
         let state = self.state.lock().unwrap();
-        let device_type = state.device.device_type();
         let val: u32 = match offset {
             MAGIC_VALUE => VIRTIO_MMIO_MAGIC,
             VERSION => VIRTIO_MMIO_VERSION,
@@ -386,7 +209,7 @@ impl MmioDevice for VirtioMmioTransport {
                     0
                 }
             }
-            INTERRUPT_STATUS => state.interrupt_status.load(Ordering::SeqCst),
+            INTERRUPT_STATUS => state.interrupt_status,
             STATUS => state.status,
             CONFIG_GENERATION => state.config_generation,
             offset if offset >= CONFIG_SPACE => {
@@ -402,19 +225,6 @@ impl MmioDevice for VirtioMmioTransport {
             _ => 0,
         };
 
-        if matches!(
-            offset,
-            DEVICE_ID | DEVICE_FEATURES | QUEUE_NUM_MAX | INTERRUPT_STATUS | STATUS
-        ) {
-            tracing::trace!(
-                event_name = "virtio.mmio.read",
-                device_type,
-                offset = format_args!("{offset:#x}"),
-                value = format_args!("{val:#x}"),
-                "virtio-mmio register read"
-            );
-        }
-
         let bytes = val.to_le_bytes();
         let len = data.len().min(4);
         data[..len].copy_from_slice(&bytes[..len]);
@@ -422,7 +232,6 @@ impl MmioDevice for VirtioMmioTransport {
 
     fn write(&self, offset: u64, data: &[u8]) {
         let mut state = self.state.lock().unwrap();
-        let device_type = state.device.device_type();
 
         // Parse value from data (up to 4 bytes, little-endian)
         let mut bytes = [0u8; 4];
@@ -459,49 +268,15 @@ impl MmioDevice for VirtioMmioTransport {
                 let qsel = state.queue_sel as usize;
                 if qsel < state.queues.len() {
                     state.queues[qsel].ready = val != 0;
-                    tracing::trace!(
-                        event_name = "virtio.mmio.queue_ready",
-                        device_type,
-                        queue = state.queue_sel,
-                        ready = val != 0,
-                        "virtio-mmio queue readiness changed"
-                    );
                 }
             }
             QUEUE_NOTIFY => {
                 if state.activated {
-                    let use_interrupt = state.device.uses_mmio_interrupt();
-                    tracing::trace!(
-                        event_name = "virtio.mmio.queue_notify",
-                        device_type,
-                        queue = val,
-                        use_interrupt,
-                        "virtio-mmio queue notified"
-                    );
-                    let should_interrupt = state.device.queue_notify(val);
-                    if use_interrupt && should_interrupt {
-                        state.interrupt_status.fetch_or(1, Ordering::SeqCst);
-                        if let Some(fd) = state.interrupt_fd.as_ref() {
-                            let one: u64 = 1;
-                            let ret = unsafe {
-                                libc::write(
-                                    fd.as_raw_fd(),
-                                    &one as *const _ as *const libc::c_void,
-                                    std::mem::size_of::<u64>(),
-                                )
-                            };
-                            if ret < 0 {
-                                tracing::warn!(
-                                    error = %std::io::Error::last_os_error(),
-                                    "failed to signal virtio-mmio interrupt eventfd"
-                                );
-                            }
-                        }
-                    }
+                    state.device.queue_notify(val);
                 }
             }
             INTERRUPT_ACK => {
-                state.interrupt_status.fetch_and(!val, Ordering::SeqCst);
+                state.interrupt_status &= !val;
             }
             STATUS => {
                 if val == 0 {
@@ -514,17 +289,6 @@ impl MmioDevice for VirtioMmioTransport {
                     return;
                 }
                 state.status = val;
-                tracing::debug!(
-                    event_name = "virtio.mmio.status",
-                    device_type,
-                    status = format_args!("{val:#x}"),
-                    acknowledge = (val & STATUS_ACKNOWLEDGE) != 0,
-                    driver = (val & STATUS_DRIVER) != 0,
-                    features_ok = (val & STATUS_FEATURES_OK) != 0,
-                    driver_ok = (val & STATUS_DRIVER_OK) != 0,
-                    failed = (val & STATUS_FAILED) != 0,
-                    "virtio-mmio device status changed"
-                );
                 // Check if DRIVER_OK was just set
                 if val & STATUS_DRIVER_OK != 0 && !state.activated {
                     state.activated = true;
@@ -537,17 +301,9 @@ impl MmioDevice for VirtioMmioTransport {
                             driver_addr: q.driver_addr(),
                             device_addr: q.device_addr(),
                             size: q.num,
-                            warm_restore: false,
-                            event_idx: state.driver_features & VIRTIO_RING_F_EVENT_IDX != 0,
                         })
                         .collect();
                     state.device.activate(mem, &queue_configs);
-                    tracing::info!(
-                        event_name = "virtio.mmio.activate",
-                        device_type,
-                        queues = queue_configs.len(),
-                        "virtio-mmio device activated"
-                    );
                 }
             }
             QUEUE_DESC_LOW => {
@@ -599,12 +355,10 @@ impl MmioDevice for VirtioMmioTransport {
 mod tests {
     use super::super::memory::{GuestMemory, RAM_BASE};
     use super::*;
-    use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 
     struct DummyDevice {
         activated: std::sync::Arc<std::sync::atomic::AtomicBool>,
         notify_count: std::sync::Arc<std::sync::atomic::AtomicU32>,
-        use_interrupt: bool,
     }
 
     impl DummyDevice {
@@ -619,7 +373,6 @@ mod tests {
                 Self {
                     activated: activated.clone(),
                     notify_count: notify_count.clone(),
-                    use_interrupt: false,
                 },
                 activated,
                 notify_count,
@@ -650,13 +403,9 @@ mod tests {
             self.activated
                 .store(true, std::sync::atomic::Ordering::SeqCst);
         }
-        fn queue_notify(&mut self, _queue_index: u32) -> bool {
+        fn queue_notify(&mut self, _queue_index: u32) {
             self.notify_count
                 .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            true
-        }
-        fn uses_mmio_interrupt(&self) -> bool {
-            self.use_interrupt
         }
     }
 
@@ -667,28 +416,9 @@ mod tests {
     ) {
         let mem = GuestMemory::new(4096).unwrap();
         let (dev, activated, notify_count) = DummyDevice::new();
-        let transport = VirtioMmioTransport::new(Box::new(dev), mem.clone_ref(RAM_BASE));
+        let transport =
+            VirtioMmioTransport::new(Box::new(dev), mem.clone_ref(super::memory::RAM_BASE));
         (transport, activated, notify_count)
-    }
-
-    fn make_transport_with_interrupt() -> (
-        VirtioMmioTransport,
-        OwnedFd,
-        std::sync::Arc<std::sync::atomic::AtomicU32>,
-    ) {
-        let mem = GuestMemory::new(4096).unwrap();
-        let (mut dev, _, notify_count) = DummyDevice::new();
-        dev.use_interrupt = true;
-        let raw_fd = unsafe { libc::eventfd(0, libc::EFD_CLOEXEC | libc::EFD_NONBLOCK) };
-        assert!(raw_fd >= 0);
-        let interrupt_fd = unsafe { OwnedFd::from_raw_fd(raw_fd) };
-        let read_fd = unsafe { OwnedFd::from_raw_fd(libc::dup(raw_fd)) };
-        let transport = VirtioMmioTransport::new_with_interrupt(
-            Box::new(dev),
-            mem.clone_ref(RAM_BASE),
-            interrupt_fd,
-        );
-        (transport, read_fd, notify_count)
     }
 
     fn read_u32(dev: &dyn MmioDevice, offset: u64) -> u32 {
@@ -821,72 +551,6 @@ mod tests {
         assert_eq!(read_u32(&t, STATUS), 0);
     }
 
-    #[cfg(target_arch = "x86_64")]
-    #[test]
-    fn restore_rehydrates_state_and_activates_device() {
-        let (t, activated, notify_count) = make_transport();
-        let snapshot = VirtioMmioSnapshot {
-            status: STATUS_ACKNOWLEDGE | STATUS_DRIVER | STATUS_FEATURES_OK | STATUS_DRIVER_OK,
-            features_sel: 1,
-            driver_features: 0x1000_0001,
-            driver_features_sel: 0,
-            queue_sel: 1,
-            queues: vec![
-                QueueSnapshot {
-                    num: 16,
-                    ready: true,
-                    desc_lo: 0x1000,
-                    desc_hi: 0,
-                    driver_lo: 0x2000,
-                    driver_hi: 0,
-                    device_lo: 0x3000,
-                    device_hi: 0,
-                },
-                QueueSnapshot {
-                    num: 8,
-                    ready: false,
-                    desc_lo: 0x4000,
-                    desc_hi: 0,
-                    driver_lo: 0x5000,
-                    driver_hi: 0,
-                    device_lo: 0x6000,
-                    device_hi: 0,
-                },
-            ],
-            interrupt_status: 1,
-            config_generation: 7,
-            activated: true,
-        };
-
-        t.restore(&snapshot).unwrap();
-
-        assert!(activated.load(std::sync::atomic::Ordering::SeqCst));
-        assert_eq!(t.snapshot(), snapshot);
-        write_u32(&t, QUEUE_NOTIFY, 0);
-        assert_eq!(notify_count.load(std::sync::atomic::Ordering::SeqCst), 1);
-    }
-
-    #[cfg(target_arch = "x86_64")]
-    #[test]
-    fn restore_rejects_wrong_queue_count() {
-        let (t, _, _) = make_transport();
-        let snapshot = VirtioMmioSnapshot {
-            status: 0,
-            features_sel: 0,
-            driver_features: 0,
-            driver_features_sel: 0,
-            queue_sel: 0,
-            queues: Vec::new(),
-            interrupt_status: 0,
-            config_generation: 0,
-            activated: false,
-        };
-
-        let err = t.restore(&snapshot).unwrap_err();
-
-        assert!(err.to_string().contains("queue count mismatch"));
-    }
-
     // -----------------------------------------------------------------------
     // Queue notify
     // -----------------------------------------------------------------------
@@ -923,55 +587,6 @@ mod tests {
         // but we can verify ACK clears bits that were already 0
         write_u32(&t, INTERRUPT_ACK, 0x1);
         assert_eq!(read_u32(&t, INTERRUPT_STATUS), 0);
-    }
-
-    #[test]
-    fn queue_notify_raises_interrupt_for_mmio_interrupt_device() {
-        let (t, interrupt_fd, notify_count) = make_transport_with_interrupt();
-        write_u32(
-            &t,
-            STATUS,
-            STATUS_ACKNOWLEDGE | STATUS_DRIVER | STATUS_FEATURES_OK | STATUS_DRIVER_OK,
-        );
-
-        write_u32(&t, QUEUE_NOTIFY, 0);
-
-        assert_eq!(notify_count.load(std::sync::atomic::Ordering::SeqCst), 1);
-        assert_eq!(read_u32(&t, INTERRUPT_STATUS), 1);
-        let mut count = 0u64;
-        let ret = unsafe {
-            libc::read(
-                interrupt_fd.as_raw_fd(),
-                &mut count as *mut _ as *mut libc::c_void,
-                std::mem::size_of::<u64>(),
-            )
-        };
-        assert_eq!(ret as usize, std::mem::size_of::<u64>());
-        assert_eq!(count, 1);
-    }
-
-    #[test]
-    fn interrupt_status_can_be_shared_with_async_device() {
-        let status = Arc::new(AtomicU32::new(0));
-        let raw_fd = unsafe { libc::eventfd(0, libc::EFD_CLOEXEC | libc::EFD_NONBLOCK) };
-        assert!(raw_fd >= 0);
-        let write_fd = unsafe { OwnedFd::from_raw_fd(raw_fd) };
-        let read_fd = unsafe { OwnedFd::from_raw_fd(libc::dup(raw_fd)) };
-        let mem = GuestMemory::new(4096).unwrap();
-        let (dev, _, _) = DummyDevice::new();
-        let transport = VirtioMmioTransport::new_with_interrupt_status(
-            Box::new(dev),
-            mem.clone_ref(RAM_BASE),
-            write_fd,
-            Arc::clone(&status),
-        );
-
-        status.fetch_or(1, Ordering::SeqCst);
-        assert_eq!(read_u32(&transport, INTERRUPT_STATUS), 1);
-
-        write_u32(&transport, INTERRUPT_ACK, 1);
-        assert_eq!(status.load(Ordering::SeqCst), 0);
-        drop(read_fd);
     }
 
     // -----------------------------------------------------------------------

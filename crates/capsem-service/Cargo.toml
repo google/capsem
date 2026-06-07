@@ -13,10 +13,7 @@ authors.workspace = true
 capsem-core = { path = "../capsem-core" }
 capsem-guard = { path = "../capsem-guard" }
 capsem-logger = { path = "../capsem-logger" }
-capsem-network-engine = { path = "../capsem-network-engine" }
-capsem-process-engine = { path = "../capsem-process-engine" }
 capsem-proto = { path = "../capsem-proto" }
-capsem-security-engine = { path = "../capsem-security-engine" }
 anyhow.workspace = true
 tokio.workspace = true
 tracing.workspace = true
@@ -35,8 +32,6 @@ base64.workspace = true
 magika = "1.0.1"
 ort = { version = "=2.0.0-rc.11", features = ["download-binaries", "ndarray"] }
 tokio-util = { version = "0.7", features = ["io"] }
-reqwest.workspace = true
-blake3 = "1"
 
 [lints]
 workspace = true
@@ -44,4 +39,3 @@ workspace = true
 [dev-dependencies]
 tempfile = "3"
 filetime = "0.2"
-rusqlite.workspace = true

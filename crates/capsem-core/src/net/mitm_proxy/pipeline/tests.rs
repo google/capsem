@@ -117,7 +117,7 @@ impl Hook for Emitter {
     {
         let saw = self.saw_emit_ok.clone();
         Box::pin(async move {
-            let mut sse = capsem_network_engine::sse_parser::SseEvent {
+            let mut sse = crate::net::parsers::sse_parser::SseEvent {
                 event_type: Some("test".into()),
                 data: "hello".into(),
             };
@@ -329,6 +329,7 @@ async fn cycle_attempt_rejected_when_l3_emits_l1() {
         .build();
 
     let mut model_call = Box::new(capsem_logger::ModelCall {
+        event_id: None,
         timestamp: std::time::SystemTime::UNIX_EPOCH,
         provider: "anthropic".into(),
         model: None,
@@ -354,7 +355,7 @@ async fn cycle_attempt_rejected_when_l3_emits_l1() {
         response_bytes: 0,
         estimated_cost_usd: 0.0,
         trace_id: None,
-        ai_evidence: None,
+        credential_ref: None,
         tool_calls: Vec::new(),
         tool_responses: Vec::new(),
     });

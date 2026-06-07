@@ -33,36 +33,7 @@ WORKDIR /usr/src/linux
 
 # Apply capsem hardened defconfig (allnoconfig base + our overrides)
 COPY {{ arch.defconfig }} .config
-RUN make olddefconfig && \
-    for sym in \
-        CONFIG_NETFILTER=y \
-        CONFIG_NF_CONNTRACK=y \
-        CONFIG_NF_NAT=y \
-        CONFIG_IP_NF_IPTABLES=y \
-        CONFIG_IP_NF_FILTER=y \
-        CONFIG_IP_NF_NAT=y \
-        CONFIG_NETFILTER_XTABLES=y \
-        CONFIG_NETFILTER_XT_TARGET_REDIRECT=y \
-        CONFIG_NF_NAT_REDIRECT=y \
-    ; do \
-        grep -qx "$sym" .config || { \
-            echo "FATAL: kernel config missing required netfilter symbol: $sym"; \
-            exit 1; \
-        }; \
-    done && \
-    if [ "{{ arch_name }}" = "arm64" ]; then \
-        for sym in \
-            CONFIG_ARM64_4K_PAGES=y \
-            CONFIG_ARM64_VA_BITS_48=y \
-            CONFIG_ARM64_VA_BITS=48 \
-            CONFIG_PGTABLE_LEVELS=4 \
-        ; do \
-            grep -qx "$sym" .config || { \
-                echo "FATAL: arm64 kernel config missing required VA symbol: $sym"; \
-                exit 1; \
-            }; \
-        done; \
-    fi
+RUN make olddefconfig
 
 # Compile kernel
 RUN make -j$(nproc) {{ arch.kernel_image | replace('arch/' ~ arch_name ~ '/boot/', '') }} && \

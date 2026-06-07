@@ -17,6 +17,17 @@ name = "App"
 description = "Application settings"
 collapsed = false
 
+[settings.app.auto_update]
+name = "Auto-check for updates"
+description = "Check for new Capsem versions on launch"
+type = "bool"
+default = true
+
+[settings.app.check_update]
+name = "Check for updates"
+description = "Manually check if a new version is available"
+action = "check_update"
+
 # -- AI Providers ------------------------------------------------------------
 
 [settings.ai]
@@ -621,11 +632,6 @@ name = "VM"
 description = "Virtual machine configuration"
 collapsed = false
 
-[settings.vm.rerun_wizard]
-name = "Setup Wizard"
-description = "Re-run the first-time setup wizard to reconfigure providers, repositories, and security."
-action = "rerun_wizard"
-
 # -- VM > Snapshots ----------------------------------------------------------
 
 [settings.vm.snapshots]
@@ -800,7 +806,7 @@ max = 8
 name = "Max concurrent VMs"
 description = "Maximum number of sandbox VMs that can be running simultaneously."
 type = "number"
-default = 8
+default = 10
 
 [settings.vm.resources.max_concurrent_vms.meta]
 min = 1
@@ -810,7 +816,7 @@ max = 20
 name = "RAM"
 description = "Amount of RAM allocated to the VM in GB."
 type = "number"
-default = 8
+default = 4
 
 [settings.vm.resources.ram_gb.meta]
 min = 1
@@ -910,7 +916,7 @@ max = 32
 
 # -- MCP Servers -------------------------------------------------------------
 # Declarative MCP server definitions. Auto-injected into AI agent configs at boot.
-# Historical v1 defaults file; Profile V2 MCP connector policy lives in profiles.
+# Enterprises can add servers via corp.toml [mcp] section.
 
 [mcp.local]
 name = "Local"

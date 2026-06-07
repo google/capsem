@@ -3,6 +3,7 @@
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
+use serde::Serialize;
 use tauri::{Emitter, Manager};
 use tracing::{info, warn};
 use tracing_subscriber::prelude::*;
@@ -60,6 +61,28 @@ async fn open_url(url: String, app: tauri::AppHandle) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+#[derive(Serialize)]
+struct UpdateInfo {
+    version: String,
+    current_version: String,
+}
+
+#[tauri::command]
+async fn check_for_app_update(app: tauri::AppHandle) -> Result<Option<UpdateInfo>, String> {
+    use tauri_plugin_updater::UpdaterExt;
+    let updater = app
+        .updater()
+        .map_err(|e| format!("updater unavailable: {e}"))?;
+    let update = updater
+        .check()
+        .await
+        .map_err(|e| format!("update check failed: {e}"))?;
+    Ok(update.map(|u| UpdateInfo {
+        version: u.version.clone(),
+        current_version: app.package_info().version.to_string(),
+    }))
+}
+
 // ---------- Deep link handling (--connect <vm_id>) ----------
 
 fn parse_flag(args: &[String], flag: &str) -> Option<String> {
@@ -108,6 +131,52 @@ fn build_deep_link_script(vm_id: &str, action: Option<&str>) -> String {
 
 fn dispatch_deep_link(window: &tauri::WebviewWindow, vm_id: &str, action: Option<&str>) {
     let _ = window.eval(build_deep_link_script(vm_id, action));
+}
+
+// ---------- Auto-update dialog ----------
+
+async fn check_for_update_with_prompt(app: tauri::AppHandle) {
+    use tauri_plugin_dialog::DialogExt;
+    use tauri_plugin_updater::UpdaterExt;
+
+    let Ok(updater) = app.updater() else { return };
+    let update = match updater.check().await {
+        Ok(Some(u)) => u,
+        Ok(None) => return,
+        Err(e) => {
+            info!("update check failed: {e:#}");
+            return;
+        }
+    };
+
+    let current = app.package_info().version.to_string();
+
+    // Bridge the callback-based `show()` to async via a oneshot: the user
+    // can leave the dialog open for seconds to minutes, and blocking_show()
+    // would hold a tauri/tokio runtime worker thread that whole time.
+    // spawn_blocking is also wrong here -- its bounded pool is meant for
+    // short I/O, not human-time waits. See /dev-rust-patterns "Blocking-
+    // in-async anti-pattern".
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    app.dialog()
+        .message(format!(
+            "Capsem {} is available (you have {current}). Download and install?",
+            update.version
+        ))
+        .title("Update Available")
+        .buttons(tauri_plugin_dialog::MessageDialogButtons::OkCancel)
+        .show(move |accepted| {
+            let _ = tx.send(accepted);
+        });
+    let accepted = rx.await.unwrap_or(false);
+    if !accepted {
+        return;
+    }
+    if let Err(e) = update.download_and_install(|_, _| {}, || {}).await {
+        tracing::error!("update failed: {e:#}");
+    } else {
+        app.restart();
+    }
 }
 
 // ---------- Log housekeeping ----------
@@ -208,64 +277,6 @@ fn capsem_home_dir() -> PathBuf {
     PathBuf::from(home).join(".capsem")
 }
 
-#[cfg(all(unix, target_os = "macos"))]
-fn service_socket_path() -> PathBuf {
-    capsem_home_dir().join("run/service.sock")
-}
-
-#[cfg(all(unix, any(target_os = "macos", test)))]
-fn ensure_tray_request() -> &'static str {
-    "POST /companions/tray/ensure HTTP/1.1\r\nHost: localhost\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
-}
-
-#[cfg(all(unix, any(target_os = "macos", test)))]
-fn parse_http_status(response: &str) -> Option<u16> {
-    response
-        .lines()
-        .next()
-        .and_then(|line| line.split_whitespace().nth(1))
-        .and_then(|raw| raw.parse::<u16>().ok())
-}
-
-#[cfg(all(unix, target_os = "macos"))]
-fn ensure_tray_once(sock: &Path) -> Result<u16, String> {
-    use std::io::{Read, Write};
-    use std::os::unix::net::UnixStream;
-
-    let mut stream =
-        UnixStream::connect(sock).map_err(|e| format!("connect({}): {e}", sock.display()))?;
-    let timeout = Some(std::time::Duration::from_millis(800));
-    let _ = stream.set_read_timeout(timeout);
-    let _ = stream.set_write_timeout(timeout);
-    stream
-        .write_all(ensure_tray_request().as_bytes())
-        .map_err(|e| format!("write ensure request: {e}"))?;
-
-    let mut response = String::new();
-    stream
-        .read_to_string(&mut response)
-        .map_err(|e| format!("read ensure response: {e}"))?;
-    parse_http_status(&response).ok_or_else(|| "missing HTTP status".to_string())
-}
-
-fn ensure_tray_nonblocking() {
-    #[cfg(target_os = "macos")]
-    std::thread::spawn(|| {
-        let sock = service_socket_path();
-        match ensure_tray_once(&sock) {
-            Ok(status) if (200..300).contains(&status) => {
-                info!(status, "requested service tray ensure");
-            }
-            Ok(status) => {
-                warn!(status, "service tray ensure returned non-success");
-            }
-            Err(e) => {
-                warn!(error = %e, "service tray ensure request failed");
-            }
-        }
-    });
-}
-
 fn main() {
     // Log to <capsem_home>/logs/<timestamp>.jsonl
     let log_dir = capsem_home_dir().join("logs");
@@ -318,10 +329,12 @@ fn main() {
     let initial_action = parse_action_arg(&cli_args);
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
             info!(args = ?args, "single-instance: second launch");
-            ensure_tray_nonblocking();
             let Some(window) = app.get_webview_window("main") else {
                 warn!("single-instance: main window missing");
                 return;
@@ -333,21 +346,11 @@ fn main() {
             }
         }))
         .setup(move |app| {
-            ensure_tray_nonblocking();
-            tauri::async_runtime::spawn(async {
-                let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
-                loop {
-                    interval.tick().await;
-                    ensure_tray_nonblocking();
-                }
+            let handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                check_for_update_with_prompt(handle).await;
             });
-            if let Some(window) = app.get_webview_window("main") {
-                window.on_window_event(|event| {
-                    if matches!(event, tauri::WindowEvent::Focused(true)) {
-                        ensure_tray_nonblocking();
-                    }
-                });
-            }
+
             if let Some(id) = connect_id.clone() {
                 let action = initial_action.clone();
                 let window = app
@@ -367,6 +370,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             log_frontend,
             open_url,
+            check_for_app_update,
             dump_frontend_logs,
         ])
         .run(tauri::generate_context!())
@@ -519,25 +523,6 @@ mod tests {
         let b = log_filename();
         // Shapes match.
         assert_eq!(a.len(), b.len());
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn ensure_tray_request_targets_service_endpoint() {
-        let request = ensure_tray_request();
-        assert!(request.starts_with("POST /companions/tray/ensure HTTP/1.1\r\n"));
-        assert!(request.contains("Content-Length: 0\r\n"));
-        assert!(request.ends_with("\r\n\r\n"));
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn parse_http_status_reads_status_code() {
-        assert_eq!(
-            parse_http_status("HTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\n{}"),
-            Some(200)
-        );
-        assert_eq!(parse_http_status("not http"), None);
     }
 
     // -----------------------------------------------------------------------

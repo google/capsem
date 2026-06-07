@@ -286,7 +286,7 @@ async fn post_to_health_requires_auth() {
 #[tokio::test]
 async fn all_non_root_paths_require_auth() {
     let app = test_app("tok");
-    for path in ["/status", "/list", "/profiles"] {
+    for path in ["/status", "/list"] {
         let resp = app
             .clone()
             .oneshot(Request::builder().uri(path).body(Body::empty()).unwrap())

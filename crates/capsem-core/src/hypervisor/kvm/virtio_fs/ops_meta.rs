@@ -4,51 +4,26 @@ use std::os::unix::fs::PermissionsExt;
 
 use super::FuseProcessor;
 use crate::hypervisor::fuse::{self, *};
-use tracing::debug;
-
-const MAX_FUSE_IO_SIZE: u32 = 1024 * 1024;
-const MAX_FUSE_IO_PAGES: u16 = (MAX_FUSE_IO_SIZE / 4096) as u16;
-const SUPPORTED_INIT_FLAGS: u32 = FUSE_ASYNC_READ | FUSE_BIG_WRITES | FUSE_MAX_PAGES;
 
 impl FuseProcessor {
     pub(super) fn do_init(&self, header: &FuseInHeader, body: &[u8]) -> Vec<u8> {
-        let Some(init_in) = fuse::read_struct::<FuseInitIn>(body) else {
+        if fuse::read_struct::<FuseInitIn>(body).is_none() {
             return fuse::error_response(header.unique, -libc::EIO);
-        };
-        let flags = init_in.flags & SUPPORTED_INIT_FLAGS;
-        let max_readahead = init_in.max_readahead.min(MAX_FUSE_IO_SIZE);
+        }
 
         let init_out = FuseInitOut {
             major: FUSE_KERNEL_VERSION,
             minor: FUSE_KERNEL_MINOR_VERSION,
-            max_readahead,
-            flags,
+            max_readahead: 128 * 1024,
+            flags: FUSE_BIG_WRITES,
             max_background: 16,
             congestion_threshold: 12,
-            max_write: MAX_FUSE_IO_SIZE,
+            max_write: 1 << 20,
             time_gran: 1,
-            max_pages: if flags & FUSE_MAX_PAGES != 0 {
-                MAX_FUSE_IO_PAGES
-            } else {
-                0
-            },
+            max_pages: 0,
             map_alignment: 0,
             unused: [0; 8],
         };
-
-        debug!(
-            event_name = "virtio.fs.init",
-            kernel_major = init_in.major,
-            kernel_minor = init_in.minor,
-            requested_flags = init_in.flags,
-            negotiated_flags = init_out.flags,
-            requested_max_readahead = init_in.max_readahead,
-            negotiated_max_readahead = init_out.max_readahead,
-            max_write = init_out.max_write,
-            max_pages = init_out.max_pages,
-            max_background = init_out.max_background,
-            "virtio-fs FUSE init negotiated"
-        );
 
         fuse::success_response(header.unique, fuse::as_bytes(&init_out))
     }

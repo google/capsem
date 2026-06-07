@@ -6,18 +6,13 @@ sidebar:
 ---
 
 Capsem includes `capsem-bench`, a Python benchmarking tool that runs inside the VM. It outputs rich tables to stderr for humans and saves structured JSON to `/tmp/capsem-benchmark.json` for machine consumption.
-The default `capsem-bench all` run includes storage split diagnostics so Linux
-and macOS artifacts carry the same rootfs/workspace/tmpfs attribution data.
 
 ## Running benchmarks
 
 ```bash
-just benchmark                      # Standard artifact-recording benchmark suite
-just bench                          # Alias for just benchmark
-just benchmark-compare              # Compare committed Linux/macOS artifacts
+just bench                          # All benchmarks in VM (~2 min)
 just run "capsem-bench disk"        # Disk I/O only
 just run "capsem-bench rootfs"      # Rootfs reads only
-just run "capsem-bench storage"     # Rootfs/workspace/tmpfs split
 just run "capsem-bench startup"     # CLI cold-start only
 just run "capsem-bench http"        # HTTP through proxy
 just run "capsem-bench throughput"  # 100MB download
@@ -25,8 +20,6 @@ just run "capsem-bench snapshot"    # Snapshot operations only
 just run "capsem-bench mitm-load"   # MITM proxy concurrency/load test
 just run "capsem-bench mcp-load"    # Guest MCP endpoint concurrency/load test
 just run "capsem-bench dns-load"    # DNS proxy concurrency/load test
-cargo bench -p capsem-security-engine --bench security_engine_cel
-uv run pytest tests/capsem-serial/test_security_engine_benchmark.py -xvs
 just full-test                      # Full validation including benchmarks
 ```
 
@@ -55,36 +48,6 @@ The diagnostic suite enforces that total boot time stays under 1 second (`test_e
 
 ## Benchmark categories
 
-### Host-native baseline
-
-`just benchmark` records a host-native artifact under `benchmarks/host-native/`
-on every run. It uses the same artifact envelope as VM benchmarks and records
-UTC time, host CPU/RAM/OS metadata, git state, filesystem context, local disk
-I/O, CLI startup, synthetic small-file reads, and metadata-stat throughput. Use
-this artifact as the local bare-host reference for VM comparison; it is not
-produced by `capsem-bench` inside the guest. By default the temporary host I/O
-workload runs under `target/host-native-benchmark` so it measures the project
-filesystem rather than `/tmp` tmpfs; override with
-`CAPSEM_HOST_NATIVE_BENCH_DIR` when comparing a specific disk.
-
-### Cross-platform artifact comparison
-
-Use `just benchmark-compare` after Linux and macOS have committed artifacts
-from the same benchmark version. The command reads `benchmarks/`, compares
-Linux `x86_64` against macOS `arm64`, reports ratios and percentages for common
-lanes, and lists missing lanes such as host-native or Criterion artifacts when
-one side has not rerun the current `just benchmark` suite yet.
-
-`just benchmark` also runs benchmark retention. Before the run, it copies the
-current host architecture's active generated artifacts into `benchmarks/archive/`
-so same-version reruns do not silently overwrite the prior evidence. After the
-run, active category directories keep the latest generated `data_*.json` for
-each category, architecture, and benchmark lane; superseded generated artifacts
-are zipped under `benchmarks/archive/` with a manifest containing their paths,
-hashes, version, architecture, lane, timestamp, and source commit. Historical
-archives are for engineering provenance, while current docs and performance
-claims should cite the active latest artifacts.
-
 ### Disk I/O (`disk`)
 
 Measures scratch disk performance in `/root` (VirtioFS-backed workspace).
@@ -106,27 +69,6 @@ Measures read performance on the compressed squashfs rootfs where binaries and l
 |------|--------|--------|
 | Sequential read | Read the largest file in `/usr/bin`, `/usr/lib`, `/opt/ai-clis` in 1MB blocks | Throughput (MB/s) |
 | Random 4K read | 5,000 random `pread` calls across all rootfs files (>4KB) | IOPS, throughput |
-
-### Storage split diagnostics (`storage`)
-
-Measures rootfs reads plus writable-path I/O across `/root`, `/tmp`,
-`/var/tmp`, `/var/log`, and `/run` by default. Use it when Linux and macOS
-benchmarks diverge and you need to separate VirtioFS workspace costs from
-tmpfs, overlayfs, squashfs/rootfs reads, and host filesystem behavior.
-This section is recorded by the canonical `just benchmark` path because
-`capsem-bench all` includes `storage`; the long-running load tests remain
-explicit opt-ins.
-
-The path set is configurable via `CAPSEM_STORAGE_BENCH_PATHS`; write test size
-is configurable via `CAPSEM_STORAGE_BENCH_SIZE_MB` (default: 64). The detailed
-I/O profile also records sequential 4K/64K/1M read/write IOPS and random 4K
-read plus sync-write IOPS with latency percentiles. Its file size and random
-operation count are configurable via `CAPSEM_STORAGE_IO_PROFILE_SIZE_MB`
-(default: 64) and `CAPSEM_STORAGE_IO_PROFILE_RANDOM_OPS` (default: 2000).
-The rootfs section reports the booted squashfs compression and block/chunk size
-from `/dev/vda`, plus overlay lower/upper/work directories when visible. The
-top-level `kernel` section records `/proc/cmdline`, virtio block queue settings,
-FUSE connection backpressure knobs, and known host-side KVM queue sizes.
 
 ### CLI cold-start (`startup`)
 
@@ -154,7 +96,7 @@ Each worker thread uses a persistent `requests.Session`. Latency includes the fu
 
 Downloads a ~10 MB PDF through the MITM proxy and reports end-to-end throughput.
 
-Uses `curl -L` to download `https://cdn.elie.net/static/files/i-am-a-legend/i-am-a-legend-slides.pdf` (301-redirects to `elie.net`, so the selected profile must allow both hosts). This measures the maximum sustained bandwidth the proxy pipeline can deliver, including TLS termination, body inspection, and re-encryption.
+Uses `curl -L` to download `https://cdn.elie.net/static/files/i-am-a-legend/i-am-a-legend-slides.pdf` (301-redirects to `elie.net`, so both hosts must be on the allow list). This measures the maximum sustained bandwidth the proxy pipeline can deliver, including TLS termination, body inspection, and re-encryption.
 
 ### Load tests (`mitm-load`, `mcp-load`, `dns-load`)
 
@@ -165,47 +107,6 @@ These modes are opt-in because they stress hot paths more aggressively than the 
 | `mitm-load` | Concurrent HTTPS requests through the MITM proxy |
 | `mcp-load` | Guest MCP framed transport and host endpoint dispatch |
 | `dns-load` | DNS redirect, capsem-dns-proxy, host DNS policy, and resolver path |
-
-### Security Engine CEL microbenchmarks
-
-The host-side Rust Criterion harness measures canonical Security Engine CEL
-paths without booting a VM:
-
-```bash
-cargo bench -p capsem-security-engine --bench security_engine_cel
-cargo bench -p capsem-core --bench security_packs
-```
-
-The S08d harness covers CEL compile time, warm enforcement evaluation,
-detection evaluation, backtest evidence deduplication, runtime registry
-operations, compiled-plan rebuild cost, policy-context projection/
-materialization, 100-rule last-match evaluation, Detection IR parse/lowering,
-and a native Rust lookup comparator for the same HTTP policy. These numbers
-explain runtime hot-path and rule-pack costs; they do not replace
-VM-originated benchmark artifacts. `just benchmark` runs both Criterion
-harnesses, archives their `target/criterion` estimates as JSON under
-`benchmarks/security-engine/`, and then runs the VM-originated security
-benchmark.
-
-### Security Engine VM-originated benchmarks
-
-The host-side serial benchmark measures the real VM-originated enforcement path
-for a process security event:
-
-```bash
-uv run pytest tests/capsem-serial/test_security_engine_benchmark.py -xvs
-```
-
-The first S08d paths install runtime CEL enforcement rules, send repeated
-blocked process exec, blocked HTTPS request, blocked DNS lookup, and blocked
-MCP `tools/call` workloads through live VMs, assert the expected block results,
-check runtime match counters, verify canonical `security_events` rows in
-`session.db`, and confirm `logs` exposes the Security Engine decision with
-VM/profile/user/rule attribution. DNS artifacts also verify the legacy
-`dns_events` row carries the runtime policy action and qname. MCP artifacts
-verify `mcp_calls` policy fields and request-id-matched server/tool log
-projection. Committed artifacts are written to
-`benchmarks/security-engine/`.
 
 ### Snapshot operations (`snapshot`)
 

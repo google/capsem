@@ -1,5 +1,5 @@
-// Settings types shared by Profile V2 settings API responses and generated
-// frontend fixtures. Keep field names and shapes aligned with the backend.
+// Settings types -- mirrors Rust serde serialization in capsem-core/src/net/policy_config/types.rs.
+// Do not modify field names or shapes without matching the backend.
 
 /** The data type of a setting (serde rename_all = "snake_case"). */
 export type SettingType =
@@ -22,42 +22,48 @@ export type SettingValue = boolean | number | string | { path: string; content: 
 /** Where a setting's effective value came from (serde rename_all = "lowercase"). */
 export type PolicySource = 'default' | 'user' | 'corp';
 
-export type PolicyCallback =
-  | 'mcp.request'
-  | 'mcp.response'
-  | 'http.request'
-  | 'http.response'
-  | 'dns.query'
-  | 'dns.response'
-  | 'model.request'
-  | 'model.response'
-  | 'model.tool_call'
-  | 'model.tool_response'
-  | 'hook.decision';
-
-export type PolicyDecisionKind = 'allow' | 'ask' | 'block' | 'rewrite';
-
-export interface PolicyRuleConfig {
-  on: PolicyCallback;
-  if: string;
-  decision: PolicyDecisionKind;
-  priority: number;
-  reason?: string | null;
-  rewrite_target?: string | null;
-  rewrite_value?: string | null;
-  strip_request_headers?: string[];
-  strip_response_headers?: string[];
+export interface ProviderDiscovery {
+  observed_at: string;
+  source: string;
+  event_type?: string | null;
+  confidence: number;
+  credential_ref?: string | null;
+  trace_id?: string | null;
 }
 
-export interface PolicyConfig {
-  mcp?: Record<string, PolicyRuleConfig>;
-  http?: Record<string, PolicyRuleConfig>;
-  dns?: Record<string, PolicyRuleConfig>;
-  model?: Record<string, PolicyRuleConfig>;
-  hook?: Record<string, PolicyRuleConfig>;
+export interface ProviderStatus {
+  id: string;
+  name: string;
+  protocol?: string | null;
+  url?: string | null;
+  aliases: string[];
+  listen_ports: number[];
+  allowed_remote_targets: string[];
+  discovery?: ProviderDiscovery | null;
+  credential_setting_id?: string | null;
+  brokered_credential_ref?: string | null;
+  corp_blocked: boolean;
 }
 
-export type SettingsChangeValue = SettingValue | PolicyRuleConfig | null;
+export type ToolConfigFormat = 'toml' | 'json' | 'yaml' | 'env' | 'text';
+export type ToolConfigOverlay =
+  | 'mcp_injection'
+  | 'broker_placeholders'
+  | 'telemetry_disablement'
+  | 'endpoint_selection';
+
+export interface ToolConfigSourceRecord {
+  tool_id: string;
+  guest_path: string;
+  format: ToolConfigFormat;
+  observed_hash?: string | null;
+  observed_version?: string | null;
+  inferred_endpoint_ref?: string | null;
+  credential_refs: string[];
+  allowed_overlays: ToolConfigOverlay[];
+}
+
+export type SettingsChangeValue = SettingValue | null;
 
 /** Per-rule HTTP method permissions. */
 export interface HttpMethodPermissions {
@@ -178,28 +184,11 @@ export type SettingsNode = SettingsGroup | SettingsLeaf | SettingsAction | McpSe
 
 /** Unified response from load_settings / save_settings. */
 export interface SettingsResponse {
-  tree?: SettingsNode[];
-  issues?: ConfigIssue[];
-  presets?: SecurityPreset[];
-  profile_presets?: ProfilePreset[];
-  effective_rules?: PolicyConfig;
-  policy?: PolicyConfig;
-  mode?: 'settings_profiles_v2' | string;
-  settings_profiles?: {
-    selected_profile_id?: string;
-    service?: {
-      credential_ids?: string[];
-    };
-    [key: string]: unknown;
-  };
-}
-
-/** Profile V2 preset entry returned by /settings. */
-export interface ProfilePreset {
-  id: string;
-  name: string;
-  description: string;
-  settings: Record<string, SettingValue>;
+  tree: SettingsNode[];
+  issues: ConfigIssue[];
+  presets: SecurityPreset[];
+  providers?: ProviderStatus[];
+  tool_config_sources?: Record<string, ToolConfigSourceRecord>;
 }
 
 /** A security preset definition. */

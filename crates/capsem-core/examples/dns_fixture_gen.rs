@@ -1,12 +1,12 @@
 //! Generate the on-disk DNS wire-format fixtures used by
-//! `crates/capsem-network-engine/src/dns_parser/tests.rs`.
+//! `crates/capsem-core/src/net/parsers/dns_parser/tests.rs`.
 //!
 //! Run from the repo root:
 //!
 //!   cargo run -p capsem-core --example dns_fixture_gen
 //!
 //! Writes every `.bin` file in
-//! `crates/capsem-network-engine/src/dns_parser/fixtures/` from a
+//! `crates/capsem-core/src/net/parsers/dns_parser/fixtures/` from a
 //! deterministic seed (fixed transaction ids, fixed names, fixed
 //! adversarial byte literals). Idempotent: re-running with no source
 //! changes produces byte-identical fixtures.
@@ -19,7 +19,7 @@
 
 use std::path::PathBuf;
 
-use capsem_network_engine::dns_parser::{build_nxdomain, build_servfail};
+use capsem_core::net::parsers::dns_parser::{build_nxdomain, build_servfail};
 use hickory_proto::op::{Message, MessageType, OpCode, Query};
 use hickory_proto::rr::{Name, RecordType};
 
@@ -32,8 +32,7 @@ fn build_query_bytes(name: &str, qtype: RecordType, id: u16) -> Vec<u8> {
 }
 
 fn main() {
-    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../capsem-network-engine/src/dns_parser/fixtures");
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/net/parsers/dns_parser/fixtures");
     std::fs::create_dir_all(&dir).expect("create fixtures dir");
 
     let write = |name: &str, bytes: &[u8]| {

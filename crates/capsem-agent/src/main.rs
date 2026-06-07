@@ -21,7 +21,6 @@ use capsem_proto::{
     MAX_BOOT_ENV_VARS, MAX_BOOT_FILES, MAX_BOOT_FILE_BYTES, MAX_FRAME_SIZE, SHUTDOWN_GRACE_SECS,
     VSOCK_PORT_AUDIT, VSOCK_PORT_CONTROL, VSOCK_PORT_EXEC, VSOCK_PORT_TERMINAL,
 };
-use nix::fcntl::{fcntl, FcntlArg, OFlag};
 use nix::libc;
 use nix::poll::{poll, PollFd, PollFlags, PollTimeout};
 use nix::pty::openpty;
@@ -33,7 +32,6 @@ use vsock_io::{read_exact_fd, vsock_connect, vsock_connect_retry, write_all_fd, 
 const BOOT_LOG_PATH: &str = "/var/log/capsem-boot.log";
 /// Reconnect timeout before giving up (seconds).
 const RECONNECT_TIMEOUT_SECS: u64 = 30;
-const SNAPSHOT_RECONNECT_DELAY: std::time::Duration = std::time::Duration::from_secs(2);
 
 // ---------------------------------------------------------------------------
 // Control message framing (using capsem-proto types)
@@ -369,7 +367,7 @@ fn main() {
     // Step 4b: Activate Python venv if capsem-init created one.
     // capsem-init creates the venv in the background and touches a ready flag when done.
     // Wait briefly for it to finish before checking.
-    const VENV_DIR: &str = "/var/lib/capsem/venv";
+    const VENV_DIR: &str = "/root/.venv";
     const VENV_READY: &str = "/run/capsem-venv-ready";
     let venv_activate = std::path::Path::new(VENV_DIR).join("bin/activate");
     if !venv_activate.exists() && !std::path::Path::new(VENV_READY).exists() {
@@ -384,10 +382,7 @@ fn main() {
         boot_env.push(("VIRTUAL_ENV".into(), VENV_DIR.into()));
         // Prepend venv bin to PATH if PATH exists in boot_env.
         if let Some((_, path_val)) = boot_env.iter_mut().find(|(k, _)| k == "PATH") {
-            let venv_bin = format!("{VENV_DIR}/bin");
-            if !path_val.split(':').any(|entry| entry == venv_bin) {
-                *path_val = format!("{venv_bin}:{path_val}");
-            }
+            *path_val = format!("{VENV_DIR}/bin:{path_val}");
         }
         blog_line(&mut blog, "venv activated in boot_env");
     } else {
@@ -860,7 +855,6 @@ fn run_bridge(
     thread::spawn(move || {
         control_loop(
             control_fd,
-            terminal_fd,
             master_fd,
             child_pid,
             &boot_env_owned,
@@ -884,116 +878,60 @@ fn run_bridge(
     eprintln!("[capsem-agent] bridge exited");
 }
 
-const BRIDGE_BUF_CAP: usize = 1024 * 1024;
-
-fn set_fd_nonblocking(fd: RawFd) -> io::Result<()> {
-    let flags = fcntl(fd, FcntlArg::F_GETFL).map_err(io::Error::from)?;
-    let mut flags = OFlag::from_bits_truncate(flags);
-    flags.insert(OFlag::O_NONBLOCK);
-    fcntl(fd, FcntlArg::F_SETFL(flags))
-        .map(|_| ())
-        .map_err(io::Error::from)
-}
-
-fn read_bridge_chunk(
-    fd: RawFd,
-    buffer: &mut std::collections::VecDeque<u8>,
-    scratch: &mut [u8],
-) -> io::Result<bool> {
-    let available = BRIDGE_BUF_CAP.saturating_sub(buffer.len());
-    if available == 0 {
-        return Ok(true);
-    }
-
-    let read_len = available.min(scratch.len());
-    match nix::unistd::read(fd, &mut scratch[..read_len]) {
-        Ok(0) => Ok(false),
-        Ok(n) => {
-            buffer.extend(&scratch[..n]);
-            Ok(true)
-        }
-        Err(nix::errno::Errno::EAGAIN) | Err(nix::errno::Errno::EINTR) => Ok(true),
-        Err(e) => Err(e.into()),
-    }
-}
-
-fn write_bridge_buffer(fd: RawFd, buffer: &mut std::collections::VecDeque<u8>) -> io::Result<()> {
-    while !buffer.is_empty() {
-        let (front, _) = buffer.as_slices();
-        if front.is_empty() {
-            break;
-        }
-
-        match nix::unistd::write(
-            unsafe { std::os::unix::io::BorrowedFd::borrow_raw(fd) },
-            front,
-        ) {
-            Ok(0) => {
-                return Err(io::Error::new(
-                    io::ErrorKind::WriteZero,
-                    "bridge write returned 0 bytes",
-                ));
-            }
-            Ok(n) => {
-                drop(buffer.drain(..n));
-            }
-            Err(nix::errno::Errno::EAGAIN) | Err(nix::errno::Errno::EINTR) => return Ok(()),
-            Err(e) => return Err(e.into()),
-        }
-    }
-    Ok(())
-}
-
 fn bridge_loop(master_fd: RawFd, vsock_fd: RawFd) {
-    if let Err(e) = set_fd_nonblocking(master_fd) {
-        eprintln!("[capsem-agent] failed to set pty nonblocking: {e}");
-        return;
-    }
-    if let Err(e) = set_fd_nonblocking(vsock_fd) {
-        eprintln!("[capsem-agent] failed to set terminal vsock nonblocking: {e}");
-        return;
-    }
+    let mut buf = [0u8; 8192];
 
-    let mut to_master = std::collections::VecDeque::new();
-    let mut to_vsock = std::collections::VecDeque::new();
-    let mut master_open = true;
-    let mut vsock_open = true;
-    let mut master_scratch = [0u8; 8192];
-    let mut vsock_scratch = [0u8; 8192];
+    // Spawn a dedicated thread for vsock -> Master PTY (stdin direction)
+    // This prevents deadlocks when both master_fd and vsock_fd buffers are full.
+    let master_fd_clone = master_fd;
+    let vsock_fd_clone = vsock_fd;
+    std::thread::spawn(move || {
+        let mut local_buf = [0u8; 8192];
+        loop {
+            let mut poll_fds = [PollFd::new(
+                unsafe { std::os::unix::io::BorrowedFd::borrow_raw(vsock_fd_clone) },
+                PollFlags::POLLIN,
+            )];
+
+            match poll(&mut poll_fds, PollTimeout::from(1000u16)) {
+                Ok(0) => continue,
+                Ok(_) => {}
+                Err(nix::errno::Errno::EINTR) => continue,
+                Err(_) => break,
+            }
+
+            if let Some(revents) = poll_fds[0].revents() {
+                if revents.contains(PollFlags::POLLIN) {
+                    match nix::unistd::read(vsock_fd_clone, &mut local_buf) {
+                        Ok(0) => break,
+                        Ok(n) => {
+                            if write_all_fd(master_fd_clone, &local_buf[..n]).is_err() {
+                                break;
+                            }
+                        }
+                        Err(nix::errno::Errno::EAGAIN) => {}
+                        Err(_) => break,
+                    }
+                }
+                if revents.intersects(PollFlags::POLLHUP | PollFlags::POLLERR) {
+                    break;
+                }
+            }
+        }
+    });
 
     loop {
-        if (!master_open && to_vsock.is_empty()) || (!vsock_open && to_master.is_empty()) {
-            break;
-        }
-
-        let mut master_events = PollFlags::empty();
-        if master_open && to_vsock.len() < BRIDGE_BUF_CAP {
-            master_events |= PollFlags::POLLIN;
-        }
-        if master_open && !to_master.is_empty() {
-            master_events |= PollFlags::POLLOUT;
-        }
-
-        let mut vsock_events = PollFlags::empty();
-        if vsock_open && to_master.len() < BRIDGE_BUF_CAP {
-            vsock_events |= PollFlags::POLLIN;
-        }
-        if vsock_open && !to_vsock.is_empty() {
-            vsock_events |= PollFlags::POLLOUT;
-        }
-
-        if master_events.is_empty() && vsock_events.is_empty() {
-            break;
-        }
-
+        // Poll vsock_fd too so a local shutdown (triggered by the heartbeat
+        // detecting host death) wakes us up via POLLHUP. Otherwise we'd sit
+        // in poll forever waiting for PTY activity that never comes.
         let mut poll_fds = [
             PollFd::new(
                 unsafe { std::os::unix::io::BorrowedFd::borrow_raw(master_fd) },
-                master_events,
+                PollFlags::POLLIN,
             ),
             PollFd::new(
                 unsafe { std::os::unix::io::BorrowedFd::borrow_raw(vsock_fd) },
-                vsock_events,
+                PollFlags::empty(),
             ),
         ];
 
@@ -1002,59 +940,34 @@ fn bridge_loop(master_fd: RawFd, vsock_fd: RawFd) {
             Ok(_) => {}
             Err(nix::errno::Errno::EINTR) => continue,
             Err(e) => {
-                eprintln!("[capsem-agent] bridge poll error: {e}");
+                eprintln!("[capsem-agent] poll error: {e}");
                 break;
             }
         }
 
-        let master_revents = poll_fds[0].revents().unwrap_or_else(PollFlags::empty);
-        let vsock_revents = poll_fds[1].revents().unwrap_or_else(PollFlags::empty);
+        if let Some(revents) = poll_fds[1].revents() {
+            if revents.intersects(PollFlags::POLLHUP | PollFlags::POLLERR | PollFlags::POLLNVAL) {
+                break;
+            }
+        }
 
-        if master_revents.contains(PollFlags::POLLIN) {
-            match read_bridge_chunk(master_fd, &mut to_vsock, &mut master_scratch) {
-                Ok(true) => {}
-                Ok(false) => master_open = false,
-                Err(e) => {
-                    eprintln!("[capsem-agent] bridge pty read error: {e}");
-                    break;
+        // Master PTY -> vsock (stdout direction)
+        if let Some(revents) = poll_fds[0].revents() {
+            if revents.contains(PollFlags::POLLIN) {
+                match nix::unistd::read(master_fd, &mut buf) {
+                    Ok(0) => break,
+                    Ok(n) => {
+                        if write_all_fd(vsock_fd, &buf[..n]).is_err() {
+                            break;
+                        }
+                    }
+                    Err(nix::errno::Errno::EAGAIN) => {}
+                    Err(_) => break,
                 }
             }
-        }
-        if vsock_revents.contains(PollFlags::POLLIN) {
-            match read_bridge_chunk(vsock_fd, &mut to_master, &mut vsock_scratch) {
-                Ok(true) => {}
-                Ok(false) => vsock_open = false,
-                Err(e) => {
-                    eprintln!("[capsem-agent] bridge vsock read error: {e}");
-                    break;
-                }
-            }
-        }
-
-        if master_revents.contains(PollFlags::POLLOUT) {
-            if let Err(e) = write_bridge_buffer(master_fd, &mut to_master) {
-                eprintln!("[capsem-agent] bridge pty write error: {e}");
+            if revents.intersects(PollFlags::POLLHUP | PollFlags::POLLERR) {
                 break;
             }
-        }
-        if vsock_revents.contains(PollFlags::POLLOUT) {
-            if let Err(e) = write_bridge_buffer(vsock_fd, &mut to_vsock) {
-                eprintln!("[capsem-agent] bridge vsock write error: {e}");
-                break;
-            }
-        }
-
-        if master_revents.intersects(PollFlags::POLLERR | PollFlags::POLLNVAL)
-            || (master_revents.contains(PollFlags::POLLHUP)
-                && !master_revents.contains(PollFlags::POLLIN))
-        {
-            master_open = false;
-        }
-        if vsock_revents.intersects(PollFlags::POLLERR | PollFlags::POLLNVAL)
-            || (vsock_revents.contains(PollFlags::POLLHUP)
-                && !vsock_revents.contains(PollFlags::POLLIN))
-        {
-            vsock_open = false;
         }
     }
 }
@@ -1394,13 +1307,12 @@ fn run_exec_on_fds(
     }
 
     // Spawn child process with piped stdout and stderr.
-    let root_cwd = std::path::Path::new("/root");
-    let cwd = if root_cwd.is_dir() && std::fs::read_dir(root_cwd).is_ok() {
-        root_cwd
+    let cwd = if std::path::Path::new("/root").exists() {
+        "/root"
     } else {
-        std::path::Path::new("/")
+        "/"
     };
-    let mut child = match std::process::Command::new("/bin/bash")
+    let mut child = match std::process::Command::new("bash")
         .arg("-c")
         .arg(command)
         .stdout(std::process::Stdio::piped())
@@ -1534,7 +1446,6 @@ fn delete_nofollow(path: &str) -> io::Result<()> {
 #[allow(clippy::too_many_arguments)]
 fn control_loop(
     control_fd: RawFd,
-    terminal_fd: RawFd,
     master_fd: RawFd,
     child_pid: Pid,
     boot_env: &[(String, String)],
@@ -1789,15 +1700,6 @@ fn control_loop(
                 if ctrl_tx.send(GuestToHost::SnapshotReady).is_err() {
                     break;
                 }
-                eprintln!(
-                    "[capsem-agent] PrepareSnapshot: snapshot ready; closing vsock pair for post-resume reconnect"
-                );
-                unsafe {
-                    libc::shutdown(control_fd, libc::SHUT_RDWR);
-                    libc::shutdown(terminal_fd, libc::SHUT_RDWR);
-                }
-                thread::sleep(SNAPSHOT_RECONNECT_DELAY);
-                break;
             }
             Ok(HostToGuest::Unfreeze) => {
                 eprintln!("[capsem-agent] Unfreeze: thawing /");
@@ -2278,15 +2180,6 @@ mod tests {
 
         let (mut master_host, master_guest) = UnixStream::pair().unwrap();
         let (mut vsock_host, vsock_guest) = UnixStream::pair().unwrap();
-        let timeout = Some(std::time::Duration::from_secs(30));
-        master_host.set_read_timeout(timeout).unwrap();
-        master_host.set_write_timeout(timeout).unwrap();
-        master_guest.set_read_timeout(timeout).unwrap();
-        master_guest.set_write_timeout(timeout).unwrap();
-        vsock_host.set_read_timeout(timeout).unwrap();
-        vsock_host.set_write_timeout(timeout).unwrap();
-        vsock_guest.set_read_timeout(timeout).unwrap();
-        vsock_guest.set_write_timeout(timeout).unwrap();
 
         let master_fd = master_guest.as_raw_fd();
         let vsock_fd = vsock_guest.as_raw_fd();
@@ -3209,7 +3102,6 @@ mod tests {
             control_loop(
                 ctrl_read_fd,
                 master_fd,
-                master_fd,
                 child_pid,
                 &[],
                 ctrl_tx,
@@ -3257,14 +3149,6 @@ mod tests {
     }
 
     #[test]
-    fn control_loop_prepare_snapshot_sends_ready_then_exits_for_reconnect() {
-        let responses = run_control_loop_with_messages(vec![HostToGuest::PrepareSnapshot]);
-
-        assert_eq!(responses.len(), 1);
-        assert!(matches!(responses[0], GuestToHost::SnapshotReady));
-    }
-
-    #[test]
     fn control_loop_resize_changes_pty_winsize() {
         let (ctrl_read_fd, ctrl_write_fd) = make_pipe();
         let pty = openpty(None, None).expect("openpty");
@@ -3291,7 +3175,6 @@ mod tests {
         let handle = thread::spawn(move || {
             control_loop(
                 ctrl_read_fd,
-                master_fd,
                 master_fd,
                 child_pid,
                 &[],

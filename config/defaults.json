@@ -3,7 +3,18 @@
     "app": {
       "name": "App",
       "description": "Application settings",
-      "collapsed": false
+      "collapsed": false,
+      "auto_update": {
+        "name": "Auto-check for updates",
+        "description": "Check for new Capsem versions on launch",
+        "type": "bool",
+        "default": true
+      },
+      "check_update": {
+        "name": "Check for updates",
+        "description": "Manually check if a new version is available",
+        "action": "check_update"
+      }
     },
     "ai": {
       "name": "AI Providers",
@@ -416,6 +427,15 @@
           "meta": {
             "format": "domain_list"
           }
+        },
+        "http_upstream_ports": {
+          "name": "Allowed plain HTTP upstream ports",
+          "description": "Plain HTTP upstream ports the MITM may dial after guest traffic reaches the local proxy.",
+          "type": "int_list",
+          "default": [
+            80,
+            11434
+          ]
         }
       },
       "services": {
@@ -652,11 +672,6 @@
       "name": "VM",
       "description": "Virtual machine configuration",
       "collapsed": false,
-      "rerun_wizard": {
-        "name": "Setup Wizard",
-        "description": "Re-run the first-time setup wizard to reconfigure providers, repositories, and security.",
-        "action": "rerun_wizard"
-      },
       "snapshots": {
         "name": "Snapshots",
         "description": "Automatic and manual workspace snapshot settings",
@@ -811,7 +826,7 @@
           "name": "RAM",
           "description": "Amount of RAM allocated to the VM in GB.",
           "type": "number",
-          "default": 8,
+          "default": 4,
           "meta": {
             "min": 1,
             "max": 16

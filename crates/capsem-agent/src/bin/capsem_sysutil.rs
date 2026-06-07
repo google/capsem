@@ -1,10 +1,14 @@
-// capsem-sysutil: Guest system utility for host-owned VM lifecycle commands.
+// capsem-sysutil: Multi-call guest system binary for VM lifecycle commands.
 //
 // Dispatches on argv[0] (busybox pattern). Symlinked at boot by capsem-init:
+//   /sbin/shutdown  -> /run/capsem-sysutil
+//   /sbin/halt      -> /run/capsem-sysutil
+//   /sbin/poweroff  -> /run/capsem-sysutil
+//   /sbin/reboot    -> /run/capsem-sysutil
 //   /usr/local/bin/suspend -> /run/capsem-sysutil
 //
 // Opens its own vsock:5004 connection directly (independent of capsem-pty-agent).
-// This means suspend works even if the agent is hung.
+// This means shutdown works even if the agent is hung.
 
 #[path = "../vsock_io.rs"]
 mod vsock_io;
@@ -59,23 +63,14 @@ fn is_reboot_request(cmd: &str, args: &[String]) -> bool {
     cmd == "shutdown" && args.iter().any(|a| a == "-r")
 }
 
-fn is_shutdown_command(cmd: &str) -> bool {
-    matches!(cmd, "shutdown" | "halt" | "poweroff")
-}
-
-fn print_shutdown_removed() {
-    eprintln!(
-        "[capsem] in-VM shutdown is disabled; use host controls: capsem stop, capsem delete, or the TUI"
-    );
-}
-
 fn print_help(cmd: &str) {
     println!("Usage: {cmd} [OPTIONS]");
     println!("Capsem sandbox lifecycle command.");
     println!();
     match cmd {
         "shutdown" | "halt" | "poweroff" => {
-            println!("Disabled: use host controls instead.");
+            println!("Stops the sandbox cleanly through the host service.");
+            println!("Accepted flags: -h, -P (default behavior), -r (error: reboot not supported)");
         }
         "suspend" => {
             println!("Suspends the sandbox (persistent VMs only).");
@@ -85,7 +80,7 @@ fn print_help(cmd: &str) {
             println!("Reboot is not supported in capsem sandbox.");
         }
         _ => {
-            println!("Commands: suspend");
+            println!("Commands: shutdown, halt, poweroff, reboot, suspend");
         }
     }
 }
@@ -104,13 +99,16 @@ fn main() {
     }
 
     match cmd {
-        cmd if is_shutdown_command(cmd) => {
+        "shutdown" | "halt" | "poweroff" => {
             if is_reboot_request(cmd, &args[1..]) {
                 eprintln!("[capsem] reboot is not supported in capsem sandbox");
                 process::exit(1);
             }
-            print_shutdown_removed();
-            process::exit(1);
+            countdown("Shutting down");
+            if let Err(e) = send_lifecycle_msg(&GuestToHost::ShutdownRequest) {
+                eprintln!("[capsem] failed to send shutdown request: {e}");
+                process::exit(1);
+            }
         }
         "reboot" => {
             eprintln!("[capsem] reboot is not supported in capsem sandbox");
@@ -127,9 +125,12 @@ fn main() {
             // Direct invocation as capsem-sysutil
             if args.len() > 1 {
                 match args[1].as_str() {
-                    cmd if is_shutdown_command(cmd) => {
-                        print_shutdown_removed();
-                        process::exit(1);
+                    "shutdown" | "halt" | "poweroff" => {
+                        countdown("Shutting down");
+                        if let Err(e) = send_lifecycle_msg(&GuestToHost::ShutdownRequest) {
+                            eprintln!("[capsem] failed to send shutdown request: {e}");
+                            process::exit(1);
+                        }
                     }
                     "suspend" => {
                         countdown("Suspending");
@@ -148,7 +149,7 @@ fn main() {
                     }
                     other => {
                         eprintln!("[capsem] unknown command: {other}");
-                        eprintln!("Available: suspend");
+                        eprintln!("Available: shutdown, halt, poweroff, reboot, suspend");
                         process::exit(1);
                     }
                 }
@@ -188,14 +189,6 @@ mod tests {
         // -r should only trigger reboot when cmd is "shutdown"
         assert!(!is_reboot_request("halt", &["-r".into()]));
         assert!(!is_reboot_request("poweroff", &["-r".into()]));
-    }
-
-    #[test]
-    fn shutdown_commands_are_disabled() {
-        assert!(is_shutdown_command("shutdown"));
-        assert!(is_shutdown_command("halt"));
-        assert!(is_shutdown_command("poweroff"));
-        assert!(!is_shutdown_command("suspend"));
     }
 
     #[test]

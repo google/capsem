@@ -1,24 +1,13 @@
-use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, UNIX_EPOCH};
+use std::time::Instant;
 
-use capsem_proto::metrics::{
-    VmDnsMetrics, VmFilesystemMetrics, VmHttpMetrics, VmMcpMetrics, VmMetricsSnapshot,
-    VmModelMetrics, VmProcessMetrics, VmSecurityMetrics,
-};
-use capsem_security_engine::{
-    AiApiFamily, AiAttributionScope, AiContentBlock, AiContentKind, AiOriginKind, AiProvider,
-    AiUsageEvidence, ArgumentsStatus, Confidence, Enforceability, EventFamily, EvidenceStatus,
-    LinkStatus, ModelInteractionEvidence, ParseStatus, RedactionState, ResolvedEventStepKind,
-    ResolvedSecurityEvent, SecurityAction, SecurityEventSubject, Severity, SourceEngine,
-    StepStatus, ToolCallStatus, ToolOrigin,
-};
-use rusqlite::{params, Connection, OptionalExtension};
-use tracing::warn;
+use rusqlite::{params, Connection};
+use tracing::{warn, Instrument};
+use uuid::Uuid;
 
 use crate::events::{
     AuditEvent, DnsEvent, ExecEvent, ExecEventComplete, FileEvent, McpCall, ModelCall, NetEvent,
-    SnapshotEvent, TelemetryIdentity,
+    SecurityAskEvent, SecurityDecisionEvent, SecurityRuleEvent, SnapshotEvent, SubstitutionEvent,
 };
 use crate::schema;
 
@@ -27,7 +16,20 @@ use crate::schema;
 /// enforces this defensively to prevent unbounded storage.
 const MAX_FIELD_BYTES: usize = 256 * 1024;
 
-type ModelToolCallMatch = (Option<i64>, Option<String>, Option<String>, LinkStatus);
+pub const DB_ENQUEUE_SPAN: &str = "capsem.db.enqueue";
+pub const DB_WRITE_BATCH_SPAN: &str = "capsem.db.write_batch";
+pub const DB_SHUTDOWN_FLUSH_SPAN: &str = "capsem.db.shutdown_flush";
+
+pub const DB_ENQUEUE_WAIT_MS: &str = "db.enqueue_wait_ms";
+pub const DB_WRITE_BATCH_TOTAL: &str = "db.write_batch_total";
+pub const DB_WRITE_BATCH_DURATION_MS: &str = "db.write_batch_duration_ms";
+pub const DB_WRITE_BATCH_SIZE: &str = "db.write_batch_size";
+pub const DB_SHUTDOWN_FLUSH_MS: &str = "db.shutdown_flush_ms";
+
+fn new_event_id() -> String {
+    let value = Uuid::new_v4().simple().to_string();
+    value[..12].to_string()
+}
 
 /// Truncate an optional string field to MAX_FIELD_BYTES.
 fn cap_field(s: &Option<String>) -> Option<String> {
@@ -45,265 +47,9 @@ fn cap_field(s: &Option<String>) -> Option<String> {
     })
 }
 
-trait SqlEnumText {
-    fn sql_text(self) -> &'static str;
-}
-
-impl SqlEnumText for AiProvider {
-    fn sql_text(self) -> &'static str {
-        self.as_str()
-    }
-}
-
-impl SqlEnumText for AiApiFamily {
-    fn sql_text(self) -> &'static str {
-        match self {
-            Self::OpenaiChatCompletions => "openai_chat_completions",
-            Self::OpenaiResponses => "openai_responses",
-            Self::AnthropicMessages => "anthropic_messages",
-            Self::GoogleGeminiContent => "google_gemini_content",
-            Self::Mcp => "mcp",
-            Self::Unknown => "unknown",
-        }
-    }
-}
-
-impl SqlEnumText for ArgumentsStatus {
-    fn sql_text(self) -> &'static str {
-        match self {
-            Self::ValidJson => "valid_json",
-            Self::PartialJson => "partial_json",
-            Self::MalformedJson => "malformed_json",
-            Self::NotJson => "not_json",
-            Self::Redacted => "redacted",
-            Self::Absent => "absent",
-        }
-    }
-}
-
-impl SqlEnumText for ParseStatus {
-    fn sql_text(self) -> &'static str {
-        match self {
-            Self::Complete => "complete",
-            Self::Partial => "partial",
-            Self::Malformed => "malformed",
-            Self::Unsupported => "unsupported",
-            Self::Redacted => "redacted",
-        }
-    }
-}
-
-impl SqlEnumText for EvidenceStatus {
-    fn sql_text(self) -> &'static str {
-        match self {
-            Self::Complete => "complete",
-            Self::Partial => "partial",
-            Self::Ambiguous => "ambiguous",
-            Self::Orphaned => "orphaned",
-            Self::Untrusted => "untrusted",
-        }
-    }
-}
-
-impl SqlEnumText for ToolOrigin {
-    fn sql_text(self) -> &'static str {
-        match self {
-            Self::NativeProviderTool => "native_provider_tool",
-            Self::McpTool => "mcp_tool",
-            Self::LocalBuiltinTool => "local_builtin_tool",
-            Self::Unknown => "unknown",
-        }
-    }
-}
-
-impl SqlEnumText for LinkStatus {
-    fn sql_text(self) -> &'static str {
-        match self {
-            Self::Linked => "linked",
-            Self::UnlinkedPending => "unlinked_pending",
-            Self::OrphanModelToolCall => "orphan_model_tool_call",
-            Self::OrphanMcpExecution => "orphan_mcp_execution",
-            Self::Ambiguous => "ambiguous",
-            Self::NotApplicable => "not_applicable",
-        }
-    }
-}
-
-impl SqlEnumText for ToolCallStatus {
-    fn sql_text(self) -> &'static str {
-        match self {
-            Self::Proposed => "proposed",
-            Self::Executed => "executed",
-            Self::Blocked => "blocked",
-            Self::ReturnedToModel => "returned_to_model",
-            Self::Error => "error",
-            Self::Unknown => "unknown",
-        }
-    }
-}
-
-impl SqlEnumText for AiContentKind {
-    fn sql_text(self) -> &'static str {
-        match self {
-            Self::Text => "text",
-            Self::Json => "json",
-            Self::Image => "image",
-            Self::File => "file",
-            Self::ToolUse => "tool_use",
-            Self::ToolResult => "tool_result",
-            Self::Reasoning => "reasoning",
-            Self::CacheMarker => "cache_marker",
-            Self::Redacted => "redacted",
-            Self::Unknown => "unknown",
-        }
-    }
-}
-
-impl SqlEnumText for Confidence {
-    fn sql_text(self) -> &'static str {
-        match self {
-            Self::Low => "low",
-            Self::Medium => "medium",
-            Self::High => "high",
-        }
-    }
-}
-
-impl SqlEnumText for AiAttributionScope {
-    fn sql_text(self) -> &'static str {
-        match self {
-            Self::Host => "host",
-            Self::Vm => "vm",
-            Self::Profile => "profile",
-            Self::Session => "session",
-            Self::Unknown => "unknown",
-        }
-    }
-}
-
-impl SqlEnumText for AiOriginKind {
-    fn sql_text(self) -> &'static str {
-        match self {
-            Self::GuestNetwork => "guest_network",
-            Self::HostService => "host_service",
-            Self::HostAdmin => "host_admin",
-            Self::HostWorkbench => "host_workbench",
-            Self::TestFixture => "test_fixture",
-            Self::Unknown => "unknown",
-        }
-    }
-}
-
-impl SqlEnumText for SourceEngine {
-    fn sql_text(self) -> &'static str {
-        match self {
-            Self::Network => "network",
-            Self::File => "file",
-            Self::Process => "process",
-            Self::Conversation => "conversation",
-            Self::Security => "security",
-            Self::Vm => "vm",
-            Self::Profile => "profile",
-            Self::HostAi => "host_ai",
-        }
-    }
-}
-
-impl SqlEnumText for EventFamily {
-    fn sql_text(self) -> &'static str {
-        match self {
-            Self::Dns => "dns",
-            Self::Http => "http",
-            Self::Mcp => "mcp",
-            Self::Model => "model",
-            Self::File => "file",
-            Self::Process => "process",
-            Self::Credential => "credential",
-            Self::Vm => "vm",
-            Self::Profile => "profile",
-            Self::Conversation => "conversation",
-            Self::Snapshot => "snapshot",
-        }
-    }
-}
-
-impl SqlEnumText for Enforceability {
-    fn sql_text(self) -> &'static str {
-        match self {
-            Self::InlineBlockable => "inline_blockable",
-            Self::ObserveOnly => "observe_only",
-            Self::RemediationOnly => "remediation_only",
-        }
-    }
-}
-
-impl SqlEnumText for RedactionState {
-    fn sql_text(self) -> &'static str {
-        match self {
-            Self::Raw => "raw",
-            Self::Redacted => "redacted",
-            Self::SummaryOnly => "summary-only",
-        }
-    }
-}
-
-impl SqlEnumText for ResolvedEventStepKind {
-    fn sql_text(self) -> &'static str {
-        match self {
-            Self::Preprocessor => "preprocessor",
-            Self::PluginCallback => "plugin_callback",
-            Self::EnforcementMatch => "enforcement_match",
-            Self::Confirm => "confirm",
-            Self::RateLimitCheck => "rate_limit_check",
-            Self::DetectionMatch => "detection_match",
-            Self::Postprocessor => "postprocessor",
-            Self::EmitterDelivery => "emitter_delivery",
-        }
-    }
-}
-
-impl SqlEnumText for StepStatus {
-    fn sql_text(self) -> &'static str {
-        match self {
-            Self::Applied => "applied",
-            Self::Matched => "matched",
-            Self::Skipped => "skipped",
-            Self::Error => "error",
-        }
-    }
-}
-
-impl SqlEnumText for Severity {
-    fn sql_text(self) -> &'static str {
-        match self {
-            Self::Info => "info",
-            Self::Low => "low",
-            Self::Medium => "medium",
-            Self::High => "high",
-            Self::Critical => "critical",
-        }
-    }
-}
-
-fn security_action_sql_text(action: &SecurityAction) -> &'static str {
-    match action {
-        SecurityAction::Continue => "continue",
-        SecurityAction::Ask(_) => "ask",
-        SecurityAction::Rewrite(_) => "rewrite",
-        SecurityAction::Block(_) => "block",
-        SecurityAction::Throttle(_) => "throttle",
-        SecurityAction::Quarantine(_) => "quarantine",
-        SecurityAction::Restore(_) => "restore",
-        SecurityAction::DropConnection(_) => "drop_connection",
-        SecurityAction::ObserveOnly => "observe_only",
-        SecurityAction::Error(_) => "error",
-    }
-}
-
 /// Typed write operations sent to the writer thread.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum WriteOp {
-    ResolvedSecurityEvent(ResolvedSecurityEvent),
     NetEvent(NetEvent),
     ModelCall(ModelCall),
     McpCall(McpCall),
@@ -313,7 +59,58 @@ pub enum WriteOp {
     ExecEventComplete(ExecEventComplete),
     AuditEvent(AuditEvent),
     DnsEvent(DnsEvent),
-    TelemetryIdentity(TelemetryIdentity),
+    SubstitutionEvent(SubstitutionEvent),
+    SecurityRuleEvent(SecurityRuleEvent),
+    SecurityAskEvent(SecurityAskEvent),
+    SecurityDecisionEvent(SecurityDecisionEvent),
+}
+
+impl WriteOp {
+    /// Ensure a primary emitted event has a stable 12-lower-hex id before it
+    /// reaches SQLite. Rule ledger rows already point at a triggering event and
+    /// therefore must not mint their own id here.
+    pub fn ensure_event_id(&mut self) -> Option<String> {
+        match self {
+            WriteOp::NetEvent(event) => ensure_option_event_id(&mut event.event_id),
+            WriteOp::ModelCall(event) => ensure_option_event_id(&mut event.event_id),
+            WriteOp::McpCall(event) => ensure_option_event_id(&mut event.event_id),
+            WriteOp::FileEvent(event) => ensure_option_event_id(&mut event.event_id),
+            WriteOp::SnapshotEvent(event) => ensure_option_event_id(&mut event.event_id),
+            WriteOp::ExecEvent(event) => ensure_option_event_id(&mut event.event_id),
+            WriteOp::AuditEvent(event) => ensure_option_event_id(&mut event.event_id),
+            WriteOp::DnsEvent(event) => ensure_option_event_id(&mut event.event_id),
+            WriteOp::SubstitutionEvent(event) => ensure_option_event_id(&mut event.event_id),
+            WriteOp::SecurityRuleEvent(event) => Some(event.event_id.clone()),
+            WriteOp::SecurityAskEvent(event) => Some(event.event_id.clone()),
+            WriteOp::SecurityDecisionEvent(event) => Some(event.event_id.clone()),
+            WriteOp::ExecEventComplete(_) => None,
+        }
+    }
+
+    pub fn event_id(&self) -> Option<&str> {
+        match self {
+            WriteOp::NetEvent(event) => event.event_id.as_deref(),
+            WriteOp::ModelCall(event) => event.event_id.as_deref(),
+            WriteOp::McpCall(event) => event.event_id.as_deref(),
+            WriteOp::FileEvent(event) => event.event_id.as_deref(),
+            WriteOp::SnapshotEvent(event) => event.event_id.as_deref(),
+            WriteOp::ExecEvent(event) => event.event_id.as_deref(),
+            WriteOp::AuditEvent(event) => event.event_id.as_deref(),
+            WriteOp::DnsEvent(event) => event.event_id.as_deref(),
+            WriteOp::SubstitutionEvent(event) => event.event_id.as_deref(),
+            WriteOp::SecurityRuleEvent(event) => Some(event.event_id.as_str()),
+            WriteOp::SecurityAskEvent(event) => Some(event.event_id.as_str()),
+            WriteOp::SecurityDecisionEvent(event) => Some(event.event_id.as_str()),
+            WriteOp::ExecEventComplete(_) => None,
+        }
+    }
+}
+
+fn ensure_option_event_id(event_id: &mut Option<String>) -> Option<String> {
+    if event_id.is_none() {
+        *event_id = Some(new_event_id());
+    }
+    event_id.clone()
 }
 
 /// A dedicated writer thread that owns the SQLite connection.
@@ -335,7 +132,6 @@ pub struct DbWriter {
     tx: std::sync::Mutex<Option<tokio::sync::mpsc::Sender<WriteOp>>>,
     join_handle: std::sync::Mutex<Option<std::thread::JoinHandle<()>>>,
     db_path: PathBuf,
-    metrics: VmMetricsAccumulator,
 }
 
 impl DbWriter {
@@ -350,7 +146,6 @@ impl DbWriter {
         schema::apply_pragmas(&conn)?;
         schema::create_tables(&conn)?;
         schema::migrate(&conn);
-        let metrics = VmMetricsAccumulator::from_connection(&conn)?;
 
         let (tx, rx) = tokio::sync::mpsc::channel(capacity);
         let db_path = path.to_path_buf();
@@ -364,7 +159,6 @@ impl DbWriter {
             tx: std::sync::Mutex::new(Some(tx)),
             join_handle: std::sync::Mutex::new(Some(join_handle)),
             db_path,
-            metrics,
         })
     }
 
@@ -374,7 +168,6 @@ impl DbWriter {
         schema::apply_pragmas(&conn)?;
         schema::create_tables(&conn)?;
         schema::migrate(&conn);
-        let metrics = VmMetricsAccumulator::from_connection(&conn)?;
 
         let (tx, rx) = tokio::sync::mpsc::channel(capacity);
 
@@ -387,7 +180,6 @@ impl DbWriter {
             tx: std::sync::Mutex::new(Some(tx)),
             join_handle: std::sync::Mutex::new(Some(join_handle)),
             db_path: PathBuf::from(":memory:"),
-            metrics,
         })
     }
 
@@ -398,31 +190,72 @@ impl DbWriter {
 
     /// Non-blocking send from async context. Yields if channel full (backpressure).
     pub async fn write(&self, op: WriteOp) {
+        let span = tracing::debug_span!(
+            target: "capsem.db",
+            DB_ENQUEUE_SPAN,
+            status = tracing::field::Empty,
+            queue_result = tracing::field::Empty,
+        );
+        let started = Instant::now();
         if let Some(tx) = self.clone_sender() {
-            let metrics_update = self.metrics.update_for_write_op(&op);
-            if let Err(e) = tx.send(op).await {
-                warn!(error = %e, "db writer channel closed, dropping write op");
-            } else if let Some(update) = metrics_update {
-                self.metrics.record_security_update(update);
+            match tx.send(op).instrument(span.clone()).await {
+                Ok(()) => {
+                    record_enqueue(started, "queued", &span);
+                }
+                Err(e) => {
+                    record_enqueue(started, "closed", &span);
+                    warn!(error = %e, "db writer channel closed, dropping write op");
+                }
             }
+        } else {
+            record_enqueue(started, "missing_sender", &span);
         }
     }
 
     /// Try to send without blocking. Returns false if the channel is full or closed.
     pub fn try_write(&self, op: WriteOp) -> bool {
-        let metrics_update = self.metrics.update_for_write_op(&op);
-        let sent = self
+        let span = tracing::debug_span!(
+            target: "capsem.db",
+            DB_ENQUEUE_SPAN,
+            status = tracing::field::Empty,
+            queue_result = tracing::field::Empty,
+        );
+        let started = Instant::now();
+        let accepted = self
             .tx
             .lock()
             .unwrap()
             .as_ref()
             .is_some_and(|tx| tx.try_send(op).is_ok());
-        if sent {
-            if let Some(update) = metrics_update {
-                self.metrics.record_security_update(update);
+        record_enqueue(
+            started,
+            if accepted { "queued" } else { "full_or_closed" },
+            &span,
+        );
+        accepted
+    }
+
+    /// Blocking send for synchronous producer threads that must not drop
+    /// security events. Do not call from Tokio async tasks; async callers
+    /// should use `write().await` so the runtime can schedule fairly.
+    pub fn write_blocking(&self, op: WriteOp) {
+        let span = tracing::debug_span!(
+            target: "capsem.db",
+            DB_ENQUEUE_SPAN,
+            status = tracing::field::Empty,
+            queue_result = tracing::field::Empty,
+        );
+        let started = Instant::now();
+        if let Some(tx) = self.clone_sender() {
+            if let Err(e) = tx.blocking_send(op) {
+                record_enqueue(started, "closed", &span);
+                warn!(error = %e, "db writer channel closed, dropping blocking write op");
+            } else {
+                record_enqueue(started, "queued", &span);
             }
+        } else {
+            record_enqueue(started, "missing_sender", &span);
         }
-        sent
     }
 
     /// Deterministically shut down the writer thread: drop the stored
@@ -456,729 +289,6 @@ impl DbWriter {
     pub fn path(&self) -> &Path {
         &self.db_path
     }
-
-    pub fn metrics_snapshot(
-        &self,
-        vm_id: impl Into<String>,
-        persistent: bool,
-        captured_at_unix_ms: u64,
-    ) -> VmMetricsSnapshot {
-        let mut snapshot = VmMetricsSnapshot::empty(vm_id, persistent, captured_at_unix_ms);
-        self.metrics.apply_snapshot(&mut snapshot);
-        snapshot
-    }
-}
-
-#[derive(Default)]
-struct VmMetricsAccumulator {
-    security: std::sync::Mutex<VmSecurityMetrics>,
-    http: std::sync::Mutex<VmHttpMetrics>,
-    dns: std::sync::Mutex<VmDnsMetrics>,
-    model: std::sync::Mutex<VmModelMetrics>,
-    mcp: std::sync::Mutex<VmMcpMetrics>,
-    filesystem: std::sync::Mutex<VmFilesystemMetrics>,
-    process: std::sync::Mutex<VmProcessMetrics>,
-}
-
-impl VmMetricsAccumulator {
-    fn from_connection(conn: &Connection) -> rusqlite::Result<Self> {
-        Ok(Self {
-            security: std::sync::Mutex::new(seed_security_metrics(conn)?),
-            http: std::sync::Mutex::new(seed_http_metrics(conn)?),
-            dns: std::sync::Mutex::new(seed_dns_metrics(conn)?),
-            model: std::sync::Mutex::new(seed_model_metrics(conn)?),
-            mcp: std::sync::Mutex::new(seed_mcp_metrics(conn)?),
-            filesystem: std::sync::Mutex::new(seed_filesystem_metrics(conn)?),
-            process: std::sync::Mutex::new(seed_process_metrics(conn)?),
-        })
-    }
-
-    fn update_for_write_op(&self, op: &WriteOp) -> Option<VmMetricsUpdate> {
-        match op {
-            WriteOp::ResolvedSecurityEvent(event) => VmMetricsUpdate::from_resolved_event(event),
-            WriteOp::ModelCall(call) => VmMetricsUpdate::from_model_call(call),
-            _ => None,
-        }
-    }
-
-    fn record_security_update(&self, update: VmMetricsUpdate) {
-        if let Some(http_update) = update.http {
-            let mut http = self.http.lock().unwrap();
-            add_http_metrics(&mut http, &http_update);
-        }
-        if let Some(dns_update) = update.dns {
-            let mut dns = self.dns.lock().unwrap();
-            add_dns_metrics(&mut dns, &dns_update);
-        }
-        if let Some(model_update) = update.model {
-            let mut model = self.model.lock().unwrap();
-            add_model_metrics(&mut model, &model_update);
-        }
-        if let Some(mcp_update) = update.mcp {
-            let mut mcp = self.mcp.lock().unwrap();
-            add_mcp_metrics(&mut mcp, &mcp_update);
-        }
-        if let Some(filesystem_update) = update.filesystem {
-            let mut filesystem = self.filesystem.lock().unwrap();
-            add_filesystem_metrics(&mut filesystem, &filesystem_update);
-        }
-        if let Some(process_update) = update.process {
-            let mut process = self.process.lock().unwrap();
-            add_process_metrics(&mut process, &process_update);
-        }
-
-        let mut security = self.security.lock().unwrap();
-        security.security_events_total += update.security.event_count;
-        if update.security.has_enforcement_decision {
-            security.enforcement_decisions_total += 1;
-        }
-        security.detection_findings_total += update.security.detection_finding_count;
-        match update.security.final_action {
-            VmSecurityActionMetric::Block {
-                event_id,
-                rule_id,
-                reason,
-                timestamp_unix_ms,
-            } => {
-                security.blocks_total += 1;
-                security.latest_block_event_id = Some(event_id);
-                security.latest_block_rule_id = rule_id;
-                security.latest_block_reason = Some(reason);
-                security.latest_block_unix_ms = Some(timestamp_unix_ms);
-            }
-            VmSecurityActionMetric::Ask => security.asks_total += 1,
-            VmSecurityActionMetric::Rewrite => security.rewrites_total += 1,
-            VmSecurityActionMetric::Throttle => security.throttles_total += 1,
-            VmSecurityActionMetric::Error => security.errors_total += 1,
-            VmSecurityActionMetric::Other => {}
-        }
-        if let Some(detection) = update.security.latest_detection {
-            security.latest_detection_event_id = Some(detection.event_id);
-            security.latest_detection_rule_id = Some(detection.rule_id);
-            security.latest_detection_title = Some(detection.title);
-            security.latest_detection_severity = Some(detection.severity);
-            security.latest_detection_unix_ms = Some(detection.timestamp_unix_ms);
-        }
-    }
-
-    fn apply_snapshot(&self, snapshot: &mut VmMetricsSnapshot) {
-        snapshot.http = self.http.lock().unwrap().clone();
-        snapshot.dns = self.dns.lock().unwrap().clone();
-        snapshot.model = self.model.lock().unwrap().clone();
-        snapshot.mcp = self.mcp.lock().unwrap().clone();
-        snapshot.filesystem = self.filesystem.lock().unwrap().clone();
-        snapshot.process = self.process.lock().unwrap().clone();
-        snapshot.security = self.security.lock().unwrap().clone();
-    }
-}
-
-fn seed_http_metrics(conn: &Connection) -> rusqlite::Result<VmHttpMetrics> {
-    conn.query_row(
-        "SELECT
-            COUNT(*),
-            COALESCE(SUM(CASE WHEN decision = 'allowed' THEN 1 ELSE 0 END), 0),
-            COALESCE(SUM(CASE WHEN policy_action IN ('ask', 'rewrite', 'throttle') THEN 1 ELSE 0 END), 0),
-            COALESCE(SUM(CASE WHEN decision = 'denied' THEN 1 ELSE 0 END), 0),
-            COALESCE(SUM(CASE WHEN decision = 'error' THEN 1 ELSE 0 END), 0),
-            COALESCE(SUM(bytes_sent), 0),
-            COALESCE(SUM(bytes_received), 0)
-         FROM net_events",
-        [],
-        |row| {
-            Ok(VmHttpMetrics {
-                http_requests_total: row_u64(row, 0)?,
-                http_requests_allowed_total: row_u64(row, 1)?,
-                http_requests_warned_total: row_u64(row, 2)?,
-                http_requests_denied_total: row_u64(row, 3)?,
-                http_requests_errored_total: row_u64(row, 4)?,
-                http_bytes_sent_total: row_u64(row, 5)?,
-                http_bytes_received_total: row_u64(row, 6)?,
-            })
-        },
-    )
-}
-
-fn seed_dns_metrics(conn: &Connection) -> rusqlite::Result<VmDnsMetrics> {
-    conn.query_row(
-        "SELECT
-            COUNT(*),
-            COALESCE(SUM(CASE WHEN decision = 'allowed' THEN 1 ELSE 0 END), 0),
-            COALESCE(SUM(CASE WHEN policy_action IN ('ask', 'throttle') THEN 1 ELSE 0 END), 0),
-            COALESCE(SUM(CASE WHEN decision = 'denied' THEN 1 ELSE 0 END), 0),
-            COALESCE(SUM(CASE WHEN decision = 'redirected' OR policy_action = 'rewrite' THEN 1 ELSE 0 END), 0),
-            COALESCE(SUM(CASE WHEN decision = 'error' THEN 1 ELSE 0 END), 0)
-         FROM dns_events",
-        [],
-        |row| {
-            Ok(VmDnsMetrics {
-                dns_queries_total: row_u64(row, 0)?,
-                dns_queries_allowed_total: row_u64(row, 1)?,
-                dns_queries_warned_total: row_u64(row, 2)?,
-                dns_queries_denied_total: row_u64(row, 3)?,
-                dns_queries_rewritten_total: row_u64(row, 4)?,
-                dns_queries_errored_total: row_u64(row, 5)?,
-            })
-        },
-    )
-}
-
-fn seed_model_metrics(conn: &Connection) -> rusqlite::Result<VmModelMetrics> {
-    let metrics = conn.query_row(
-        "SELECT
-            COUNT(*),
-            COALESCE(SUM(usage_input_tokens), 0),
-            COALESCE(SUM(usage_output_tokens), 0),
-            COALESCE(SUM(usage_estimated_cost_micros), 0)
-         FROM ai_model_interactions
-         WHERE attribution_scope = 'vm'",
-        [],
-        |row| {
-            Ok(VmModelMetrics {
-                model_requests_total: row_u64(row, 0)?,
-                model_requests_allowed_total: row_u64(row, 0)?,
-                model_input_tokens_total: row_u64(row, 1)?,
-                model_output_tokens_total: row_u64(row, 2)?,
-                model_estimated_cost_micros_total: row_u64(row, 3)?,
-                ..VmModelMetrics::default()
-            })
-        },
-    )?;
-    if metrics.model_requests_total > 0 {
-        return Ok(metrics);
-    }
-
-    conn.query_row(
-        "SELECT
-            COUNT(*),
-            COALESCE(SUM(input_tokens), 0),
-            COALESCE(SUM(output_tokens), 0),
-            COALESCE(SUM(estimated_cost_usd * 1000000.0), 0)
-         FROM model_calls",
-        [],
-        |row| {
-            Ok(VmModelMetrics {
-                model_requests_total: row_u64(row, 0)?,
-                model_requests_allowed_total: row_u64(row, 0)?,
-                model_input_tokens_total: row_u64(row, 1)?,
-                model_output_tokens_total: row_u64(row, 2)?,
-                model_estimated_cost_micros_total: row_u64(row, 3)?,
-                ..VmModelMetrics::default()
-            })
-        },
-    )
-}
-
-fn seed_mcp_metrics(conn: &Connection) -> rusqlite::Result<VmMcpMetrics> {
-    conn.query_row(
-        "SELECT
-            COUNT(*),
-            COALESCE(SUM(CASE WHEN decision = 'allowed' THEN 1 ELSE 0 END), 0),
-            COALESCE(SUM(CASE WHEN decision = 'warned' THEN 1 ELSE 0 END), 0),
-            COALESCE(SUM(CASE WHEN decision = 'denied' THEN 1 ELSE 0 END), 0),
-            COALESCE(SUM(CASE WHEN decision = 'error' THEN 1 ELSE 0 END), 0)
-         FROM mcp_calls",
-        [],
-        |row| {
-            Ok(VmMcpMetrics {
-                mcp_tool_invocations_total: row_u64(row, 0)?,
-                mcp_tool_invocations_allowed_total: row_u64(row, 1)?,
-                mcp_tool_invocations_warned_total: row_u64(row, 2)?,
-                mcp_tool_invocations_denied_total: row_u64(row, 3)?,
-                mcp_tool_invocations_errored_total: row_u64(row, 4)?,
-                ..VmMcpMetrics::default()
-            })
-        },
-    )
-}
-
-fn seed_filesystem_metrics(conn: &Connection) -> rusqlite::Result<VmFilesystemMetrics> {
-    conn.query_row(
-        "SELECT
-            COALESCE(SUM(CASE WHEN action = 'read' THEN 1 ELSE 0 END), 0),
-            COALESCE(SUM(CASE WHEN action IN ('modified', 'write') THEN 1 ELSE 0 END), 0),
-            COALESCE(SUM(CASE WHEN action IN ('created', 'create') THEN 1 ELSE 0 END), 0),
-            COALESCE(SUM(CASE WHEN action IN ('deleted', 'delete') THEN 1 ELSE 0 END), 0),
-            COALESCE(SUM(CASE WHEN action IN ('restored', 'restore') THEN 1 ELSE 0 END), 0),
-            COALESCE(SUM(CASE WHEN action = 'read' THEN size ELSE 0 END), 0),
-            COALESCE(SUM(CASE WHEN action IN ('created', 'create', 'modified', 'write', 'restored', 'restore') THEN size ELSE 0 END), 0)
-         FROM fs_events",
-        [],
-        |row| {
-            Ok(VmFilesystemMetrics {
-                fs_reads_total: row_u64(row, 0)?,
-                fs_writes_total: row_u64(row, 1)?,
-                fs_creates_total: row_u64(row, 2)?,
-                fs_deletes_total: row_u64(row, 3)?,
-                fs_restores_total: row_u64(row, 4)?,
-                fs_errors_total: 0,
-                fs_bytes_read_total: row_u64(row, 5)?,
-                fs_bytes_written_total: row_u64(row, 6)?,
-            })
-        },
-    )
-}
-
-fn seed_process_metrics(conn: &Connection) -> rusqlite::Result<VmProcessMetrics> {
-    let exec_total: u64 = conn.query_row("SELECT COUNT(*) FROM exec_events", [], |row| {
-        row_u64(row, 0)
-    })?;
-    let exec_errors: u64 = conn.query_row(
-        "SELECT COUNT(*) FROM exec_events WHERE exit_code IS NOT NULL AND exit_code != 0",
-        [],
-        |row| row_u64(row, 0),
-    )?;
-    let audit_total: u64 = conn.query_row("SELECT COUNT(*) FROM audit_events", [], |row| {
-        row_u64(row, 0)
-    })?;
-    let audit_errors: u64 = conn.query_row(
-        "SELECT COUNT(*) FROM audit_events WHERE exit_code IS NOT NULL AND exit_code != 0",
-        [],
-        |row| row_u64(row, 0),
-    )?;
-    Ok(VmProcessMetrics {
-        process_events_total: exec_total + audit_total,
-        process_exec_total: exec_total,
-        process_audit_total: audit_total,
-        process_errors_total: exec_errors + audit_errors,
-    })
-}
-
-fn seed_security_metrics(conn: &Connection) -> rusqlite::Result<VmSecurityMetrics> {
-    let mut metrics = conn.query_row(
-        "SELECT
-            COUNT(*),
-            COALESCE(SUM(CASE WHEN final_action = 'block' THEN 1 ELSE 0 END), 0),
-            COALESCE(SUM(CASE WHEN final_action = 'ask' THEN 1 ELSE 0 END), 0),
-            COALESCE(SUM(CASE WHEN final_action = 'rewrite' THEN 1 ELSE 0 END), 0),
-            COALESCE(SUM(CASE WHEN final_action = 'throttle' THEN 1 ELSE 0 END), 0),
-            COALESCE(SUM(CASE WHEN final_action = 'error' THEN 1 ELSE 0 END), 0),
-            COALESCE(SUM(CASE WHEN final_action NOT IN ('continue', 'observe_only') THEN 1 ELSE 0 END), 0)
-         FROM security_events
-         WHERE attribution_scope = 'vm'",
-        [],
-        |row| {
-            Ok(VmSecurityMetrics {
-                security_events_total: row_u64(row, 0)?,
-                blocks_total: row_u64(row, 1)?,
-                asks_total: row_u64(row, 2)?,
-                rewrites_total: row_u64(row, 3)?,
-                throttles_total: row_u64(row, 4)?,
-                errors_total: row_u64(row, 5)?,
-                enforcement_decisions_total: row_u64(row, 6)?,
-                ..VmSecurityMetrics::default()
-            })
-        },
-    )?;
-    metrics.detection_findings_total = conn.query_row(
-        "SELECT COUNT(*)
-         FROM detection_findings df
-         JOIN security_events se ON se.event_id = df.event_id
-         WHERE se.attribution_scope = 'vm'",
-        [],
-        |row| row_u64(row, 0),
-    )?;
-
-    if let Some((event_id, timestamp_unix_ms)) = conn
-        .query_row(
-            "SELECT event_id, timestamp_unix_ms
-             FROM security_events
-             WHERE attribution_scope = 'vm' AND final_action = 'block'
-             ORDER BY timestamp_unix_ms DESC, id DESC
-             LIMIT 1",
-            [],
-            |row| Ok((row.get::<_, String>(0)?, row_u64(row, 1)?)),
-        )
-        .optional()?
-    {
-        let step: Option<(Option<String>, Option<String>)> = conn
-            .query_row(
-                "SELECT rule_id, message
-                 FROM security_event_steps
-                 WHERE event_id = ?1
-                   AND kind IN ('enforcement_match', 'confirm', 'rate_limit_check')
-                 ORDER BY step_index DESC
-                 LIMIT 1",
-                params![event_id],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .optional()?;
-        metrics.latest_block_event_id = Some(event_id);
-        metrics.latest_block_rule_id = step.as_ref().and_then(|(rule_id, _)| rule_id.clone());
-        metrics.latest_block_reason = step.and_then(|(_, message)| message);
-        metrics.latest_block_unix_ms = Some(timestamp_unix_ms);
-    }
-
-    if let Some(detection) = conn
-        .query_row(
-            "SELECT df.event_id, df.rule_id, df.title, df.severity, se.timestamp_unix_ms
-             FROM detection_findings df
-             JOIN security_events se ON se.event_id = df.event_id
-             WHERE se.attribution_scope = 'vm'
-             ORDER BY se.timestamp_unix_ms DESC, df.id DESC
-             LIMIT 1",
-            [],
-            |row| {
-                Ok(VmDetectionMetric {
-                    event_id: row.get(0)?,
-                    rule_id: row.get(1)?,
-                    title: row.get(2)?,
-                    severity: row.get(3)?,
-                    timestamp_unix_ms: row_u64(row, 4)?,
-                })
-            },
-        )
-        .optional()?
-    {
-        metrics.latest_detection_event_id = Some(detection.event_id);
-        metrics.latest_detection_rule_id = Some(detection.rule_id);
-        metrics.latest_detection_title = Some(detection.title);
-        metrics.latest_detection_severity = Some(detection.severity);
-        metrics.latest_detection_unix_ms = Some(detection.timestamp_unix_ms);
-    }
-
-    Ok(metrics)
-}
-
-fn row_u64(row: &rusqlite::Row<'_>, index: usize) -> rusqlite::Result<u64> {
-    let value: i64 = row.get(index)?;
-    Ok(value.max(0) as u64)
-}
-
-#[derive(Default)]
-struct VmMetricsUpdate {
-    security: VmSecurityMetricsUpdate,
-    http: Option<VmHttpMetrics>,
-    dns: Option<VmDnsMetrics>,
-    model: Option<VmModelMetrics>,
-    mcp: Option<VmMcpMetrics>,
-    filesystem: Option<VmFilesystemMetrics>,
-    process: Option<VmProcessMetrics>,
-}
-
-impl VmMetricsUpdate {
-    fn from_resolved_event(event: &ResolvedSecurityEvent) -> Option<Self> {
-        if event.event.common.attribution_scope != AiAttributionScope::Vm {
-            return None;
-        }
-
-        let mut update = Self {
-            security: VmSecurityMetricsUpdate::from(event),
-            ..Self::default()
-        };
-        match &event.event.subject {
-            SecurityEventSubject::Http(subject) => {
-                let mut http = VmHttpMetrics {
-                    http_requests_total: 1,
-                    http_bytes_sent_total: subject.request_bytes,
-                    http_bytes_received_total: subject.response_bytes.unwrap_or_default(),
-                    ..VmHttpMetrics::default()
-                };
-                record_http_decision(&mut http, &event.final_action);
-                update.http = Some(http);
-            }
-            SecurityEventSubject::Dns(_) => {
-                let mut dns = VmDnsMetrics {
-                    dns_queries_total: 1,
-                    ..VmDnsMetrics::default()
-                };
-                record_dns_decision(&mut dns, &event.final_action);
-                update.dns = Some(dns);
-            }
-            SecurityEventSubject::Model(subject) => {
-                let mut model = VmModelMetrics {
-                    model_requests_total: 1,
-                    model_input_tokens_total: subject.estimated_input_tokens.unwrap_or_default(),
-                    model_output_tokens_total: subject.estimated_output_tokens.unwrap_or_default(),
-                    model_estimated_cost_micros_total: subject
-                        .estimated_cost_micros
-                        .unwrap_or_default(),
-                    ..VmModelMetrics::default()
-                };
-                record_model_decision(&mut model, &event.final_action);
-                update.model = Some(model);
-            }
-            SecurityEventSubject::Mcp(_) => {
-                let mut mcp = VmMcpMetrics {
-                    mcp_tool_invocations_total: 1,
-                    ..VmMcpMetrics::default()
-                };
-                record_mcp_decision(&mut mcp, &event.final_action);
-                update.mcp = Some(mcp);
-            }
-            SecurityEventSubject::File(subject) => {
-                let mut filesystem = VmFilesystemMetrics::default();
-                match subject.operation.as_str() {
-                    "read" => {
-                        filesystem.fs_reads_total = 1;
-                        filesystem.fs_bytes_read_total = subject.byte_count.unwrap_or_default();
-                    }
-                    "write" | "modify" | "modified" => {
-                        filesystem.fs_writes_total = 1;
-                        filesystem.fs_bytes_written_total = subject.byte_count.unwrap_or_default();
-                    }
-                    "create" | "created" => {
-                        filesystem.fs_creates_total = 1;
-                        filesystem.fs_bytes_written_total = subject.byte_count.unwrap_or_default();
-                    }
-                    "delete" | "deleted" => filesystem.fs_deletes_total = 1,
-                    "restore" | "restored" => {
-                        filesystem.fs_restores_total = 1;
-                        filesystem.fs_bytes_written_total = subject.byte_count.unwrap_or_default();
-                    }
-                    _ => {}
-                }
-                if matches!(event.final_action, SecurityAction::Error(_)) {
-                    filesystem.fs_errors_total = 1;
-                }
-                update.filesystem = Some(filesystem);
-            }
-            SecurityEventSubject::Process(subject) => {
-                let mut process = VmProcessMetrics {
-                    process_events_total: 1,
-                    ..VmProcessMetrics::default()
-                };
-                match subject.operation.as_str() {
-                    "exec" => process.process_exec_total = 1,
-                    "audit" => process.process_audit_total = 1,
-                    _ => {}
-                }
-                if matches!(event.final_action, SecurityAction::Error(_)) {
-                    process.process_errors_total = 1;
-                }
-                update.process = Some(process);
-            }
-            SecurityEventSubject::Credential(_)
-            | SecurityEventSubject::VmLifecycle(_)
-            | SecurityEventSubject::Profile(_)
-            | SecurityEventSubject::Conversation(_)
-            | SecurityEventSubject::Snapshot(_) => {}
-        }
-        Some(update)
-    }
-
-    fn from_model_call(call: &ModelCall) -> Option<Self> {
-        let attribution_scope = call
-            .ai_evidence
-            .as_ref()
-            .map(|evidence| evidence.attribution_scope)
-            .unwrap_or(AiAttributionScope::Vm);
-        if attribution_scope != AiAttributionScope::Vm {
-            return None;
-        }
-
-        let mut model = VmModelMetrics {
-            model_requests_total: 1,
-            model_input_tokens_total: call.input_tokens.unwrap_or_default(),
-            model_output_tokens_total: call.output_tokens.unwrap_or_default(),
-            model_estimated_cost_micros_total: model_call_cost_micros(call.estimated_cost_usd),
-            ..VmModelMetrics::default()
-        };
-        if call.status_code.is_some_and(|status| status >= 400) {
-            model.model_requests_errored_total = 1;
-        } else {
-            model.model_requests_allowed_total = 1;
-        }
-
-        Some(Self {
-            model: Some(model),
-            ..Self::default()
-        })
-    }
-}
-
-fn model_call_cost_micros(estimated_cost_usd: f64) -> u64 {
-    if estimated_cost_usd.is_finite() && estimated_cost_usd > 0.0 {
-        (estimated_cost_usd * 1_000_000.0).round() as u64
-    } else {
-        0
-    }
-}
-
-#[derive(Default)]
-struct VmSecurityMetricsUpdate {
-    event_count: u64,
-    has_enforcement_decision: bool,
-    detection_finding_count: u64,
-    final_action: VmSecurityActionMetric,
-    latest_detection: Option<VmDetectionMetric>,
-}
-
-impl From<&ResolvedSecurityEvent> for VmSecurityMetricsUpdate {
-    fn from(event: &ResolvedSecurityEvent) -> Self {
-        let final_action = match &event.final_action {
-            SecurityAction::Block(block) => VmSecurityActionMetric::Block {
-                event_id: event.event.common.event_id.clone(),
-                rule_id: block.rule_id.clone(),
-                reason: block.reason_code.clone(),
-                timestamp_unix_ms: event.event.common.timestamp_unix_ms,
-            },
-            SecurityAction::Ask(_) => VmSecurityActionMetric::Ask,
-            SecurityAction::Rewrite(_) => VmSecurityActionMetric::Rewrite,
-            SecurityAction::Throttle(_) => VmSecurityActionMetric::Throttle,
-            SecurityAction::Error(_) => VmSecurityActionMetric::Error,
-            _ => VmSecurityActionMetric::Other,
-        };
-        let latest_detection = event
-            .detection_findings
-            .last()
-            .map(|finding| VmDetectionMetric {
-                event_id: finding.event_id.clone(),
-                rule_id: finding.rule_id.clone(),
-                title: finding.title.clone(),
-                severity: finding.severity.sql_text().to_string(),
-                timestamp_unix_ms: event.event.common.timestamp_unix_ms,
-            });
-        Self {
-            event_count: 1,
-            has_enforcement_decision: event.event.decision.is_some(),
-            detection_finding_count: event.detection_findings.len() as u64,
-            final_action,
-            latest_detection,
-        }
-    }
-}
-
-#[derive(Default)]
-enum VmSecurityActionMetric {
-    Block {
-        event_id: String,
-        rule_id: Option<String>,
-        reason: String,
-        timestamp_unix_ms: u64,
-    },
-    Ask,
-    Rewrite,
-    Throttle,
-    Error,
-    #[default]
-    Other,
-}
-
-struct VmDetectionMetric {
-    event_id: String,
-    rule_id: String,
-    title: String,
-    severity: String,
-    timestamp_unix_ms: u64,
-}
-
-fn record_http_decision(http: &mut VmHttpMetrics, action: &SecurityAction) {
-    match action_metric_bucket(action) {
-        VmDecisionMetricBucket::Allowed => http.http_requests_allowed_total += 1,
-        VmDecisionMetricBucket::Warned => http.http_requests_warned_total += 1,
-        VmDecisionMetricBucket::Denied => http.http_requests_denied_total += 1,
-        VmDecisionMetricBucket::Errored => http.http_requests_errored_total += 1,
-    }
-}
-
-fn record_dns_decision(dns: &mut VmDnsMetrics, action: &SecurityAction) {
-    match action {
-        SecurityAction::Rewrite(_) => dns.dns_queries_rewritten_total += 1,
-        _ => match action_metric_bucket(action) {
-            VmDecisionMetricBucket::Allowed => dns.dns_queries_allowed_total += 1,
-            VmDecisionMetricBucket::Warned => dns.dns_queries_warned_total += 1,
-            VmDecisionMetricBucket::Denied => dns.dns_queries_denied_total += 1,
-            VmDecisionMetricBucket::Errored => dns.dns_queries_errored_total += 1,
-        },
-    }
-}
-
-fn record_model_decision(model: &mut VmModelMetrics, action: &SecurityAction) {
-    match action_metric_bucket(action) {
-        VmDecisionMetricBucket::Allowed => model.model_requests_allowed_total += 1,
-        VmDecisionMetricBucket::Warned => model.model_requests_warned_total += 1,
-        VmDecisionMetricBucket::Denied => model.model_requests_denied_total += 1,
-        VmDecisionMetricBucket::Errored => model.model_requests_errored_total += 1,
-    }
-}
-
-fn record_mcp_decision(mcp: &mut VmMcpMetrics, action: &SecurityAction) {
-    match action_metric_bucket(action) {
-        VmDecisionMetricBucket::Allowed => mcp.mcp_tool_invocations_allowed_total += 1,
-        VmDecisionMetricBucket::Warned => mcp.mcp_tool_invocations_warned_total += 1,
-        VmDecisionMetricBucket::Denied => mcp.mcp_tool_invocations_denied_total += 1,
-        VmDecisionMetricBucket::Errored => mcp.mcp_tool_invocations_errored_total += 1,
-    }
-}
-
-enum VmDecisionMetricBucket {
-    Allowed,
-    Warned,
-    Denied,
-    Errored,
-}
-
-fn action_metric_bucket(action: &SecurityAction) -> VmDecisionMetricBucket {
-    match action {
-        SecurityAction::Continue | SecurityAction::ObserveOnly => VmDecisionMetricBucket::Allowed,
-        SecurityAction::Ask(_) | SecurityAction::Rewrite(_) | SecurityAction::Throttle(_) => {
-            VmDecisionMetricBucket::Warned
-        }
-        SecurityAction::Block(_)
-        | SecurityAction::Quarantine(_)
-        | SecurityAction::Restore(_)
-        | SecurityAction::DropConnection(_) => VmDecisionMetricBucket::Denied,
-        SecurityAction::Error(_) => VmDecisionMetricBucket::Errored,
-    }
-}
-
-fn add_http_metrics(total: &mut VmHttpMetrics, delta: &VmHttpMetrics) {
-    total.http_requests_total += delta.http_requests_total;
-    total.http_requests_allowed_total += delta.http_requests_allowed_total;
-    total.http_requests_warned_total += delta.http_requests_warned_total;
-    total.http_requests_denied_total += delta.http_requests_denied_total;
-    total.http_requests_errored_total += delta.http_requests_errored_total;
-    total.http_bytes_sent_total += delta.http_bytes_sent_total;
-    total.http_bytes_received_total += delta.http_bytes_received_total;
-}
-
-fn add_dns_metrics(total: &mut VmDnsMetrics, delta: &VmDnsMetrics) {
-    total.dns_queries_total += delta.dns_queries_total;
-    total.dns_queries_allowed_total += delta.dns_queries_allowed_total;
-    total.dns_queries_warned_total += delta.dns_queries_warned_total;
-    total.dns_queries_denied_total += delta.dns_queries_denied_total;
-    total.dns_queries_rewritten_total += delta.dns_queries_rewritten_total;
-    total.dns_queries_errored_total += delta.dns_queries_errored_total;
-}
-
-fn add_model_metrics(total: &mut VmModelMetrics, delta: &VmModelMetrics) {
-    total.model_requests_total += delta.model_requests_total;
-    total.model_requests_allowed_total += delta.model_requests_allowed_total;
-    total.model_requests_warned_total += delta.model_requests_warned_total;
-    total.model_requests_denied_total += delta.model_requests_denied_total;
-    total.model_requests_errored_total += delta.model_requests_errored_total;
-    total.model_input_tokens_total += delta.model_input_tokens_total;
-    total.model_output_tokens_total += delta.model_output_tokens_total;
-    total.model_estimated_cost_micros_total += delta.model_estimated_cost_micros_total;
-}
-
-fn add_mcp_metrics(total: &mut VmMcpMetrics, delta: &VmMcpMetrics) {
-    total.mcp_tool_invocations_total += delta.mcp_tool_invocations_total;
-    total.mcp_tool_invocations_allowed_total += delta.mcp_tool_invocations_allowed_total;
-    total.mcp_tool_invocations_warned_total += delta.mcp_tool_invocations_warned_total;
-    total.mcp_tool_invocations_denied_total += delta.mcp_tool_invocations_denied_total;
-    total.mcp_tool_invocations_errored_total += delta.mcp_tool_invocations_errored_total;
-    total.mcp_servers_connected_total += delta.mcp_servers_connected_total;
-    total.mcp_servers_disconnected_total += delta.mcp_servers_disconnected_total;
-    total.mcp_server_errors_total += delta.mcp_server_errors_total;
-}
-
-fn add_filesystem_metrics(total: &mut VmFilesystemMetrics, delta: &VmFilesystemMetrics) {
-    total.fs_reads_total += delta.fs_reads_total;
-    total.fs_writes_total += delta.fs_writes_total;
-    total.fs_creates_total += delta.fs_creates_total;
-    total.fs_deletes_total += delta.fs_deletes_total;
-    total.fs_restores_total += delta.fs_restores_total;
-    total.fs_errors_total += delta.fs_errors_total;
-    total.fs_bytes_read_total += delta.fs_bytes_read_total;
-    total.fs_bytes_written_total += delta.fs_bytes_written_total;
-}
-
-fn add_process_metrics(total: &mut VmProcessMetrics, delta: &VmProcessMetrics) {
-    total.process_events_total += delta.process_events_total;
-    total.process_exec_total += delta.process_exec_total;
-    total.process_audit_total += delta.process_audit_total;
-    total.process_errors_total += delta.process_errors_total;
 }
 
 impl Drop for DbWriter {
@@ -1204,8 +314,20 @@ fn writer_loop(conn: Connection, mut rx: tokio::sync::mpsc::Receiver<WriteOp>) {
         }
 
         // 3. Execute entire batch in a single transaction.
-        if let Err(e) = execute_batch(&conn, &batch) {
+        let batch_size = batch.len();
+        let batch_bucket = batch_size_bucket(batch_size);
+        let span = tracing::debug_span!(
+            target: "capsem.db",
+            DB_WRITE_BATCH_SPAN,
+            batch_size_bucket = batch_bucket,
+            status = tracing::field::Empty,
+        );
+        let started = Instant::now();
+        if let Err(e) = span.in_scope(|| execute_batch(&conn, &batch)) {
+            record_batch(started, batch_size, batch_bucket, "error", &span);
             warn!(error = %e, count = batch.len(), "db write batch failed");
+        } else {
+            record_batch(started, batch_size, batch_bucket, "ok", &span);
         }
     }
 
@@ -1220,14 +342,70 @@ fn writer_loop(conn: Connection, mut rx: tokio::sync::mpsc::Receiver<WriteOp>) {
     }
 
     // All senders dropped -- checkpoint WAL before closing connection.
-    let _ = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)");
+    let span = tracing::debug_span!(
+        target: "capsem.db",
+        DB_SHUTDOWN_FLUSH_SPAN,
+        status = tracing::field::Empty,
+    );
+    let started = Instant::now();
+    let result = span.in_scope(|| conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)"));
+    let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
+    let status = if result.is_ok() { "ok" } else { "error" };
+    ::metrics::histogram!(DB_SHUTDOWN_FLUSH_MS, "status" => status).record(elapsed_ms);
+    span.record("status", status);
+}
+
+fn record_enqueue(started: Instant, queue_result: &'static str, span: &tracing::Span) {
+    let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
+    ::metrics::histogram!(DB_ENQUEUE_WAIT_MS, "queue_result" => queue_result).record(elapsed_ms);
+    span.record(
+        "status",
+        if queue_result == "queued" {
+            "ok"
+        } else {
+            "error"
+        },
+    );
+    span.record("queue_result", queue_result);
+}
+
+fn record_batch(
+    started: Instant,
+    batch_size: usize,
+    batch_size_bucket: &'static str,
+    status: &'static str,
+    span: &tracing::Span,
+) {
+    let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
+    ::metrics::counter!(DB_WRITE_BATCH_TOTAL,
+        "batch_size_bucket" => batch_size_bucket,
+        "status" => status)
+    .increment(1);
+    ::metrics::histogram!(DB_WRITE_BATCH_DURATION_MS,
+        "batch_size_bucket" => batch_size_bucket,
+        "status" => status)
+    .record(elapsed_ms);
+    ::metrics::histogram!(DB_WRITE_BATCH_SIZE,
+        "batch_size_bucket" => batch_size_bucket)
+    .record(batch_size as f64);
+    span.record("status", status);
+}
+
+fn batch_size_bucket(size: usize) -> &'static str {
+    match size {
+        0 => "0",
+        1 => "1",
+        2..=8 => "2_8",
+        9..=32 => "9_32",
+        33..=128 => "33_128",
+        _ => "gt_128",
+    }
 }
 
 fn execute_batch(conn: &Connection, batch: &[WriteOp]) -> rusqlite::Result<()> {
     let tx = conn.unchecked_transaction()?;
     for op in batch {
         match op {
-            WriteOp::ResolvedSecurityEvent(e) => insert_resolved_security_event(&tx, e)?,
             WriteOp::NetEvent(e) => insert_net_event(&tx, e)?,
             WriteOp::ModelCall(m) => insert_model_call(&tx, m)?,
             WriteOp::McpCall(c) => insert_mcp_call(&tx, c)?,
@@ -1237,240 +415,13 @@ fn execute_batch(conn: &Connection, batch: &[WriteOp]) -> rusqlite::Result<()> {
             WriteOp::ExecEventComplete(c) => update_exec_event(&tx, c)?,
             WriteOp::AuditEvent(a) => insert_audit_event(&tx, a)?,
             WriteOp::DnsEvent(d) => insert_dns_event(&tx, d)?,
-            WriteOp::TelemetryIdentity(i) => insert_telemetry_identity(&tx, i)?,
+            WriteOp::SubstitutionEvent(s) => insert_substitution_event(&tx, s)?,
+            WriteOp::SecurityRuleEvent(e) => insert_security_rule_event(&tx, e)?,
+            WriteOp::SecurityAskEvent(e) => insert_security_ask_event(&tx, e)?,
+            WriteOp::SecurityDecisionEvent(e) => insert_security_decision_event(&tx, e)?,
         }
     }
     tx.commit()
-}
-
-fn timestamp_from_unix_ms(timestamp_unix_ms: u64) -> String {
-    humantime::format_rfc3339(UNIX_EPOCH + Duration::from_millis(timestamp_unix_ms)).to_string()
-}
-
-fn insert_resolved_security_event(
-    conn: &Connection,
-    event: &ResolvedSecurityEvent,
-) -> rusqlite::Result<()> {
-    let common = &event.event.common;
-    let event_id = &common.event_id;
-
-    conn.execute(
-        "DELETE FROM detection_finding_tags
-         WHERE finding_id IN (SELECT finding_id FROM detection_findings WHERE event_id = ?1)",
-        params![event_id],
-    )?;
-    conn.execute(
-        "DELETE FROM detection_findings WHERE event_id = ?1",
-        params![event_id],
-    )?;
-    conn.execute(
-        "DELETE FROM security_event_steps WHERE event_id = ?1",
-        params![event_id],
-    )?;
-    conn.execute(
-        "DELETE FROM security_event_links WHERE event_id = ?1",
-        params![event_id],
-    )?;
-
-    let timestamp = timestamp_from_unix_ms(common.timestamp_unix_ms);
-    let (process_operation, process_command_class) = match &event.event.subject {
-        SecurityEventSubject::Process(subject) => (
-            Some(subject.operation.as_str()),
-            subject.command_class.as_deref(),
-        ),
-        _ => (None, None),
-    };
-    conn.execute(
-        "INSERT INTO security_events (
-            event_id, timestamp, timestamp_unix_ms, event_family, event_type,
-            source_engine, final_action, enforceability, attribution_scope,
-            origin_kind, accounting_owner, trace_id, span_id, parent_event_id,
-            stream_id, activity_id, sequence_no, vm_id, session_id, profile_id,
-            profile_revision, user_id, process_id, parent_process_id, exec_id,
-            turn_id, message_id, tool_call_id, mcp_call_id, redaction_state,
-            process_operation, process_command_class, label_count, mutation_count,
-            finding_count
-         )
-         VALUES (
-            ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15,
-            ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28,
-            ?29, ?30, ?31, ?32, ?33, ?34, ?35
-         )
-         ON CONFLICT(event_id) DO UPDATE SET
-            timestamp = excluded.timestamp,
-            timestamp_unix_ms = excluded.timestamp_unix_ms,
-            event_family = excluded.event_family,
-            event_type = excluded.event_type,
-            source_engine = excluded.source_engine,
-            final_action = excluded.final_action,
-            enforceability = excluded.enforceability,
-            attribution_scope = excluded.attribution_scope,
-            origin_kind = excluded.origin_kind,
-            accounting_owner = excluded.accounting_owner,
-            trace_id = excluded.trace_id,
-            span_id = excluded.span_id,
-            parent_event_id = excluded.parent_event_id,
-            stream_id = excluded.stream_id,
-            activity_id = excluded.activity_id,
-            sequence_no = excluded.sequence_no,
-            vm_id = excluded.vm_id,
-            session_id = excluded.session_id,
-            profile_id = excluded.profile_id,
-            profile_revision = excluded.profile_revision,
-            user_id = excluded.user_id,
-            process_id = excluded.process_id,
-            parent_process_id = excluded.parent_process_id,
-            exec_id = excluded.exec_id,
-            turn_id = excluded.turn_id,
-            message_id = excluded.message_id,
-            tool_call_id = excluded.tool_call_id,
-            mcp_call_id = excluded.mcp_call_id,
-            redaction_state = excluded.redaction_state,
-            process_operation = excluded.process_operation,
-            process_command_class = excluded.process_command_class,
-            label_count = excluded.label_count,
-            mutation_count = excluded.mutation_count,
-            finding_count = excluded.finding_count",
-        params![
-            event_id,
-            timestamp,
-            common.timestamp_unix_ms as i64,
-            event.event.subject.event_family().sql_text(),
-            &common.event_type,
-            common.source_engine.sql_text(),
-            security_action_sql_text(&event.final_action),
-            common.enforceability.sql_text(),
-            common.attribution_scope.sql_text(),
-            common.origin_kind.sql_text(),
-            common.accounting_owner.as_deref(),
-            common.trace_id.as_deref(),
-            common.span_id.as_deref(),
-            common.parent_event_id.as_deref(),
-            common.stream_id.as_deref(),
-            common.activity_id.as_deref(),
-            common.sequence_no.map(|value| value as i64),
-            common.vm_id.as_deref(),
-            common.session_id.as_deref(),
-            common.profile_id.as_deref(),
-            common.profile_revision.as_deref(),
-            common.user_id.as_deref(),
-            common.process_id.as_deref(),
-            common.parent_process_id.as_deref(),
-            common.exec_id.as_deref(),
-            common.turn_id.as_deref(),
-            common.message_id.as_deref(),
-            common.tool_call_id.as_deref(),
-            common.mcp_call_id.as_deref(),
-            common.redaction_state.sql_text(),
-            process_operation,
-            process_command_class,
-            event.event.labels.len() as i64,
-            event.event.mutations.len() as i64,
-            (event.event.findings.len() + event.detection_findings.len()) as i64,
-        ],
-    )?;
-
-    for (index, step) in event.steps.iter().enumerate() {
-        let message = cap_field(&step.message);
-        conn.execute(
-            "INSERT INTO security_event_steps (
-                event_id, step_index, kind, status, rule_id, pack_id, message
-             )
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            params![
-                event_id,
-                index as i64,
-                step.kind.sql_text(),
-                step.status.sql_text(),
-                step.rule_id.as_deref(),
-                step.pack_id.as_deref(),
-                message,
-            ],
-        )?;
-    }
-
-    let mut seen_findings = HashSet::new();
-    for finding in event
-        .event
-        .findings
-        .iter()
-        .chain(event.detection_findings.iter())
-    {
-        if !seen_findings.insert(finding.finding_id.as_str()) {
-            continue;
-        }
-        conn.execute(
-            "INSERT INTO detection_findings (
-                finding_id, event_id, rule_id, pack_id, sigma_id, title,
-                severity, confidence
-             )
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-            params![
-                &finding.finding_id,
-                &finding.event_id,
-                &finding.rule_id,
-                &finding.pack_id,
-                finding.sigma_id.as_deref(),
-                &finding.title,
-                finding.severity.sql_text(),
-                finding.confidence.sql_text(),
-            ],
-        )?;
-        for (tag_index, tag) in finding.tags.iter().enumerate() {
-            conn.execute(
-                "INSERT INTO detection_finding_tags (finding_id, tag_index, tag)
-                 VALUES (?1, ?2, ?3)",
-                params![&finding.finding_id, tag_index as i64, tag],
-            )?;
-        }
-    }
-
-    if let Some(parent) = &common.parent_event_id {
-        conn.execute(
-            "INSERT INTO security_event_links (event_id, linked_event_id, link_type, evidence)
-             VALUES (?1, ?2, 'parent', ?3)",
-            params![event_id, parent, &common.event_type],
-        )?;
-    }
-    for history in &event.event.trace.history {
-        conn.execute(
-            "INSERT INTO security_event_links (event_id, linked_event_id, link_type, evidence)
-             VALUES (?1, ?2, 'trace_history', ?3)",
-            params![event_id, &history.event_id, &history.event_type],
-        )?;
-    }
-    for history in &event.event.context.history {
-        conn.execute(
-            "INSERT INTO security_event_links (event_id, linked_event_id, link_type, evidence)
-             VALUES (?1, ?2, 'context_history', ?3)",
-            params![event_id, &history.event_id, &history.event_type],
-        )?;
-    }
-
-    Ok(())
-}
-
-fn insert_telemetry_identity(
-    conn: &Connection,
-    identity: &TelemetryIdentity,
-) -> rusqlite::Result<()> {
-    let timestamp = humantime::format_rfc3339(identity.timestamp).to_string();
-    conn.execute(
-        "INSERT INTO session_identity (id, updated_at, vm_id, profile_id, user_id)
-         VALUES (1, ?1, ?2, ?3, ?4)
-         ON CONFLICT(id) DO UPDATE SET
-            updated_at = excluded.updated_at,
-            vm_id = excluded.vm_id,
-            profile_id = excluded.profile_id,
-            user_id = excluded.user_id",
-        params![
-            timestamp,
-            identity.vm_id,
-            identity.profile_id,
-            identity.user_id,
-        ],
-    )?;
-    Ok(())
 }
 
 fn insert_net_event(conn: &Connection, event: &NetEvent) -> rusqlite::Result<()> {
@@ -1481,16 +432,17 @@ fn insert_net_event(conn: &Connection, event: &NetEvent) -> rusqlite::Result<()>
     let resp_headers = cap_field(&event.response_headers);
     conn.execute(
         "INSERT INTO net_events (
-            timestamp, domain, port, decision, process_name, pid,
+            event_id, timestamp, domain, port, decision, process_name, pid,
             method, path, query, status_code,
             bytes_sent, bytes_received, duration_ms, matched_rule,
             request_headers, response_headers,
             request_body_preview, response_body_preview, conn_type,
             policy_mode, policy_action, policy_rule, policy_reason,
-            trace_id
+            trace_id, credential_ref
          )
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)",
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26)",
         params![
+            event.event_id.clone().unwrap_or_else(new_event_id),
             timestamp,
             event.domain,
             event.port as i64,
@@ -1515,6 +467,7 @@ fn insert_net_event(conn: &Connection, event: &NetEvent) -> rusqlite::Result<()>
             event.policy_rule,
             event.policy_reason,
             event.trace_id,
+            event.credential_ref,
         ],
     )?;
     Ok(())
@@ -1528,17 +481,18 @@ fn insert_model_call(conn: &Connection, call: &ModelCall) -> rusqlite::Result<()
     let sys_prompt = cap_field(&call.system_prompt_preview);
     conn.execute(
         "INSERT INTO model_calls (
-            timestamp, provider, model, process_name, pid,
+            event_id, timestamp, provider, model, process_name, pid,
             method, path, stream,
             system_prompt_preview, messages_count, tools_count,
             request_bytes, request_body_preview,
             message_id, status_code, text_content, thinking_content,
             stop_reason, input_tokens, output_tokens,
             duration_ms, response_bytes, estimated_cost_usd, trace_id,
-            usage_details
+            usage_details, credential_ref
          )
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25)",
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27)",
         params![
+            call.event_id.clone().unwrap_or_else(new_event_id),
             timestamp,
             call.provider,
             call.model,
@@ -1564,13 +518,10 @@ fn insert_model_call(conn: &Connection, call: &ModelCall) -> rusqlite::Result<()
             call.estimated_cost_usd,
             call.trace_id,
             if call.usage_details.is_empty() { None } else { Some(serde_json::to_string(&call.usage_details).unwrap_or_default()) },
+            call.credential_ref,
         ],
     )?;
     let model_call_id = conn.last_insert_rowid();
-
-    if let Some(evidence) = &call.ai_evidence {
-        insert_ai_model_evidence(conn, model_call_id, evidence)?;
-    }
 
     for tc in &call.tool_calls {
         // W6: tool_calls.trace_id falls back to the parent model_call's
@@ -1609,395 +560,19 @@ fn insert_model_call(conn: &Connection, call: &ModelCall) -> rusqlite::Result<()
     Ok(())
 }
 
-fn insert_ai_model_evidence(
-    conn: &Connection,
-    model_call_id: i64,
-    evidence: &ModelInteractionEvidence,
-) -> rusqlite::Result<()> {
-    let response = evidence.response.as_ref();
-    conn.execute(
-        "INSERT INTO ai_model_interactions (
-            model_call_id, interaction_id, trace_id,
-            attribution_scope, source_engine, origin_kind, accounting_owner,
-            profile_id, vm_id, session_id, user_id,
-            provider, api_family, model, parse_status, evidence_status,
-            request_id, request_model, request_stream,
-            request_system_prompt_preview, request_message_count,
-            request_tools_declared_count, request_raw_shape_version,
-            request_unknown_fields_present,
-            response_id, response_provider_response_id, response_stop_reason,
-            response_text_preview, response_thinking_preview,
-            response_raw_shape_version,
-            usage_input_tokens, usage_output_tokens, usage_estimated_cost_micros
-         )
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32, ?33)",
-        params![
-            model_call_id,
-            evidence.interaction_id,
-            evidence.trace_id,
-            evidence.attribution_scope.sql_text(),
-            evidence.source_engine.sql_text(),
-            evidence.origin_kind.sql_text(),
-            evidence.accounting_owner,
-            evidence.profile_id,
-            evidence.vm_id,
-            evidence.session_id,
-            evidence.user_id,
-            evidence.provider.sql_text(),
-            evidence.api_family.sql_text(),
-            evidence.model,
-            evidence.parse_status.sql_text(),
-            evidence.evidence_status.sql_text(),
-            evidence.request.request_id,
-            evidence.request.model,
-            evidence.request.stream as i64,
-            cap_field(&evidence.request.system_prompt_preview),
-            evidence.request.message_count as i64,
-            evidence.request.tools_declared_count as i64,
-            evidence.request.raw_shape_version,
-            evidence.request.unknown_fields_present as i64,
-            response.map(|r| r.response_id.as_str()),
-            response.and_then(|r| r.provider_response_id.as_deref()),
-            response.and_then(|r| r.stop_reason.as_deref()),
-            response.and_then(|r| cap_field(&r.text_preview)),
-            response.and_then(|r| cap_field(&r.thinking_preview)),
-            response.map(|r| r.raw_shape_version.as_str()),
-            evidence.usage.input_tokens.map(|t| t as i64),
-            evidence.usage.output_tokens.map(|t| t as i64),
-            evidence.usage.estimated_cost_micros.map(|c| c as i64),
-        ],
-    )?;
-    let interaction_row_id = conn.last_insert_rowid();
-
-    insert_ai_usage_details(conn, interaction_row_id, "interaction", &evidence.usage)?;
-    if let Some(response) = response {
-        insert_ai_usage_details(conn, interaction_row_id, "response", &response.usage)?;
-        for (index, block) in response.content_blocks.iter().enumerate() {
-            insert_ai_content_block(conn, interaction_row_id, index as i64, block)?;
-        }
-    }
-
-    for tool_call in &evidence.tool_calls {
-        conn.execute(
-            "INSERT INTO ai_model_tool_calls (
-                interaction_id, tool_call_id, call_index, provider_call_id,
-                raw_name, normalized_name, arguments_raw, arguments_json,
-                arguments_status, origin, linked_mcp_call_id, status,
-                parse_confidence
-             )
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
-            params![
-                interaction_row_id,
-                tool_call.tool_call_id,
-                tool_call.index as i64,
-                tool_call.provider_call_id,
-                tool_call.raw_name,
-                tool_call.normalized_name,
-                tool_call.arguments_raw,
-                tool_call.arguments_json,
-                tool_call.arguments_status.sql_text(),
-                tool_call.origin.sql_text(),
-                tool_call.linked_mcp_call_id,
-                tool_call.status.sql_text(),
-                tool_call.parse_confidence.sql_text(),
-            ],
-        )?;
-    }
-
-    for tool_result in &evidence.tool_results {
-        conn.execute(
-            "INSERT INTO ai_model_tool_results (
-                interaction_id, tool_call_id, linked_mcp_call_id,
-                content_kind, content_preview, content_json, is_error,
-                result_status, returned_to_model, parse_confidence
-             )
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
-            params![
-                interaction_row_id,
-                tool_result.tool_call_id,
-                tool_result.linked_mcp_call_id,
-                tool_result.content_kind.sql_text(),
-                cap_field(&tool_result.content_preview),
-                tool_result.content_json,
-                tool_result.is_error as i64,
-                tool_result.result_status.sql_text(),
-                tool_result.returned_to_model as i64,
-                tool_result.parse_confidence.sql_text(),
-            ],
-        )?;
-    }
-
-    for execution in &evidence.mcp_executions {
-        conn.execute(
-            "INSERT INTO ai_mcp_execution_evidence (
-                interaction_id, mcp_call_id, server_id, tool_name,
-                namespaced_tool_name, transport, request_arguments_raw,
-                request_arguments_json, result_kind, result_preview,
-                result_json, is_error, latency_ms, linked_model_interaction_id,
-                linked_model_tool_call_id, link_status
-             )
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
-            params![
-                interaction_row_id,
-                execution.mcp_call_id,
-                execution.server_id,
-                execution.tool_name,
-                execution.namespaced_tool_name,
-                execution.transport,
-                execution.request_arguments_raw,
-                execution.request_arguments_json,
-                execution.result_kind.sql_text(),
-                cap_field(&execution.result_preview),
-                execution.result_json,
-                execution.is_error as i64,
-                execution.latency_ms as i64,
-                execution.linked_model_interaction_id,
-                execution.linked_model_tool_call_id,
-                execution.link_status.sql_text(),
-            ],
-        )?;
-    }
-
-    Ok(())
-}
-
-fn insert_ai_usage_details(
-    conn: &Connection,
-    interaction_id: i64,
-    scope: &str,
-    usage: &AiUsageEvidence,
-) -> rusqlite::Result<()> {
-    for (name, value) in &usage.details {
-        conn.execute(
-            "INSERT INTO ai_usage_details (interaction_id, scope, name, value)
-             VALUES (?1, ?2, ?3, ?4)",
-            params![interaction_id, scope, name, *value as i64],
-        )?;
-    }
-    Ok(())
-}
-
-fn insert_ai_content_block(
-    conn: &Connection,
-    interaction_id: i64,
-    block_index: i64,
-    block: &AiContentBlock,
-) -> rusqlite::Result<()> {
-    let (
-        kind,
-        text_preview,
-        json_preview,
-        mime_type,
-        redacted,
-        file_name,
-        path_class,
-        tool_call_id,
-        name,
-        is_error,
-        marker,
-        reason,
-        raw_type,
-    ) = match block {
-        AiContentBlock::Text { text_preview } => (
-            "text",
-            Some(text_preview.clone()),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-        ),
-        AiContentBlock::Json { json_preview } => (
-            "json",
-            None,
-            Some(json_preview.clone()),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-        ),
-        AiContentBlock::Image {
-            mime_type,
-            redacted,
-        } => (
-            "image",
-            None,
-            None,
-            Some(mime_type.clone()),
-            Some(*redacted as i64),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-        ),
-        AiContentBlock::File {
-            file_name,
-            path_class,
-        } => (
-            "file",
-            None,
-            None,
-            None,
-            None,
-            Some(file_name.clone()),
-            Some(path_class.clone()),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-        ),
-        AiContentBlock::ToolUse { tool_call_id, name } => (
-            "tool_use",
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            Some(tool_call_id.clone()),
-            Some(name.clone()),
-            None,
-            None,
-            None,
-            None,
-        ),
-        AiContentBlock::ToolResult {
-            tool_call_id,
-            is_error,
-        } => (
-            "tool_result",
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            Some(tool_call_id.clone()),
-            None,
-            Some(*is_error as i64),
-            None,
-            None,
-            None,
-        ),
-        AiContentBlock::Reasoning { text_preview } => (
-            "reasoning",
-            Some(text_preview.clone()),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-        ),
-        AiContentBlock::CacheMarker { marker } => (
-            "cache_marker",
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            Some(marker.clone()),
-            None,
-            None,
-        ),
-        AiContentBlock::Redacted { reason } => (
-            "redacted",
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            Some(reason.clone()),
-            None,
-        ),
-        AiContentBlock::Unknown { raw_type } => (
-            "unknown",
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            raw_type.clone(),
-        ),
-    };
-
-    conn.execute(
-        "INSERT INTO ai_content_blocks (
-            interaction_id, block_index, kind, text_preview, json_preview,
-            mime_type, redacted, file_name, path_class, tool_call_id, name,
-            is_error, marker, reason, raw_type
-         )
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
-        params![
-            interaction_id,
-            block_index,
-            kind,
-            cap_field(&text_preview),
-            cap_field(&json_preview),
-            mime_type,
-            redacted,
-            file_name,
-            path_class,
-            tool_call_id,
-            name,
-            is_error,
-            marker,
-            reason,
-            raw_type,
-        ],
-    )?;
-    Ok(())
-}
-
 fn insert_file_event(conn: &Connection, event: &FileEvent) -> rusqlite::Result<()> {
     let timestamp = humantime::format_rfc3339(event.timestamp).to_string();
     conn.execute(
-        "INSERT INTO fs_events (timestamp, action, path, size, trace_id)
-         VALUES (?1, ?2, ?3, ?4, ?5)",
+        "INSERT INTO fs_events (event_id, timestamp, action, path, size, trace_id, credential_ref)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
         params![
+            event.event_id.clone().unwrap_or_else(new_event_id),
             timestamp,
             event.action.as_str(),
             event.path,
             event.size.map(|s| s as i64),
             event.trace_id,
+            event.credential_ref,
         ],
     )?;
     Ok(())
@@ -2009,15 +584,16 @@ fn insert_mcp_call(conn: &Connection, call: &McpCall) -> rusqlite::Result<()> {
     let resp_preview = cap_field(&call.response_preview);
     conn.execute(
         "INSERT INTO mcp_calls (
-            timestamp, server_name, method, tool_name, request_id,
+            event_id, timestamp, server_name, method, tool_name, request_id,
             request_preview, response_preview, decision,
             duration_ms, error_message, process_name,
             bytes_sent, bytes_received,
             policy_mode, policy_action, policy_rule, policy_reason,
-            trace_id
+            trace_id, credential_ref
          )
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)",
         params![
+            call.event_id.clone().unwrap_or_else(new_event_id),
             timestamp,
             call.server_name,
             call.method,
@@ -2036,169 +612,22 @@ fn insert_mcp_call(conn: &Connection, call: &McpCall) -> rusqlite::Result<()> {
             call.policy_rule,
             call.policy_reason,
             call.trace_id,
+            call.credential_ref,
         ],
     )?;
-    let mcp_row_id = conn.last_insert_rowid();
-    link_mcp_execution_evidence(conn, mcp_row_id, call)?;
     Ok(())
-}
-
-fn link_mcp_execution_evidence(
-    conn: &Connection,
-    mcp_row_id: i64,
-    call: &McpCall,
-) -> rusqlite::Result<()> {
-    if call.method != "tools/call" {
-        return Ok(());
-    }
-    let Some(namespaced_tool_name) = call.tool_name.as_deref() else {
-        return Ok(());
-    };
-    let normalized_tool_name = namespaced_tool_name.replace("__", ".");
-    let (server_id, tool_name) = namespaced_tool_name
-        .split_once("__")
-        .map(|(server, tool)| (server.to_string(), tool.to_string()))
-        .unwrap_or_else(|| (call.server_name.clone(), namespaced_tool_name.to_string()));
-    let mcp_call_id = mcp_row_id.to_string();
-    let result_kind = if call
-        .response_preview
-        .as_deref()
-        .and_then(|preview| serde_json::from_str::<serde_json::Value>(preview).ok())
-        .is_some()
-    {
-        AiContentKind::Json
-    } else {
-        AiContentKind::Text
-    };
-    let request_arguments = mcp_request_arguments_json(call.request_preview.as_deref());
-    let (linked_interaction_row_id, linked_interaction_id, linked_tool_call_id, link_status) =
-        find_matching_model_tool_call(conn, call.trace_id.as_deref(), &normalized_tool_name)?;
-    let status = mcp_decision_tool_status(&call.decision);
-
-    conn.execute(
-        "INSERT INTO ai_mcp_execution_evidence (
-            interaction_id, mcp_call_id, server_id, tool_name,
-            namespaced_tool_name, transport, request_arguments_raw,
-            request_arguments_json, result_kind, result_preview,
-            result_json, is_error, latency_ms, linked_model_interaction_id,
-            linked_model_tool_call_id, link_status
-         )
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
-        params![
-            linked_interaction_row_id,
-            mcp_call_id,
-            server_id,
-            tool_name,
-            namespaced_tool_name,
-            "mcp-framed",
-            request_arguments,
-            request_arguments,
-            result_kind.sql_text(),
-            cap_field(&call.response_preview),
-            call.response_preview,
-            (call.decision == "error" || call.error_message.is_some()) as i64,
-            call.duration_ms as i64,
-            linked_interaction_id,
-            linked_tool_call_id,
-            link_status.sql_text(),
-        ],
-    )?;
-
-    if let (Some(interaction_row_id), Some(tool_call_id)) =
-        (linked_interaction_row_id, linked_tool_call_id.as_deref())
-    {
-        conn.execute(
-            "UPDATE ai_model_tool_calls
-             SET linked_mcp_call_id = ?1, status = ?2
-             WHERE interaction_id = ?3 AND tool_call_id = ?4",
-            params![
-                mcp_call_id,
-                status.sql_text(),
-                interaction_row_id,
-                tool_call_id
-            ],
-        )?;
-        if let Some(trace_id) = call.trace_id.as_deref() {
-            conn.execute(
-                "UPDATE tool_calls
-                 SET mcp_call_id = ?1
-                 WHERE trace_id = ?2
-                   AND replace(tool_name, '__', '.') = ?3
-                   AND mcp_call_id IS NULL",
-                params![mcp_row_id, trace_id, normalized_tool_name],
-            )?;
-        }
-    }
-
-    Ok(())
-}
-
-fn find_matching_model_tool_call(
-    conn: &Connection,
-    trace_id: Option<&str>,
-    normalized_tool_name: &str,
-) -> rusqlite::Result<ModelToolCallMatch> {
-    let Some(trace_id) = trace_id else {
-        return Ok((None, None, None, LinkStatus::UnlinkedPending));
-    };
-    let mut stmt = conn.prepare(
-        "SELECT ami.id, ami.interaction_id, atc.tool_call_id
-         FROM ai_model_interactions ami
-         JOIN ai_model_tool_calls atc ON atc.interaction_id = ami.id
-         WHERE ami.trace_id = ?1
-           AND atc.normalized_name = ?2
-           AND atc.linked_mcp_call_id IS NULL
-         ORDER BY atc.id ASC",
-    )?;
-    let rows = stmt
-        .query_map(params![trace_id, normalized_tool_name], |row| {
-            Ok((
-                row.get::<_, i64>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, String>(2)?,
-            ))
-        })?
-        .collect::<rusqlite::Result<Vec<_>>>()?;
-    match rows.len() {
-        0 => Ok((None, None, None, LinkStatus::OrphanMcpExecution)),
-        1 => {
-            let (row_id, interaction_id, tool_call_id) = rows[0].clone();
-            Ok((
-                Some(row_id),
-                Some(interaction_id),
-                Some(tool_call_id),
-                LinkStatus::Linked,
-            ))
-        }
-        _ => Ok((None, None, None, LinkStatus::Ambiguous)),
-    }
-}
-
-fn mcp_request_arguments_json(request_preview: Option<&str>) -> Option<String> {
-    let preview = request_preview?;
-    let value = serde_json::from_str::<serde_json::Value>(preview).ok()?;
-    value
-        .get("arguments")
-        .and_then(|arguments| serde_json::to_string(arguments).ok())
-}
-
-fn mcp_decision_tool_status(decision: &str) -> ToolCallStatus {
-    match decision {
-        "denied" => ToolCallStatus::Blocked,
-        "error" => ToolCallStatus::Error,
-        _ => ToolCallStatus::Executed,
-    }
 }
 
 fn insert_snapshot_event(conn: &Connection, event: &SnapshotEvent) -> rusqlite::Result<()> {
     let timestamp = humantime::format_rfc3339(event.timestamp).to_string();
     conn.execute(
         "INSERT INTO snapshot_events (
-            timestamp, slot, origin, name, files_count,
+            event_id, timestamp, slot, origin, name, files_count,
             start_fs_event_id, stop_fs_event_id, trace_id
          )
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
         params![
+            event.event_id.clone().unwrap_or_else(new_event_id),
             timestamp,
             event.slot as i64,
             event.origin,
@@ -2216,10 +645,11 @@ fn insert_exec_event(conn: &Connection, event: &ExecEvent) -> rusqlite::Result<(
     let timestamp = humantime::format_rfc3339(event.timestamp).to_string();
     conn.execute(
         "INSERT INTO exec_events (
-            timestamp, exec_id, command, source, mcp_call_id, trace_id, process_name
+            event_id, timestamp, exec_id, command, source, mcp_call_id, trace_id, process_name, credential_ref
          )
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
         params![
+            event.event_id.clone().unwrap_or_else(new_event_id),
             timestamp,
             event.exec_id as i64,
             event.command,
@@ -2227,6 +657,7 @@ fn insert_exec_event(conn: &Connection, event: &ExecEvent) -> rusqlite::Result<(
             event.mcp_call_id.map(|id| id as i64),
             event.trace_id,
             event.process_name,
+            event.credential_ref,
         ],
     )?;
     Ok(())
@@ -2263,12 +694,13 @@ fn insert_dns_event(conn: &Connection, event: &DnsEvent) -> rusqlite::Result<()>
     let timestamp = humantime::format_rfc3339(event.timestamp).to_string();
     conn.execute(
         "INSERT INTO dns_events (
-            timestamp, qname, qtype, qclass, rcode, decision, matched_rule,
+            event_id, timestamp, qname, qtype, qclass, rcode, decision, matched_rule,
             source_proto, process_name, upstream_resolver_ms, trace_id,
-            policy_mode, policy_action, policy_rule, policy_reason
+            policy_mode, policy_action, policy_rule, policy_reason, credential_ref
          )
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
         params![
+            event.event_id.clone().unwrap_or_else(new_event_id),
             timestamp,
             event.qname,
             event.qtype as i64,
@@ -2284,6 +716,7 @@ fn insert_dns_event(conn: &Connection, event: &DnsEvent) -> rusqlite::Result<()>
             event.policy_action,
             event.policy_rule,
             event.policy_reason,
+            event.credential_ref,
         ],
     )?;
     Ok(())
@@ -2293,11 +726,12 @@ fn insert_audit_event(conn: &Connection, event: &AuditEvent) -> rusqlite::Result
     let timestamp = humantime::format_rfc3339(event.timestamp).to_string();
     conn.execute(
         "INSERT INTO audit_events (
-            timestamp, pid, ppid, uid, exe, comm, argv, cwd,
-            session_id, tty, audit_id, exec_event_id, parent_exe, trace_id
+            event_id, timestamp, pid, ppid, uid, exe, comm, argv, cwd,
+            session_id, tty, audit_id, exec_event_id, parent_exe, trace_id, credential_ref
          )
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
         params![
+            event.event_id.clone().unwrap_or_else(new_event_id),
             timestamp,
             event.pid as i64,
             event.ppid as i64,
@@ -2311,6 +745,113 @@ fn insert_audit_event(conn: &Connection, event: &AuditEvent) -> rusqlite::Result
             event.audit_id,
             event.exec_event_id,
             event.parent_exe,
+            event.trace_id,
+            event.credential_ref,
+        ],
+    )?;
+    Ok(())
+}
+
+fn insert_substitution_event(conn: &Connection, event: &SubstitutionEvent) -> rusqlite::Result<()> {
+    let timestamp = humantime::format_rfc3339(event.timestamp).to_string();
+    conn.execute(
+        "INSERT INTO substitution_events (
+            event_id, timestamp, material_class, source, event_type, algorithm,
+            substitution_ref, outcome, provider, confidence, trace_id, context_json
+         )
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+        params![
+            event.event_id.clone().unwrap_or_else(new_event_id),
+            timestamp,
+            event.material_class,
+            event.source,
+            event.event_type,
+            event.algorithm,
+            event.substitution_ref,
+            event.outcome,
+            event.provider,
+            event.confidence,
+            event.trace_id,
+            event.context_json,
+        ],
+    )?;
+    Ok(())
+}
+
+fn insert_security_rule_event(
+    conn: &Connection,
+    event: &SecurityRuleEvent,
+) -> rusqlite::Result<()> {
+    conn.execute(
+        "INSERT INTO security_rule_events (
+            timestamp_unix_ms, event_id, event_type, rule_id,
+            rule_action, detection_level, rule_json, event_json, trace_id
+         )
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        params![
+            event.timestamp_unix_ms,
+            event.event_id,
+            event.event_type,
+            event.rule_id,
+            event.rule_action.as_str(),
+            event.detection_level.as_str(),
+            event.rule_json,
+            event.event_json,
+            event.trace_id,
+        ],
+    )?;
+    Ok(())
+}
+
+fn insert_security_ask_event(conn: &Connection, event: &SecurityAskEvent) -> rusqlite::Result<()> {
+    conn.execute(
+        "INSERT INTO security_ask_events (
+            timestamp_unix_ms, ask_id, event_id, event_type, rule_id, rule_name,
+            status, rule_json, event_json, resolver, reason, trace_id
+         )
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+        params![
+            event.timestamp_unix_ms,
+            event.ask_id,
+            event.event_id,
+            event.event_type,
+            event.rule_id,
+            event.rule_name,
+            event.status.as_str(),
+            event.rule_json,
+            event.event_json,
+            event.resolver,
+            event.reason,
+            event.trace_id,
+        ],
+    )?;
+    Ok(())
+}
+
+fn insert_security_decision_event(
+    conn: &Connection,
+    event: &SecurityDecisionEvent,
+) -> rusqlite::Result<()> {
+    conn.execute(
+        "INSERT INTO security_decision_events (
+            timestamp_unix_ms, event_id, event_type, stage, actor,
+            rule_id, plugin_id, previous_decision, requested_decision,
+            effective_decision, reason, event_json, trace_id
+         )
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+        params![
+            event.timestamp_unix_ms,
+            event.event_id,
+            event.event_type,
+            event.stage.as_str(),
+            event.actor,
+            event.rule_id,
+            event.plugin_id,
+            event.previous_decision.as_str(),
+            event.requested_decision.as_str(),
+            event.effective_decision.as_str(),
+            event.reason,
+            event.event_json,
             event.trace_id,
         ],
     )?;

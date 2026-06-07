@@ -1,14 +1,11 @@
 ---
 name: dev-skills
-description: How AI agent skills work -- discovery, loading, triggering, format, and organization. Use when building Capsem's skills system, implementing skill discovery for guest AI agents, or understanding how Claude Code, Gemini CLI, Codex, and Cursor consume SKILL.md files. Covers the SKILL.md format, discovery mechanics, progressive disclosure, naming conventions, and lessons learned from setting up this project's skills.
+description: How AI agent skills work -- discovery, loading, triggering, format, and organization. Use when building Capsem's skills system, implementing skill discovery for guest AI agents, or understanding how Claude Code and Gemini CLI consume SKILL.md files. Covers the SKILL.md format, discovery mechanics, progressive disclosure, naming conventions, and lessons learned from setting up this project's skills.
 ---
 
 # AI Agent Skills System
 
-This documents everything we know about how skills work across Claude Code,
-Gemini CLI, Codex, and Cursor, learned from building and organizing this
-project's skills. This knowledge will inform Capsem's own skills system for
-guest AI agents.
+This documents everything we know about how skills work across Claude Code and Gemini CLI, learned from building and organizing this project's 18+ skills. This knowledge will inform Capsem's own skills system for guest AI agents.
 
 ## Discovery
 
@@ -22,14 +19,7 @@ guest AI agents.
 ### Gemini CLI
 - Looks in `.agents/skills/` or `.gemini/skills/`
 - Same `<name>/SKILL.md` format as Claude Code
-- We use `.agents/skills -> ../skills` and `.gemini/skills -> ../skills`
-  symlinks
-
-### Codex and Cursor
-- Project-local `.codex/skills/` and `.cursor/skills/` point to the shared
-  `skills/` directory so those clients consume the same project skills.
-- `bootstrap.sh` creates `.claude`, `.agents`, `.gemini`, `.codex`, and
-  `.cursor` skill symlinks non-destructively.
+- We use `.agents/skills -> ../skills` symlink
 
 ### What does NOT work
 - Nested categories: `skills/dev/testing/SKILL.md` is not found by either CLI
@@ -88,8 +78,7 @@ skills/
   meta-find-skills/SKILL.md     meta category
 ```
 
-Categories we use: `meta-*`, `dev-*`, `build-*`, `release-*`, `site-*`,
-`frontend-*`.
+Categories we use: `meta-*`, `dev-*`, `build-*`, `release-*`, `site-*`, `frontend-*`.
 
 ## Bundled resources pattern
 
@@ -141,5 +130,4 @@ Skills in `~/.claude/skills/` are available across all projects. We install meta
 5. **One skill per concern.** MCP and MITM proxy are separate skills even though both handle network traffic -- they have different trigger conditions.
 6. **Cross-reference between skills** using "See dev-testing-vm for..." style pointers in the body.
 7. **Skills load on demand** -- having 18 skills costs nothing when they're not triggered. Don't try to merge skills to save space.
-8. **Agent clients read the same format.** SKILL.md with YAML frontmatter works
-   for Claude Code, Gemini CLI, Codex, and Cursor. No duplication needed.
+8. **Both CLIs read the same format.** SKILL.md with YAML frontmatter works for Claude Code and Gemini CLI. No duplication needed.

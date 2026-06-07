@@ -117,66 +117,6 @@ fn api_response_ok_variant() {
 }
 
 #[test]
-fn provision_response_preserves_profile_provenance() {
-    let json = r#"{
-      "id": "vm-1",
-      "uds_path": "/tmp/capsem/vm-1.sock",
-      "profile_id": "coding",
-      "profile_revision": "2026.0520.1",
-      "profile_status": "current",
-      "profile_pin": {
-        "profile_id": "coding",
-        "profile_revision": "2026.0520.1",
-        "profile_payload_hash": "blake3:profile",
-        "package_contract_hash": "blake3:packages",
-        "base_assets": {
-          "asset_version": "2026.0520.1",
-          "arch": "arm64",
-          "kernel_hash": "blake3:kernel",
-          "initrd_hash": "blake3:initrd",
-          "rootfs_hash": "blake3:rootfs",
-          "guest_abi": "capsem-guest-v1"
-        }
-      },
-      "asset_health": {
-        "ready": true,
-        "state": "ready",
-        "profile_id": "coding",
-        "profile_revision": "2026.0520.1",
-        "profile_payload_hash": "blake3:profile",
-        "profile_assets": [
-          {
-            "logical_name": "rootfs.squashfs",
-            "hash": "blake3:rootfs",
-            "source_url": "https://assets.example/rootfs.squashfs",
-            "size": 123,
-            "content_type": "application/octet-stream"
-          }
-        ],
-        "version": "2026.0520.1",
-        "arch": "arm64",
-        "missing": [],
-        "retry_count": 0,
-        "retryable": false,
-        "saved_vm_dependencies": []
-      }
-    }"#;
-    let resp: ApiResponse<ProvisionResponse> = serde_json::from_str(json).unwrap();
-    let result = resp.into_result().unwrap();
-
-    assert_eq!(result.profile_id.as_deref(), Some("coding"));
-    assert_eq!(result.profile_revision.as_deref(), Some("2026.0520.1"));
-    assert_eq!(result.profile_status, Some(SessionProfileStatus::Current));
-    let pin = result.profile_pin.unwrap();
-    assert_eq!(pin.profile_payload_hash.as_deref(), Some("blake3:profile"));
-    assert_eq!(pin.package_contract_hash, "blake3:packages");
-    assert_eq!(pin.base_assets.unwrap().rootfs_hash, "blake3:rootfs");
-    let health = result.asset_health.unwrap();
-    assert_eq!(health.profile_assets[0].logical_name, "rootfs.squashfs");
-    assert_eq!(health.profile_assets[0].hash, "blake3:rootfs");
-}
-
-#[test]
 fn api_response_err_variant() {
     let json = r#"{"error":"sandbox not found"}"#;
     let resp: ApiResponse<ProvisionResponse> = serde_json::from_str(json).unwrap();
@@ -232,8 +172,6 @@ fn provision_request_serde() {
         persistent: true,
         env: None,
         from: None,
-        profile_id: None,
-        profile_revision: None,
     };
     let json = serde_json::to_string(&req).unwrap();
     let req2: ProvisionRequest = serde_json::from_str(&json).unwrap();
@@ -254,8 +192,6 @@ fn provision_request_with_env() {
         persistent: true,
         env: Some(env),
         from: None,
-        profile_id: None,
-        profile_revision: None,
     };
     let json = serde_json::to_string(&req).unwrap();
     assert!(json.contains("FOO"));
@@ -272,8 +208,6 @@ fn provision_request_env_omitted_when_none() {
         persistent: false,
         env: None,
         from: None,
-        profile_id: None,
-        profile_revision: None,
     };
     let json = serde_json::to_string(&req).unwrap();
     assert!(!json.contains("env"));
@@ -288,8 +222,6 @@ fn provision_request_with_from() {
         persistent: false,
         env: None,
         from: Some("my-sandbox".into()),
-        profile_id: None,
-        profile_revision: None,
     };
     let json = serde_json::to_string(&req).unwrap();
     assert!(json.contains("my-sandbox"));
@@ -306,8 +238,6 @@ fn provision_request_from_omitted_when_none() {
         persistent: false,
         env: None,
         from: None,
-        profile_id: None,
-        profile_revision: None,
     };
     let json = serde_json::to_string(&req).unwrap();
     assert!(!json.contains("from"));
@@ -315,10 +245,7 @@ fn provision_request_from_omitted_when_none() {
 
 #[test]
 fn list_response_empty_serde() {
-    let resp = ListResponse {
-        sessions: vec![],
-        asset_health: None,
-    };
+    let resp = ListResponse { sessions: vec![] };
     let json = serde_json::to_string(&resp).unwrap();
     // Wire format uses "sandboxes" key
     assert!(json.contains("sandboxes"));
@@ -339,26 +266,8 @@ fn list_response_with_entries() {
                 ram_mb: Some(2048),
                 cpus: Some(2),
                 version: Some("0.16.1".into()),
-                base_assets: Some(SavedVmBaseAssets {
-                    asset_version: "2026.0520.1".into(),
-                    arch: "arm64".into(),
-                    kernel_hash: "blake3:kernel".into(),
-                    initrd_hash: "blake3:initrd".into(),
-                    rootfs_hash: "blake3:rootfs".into(),
-                    guest_abi: None,
-                }),
-                profile_pin: Some(SavedVmProfilePin {
-                    profile_id: "everyday-work".into(),
-                    profile_revision: Some("2026.0520.2".into()),
-                    profile_payload_hash: Some("blake3:profile".into()),
-                    package_contract_hash: "blake3:packages".into(),
-                    base_assets: None,
-                }),
                 forked_from: None,
                 description: None,
-                profile_id: Some("everyday-work".into()),
-                profile_revision: Some("2026.0520.2".into()),
-                profile_status: Some(SessionProfileStatus::Current),
                 created_at: None,
                 uptime_secs: Some(3600),
                 total_input_tokens: None,
@@ -382,13 +291,8 @@ fn list_response_with_entries() {
                 ram_mb: Some(4096),
                 cpus: Some(4),
                 version: None,
-                base_assets: None,
-                profile_pin: None,
                 forked_from: None,
                 description: None,
-                profile_id: None,
-                profile_revision: None,
-                profile_status: Some(SessionProfileStatus::Corrupted),
                 created_at: None,
                 uptime_secs: None,
                 total_input_tokens: None,
@@ -404,41 +308,14 @@ fn list_response_with_entries() {
                 last_error: None,
             },
         ],
-        asset_health: None,
     };
     let json = serde_json::to_string(&resp).unwrap();
     let resp2: ListResponse = serde_json::from_str(&json).unwrap();
     assert_eq!(resp2.sessions.len(), 2);
     assert_eq!(resp2.sessions[0].id, "vm-1");
     assert!(!resp2.sessions[0].persistent);
-    assert_eq!(
-        resp2.sessions[0].profile_id.as_deref(),
-        Some("everyday-work")
-    );
-    assert_eq!(
-        resp2.sessions[0].profile_revision.as_deref(),
-        Some("2026.0520.2")
-    );
-    assert_eq!(
-        resp2.sessions[0].profile_status,
-        Some(SessionProfileStatus::Current)
-    );
-    let pin = resp2.sessions[0].profile_pin.as_ref().unwrap();
-    assert_eq!(pin.profile_payload_hash.as_deref(), Some("blake3:profile"));
-    assert_eq!(pin.package_contract_hash, "blake3:packages");
-    assert_eq!(
-        resp2.sessions[0]
-            .base_assets
-            .as_ref()
-            .map(|assets| assets.rootfs_hash.as_str()),
-        Some("blake3:rootfs")
-    );
     assert_eq!(resp2.sessions[1].id, "mydev");
     assert!(resp2.sessions[1].persistent);
-    assert_eq!(
-        resp2.sessions[1].profile_status,
-        Some(SessionProfileStatus::Corrupted)
-    );
 }
 
 #[test]
@@ -562,16 +439,12 @@ fn run_request_serde() {
     let req = RunRequest {
         command: "echo hi".into(),
         timeout_secs: Some(60),
-        profile_id: Some("coding".into()),
-        profile_revision: Some("2026.0520.1".into()),
         env: Some(env),
     };
     let json = serde_json::to_string(&req).unwrap();
     let req2: RunRequest = serde_json::from_str(&json).unwrap();
     assert_eq!(req2.command, "echo hi");
     assert_eq!(req2.timeout_secs, Some(60));
-    assert_eq!(req2.profile_id.as_deref(), Some("coding"));
-    assert_eq!(req2.profile_revision.as_deref(), Some("2026.0520.1"));
     assert_eq!(req2.env.unwrap().get("KEY").unwrap(), "val");
 }
 
@@ -580,8 +453,6 @@ fn run_request_env_omitted_when_none() {
     let req = RunRequest {
         command: "ls".into(),
         timeout_secs: None,
-        profile_id: None,
-        profile_revision: None,
         env: None,
     };
     let json = serde_json::to_string(&req).unwrap();
@@ -595,7 +466,6 @@ fn logs_response_serde() {
         logs: "boot log".into(),
         serial_logs: Some("serial output".into()),
         process_logs: None,
-        security_logs: None,
     };
     let json = serde_json::to_string(&resp).unwrap();
     let resp2: LogsResponse = serde_json::from_str(&json).unwrap();

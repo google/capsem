@@ -8,10 +8,9 @@
 //! Google, landing in the next slice) can drain new events on every
 //! chunk.
 //!
-//! The hook gates internally: only AI-provider domains run the parser,
-//! so registering it in the production pipeline is free for non-AI
-//! traffic. The check uses `detect_ai_provider` so the SSE parsing
-//! surface tracks the provider routing surface exactly.
+//! The hook gates internally: only connections whose runtime metadata
+//! already carries a model protocol run the parser, so registering it
+//! in the production pipeline is free for non-AI traffic.
 
 #![allow(dead_code)]
 
@@ -19,7 +18,7 @@ use bytes::Bytes;
 
 use super::hooks::{ChunkCtx, ChunkHook, ConnMeta};
 use crate::net::ai_traffic::provider::ProviderKind;
-use capsem_network_engine::sse_parser::{SseEvent, SseParser};
+use crate::net::parsers::sse_parser::{SseEvent, SseParser};
 
 /// Per-request producer/consumer slot for parsed SSE events.
 ///
@@ -48,21 +47,8 @@ struct SseParserState {
     initialized: bool,
 }
 
-/// Detect AI provider from a domain. Mirrors `mitm_proxy::detect_ai_provider`
-/// but lives here so the hook's gating surface is independent of the
-/// outer module's private helper.
-fn detect_ai_provider(domain: &str) -> Option<ProviderKind> {
-    match domain {
-        "api.anthropic.com" => Some(ProviderKind::Anthropic),
-        "api.openai.com" => Some(ProviderKind::OpenAi),
-        "generativelanguage.googleapis.com" => Some(ProviderKind::Google),
-        _ => None,
-    }
-}
-
 fn conn_ai_provider(conn: &ConnMeta) -> Option<ProviderKind> {
     conn.ai_provider
-        .or_else(|| detect_ai_provider(&conn.domain))
 }
 
 /// `ChunkHook` that runs the shared `SseParser` over the response

@@ -1,1 +1,0 @@
-process.activity.operation == 'exec' && process.activity.command_class == 'shell'

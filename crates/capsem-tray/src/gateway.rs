@@ -9,59 +9,9 @@ pub struct StatusResponse {
     pub service: String,
     pub vm_count: u32,
     pub vms: Vec<VmSummary>,
-    #[serde(default)]
-    pub assets: Option<AssetHealth>,
     /// Client-side measured latency (not from gateway). Set by the tray poller.
     #[serde(skip)]
     pub latency_ms: Option<u32>,
-}
-
-#[derive(Debug, Clone, PartialEq, Deserialize)]
-#[allow(dead_code)]
-pub struct AssetHealth {
-    pub ready: bool,
-    #[serde(default = "default_asset_state")]
-    pub state: String,
-    #[serde(default)]
-    pub version: Option<String>,
-    #[serde(default)]
-    pub arch: Option<String>,
-    #[serde(default)]
-    pub missing: Vec<String>,
-    #[serde(default)]
-    pub progress: Option<AssetProgress>,
-    #[serde(default)]
-    pub error: Option<String>,
-    #[serde(default)]
-    pub retry_count: u32,
-    #[serde(default)]
-    pub retryable: bool,
-    #[serde(default)]
-    pub saved_vm_dependencies: Vec<SavedVmAssetDependency>,
-}
-
-#[derive(Debug, Clone, PartialEq, Deserialize)]
-#[allow(dead_code)]
-pub struct SavedVmAssetDependency {
-    pub vm: String,
-    pub asset_version: String,
-    pub arch: String,
-    pub missing: Vec<String>,
-    pub recovery_hint: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Deserialize)]
-#[allow(dead_code)]
-pub struct AssetProgress {
-    pub logical_name: String,
-    pub bytes_done: u64,
-    #[serde(default)]
-    pub bytes_total: Option<u64>,
-    pub done: bool,
-}
-
-fn default_asset_state() -> String {
-    "unknown".to_string()
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]

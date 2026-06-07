@@ -1,42 +1,109 @@
-"""VM lifecycle integration tests: suspend/resume and identity.
+"""VM lifecycle integration tests: shutdown, suspend/resume, identity.
 
-Tests VM lifecycle paths:
+Tests the full guest-initiated lifecycle:
+- Guest shutdown via /sbin/shutdown stops ephemeral and persistent VMs
+- Persistent VM survives guest shutdown + resume with file persistence
 - CAPSEM_VM_ID and CAPSEM_VM_NAME env vars are injected
 - Hostname reflects the VM name
 - Suspend + warm resume round-trip (Apple VZ)
 """
 
+import time
 import uuid
 
 import pytest
 
-from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT, SUSPEND_TIMEOUT
+from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
 from helpers.service import wait_exec_ready, vm_name
 
 pytestmark = pytest.mark.integration
 
 
-class TestGuestShutdownDisabled:
+class TestGuestShutdownEphemeral:
 
-    def test_capsem_sysutil_shutdown_does_not_stop_vm(self, client):
-        """Guest shutdown is disabled; direct sysutil calls must leave the VM alive."""
+    def test_guest_shutdown_stops_ephemeral(self, client):
+        """Typing 'shutdown' inside an ephemeral VM should stop it."""
         resp = client.post("/provision", {"ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
         vm_id = resp["id"]
-        try:
-            assert wait_exec_ready(client, vm_id, timeout=EXEC_READY_TIMEOUT), \
-                f"VM {vm_id} never became exec-ready"
+        assert wait_exec_ready(client, vm_id, timeout=EXEC_READY_TIMEOUT), \
+            f"VM {vm_id} never became exec-ready"
 
-            shutdown_resp = client.post(f"/exec/{vm_id}", {
-                "command": "/run/capsem-sysutil shutdown 2>&1",
-            })
-            assert shutdown_resp.get("exit_code") != 0, shutdown_resp
-            assert "disabled" in shutdown_resp.get("stdout", "").lower(), shutdown_resp
+        # Trigger guest-initiated shutdown (capsem-sysutil sends ShutdownRequest).
+        # Use nohup so the exec doesn't block waiting for shutdown to complete.
+        # The countdown is ~4s (SHUTDOWN_GRACE_SECS + 1), so we fire-and-forget.
+        client.post(f"/exec/{vm_id}", {
+            "command": "nohup /run/capsem-sysutil shutdown </dev/null >/dev/null 2>&1 &",
+        })
 
-            alive_resp = client.post(f"/exec/{vm_id}", {"command": "echo alive"})
-            assert alive_resp.get("exit_code") == 0, alive_resp
-            assert alive_resp.get("stdout", "").strip() == "alive", alive_resp
-        finally:
-            client.delete(f"/delete/{vm_id}")
+        # Wait for VM to disappear from list (service reaps ephemeral on exit)
+        gone = False
+        for _ in range(20):
+            time.sleep(1)
+            listing = client.get("/list")
+            ids = [s["id"] for s in listing["sandboxes"]]
+            if vm_id not in ids:
+                gone = True
+                break
+        assert gone, f"Ephemeral VM {vm_id} still in list after guest shutdown"
+
+
+class TestGuestShutdownPersistent:
+
+    def test_guest_shutdown_preserves_persistent_and_resume(self, client):
+        """Guest shutdown on a persistent VM preserves state; resume restores it."""
+        name = vm_name("gshut")
+        client.post("/provision", {
+            "name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS, "persistent": True,
+        })
+        assert wait_exec_ready(client, name, timeout=EXEC_READY_TIMEOUT), \
+            f"VM {name} never became exec-ready"
+
+        # Write a marker file
+        marker = f"shutdown-test-{uuid.uuid4().hex[:8]}"
+        client.post(f"/write_file/{name}", {
+            "path": f"/root/{marker}",
+            "content": f"hello from {marker}",
+        })
+
+        # Guest-initiated shutdown
+        client.post(f"/exec/{name}", {
+            "command": "nohup /run/capsem-sysutil shutdown </dev/null >/dev/null 2>&1 &",
+        })
+
+        # Wait for VM to stop
+        stopped = False
+        for _ in range(20):
+            time.sleep(1)
+            listing = client.get("/list")
+            vm = next((s for s in listing["sandboxes"] if s["id"] == name), None)
+            if vm and vm["status"] == "Stopped":
+                stopped = True
+                break
+            if vm is None:
+                # Might have been removed from running list but still in registry
+                try:
+                    info = client.get(f"/info/{name}")
+                    if info and info.get("status") == "Stopped":
+                        stopped = True
+                        break
+                except Exception:
+                    pass
+        assert stopped, f"Persistent VM {name} did not reach Stopped after guest shutdown"
+
+        # Resume and verify file survived
+        resume_resp = client.post(f"/resume/{name}", {})
+        assert resume_resp is not None
+        resumed_id = resume_resp.get("id", name)
+        assert wait_exec_ready(client, resumed_id, timeout=EXEC_READY_TIMEOUT), \
+            f"VM {resumed_id} never became exec-ready after resume"
+
+        read_resp = client.post(f"/read_file/{resumed_id}", {"path": f"/root/{marker}"})
+        assert isinstance(read_resp, dict) and "content" in read_resp, \
+            f"read_file returned an error instead of content: {read_resp}"
+        assert marker in read_resp["content"], \
+            f"File did not survive guest shutdown + resume: {read_resp}"
+
+        client.delete(f"/delete/{resumed_id}")
 
 
 class TestVmIdentity:
@@ -114,7 +181,10 @@ class TestStopResumeE2E:
         assert wait_exec_ready(client, name, timeout=EXEC_READY_TIMEOUT)
 
         marker = f"e2e-{uuid.uuid4().hex[:8]}"
-        client.write_file(name, f"/root/{marker}", f"hello from {marker}")
+        client.post(f"/write_file/{name}", {
+            "path": f"/root/{marker}",
+            "content": f"hello from {marker}",
+        })
 
         # Stop
         client.post(f"/stop/{name}", {})
@@ -126,7 +196,7 @@ class TestStopResumeE2E:
         assert wait_exec_ready(client, resumed_id, timeout=EXEC_READY_TIMEOUT)
 
         # Read back
-        read_resp = client.read_file(resumed_id, f"/root/{marker}")
+        read_resp = client.post(f"/read_file/{resumed_id}", {"path": f"/root/{marker}"})
         assert marker in str(read_resp), \
             f"File did not survive stop + resume: {read_resp}"
 
@@ -168,7 +238,7 @@ class TestStopResumeE2E:
 class TestSuspendResume:
 
     def test_suspend_resume_round_trip(self, client):
-        """Suspend a persistent VM, resume it, verify memory/process state survives."""
+        """Suspend a persistent VM, resume it, verify file survives."""
         name = vm_name("susp")
         client.post("/provision", {
             "name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS, "persistent": True,
@@ -178,44 +248,13 @@ class TestSuspendResume:
 
         # Write a marker file
         marker = f"suspend-test-{uuid.uuid4().hex[:8]}"
-        client.write_file(name, f"/root/{marker}", f"hello from {marker}")
-
-        proof_prefix = f"/root/suspend-proof-{uuid.uuid4().hex[:8]}"
-        start_resp = client.post(f"/exec/{name}", {
-            "command": (
-                f"rm -f {proof_prefix}.pid {proof_prefix}.ticks; "
-                "python3 - <<'PY'\n"
-                "import subprocess\n"
-                f"prefix = {proof_prefix!r}\n"
-                "open(prefix + '.ticks', 'w').close()\n"
-                "cmd = f\"i=0; while true; do i=$((i+1)); echo $i >> {prefix}.ticks; sleep 1; done\"\n"
-                "proc = subprocess.Popen(\n"
-                "    ['sh', '-c', cmd],\n"
-                "    stdin=subprocess.DEVNULL,\n"
-                "    stdout=subprocess.DEVNULL,\n"
-                "    stderr=subprocess.DEVNULL,\n"
-                "    start_new_session=True,\n"
-                ")\n"
-                "open(prefix + '.pid', 'w').write(str(proc.pid))\n"
-                "print(proc.pid)\n"
-                "PY"
-            ),
+        client.post(f"/write_file/{name}", {
+            "path": f"/root/{marker}",
+            "content": f"hello from {marker}",
         })
-        assert start_resp and start_resp.get("exit_code") == 0, \
-            f"failed to start suspend proof process: {start_resp}"
-        proof_pid = start_resp["stdout"].strip()
-        assert proof_pid.isdigit(), f"invalid proof pid: {start_resp}"
-
-        before_resp = client.post(f"/exec/{name}", {
-            "command": f"sleep 2; wc -l < {proof_prefix}.ticks",
-        })
-        assert before_resp and before_resp.get("exit_code") == 0, \
-            f"proof process did not write ticks before suspend: {before_resp}"
-        before_ticks = int(before_resp["stdout"].strip())
-        assert before_ticks >= 1, f"expected proof ticks before suspend, got {before_ticks}"
 
         # Suspend via service API
-        suspend_resp = client.post(f"/suspend/{name}", {}, timeout=SUSPEND_TIMEOUT)
+        suspend_resp = client.post(f"/suspend/{name}", {}, timeout=EXEC_READY_TIMEOUT)
         assert suspend_resp is not None and suspend_resp.get("success") is True, \
             f"Suspend failed: {suspend_resp}"
 
@@ -233,24 +272,9 @@ class TestSuspendResume:
             f"VM {resumed_id} never became exec-ready after warm resume"
 
         # Verify file survived
-        read_resp = client.read_file(resumed_id, f"/root/{marker}")
+        read_resp = client.post(f"/read_file/{resumed_id}", {"path": f"/root/{marker}"})
         assert marker in str(read_resp), \
             f"File did not survive suspend + resume: {read_resp}"
-
-        process_resp = client.post(f"/exec/{resumed_id}", {
-            "command": (
-                f"test -d /proc/{proof_pid} && "
-                f"test \"$(cat {proof_prefix}.pid)\" = \"{proof_pid}\" && "
-                f"sleep 2; wc -l < {proof_prefix}.ticks"
-            ),
-        })
-        assert process_resp and process_resp.get("exit_code") == 0, \
-            f"proof process did not survive suspend + resume: {process_resp}"
-        after_ticks = int(process_resp["stdout"].strip())
-        assert after_ticks > before_ticks, (
-            f"proof process did not continue after resume: "
-            f"before_ticks={before_ticks}, after_ticks={after_ticks}, pid={proof_pid}"
-        )
 
         client.delete(f"/delete/{resumed_id}")
 

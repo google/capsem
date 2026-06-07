@@ -12,13 +12,13 @@ export const SITE = {
   issues: "https://github.com/google/capsem/issues",
   copyright: "Elie Bursztein",
   license: "MIT",
-  platform: "macOS 14+ on Apple Silicon, or Debian/Ubuntu with KVM",
+  platform: "macOS 14+ on Apple Silicon",
 } as const;
 
 export const NAV_LINKS = [
-  { label: "Features", href: "/#features" },
-  { label: "How It Works", href: "/#how-it-works" },
-  { label: "FAQ", href: "/faq" },
+  { label: "Features", href: "#features" },
+  { label: "How It Works", href: "#how-it-works" },
+  { label: "FAQ", href: "#faq" },
   { label: "Docs", href: SITE.docs },
 ] as const;
 
@@ -43,7 +43,7 @@ export const PACKAGES = [
 
 export const ROADMAP = [
   "VM checkpointing and restore",
-  "Windows and ChromeOS host support",
+  "Linux host support",
   "VS Code extension",
   "Custom MCP server marketplace",
 ] as const;
@@ -105,11 +105,6 @@ export const VSOCK_CHANNELS = [
 
 export const FAQS = [
   {
-    question: "Why does Capsem use a hypervisor instead of containers?",
-    answer:
-      "Containers are excellent for packaging and reproducibility, but they share the host kernel. Capsem runs each AI agent in its own Linux VM, giving the sandbox a separate kernel, filesystem, process tree, and network stack. That stronger boundary also enables true air-gapping, policy-controlled egress through Capsem's proxy, clean teardown of the whole machine state, snapshots and forks, and explicit host/guest control over vsock. Containers can still be useful inside a Capsem VM, but they are not strong enough to be the outer sandbox boundary.",
-  },
-  {
     question: "Does Capsem work with Claude Code, Gemini CLI, and Codex?",
     answer:
       "Yes. Capsem supports any AI coding agent that runs in a terminal. Claude Code, Gemini CLI, and Codex are pre-installed in the VM and configured to work through the MITM proxy automatically.",
@@ -122,7 +117,7 @@ export const FAQS = [
   {
     question: "What platforms are supported?",
     answer:
-      "Capsem supports macOS on Apple Silicon (M1 or later) through Apple's Virtualization.framework, and Debian/Ubuntu Linux hosts through KVM on x86_64 or arm64. The guest environment is always Linux.",
+      "Capsem requires macOS on Apple Silicon (M1 or later). It uses Apple's Virtualization.framework which is only available on macOS. The guest VM runs aarch64 Linux.",
   },
   {
     question: "Can I customize which domains are allowed?",
@@ -132,7 +127,7 @@ export const FAQS = [
   {
     question: "Is the VM truly air-gapped?",
     answer:
-      "Yes. The guest has no real network interface. It uses a dummy NIC with capsem-dns-proxy and iptables rules that redirect all port 443 traffic through the MITM proxy. Direct IP access and non-443 ports are blocked entirely.",
+      "Yes. The guest has no real network interface. It uses a dummy NIC with fake DNS (dnsmasq) and iptables rules that redirect all port 443 traffic through the MITM proxy. Direct IP access and non-443 ports are blocked entirely.",
   },
 ] as const;
 
@@ -140,9 +135,9 @@ export const FOOTER_COLUMNS = [
   {
     title: "Product",
     links: [
-      { label: "Features", href: "/#features" },
-      { label: "How It Works", href: "/#how-it-works" },
-      { label: "FAQ", href: "/faq" },
+      { label: "Features", href: "#features" },
+      { label: "How It Works", href: "#how-it-works" },
+      { label: "FAQ", href: "#faq" },
     ],
   },
   {

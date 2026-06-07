@@ -122,32 +122,28 @@ class TestDelete:
         assert rc != 0
 
 
-class TestRemovedAliases:
+class TestAliases:
 
     def test_rm_alias(self, uds_path):
-        """capsem rm is intentionally not a compatibility alias for delete."""
+        """capsem rm <id> deletes a VM (alias for delete)."""
         name = f"rmal-{uuid.uuid4().hex[:4]}"
         _provision_vm(uds_path, name)
-        try:
-            _stdout, stderr, rc = run_cli("rm", name, uds_path=uds_path)
-            assert rc != 0
-            assert "unrecognized subcommand" in stderr
-            list_out, _, _ = run_cli("list", uds_path=uds_path)
-            assert name in list_out
-        finally:
-            run_cli("delete", name, uds_path=uds_path)
+        stdout, stderr, rc = run_cli("rm", name, uds_path=uds_path)
+        assert rc == 0, f"rm alias failed: {stderr}"
+        list_out, _, _ = run_cli("list", uds_path=uds_path)
+        assert name not in list_out
 
     def test_ls_alias(self, uds_path):
-        """capsem ls is intentionally not a compatibility alias for list."""
+        """capsem ls returns same data as capsem list."""
         name = f"lsal-{uuid.uuid4().hex[:4]}"
         _provision_vm(uds_path, name)
         try:
             list_out, _, list_rc = run_cli("list", uds_path=uds_path)
-            _ls_out, ls_err, ls_rc = run_cli("ls", uds_path=uds_path)
+            ls_out, _, ls_rc = run_cli("ls", uds_path=uds_path)
             assert list_rc == 0
-            assert ls_rc != 0
-            assert "unrecognized subcommand" in ls_err
+            assert ls_rc == 0
             assert name in list_out
+            assert name in ls_out
         finally:
             run_cli("delete", name, uds_path=uds_path)
 

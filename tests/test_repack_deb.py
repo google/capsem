@@ -29,12 +29,8 @@ REQUIRED_BINARIES = [
     "capsem-service",
     "capsem-process",
     "capsem-mcp",
-    "capsem-mcp-aggregator",
-    "capsem-mcp-builtin",
     "capsem-gateway",
     "capsem-tray",
-    "capsem-tui",
-    "capsem-admin",
 ]
 
 pytestmark = pytest.mark.skipif(
@@ -76,10 +72,6 @@ def _seed_binaries(bin_dir: Path, which: list[str] = None):
         # bytes, doesn't care about ELF validity.
         path.write_text(f"#!/bin/sh\necho {name} stub\n")
         path.chmod(0o755)
-    admin_pkg = bin_dir / "capsem-admin-python" / "capsem" / "admin"
-    admin_pkg.mkdir(parents=True, exist_ok=True)
-    (admin_pkg / "__init__.py").write_text("")
-    (admin_pkg / "cli.py").write_text("def main(): return 0\n")
 
 
 def _run_repack(input_deb: Path, bin_dir: Path, output_deb: Path = None,
@@ -88,65 +80,6 @@ def _run_repack(input_deb: Path, bin_dir: Path, output_deb: Path = None,
     if output_deb is not None:
         args.append(str(output_deb))
     return subprocess.run(args, capture_output=True, text=True, timeout=timeout)
-
-
-def _seed_assets(assets_dir: Path):
-    arch_dir = assets_dir / "arm64"
-    arch_dir.mkdir(parents=True, exist_ok=True)
-    payloads = {
-        "vmlinuz": b"kernel fixture",
-        "initrd.img": b"initrd fixture",
-        "rootfs.squashfs": b"rootfs fixture",
-    }
-    hashes = {
-        # Stable fixture hashes; the repack test only needs profile materialization
-        # to consume the manifest contract, not cryptographic verification.
-        "vmlinuz": "1" * 64,
-        "initrd.img": "2" * 64,
-        "rootfs.squashfs": "3" * 64,
-    }
-    for name, payload in payloads.items():
-        (arch_dir / name).write_bytes(payload)
-    (assets_dir / "manifest.json").write_text(
-        json_dumps(
-            {
-                "format": 2,
-                "assets": {
-                    "current": "2026.0524.1",
-                    "releases": {
-                        "2026.0524.1": {
-                            "date": "2026-05-24",
-                            "deprecated": False,
-                            "min_binary": "1.0.0",
-                            "arches": {
-                                "arm64": {
-                                    name: {"hash": hashes[name], "size": len(payload)}
-                                    for name, payload in payloads.items()
-                                }
-                            },
-                        }
-                    },
-                },
-                "binaries": {
-                    "current": "0.0.1",
-                    "releases": {
-                        "0.0.1": {
-                            "date": "2026-05-24",
-                            "deprecated": False,
-                            "min_assets": "2026.0524.1",
-                        }
-                    },
-                },
-            }
-        )
-    )
-    (assets_dir / "manifest.json.minisig").write_text("fixture signature\n")
-
-
-def json_dumps(value: dict) -> str:
-    import json
-
-    return json.dumps(value, indent=2) + "\n"
 
 
 def _deb_contents(deb: Path, dest: Path) -> Path:
@@ -159,7 +92,7 @@ def _deb_contents(deb: Path, dest: Path) -> Path:
 
 
 def test_happy_path_adds_every_companion_binary(tmp_path):
-    """All companion binaries land in /usr/bin with mode 755."""
+    """All six companion binaries land in /usr/bin with mode 755."""
     fixture = _build_fixture_deb(tmp_path)
     bin_dir = tmp_path / "bin"
     _seed_binaries(bin_dir)
@@ -225,30 +158,6 @@ def test_missing_companion_binary_fails_loudly(tmp_path):
     )
 
 
-def test_missing_assets_dir_named_assets_fails_loudly(tmp_path):
-    """Clean checkout `assets` must not be mistaken for an output .deb path."""
-    fixture = _build_fixture_deb(tmp_path)
-    bin_dir = tmp_path / "bin"
-    _seed_binaries(bin_dir)
-    missing_assets_dir = tmp_path / "assets"
-
-    res = subprocess.run(
-        [str(SCRIPT), str(fixture), str(bin_dir), str(missing_assets_dir)],
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-
-    assert res.returncode != 0, (
-        "repack should have rejected a missing assets directory instead of "
-        f"building a .deb at that path; stdout={res.stdout!r} stderr={res.stderr!r}"
-    )
-    assert "neither an existing assets directory nor a .deb output path" in (
-        res.stdout + res.stderr
-    )
-    assert not missing_assets_dir.exists()
-
-
 def test_path_with_embedded_newline_fails(tmp_path):
     """Newline-joined paths must fail fast, not corrupt an output .deb.
 
@@ -274,8 +183,8 @@ def test_path_with_embedded_newline_fails(tmp_path):
     )
 
 
-def test_version_is_preserved_exactly(tmp_path):
-    """DEBIAN/control's Version field must stay aligned with the release tag."""
+def test_version_gets_build_timestamp_stamped(tmp_path):
+    """DEBIAN/control's Version field gains a numeric suffix so repeat installs see a newer package."""
     fixture = _build_fixture_deb(tmp_path, version="0.0.1")
     bin_dir = tmp_path / "bin"
     _seed_binaries(bin_dir)
@@ -291,7 +200,14 @@ def test_version_is_preserved_exactly(tmp_path):
         None,
     )
     assert version_line is not None, f"no Version: line in control: {control!r}"
-    assert version_line == "Version: 0.0.1"
+    # Expect the original "0.0.1" plus a dotted numeric build stamp.
+    assert version_line.startswith("Version: 0.0.1."), (
+        f"Version should be 0.0.1.<ts>, got: {version_line!r}"
+    )
+    suffix = version_line[len("Version: 0.0.1."):]
+    assert suffix.isdigit() and len(suffix) >= 9, (
+        f"expected unix-ish timestamp suffix, got: {suffix!r}"
+    )
 
 
 def test_output_defaults_to_overwriting_input(tmp_path):
@@ -309,71 +225,3 @@ def test_output_defaults_to_overwriting_input(tmp_path):
     assert fixture.stat().st_size > original_size, (
         "in-place repack should produce a larger .deb after adding binaries"
     )
-
-
-def test_assets_dir_materializes_base_profiles_from_local_assets(tmp_path):
-    """Install packages must not seed draft profile URLs like assets.example.invalid."""
-    fixture = _build_fixture_deb(tmp_path)
-    bin_dir = tmp_path / "bin"
-    assets_dir = tmp_path / "assets"
-    _seed_binaries(bin_dir)
-    _seed_assets(assets_dir)
-    output = tmp_path / "out.deb"
-
-    res = subprocess.run(
-        [str(SCRIPT), str(fixture), str(bin_dir), str(assets_dir), str(output)],
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-
-    assert res.returncode == 0, (
-        f"repack with assets failed: stdout={res.stdout!r} stderr={res.stderr!r}"
-    )
-    extracted = _deb_contents(output, tmp_path / "extracted")
-    profile = (
-        extracted
-        / "usr"
-        / "share"
-        / "capsem"
-        / "profiles"
-        / "base"
-        / "everyday-work.profile.toml"
-    ).read_text()
-    assert "assets.example.invalid" not in profile
-    assert 'revision = "2026.0524.1"' in profile
-    assert (
-        'url = "https://assets.capsem.dev/vm/everyday-work/2026.0524.1/arm64/vmlinuz"'
-        in profile
-    )
-    assert 'hash = "blake3:1111111111111111111111111111111111111111111111111111111111111111"' in profile
-    assert "[vm.assets.x86_64.kernel]" not in profile
-    assert not (extracted / "usr" / "share" / "capsem" / "assets" / "arm64").exists()
-
-
-def test_assets_dir_can_materialize_profiles_to_file_asset_root(tmp_path):
-    """Admins and tests may intentionally use file:// profile asset sources."""
-    profile_src = REPO_ROOT / "config" / "profiles" / "base"
-    assets_dir = tmp_path / "assets"
-    out_dir = tmp_path / "profiles"
-    _seed_assets(assets_dir)
-
-    res = subprocess.run(
-        [
-            str(REPO_ROOT / "scripts" / "materialize-install-profiles.py"),
-            str(profile_src),
-            str(assets_dir),
-            str(out_dir),
-            str(assets_dir),
-        ],
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-
-    assert res.returncode == 0, (
-        f"profile materializer failed: stdout={res.stdout!r} stderr={res.stderr!r}"
-    )
-    profile = (out_dir / "everyday-work.profile.toml").read_text()
-    assert "assets.example.invalid" not in profile
-    assert f'url = "{assets_dir.as_uri()}/arm64/vmlinuz"' in profile

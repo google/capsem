@@ -1,8 +1,8 @@
-"""Verify ephemeral VM cleanup when process dies.
+"""Verify ephemeral VM cleanup when process crashes.
 
-Tests the SERVICE-SIDE cleanup behavior: when an ephemeral VM process dies,
-the service should automatically clean up the session directory. Persistent
-VMs should preserve their session dir even when the process dies.
+Tests the SERVICE-SIDE cleanup behavior: when an ephemeral VM process crashes,
+the service should move its session directory under a failed-session name.
+Persistent VMs should preserve their session dir even when the process dies.
 """
 
 import os
@@ -32,7 +32,7 @@ def _vm_in_list(client, name):
 
 
 def test_ephemeral_cleaned_on_process_death(cleanup_env):
-    """Kill an ephemeral VM process; service should clean up session dir."""
+    """Crash an ephemeral VM process; service should preserve a failed session dir."""
     client = cleanup_env.client()
     name = f"eph-{uuid.uuid4().hex[:6]}"
     client.post("/provision", {
@@ -46,19 +46,26 @@ def test_ephemeral_cleaned_on_process_death(cleanup_env):
     pid = _get_vm_pid(client, name)
     assert pid, f"Could not get PID for VM {name}"
 
-    os.kill(pid, signal.SIGTERM)
+    os.kill(pid, signal.SIGKILL)
 
-    # Wait for the capsem-process SIGTERM handler to drain telemetry and exit.
-    # Under the four-worker VM gate this can be CPU-starved for more than 10s.
-    for _ in range(30):
+    # Wait for service to notice via stale-instance cleanup
+    for _ in range(10):
         time.sleep(1)
         if not _vm_in_list(client, name):
             break
     else:
-        pytest.fail(f"Ephemeral VM {name} still in list 30s after process kill")
+        pytest.fail(f"Ephemeral VM {name} still in list 10s after process kill")
 
-    if sessions_dir.exists():
-        pytest.fail(f"Session dir {sessions_dir} still exists after ephemeral cleanup")
+    failed_dirs = []
+    for _ in range(10):
+        failed_dirs = list(sessions_dir.parent.glob(f"{name}-failed-*"))
+        if not sessions_dir.exists() and failed_dirs:
+            break
+        time.sleep(0.5)
+    else:
+        pytest.fail(
+            f"Session dir {sessions_dir} was not moved to a failed-session dir"
+        )
 
 
 def test_persistent_preserved_on_process_death(cleanup_env):

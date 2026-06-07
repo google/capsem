@@ -40,22 +40,20 @@ MCP_TO_CLI: dict[str, str | tuple[None, str]] = {
     "capsem_version":   "version",
 
     # MCP bridge
-    "capsem_mcp_connectors": "mcp connectors",
-    "capsem_mcp_add":        "mcp add",
-    "capsem_mcp_delete":     "mcp delete",
-
-    # File transfer
-    "capsem_read_file":       "cp",
-    "capsem_write_file":      "cp",
+    "capsem_mcp_servers": "mcp servers",
+    "capsem_mcp_tools":   "mcp tools",
+    "capsem_mcp_call":    "mcp call",
 
     # MCP-only: bridges / AI-caller helpers with no CLI analog
+    "capsem_read_file":       (None, "file I/O reserved for AI callers; CLI users drop into `capsem shell`"),
+    "capsem_write_file":      (None, "file I/O reserved for AI callers; CLI users drop into `capsem shell`"),
     "capsem_inspect":         (None, "SQL query tool for AI callers; CLI users `sqlite3` the session DB directly"),
     "capsem_inspect_schema":  (None, "paired with capsem_inspect; AI callers need schemas before querying"),
     "capsem_service_logs":    (None, "no CLI equivalent yet -- candidate for `capsem service logs`"),
-    "capsem_panics":          (None, "AI-facing host triage helper; CLI users inspect logs/support bundles directly"),
-    "capsem_triage":          (None, "AI-facing host triage helper; CLI users inspect logs/support bundles directly"),
-    "capsem_host_logs":       (None, "AI-facing host log reader; CLI users inspect ~/.capsem/run logs directly"),
-    "capsem_timeline":        (None, "AI-facing telemetry correlation view; no CLI equivalent yet"),
+    "capsem_panics":          (None, "host diagnostic triage tool; no CLI equivalent yet"),
+    "capsem_triage":          (None, "host diagnostic triage summary; no CLI equivalent yet"),
+    "capsem_host_logs":       (None, "host log reader for AI diagnostics; CLI users can inspect log files directly"),
+    "capsem_timeline":        (None, "session timeline query for AI diagnostics; CLI users can inspect session DB directly"),
 
     # Known drift -- possible cleanup candidate
     "capsem_stop":            (None, "MCP-only -- CLI expresses stop via suspend (persistent) or delete (ephemeral). Consider removing."),
@@ -68,10 +66,8 @@ CLI_ONLY: dict[str, str] = {
     "history":      "host-side command audit view; no MCP tool yet (drift candidate)",
 
     # Service-level / install-time -- not session-scoped, not AI-callable
-    "setup":        "first-time setup wizard",
     "update":       "self-updater",
     "doctor":       "boots a VM and runs capsem-doctor; could be MCP later",
-    "debug":        "host-side debug report generator; no MCP tool yet",
     "completions":  "shell completions generator",
     "uninstall":    "system uninstaller",
     "install":      "registers the LaunchAgent / systemd unit",
@@ -79,10 +75,11 @@ CLI_ONLY: dict[str, str] = {
     "start":        "start the background service daemon",
     "stop":         "stop the background service daemon",
     "support-bundle": "host-side bug-report bundler; no service round-trip, not an AI concept",
-    "export-policy-contexts": "developer/admin rule authoring helper; MCP exposes the runtime timeline instead",
-    "mcp list":     "human-readable MCP connector list; MCP callers use capsem_mcp_connectors",
-    "mcp show":     "human-readable MCP connector detail; MCP callers use capsem_mcp_connectors",
+    "cp":           "host/session file copy convenience; MCP uses capsem_read_file/capsem_write_file",
 
+    # MCP sub-namespace: not every entry has a tool
+    "mcp policy":   "read-only policy dump; AI callers don't need it",
+    "mcp refresh":  "forces tool re-discovery; AI callers re-list directly",
 }
 
 
@@ -90,13 +87,19 @@ CLI_ONLY: dict[str, str] = {
 # Source parsers
 # ---------------------------------------------------------------------------
 
-_MCP_TOOL_RE = re.compile(r'#\[tool\(\s*name\s*=\s*"(?P<name>capsem_[a-z_]+)"')
+_MCP_TOOL_RE = re.compile(r"#\[tool\((?P<body>.*?)\)\]", re.S)
+_MCP_TOOL_NAME_RE = re.compile(r'name\s*=\s*"(?P<name>capsem_[a-z_]+)"')
 
 
 def parse_mcp_tools() -> set[str]:
     """Extract tool names from #[tool(name = "...")] attributes."""
     src = MCP_SRC.read_text()
-    return {m.group("name") for m in _MCP_TOOL_RE.finditer(src)}
+    names = set()
+    for attr in _MCP_TOOL_RE.finditer(src):
+        name = _MCP_TOOL_NAME_RE.search(attr.group("body"))
+        if name:
+            names.add(name.group("name"))
+    return names
 
 
 def _parse_subcommand_variants(src: str, enum_name: str) -> list[str]:

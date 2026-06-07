@@ -362,9 +362,8 @@ def _validate_artifacts(
             file=str(ca_cert),
         ))
 
-    # E302: Required artifacts. Keep this in lock-step with docker.py so the
-    # validator cannot miss a build-context artifact added later.
-    required = ["capsem-init", *ROOTFS_SUPPORT_FILES, *ROOTFS_SCRIPTS]
+    # E302: Required artifacts
+    required = ["capsem-init", "capsem-bashrc", "capsem-doctor", "capsem-bench", "snapshots"]
     for name in required:
         path = artifacts_dir / name
         if not path.exists():

@@ -1,11 +1,75 @@
-//! Provider trait and routing: maps inbound request paths to upstream AI
-//! providers and handles provider-specific key injection.
+//! Model protocol adapters and legacy path routing.
+//!
+//! Provider identity is data (`ai.<provider_id>` in settings/profile TOML).
+//! The closed Rust enum below is only the wire protocol/parser adapter.
+//! A custom endpoint such as Ollama or a private OpenAI-compatible gateway
+//! should reuse `ModelProtocol::OpenAi`; it must not need a new enum variant.
 
-pub use capsem_network_engine::ai_provider::{extract_model_from_path, tool_origin, ProviderKind};
+use super::events::{LlmEvent, ProviderStreamParser};
+use crate::net::parsers::sse_parser::SseEvent;
+
+/// Which model wire protocol/parser handles this request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModelProtocol {
+    Anthropic,
+    OpenAi,
+    Google,
+    Ollama,
+}
+
+impl ModelProtocol {
+    /// Short name for audit logging.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ModelProtocol::Anthropic => "anthropic",
+            ModelProtocol::OpenAi => "openai",
+            ModelProtocol::Google => "google",
+            ModelProtocol::Ollama => "ollama",
+        }
+    }
+
+    /// Create a new SSE stream parser for this provider.
+    pub fn create_parser(&self) -> Box<dyn ProviderStreamParser + Send> {
+        match self {
+            ModelProtocol::Anthropic => Box::new(crate::net::interpreters::anthropic_interpreter::AnthropicStreamParserWithState::new()),
+            ModelProtocol::OpenAi => Box::new(crate::net::interpreters::openai_interpreter::OpenAiStreamParser::new()),
+            ModelProtocol::Google => Box::new(crate::net::interpreters::google_interpreter::GoogleStreamParser::new()),
+            ModelProtocol::Ollama => Box::new(NativeOllamaStreamParser),
+        }
+    }
+}
+
+struct NativeOllamaStreamParser;
+
+impl ProviderStreamParser for NativeOllamaStreamParser {
+    fn parse_event(&mut self, _sse: &SseEvent) -> Vec<LlmEvent> {
+        Vec::new()
+    }
+}
+
+impl TryFrom<&str> for ModelProtocol {
+    type Error = String;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "anthropic" | "claude" => Ok(Self::Anthropic),
+            "openai" | "openai_compatible" | "openai-compatible" => Ok(Self::OpenAi),
+            "google" | "gemini" => Ok(Self::Google),
+            "ollama" => Ok(Self::Ollama),
+            other => Err(format!("unknown model protocol '{other}'")),
+        }
+    }
+}
+
+/// Backward-compatible name for existing call sites.
+///
+/// New code should use [`ModelProtocol`] for the typed parser adapter and keep
+/// provider identity in settings/profile data.
+pub type ProviderKind = ModelProtocol;
 
 /// A provider knows how to build the upstream URL and inject API keys.
 pub trait Provider: Send + Sync {
-    fn kind(&self) -> ProviderKind;
+    fn kind(&self) -> ModelProtocol;
 
     /// The upstream base URL (e.g., "https://api.anthropic.com").
     fn upstream_base_url(&self) -> &str;
@@ -33,21 +97,62 @@ pub trait Provider: Send + Sync {
 pub fn route_provider(path: &str) -> Option<(ProviderKind, Box<dyn Provider>)> {
     if path.starts_with("/v1/messages") {
         Some((
-            ProviderKind::Anthropic,
+            ModelProtocol::Anthropic,
             Box::new(crate::net::interpreters::anthropic_interpreter::AnthropicProvider),
         ))
     } else if path.starts_with("/v1beta/") {
         Some((
-            ProviderKind::Google,
+            ModelProtocol::Google,
             Box::new(crate::net::interpreters::google_interpreter::GoogleProvider),
         ))
     } else if path.starts_with("/v1/responses") || path.starts_with("/v1/chat/completions") {
         Some((
-            ProviderKind::OpenAi,
+            ModelProtocol::OpenAi,
             Box::new(crate::net::interpreters::openai_interpreter::OpenAiProvider),
         ))
     } else {
         None
+    }
+}
+
+/// Extract model name from a Gemini-style URL path.
+/// E.g. `/v1beta/models/gemini-2.5-flash-lite:generateContent` -> `gemini-2.5-flash-lite`
+pub fn extract_model_from_path(path: &str) -> Option<String> {
+    // Match pattern: /v.../models/{model}:{action}
+    let models_idx = path.find("/models/")?;
+    let after = &path[models_idx + 8..]; // skip "/models/"
+    let model = after.split(':').next()?;
+    if model.is_empty() {
+        return None;
+    }
+    Some(model.to_string())
+}
+
+/// Classify a tool call's origin from its name (heuristic).
+///
+/// - Built-in MCP tools (fetch_http, grep_http, http_headers): "local"
+/// - External MCP tools with server__tool namespacing: "mcp_proxy"
+/// - Native model tools (write_file, bash, run_shell_command, etc.): "native"
+///
+/// # Known limitations (next-gen TODOs)
+///
+/// - **Cross-module import**: calls `mcp::builtin_tools::is_builtin_tool()`,
+///   coupling ai_traffic to the MCP module. A shared tool registry would be
+///   cleaner but premature until next-gen unifies tool tracking.
+/// - **Heuristic-only**: uses `__` as MCP namespace separator. If a native
+///   tool name contains `__`, it would be misclassified as mcp_proxy.
+/// - **No correlation to mcp_calls**: the `mcp_call_id` column in
+///   `tool_calls` is defined but never populated. There is no mechanism to
+///   link a model_call's tool_call entry to the corresponding mcp_calls row.
+///   Next-gen should propagate a shared call_id or request_id through the
+///   guest MCP endpoint.
+pub fn tool_origin(name: &str) -> &'static str {
+    if crate::mcp::builtin_tools::is_builtin_tool(name) {
+        "local"
+    } else if name.contains("__") {
+        "mcp_proxy"
+    } else {
+        "native"
     }
 }
 

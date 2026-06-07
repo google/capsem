@@ -1,7 +1,6 @@
 //! File I/O FUSE operations: OPEN, READ, WRITE, CREATE, RELEASE, FLUSH, FSYNC, LSEEK.
 
-use std::io::{Seek, SeekFrom, Write};
-use std::os::unix::fs::FileExt;
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::os::unix::fs::PermissionsExt;
 
 use super::FuseProcessor;
@@ -64,9 +63,13 @@ impl FuseProcessor {
             None => return fuse::error_response(header.unique, -libc::EBADF),
         };
 
+        if file.seek(SeekFrom::Start(read_in.offset)).is_err() {
+            return fuse::error_response(header.unique, -libc::EIO);
+        }
+
         let clamped = read_in.size.min(super::MAX_READ_SIZE);
         let mut data = vec![0u8; clamped as usize];
-        let n = match file.read_at(&mut data, read_in.offset) {
+        let n = match file.read(&mut data) {
             Ok(n) => n,
             Err(e) => return fuse::error_response(header.unique, -fuse::io_error_to_errno(&e)),
         };
@@ -89,16 +92,11 @@ impl FuseProcessor {
             Some(f) => f,
             None => return fuse::error_response(header.unique, -libc::EBADF),
         };
-        let mut written = 0usize;
-        while written < to_write {
-            match file.write_at(
-                &write_data[written..to_write],
-                write_in.offset + written as u64,
-            ) {
-                Ok(0) => return fuse::error_response(header.unique, -libc::EIO),
-                Ok(n) => written += n,
-                Err(e) => return fuse::error_response(header.unique, -fuse::io_error_to_errno(&e)),
-            }
+        if file.seek(SeekFrom::Start(write_in.offset)).is_err() {
+            return fuse::error_response(header.unique, -libc::EIO);
+        }
+        if let Err(e) = file.write_all(&write_data[..to_write]) {
+            return fuse::error_response(header.unique, -fuse::io_error_to_errno(&e));
         }
 
         let write_out = FuseWriteOut {
@@ -126,10 +124,15 @@ impl FuseProcessor {
             Some(i) => i,
             None => {
                 // File doesn't exist yet -- create it
-                let child_path = match self.inodes.child_path(header.nodeid, name) {
-                    Some(p) => p,
-                    None => return fuse::error_response(header.unique, -libc::EINVAL),
+                let name_str = match std::str::from_utf8(name) {
+                    Ok(s) => s,
+                    Err(_) => return fuse::error_response(header.unique, -libc::EINVAL),
                 };
+                let parent_path = match self.inodes.get(header.nodeid) {
+                    Some(p) => p.clone(),
+                    None => return fuse::error_response(header.unique, -libc::ENOENT),
+                };
+                let child_path = parent_path.join(name_str);
 
                 let flags = create_in.flags as i32;
                 let accmode = flags & libc::O_ACCMODE;

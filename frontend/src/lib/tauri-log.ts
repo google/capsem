@@ -89,8 +89,13 @@ export function maybeInstallDebugHandle(): void {
   const params = new URLSearchParams(url.search);
   if (params.get('debug') !== '1') return;
 
-  const buildTs: string = typeof __BUILD_TS__ === 'string' ? __BUILD_TS__ : 'dev';
-  const appVersion: string = typeof __APP_VERSION__ === 'string' ? __APP_VERSION__ : 'dev';
+  // Read build-time constants out of globalThis so a missing Vite-define
+  // doesn't throw a ReferenceError. The build pipeline can wire these
+  // via vite-define / esbuild --define / equivalent.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const g = globalThis as any;
+  const buildTs: string = g.__BUILD_TS__ ?? 'dev';
+  const appVersion: string = g.__APP_VERSION__ ?? 'dev';
 
   const handle: CapsemDebug = {
     versions: () => ({ build_ts: buildTs, version: appVersion }),

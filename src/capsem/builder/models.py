@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from enum import Enum
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from capsem.builder.schema import McpTransport
 
@@ -25,6 +25,14 @@ class Compression(str, Enum):
     GZIP = "gzip"
     LZO = "lzo"
     XZ = "xz"
+
+
+class ErofsCompression(str, Enum):
+    """Compression algorithm for EROFS rootfs assets."""
+
+    LZ4 = "lz4"
+    LZ4HC = "lz4hc"
+    ZSTD = "zstd"
 
 
 class PackageManager(str, Enum):
@@ -57,6 +65,38 @@ class ArchConfig(BaseModel):
     node_major: int = 24
 
 
+class ErofsConfig(BaseModel):
+    """EROFS rootfs asset settings.
+
+    Squashfs remains as a legacy fallback asset. EROFS is the primary 1.3
+    asset path and defaults to lz4hc level 12 based on macOS/Linux benchmarks.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    enabled: bool = True
+    compression: ErofsCompression = ErofsCompression.LZ4HC
+    compression_level: int | None = 12
+    cluster_size: int | None = None
+
+    @model_validator(mode="after")
+    def _compression_level_valid(self):
+        if self.compression is ErofsCompression.LZ4:
+            if self.compression_level is not None:
+                raise ValueError("lz4 EROFS compression does not accept a level")
+        elif self.compression is ErofsCompression.LZ4HC:
+            if self.compression_level is None:
+                raise ValueError("lz4hc EROFS compression requires a level")
+            if not 0 <= self.compression_level <= 12:
+                raise ValueError("lz4hc EROFS compression level must be between 0 and 12")
+        elif self.compression is ErofsCompression.ZSTD:
+            if self.compression_level is None:
+                raise ValueError("zstd EROFS compression requires a level")
+            if not 0 <= self.compression_level <= 22:
+                raise ValueError("zstd EROFS compression level must be between 0 and 22")
+        return self
+
+
 class BuildConfig(BaseModel):
     """Top-level build settings from build.toml."""
 
@@ -64,20 +104,9 @@ class BuildConfig(BaseModel):
 
     compression: Compression = Compression.ZSTD
     compression_level: int = Field(default=15, ge=1, le=22)
-    squashfs_block_size: str = "128K"
+    erofs: ErofsConfig = Field(default_factory=ErofsConfig)
     architectures: dict[str, ArchConfig]
     version_commands: dict[str, str] = Field(default_factory=dict)
-
-    @field_validator("squashfs_block_size")
-    @classmethod
-    def _valid_squashfs_block_size(cls, value: str) -> str:
-        valid = {"4K", "8K", "16K", "32K", "64K", "128K", "256K", "512K", "1M"}
-        if value not in valid:
-            raise ValueError(
-                "squashfs_block_size must be one of "
-                "4K, 8K, 16K, 32K, 64K, 128K, 256K, 512K, 1M"
-            )
-        return value
 
     @model_validator(mode="after")
     def _architectures_non_empty(self):
@@ -202,12 +231,7 @@ class PackageSetConfig(BaseModel):
             raise ValueError("packages must have at least one entry")
         if not self.install_cmd:
             raise ValueError("install_cmd must not be empty")
-        package_keys = set(self.packages)
-        if self.manager is PackageManager.CURL:
-            package_keys.update(
-                spec.split("=", 1)[0] for spec in self.packages if "=" in spec
-            )
-        bad = set(self.version_commands) - package_keys
+        bad = set(self.version_commands) - set(self.packages)
         if bad:
             raise ValueError(
                 f"version_commands keys not in packages: {sorted(bad)}"
@@ -271,6 +295,7 @@ class WebSecurityConfig(BaseModel):
     allow_write: bool = False
     custom_allow: list[str] = Field(default_factory=list)
     custom_block: list[str] = Field(default_factory=list)
+    http_upstream_ports: list[int] = Field(default_factory=lambda: [80, 11434])
     search: dict[str, WebServiceConfig] = Field(default_factory=dict)
     registry: dict[str, WebServiceConfig] = Field(default_factory=dict)
     repository: dict[str, WebServiceConfig] = Field(default_factory=dict)
@@ -287,7 +312,7 @@ class VmResourcesConfig(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     cpu_count: int = Field(default=4, ge=1, le=8)
-    ram_gb: int = Field(default=8, ge=1, le=16)
+    ram_gb: int = Field(default=4, ge=1, le=16)
     scratch_disk_size_gb: int = Field(default=16, ge=1, le=128)
     log_bodies: bool = False
     max_body_capture: int = Field(default=4096, ge=0, le=1048576)

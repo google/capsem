@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use axum::extract::{Request, State};
 use axum::http::StatusCode;
@@ -20,11 +20,49 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
 /// tasks if neither side closes the connection cleanly.
 const CONN_DRIVER_TIMEOUT: Duration = Duration::from_secs(300);
 
-/// Catch-all handler: forward any request to capsem-service over UDS.
+/// Forward an allowlisted gateway route to capsem-service over UDS.
 pub async fn handle_proxy(State(state): State<Arc<AppState>>, req: Request) -> Response {
+    let request_id = gateway_request_id();
+    let method = req.method().clone();
+    let path = req.uri().path().to_string();
+    let query_present = req.uri().query().is_some();
+    let content_length = req
+        .headers()
+        .get(axum::http::header::CONTENT_LENGTH)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<usize>().ok());
+    let started = Instant::now();
+
+    let span = tracing::info_span!(
+        target: "capsem_gateway",
+        "capsem.gateway.proxy",
+        gateway_request_id = %request_id,
+        method = %method,
+        path = %path,
+        query_present,
+        content_length = ?content_length,
+        uds_path = %state.uds_path.display(),
+        status = tracing::field::Empty,
+        latency_ms = tracing::field::Empty,
+        error = tracing::field::Empty,
+    );
+    let _span_guard = span.enter();
+    tracing::info!(
+        target: "capsem_gateway",
+        "gateway.proxy.start"
+    );
+
     if let Some(content_length) = req.headers().get(axum::http::header::CONTENT_LENGTH) {
         if let Ok(len) = content_length.to_str().unwrap_or("").parse::<usize>() {
             if len > MAX_BODY_SIZE {
+                span.record("status", StatusCode::PAYLOAD_TOO_LARGE.as_u16());
+                span.record("latency_ms", started.elapsed().as_millis() as u64);
+                tracing::warn!(
+                    target: "capsem_gateway",
+                    content_length = len,
+                    max_body_size = MAX_BODY_SIZE,
+                    "gateway.proxy.reject_oversized"
+                );
                 return (
                     StatusCode::PAYLOAD_TOO_LARGE,
                     axum::Json(serde_json::json!({"error": "request body too large"})),
@@ -35,9 +73,24 @@ pub async fn handle_proxy(State(state): State<Arc<AppState>>, req: Request) -> R
     }
 
     match forward(&state, req).await {
-        Ok(resp) => resp,
+        Ok(resp) => {
+            span.record("status", resp.status().as_u16());
+            span.record("latency_ms", started.elapsed().as_millis() as u64);
+            tracing::info!(
+                target: "capsem_gateway",
+                "gateway.proxy.ok"
+            );
+            resp
+        }
         Err(e) => {
-            tracing::error!(error = %e, "proxy error");
+            span.record("status", StatusCode::BAD_GATEWAY.as_u16());
+            span.record("latency_ms", started.elapsed().as_millis() as u64);
+            span.record("error", tracing::field::display(&e));
+            tracing::error!(
+                target: "capsem_gateway",
+                error = %e,
+                "gateway.proxy.error"
+            );
             (
                 StatusCode::BAD_GATEWAY,
                 axum::Json(serde_json::json!({"error": "service unavailable"})),
@@ -45,6 +98,10 @@ pub async fn handle_proxy(State(state): State<Arc<AppState>>, req: Request) -> R
                 .into_response()
         }
     }
+}
+
+fn gateway_request_id() -> String {
+    format!("{:012x}", rand::random::<u64>() & 0x0000_ffff_ffff_ffff)
 }
 
 async fn forward(state: &AppState, mut req: Request) -> anyhow::Result<Response> {

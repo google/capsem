@@ -512,7 +512,6 @@ class TestFormatResults:
             CheckResult(name="cargo", passed=True, detail="cargo 1.82.0"),
         ]
         output = format_results(results)
-        assert "capsem-admin doctor" in output
         assert "PASS" in output
         assert "2 passed" in output
         assert "0 failed" in output

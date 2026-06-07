@@ -32,20 +32,12 @@ export default defineConfig({
           autogenerate: { directory: 'usage' },
         },
         {
-          label: 'Configuration',
-          autogenerate: { directory: 'configuration' },
-        },
-        {
           label: 'Architecture',
           autogenerate: { directory: 'architecture' },
         },
         {
           label: 'Security',
           autogenerate: { directory: 'security' },
-        },
-        {
-          label: 'Observability',
-          autogenerate: { directory: 'observability' },
         },
         {
           label: 'Benchmarks',

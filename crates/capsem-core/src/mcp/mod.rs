@@ -123,12 +123,6 @@ pub fn build_server_list_with_builtin(
                 .and_then(|s| s.parse::<u32>().ok())
                 .map(|n| n.clamp(1, 16))
                 .or(default_pool);
-            let enabled = corp_config
-                .server_enabled
-                .get("local")
-                .copied()
-                .or_else(|| user_config.server_enabled.get("local").copied())
-                .unwrap_or(true);
 
             servers.push(McpServerDef {
                 name: "local".to_string(),
@@ -138,7 +132,7 @@ pub fn build_server_list_with_builtin(
                 env: builtin_env,
                 headers: std::collections::HashMap::new(),
                 bearer_token: None,
-                enabled,
+                enabled: true,
                 source: "builtin".to_string(),
                 pool_size,
                 pool_safe_tools,
@@ -166,60 +160,20 @@ pub fn build_server_list_with_builtin(
             servers.push(McpServerDef {
                 name: corp_server.name.clone(),
                 url: corp_server.url.clone(),
-                command: corp_server.command.clone(),
-                args: corp_server.args.clone(),
-                env: corp_server.env.clone(),
+                command: None,
+                args: vec![],
+                env: HashMap::new(),
                 headers: corp_server.headers.clone(),
                 bearer_token: corp_server.bearer_token.clone(),
                 enabled: corp_server.enabled,
                 source: "corp".to_string(),
-                pool_size: corp_server.pool_size,
-                pool_safe_tools: corp_server.pool_safe_tools.clone(),
+                pool_size: None,
+                pool_safe_tools: Vec::new(),
             });
         }
     }
 
-    // 2. Profile/user servers. In Profile V2 this is the selected profile's
-    //    `mcpServers` block, so it must win over opportunistic host
-    //    auto-detection.
-    for manual in &user_config.servers {
-        if manual.name.is_empty() {
-            warn!("manual server has empty name, skipping");
-            continue;
-        }
-        if manual.name == "builtin" {
-            warn!("manual server uses reserved name 'builtin', skipping");
-            continue;
-        }
-        if manual.name.contains(crate::mcp::types::NS_SEP) {
-            warn!(name = %manual.name, "manual server name contains namespace separator '{}', skipping to prevent ambiguity", crate::mcp::types::NS_SEP);
-            continue;
-        }
-        if seen.insert(manual.name.clone()) {
-            let mut def = McpServerDef {
-                name: manual.name.clone(),
-                url: manual.url.clone(),
-                command: manual.command.clone(),
-                args: manual.args.clone(),
-                env: manual.env.clone(),
-                headers: manual.headers.clone(),
-                bearer_token: manual.bearer_token.clone(),
-                enabled: manual.enabled,
-                source: "manual".to_string(),
-                pool_size: manual.pool_size,
-                pool_safe_tools: manual.pool_safe_tools.clone(),
-            };
-            // Apply enabled overrides
-            if let Some(&enabled) = corp_config.server_enabled.get(&def.name) {
-                def.enabled = enabled;
-            } else if let Some(&enabled) = user_config.server_enabled.get(&def.name) {
-                def.enabled = enabled;
-            }
-            servers.push(def);
-        }
-    }
-
-    // 3. Auto-detected servers (claude, gemini configs)
+    // 2. Auto-detected servers (claude, gemini configs)
     for mut def in detect_host_mcp_servers() {
         if def.name.is_empty() {
             continue;
@@ -241,6 +195,44 @@ pub fn build_server_list_with_builtin(
             def.enabled = enabled;
         }
         if seen.insert(def.name.clone()) {
+            servers.push(def);
+        }
+    }
+
+    // 3. User manual servers
+    for manual in &user_config.servers {
+        if manual.name.is_empty() {
+            warn!("manual server has empty name, skipping");
+            continue;
+        }
+        if manual.name == "builtin" {
+            warn!("manual server uses reserved name 'builtin', skipping");
+            continue;
+        }
+        if manual.name.contains(crate::mcp::types::NS_SEP) {
+            warn!(name = %manual.name, "manual server name contains namespace separator '{}', skipping to prevent ambiguity", crate::mcp::types::NS_SEP);
+            continue;
+        }
+        if seen.insert(manual.name.clone()) {
+            let mut def = McpServerDef {
+                name: manual.name.clone(),
+                url: manual.url.clone(),
+                command: None,
+                args: vec![],
+                env: HashMap::new(),
+                headers: manual.headers.clone(),
+                bearer_token: manual.bearer_token.clone(),
+                enabled: manual.enabled,
+                source: "manual".to_string(),
+                pool_size: None,
+                pool_safe_tools: Vec::new(),
+            };
+            // Apply enabled overrides
+            if let Some(&enabled) = corp_config.server_enabled.get(&def.name) {
+                def.enabled = enabled;
+            } else if let Some(&enabled) = user_config.server_enabled.get(&def.name) {
+                def.enabled = enabled;
+            }
             servers.push(def);
         }
     }

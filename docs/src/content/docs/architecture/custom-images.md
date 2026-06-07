@@ -5,30 +5,21 @@ sidebar:
   order: 40
 ---
 
-Capsem images are defined by signed Profile V2 payloads. Organizations create
-profiles with their own packages, tools, MCP servers, VM assets, enforcement packs,
-and detection packs, then use `capsem-admin` to derive build plans, verify
-assets, generate manifests, and sign the catalog.
+Capsem images are defined declaratively using TOML configuration files. Organizations can create custom images with their own AI providers, pre-installed packages, MCP servers, and security policies.
 
 ## Quick Start
 
 ```bash
-python -m pip install capsem
-capsem-admin profile init corp-dev --out profiles/corp-dev.profile.toml
-capsem-admin profile validate profiles/corp-dev.profile.toml --json
-capsem-admin image build profiles/corp-dev.profile.toml --arch all --json
-capsem-admin image verify profiles/corp-dev.profile.toml --assets-dir assets/ --json
-capsem-admin manifest generate --profiles profiles/ --base-url https://profiles.example.com/catalog/ --out manifest.json
+pip install capsem
+capsem-builder init my-corp-image/
+capsem-builder validate my-corp-image/
+capsem-builder build my-corp-image/
 ```
 
-The generated build workspace still contains TOML files consumed by the Docker
-templates, but those files are derived artifacts. The profile is the source of
-truth.
-
-## Generated Build Workspace
+## Directory Structure
 
 ```
-build/corp-dev-image/
+my-corp-image/
     config/
         build.toml              Architectures, compression, base images
         ai/
@@ -41,7 +32,7 @@ build/corp-dev-image/
         mcp/
             capsem.toml         MCP server definitions
         security/
-            controls.toml       Developer seed controls for built-in profiles
+            web.toml            Domain allow/block policy
         vm/
             resources.toml      CPU, RAM, disk, session limits
             environment.toml    Shell, bashrc, TLS config
@@ -88,12 +79,10 @@ path = "/root/.claude/settings.json"
 content = '{"permissions":{"defaultMode":"bypassPermissions"}}'
 ```
 
-Add a custom provider by editing the profile package/tool/provider contract,
-then validate the profile:
+Add a custom provider:
 
 ```bash
-capsem-admin profile validate profiles/corp-dev.profile.toml --json
-capsem-admin image plan profiles/corp-dev.profile.toml --json
+capsem-builder add ai-provider my-llm
 ```
 
 ### Package Sets
@@ -138,24 +127,35 @@ builtin = true
 enabled = true
 ```
 
-### Security Controls
+### Security Policy
 
-Profile V2 enforcement and detection packs control network access and findings
-inside the VM. Developer image TOML can still seed built-in profile generation,
-but corp/operator releases should author controls in the profile.
+`config/security/web.toml` controls network access inside the VM.
 
 ```toml
-[security.rules.http.allow_github]
-on = "http.request"
-if = 'http.request.host == "github.com" || http.request.host.endsWith(".githubusercontent.com")'
-decision = "allow"
-priority = 10
+[web]
+allow_read = false      # GET/HEAD for unknown domains
+allow_write = false     # POST/PUT for unknown domains
+custom_allow = []       # additional allowed domain patterns
+custom_block = []       # blocked patterns (override allow)
 
-[security.rules.http.block_unknown_writes]
-on = "http.request"
-if = 'http.request.method in ["POST", "PUT", "PATCH", "DELETE"]'
-decision = "block"
-priority = 1000
+[web.search.google]
+name = "Google"
+enabled = true
+domains = ["www.google.com", "google.com"]
+allow_get = true
+
+[web.registry.npm]
+name = "npm"
+enabled = true
+domains = ["registry.npmjs.org", "*.npmjs.org"]
+allow_get = true
+
+[web.repository.github]
+name = "GitHub"
+enabled = true
+domains = ["github.com", "*.github.com", "*.githubusercontent.com"]
+allow_get = true
+allow_post = true
 ```
 
 ### Build Configuration
@@ -167,11 +167,16 @@ priority = 1000
 compression = "zstd"
 compression_level = 15
 
+[build.erofs]
+enabled = true
+compression = "lz4hc"
+compression_level = 12
+
 [build.architectures.arm64]
 base_image = "debian:bookworm-slim"
 docker_platform = "linux/arm64"
 rust_target = "aarch64-unknown-linux-musl"
-kernel_branch = "6.6"
+kernel_branch = "7.0"
 kernel_image = "arch/arm64/boot/Image"
 defconfig = "kernel/defconfig.arm64"
 node_major = 24
@@ -180,7 +185,7 @@ node_major = 24
 base_image = "debian:bookworm-slim"
 docker_platform = "linux/amd64"
 rust_target = "x86_64-unknown-linux-musl"
-kernel_branch = "6.6"
+kernel_branch = "7.0"
 kernel_image = "arch/x86_64/boot/bzImage"
 defconfig = "kernel/defconfig.x86_64"
 node_major = 24
@@ -226,17 +231,17 @@ The `PATH` is set by the host at boot via the settings registry -- do not set PA
 
 | Command | What it does |
 |---------|-------------|
-| `capsem-admin profile init <id> --out <profile>` | Create a valid Profile V2 draft |
-| `capsem-admin profile validate <profile> --json` | Validate profile JSON/TOML |
-| `capsem-admin image build <profile>` | Build all architectures from a Profile V2 payload |
-| `capsem-admin image build <profile> --arch arm64` | Single architecture |
-| `capsem-admin image build <profile> --dry-run --json` | Preview without building |
-| `capsem-admin image verify <profile> --assets-dir assets/ --json` | Verify local assets, hashes, and package/tool inventory |
-| `capsem-admin image sbom <profile> --assets-dir assets/ --out-dir sboms/` | Emit guest-image SPDX SBOMs |
-| `capsem-admin manifest generate --profiles profiles/ --out manifest.json` | Build a profile catalog manifest |
-| `capsem-admin manifest check manifest.json --download --pubkey profile-sign.pub --json` | Download and verify profile/assets/signatures |
-| `capsem-admin enforcement validate <enforcement-pack> --json` | Validate enforcement packs |
-| `capsem-admin detection compile <detection-pack> --out detection.ir.json --json` | Validate Sigma with pySigma and compile Detection IR |
+| `capsem-builder build [DIR]` | Build all architectures |
+| `capsem-builder build --arch arm64` | Single architecture |
+| `capsem-builder build --dry-run` | Preview without building |
+| `capsem-builder validate [DIR]` | Lint configs with diagnostics |
+| `capsem-builder inspect [DIR]` | Render build manifest |
+| `capsem-builder audit` | Vulnerability scan |
+| `capsem-builder init NAME/` | Scaffold new image |
+| `capsem-builder add ai-provider NAME` | Add provider template |
+| `capsem-builder add packages NAME` | Add package set template |
+| `capsem-builder add mcp NAME` | Add MCP server template |
+| `capsem-builder doctor` | Check build prerequisites |
 
 ## Manifest
 
@@ -281,40 +286,43 @@ The runtime boots only when the asset hashes match. `min_binary`/`min_assets` ga
 
 ### Workflow
 
-1. `capsem-admin profile init corp-image --out profiles/corp-image.profile.toml` -- create a typed draft.
-2. Remove unwanted providers, MCP servers, packages, enforcement packs, or detection packs from the profile.
-3. Add internal providers and package/tool requirements to the profile.
-4. Validate: `capsem-admin profile validate profiles/corp-image.profile.toml --json`.
-5. Build: `capsem-admin image build profiles/corp-image.profile.toml --arch all --json`.
-6. Verify: `capsem-admin image verify profiles/corp-image.profile.toml --assets-dir assets/ --json`.
-7. Generate and sign the profile catalog manifest.
+1. `capsem-builder init corp-image/` -- scaffold from defaults
+2. Remove unwanted providers: delete `config/ai/openai.toml`
+3. Add internal providers: `capsem-builder add ai-provider internal-llm`
+4. Edit security policy: lock down domains in `config/security/web.toml`
+5. Add corporate packages: edit `config/packages/python.toml`
+6. Validate: `capsem-builder validate corp-image/`
+7. Build: `capsem-builder build corp-image/`
+8. Distribute: ship the `assets/` directory
 
 ### Lockdown Example
 
-Create a corp profile draft, then keep only the approved providers and security
-packs:
+Remove all AI providers except Anthropic, block external search, allow only internal registries:
 
 ```bash
-capsem-admin profile init corp-image --out profiles/corp-image.profile.toml
-capsem-admin profile validate profiles/corp-image.profile.toml --json
-capsem-admin enforcement validate corp-enforcement.toml --json
-capsem-admin detection compile corp-detections.yml --out detection.ir.json --json
+capsem-builder init corp-image/
+rm corp-image/config/ai/google.toml
+rm corp-image/config/ai/openai.toml
 ```
 
-Enforcement packs carry blocking rules:
+Edit `corp-image/config/security/web.toml`:
 
 ```toml
-[security.rules.http.allow_internal]
-on = "http.request"
-if = 'http.request.host.endsWith(".internal.corp.com")'
-decision = "allow"
-priority = -100
+[web]
+allow_read = false
+allow_write = false
+custom_allow = ["*.internal.corp.com"]
+custom_block = []
 
-[security.rules.http.block_google]
-on = "http.request"
-if = 'http.request.host.contains("google")'
-decision = "block"
-priority = -90
+[web.search.google]
+name = "Google"
+enabled = false
+
+[web.registry.npm]
+name = "Internal npm"
+enabled = true
+domains = ["npm.internal.corp.com"]
+allow_get = true
 ```
 
 ## Install Methods
@@ -352,8 +360,8 @@ Anything installed under `/root/` during the Docker build is hidden at runtime b
 |-----------|-------|-----|
 | `error[E001] missing required field` | TOML config missing a schema field | Check file:line in error, compare against examples above |
 | `error[E304] defconfig missing` | Kernel config for declared arch doesn't exist | Add `config/kernel/defconfig.{arch}` |
-| `warn[W001] no npm registry` | npm packages declared but no profile rule permits registry access | Add an enforcement rule or package contract entry for the registry |
-| `warn[W005] API key in config` | Hardcoded key in TOML | Use credential references in Service Settings V2/Profile V2 |
+| `warn[W001] no npm registry` | npm packages declared but no registry in web.toml | Add npm registry entry to security policy |
+| `warn[W005] API key in config` | Hardcoded key in TOML | Use `~/.capsem/user.toml` for personal keys |
 | Build fails: "container runtime not found" | No Docker | Install Docker (`brew install colima docker` on macOS, `sudo apt install docker.io` on Linux) |
 | Build fails: exit 137 (OOM) or exit 143 (SIGTERM mid-build) | Container runtime VM out of memory -- Tauri install-test cold build needs >12GB | Bump Colima to 16GB: `colima stop && colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8` |
 | Build fails: "Release file not valid yet" | Container VM clock drift | Builder handles this automatically via `Acquire::Check-Valid-Until=false` |

@@ -30,16 +30,15 @@ When the capsem MCP server is configured in your AI CLI, you have direct VM cont
 | `capsem_read_file` | id, path | Read file content from guest |
 | `capsem_write_file` | id, path, content | Write file into guest |
 | `capsem_vm_logs` | id, grep?, tail? | Serial + process logs. grep filters lines, tail limits to last N. |
-| `capsem_terminal_snapshot` | id, source?, grep?, tail? | Render a text snapshot of a session terminal/log surface from serial/process logs with ANSI cleanup. |
 | `capsem_service_logs` | grep?, tail? | Service daemon logs (last ~100KB). grep + tail filters. |
 | `capsem_inspect_schema` | -- | session.db CREATE TABLE statements |
 | `capsem_inspect` | id, sql | Raw SQL against session.db |
 | `capsem_delete` | id | Destroy VM and wipe all state |
 | `capsem_version` | -- | MCP server version + service connectivity status |
 | `capsem_fork` | id, name, description? | Fork a running/stopped VM into a new stopped persistent session (use as a reusable template). |
-| `capsem_mcp_connectors` | profile? | List Profile V2 `mcpServers` entries for the selected or requested profile. |
-| `capsem_mcp_add` | id, profile?, disabled?, type?, command?, args?, env?, url?, headers?, bearerToken?, credential_refs?, allowed_tools? | Add a standard MCP server entry plus Capsem governance metadata to a user profile. |
-| `capsem_mcp_delete` | id, profile? | Delete a direct user Profile V2 MCP server entry. |
+| `capsem_mcp_servers` | -- | List configured MCP servers with connection status and tool counts. |
+| `capsem_mcp_tools` | server? | List discovered MCP tools across all connected servers. Filter by `server` name to scope to one server. |
+| `capsem_mcp_call` | name, args? | Call an MCP tool by namespaced name (e.g. `github__search_repos`) with JSON arguments. Lets the agent exercise the MCP policy + telemetry path without driving guest stdio. |
 | `capsem_panics` | since?, limit? | **Run FIRST when investigating an unexplained failure.** Structured panic + backtrace extractor across `~/.capsem/run/{service,mcp,gateway,tray}.log` and capsem-app's latest jsonl. Returns `[{ ts, binary, thread, location, message, frames }]` with home-dir paths redacted. |
 | `capsem_triage` | id?, since?, limit? | Opinionated ranked summary of recent panics, dropped IPC frames (`target=ipc` warns from W1), 4xx/5xx server errors (`target=service`), and slow operations (>500ms). With `id`: also queries session.db for denied net + mcp errors + exec failures. |
 | `capsem_host_logs` | name, grep?, tail?, maxBytes? | Read a host log by symbolic name. Names: `service`, `mcp`, `gateway`, `tray`, `app` (latest jsonl in `~/.capsem/logs/`). Hard-coded allowlist; no path traversal. |
@@ -102,7 +101,7 @@ capsem_exec { id: "vm-1", command: "chmod +x /tmp/test.sh && /tmp/test.sh" }
 | Run capsem-doctor diagnostics | `capsem_exec` with `capsem-doctor` |
 | Full regression suite | `just test` |
 | Build + boot + validate in one shot | `just smoke` |
-| Benchmark performance | `just benchmark` |
+| Benchmark performance | `just bench` |
 
 MCP tools are for fast, targeted checks during development. Just recipes are for comprehensive validation before committing.
 

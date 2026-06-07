@@ -56,15 +56,19 @@ impl InodeTable {
         self.entries.get(&ino).map(|e| &e.host_path)
     }
 
-    pub fn child_path(&self, parent_ino: u64, name: &[u8]) -> Option<PathBuf> {
-        let name_str = valid_child_name(name)?;
-        Some(self.entries.get(&parent_ino)?.host_path.join(name_str))
-    }
-
     /// Resolve a child name under a parent inode. Returns inode number.
     /// Validates path traversal security: the resolved path must be under root.
     pub fn lookup(&mut self, parent_ino: u64, name: &[u8]) -> Option<u64> {
-        let name_str = valid_child_name(name)?;
+        let name_str = std::str::from_utf8(name).ok()?;
+
+        if name_str.is_empty()
+            || name_str == "."
+            || name_str == ".."
+            || name_str.contains('/')
+            || name_str.contains('\0')
+        {
+            return None;
+        }
 
         let parent_path = self.entries.get(&parent_ino)?.host_path.clone();
         let child_path = parent_path.join(name_str);
@@ -72,18 +76,9 @@ impl InodeTable {
         if !canonical.starts_with(&self.root_canonical) {
             return None;
         }
-        let entry_path = if std::fs::symlink_metadata(&child_path)
-            .ok()?
-            .file_type()
-            .is_symlink()
-        {
-            child_path
-        } else {
-            canonical
-        };
 
         for (&ino, entry) in &self.entries {
-            if entry.host_path == entry_path {
+            if entry.host_path == canonical {
                 if let Some(e) = self.entries.get_mut(&ino) {
                     e.refcount = e.refcount.saturating_add(1);
                 }
@@ -96,7 +91,7 @@ impl InodeTable {
         self.entries.insert(
             ino,
             InodeEntry {
-                host_path: entry_path,
+                host_path: canonical,
                 refcount: 1,
             },
         );
@@ -117,49 +112,6 @@ impl InodeTable {
             self.entries.remove(&ino);
         }
     }
-
-    pub fn rename_path(&mut self, old_path: &Path, new_path: &Path) {
-        let moved: Vec<u64> = self
-            .entries
-            .iter()
-            .filter_map(|(&ino, entry)| {
-                same_or_descendant(&entry.host_path, old_path).then_some(ino)
-            })
-            .collect();
-
-        self.entries.retain(|ino, entry| {
-            moved.contains(ino) || !same_or_descendant(&entry.host_path, new_path)
-        });
-
-        for ino in moved {
-            if let Some(entry) = self.entries.get_mut(&ino) {
-                if let Ok(suffix) = entry.host_path.strip_prefix(old_path) {
-                    entry.host_path = if suffix.as_os_str().is_empty() {
-                        new_path.to_path_buf()
-                    } else {
-                        new_path.join(suffix)
-                    };
-                }
-            }
-        }
-    }
-}
-
-fn valid_child_name(name: &[u8]) -> Option<&str> {
-    let name_str = std::str::from_utf8(name).ok()?;
-    if name_str.is_empty()
-        || name_str == "."
-        || name_str == ".."
-        || name_str.contains('/')
-        || name_str.contains('\0')
-    {
-        return None;
-    }
-    Some(name_str)
-}
-
-fn same_or_descendant(path: &Path, prefix: &Path) -> bool {
-    path == prefix || path.strip_prefix(prefix).is_ok()
 }
 
 #[cfg(test)]

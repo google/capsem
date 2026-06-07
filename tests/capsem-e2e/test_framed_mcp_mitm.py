@@ -20,7 +20,7 @@ from pathlib import Path
 import pytest
 
 from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB
-from helpers.service import ServiceInstance, select_editable_profile, wait_exec_ready
+from helpers.service import ServiceInstance, wait_exec_ready
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 CLI_BINARY = PROJECT_ROOT / "target/debug/capsem"
@@ -37,7 +37,6 @@ def _guest_python(script: str) -> str:
 def _start_service():
     svc = ServiceInstance()
     svc.start()
-    select_editable_profile(svc.client(), prefix="framed-policy")
     return svc
 
 
@@ -165,35 +164,6 @@ def _wait_for_net_row(db_path: Path, predicate, timeout: float = 20.0):
     pytest.fail(f"timed out waiting for net_events row; rows={rows}")
 
 
-def _timeline_rows(svc: ServiceInstance, vm: str, *, layers: str, limit: int = 50):
-    response = svc.client().get(
-        f"/timeline/{vm}?layers={layers}&limit={limit}",
-        timeout=15,
-    )
-    columns = response.get("columns", [])
-    return [dict(zip(columns, row)) for row in response.get("rows", [])]
-
-
-def _wait_for_timeline_row(
-    svc: ServiceInstance,
-    vm: str,
-    *,
-    layers: str,
-    predicate,
-    timeout: float = 20.0,
-):
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        rows = _timeline_rows(svc, vm, layers=layers)
-        for row in rows:
-            if predicate(row):
-                return row
-        time.sleep(0.2)
-    pytest.fail(
-        f"timed out waiting for timeline row; rows={_timeline_rows(svc, vm, layers=layers)}"
-    )
-
-
 def _responses_by_id(stdout: str) -> dict[object, dict]:
     payload = json.loads(stdout.strip().splitlines()[-1])
     return {resp["id"]: resp for resp in payload["responses"] if "id" in resp}
@@ -299,12 +269,18 @@ sys.exit(proc.returncode)
             assert row["method"] == method
             assert row["decision"] == "allowed"
             assert row["process_name"] == "python3"
-            assert row["policy_mode"] == "enforce"
+            assert row["policy_mode"] == "audit_only"
             assert row["policy_action"] == "allow"
 
         rows = _query_mcp_rows(db_path)
+        notifications = [
+            row for row in rows if row["request_id"] is None and row["method"] == "notifications/initialized"
+        ]
+        assert len(notifications) == 1
         counts = {}
         for row in rows:
+            if row["request_id"] is None:
+                continue
             counts[row["request_id"]] = counts.get(row["request_id"], 0) + 1
         assert counts == {"1": 1, "2": 1, "3": 1, "4": 1, "5": 1}
         echo = [r for r in rows if r["request_id"] == "3"][0]
@@ -376,14 +352,14 @@ sys.exit(proc.returncode)
         assert init["method"] == "initialize"
         assert tools["method"] == "tools/list"
         rows = _query_mcp_rows(db_path)
-        request_ids = {row["request_id"] for row in rows}
-        assert request_ids == {"init-string", "tools-list-string", None}
-        denied_notification = [
-            row for row in rows if row["request_id"] is None and row["method"] == "$/progress"
+        assert {row["request_id"] for row in rows if row["request_id"] is not None} == {
+            "init-string",
+            "tools-list-string",
+        }
+        notifications = [
+            row for row in rows if row["request_id"] is None and row["method"] == "notifications/initialized"
         ]
-        assert len(denied_notification) == 1
-        assert denied_notification[0]["decision"] == "denied"
-        assert denied_notification[0]["policy_rule"] == "mcp.notification.disallowed"
+        assert len(notifications) == 1
     finally:
         if vm is not None:
             _delete_vm(svc, vm)
@@ -464,24 +440,6 @@ import struct
 MCP_FRAME_VERSION = 1
 MCP_FRAME_HEADER_LEN = 16
 MCP_FRAME_MAGIC = 0x4D43
-CAPSEM_LOGICAL_PORT_MIN = 5000
-CAPSEM_LOGICAL_PORT_MAX = 5007
-
-def host_vsock_port(logical_port):
-    if not CAPSEM_LOGICAL_PORT_MIN <= logical_port <= CAPSEM_LOGICAL_PORT_MAX:
-        return logical_port
-    try:
-        cmdline = open("/proc/cmdline", encoding="utf-8").read().split()
-    except OSError:
-        return logical_port
-    for part in cmdline:
-        prefix = "capsem.vsock_port_offset="
-        if part.startswith(prefix):
-            try:
-                return logical_port + int(part[len(prefix):])
-            except ValueError:
-                return logical_port
-    return logical_port
 
 def encode_frame(stream_id, process_name, payload, *, magic=MCP_FRAME_MAGIC):
     process_bytes = process_name.encode()
@@ -521,7 +479,7 @@ def read_frame(sock):
 
 sock = socket.socket(socket.AF_VSOCK, socket.SOCK_STREAM)
 sock.settimeout(10)
-sock.connect((socket.VMADDR_CID_HOST, host_vsock_port(5002)))
+sock.connect((socket.VMADDR_CID_HOST, 5002))
 sock.sendall(b"\0CAPSEM_META:raw-corruptor\n")
 
 initial_payload = json.dumps({"jsonrpc": "2.0", "id": "before-corrupt", "method": "initialize", "params": {
@@ -633,23 +591,13 @@ print(json.dumps({"responses": responses, "stderr": proc.stderr.read()}))
             lambda r: r["request_id"] == "2" and r["decision"] == "allowed",
         )
 
-        saved = svc.client().post(
-            "/settings",
-            {
-                "policy.mcp.block_live_reload_echo": {
-                    "on": "mcp.request",
-                    "if": 'method == "tools/call" && tool.name == "local__echo" && arguments.text == "after-reload"',
-                    "decision": "block",
-                    "priority": 10,
-                    "reason": "Live reload block from settings API",
-                }
-            },
-            timeout=15,
+        config_path = svc.tmp_dir / "user.toml"
+        config_path.write_text(
+            "[mcp.tool_permissions]\nlocal__echo = \"block\"\n",
+            encoding="utf-8",
         )
-        assert saved["effective_rules"]["mcp"]["block_live_reload_echo"]["decision"] == "block"
         reload_response = svc.client().post("/reload-config", {}, timeout=15)
         assert reload_response["success"] is True
-        assert reload_response["reloaded"] >= 1
 
         stdout, stderr = proc.communicate(timeout=60)
         assert proc.returncode == 0, stderr
@@ -661,22 +609,9 @@ print(json.dumps({"responses": responses, "stderr": proc.stderr.read()}))
             db_path,
             lambda r: r["request_id"] == "3" and r["decision"] == "denied",
         )
-        assert denied["policy_action"] == "block"
-        assert denied["policy_rule"] == "policy.mcp.block_live_reload_echo"
-        assert denied["policy_reason"] == "Live reload block from settings API"
-        assert "redacted_by_policy" in (denied["request_preview"] or "")
-        assert "after-reload" not in (denied["request_preview"] or "")
-
-        timeline_row = _wait_for_timeline_row(
-            svc,
-            vm,
-            layers="mcp",
-            predicate=lambda r: (
-                r["layer"] == "mcp"
-                and "policy=block/policy.mcp.block_live_reload_echo" in r["summary"]
-            ),
-        )
-        assert timeline_row["status"] is None
+        assert denied["policy_action"] == "deny"
+        assert denied["policy_rule"] == "mcp.tool.local__echo"
+        assert "after-reload" in denied["request_preview"]
     finally:
         if proc is not None and proc.poll() is None:
             proc.kill()
@@ -703,7 +638,7 @@ def test_framed_guest_mcp_policy_v2_argument_block_from_settings_no_leak():
             },
             timeout=15,
         )
-        rule = saved["effective_rules"]["mcp"]["block_prod_token"]
+        rule = saved["policy"]["mcp"]["block_prod_token"]
         assert rule["decision"] == "block"
         assert rule["priority"] == 10
         reload_response = svc.client().post("/reload-config", {}, timeout=15)
@@ -764,8 +699,7 @@ sys.exit(proc.returncode)
         assert denied["server_name"] == "local"
         assert denied["tool_name"] == "local__echo"
         assert denied["process_name"] == "python3"
-        assert denied["policy_mode"] == "enforce"
-        assert denied["policy_action"] == "block"
+        assert denied["policy_action"] == "deny"
         assert denied["policy_rule"] == "policy.mcp.block_prod_token"
         assert (
             denied["policy_reason"]
@@ -808,8 +742,8 @@ def test_framed_guest_mcp_policy_v2_ask_and_request_rewrite_from_settings():
             },
             timeout=15,
         )
-        assert saved["effective_rules"]["mcp"]["ask_sensitive_echo"]["decision"] == "ask"
-        assert saved["effective_rules"]["mcp"]["rewrite_echo_token"]["decision"] == "rewrite"
+        assert saved["policy"]["mcp"]["ask_sensitive_echo"]["decision"] == "ask"
+        assert saved["policy"]["mcp"]["rewrite_echo_token"]["decision"] == "rewrite"
         reload_response = svc.client().post("/reload-config", {}, timeout=15)
         assert reload_response["success"] is True
 
@@ -854,8 +788,10 @@ sys.exit(proc.returncode)
         result = _exec_cli(svc, vm, _guest_python(script), timeout=90)
         assert result.returncode == 0, result.stderr
         responses = _responses_by_id(result.stdout)
-        assert "error" not in responses[2]
-        assert "ask-secret-value" in json.dumps(responses[2]["result"])
+        assert responses[2]["error"]["message"].startswith(
+            "MCP request blocked by policy"
+        )
+        assert "ask-secret-value" not in json.dumps(responses[2])
         rewrite_response = json.dumps(responses[3]["result"])
         assert "[redacted-token]" in rewrite_response
         assert "prod-token-ABC123" not in rewrite_response
@@ -864,14 +800,15 @@ sys.exit(proc.returncode)
         db_path = _session_db(svc, vm)
         asked = _wait_for_mcp_row(
             db_path,
-            lambda r: r["request_id"] == "2" and r["decision"] == "allowed",
+            lambda r: r["request_id"] == "2" and r["decision"] == "denied",
         )
-        assert asked["policy_action"] == "allow"
+        assert asked["policy_action"] == "ask"
         assert asked["policy_rule"] == "policy.mcp.ask_sensitive_echo"
         assert asked["policy_reason"] == "Sensitive echo needs approval"
-        assert "ask-secret-value" in (asked["response_preview"] or "")
+        assert asked["response_preview"] is None
         asked_preview = asked["request_preview"] or ""
-        assert "ask-secret-value" in asked_preview
+        assert "redacted_by_policy" in asked_preview
+        assert "ask-secret-value" not in asked_preview
 
         rewritten = _wait_for_mcp_row(
             db_path,
@@ -893,72 +830,21 @@ def test_framed_guest_mcp_builtin_http_policy_writes_mcp_and_net_rows():
     svc = _start_service()
     vm = None
     try:
-        vm = _create_vm(svc, "framed-builtin-http")
-
-        warmup_script = r'''
-import json
-import subprocess
-import sys
-
-messages = [
-    {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
-        "protocolVersion": "2024-11-05",
-        "capabilities": {},
-        "clientInfo": {"name": "builtin-http-warmup", "version": "1.0"},
-    }},
-    {"jsonrpc": "2.0", "method": "notifications/initialized"},
-    {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {
-        "name": "local__http_headers",
-        "arguments": {"url": "https://example.com/", "method": "HEAD"},
-    }},
-]
-
-proc = subprocess.run(
-    ["/run/capsem-mcp-server"],
-    input="\n".join(json.dumps(m) for m in messages) + "\n",
-    capture_output=True,
-    text=True,
-    timeout=45,
-)
-responses = [json.loads(line) for line in proc.stdout.splitlines() if line.strip()]
-print(json.dumps({
-    "returncode": proc.returncode,
-    "stderr": proc.stderr,
-    "responses": responses,
-}))
-sys.exit(proc.returncode)
-'''
-        warmup = _exec_cli(svc, vm, _guest_python(warmup_script), timeout=120)
-        assert warmup.returncode == 0, warmup.stderr
-        assert "domain blocked by policy: example.com" in json.dumps(
-            _responses_by_id(warmup.stdout)[2]["result"]
-        )
-
         saved = svc.client().post(
             "/settings",
             {
-                "policy.http.allow_builtin_example_com": {
-                    "on": "http.request",
-                    "if": 'request.host == "example.com"',
-                    "decision": "allow",
-                    "priority": 900,
-                    "reason": "Allow builtin MCP HTTP fixture domain",
-                },
-                "policy.http.block_builtin_invalid": {
-                    "on": "http.request",
-                    "if": 'request.host == "blocked-builtin-http.invalid"',
-                    "decision": "block",
-                    "priority": 10,
-                    "reason": "Block builtin MCP HTTP fixture domain",
-                },
+                "security.web.allow_read": False,
+                "security.web.allow_write": False,
+                "security.web.custom_allow": "example.com",
+                "security.web.custom_block": "blocked-builtin-http.invalid",
             },
             timeout=15,
         )
         assert "error" not in saved, saved
         reload_response = svc.client().post("/reload-config", {}, timeout=15)
         assert reload_response["success"] is True
-        assert reload_response["reloaded"] >= 1
 
+        vm = _create_vm(svc, "framed-builtin-http")
         script = r'''
 import json
 import subprocess
@@ -1005,14 +891,6 @@ sys.exit(proc.returncode)
         )
 
         db_path = _session_db(svc, vm)
-        warmup_denied_net = _wait_for_net_row(
-            db_path,
-            lambda r: r["domain"] == "example.com"
-            and r["method"] == "HEAD"
-            and r["decision"] == "denied",
-        )
-        assert warmup_denied_net["process_name"] == "mcp_builtin"
-
         allowed_mcp = _wait_for_mcp_row(
             db_path,
             lambda r: r["request_id"] == "2" and r["tool_name"] == "local__http_headers",
@@ -1027,9 +905,7 @@ sys.exit(proc.returncode)
 
         allowed_net = _wait_for_net_row(
             db_path,
-            lambda r: r["domain"] == "example.com"
-            and r["method"] == "HEAD"
-            and r["decision"] == "allowed",
+            lambda r: r["domain"] == "example.com" and r["method"] == "HEAD",
         )
         assert allowed_net["decision"] == "allowed"
         assert allowed_net["process_name"] == "mcp_builtin"
@@ -1328,11 +1204,11 @@ def test_framed_guest_mcp_policy_v2_controls_external_stdio_tool_from_settings()
             timeout=15,
         )
         assert (
-            saved["effective_rules"]["mcp"]["block_external_deny_text"]["decision"]
+            saved["policy"]["mcp"]["block_external_deny_text"]["decision"]
             == "block"
         )
         assert (
-            saved["effective_rules"]["mcp"]["block_external_secret_return"]["on"]
+            saved["policy"]["mcp"]["block_external_secret_return"]["on"]
             == "mcp.response"
         )
         reload_response = svc.client().post("/reload-config", {}, timeout=15)
@@ -1401,8 +1277,7 @@ sys.exit(proc.returncode)
         )
         assert blocked_request["server_name"] == "fast"
         assert blocked_request["tool_name"] == "fast__ping"
-        assert blocked_request["policy_mode"] == "enforce"
-        assert blocked_request["policy_action"] == "block"
+        assert blocked_request["policy_action"] == "deny"
         assert (
             blocked_request["policy_rule"]
             == "policy.mcp.block_external_deny_text"
@@ -1417,8 +1292,7 @@ sys.exit(proc.returncode)
         )
         assert blocked_response["server_name"] == "fast"
         assert blocked_response["tool_name"] == "fast__ping"
-        assert blocked_response["policy_mode"] == "enforce"
-        assert blocked_response["policy_action"] == "block"
+        assert blocked_response["policy_action"] == "deny"
         assert (
             blocked_response["policy_rule"]
             == "policy.mcp.block_external_secret_return"

@@ -70,7 +70,6 @@ class ActionKind(str, Enum):
 
     CHECK_UPDATE = "check_update"
     PRESET_SELECT = "preset_select"
-    RERUN_WIZARD = "rerun_wizard"
 
 
 class McpTransport(str, Enum):
@@ -151,7 +150,7 @@ class SettingMetadata(BaseModel):
     - Common: domains, choices, min, max, rules, env_vars, mask, validator, etc.
     - Action-specific: action (ActionKind)
     - MCP tool-specific: origin (McpToolOrigin)
-    - MCP server-specific: transport, command, url, args, env, headers
+    - MCP server-specific (legacy): transport, command, url, args, env, headers
     """
 
     # -- Common fields (from Rust SettingMetadata) --
@@ -179,7 +178,7 @@ class SettingMetadata(BaseModel):
     # -- MCP tool-specific --
     origin: McpToolOrigin | None = None
 
-    # -- MCP server-specific --
+    # -- MCP server-specific (legacy, kept for backward compat) --
     transport: McpTransport | None = None
     command: str | None = None
     url: str | None = None

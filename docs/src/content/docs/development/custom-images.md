@@ -5,14 +5,7 @@ sidebar:
   order: 15
 ---
 
-Release VM images are defined by Profile V2 payloads and built through
-`capsem-admin image build`. The TOML configs under `guest/config/` remain a
-developer input for built-in profile generation and the current Docker
-templates; they are not the corporate release authority.
-
-For corp/operator workflows, use [Admin CLI](/usage/admin-cli/) and
-[Custom Images Reference](/architecture/custom-images/). This page is for
-developers editing the repo internals.
+The VM image is defined by TOML configs in `guest/config/`. To change what's installed in the VM -- packages, AI providers, MCP servers, security policy -- you edit these configs and rebuild.
 
 ## The config directory
 
@@ -98,19 +91,14 @@ prefix = "/opt/ai-clis"
 packages = ["your-provider-cli"]
 ```
 
-### Change security controls
+### Change network policy
 
-For release profiles, change the Profile V2 enforcement or detection pack and
-rebuild/verify the profile-owned assets with `capsem-admin`. Repo-local
-`guest/config/security/web.toml` is only a developer input for built-in profile
-generation.
+Edit `guest/config/security/web.toml` to allow or block domains:
 
 ```toml
-[security.rules.http.allow_corp]
-on = "http.request"
-if = 'http.request.host.endsWith(".your-corp.com")'
-decision = "allow"
-priority = 10
+[web]
+custom_allow = ["*.your-corp.com"]
+custom_block = ["*.banned-domain.com"]
 ```
 
 ### Customize login tips
@@ -147,8 +135,8 @@ After editing configs:
 # 1. Validate your changes (fast, catches typos)
 uv run capsem-builder validate guest/
 
-# 2. Preview the profile-derived Dockerfile without building
-uv run capsem-admin image build config/profiles/base/coding.profile.toml --dry-run --json
+# 2. Preview the generated Dockerfile without building
+uv run capsem-builder build guest/ --dry-run
 
 # 3. Rebuild the rootfs (kernel rebuild only needed if you changed defconfig)
 just build-rootfs
@@ -181,18 +169,16 @@ just run "capsem-doctor"
 | `guest/artifacts/capsem-bashrc` | `just build-rootfs` (baked into rootfs) |
 | `guest/artifacts/capsem-init` | `just run` (repacks initrd automatically) |
 
-Profile/settings-only changes take effect through the service/profile resolver
-on the next VM create or reload path. They do not rely on a generated
-`defaults.json` runtime authority.
+Settings-only changes (security, resources, environment) take effect on the next `just run` without any rebuild -- capsem-builder generates `defaults.json` which the host reads at boot.
 
 ## Builder CLI reference
 
 ```bash
 uv run capsem-builder validate guest/           # lint all configs
 uv run capsem-builder inspect guest/            # show resolved config summary
-uv run capsem-admin image build config/profiles/base/coding.profile.toml --arch arm64
-uv run capsem-admin image build config/profiles/base/coding.profile.toml --dry-run --json
-uv run capsem-admin doctor --profile config/profiles/base/coding.profile.toml
+uv run capsem-builder build guest/ --arch arm64 # build for arm64
+uv run capsem-builder build guest/ --dry-run    # preview Dockerfiles
+uv run capsem-builder doctor guest/             # check prerequisites
 ```
 
 ## Further reading

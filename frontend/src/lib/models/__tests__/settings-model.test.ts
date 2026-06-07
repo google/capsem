@@ -1,10 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import {
-  EDITABLE_POLICY_RULE_TYPES,
-  SettingsModel,
-  policyRuleKey,
-  validatePolicyRuleConfig,
-} from '../settings-model';
+import { SettingsModel } from '../settings-model';
 import { Widget } from '../settings-enums';
 import { buildMockSettingsResponse } from '../../mock-settings';
 
@@ -14,54 +9,6 @@ function loadModel(): SettingsModel {
 
 describe('SettingsModel', () => {
   describe('tree indexing', () => {
-    it('loads the Profile V2 /settings envelope without legacy tree fields', () => {
-      const model = new SettingsModel({
-        mode: 'settings_profiles_v2',
-        profile_presets: [
-          {
-            id: 'coding',
-            name: 'Coding',
-            description: 'Focused defaults for software development sessions.',
-            settings: { 'profiles.default_profile': 'coding' },
-          },
-          {
-            id: 'everyday-work',
-            name: 'Everyday Work',
-            description: 'Balanced defaults for daily work sessions.',
-            settings: { 'profiles.default_profile': 'everyday-work' },
-          },
-        ],
-        settings_profiles: {
-          selected_profile_id: 'everyday-work',
-          effective: {
-            profile_id: 'everyday-work',
-          },
-        },
-        effective_rules: {
-          http: {
-            block_example: {
-              on: 'http.request',
-              if: 'http.request.host == "example.com"',
-              decision: 'block',
-              priority: 10,
-              reason: 'test rule',
-            },
-          },
-        },
-      });
-
-      expect(model.tree).toEqual([]);
-      expect(model.issues).toEqual([]);
-      expect(model.presets.map((preset) => preset.id)).toEqual(['coding', 'everyday-work']);
-      expect(model.activePresetId).toBe('everyday-work');
-      expect(model.policyRuleEntries).toHaveLength(1);
-      expect(model.policyRuleEntries[0]).toMatchObject({
-        key: 'policy.http.block_example',
-        type: 'http',
-        name: 'block_example',
-      });
-    });
-
     it('finds leaf settings by ID', () => {
       const model = loadModel();
       const leaf = model.getLeaf('ai.anthropic.allow');
@@ -84,6 +31,7 @@ describe('SettingsModel', () => {
     it('returns top-level groups', () => {
       const model = loadModel();
       const names = model.sections.map(s => s.name);
+      expect(names).toContain('App');
       expect(names).toContain('AI Providers');
       expect(names).toContain('Repositories');
       expect(names).toContain('Security');
@@ -134,195 +82,28 @@ describe('SettingsModel', () => {
     });
   });
 
-  describe('policy', () => {
-    it('normalizes omitted policy maps from the settings response', () => {
-      const response = buildMockSettingsResponse();
-      response.policy = {
-        http: {
-          block_openai_github: {
-            on: 'http.request',
-            if: "request.host == 'github.com'",
-            decision: 'block',
-            priority: 10,
-          },
-        },
-      };
-
-      const model = new SettingsModel(response);
-      expect(model.policy.mcp).toEqual({});
-      expect(Object.keys(model.policy.http ?? {})).toEqual([
-        'block_openai_github',
-      ]);
-      expect(model.policy.dns).toEqual({});
-      expect(model.policy.model).toEqual({});
-      expect(model.policy.hook).toEqual({});
-    });
-
-    it('lists named policy rules with full settings-save keys', () => {
+  describe('provider status', () => {
+    it('exposes provider discovery and brokered credential refs from the response', () => {
       const model = loadModel();
-      const keys = model.policyRuleEntries.map((entry) => entry.key);
-      expect(keys).toContain('policy.http.block_openai_github');
-      expect(keys).toContain('policy.mcp.ask_prod_issue');
+      const openai = model.providers.find((provider) => provider.id === 'openai');
+
+      expect(openai?.discovery?.event_type).toBe('file.event');
+      expect(openai?.brokered_credential_ref).toMatch(/^credential:blake3:[0-9a-f]{64}$/);
+      expect(openai?.aliases).toContain('api.openai.com');
+      expect(openai?.listen_ports).toEqual([443]);
+      expect(openai?.allowed_remote_targets).toContain('api.openai.com:443');
+      expect(openai?.corp_blocked).toBe(false);
     });
 
-    it('keeps hook readable but out of editable release rule types', () => {
-      expect(EDITABLE_POLICY_RULE_TYPES).toEqual(['mcp', 'http', 'dns', 'model']);
+    it('exposes tool config source indexes without raw config content', () => {
       const model = loadModel();
-      expect(model.callbacksForPolicyType('hook')).toEqual(['hook.decision']);
-      expect(() => model.stagePolicyRule('hook', 'external_decision', {
-        on: 'hook.decision',
-        if: 'decision == "block"',
-        decision: 'block',
-        priority: 10,
-      })).toThrow('hook policy rules are not editable in this release');
-    });
+      const codexConfig = model.toolConfigSources.codex_config;
 
-    it('merges staged policy additions, updates, and deletes into review entries', () => {
-      const model = loadModel();
-      model.stagePolicyRule('http', 'block_evil', {
-        on: 'http.request',
-        if: 'request.host == "evil.com"',
-        decision: 'block',
-        priority: 5,
-      });
-      model.stagePolicyRule('mcp', 'ask_prod_issue', {
-        on: 'mcp.request',
-        if: 'method == "tools/call" && arguments.issue == "prod"',
-        decision: 'block',
-        priority: 4,
-      });
-      model.deletePolicyRule('http', 'block_openai_github');
-
-      const entries = model.policyRuleEntries;
-      expect(entries.find((entry) => entry.key === 'policy.http.block_evil')?.pending).toBe('add');
-      expect(entries.find((entry) => entry.key === 'policy.mcp.ask_prod_issue')?.pending).toBe('update');
-      expect(entries.find((entry) => entry.key === 'policy.http.block_openai_github')?.pending).toBe('delete');
-    });
-
-    it('stages rename and type change atomically', () => {
-      const model = loadModel();
-      model.stagePolicyRuleRename('policy.http.block_openai_github', 'mcp', 'block_prod_tool', {
-        on: 'mcp.request',
-        if: 'method == "tools/call"',
-        decision: 'block',
-        priority: 5,
-      });
-
-      expect(model.pendingChanges.get('policy.http.block_openai_github')).toBeNull();
-      expect(model.pendingChanges.get('policy.mcp.block_prod_tool')).toMatchObject({
-        on: 'mcp.request',
-        decision: 'block',
-      });
-      expect(model.policyRuleEntries.find((entry) => entry.key === 'policy.mcp.block_prod_tool')?.pending).toBe('add');
-      expect(model.policyRuleEntries.find((entry) => entry.key === 'policy.http.block_openai_github')?.pending).toBe('delete');
-    });
-
-    it('generates Policy block rules from blocked domain chips', () => {
-      const model = loadModel();
-      const blocked = model.getLeaf('security.web.custom_block')!;
-      (blocked as { effective_value: string }).effective_value = 'evil.com, *.tracker.example';
-
-      const generated = model.generatedPolicyRuleEntries;
-      const exact = generated.find((entry) => entry.key === 'policy.http.block_custom_evil_com');
-      expect(exact?.rule).toEqual({
-        on: 'http.request',
-        if: 'request.host == "evil.com"',
-        decision: 'block',
-        priority: 100,
-        reason: 'Blocked by Blocked domains',
-      });
-
-      const wildcard = generated.find((entry) => entry.key === 'policy.http.block_custom_tracker_example');
-      expect(wildcard?.rule.if).toBe('request.host.endsWith(".tracker.example")');
-    });
-
-    it('generates method-aware Policy allow rules from metadata rules', () => {
-      const model = loadModel();
-      const generated = model.generatedPolicyRuleEntries;
-      const key = policyRuleKey(
-        'http',
-        'allow_repository_providers_github_allow_default_github_com_post',
-      );
-      const rule = generated.find((entry) => entry.key === key)?.rule;
-      expect(rule).toMatchObject({
-        on: 'http.request',
-        if: 'request.host == "github.com" && request.method == "POST"',
-        decision: 'allow',
-        priority: 800,
-      });
-    });
-
-    it('deduplicates generated policy rules with the same key', () => {
-      const model = loadModel();
-      const allowed = model.getLeaf('security.web.custom_allow')!;
-      (allowed as { effective_value: string }).effective_value = 'elie.net, elie.net';
-
-      const generated = model.generatedPolicyRuleEntries.filter(
-        (entry) => entry.key === 'policy.http.allow_custom_elie_net',
-      );
-      expect(generated).toHaveLength(1);
-    });
-
-    it('suppresses generated policy rules already effective or staged unchanged', () => {
-      const response = buildMockSettingsResponse();
-      response.policy!.http!.block_custom_evil_com = {
-        on: 'http.request',
-        if: 'request.host == "evil.com"',
-        decision: 'block',
-        priority: 100,
-        reason: 'Blocked by Blocked domains',
-      };
-      const model = new SettingsModel(response);
-      const blocked = model.getLeaf('security.web.custom_block')!;
-      (blocked as { effective_value: string }).effective_value = 'evil.com, tracker.example';
-
-      expect(model.generatedPolicyRuleEntries.map((entry) => entry.key)).not.toContain('policy.http.block_custom_evil_com');
-      expect(model.generatedPolicyRuleEntries.map((entry) => entry.key)).toContain('policy.http.block_custom_tracker_example');
-
-      const count = model.stageGeneratedPolicyRules();
-      expect(count).toBeGreaterThan(0);
-      expect(model.generatedPolicyRuleEntries.map((entry) => entry.key)).not.toContain('policy.http.block_custom_tracker_example');
-    });
-
-    it('validates policy rules before staging', () => {
-      expect(validatePolicyRuleConfig('model', 'bad_callback', {
-        on: 'http.request',
-        if: 'request.host == "example.com"',
-        decision: 'block',
-        priority: 1,
-      })).toContain('different policy type');
-      expect(validatePolicyRuleConfig('http', 'bad_decision', {
-        on: 'http.request',
-        if: 'request.host == "example.com"',
-        decision: 'deny',
-        priority: 1,
-      })).toContain('invalid decision');
-      expect(validatePolicyRuleConfig('http', 'bad_header', {
-        on: 'http.request',
-        if: 'request.host == "example.com"',
-        decision: 'rewrite',
-        priority: 1,
-        strip_request_headers: [''],
-      })).toContain('empty HTTP header');
-      expect(validatePolicyRuleConfig('http', 'bad_rewrite', {
-        on: 'http.request',
-        if: 'request.host == "example.com"',
-        decision: 'rewrite',
-        priority: 1,
-        rewrite_target: 'response.body =~ "secret"',
-        rewrite_value: '[redacted]',
-      })).toContain('unsupported rewrite target');
-    });
-
-    it('tolerates omitted metadata arrays from live settings responses', () => {
-      const model = loadModel();
-      const leaf = model.getLeaf('repository.providers.github.allow')!;
-      (leaf.metadata as { domains?: string[] }).domains = undefined;
-      for (const permissions of Object.values(leaf.metadata.rules)) {
-        (permissions as { domains?: string[] }).domains = undefined;
-      }
-
-      expect(() => model.generatedPolicyRuleEntries).not.toThrow();
+      expect(codexConfig.tool_id).toBe('codex');
+      expect(codexConfig.guest_path).toBe('/root/.codex/config.toml');
+      expect(codexConfig.inferred_endpoint_ref).toBe('ai.openai');
+      expect(codexConfig.observed_hash).toMatch(/^blake3:[0-9a-f]{64}$/);
+      expect(JSON.stringify(codexConfig)).not.toContain('sk-');
     });
   });
 
@@ -401,26 +182,6 @@ describe('SettingsModel', () => {
       expect(record).toEqual({ 'vm.resources.cpu_count': 8 });
     });
 
-    it('stages policy rule objects for settings save', () => {
-      const model = loadModel();
-      const rule = {
-        on: 'http.request' as const,
-        if: "request.host == 'github.com'",
-        decision: 'block' as const,
-        priority: 10,
-      };
-      model.stage('policy.http.block_openai_github', rule);
-      expect(model.getPendingAsRecord()).toEqual({
-        'policy.http.block_openai_github': rule,
-      });
-    });
-  });
-
-  describe('needsSetup', () => {
-    it('returns true when no API keys are set', () => {
-      const model = loadModel();
-      expect(model.needsSetup).toBe(true);
-    });
   });
 
   describe('enabled / visibility', () => {

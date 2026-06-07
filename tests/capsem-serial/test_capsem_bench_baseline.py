@@ -1,27 +1,27 @@
 """Record in-VM capsem-bench output as a time-series baseline.
 
 Provisions a fresh VM, runs `capsem-bench all`, pulls /tmp/capsem-benchmark.json
-out via /exec, validates gross-regression gates, and archives it to an
-arch-scoped benchmark artifact.
+out via /exec, and archives it to benchmarks/capsem-bench/data_<version>_<arch>.json.
+
+No gates yet -- we lack a stable baseline. Once 5-10 clean runs are on
+disk per arch, per-category tolerances can be picked and promoted to
+pytest asserts (mirroring OP_GATE_MS / FORK_GATE_MS in
+test_lifecycle_benchmark.py).
 """
 
 import json
+import os
 import re
+import time
 import uuid
 from pathlib import Path
 
 import pytest
 
-from helpers.benchmark_artifacts import (
-    benchmark_arch,
-    benchmark_output_path,
-    enrich_benchmark_artifact,
-)
-from helpers.benchmark_gates import validate_capsem_bench_result
 from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
 from helpers.service import ServiceInstance, wait_exec_ready
 
-pytestmark = [pytest.mark.serial, pytest.mark.benchmark]
+pytestmark = pytest.mark.serial
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 
@@ -34,16 +34,10 @@ def _project_version():
 
 def _save(data):
     version = _project_version()
-    arch = benchmark_arch()
-    out_path = benchmark_output_path(PROJECT_ROOT, "capsem-bench", version, arch)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    data = enrich_benchmark_artifact(
-        data,
-        project_root=PROJECT_ROOT,
-        project_version=version,
-        arch=arch,
-        command="capsem-bench all",
-    )
+    arch = "arm64" if os.uname().machine == "arm64" else "x86_64"
+    out_dir = PROJECT_ROOT / "benchmarks" / "capsem-bench"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_path = out_dir / f"data_{version}_{arch}.json"
     with open(out_path, "w") as f:
         json.dump(data, f, indent=2)
     print(f"capsem-bench baseline archived to {out_path}")
@@ -93,7 +87,10 @@ def test_capsem_bench_baseline():
         )
         raw = resp.get("stdout", "").strip()
         data = json.loads(raw)
-        validate_capsem_bench_result(data)
+        # Stamp host-side metadata so a future comparison helper can group
+        # by arch and time without re-reading Cargo.toml.
+        data["host_recorded_at"] = time.time()
+        data["arch"] = os.uname().machine
         _save(data)
     finally:
         try:

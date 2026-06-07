@@ -8,7 +8,6 @@
 
 use std::io;
 use std::os::unix::io::RawFd;
-use std::sync::OnceLock;
 use std::time::Duration;
 
 use nix::libc;
@@ -32,42 +31,6 @@ pub struct SockaddrVm {
 /// longer than this, it returns EAGAIN instead of hanging forever.
 /// 30s is generous -- vsock to hypervisor should drain in milliseconds.
 const IO_TIMEOUT_SECS: i64 = 30;
-const CAPSEM_LOGICAL_PORT_MIN: u32 = 5000;
-const CAPSEM_LOGICAL_PORT_MAX: u32 = 5007;
-
-static VSOCK_PORT_OFFSET: OnceLock<u32> = OnceLock::new();
-
-pub fn host_vsock_port(logical_port: u32) -> u32 {
-    if !(CAPSEM_LOGICAL_PORT_MIN..=CAPSEM_LOGICAL_PORT_MAX).contains(&logical_port) {
-        return logical_port;
-    }
-    logical_port.saturating_add(*VSOCK_PORT_OFFSET.get_or_init(read_vsock_port_offset))
-}
-
-fn read_vsock_port_offset() -> u32 {
-    let Ok(cmdline) = std::fs::read_to_string("/proc/cmdline") else {
-        return 0;
-    };
-    parse_vsock_port_offset(&cmdline)
-}
-
-fn parse_vsock_port_offset(cmdline: &str) -> u32 {
-    for part in cmdline.split_whitespace() {
-        let Some(raw) = part.strip_prefix("capsem.vsock_port_offset=") else {
-            continue;
-        };
-        let Ok(offset) = raw.parse::<u32>() else {
-            eprintln!("[capsem-agent] ignoring invalid capsem.vsock_port_offset={raw}");
-            return 0;
-        };
-        if CAPSEM_LOGICAL_PORT_MAX.saturating_add(offset) > u16::MAX as u32 {
-            eprintln!("[capsem-agent] ignoring out-of-range capsem.vsock_port_offset={offset}");
-            return 0;
-        }
-        return offset;
-    }
-    0
-}
 
 /// Connect to a vsock port on the given CID.
 ///
@@ -75,7 +38,6 @@ fn parse_vsock_port_offset(cmdline: &str) -> u32 {
 /// return EAGAIN after IO_TIMEOUT_SECS instead of hanging indefinitely
 /// if the host stops draining the buffer.
 pub fn vsock_connect(cid: u32, port: u32) -> io::Result<RawFd> {
-    let port = host_vsock_port(port);
     let fd = unsafe { libc::socket(AF_VSOCK, libc::SOCK_STREAM, 0) };
     if fd < 0 {
         return Err(io::Error::last_os_error());
@@ -145,38 +107,17 @@ pub fn vsock_connect_retry(cid: u32, port: u32, label: &str) -> RawFd {
 
     // Leak a &'static str for the label so RetryOpts can use it.
     let static_label: &'static str = Box::leak(format!("vsock-{label}").into_boxed_str());
-    let mut attempts: u32 = 0;
-    let mut last_err: Option<io::Error> = None;
-    let physical_port = host_vsock_port(port);
 
     match retry_with_backoff(
         &RetryOpts::new(static_label, Duration::from_secs(30)),
-        || {
-            attempts += 1;
-            eprintln!("[capsem-agent] {label} connect attempt {attempts} (port {physical_port})");
-            match vsock_connect(cid, port) {
-                Ok(fd) => Some(fd),
-                Err(e) => {
-                    eprintln!("[capsem-agent] {label} connect attempt {attempts} failed: {e}");
-                    last_err = Some(e);
-                    None
-                }
-            }
-        },
+        || vsock_connect(cid, port).ok(),
     ) {
         Ok(fd) => {
-            eprintln!("[capsem-agent] {label} connected (port {physical_port})");
+            eprintln!("[capsem-agent] {label} connected (port {port})");
             fd
         }
         Err(e) => {
-            match last_err {
-                Some(err) => {
-                    eprintln!("[capsem-agent] {label} connect timed out: {e}; last error: {err}");
-                }
-                None => {
-                    eprintln!("[capsem-agent] {label} connect timed out: {e}");
-                }
-            }
+            eprintln!("[capsem-agent] {label} connect timed out: {e}");
             std::process::exit(1);
         }
     }
@@ -265,21 +206,6 @@ mod tests {
             result.is_err(),
             "vsock connect should fail on macOS/host machines gracefully"
         );
-    }
-
-    #[test]
-    fn parse_vsock_port_offset_from_kernel_cmdline() {
-        assert_eq!(
-            parse_vsock_port_offset("console=ttyS0 capsem.vsock_port_offset=15016 quiet"),
-            15016
-        );
-    }
-
-    #[test]
-    fn parse_vsock_port_offset_rejects_invalid_values() {
-        assert_eq!(parse_vsock_port_offset("capsem.vsock_port_offset=nope"), 0);
-        assert_eq!(parse_vsock_port_offset("capsem.vsock_port_offset=65000"), 0);
-        assert_eq!(parse_vsock_port_offset("console=ttyS0 quiet"), 0);
     }
 
     #[test]

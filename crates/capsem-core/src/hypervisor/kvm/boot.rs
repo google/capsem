@@ -24,7 +24,6 @@ const MAGIC_OFFSET: usize = 56;
 const TEXT_OFFSET_FIELD: usize = 8;
 
 /// Result of loading a kernel image.
-#[derive(Debug)]
 pub(super) struct KernelLoadInfo {
     /// Guest physical address where the kernel entry point is.
     pub entry_addr: u64,
@@ -33,7 +32,6 @@ pub(super) struct KernelLoadInfo {
 }
 
 /// Result of loading an initrd.
-#[derive(Debug)]
 pub(super) struct InitrdLoadInfo {
     /// Guest physical address where the initrd was loaded.
     pub guest_addr: u64,

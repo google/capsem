@@ -1,0 +1,64 @@
+[ai.openai.rules.http_api]
+name = "openai_http_api_observed"
+action = "allow"
+detection_level = "informational"
+match = 'http.host.matches("(^|.*\.)(openai\.com|chatgpt\.com|oaistatic\.com|oaiusercontent\.com)$")'
+
+[ai.openai.rules.model_api]
+name = "openai_model_api_observed"
+action = "allow"
+detection_level = "informational"
+match = 'model.provider == "openai"'
+
+[ai.openai.rules.rogue_endpoint]
+name = "openai_rogue_endpoint"
+action = "block"
+detection_level = "critical"
+reason = "OpenAI model traffic must use an OpenAI-owned endpoint"
+match = 'model.provider == "openai" && http.host != "api.openai.com"'
+
+[ai.openai.rules.api_key_broker]
+name = "openai_api_key_broker"
+plugin = "credential_broker"
+action = "postprocess"
+type = "api-key"
+header = "Authorization"
+prefix = "Bearer "
+credential = "api_key"
+match = 'http.host.matches("(^|.*\.)(openai\.com|chatgpt\.com|oaistatic\.com|oaiusercontent\.com)$")'
+
+[corp.rules.block_openai]
+name = "openai_api_block"
+action = "block"
+detection_level = "high"
+corp_locked = true
+match = 'http.host.matches("(^|.*\.)(openai\.com|chatgpt\.com|oaistatic\.com|oaiusercontent\.com)$")'
+
+[ai.openai.rules.ask_tool_use]
+name = "openai_tool_ask"
+action = "ask"
+match = 'model.request.tool_calls.contains("email")'
+
+[ai.openai.rules.allow_local_ollama]
+name = "ollama_local_allow"
+action = "allow"
+match = 'http.host == "local.ollama" || model.provider == "ollama"'
+
+[profiles.rules.redact_pii]
+name = "openai_prompt_pii_redact"
+plugin = "pii"
+action = "preprocess"
+match = 'has(model.request.body)'
+
+[profiles.rules.scan_import]
+name = "file_import_vt_scan"
+plugin = "virus_total"
+action = "postprocess"
+match = 'file.import.path.matches(".*")'
+
+[profiles.rules.skill_loaded]
+name = "skill_loaded"
+action = "allow"
+detection_level = "informational"
+reason = "Skill markdown was loaded"
+match = 'file.read.path.matches("(^|.*/)skills/.+\\.md$") && file.read.ext == "md"'

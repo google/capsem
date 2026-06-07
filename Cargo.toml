@@ -6,24 +6,20 @@ members = [
     "crates/capsem-app",
     "crates/capsem-agent",
     "crates/capsem-logger",
-    "crates/capsem-security-engine",
-    "crates/capsem-file-engine",
-    "crates/capsem-network-engine",
-    "crates/capsem-process-engine",
     "crates/capsem-process",
     "crates/capsem-service",
     "crates/capsem",
-    "crates/capsem-tui",
     "crates/capsem-mcp",
     "crates/capsem-mcp-aggregator",
     "crates/capsem-mcp-builtin",
     "crates/capsem-tray",
     "crates/capsem-gateway",
     "crates/capsem-guard",
+    "crates/capsem-debug-upstream",
 ]
 
 [workspace.package]
-version = "1.2.1780103109"
+version = "1.0.1780763638"
 edition = "2021"
 rust-version = "1.91"
 license = "Apache-2.0"
@@ -68,9 +64,10 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 tracing-appender = "0.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["raw_value"] }
+serde_yaml = "0.9"
 rmp-serde = "1.3.0"
 toml = "0.8"
-rusqlite = { version = "0.32", features = ["bundled", "hooks"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
 humantime = "2"
 objc2 = "0.6"
 objc2-virtualization = { version = "0.3", features = [
@@ -103,8 +100,6 @@ base64 = "0.22"
 bytes = "1"
 regex = "1"
 clap = { version = "4", features = ["derive"] }
-ratatui = "0.30.0"
-crossterm = "0.29.0"
 tokio-unix-ipc = "0.4"
 rmcp = { version = "1.3", features = ["client", "server"] }
 # Low-level DNS protocol (wire-format codec). Used host-side by the

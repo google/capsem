@@ -24,15 +24,10 @@ class TestGuestNetwork:
         assert "dummy0" in stdout or "does not exist" in stderr or resp is not None
 
     def test_iptables_redirect(self, guest_env):
-        """Guest has iptables REDIRECT to proxy port."""
+        """Guest has iptables-nft REDIRECT to proxy port."""
         client, name = guest_env
-        resp = client.post(
-            f"/exec/{name}",
-            {"command": "iptables-legacy -t nat -L -n 2>&1 || iptables -t nat -L -n 2>&1"},
-        )
+        resp = client.post(f"/exec/{name}", {"command": "iptables-nft -t nat -S 2>/dev/null || true"})
         stdout = resp.get("stdout", "") if resp else ""
-        exit_code = resp.get("exit_code") if resp else None
-        assert exit_code == 0, f"iptables table unavailable:\n{stdout}"
         # Should have REDIRECT rules for HTTPS interception
         assert "REDIRECT" in stdout or "redirect" in stdout or len(stdout) > 0
 

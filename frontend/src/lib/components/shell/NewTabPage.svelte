@@ -3,32 +3,27 @@
   import { vmStore } from '../../stores/vms.svelte.ts';
   import { tabStore } from '../../stores/tabs.svelte.ts';
   import * as api from '../../api';
-  import type { ProfileListRecord, VmProfileStatus, VmSummary } from '../../types/gateway';
+  import type { VmSummary } from '../../types/gateway';
   import type { GlobalStats } from '../../types/gateway';
   import { formatUptime, formatTokens, formatCost } from '../../format';
   import Modal from './Modal.svelte';
-  import AssetReadinessPanel from './AssetReadinessPanel.svelte';
   import ArrowClockwise from 'phosphor-svelte/lib/ArrowClockwise';
   import Pause from 'phosphor-svelte/lib/Pause';
   import Trash from 'phosphor-svelte/lib/Trash';
   import Play from 'phosphor-svelte/lib/Play';
   import Plus from 'phosphor-svelte/lib/Plus';
   import BracketsAngle from 'phosphor-svelte/lib/BracketsAngle';
-  import Briefcase from 'phosphor-svelte/lib/Briefcase';
   import CircleNotch from 'phosphor-svelte/lib/CircleNotch';
   import Warning from 'phosphor-svelte/lib/Warning';
   import X from 'phosphor-svelte/lib/X';
   import GitFork from 'phosphor-svelte/lib/GitFork';
   import FloppyDisk from 'phosphor-svelte/lib/FloppyDisk';
 
-  type SortKey = 'name' | 'status' | 'profile' | 'uptime' | 'tokens' | 'cost';
+  type SortKey = 'name' | 'status' | 'uptime';
   type SortDir = 'asc' | 'desc';
 
   let globalStats = $state<GlobalStats | null>(null);
   let statsLoading = $state(true);
-  let profiles = $state<ProfileListRecord[]>([]);
-  let profilesLoading = $state(true);
-  let profilesError = $state<string | null>(null);
 
   let initialLoading = $derived(!vmStore.polled);
 
@@ -41,8 +36,6 @@
     } finally {
       statsLoading = false;
     }
-
-    await loadProfiles();
   });
 
   let sortKey = $state<SortKey>('name');
@@ -63,10 +56,7 @@
       switch (sortKey) {
         case 'name': cmp = (a.name ?? a.id).localeCompare(b.name ?? b.id); break;
         case 'status': cmp = a.status.localeCompare(b.status); break;
-        case 'profile': cmp = profileSortValue(a).localeCompare(profileSortValue(b)); break;
         case 'uptime': cmp = (a.uptime_secs ?? 0) - (b.uptime_secs ?? 0); break;
-        case 'tokens': cmp = ((a.total_input_tokens ?? 0) + (a.total_output_tokens ?? 0)) - ((b.total_input_tokens ?? 0) + (b.total_output_tokens ?? 0)); break;
-        case 'cost': cmp = (a.total_estimated_cost ?? 0) - (b.total_estimated_cost ?? 0); break;
       }
       return sortDir === 'asc' ? cmp : -cmp;
     });
@@ -85,37 +75,6 @@
 
   function statusBadge(status: string): string {
     return statusColor[status] ?? 'bg-muted text-muted-foreground-1';
-  }
-
-  const profileStatusColor: Record<VmProfileStatus, string> = {
-    current: 'bg-primary text-primary-foreground',
-    needs_update: 'border border-warning/40 bg-warning/10 text-warning',
-    deprecated: 'border border-warning/40 bg-warning/10 text-warning',
-    revoked: 'border border-destructive/40 bg-destructive/10 text-destructive',
-    corrupted: 'border border-destructive/40 bg-destructive/10 text-destructive',
-    unknown: 'border border-line-2 bg-muted text-muted-foreground-1',
-  };
-
-  function resolvedProfileStatus(vm: VmSummary): VmProfileStatus {
-    if (!vm.profile_id) return 'corrupted';
-    return vm.profile_status ?? 'unknown';
-  }
-
-  function profileStatusBadge(vm: VmSummary): string {
-    return profileStatusColor[resolvedProfileStatus(vm)];
-  }
-
-  function profileStatusLabel(vm: VmSummary): string {
-    return resolvedProfileStatus(vm).replace('_', ' ');
-  }
-
-  function profileIdentity(vm: VmSummary): string {
-    if (!vm.profile_id) return 'missing profile';
-    return vm.profile_revision ? `${vm.profile_id}@${vm.profile_revision}` : vm.profile_id;
-  }
-
-  function profileSortValue(vm: VmSummary): string {
-    return `${profileIdentity(vm)}:${resolvedProfileStatus(vm)}`;
   }
 
   // --- Modal state ---
@@ -153,21 +112,28 @@
     if (vm.name) await vmStore.resume(vm.name);
   }
 
-  let creatingProfileId = $state<string | null>(null);
+  let creatingTemp = $state(false);
   let actionError = $state<string | null>(null);
-  let setupRetrying = $state(false);
-  let setupRetryError = $state<string | null>(null);
 
-  let serviceReady = $derived(vmStore.serviceStatus === 'running');
   let assetsReady = $derived(vmStore.assetHealth?.ready === true);
-  let startupBlocked = $derived(!initialLoading && (!serviceReady || !assetsReady));
-
-  function emptySessionText(kind: 'ephemeral' | 'persistent'): string {
-    if (startupBlocked) {
-      return 'Session list unavailable until startup checks pass';
+  let missingAssets = $derived(vmStore.assetHealth?.assets.filter(asset => asset.status !== 'present').map(asset => asset.name) ?? []);
+  let assetStatusText = $derived.by(() => {
+    const assetHealth = vmStore.assetHealth;
+    if (!assetHealth) return 'Checking VM assets.';
+    if (assetHealth.downloading) {
+      const name = assetHealth.current_asset ? ` ${assetHealth.current_asset}` : '';
+      if (assetHealth.bytes_total && assetHealth.bytes_total > 0) {
+        const pct = Math.floor(((assetHealth.bytes_done ?? 0) / assetHealth.bytes_total) * 100);
+        return `Downloading${name}: ${pct}%`;
+      }
+      return `Downloading${name}.`;
     }
-    return kind === 'ephemeral' ? 'No ephemeral sessions' : 'No persistent sessions';
-  }
+    if (assetHealth.error || assetHealth.reconcile_error) {
+      return assetHealth.error ?? assetHealth.reconcile_error ?? 'Asset reconciliation failed.';
+    }
+    if (missingAssets.length > 0) return `Missing: ${missingAssets.join(', ')}.`;
+    return 'Assets are not ready.';
+  });
 
   function parseApiError(e: unknown): string {
     if (!(e instanceof Error)) return 'An unexpected error occurred';
@@ -185,98 +151,26 @@
     return stripped || msg;
   }
 
-  async function loadProfiles(): Promise<void> {
-    profilesLoading = true;
-    profilesError = null;
-    try {
-      const response = await api.listProfiles();
-      profiles = response.profiles;
-    } catch (e) {
-      profilesError = parseApiError(e);
-      profiles = [];
-    } finally {
-      profilesLoading = false;
-    }
-  }
-
-  function profileId(profile: ProfileListRecord): string {
-    return profile.profile.id;
-  }
-
-  function profileName(profile: ProfileListRecord): string {
-    return profile.profile.name || profile.profile.id;
-  }
-
-  function profileDescription(profile: ProfileListRecord): string {
-    return profile.profile.description || 'A ready-to-use Capsem session profile.';
-  }
-
-  function profileBestFor(profile: ProfileListRecord): string {
-    return profile.profile.best_for || 'General agent work.';
-  }
-
-  function profileRevision(profile: ProfileListRecord): string | null {
-    return profile.profile.revision ?? profile.asset_status?.profile_revision ?? null;
-  }
-
-  function profileUsable(profile: ProfileListRecord): boolean {
-    return profile.asset_status?.usable_for_vm !== false;
-  }
-
-  function profileStateLabel(profile: ProfileListRecord): string {
-    if (profileUsable(profile)) return 'Ready';
-    if (profile.asset_status?.state === 'missing') return 'Assets missing';
-    return 'Unavailable';
-  }
-
-  async function createFromProfile(profile: ProfileListRecord) {
-    const idForLog = profileId(profile);
-    console.log('[NewTabPage] createFromProfile(%s) creatingProfileId=%s', idForLog, creatingProfileId);
-    if (creatingProfileId || !profileUsable(profile)) return;
+  async function createTemporary() {
+    console.log('[NewTabPage] createTemporary() creatingTemp=%s', creatingTemp);
+    if (creatingTemp) return;
     actionError = null;
-    creatingProfileId = profileId(profile);
+    if (!assetsReady) {
+      actionError = 'VM assets are not ready';
+      return;
+    }
+    creatingTemp = true;
     try {
       console.log('[NewTabPage] calling vmStore.provision()');
-      const request = {
-        persistent: false,
-        ...profileProvisionFields(profile),
-      };
-      const { id, name } = await vmStore.provision(request);
+      const { id, name } = await vmStore.provision({ ram_mb: 2048, cpus: 2, persistent: false });
       console.log('[NewTabPage] provision OK id=%s name=%s', id, name);
       tabStore.openVM(id, name);
     } catch (e) {
       console.error('[NewTabPage] provision FAIL:', e);
       actionError = parseApiError(e);
     } finally {
-      creatingProfileId = null;
+      creatingTemp = false;
     }
-  }
-
-  function profileProvisionFields(profile: ProfileListRecord): { profile_id?: string; profile_revision?: string } {
-    const selectedProfileId = profileId(profile);
-    const revision = profileRevision(profile);
-    return {
-      profile_id: selectedProfileId,
-      ...(revision ? { profile_revision: revision } : {}),
-    };
-  }
-
-  async function retrySetup(): Promise<void> {
-    if (setupRetrying) return;
-    setupRetrying = true;
-    setupRetryError = null;
-    try {
-      await api.retrySetup();
-      await vmStore.refresh();
-    } catch (e) {
-      setupRetryError = parseApiError(e);
-    } finally {
-      setupRetrying = false;
-    }
-  }
-
-  function openCustomizeSession(): void {
-    vmStore.showCreateModal = true;
   }
 </script>
 
@@ -289,7 +183,6 @@
             {#each [
               { key: 'name', label: 'Name' },
               { key: 'status', label: 'Status' },
-              { key: 'profile', label: 'Profile' },
               { key: 'uptime', label: 'Uptime' },
               { key: 'tokens', label: 'Tokens' },
               { key: 'cost', label: 'Cost' },
@@ -318,14 +211,6 @@
               <td class="p-3 whitespace-nowrap text-sm font-medium text-foreground">{vm.name ?? vm.id}</td>
               <td class="p-3 whitespace-nowrap text-sm">
                 <span class="text-xs px-2 py-0.5 rounded-full {statusBadge(vm.status)}">{vm.status}</span>
-              </td>
-              <td class="p-3 whitespace-nowrap text-sm">
-                <div class="flex flex-col gap-y-1">
-                  <span class="font-mono text-xs text-foreground">{profileIdentity(vm)}</span>
-                  <span class="w-fit text-[10px] px-1.5 py-0.5 rounded-full {profileStatusBadge(vm)}">
-                    {profileStatusLabel(vm)}
-                  </span>
-                </div>
               </td>
               <td class="p-3 whitespace-nowrap text-sm text-muted-foreground-1 tabular-nums">{vm.uptime_secs != null ? formatUptime(vm.uptime_secs) : '--'}</td>
               <td class="p-3 whitespace-nowrap text-sm text-muted-foreground-1 tabular-nums">{vm.total_input_tokens != null ? formatTokens((vm.total_input_tokens ?? 0) + (vm.total_output_tokens ?? 0)) : '--'}</td>
@@ -374,127 +259,75 @@
 {/snippet}
 
 <div class="p-6 max-w-5xl mx-auto">
+  <!-- Sessions header -->
   <div class="flex items-center justify-between mb-6">
     <h2 class="text-2xl font-bold text-foreground">Sessions</h2>
-    <button
-      type="button"
-      class="inline-flex items-center gap-x-2 bg-surface border border-line-2 text-foreground hover:bg-muted-hover rounded-lg px-4 py-2 text-sm font-medium transition-colors disabled:opacity-50 disabled:pointer-events-none"
-      onclick={openCustomizeSession}
-      disabled={initialLoading || !serviceReady}
-    >
-      <Plus size={16} weight="bold" />
-      Advanced...
-    </button>
+    <div class="flex items-center gap-x-2">
+      <button
+        type="button"
+        class="inline-flex items-center gap-x-2 bg-surface border border-line-2 text-foreground hover:bg-muted-hover rounded-lg px-4 py-2 text-sm font-medium transition-colors disabled:opacity-50 disabled:pointer-events-none"
+        onclick={() => vmStore.showCreateModal = true}
+        disabled={creatingTemp || !assetsReady}
+        title={!assetsReady ? 'VM assets are not ready' : 'Customize Session'}
+      >
+        <Plus size={16} weight="bold" />
+        Customize Session...
+      </button>
+      <button
+        type="button"
+        class="inline-flex items-center gap-x-2 bg-primary text-primary-foreground hover:bg-primary-hover rounded-lg px-4 py-2 text-sm font-medium transition-colors disabled:opacity-50 disabled:pointer-events-none"
+        onclick={createTemporary}
+        disabled={creatingTemp || !assetsReady}
+        title={!assetsReady ? 'VM assets are not ready' : 'Quick Session'}
+      >
+        <BracketsAngle size={16} weight="bold" />
+        {creatingTemp ? 'Creating...' : 'Quick Session'}
+      </button>
+    </div>
   </div>
 
-  {#if !serviceReady || !assetsReady}
-    <div class="mb-5">
-      <AssetReadinessPanel
-        health={vmStore.assetHealth}
-        {serviceReady}
-        retrying={setupRetrying}
-        retryError={setupRetryError}
-        onretry={retrySetup}
-        onrefresh={() => vmStore.refresh()}
-      />
-    </div>
-  {/if}
-
-  <section class="mb-6">
-    <div class="flex items-center justify-between mb-3">
-      <div>
-        <h3 class="text-xl font-medium text-foreground">Start from a profile</h3>
-        <p class="text-sm text-muted-foreground-1 mt-0.5">Profiles bundle tools, model access, security rules, and workspace defaults.</p>
+  <!-- Asset health warning -->
+  {#if vmStore.assetHealth && !vmStore.assetHealth.ready}
+    <div class="flex items-start gap-x-3 p-4 mb-4 rounded-lg border border-warning/30 bg-warning/10 text-sm">
+      <Warning size={18} class="text-warning mt-0.5 shrink-0" />
+      <div class="flex-1 min-w-0">
+        <p class="font-medium text-foreground">VM assets are not ready</p>
+        <p class="text-muted-foreground-1 mt-0.5">
+          {assetStatusText}
+        </p>
       </div>
       <button
         type="button"
-        class="p-2 rounded-lg border border-line-2 bg-layer text-foreground hover:bg-layer-hover transition-colors disabled:opacity-60"
-        title="Refresh profiles"
-        aria-label="Refresh profiles"
-        disabled={profilesLoading}
-        onclick={loadProfiles}
+        class="shrink-0 inline-flex items-center gap-x-2 bg-layer border border-layer-line text-layer-foreground hover:bg-muted-hover rounded-lg px-3 py-1.5 text-xs font-medium disabled:opacity-50 disabled:pointer-events-none"
+        onclick={() => vmStore.ensureAssets()}
+        disabled={vmStore.acting || vmStore.assetHealth.downloading}
       >
-        <ArrowClockwise size={16} />
+        {vmStore.assetHealth.downloading ? 'Downloading' : 'Ensure'}
       </button>
     </div>
+  {/if}
 
-    {#if profilesLoading && profiles.length === 0}
-      <div class="bg-card border border-card-line rounded-xl p-5 text-sm text-muted-foreground-1">Loading profiles...</div>
-    {:else if profilesError && profiles.length === 0}
-      <div class="bg-card border border-card-line rounded-xl p-4 flex items-start gap-x-3">
-        <Warning size={18} class="text-destructive mt-0.5 shrink-0" />
-        <p class="text-sm text-destructive">{profilesError}</p>
+  <!-- Action error banner -->
+  {#if actionError}
+    <div class="flex items-start gap-x-3 p-4 mb-4 rounded-lg border border-destructive/30 bg-destructive/10 text-sm">
+      <Warning size={18} class="text-destructive mt-0.5 shrink-0" />
+      <div class="flex-1 min-w-0">
+        <p class="font-medium text-foreground">Failed to create session</p>
+        <p class="text-muted-foreground-1 mt-0.5 break-words">{actionError}</p>
       </div>
-    {:else if profiles.length === 0}
-      <div class="bg-card border border-card-line rounded-xl p-5 text-sm text-muted-foreground-1">No profiles installed.</div>
-    {:else}
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-        {#each profiles as profile (profileId(profile))}
-          <article class="bg-card border border-card-line rounded-xl p-4">
-            <div class="flex gap-3">
-              <div class="size-11 shrink-0 rounded-lg bg-primary/10 text-primary flex items-center justify-center">
-                {#if profile.profile.ui === 'coding'}
-                  <BracketsAngle size={21} />
-                {:else}
-                  <Briefcase size={21} />
-                {/if}
-              </div>
-              <div class="min-w-0 flex-1">
-                <div class="flex items-center gap-2 flex-wrap">
-                  <h4 class="text-sm font-medium text-foreground">{profileName(profile)}</h4>
-                  <span class="text-[10px] px-1.5 py-0.5 rounded-full {profileUsable(profile) ? 'bg-primary/10 text-primary' : 'bg-destructive/10 text-destructive'}">
-                    {profileStateLabel(profile)}
-                  </span>
-                </div>
-                <p class="mt-1 text-xs text-muted-foreground-1">{profileDescription(profile)}</p>
-                <p class="mt-1 text-xs text-muted-foreground">{profileBestFor(profile)}</p>
-                {#if profileRevision(profile)}
-                  <p class="mt-3 text-[11px] text-muted-foreground-1">{profileRevision(profile)}</p>
-                {/if}
-              </div>
-            </div>
-
-            <div class="mt-4 flex justify-end">
-              <button
-                type="button"
-                class="inline-flex items-center gap-x-2 bg-primary text-primary-foreground hover:bg-primary-hover rounded-lg px-3 py-2 text-xs font-medium transition-colors disabled:opacity-50 disabled:pointer-events-none"
-                disabled={creatingProfileId !== null || initialLoading || !serviceReady || !profileUsable(profile)}
-                onclick={() => createFromProfile(profile)}
-              >
-                <Plus size={14} weight="bold" />
-                {creatingProfileId === profileId(profile) ? 'Creating...' : 'Start Session'}
-              </button>
-            </div>
-          </article>
-        {/each}
-      </div>
-    {/if}
-  </section>
-
-  <section class="space-y-4">
-    <div class="flex items-center justify-between">
-      <h3 class="text-xl font-medium text-foreground">Existing sessions</h3>
+      <button
+        type="button"
+        class="shrink-0 size-6 inline-flex items-center justify-center rounded text-muted-foreground-1 hover:text-foreground"
+        onclick={() => actionError = null}
+        aria-label="Dismiss"
+      >
+        <X size={14} />
+      </button>
     </div>
+  {/if}
 
-    {#if actionError}
-      <div class="flex items-start gap-x-3 p-4 rounded-lg border border-destructive/30 bg-destructive/10 text-sm">
-        <Warning size={18} class="text-destructive mt-0.5 shrink-0" />
-        <div class="flex-1 min-w-0">
-          <p class="font-medium text-foreground">Failed to create session</p>
-          <p class="text-muted-foreground-1 mt-0.5 break-words">{actionError}</p>
-        </div>
-        <button
-          type="button"
-          class="shrink-0 size-6 inline-flex items-center justify-center rounded text-muted-foreground-1 hover:text-foreground"
-          onclick={() => actionError = null}
-          aria-label="Dismiss"
-        >
-          <X size={14} />
-        </button>
-      </div>
-    {/if}
-
-  <h4 class="text-xs font-semibold text-foreground uppercase tracking-wider mb-3">Ephemeral</h4>
+  <!-- Ephemeral sessions -->
+  <h3 class="text-xs font-semibold text-foreground uppercase tracking-wider mb-3">Ephemeral</h3>
   {#if initialLoading}
     <div class="bg-card border border-card-line rounded-xl p-12 flex items-center justify-center gap-x-3">
       <CircleNotch size={18} class="text-muted-foreground-1 animate-spin" />
@@ -502,14 +335,14 @@
     </div>
   {:else if ephemeralVms.length === 0}
     <div class="bg-card border border-card-line rounded-xl p-8 flex items-center justify-center">
-      <p class="text-muted-foreground-1 text-sm">{emptySessionText('ephemeral')}</p>
+      <p class="text-muted-foreground-1 text-sm">No ephemeral sessions</p>
     </div>
   {:else}
     {@render sessionTable(ephemeralVms)}
   {/if}
 
   <!-- Persistent sessions -->
-  <h4 class="text-xs font-semibold text-foreground uppercase tracking-wider mt-8 mb-3">Persistent</h4>
+  <h3 class="text-xs font-semibold text-foreground uppercase tracking-wider mt-8 mb-3">Persistent</h3>
   {#if initialLoading}
     <div class="flex items-center gap-x-2 py-3">
       <CircleNotch size={14} class="text-muted-foreground-1 animate-spin" />
@@ -517,14 +350,14 @@
     </div>
   {:else if persistentVms.length === 0}
     <div class="bg-card border border-card-line rounded-xl p-8 flex items-center justify-center">
-      <p class="text-muted-foreground-1 text-sm">{emptySessionText('persistent')}</p>
+      <p class="text-muted-foreground-1 text-sm">No persistent sessions</p>
     </div>
   {:else}
     {@render sessionTable(persistentVms)}
   {/if}
 
   <!-- Statistics -->
-  <h4 class="text-xs font-semibold text-foreground uppercase tracking-wider mt-8 mb-3">Statistics</h4>
+  <h3 class="text-xs font-semibold text-foreground uppercase tracking-wider mt-8 mb-3">Statistics</h3>
   {#if statsLoading}
     <div class="flex items-center gap-x-2 py-3">
       <CircleNotch size={14} class="text-muted-foreground-1 animate-spin" />
@@ -550,7 +383,6 @@
       </div>
     </div>
   {/if}
-  </section>
 </div>
 
 <Modal

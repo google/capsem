@@ -1,0 +1,80 @@
+{
+  "version": "1.0",
+  "benchmark": "db_writer_pressure",
+  "source": "/Users/elie/.codex/worktrees/5ce6/capsem/target/criterion/db_writer_pressure",
+  "rows": [
+    {
+      "name": "file_events_1024",
+      "burst_size": 1024,
+      "mean_ms": 6.916,
+      "median_ms": 6.8931,
+      "events_per_sec_mean": 148062.5,
+      "events_per_sec_median": 148554.4,
+      "sample_percentiles": {
+        "p50_ms": 6.8931,
+        "p95_ms": 7.0277,
+        "p99_ms": 7.0382
+      },
+      "mean_confidence": {
+        "confidence_level": 0.95,
+        "lower_ms": 6.8822,
+        "upper_ms": 6.9558
+      },
+      "median_confidence": {
+        "confidence_level": 0.95,
+        "lower_ms": 6.8739,
+        "upper_ms": 6.961
+      }
+    },
+    {
+      "name": "file_events_128",
+      "burst_size": 128,
+      "mean_ms": 1.525,
+      "median_ms": 1.5188,
+      "events_per_sec_mean": 83934.4,
+      "events_per_sec_median": 84277.1,
+      "sample_percentiles": {
+        "p50_ms": 1.5188,
+        "p95_ms": 1.5538,
+        "p99_ms": 1.5588
+      },
+      "mean_confidence": {
+        "confidence_level": 0.95,
+        "lower_ms": 1.5146,
+        "upper_ms": 1.5364
+      },
+      "median_confidence": {
+        "confidence_level": 0.95,
+        "lower_ms": 1.5111,
+        "upper_ms": 1.5399
+      }
+    },
+    {
+      "name": "file_events_4096",
+      "burst_size": 4096,
+      "mean_ms": 27.1623,
+      "median_ms": 27.02,
+      "events_per_sec_mean": 150797.2,
+      "events_per_sec_median": 151591.4,
+      "sample_percentiles": {
+        "p50_ms": 27.02,
+        "p95_ms": 27.8743,
+        "p99_ms": 28.0951
+      },
+      "mean_confidence": {
+        "confidence_level": 0.95,
+        "lower_ms": 26.9564,
+        "upper_ms": 27.4277
+      },
+      "median_confidence": {
+        "confidence_level": 0.95,
+        "lower_ms": 26.9391,
+        "upper_ms": 27.3255
+      }
+    }
+  ],
+  "project_version": "1.0.1780763638",
+  "arch": "arm64",
+  "host_recorded_at": 1780771539.468837,
+  "notes": "Criterion benchmark of the real capsem_logger::DbWriter writing file-event bursts to SQLite and shutting down cleanly."
+}

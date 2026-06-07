@@ -60,13 +60,9 @@ export const TRACE_DETAIL_SQL = `
 `;
 
 export const TRACE_TOOL_CALLS_SQL = `
-  SELECT tc.id, tc.model_call_id, tc.call_index, tc.call_id, tc.tool_name,
-         tc.arguments, tc.origin, tc.mcp_call_id, tc.trace_id,
-         mcalls.decision, mcalls.policy_mode, mcalls.policy_action,
-         mcalls.policy_rule, mcalls.policy_reason
+  SELECT tc.id, tc.model_call_id, tc.call_index, tc.call_id, tc.tool_name, tc.arguments, tc.origin
   FROM tool_calls tc
   JOIN model_calls mc ON tc.model_call_id = mc.id
-  LEFT JOIN mcp_calls mcalls ON tc.mcp_call_id = mcalls.id
   WHERE mc.trace_id = ?
   ORDER BY tc.model_call_id, tc.call_index
 `;
@@ -141,18 +137,14 @@ export const TOOLS_OVER_TIME_SQL = `
 export const TOOLS_UNIFIED_SQL = `
   SELECT timestamp, process_name, server_name, tool_name, method,
          decision, duration_ms, bytes, arguments, response_preview,
-         error_message, source, mcp_call_id, trace_id, policy_mode,
-         policy_action, policy_rule, policy_reason
+         error_message, source
   FROM (
     SELECT mc.timestamp, NULL as process_name, 'local' as server_name,
            tc.tool_name, NULL as method, 'allowed' as decision,
            mc.duration_ms,
            COALESCE(LENGTH(tc.arguments), 0) as bytes,
            tc.arguments, tr.content_preview as response_preview,
-           NULL as error_message, 'native' as source, tc.mcp_call_id,
-           COALESCE(tc.trace_id, mc.trace_id) as trace_id,
-           NULL as policy_mode, NULL as policy_action,
-           NULL as policy_rule, NULL as policy_reason
+           NULL as error_message, 'native' as source
     FROM tool_calls tc
     JOIN model_calls mc ON tc.model_call_id = mc.id
     LEFT JOIN tool_responses tr ON tc.call_id = tr.call_id
@@ -162,8 +154,7 @@ export const TOOLS_UNIFIED_SQL = `
            decision, duration_ms,
            COALESCE(LENGTH(request_preview), 0) + COALESCE(LENGTH(response_preview), 0) as bytes,
            request_preview as arguments, response_preview,
-           error_message, 'mcp' as source, id as mcp_call_id, trace_id,
-           policy_mode, policy_action, policy_rule, policy_reason
+           error_message, 'mcp' as source
     FROM mcp_calls
   )
   ORDER BY timestamp DESC
@@ -172,18 +163,14 @@ export const TOOLS_UNIFIED_SQL = `
 export const TOOLS_UNIFIED_SEARCH_SQL = `
   SELECT timestamp, process_name, server_name, tool_name, method,
          decision, duration_ms, bytes, arguments, response_preview,
-         error_message, source, mcp_call_id, trace_id, policy_mode,
-         policy_action, policy_rule, policy_reason
+         error_message, source
   FROM (
     SELECT mc.timestamp, NULL as process_name, 'local' as server_name,
            tc.tool_name, NULL as method, 'allowed' as decision,
            mc.duration_ms,
            COALESCE(LENGTH(tc.arguments), 0) as bytes,
            tc.arguments, tr.content_preview as response_preview,
-           NULL as error_message, 'native' as source, tc.mcp_call_id,
-           COALESCE(tc.trace_id, mc.trace_id) as trace_id,
-           NULL as policy_mode, NULL as policy_action,
-           NULL as policy_rule, NULL as policy_reason
+           NULL as error_message, 'native' as source
     FROM tool_calls tc
     JOIN model_calls mc ON tc.model_call_id = mc.id
     LEFT JOIN tool_responses tr ON tc.call_id = tr.call_id
@@ -193,8 +180,7 @@ export const TOOLS_UNIFIED_SEARCH_SQL = `
            decision, duration_ms,
            COALESCE(LENGTH(request_preview), 0) + COALESCE(LENGTH(response_preview), 0) as bytes,
            request_preview as arguments, response_preview,
-           error_message, 'mcp' as source, id as mcp_call_id, trace_id,
-           policy_mode, policy_action, policy_rule, policy_reason
+           error_message, 'mcp' as source
     FROM mcp_calls
   )
   WHERE tool_name LIKE ? OR method LIKE ? OR server_name LIKE ? OR process_name LIKE ?
@@ -310,9 +296,7 @@ export const NET_TOP_DOMAINS_SQL = `
 export const NET_EVENTS_ALL_SQL = `
   SELECT id, timestamp, domain, port, decision, method, path, query,
          status_code, bytes_sent, bytes_received, duration_ms, matched_rule,
-         request_headers, response_headers, request_body_preview,
-         response_body_preview, policy_mode, policy_action, policy_rule,
-         policy_reason, trace_id
+         request_headers, response_headers, request_body_preview, response_body_preview
   FROM net_events
   ORDER BY id DESC
 `;
@@ -320,9 +304,7 @@ export const NET_EVENTS_ALL_SQL = `
 export const NET_EVENTS_SEARCH_SQL = `
   SELECT id, timestamp, domain, port, decision, method, path, query,
          status_code, bytes_sent, bytes_received, duration_ms, matched_rule,
-         request_headers, response_headers, request_body_preview,
-         response_body_preview, policy_mode, policy_action, policy_rule,
-         policy_reason, trace_id
+         request_headers, response_headers, request_body_preview, response_body_preview
   FROM net_events
   WHERE domain LIKE ? OR path LIKE ? OR method LIKE ?
   ORDER BY id DESC

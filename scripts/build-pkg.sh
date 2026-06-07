@@ -6,7 +6,7 @@
 # Arguments:
 #   app_path          Path to signed Capsem.app (from Tauri build)
 #   bin_dir           Directory containing companion binaries (capsem, capsem-service, etc.)
-#   assets_dir        Directory containing VM assets (manifest.json, vmlinuz, initrd.img, etc.)
+#   assets_dir        Directory containing VM assets (manifest.json, arch dirs, etc.)
 #   version           Version string (e.g. "0.16.1")
 #   signing_identity  Optional: Developer ID Installer identity for productsign
 #
@@ -14,14 +14,13 @@
 #
 # The .pkg installs:
 #   /Applications/Capsem.app           -- Tauri GUI
-#   /usr/local/share/capsem/bin/       -- companion binaries
-#   /usr/local/share/capsem/admin-python/ -- capsem-admin Python payload
-#   /usr/local/share/capsem/profiles/base/ -- Profile V2 base profiles
-#   /usr/local/share/capsem/assets/    -- signed manifest only
+#   /usr/local/share/capsem/bin/       -- 6 companion binaries
+#   /usr/local/share/capsem/assets/    -- manifest.json, or current-arch assets when
+#                                         CAPSEM_PKG_ASSET_MODE=current-arch
 #   /usr/local/share/capsem/entitlements.plist
 #
 # A postinstall script copies binaries to ~/.capsem/bin/, codesigns them,
-# registers the LaunchAgent, and runs capsem setup (which downloads VM assets).
+# registers the LaunchAgent, and waits for service readiness.
 set -euo pipefail
 
 APP_PATH="${1:?usage: build-pkg.sh <app_path> <bin_dir> <assets_dir> <version> [signing_identity]}"
@@ -29,29 +28,10 @@ BIN_DIR="${2:?usage: build-pkg.sh <app_path> <bin_dir> <assets_dir> <version> [s
 ASSETS_DIR="${3:?usage: build-pkg.sh <app_path> <bin_dir> <assets_dir> <version> [signing_identity]}"
 VERSION="${4:?usage: build-pkg.sh <app_path> <bin_dir> <assets_dir> <version> [signing_identity]}"
 SIGNING_IDENTITY="${5:-}"
-CODE_SIGNING_IDENTITY="${APPLE_SIGNING_IDENTITY:-}"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 WORK_DIR=$(mktemp -d)
 trap 'rm -rf "$WORK_DIR"' EXIT
-
-sign_macho_tree() {
-    local root="$1"
-    local identity="$2"
-    if [ -z "$identity" ] || [ ! -d "$root" ]; then
-        return 0
-    fi
-    while IFS= read -r -d '' file_path; do
-        if file "$file_path" | grep -q 'Mach-O'; then
-            codesign \
-                --sign "$identity" \
-                --options runtime \
-                --timestamp \
-                --force \
-                "$file_path"
-        fi
-    done < <(find "$root" -type f -print0)
-}
 
 echo "=== Assembling .pkg payload ==="
 
@@ -62,7 +42,7 @@ cp -R "$APP_PATH" "$WORK_DIR/payload/Applications/Capsem.app"
 # Companion binaries
 SHARE_DIR="$WORK_DIR/payload/usr/local/share/capsem"
 mkdir -p "$SHARE_DIR/bin"
-for bin in capsem capsem-service capsem-process capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-gateway capsem-tray capsem-tui capsem-admin; do
+for bin in capsem capsem-service capsem-process capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-gateway capsem-tray; do
     src="$BIN_DIR/$bin"
     if [ -f "$src" ]; then
         cp "$src" "$SHARE_DIR/bin/$bin"
@@ -73,54 +53,30 @@ for bin in capsem capsem-service capsem-process capsem-mcp capsem-mcp-aggregator
     fi
 done
 
-ADMIN_PYTHON_DIR="$BIN_DIR/capsem-admin-python"
-if [ -d "$ADMIN_PYTHON_DIR" ]; then
-    cp -R "$ADMIN_PYTHON_DIR" "$SHARE_DIR/admin-python"
-    sign_macho_tree "$SHARE_DIR/admin-python" "$CODE_SIGNING_IDENTITY"
-else
-    echo "ERROR: capsem-admin Python payload not found: $ADMIN_PYTHON_DIR" >&2
-    echo "       Run scripts/prepare-admin-cli.sh $BIN_DIR before packaging." >&2
-    exit 1
-fi
-
-PROFILE_SRC="$SCRIPT_DIR/../config/profiles/base"
-if [ -d "$PROFILE_SRC" ]; then
-    mkdir -p "$SHARE_DIR/profiles/base"
-    python3 "$SCRIPT_DIR/materialize-install-profiles.py" \
-        "$PROFILE_SRC" \
-        "$ASSETS_DIR" \
-        "$SHARE_DIR/profiles/base" \
-        "${CAPSEM_INSTALL_PROFILE_ASSET_ROOT:-https://assets.capsem.dev/vm}"
-else
-    echo "ERROR: base profiles not found: $PROFILE_SRC" >&2
-    exit 1
-fi
-
-# Fallback app copy used by postinstall. The package payload also installs
-# /Applications/Capsem.app directly, but postinstall verifies/materializes the
-# app from this copy so a successful install cannot leave the GUI missing.
-cp -R "$APP_PATH" "$SHARE_DIR/Capsem.app"
-
 # Entitlements (needed by postinstall for codesigning)
 if [ -f "$SCRIPT_DIR/../entitlements.plist" ]; then
     cp "$SCRIPT_DIR/../entitlements.plist" "$SHARE_DIR/"
 fi
 
-# VM assets: only bundle the signed manifest. Heavy assets stay on the asset
-# channel; profiles may point at https:// or a local file:// mirror.
+# VM assets. Release packages can stay manifest-only; local dev packages use
+# current-arch so `just install` does not mutate ~/.capsem after Installer.app
+# returns.
 mkdir -p "$SHARE_DIR/assets"
-for asset in manifest.json manifest.json.minisig; do
-    src="$ASSETS_DIR/$asset"
-    if [ -f "$src" ]; then
-        cp "$src" "$SHARE_DIR/assets/"
-    else
-        echo "ERROR: signed manifest file not found: $src" >&2
+ASSET_MODE="${CAPSEM_PKG_ASSET_MODE:-manifest-only}"
+case "$ASSET_MODE" in
+    manifest-only)
+        if [ -f "$ASSETS_DIR/manifest.json" ]; then
+            cp "$ASSETS_DIR/manifest.json" "$SHARE_DIR/assets/"
+        fi
+        ;;
+    current-arch)
+        bash "$SCRIPT_DIR/sync-dev-assets.sh" "$ASSETS_DIR" "$SHARE_DIR/assets"
+        ;;
+    *)
+        echo "ERROR: unknown CAPSEM_PKG_ASSET_MODE=$ASSET_MODE" >&2
         exit 1
-    fi
-done
-if [ -f "$ASSETS_DIR/manifest-sign.dev.pub" ]; then
-    cp "$ASSETS_DIR/manifest-sign.dev.pub" "$SHARE_DIR/assets/"
-fi
+        ;;
+esac
 
 echo "=== Building component package ==="
 
@@ -152,10 +108,10 @@ cat > "$WORK_DIR/welcome.html" <<'WELCOME_EOF'
 </html>
 WELCOME_EOF
 
-# Keep the package metadata aligned with the immutable release tag. Local
-# install paths stamp a fresh version before packaging when they need upgrade
-# ordering.
-sed "s/__VERSION__/$VERSION/g" "$SCRIPT_DIR/pkg-distribution.xml" > "$WORK_DIR/pkg-distribution.xml"
+# Stamp version into distribution XML (append build timestamp for uniqueness)
+BUILD_TS=$(date +%s)
+PKG_VERSION="$VERSION.$BUILD_TS"
+sed "s/__VERSION__/$PKG_VERSION/g" "$SCRIPT_DIR/pkg-distribution.xml" > "$WORK_DIR/pkg-distribution.xml"
 
 # Build the distribution .pkg (wraps component with UI)
 productbuild \

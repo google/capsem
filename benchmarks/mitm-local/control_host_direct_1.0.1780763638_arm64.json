@@ -1,0 +1,191 @@
+{
+  "version": "0.3.0",
+  "timestamp": 1780770405.9584372,
+  "hostname": "Saphyr.local",
+  "mitm_local": {
+    "version": "1.0",
+    "base_url": "http://127.0.0.1:50233",
+    "total_requests": 20,
+    "concurrency": 1,
+    "timeout_s": 30.0,
+    "scenarios": [
+      {
+        "name": "tiny_http",
+        "path": "/tiny",
+        "body_kind": "tiny",
+        "total_requests": 20,
+        "concurrency": 1,
+        "successful": 20,
+        "failed": 0,
+        "total_duration_ms": 11.8,
+        "requests_per_sec": 1693.0,
+        "transfer_bytes": 540,
+        "bytes_per_sec": 45710.1,
+        "latency_ms": {
+          "min": 0.3,
+          "max": 4.2,
+          "mean": 0.6,
+          "p50": 0.4,
+          "p95": 0.7,
+          "p99": 3.5
+        },
+        "errors": {}
+      },
+      {
+        "name": "http_1mb",
+        "path": "/bytes/1mb",
+        "body_kind": "1mb",
+        "total_requests": 20,
+        "concurrency": 1,
+        "successful": 20,
+        "failed": 0,
+        "total_duration_ms": 204.9,
+        "requests_per_sec": 97.6,
+        "transfer_bytes": 20971520,
+        "bytes_per_sec": 102366344.6,
+        "latency_ms": {
+          "min": 9.7,
+          "max": 10.7,
+          "mean": 10.2,
+          "p50": 10.2,
+          "p95": 10.7,
+          "p99": 10.7
+        },
+        "errors": {}
+      },
+      {
+        "name": "gzip_1mb",
+        "path": "/gzip/1mb",
+        "body_kind": "gzip",
+        "total_requests": 20,
+        "concurrency": 1,
+        "successful": 20,
+        "failed": 0,
+        "total_duration_ms": 415.6,
+        "requests_per_sec": 48.1,
+        "transfer_bytes": 20971520,
+        "bytes_per_sec": 50460043.5,
+        "latency_ms": {
+          "min": 20.4,
+          "max": 21.4,
+          "mean": 20.8,
+          "p50": 20.7,
+          "p95": 21.3,
+          "p99": 21.4
+        },
+        "errors": {}
+      },
+      {
+        "name": "sse_model",
+        "path": "/sse/model",
+        "body_kind": "sse",
+        "total_requests": 20,
+        "concurrency": 1,
+        "successful": 20,
+        "failed": 0,
+        "total_duration_ms": 8.1,
+        "requests_per_sec": 2467.8,
+        "transfer_bytes": 4780,
+        "bytes_per_sec": 589798.8,
+        "latency_ms": {
+          "min": 0.3,
+          "max": 0.9,
+          "mean": 0.4,
+          "p50": 0.3,
+          "p95": 0.5,
+          "p99": 0.8
+        },
+        "errors": {}
+      },
+      {
+        "name": "denied_target",
+        "path": "/deny-target",
+        "body_kind": "tiny",
+        "total_requests": 20,
+        "concurrency": 1,
+        "successful": 20,
+        "failed": 0,
+        "total_duration_ms": 7.0,
+        "requests_per_sec": 2863.4,
+        "transfer_bytes": 680,
+        "bytes_per_sec": 97356.1,
+        "latency_ms": {
+          "min": 0.3,
+          "max": 0.5,
+          "mean": 0.3,
+          "p50": 0.3,
+          "p95": 0.4,
+          "p99": 0.5
+        },
+        "errors": {}
+      },
+      {
+        "name": "credential_response",
+        "path": "/credential/response",
+        "body_kind": "credential",
+        "total_requests": 20,
+        "concurrency": 1,
+        "successful": 20,
+        "failed": 0,
+        "total_duration_ms": 7.0,
+        "requests_per_sec": 2871.3,
+        "transfer_bytes": 4720,
+        "bytes_per_sec": 677633.5,
+        "latency_ms": {
+          "min": 0.3,
+          "max": 0.7,
+          "mean": 0.3,
+          "p50": 0.3,
+          "p95": 0.4,
+          "p99": 0.6
+        },
+        "errors": {},
+        "secret_shaped_fixture_seen": true,
+        "raw_secret_stored_in_result": false
+      }
+    ],
+    "websocket": [
+      {
+        "name": "websocket_echo",
+        "path": "/ws/echo",
+        "skipped": false,
+        "frames": 10,
+        "failed": false,
+        "duration_ms": 1.9,
+        "frames_per_sec": 5161.8,
+        "latency_ms": {
+          "min": 0.1,
+          "max": 0.1,
+          "mean": 0.1,
+          "p50": 0.1,
+          "p95": 0.1,
+          "p99": 0.1
+        }
+      },
+      {
+        "name": "websocket_close",
+        "path": "/ws/close",
+        "skipped": false,
+        "frames": 1,
+        "failed": false,
+        "duration_ms": 0.6,
+        "frames_per_sec": 1596.5,
+        "latency_ms": {
+          "min": 0.6,
+          "max": 0.6,
+          "mean": 0.6,
+          "p50": 0.6,
+          "p95": 0.6,
+          "p99": 0.6
+        }
+      }
+    ]
+  },
+  "run_context": {
+    "kind": "host_direct_control",
+    "note": "Direct host-to-capsem-debug-upstream control baseline; not through VM/MITM.",
+    "command": "PYTHONPATH=guest/artifacts uv run --with rich --with requests python -m capsem_bench mitm-local http://127.0.0.1:50233 20 1",
+    "arch": "arm64",
+    "archived_at_unix": 1780770446.31937
+  }
+}

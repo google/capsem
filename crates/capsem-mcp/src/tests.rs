@@ -192,13 +192,11 @@ fn tail_log_fields_applies_to_all() {
         "logs": "a\nb\nc\nd\ne",
         "serial_logs": "1\n2\n3\n4\n5",
         "process_logs": "x\ny\nz",
-        "security_logs": "allow\nblock\ndetect",
     });
     tail_log_fields(&mut val, 2);
     assert_eq!(val["logs"], "d\ne");
     assert_eq!(val["serial_logs"], "4\n5");
     assert_eq!(val["process_logs"], "y\nz");
-    assert_eq!(val["security_logs"], "block\ndetect");
 }
 
 // -----------------------------------------------------------------------
@@ -346,24 +344,21 @@ fn grep_log_fields_filters_all_log_keys() {
         "logs": "INFO boot\nERROR crash\nINFO done",
         "serial_logs": "serial: ok\nserial: ERROR fail",
         "process_logs": "proc started\nproc ERROR exit",
-        "security_logs": "security allow\nsecurity ERROR block",
     });
     grep_log_fields(&mut val, "error");
     assert_eq!(val["logs"], "ERROR crash");
     assert_eq!(val["serial_logs"], "serial: ERROR fail");
     assert_eq!(val["process_logs"], "proc ERROR exit");
-    assert_eq!(val["security_logs"], "security ERROR block");
 }
 
 #[test]
 fn grep_log_fields_missing_optional_keys() {
-    // serial_logs, process_logs, and security_logs may be absent
+    // serial_logs and process_logs may be absent
     let mut val = json!({ "logs": "INFO ok\nERROR bad" });
     grep_log_fields(&mut val, "error");
     assert_eq!(val["logs"], "ERROR bad");
     assert!(val.get("serial_logs").is_none());
     assert!(val.get("process_logs").is_none());
-    assert!(val.get("security_logs").is_none());
 }
 
 #[test]
@@ -451,13 +446,12 @@ fn tool_router_registers_all_tools() {
         "capsem_purge",
         "capsem_run",
         "capsem_vm_logs",
-        "capsem_terminal_snapshot",
         "capsem_service_logs",
         "capsem_version",
         "capsem_fork",
-        "capsem_mcp_connectors",
-        "capsem_mcp_add",
-        "capsem_mcp_delete",
+        "capsem_mcp_servers",
+        "capsem_mcp_tools",
+        "capsem_mcp_call",
         // Observability sprint additions (T2/T3):
         "capsem_panics",
         "capsem_triage",
@@ -472,93 +466,6 @@ fn tool_router_registers_all_tools() {
         expected.len(),
         "Extra tools registered: {names:?}"
     );
-}
-
-#[test]
-fn terminal_snapshot_tool_description_mentions_terminal_inspection() {
-    let tools = CapsemHandler::tool_router();
-    let all_tools = tools.list_all();
-    let tool = all_tools
-        .iter()
-        .find(|tool| tool.name == "capsem_terminal_snapshot")
-        .expect("capsem_terminal_snapshot registered");
-    let description = tool.description.as_deref().unwrap_or_default();
-    assert!(
-        description.contains("terminal") && description.contains("ANSI"),
-        "terminal snapshot description should explain terminal inspection: {description}"
-    );
-}
-
-#[test]
-fn vm_logs_tool_description_mentions_security_logs() {
-    let tools = CapsemHandler::tool_router();
-    let all_tools = tools.list_all();
-    let tool = all_tools
-        .iter()
-        .find(|tool| tool.name == "capsem_vm_logs")
-        .expect("capsem_vm_logs registered");
-    let description = tool.description.as_deref().unwrap_or_default();
-    assert!(
-        description.contains("security"),
-        "capsem_vm_logs description should mention security logs: {description}"
-    );
-}
-
-#[test]
-fn terminal_snapshot_strips_ansi_and_tails_serial_log() {
-    let params = TerminalSnapshotParams {
-        id: "vm-1".into(),
-        tail: Some(2),
-        ..Default::default()
-    };
-    let out = terminal_snapshot_from_logs(
-        json!({
-            "serial_logs": "boot\n\u{1b}[31mred\u{1b}[0m\nready\r\nprompt$ "
-        }),
-        &params,
-    )
-    .unwrap();
-    let json: Value = serde_json::from_str(&out).unwrap();
-    assert_eq!(json["id"], "vm-1");
-    assert_eq!(json["source"], "serial");
-    assert_eq!(json["lines"][0], "ready");
-    assert_eq!(json["lines"][1], "prompt$ ");
-    assert!(
-        !json["text"].as_str().unwrap().contains('\u{1b}'),
-        "ANSI escapes should be stripped"
-    );
-}
-
-#[test]
-fn terminal_snapshot_supports_grep_and_process_source() {
-    let params = TerminalSnapshotParams {
-        id: "vm-1".into(),
-        source: Some("process".into()),
-        grep: Some("error".into()),
-        tail: Some(10),
-    };
-    let out = terminal_snapshot_from_logs(
-        json!({
-            "serial_logs": "serial ok",
-            "process_logs": "info\nerror: failed\nwarn"
-        }),
-        &params,
-    )
-    .unwrap();
-    let json: Value = serde_json::from_str(&out).unwrap();
-    assert_eq!(json["source"], "process");
-    assert_eq!(json["lines"], json!(["error: failed"]));
-}
-
-#[test]
-fn terminal_snapshot_rejects_unknown_source() {
-    let params = TerminalSnapshotParams {
-        id: "vm-1".into(),
-        source: Some("cosmic".into()),
-        ..Default::default()
-    };
-    let err = terminal_snapshot_from_logs(json!({"serial_logs": "ok"}), &params).unwrap_err();
-    assert!(err.contains("unsupported source"));
 }
 
 // -----------------------------------------------------------------------
@@ -722,31 +629,8 @@ fn inspect_schema_has_all_tables() {
         "mcp_calls",
         "fs_events",
         "snapshot_events",
-        "dns_events",
-        "audit_events",
-        "session_identity",
-        "security_events",
-        "security_event_steps",
-        "detection_findings",
-        "detection_finding_tags",
-        "security_event_links",
     ] {
         assert!(schema.contains(table), "Missing table in schema: {table}");
-    }
-}
-
-#[test]
-fn timeline_tool_schema_exposes_policy_layers() {
-    let schema = schemars::schema_for!(TimelineMcpParams);
-    let text = serde_json::to_string(&schema).unwrap();
-    for expected in [
-        "traceId",
-        "exec,mcp,net,dns,security,audit,snapshot,fs,model",
-    ] {
-        assert!(
-            text.contains(expected),
-            "timeline schema should mention {expected}: {text}"
-        );
     }
 }
 
@@ -947,7 +831,7 @@ fn fork_body_without_description() {
 }
 
 // -----------------------------------------------------------------------
-// build_persist_body / build_purge_body
+// build_persist_body / build_purge_body / build_read_file_body
 // -----------------------------------------------------------------------
 
 #[test]
@@ -974,6 +858,17 @@ fn purge_body_all_true_preserved() {
     let p = PurgeParams { all: Some(true) };
     let body = build_purge_body(&p);
     assert_eq!(body["all"], true);
+}
+
+#[test]
+fn read_file_body_contains_path_only() {
+    let p = FileReadParams {
+        id: "vm-1".into(),
+        path: "/etc/hostname".into(),
+    };
+    let body = build_read_file_body(&p);
+    assert_eq!(body["path"], "/etc/hostname");
+    assert!(body.get("id").is_none());
 }
 
 // -----------------------------------------------------------------------

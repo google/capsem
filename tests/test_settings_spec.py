@@ -98,7 +98,7 @@ class TestSideEffect:
 
 
 class TestActionKind:
-    EXPECTED = ["check_update", "preset_select", "rerun_wizard"]
+    EXPECTED = ["check_update", "preset_select"]
 
     def test_all_values_present(self):
         actual = sorted(e.value for e in ActionKind)
@@ -252,7 +252,7 @@ class TestSettingMetadata:
         assert meta.action is None
         # MCP tool-specific
         assert meta.origin is None
-        # MCP server-specific
+        # MCP server-specific (legacy)
         assert meta.transport is None
         assert meta.command is None
         assert meta.url is None

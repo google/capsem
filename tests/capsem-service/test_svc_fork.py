@@ -35,7 +35,10 @@ class TestFork:
             )
 
             marker = f"fork-marker-{uuid.uuid4().hex[:8]}"
-            client.write_file(source, "/root/fork-marker.txt", marker)
+            client.post(f"/write_file/{source}", {
+                "path": "/root/fork-marker.txt",
+                "content": marker,
+            })
 
             child = f"fork-child-{uuid.uuid4().hex[:6]}"
             children.append(child)
@@ -54,7 +57,7 @@ class TestFork:
             assert wait_exec_ready(client, resumed_id, timeout=EXEC_READY_TIMEOUT), (
                 f"forked VM {resumed_id} did not become exec-ready"
             )
-            read = client.read_file(resumed_id, "/root/fork-marker.txt")
+            read = client.post(f"/read_file/{resumed_id}", {"path": "/root/fork-marker.txt"})
             assert read is not None
             assert read.get("content") == marker, (
                 f"marker did not survive fork: {read}"

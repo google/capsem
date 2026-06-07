@@ -11,6 +11,25 @@ import pytest
 
 from conftest import run
 
+LOCAL_DEBUG_UPSTREAM_ENV = "CAPSEM_BENCH_MITM_LOCAL_BASE_URL"
+PUBLIC_NETWORK_SMOKE_ENV = "CAPSEM_RUN_PUBLIC_NETWORK_SMOKE"
+
+
+def _local_debug_url(path):
+    base_url = os.environ.get(LOCAL_DEBUG_UPSTREAM_ENV)
+    if not base_url:
+        return None
+    return f"{base_url.rstrip('/')}/{path.lstrip('/')}"
+
+
+def _public_network_smoke_enabled():
+    return os.environ.get(PUBLIC_NETWORK_SMOKE_ENV) == "1"
+
+
+def _require_public_network_smoke(reason):
+    if not _public_network_smoke_enabled():
+        pytest.skip(f"{reason}; set {PUBLIC_NETWORK_SMOKE_ENV}=1")
+
 
 # ---------------------------------------------------------------
 # Layer 1: Guest network plumbing (dummy0, capsem-dns-proxy, iptables)
@@ -40,28 +59,20 @@ def test_dns_proxy_listening_tcp():
 
 
 def test_iptables_redirect_dns_udp_to_1053():
-    """T3.4: iptables must REDIRECT UDP port 53 to 1053
+    """T3.4: iptables-nft must REDIRECT UDP port 53 to 1053
     (capsem-dns-proxy)."""
-    result = run(
-        "iptables-legacy -t nat -L OUTPUT -n 2>&1 || iptables -t nat -L OUTPUT -n 2>&1",
-        timeout=5,
-    )
-    assert result.returncode == 0, f"iptables nat table unavailable:\n{result.stdout}"
+    result = run("iptables-nft -t nat -S OUTPUT 2>&1", timeout=5)
     assert "1053" in result.stdout, \
         f"no REDIRECT to 1053 (DNS proxy):\n{result.stdout}"
-    assert "udp dpt:53" in result.stdout, \
+    assert "-p udp" in result.stdout and "--dport 53" in result.stdout, \
         f"no UDP dport 53 redirect rule:\n{result.stdout}"
 
 
 def test_iptables_redirect_dns_tcp_to_1053():
-    """T3.4: iptables must REDIRECT TCP port 53 to 1053 (large
+    """T3.4: iptables-nft must REDIRECT TCP port 53 to 1053 (large
     answers / TC-bit retries fall through TCP)."""
-    result = run(
-        "iptables-legacy -t nat -L OUTPUT -n 2>&1 || iptables -t nat -L OUTPUT -n 2>&1",
-        timeout=5,
-    )
-    assert result.returncode == 0, f"iptables nat table unavailable:\n{result.stdout}"
-    assert "tcp dpt:53" in result.stdout, \
+    result = run("iptables-nft -t nat -S OUTPUT 2>&1", timeout=5)
+    assert "-p tcp" in result.stdout and "--dport 53" in result.stdout, \
         f"no TCP dport 53 redirect rule:\n{result.stdout}"
 
 
@@ -70,6 +81,7 @@ def test_dns_resolves_via_capsem_proxy():
     the capsem-dns-proxy -> host hickory handler. Pre-T3.4 every
     name resolved to 10.0.0.1; post-T3.4 we must get a real upstream
     answer for an allowed domain."""
+    _require_public_network_smoke("public DNS resolution smoke")
     result = run("getent hosts elie.net", timeout=10)
     assert result.returncode == 0, f"elie.net did not resolve:\n{result.stderr}"
     assert "10.0.0.1" not in result.stdout, \
@@ -104,54 +116,26 @@ def test_dns_nxdomain_propagates_from_upstream():
     assert "10.0.0.1" not in result.stdout
 
 
-def test_localhost_resolves_from_hosts_not_dns_proxy():
-    """localhost must resolve locally even though resolv.conf points at Capsem DNS."""
-    result = run("getent hosts localhost", timeout=5)
-    assert result.returncode == 0, f"localhost did not resolve:\n{result.stdout}\n{result.stderr}"
-    assert "127.0.0.1" in result.stdout or "::1" in result.stdout, (
-        f"localhost resolved to an unexpected address:\n{result.stdout}"
-    )
-
-    hosts = run("cat /etc/hosts", timeout=5)
-    assert hosts.returncode == 0, f"/etc/hosts unreadable:\n{hosts.stderr}"
-    assert "127.0.0.1 localhost" in hosts.stdout, (
-        f"/etc/hosts missing loopback localhost entry:\n{hosts.stdout}"
-    )
-
-
 def test_iptables_redirect_443_to_10443():
-    """iptables must REDIRECT port 443 to 10443."""
-    result = run(
-        "iptables-legacy -t nat -L OUTPUT -n 2>&1 || iptables -t nat -L OUTPUT -n 2>&1",
-        timeout=5,
-    )
-    assert result.returncode == 0, f"iptables nat table unavailable:\n{result.stdout}"
+    """iptables-nft must REDIRECT port 443 to 10443."""
+    result = run("iptables-nft -t nat -S OUTPUT 2>&1", timeout=5)
     assert "REDIRECT" in result.stdout and "10443" in result.stdout, \
         f"no REDIRECT 443->10443:\n{result.stdout}"
 
 
 def test_iptables_redirect_80_to_10080():
-    """T2.2: iptables must REDIRECT port 80 to 10080 (plain HTTP)."""
-    result = run(
-        "iptables-legacy -t nat -L OUTPUT -n 2>&1 || iptables -t nat -L OUTPUT -n 2>&1",
-        timeout=5,
-    )
-    assert result.returncode == 0, f"iptables nat table unavailable:\n{result.stdout}"
+    """T2.2: iptables-nft must REDIRECT port 80 to 10080 (plain HTTP)."""
+    result = run("iptables-nft -t nat -S OUTPUT 2>&1", timeout=5)
     # Look for a REDIRECT line carrying ports "80" and "10080".
     assert "10080" in result.stdout, \
         f"no REDIRECT to 10080 (plain HTTP path):\n{result.stdout}"
-    assert "dpt:80 " in result.stdout or " dpt:80\n" in result.stdout \
-        or "tcp dpt:80" in result.stdout, \
+    assert "-p tcp" in result.stdout and "--dport 80" in result.stdout, \
         f"no dport 80 redirect rule:\n{result.stdout}"
 
 
 def test_iptables_redirect_11434_to_10080():
     """T2.2: Ollama default port 11434 must REDIRECT to 10080 too."""
-    result = run(
-        "iptables-legacy -t nat -L OUTPUT -n 2>&1 || iptables -t nat -L OUTPUT -n 2>&1",
-        timeout=5,
-    )
-    assert result.returncode == 0, f"iptables nat table unavailable:\n{result.stdout}"
+    result = run("iptables-nft -t nat -S OUTPUT 2>&1", timeout=5)
     assert "11434" in result.stdout, \
         f"no REDIRECT for 11434 (Ollama):\n{result.stdout}"
 
@@ -232,6 +216,7 @@ def test_vsock_bridge_delivers_bytes():
 
 def test_tls_handshake_completes():
     """TLS handshake to allowed domain must complete through the MITM proxy."""
+    _require_public_network_smoke("public TLS handshake smoke")
     result = run(
         "python3 -c \""
         "import socket, ssl; "
@@ -254,6 +239,7 @@ def test_tls_handshake_completes():
 
 def test_tls_cert_from_capsem_ca():
     """MITM proxy must present a cert signed by the Capsem CA."""
+    _require_public_network_smoke("public TLS certificate smoke")
     result = run(
         "python3 -c \""
         "import socket, ssl; "
@@ -288,6 +274,7 @@ def test_tls_cert_from_capsem_ca():
 
 def test_curl_https_with_skip_verify():
     """curl -k to allowed domain must get HTTP response."""
+    _require_public_network_smoke("public HTTPS curl smoke")
     result = run("curl -skI --connect-timeout 10 https://google.com 2>&1", timeout=20)
     assert result.returncode == 0, \
         f"curl -k failed (exit {result.returncode}):\n{result.stdout}"
@@ -296,6 +283,7 @@ def test_curl_https_with_skip_verify():
 
 def test_curl_verbose_diagnostics():
     """curl -v captures the full handshake trace for debugging."""
+    _require_public_network_smoke("public HTTPS verbose curl smoke")
     result = run("curl -vvk --connect-timeout 10 -o /dev/null https://google.com 2>&1", timeout=20)
     # Even if curl fails, capture the verbose output for diagnosis.
     # This test always passes -- it's here for diagnostic output on failure.
@@ -352,6 +340,7 @@ def test_certifi_includes_capsem_ca():
 
 def test_curl_allowed_domain_ca_trusted():
     """curl without -k must succeed (system trusts Capsem CA)."""
+    _require_public_network_smoke("public HTTPS CA trust smoke")
     result = run(
         "curl -sI --connect-timeout 10 https://google.com 2>&1",
         timeout=20,
@@ -363,6 +352,7 @@ def test_curl_allowed_domain_ca_trusted():
 
 def test_python_urllib_https_trusted():
     """Python urllib must complete TLS via system CA trust."""
+    _require_public_network_smoke("public Python TLS smoke")
     # Verify TLS works by connecting with ssl module (urllib raises HTTPError
     # for 403 responses, which obscures the TLS-success signal we care about).
     result = run(
@@ -418,8 +408,6 @@ def test_denied_domain_rejected():
 
 def test_post_to_random_domain_denied():
     """POST to a non-allow-listed domain must return 403."""
-    if os.environ.get("CAPSEM_WEB_ALLOW_WRITE") == "1":
-        pytest.skip("security.web.allow_write=true -- unknown write requests allowed by profile")
     result = run("curl -ski -X POST --connect-timeout 5 https://example.com 2>&1", timeout=15)
     assert "403" in result.stdout or result.returncode != 0, "POST to denied domain should return 403 or fail"
 
@@ -430,6 +418,8 @@ def test_post_to_random_domain_denied():
 ])
 def test_ai_provider_domain_blocked(domain, env_var):
     """AI provider domains: blocked unless allowed by policy, reachable if allowed."""
+    if os.environ.get(env_var) == "1":
+        _require_public_network_smoke(f"public AI provider smoke for {domain}")
     result = run(
         f"curl -skI --connect-timeout 10 https://{domain} 2>&1",
         timeout=20,
@@ -446,6 +436,24 @@ def test_ai_provider_domain_blocked(domain, env_var):
 
 def test_http_port_80_is_proxied():
     """Plain HTTP (port 80) is inspected by the MITM proxy."""
+    local_url = _local_debug_url("/tiny")
+    if local_url:
+        result = run(
+            f"curl -sS --connect-timeout 5 {local_url} 2>&1",
+            timeout=15,
+        )
+        assert result.returncode == 0, \
+            f"local HTTP through proxy failed: {result.stdout}"
+        assert "capsem-debug-upstream:tiny" in result.stdout, \
+            f"unexpected local HTTP response: {result.stdout}"
+        return
+
+    if not _public_network_smoke_enabled():
+        pytest.skip(
+            f"set {LOCAL_DEBUG_UPSTREAM_ENV} for local lab or "
+            f"{PUBLIC_NETWORK_SMOKE_ENV}=1 for explicit public smoke"
+        )
+
     result = run(
         "curl -sI --connect-timeout 5 http://google.com 2>&1",
         timeout=15,
@@ -458,6 +466,7 @@ def test_http_port_80_is_proxied():
 
 def test_non_standard_port_fails():
     """Connections to non-443 ports must fail."""
+    _require_public_network_smoke("public non-standard-port smoke")
     result = run(
         "curl -skI --connect-timeout 5 https://google.com:8443 2>&1",
         timeout=15,
@@ -488,27 +497,46 @@ _MIN_SPEED_MBPS = 0.5
 
 
 def test_proxy_download_throughput():
-    """~10 MB PDF download through the MITM proxy must complete above minimum speed.
+    """Download through the MITM proxy above the minimum speed.
 
     Exercises the full pipeline: guest curl -> iptables -> net-proxy ->
-    vsock -> host MITM proxy -> upstream TLS -> back.  Skipped when the
-    speed-test domain is not in the allow list.
+    vsock -> host MITM proxy -> upstream -> back. Public network is an
+    explicit smoke only; default release gates should use the local lab.
     """
-    # Probe reachability first so we can skip cleanly rather than fail.
-    probe = run(
-        f"curl -skLI --connect-timeout 10 {_THROUGHPUT_URL} 2>&1",
-        timeout=20,
-    )
-    if probe.returncode != 0 or "403" in probe.stdout:
-        pytest.skip(f"{_THROUGHPUT_DOMAIN} not in allow list (add to network.custom_allow to run)")
+    local_url = _local_debug_url("/bytes/10mb")
+    if local_url:
+        result = run(
+            f"curl -sL -o /dev/null"
+            f" -w '%{{speed_download}} %{{size_download}} %{{time_total}}'"
+            f" --connect-timeout 15"
+            f" {local_url}",
+            timeout=180,
+        )
+        expected_bytes = 10 * 1024 * 1024
+    else:
+        if not _public_network_smoke_enabled():
+            pytest.skip(
+                f"set {LOCAL_DEBUG_UPSTREAM_ENV} for local lab or "
+                f"{PUBLIC_NETWORK_SMOKE_ENV}=1 for explicit public smoke"
+            )
 
-    result = run(
-        f"curl -sL -o /dev/null"
-        f" -w '%{{speed_download}} %{{size_download}} %{{time_total}}'"
-        f" --connect-timeout 15"
-        f" {_THROUGHPUT_URL}",
-        timeout=180,
-    )
+    # Probe reachability first so we can skip cleanly rather than fail.
+        probe = run(
+            f"curl -skLI --connect-timeout 10 {_THROUGHPUT_URL} 2>&1",
+            timeout=20,
+        )
+        if probe.returncode != 0 or "403" in probe.stdout:
+            pytest.skip(f"{_THROUGHPUT_DOMAIN} not in allow list (add to network.custom_allow to run)")
+
+        result = run(
+            f"curl -sL -o /dev/null"
+            f" -w '%{{speed_download}} %{{size_download}} %{{time_total}}'"
+            f" --connect-timeout 15"
+            f" {_THROUGHPUT_URL}",
+            timeout=180,
+        )
+        expected_bytes = 500 * 1024
+
     assert result.returncode == 0, \
         f"download failed (exit {result.returncode}):\n{result.stderr}"
 
@@ -525,7 +553,7 @@ def test_proxy_download_throughput():
         f" in {time_s:.1f}s = {speed_mbps:.2f} MB/s"
     )
 
-    assert size_bytes >= 500 * 1024, \
-        f"incomplete download: {size_bytes / (1024*1024):.1f} MB (expected 0.5 MB)"
+    assert size_bytes >= expected_bytes, \
+        f"incomplete download: {size_bytes / (1024*1024):.1f} MB"
     assert speed_mbps >= _MIN_SPEED_MBPS, \
         f"throughput too low: {speed_mbps:.2f} MB/s (minimum {_MIN_SPEED_MBPS} MB/s)"

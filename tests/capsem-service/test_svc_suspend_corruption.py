@@ -21,13 +21,7 @@ import uuid
 
 import pytest
 
-from helpers.constants import (
-    DEFAULT_CPUS,
-    DEFAULT_RAM_MB,
-    EXEC_READY_TIMEOUT,
-    EXEC_TIMEOUT_SECS,
-    SUSPEND_TIMEOUT,
-)
+from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT, EXEC_TIMEOUT_SECS
 from helpers.service import wait_exec_ready, vm_name
 
 pytestmark = pytest.mark.integration
@@ -58,7 +52,7 @@ class TestSuspendOverlayDurability:
                 w = _exec(client, name, f"mkdir -p $(dirname {p}) && echo {marker} > {p}")
                 assert w.get("exit_code") == 0, f"write {p}: {w}"
 
-            sus = client.post(f"/suspend/{name}", {}, timeout=SUSPEND_TIMEOUT)
+            sus = client.post(f"/suspend/{name}", {})
             assert sus and sus.get("success"), f"suspend failed: {sus}"
 
             res = client.post(f"/resume/{name}", {})
@@ -91,7 +85,7 @@ class TestSuspendOverlayDurability:
             # Touch a file so /root has something with a known inode.
             _exec(client, name, "echo hello > /root/before.txt")
 
-            sus = client.post(f"/suspend/{name}", {}, timeout=SUSPEND_TIMEOUT)
+            sus = client.post(f"/suspend/{name}", {})
             assert sus and sus.get("success"), f"suspend failed: {sus}"
 
             res = client.post(f"/resume/{name}", {})
@@ -137,7 +131,7 @@ class TestSuspendOverlayDurability:
             assert r.get("exit_code") == 0, f"churn failed: {r}"
 
             for cycle in range(3):
-                sus = client.post(f"/suspend/{name}", {}, timeout=SUSPEND_TIMEOUT)
+                sus = client.post(f"/suspend/{name}", {})
                 assert sus and sus.get("success"), f"[cycle {cycle}] suspend failed: {sus}"
 
                 res = client.post(f"/resume/{name}", {})

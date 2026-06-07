@@ -79,9 +79,7 @@ Four layers handle the flow:
 
 ### Spawn
 
-capsem-process spawns the aggregator during VM startup, after resolving the
-VM-effective Profile V2 `mcpServers` list from built-in, corp, and user profile
-layers.
+capsem-process spawns the aggregator during VM startup, after loading MCP server definitions from user and corp config files.
 
 ```mermaid
 sequenceDiagram
@@ -205,39 +203,38 @@ The aggregator splits on the first `__` when routing, so tool names containing `
 
 ## Server definition sources
 
-MCP server definitions are resolved from profile layers with the same
-provenance and lock semantics as the rest of Profile V2. The effective list is
-processed in trust order so locked corp entries cannot be shadowed by user or
-auto-detected entries:
+Three layers combined with deduplication (first occurrence wins by name). The list is processed in trust order so the first-wins rule encodes the documented `corp > user > defaults` policy:
 
-1. **Corp profile entries** from signed corp profile payloads. They can lock
-   providers, tool lists, and rule ownership.
-2. **User profile entries** when the profile marks the MCP section editable.
-3. **Auto-detected entries** from host AI CLI configs
-   (`~/.claude/settings.json`, `~/.gemini/settings.json`) when import into the
-   selected profile is permitted.
+1. **Corp-injected servers** from `/etc/capsem/corp.toml` (enterprise policy -- definitions and enable/disable overrides; cannot be shadowed by a same-name user or auto-detected entry)
+2. **Auto-detected** from host AI CLI configs (`~/.claude/settings.json`, `~/.gemini/settings.json`)
+3. **User manual servers** from `~/.capsem/user.toml` `[mcp]` section
 
 Names containing `__` or matching `builtin` are rejected. Empty names are rejected.
 
 ## Hot reload
 
-`POST /reload-config` allows live reconfiguration without restarting the VM:
+The `refresh` operation allows live reconfiguration without restarting the VM:
 
 1. Service receives `POST /reload-config`
-2. Service sends `ReloadConfig` IPC to capsem-process
-3. capsem-process reads the session-effective Profile V2 state and rebuilds MCP server definitions
-4. capsem-process sends `refresh` with new definitions to the aggregator
+2. Service sends `McpRefreshTools` IPC to capsem-process
+3. capsem-process reads fresh settings from disk, calls `build_server_list()`
+4. Client sends `refresh` with new definitions to the aggregator
 5. Aggregator disconnects all servers, replaces definitions, reconnects
 
 This supports adding, removing, or reconfiguring MCP servers while a VM is running.
 
 ## Service API integration
 
-The service management API is Profile V2 connector based. `GET /mcp/connectors`
-lists effective connectors, `POST /mcp/connectors` adds a direct connector to a
-user profile, and `DELETE /mcp/connectors/{id}` removes a direct user connector.
-Tool calls are not exposed through the service management API; guest MCP calls
-flow through the framed MITM endpoint and aggregator runtime.
+The service exposes MCP operations through its HTTP API, which capsem-process handles by delegating to the aggregator:
+
+| Service IPC message | capsem-process action |
+|---|---|
+| `McpListServers` | `aggregator.list_servers()` |
+| `McpListTools` | `aggregator.list_tools()` |
+| `McpRefreshTools` | Read settings, `aggregator.refresh(new_servers)` |
+| `McpCallTool` | `aggregator.call_tool(name, args)` |
+
+These IPC messages let the CLI, gateway, and frontend query and control MCP servers through the standard service API path.
 
 ## Error handling
 
