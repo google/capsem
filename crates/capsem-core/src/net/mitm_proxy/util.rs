@@ -1,9 +1,6 @@
 //! Pure helpers used by the MITM pipeline: LLM-API path detection,
-//! URI splitting, and header formatting with sensitive-value substitution.
+//! URI splitting, and header formatting with sensitive-value hashing.
 
-use crate::credential_broker::{
-    detect_http_credential, is_broker_reference, CredentialObservation,
-};
 use crate::net::ai_traffic::provider::ProviderKind;
 
 /// Returns true only for paths that are actual LLM API endpoints
@@ -25,15 +22,6 @@ pub(super) fn is_llm_api_path(provider: ProviderKind, path: &str) -> bool {
                 || path.contains(":streamGenerateContent")
                 || path.contains(":embedContent")
                 || path.contains(":batchEmbedContents")
-        }
-        ProviderKind::Ollama => {
-            path.starts_with("/api/chat")
-                || path.starts_with("/api/generate")
-                || path.starts_with("/api/embeddings")
-                || path.starts_with("/api/embed")
-                || path.starts_with("/v1/chat/completions")
-                || path.starts_with("/v1/completions")
-                || path.starts_with("/v1/embeddings")
         }
     }
 }
@@ -73,9 +61,9 @@ pub(super) fn parse_http_host_target(
 }
 
 /// Headers whose values are safe to store verbatim in telemetry logs.
-/// Everything else keeps its name but the value is replaced with either
-/// a broker credential reference (when a known credential is detected)
-/// or a short BLAKE3 hash for unknown sensitive material.
+/// Everything else keeps its name but the value is replaced with a BLAKE3
+/// hash prefix so credentials (API keys, bearer tokens, cookies) never
+/// reach the database while still allowing correlation across requests.
 const HEADER_ALLOWLIST: &[&str] = &[
     "accept",
     "content-encoding",
@@ -88,66 +76,19 @@ const HEADER_ALLOWLIST: &[&str] = &[
     "user-agent",
 ];
 
-#[derive(Debug, Clone, PartialEq)]
-pub(super) struct FormattedHeaders {
-    pub formatted: String,
-    pub observations: Vec<CredentialObservation>,
-    pub credential_ref: Option<String>,
-}
-
 /// Format HTTP headers for telemetry storage.
 ///
 /// Allowlisted headers are stored verbatim. All other headers keep their
-/// name but the value is replaced with `credential:blake3:<hex>` when the
-/// broker recognizes the credential provider, otherwise `hash:<12-char-hex>`
-/// for non-credential sensitive material. This prevents credential leakage
-/// while preserving header presence and enabling same-key correlation.
+/// name but the value is replaced with `hash:<12-char-hex>` (first 6 bytes
+/// of the BLAKE3 digest). This prevents credential leakage while preserving
+/// header presence and enabling same-key correlation.
 pub(super) fn format_headers(headers: &hyper::HeaderMap) -> String {
-    format_headers_for_domain("", headers).formatted
-}
-
-pub(super) fn format_headers_for_domain(
-    domain: &str,
-    headers: &hyper::HeaderMap,
-) -> FormattedHeaders {
-    let mut observations = Vec::new();
-    let mut credential_ref = None;
-    let formatted = headers
+    headers
         .iter()
         .map(|(name, value)| {
             if HEADER_ALLOWLIST.contains(&name.as_str()) {
                 let v = value.to_str().unwrap_or("<binary>");
                 format!("{}: {}", name, v)
-            } else if let Ok(v) = value.to_str() {
-                if is_broker_reference(v) {
-                    if credential_ref.is_none() {
-                        credential_ref = Some(v.to_string());
-                    }
-                    format!("{}: {}", name, v)
-                } else if let Some(observation) =
-                    detect_http_credential(domain, name.as_str(), value.as_bytes())
-                {
-                    let reference = observation.credential_ref();
-                    if credential_ref.is_none() {
-                        credential_ref = Some(reference.clone());
-                    }
-                    observations.push(observation);
-                    format!("{}: {}", name, reference)
-                } else {
-                    let raw = value.as_bytes();
-                    let digest = blake3::hash(raw);
-                    let hex = &digest.to_hex()[..12];
-                    format!("{}: hash:{}", name, hex)
-                }
-            } else if let Some(observation) =
-                detect_http_credential(domain, name.as_str(), value.as_bytes())
-            {
-                let reference = observation.credential_ref();
-                if credential_ref.is_none() {
-                    credential_ref = Some(reference.clone());
-                }
-                observations.push(observation);
-                format!("{}: {}", name, reference)
             } else {
                 let raw = value.as_bytes();
                 let digest = blake3::hash(raw);
@@ -156,11 +97,5 @@ pub(super) fn format_headers_for_domain(
             }
         })
         .collect::<Vec<_>>()
-        .join("\r\n");
-
-    FormattedHeaders {
-        formatted,
-        observations,
-        credential_ref,
-    }
+        .join("\r\n")
 }

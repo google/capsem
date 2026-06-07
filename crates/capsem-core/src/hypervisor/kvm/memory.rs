@@ -72,6 +72,15 @@ pub(super) const fn virtio_mmio_irq(slot: u32) -> u32 {
 #[cfg(target_arch = "x86_64")]
 pub(super) const RAM_BASE: u64 = 0;
 
+/// Start of the conventional x86 PCI/MMIO hole.
+#[cfg(target_arch = "x86_64")]
+pub(super) const PCI_HOLE_START: u64 = 0xC000_0000; // 3 GiB
+/// End of the conventional x86 PCI/MMIO hole.
+#[cfg(target_arch = "x86_64")]
+pub(super) const PCI_HOLE_END: u64 = 0x1_0000_0000; // 4 GiB
+#[cfg(target_arch = "x86_64")]
+pub(super) const PCI_HOLE_SIZE: u64 = PCI_HOLE_END - PCI_HOLE_START;
+
 /// Protected-mode kernel entry point (standard bzImage load address).
 #[cfg(target_arch = "x86_64")]
 pub(super) const KERNEL_LOAD_ADDR: u64 = 0x10_0000; // 1 MiB
@@ -102,9 +111,9 @@ pub(super) const PDPT_ADDR: u64 = 0xA000;
 #[cfg(target_arch = "x86_64")]
 pub(super) const PD_ADDR: u64 = 0xB000;
 
-/// Virtio MMIO base address (above 64 GiB, to avoid overlapping with RAM).
+/// Virtio MMIO base address inside the reserved x86 PCI/MMIO hole.
 #[cfg(target_arch = "x86_64")]
-pub(super) const VIRTIO_MMIO_BASE: u64 = 0x10_0000_0000;
+pub(super) const VIRTIO_MMIO_BASE: u64 = 0xD000_0000;
 
 /// First IRQ for virtio devices (above legacy ISA IRQs 0-4).
 #[cfg(target_arch = "x86_64")]
@@ -140,6 +149,37 @@ pub(super) const EBDA_START: u64 = 0x9_FC00;
 #[cfg(target_arch = "x86_64")]
 pub(super) const HIGH_MEM_START: u64 = 0x10_0000;
 
+/// ACPI Root System Description Pointer location.
+///
+/// Linux searches the first KiB of EBDA for the RSDP. Keep all synthetic ACPI
+/// tables in the reserved EBDA/ISA-hole range so they never collide with RAM,
+/// the kernel image, or boot_params.
+#[cfg(target_arch = "x86_64")]
+pub(super) const ACPI_RSDP_ADDR: u64 = EBDA_START;
+#[cfg(target_arch = "x86_64")]
+pub(super) const ACPI_RSDT_ADDR: u64 = EBDA_START + 0x20;
+#[cfg(target_arch = "x86_64")]
+pub(super) const ACPI_MADT_ADDR: u64 = EBDA_START + 0x100;
+#[cfg(target_arch = "x86_64")]
+pub(super) const BDA_EBDA_SEGMENT_ADDR: u64 = 0x040E;
+#[cfg(target_arch = "x86_64")]
+pub(super) const BIOS_RSDP_ADDR: u64 = 0xF0000;
+
+/// Local APIC and IOAPIC physical addresses used by KVM's in-kernel irqchip.
+#[cfg(target_arch = "x86_64")]
+pub(super) const LOCAL_APIC_ADDR: u32 = 0xFEE0_0000;
+#[cfg(target_arch = "x86_64")]
+pub(super) const IO_APIC_ADDR: u32 = 0xFEC0_0000;
+
+#[cfg(target_arch = "x86_64")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct KvmMemoryRegion {
+    pub slot: u32,
+    pub guest_phys_addr: u64,
+    pub memory_size: u64,
+    pub host_offset: u64,
+}
+
 /// E820 table entry.
 #[cfg(target_arch = "x86_64")]
 #[repr(C)]
@@ -151,10 +191,11 @@ pub(super) struct E820Entry {
 }
 
 /// Build E820 memory map for the given RAM size.
-/// Returns entries: [0..640K RAM, 640K..1M reserved, 1M..ram_end RAM].
+/// Returns entries with the standard ISA hole and, for guests above 3 GiB,
+/// a PCI/MMIO hole from 3 GiB to 4 GiB.
 #[cfg(target_arch = "x86_64")]
 pub(super) fn build_e820_map(ram_size: u64) -> Vec<E820Entry> {
-    let mut entries = Vec::with_capacity(3);
+    let mut entries = Vec::with_capacity(5);
     // Low memory: 0 to 640K
     entries.push(E820Entry {
         addr: 0,
@@ -167,15 +208,80 @@ pub(super) fn build_e820_map(ram_size: u64) -> Vec<E820Entry> {
         size: HIGH_MEM_START - EBDA_START,
         type_: E820_RESERVED,
     });
-    // High memory: 1M to end of RAM
-    if ram_size > HIGH_MEM_START {
+    if ram_size <= HIGH_MEM_START {
+        return entries;
+    }
+
+    let low_high_end = ram_size.min(PCI_HOLE_START);
+    if low_high_end > HIGH_MEM_START {
         entries.push(E820Entry {
             addr: HIGH_MEM_START,
-            size: ram_size - HIGH_MEM_START,
+            size: low_high_end - HIGH_MEM_START,
+            type_: E820_RAM,
+        });
+    }
+
+    if ram_size > PCI_HOLE_START {
+        entries.push(E820Entry {
+            addr: PCI_HOLE_START,
+            size: PCI_HOLE_SIZE,
+            type_: E820_RESERVED,
+        });
+        entries.push(E820Entry {
+            addr: PCI_HOLE_END,
+            size: ram_size - PCI_HOLE_START,
             type_: E820_RAM,
         });
     }
     entries
+}
+
+#[cfg(target_arch = "x86_64")]
+pub(super) fn guest_phys_end(ram_size: u64) -> u64 {
+    if ram_size > PCI_HOLE_START {
+        ram_size + PCI_HOLE_SIZE
+    } else {
+        ram_size
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+pub(super) fn gpa_to_ram_offset(gpa: u64, ram_size: u64) -> Option<u64> {
+    let offset = if gpa < PCI_HOLE_START {
+        gpa
+    } else if gpa >= PCI_HOLE_END {
+        gpa.checked_sub(PCI_HOLE_SIZE)?
+    } else {
+        return None;
+    };
+    (offset < ram_size).then_some(offset)
+}
+
+#[cfg(target_arch = "x86_64")]
+pub(super) fn kvm_memory_regions(ram_size: u64) -> Vec<KvmMemoryRegion> {
+    if ram_size <= PCI_HOLE_START {
+        return vec![KvmMemoryRegion {
+            slot: 0,
+            guest_phys_addr: 0,
+            memory_size: ram_size,
+            host_offset: 0,
+        }];
+    }
+
+    vec![
+        KvmMemoryRegion {
+            slot: 0,
+            guest_phys_addr: 0,
+            memory_size: PCI_HOLE_START,
+            host_offset: 0,
+        },
+        KvmMemoryRegion {
+            slot: 1,
+            guest_phys_addr: PCI_HOLE_END,
+            memory_size: ram_size - PCI_HOLE_START,
+            host_offset: PCI_HOLE_START,
+        },
+    ]
 }
 
 /// Align a value up to the next page boundary.
@@ -206,7 +312,7 @@ impl GuestMemory {
     /// Allocate a new guest memory region of the given size.
     /// The region is zero-initialized and page-aligned.
     pub fn new(size: u64) -> Result<Self> {
-        if size == 0 || size % PAGE_SIZE != 0 {
+        if size == 0 || !size.is_multiple_of(PAGE_SIZE) {
             bail!("guest memory size must be non-zero and page-aligned, got {size}");
         }
 
@@ -238,6 +344,13 @@ impl GuestMemory {
         self.ptr
     }
 
+    pub fn as_ptr_at(&self, offset: u64) -> Result<*const u8> {
+        if offset > self.size {
+            bail!("guest memory pointer offset out of bounds: offset={offset:#x}");
+        }
+        Ok(unsafe { self.ptr.add(offset as usize) })
+    }
+
     /// Size of the guest memory region.
     pub fn size(&self) -> u64 {
         self.size
@@ -259,6 +372,13 @@ impl GuestMemory {
             std::ptr::copy_nonoverlapping(data.as_ptr(), self.ptr.add(offset as usize), data.len());
         }
         Ok(())
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    pub fn write_gpa(&self, gpa: u64, data: &[u8]) -> Result<()> {
+        let offset = gpa_to_ram_offset(gpa, self.size)
+            .ok_or_else(|| anyhow::anyhow!("guest physical address not backed by RAM: {gpa:#x}"))?;
+        self.write_at(offset, data)
     }
 
     /// Read bytes from guest memory at a given offset from RAM_BASE.
@@ -332,11 +452,20 @@ impl GuestMemoryRef {
     /// Convert a guest physical address to a host pointer.
     /// Returns None if the address is outside the RAM region.
     pub fn gpa_to_host(&self, gpa: u64) -> Option<*mut u8> {
-        if gpa < self.ram_base || gpa >= self.ram_base + self.size {
-            return None;
+        #[cfg(target_arch = "x86_64")]
+        {
+            let offset = gpa_to_ram_offset(gpa, self.size)?;
+            Some(unsafe { self.ptr.add(offset as usize) })
         }
-        let offset = gpa - self.ram_base;
-        Some(unsafe { self.ptr.add(offset as usize) })
+
+        #[cfg(not(target_arch = "x86_64"))]
+        {
+            let offset = gpa.checked_sub(self.ram_base)?;
+            if offset >= self.size {
+                return None;
+            }
+            Some(unsafe { self.ptr.add(offset as usize) })
+        }
     }
 
     pub fn write_at(&self, offset: u64, data: &[u8]) -> Result<()> {
@@ -573,7 +702,8 @@ mod tests {
         assert!(ptr.is_some());
 
         // Address before RAM base
-        let ptr = memref.gpa_to_host(RAM_BASE - 1);
+        let before_ram_base = RAM_BASE.checked_sub(1).unwrap_or(u64::MAX);
+        let ptr = memref.gpa_to_host(before_ram_base);
         assert!(ptr.is_none());
 
         // Address past end
@@ -667,12 +797,14 @@ mod tests {
 
     #[cfg(target_arch = "x86_64")]
     #[test]
+    #[allow(clippy::assertions_on_constants)]
     fn x86_64_kernel_above_legacy_hole() {
         assert!(KERNEL_LOAD_ADDR >= HIGH_MEM_START);
     }
 
     #[cfg(target_arch = "x86_64")]
     #[test]
+    #[allow(clippy::assertions_on_constants)]
     fn x86_64_boot_structs_below_ebda() {
         assert!(BOOT_PARAMS_ADDR + 4096 <= EBDA_START);
         assert!(GDT_ADDR + 24 <= EBDA_START);
@@ -683,6 +815,7 @@ mod tests {
 
     #[cfg(target_arch = "x86_64")]
     #[test]
+    #[allow(clippy::assertions_on_constants)]
     fn x86_64_boot_structs_no_overlap() {
         // GDT: 0x500..0x518 (24 bytes)
         // BOOT_PARAMS: 0x7000..0x8000 (4096 bytes)
@@ -722,6 +855,62 @@ mod tests {
 
     #[cfg(target_arch = "x86_64")]
     #[test]
+    fn x86_64_e820_map_reserves_pci_hole_above_3gb() {
+        let ram_size = 8 * 1024 * 1024 * 1024u64;
+        let entries = build_e820_map(ram_size);
+        assert_eq!(entries.len(), 5);
+        assert_eq!(entries[2].addr, HIGH_MEM_START);
+        assert_eq!(entries[2].size, PCI_HOLE_START - HIGH_MEM_START);
+        assert_eq!(entries[2].type_, E820_RAM);
+        assert_eq!(entries[3].addr, PCI_HOLE_START);
+        assert_eq!(entries[3].size, PCI_HOLE_SIZE);
+        assert_eq!(entries[3].type_, E820_RESERVED);
+        assert_eq!(entries[4].addr, PCI_HOLE_END);
+        assert_eq!(entries[4].size, ram_size - PCI_HOLE_START);
+        assert_eq!(entries[4].type_, E820_RAM);
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn x86_64_kvm_memory_regions_split_around_pci_hole() {
+        let regions = kvm_memory_regions(8 * 1024 * 1024 * 1024u64);
+        assert_eq!(
+            regions,
+            vec![
+                KvmMemoryRegion {
+                    slot: 0,
+                    guest_phys_addr: 0,
+                    memory_size: PCI_HOLE_START,
+                    host_offset: 0,
+                },
+                KvmMemoryRegion {
+                    slot: 1,
+                    guest_phys_addr: PCI_HOLE_END,
+                    memory_size: 5 * 1024 * 1024 * 1024u64,
+                    host_offset: PCI_HOLE_START,
+                },
+            ]
+        );
+        assert_eq!(
+            guest_phys_end(8 * 1024 * 1024 * 1024u64),
+            9 * 1024 * 1024 * 1024u64
+        );
+        assert_eq!(
+            gpa_to_ram_offset(PCI_HOLE_START - 1, 8 * 1024 * 1024 * 1024u64),
+            Some(PCI_HOLE_START - 1)
+        );
+        assert_eq!(
+            gpa_to_ram_offset(PCI_HOLE_START, 8 * 1024 * 1024 * 1024u64),
+            None
+        );
+        assert_eq!(
+            gpa_to_ram_offset(PCI_HOLE_END, 8 * 1024 * 1024 * 1024u64),
+            Some(PCI_HOLE_START)
+        );
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
     fn x86_64_virtio_mmio_sequential() {
         assert_eq!(virtio_mmio_addr(0), VIRTIO_MMIO_BASE);
         assert_eq!(virtio_mmio_addr(1), VIRTIO_MMIO_BASE + 0x200);
@@ -731,16 +920,22 @@ mod tests {
 
     #[cfg(target_arch = "x86_64")]
     #[test]
-    fn x86_64_virtio_mmio_above_max_ram() {
-        let max_ram = 16 * 1024 * 1024 * 1024u64; // 16GB
+    #[allow(clippy::assertions_on_constants)]
+    fn x86_64_virtio_mmio_in_pci_hole() {
+        let window_end = VIRTIO_MMIO_BASE + VIRTIO_MMIO_SIZE * VIRTIO_MMIO_MAX_DEVICES as u64;
         assert!(
-            VIRTIO_MMIO_BASE >= max_ram,
-            "Virtio MMIO base {VIRTIO_MMIO_BASE:#x} overlaps with guest RAM"
+            VIRTIO_MMIO_BASE >= PCI_HOLE_START,
+            "Virtio MMIO base {VIRTIO_MMIO_BASE:#x} must be inside the PCI hole"
+        );
+        assert!(
+            window_end <= PCI_HOLE_END,
+            "Virtio MMIO window {VIRTIO_MMIO_BASE:#x}..{window_end:#x} must fit inside the PCI hole"
         );
     }
 
     #[cfg(target_arch = "x86_64")]
     #[test]
+    #[allow(clippy::assertions_on_constants)]
     fn x86_64_irq_base_above_legacy() {
         assert!(
             VIRTIO_MMIO_IRQ_BASE > 4,

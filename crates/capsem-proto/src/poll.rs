@@ -29,6 +29,7 @@ impl fmt::Display for TimedOut {
 ///
 /// Used directly for sync retries via [`retry_with_backoff`], and re-exported
 /// as `PollOpts` in `capsem-core::poll` for the async variant.
+#[derive(Clone)]
 pub struct RetryOpts {
     /// Human-readable label for log messages (e.g. "vm-ready", "vsock-connect").
     pub label: &'static str,

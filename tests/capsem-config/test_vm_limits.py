@@ -8,9 +8,7 @@ from helpers.service import ServiceInstance
 
 pytestmark = pytest.mark.config
 
-# NOTE: The max_concurrent_vms config key does not exist yet.
-# This test documents the requirement. See implementation-tasks.md.
-# Until implemented, these tests will fail -- that's intentional (TDD).
+DEFAULT_MAX_CONCURRENT_VMS = 8
 
 
 def test_provision_at_limit_rejected():
@@ -21,15 +19,14 @@ def test_provision_at_limit_rejected():
     created = []
 
     try:
-        # Default limit should be 10 (per implementation-tasks.md)
-        max_vms = 10
+        max_vms = DEFAULT_MAX_CONCURRENT_VMS
         for i in range(max_vms):
             name = f"limit-{i}-{uuid.uuid4().hex[:6]}"
             resp = client.post("/provision", {"name": name, "ram_mb": 512, "cpus": 1})
             assert resp is not None and "id" in str(resp), f"VM {i} should succeed: {resp}"
             created.append(name)
 
-        # VM #11 should be rejected
+        # The next VM should be rejected.
         name = f"limit-over-{uuid.uuid4().hex[:6]}"
         resp = client.post("/provision", {"name": name, "ram_mb": 512, "cpus": 1})
         # Should be rejected
@@ -55,7 +52,7 @@ def test_delete_frees_slot():
 
     try:
         # Fill to limit
-        max_vms = 10
+        max_vms = DEFAULT_MAX_CONCURRENT_VMS
         for i in range(max_vms):
             name = f"slot-{i}-{uuid.uuid4().hex[:6]}"
             client.post("/provision", {"name": name, "ram_mb": 512, "cpus": 1})

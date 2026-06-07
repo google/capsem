@@ -80,9 +80,9 @@ preflight (30s) --> build-assets (arm64 + x86_64, 10 min) --> build-app-macos (1
 | `preflight` | macos-14 | Validates Apple cert, Tauri signing key, notarization creds |
 | `build-assets` | ubuntu arm64 + x86_64 | vmlinuz, initrd.img, rootfs.squashfs per arch |
 | `test` | macos-14 | Unit tests + coverage + audit (gates release) |
-| `build-app-macos` | macos-14 | DMG (codesigned + notarized), host binaries, latest.json |
-| `build-app-linux` | ubuntu arm64 + x86_64 | deb packages (both arches), latest.json |
-| `create-release` | ubuntu | Merges latest.json, signs manifest, creates GitHub release |
+| `build-app-macos` | macos-14 | `.pkg` package, host binaries, signed manifest payload |
+| `build-app-linux` | ubuntu arm64 + x86_64 | `.deb` packages for both arches |
+| `create-release` | ubuntu | Signs manifest, verifies package payloads, creates GitHub release |
 
 ### Apple code signing
 
@@ -95,11 +95,15 @@ The macOS build signs all binaries with a Developer ID certificate:
 ### Release artifacts
 
 Each release publishes:
-- `capsem-{version}-{arch}.dmg` -- macOS desktop app
+- `Capsem-{version}.pkg` -- macOS installer package
 - `capsem_{version}_{arch}.deb` -- Linux package
 - `{arch}-vmlinuz`, `{arch}-initrd.img`, `{arch}-rootfs.squashfs` -- VM images
 - `manifest.json` -- asset manifest with BLAKE3 hashes
-- `latest.json` -- Tauri auto-updater metadata
+- `manifest.json.minisig` -- minisign signature for the asset manifest
+- `capsem-sbom.spdx.json` -- release SBOM
+
+The desktop auto-updater is disabled for this release line unless a future
+release ships a verified full-package updater feed.
 
 ## Running CI checks locally
 

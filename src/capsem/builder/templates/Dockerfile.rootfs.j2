@@ -13,8 +13,6 @@ RUN apt-get -o Acquire::Check-Valid-Until=false -o Acquire::Check-Date=false upd
     apt-get install -y --no-install-recommends \
         {{ apt_packages | join(' \\\n        ') }} && \
     ln -sf vim.tiny /usr/bin/vim && \
-    rm -f /usr/sbin/iptables-legacy /usr/sbin/iptables-legacy-restore /usr/sbin/iptables-legacy-save \
-          /usr/sbin/ip6tables-legacy /usr/sbin/ip6tables-legacy-restore /usr/sbin/ip6tables-legacy-save && \
     pip3 install --break-system-packages --upgrade pip
 
 # Node.js {{ arch.node_major }} LTS via nvm (Debian bookworm ships v18 which lacks the 'v'

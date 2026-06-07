@@ -2,6 +2,7 @@
 
 import json
 import subprocess
+from urllib.parse import quote
 
 
 class UdsHttpClient:
@@ -89,3 +90,52 @@ class UdsHttpClient:
         status = int(raw[idx + len(sep):].decode(errors="replace"))
         body = raw[:idx]
         return status, body
+
+    @staticmethod
+    def _sanitize_path(raw):
+        raw = str(raw)
+        if raw.startswith("/root/"):
+            raw = raw[len("/root/"):]
+        cleaned = "".join(
+            ch for ch in raw
+            if ch.isascii() and (ch.isalnum() or ch in "._-/")
+        )
+        while "//" in cleaned:
+            cleaned = cleaned.replace("//", "/")
+        cleaned = cleaned.lstrip("/")
+        if not cleaned:
+            raise ValueError("empty path after sanitization")
+        if ".." in cleaned:
+            raise ValueError("path traversal rejected")
+        return cleaned
+
+    @classmethod
+    def _files_content_path(cls, vm_id, path):
+        sanitized = cls._sanitize_path(path)
+        encoded = quote(sanitized, safe="")
+        return f"/files/{vm_id}/content?path={encoded}"
+
+    def write_file(self, vm_id, path, content, timeout=60):
+        """Write text/bytes to VM workspace via canonical files endpoint."""
+        endpoint = self._files_content_path(vm_id, path)
+        data = content.encode("utf-8") if isinstance(content, str) else bytes(content)
+        return self.post_bytes(endpoint, data, timeout=timeout)
+
+    def read_file(self, vm_id, path, timeout=60):
+        """Read text file from VM workspace via canonical files endpoint.
+
+        Returns {"content": "..."} on success, or {"error": "..."} on failure.
+        """
+        endpoint = self._files_content_path(vm_id, path)
+        status, body = self.get_bytes(endpoint, timeout=timeout)
+        if status is None:
+            return None
+        if 200 <= status < 300:
+            return {"content": body.decode("utf-8", errors="replace")}
+        try:
+            parsed = json.loads(body.decode("utf-8", errors="replace"))
+            if isinstance(parsed, dict):
+                return parsed
+        except Exception:
+            pass
+        return {"error": body.decode("utf-8", errors="replace")}

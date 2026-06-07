@@ -1,6 +1,1746 @@
 //! Tests for `writer` (extracted from inline `mod tests`).
 
 use super::*;
+use std::collections::BTreeMap;
+
+use capsem_security_engine::{
+    AskPlan, BlockResponse, DetectionFinding, DnsSecuritySubject, FileSecuritySubject,
+    HttpBodySecuritySubject, HttpSecuritySubject, McpSecuritySubject, ModelInteractionEvidence,
+    ModelRequestEvidence, ModelSecuritySubject, ProcessSecuritySubject, ResolvedEventStep,
+    RewritePatch, SecurityError, SecurityEvent, SecurityEventCommon, ThrottlePlan,
+    TraceHistoryEntry, RESOLVED_EVENT_SCHEMA_VERSION,
+};
+use serde::Serialize;
+
+fn assert_sql_enum<T>(value: T)
+where
+    T: SqlEnumText + Serialize + Copy,
+{
+    let serialized = serde_json::to_value(value)
+        .unwrap()
+        .as_str()
+        .expect("canonical enum serialization must be a string")
+        .to_string();
+    assert_eq!(value.sql_text(), serialized);
+}
+
+#[test]
+fn ai_evidence_sql_enum_text_matches_canonical_serde_names() {
+    for value in [
+        AiProvider::Openai,
+        AiProvider::Anthropic,
+        AiProvider::GoogleGemini,
+        AiProvider::Unknown,
+    ] {
+        assert_sql_enum(value);
+    }
+    for value in [
+        AiApiFamily::OpenaiChatCompletions,
+        AiApiFamily::OpenaiResponses,
+        AiApiFamily::AnthropicMessages,
+        AiApiFamily::GoogleGeminiContent,
+        AiApiFamily::Mcp,
+        AiApiFamily::Unknown,
+    ] {
+        assert_sql_enum(value);
+    }
+    for value in [
+        AiAttributionScope::Host,
+        AiAttributionScope::Vm,
+        AiAttributionScope::Profile,
+        AiAttributionScope::Session,
+        AiAttributionScope::Unknown,
+    ] {
+        assert_sql_enum(value);
+    }
+    for value in [
+        AiOriginKind::GuestNetwork,
+        AiOriginKind::HostService,
+        AiOriginKind::HostAdmin,
+        AiOriginKind::HostWorkbench,
+        AiOriginKind::TestFixture,
+        AiOriginKind::Unknown,
+    ] {
+        assert_sql_enum(value);
+    }
+    for value in [
+        ArgumentsStatus::ValidJson,
+        ArgumentsStatus::PartialJson,
+        ArgumentsStatus::MalformedJson,
+        ArgumentsStatus::NotJson,
+        ArgumentsStatus::Redacted,
+        ArgumentsStatus::Absent,
+    ] {
+        assert_sql_enum(value);
+    }
+    for value in [
+        ParseStatus::Complete,
+        ParseStatus::Partial,
+        ParseStatus::Malformed,
+        ParseStatus::Unsupported,
+        ParseStatus::Redacted,
+    ] {
+        assert_sql_enum(value);
+    }
+    for value in [
+        EvidenceStatus::Complete,
+        EvidenceStatus::Partial,
+        EvidenceStatus::Ambiguous,
+        EvidenceStatus::Orphaned,
+        EvidenceStatus::Untrusted,
+    ] {
+        assert_sql_enum(value);
+    }
+    for value in [
+        ToolOrigin::NativeProviderTool,
+        ToolOrigin::McpTool,
+        ToolOrigin::LocalBuiltinTool,
+        ToolOrigin::Unknown,
+    ] {
+        assert_sql_enum(value);
+    }
+    for value in [
+        LinkStatus::Linked,
+        LinkStatus::UnlinkedPending,
+        LinkStatus::OrphanModelToolCall,
+        LinkStatus::OrphanMcpExecution,
+        LinkStatus::Ambiguous,
+        LinkStatus::NotApplicable,
+    ] {
+        assert_sql_enum(value);
+    }
+    for value in [
+        ToolCallStatus::Proposed,
+        ToolCallStatus::Executed,
+        ToolCallStatus::Blocked,
+        ToolCallStatus::ReturnedToModel,
+        ToolCallStatus::Error,
+        ToolCallStatus::Unknown,
+    ] {
+        assert_sql_enum(value);
+    }
+    for value in [
+        AiContentKind::Text,
+        AiContentKind::Json,
+        AiContentKind::Image,
+        AiContentKind::File,
+        AiContentKind::ToolUse,
+        AiContentKind::ToolResult,
+        AiContentKind::Reasoning,
+        AiContentKind::CacheMarker,
+        AiContentKind::Redacted,
+        AiContentKind::Unknown,
+    ] {
+        assert_sql_enum(value);
+    }
+    for value in [Confidence::Low, Confidence::Medium, Confidence::High] {
+        assert_sql_enum(value);
+    }
+    for value in [
+        SourceEngine::Network,
+        SourceEngine::File,
+        SourceEngine::Process,
+        SourceEngine::Conversation,
+        SourceEngine::Security,
+        SourceEngine::Vm,
+        SourceEngine::Profile,
+        SourceEngine::HostAi,
+    ] {
+        assert_sql_enum(value);
+    }
+}
+
+#[test]
+fn security_event_sql_enum_text_matches_canonical_serde_names() {
+    for value in [
+        EventFamily::Dns,
+        EventFamily::Http,
+        EventFamily::Mcp,
+        EventFamily::Model,
+        EventFamily::File,
+        EventFamily::Process,
+        EventFamily::Credential,
+        EventFamily::Vm,
+        EventFamily::Profile,
+        EventFamily::Conversation,
+        EventFamily::Snapshot,
+    ] {
+        assert_sql_enum(value);
+    }
+    for value in [
+        Enforceability::InlineBlockable,
+        Enforceability::ObserveOnly,
+        Enforceability::RemediationOnly,
+    ] {
+        assert_sql_enum(value);
+    }
+    for value in [
+        RedactionState::Raw,
+        RedactionState::Redacted,
+        RedactionState::SummaryOnly,
+    ] {
+        assert_sql_enum(value);
+    }
+    for value in [
+        ResolvedEventStepKind::Preprocessor,
+        ResolvedEventStepKind::PluginCallback,
+        ResolvedEventStepKind::EnforcementMatch,
+        ResolvedEventStepKind::Confirm,
+        ResolvedEventStepKind::RateLimitCheck,
+        ResolvedEventStepKind::DetectionMatch,
+        ResolvedEventStepKind::Postprocessor,
+        ResolvedEventStepKind::EmitterDelivery,
+    ] {
+        assert_sql_enum(value);
+    }
+    for value in [
+        StepStatus::Applied,
+        StepStatus::Matched,
+        StepStatus::Skipped,
+        StepStatus::Error,
+    ] {
+        assert_sql_enum(value);
+    }
+    for value in [
+        Severity::Info,
+        Severity::Low,
+        Severity::Medium,
+        Severity::High,
+        Severity::Critical,
+    ] {
+        assert_sql_enum(value);
+    }
+}
+
+fn security_common(event_id: &str) -> SecurityEventCommon {
+    SecurityEventCommon {
+        event_id: event_id.to_string(),
+        parent_event_id: Some("evt-parent".to_string()),
+        stream_id: Some("stream-1".to_string()),
+        activity_id: Some("activity-1".to_string()),
+        sequence_no: Some(7),
+        source_engine: SourceEngine::Network,
+        attribution_scope: AiAttributionScope::Vm,
+        origin_kind: AiOriginKind::GuestNetwork,
+        accounting_owner: Some("vm:vm-1".to_string()),
+        enforceability: Enforceability::InlineBlockable,
+        trace_id: Some("trace-1".to_string()),
+        span_id: Some("span-1".to_string()),
+        timestamp_unix_ms: 1_700_000_123_456,
+        vm_id: Some("vm-1".to_string()),
+        session_id: Some("session-1".to_string()),
+        profile_id: Some("coding".to_string()),
+        profile_revision: Some("rev-a".to_string()),
+        profile_pack_ids: Vec::new(),
+        enforcement_packs: Vec::new(),
+        detection_packs: Vec::new(),
+        user_id: Some("user-1".to_string()),
+        process_id: Some("pid-42".to_string()),
+        parent_process_id: Some("pid-1".to_string()),
+        exec_id: Some("exec-1".to_string()),
+        turn_id: Some("turn-1".to_string()),
+        message_id: Some("message-1".to_string()),
+        tool_call_id: Some("tool-call-1".to_string()),
+        mcp_call_id: Some("mcp-call-1".to_string()),
+        event_type: "http.request".to_string(),
+        redaction_state: RedactionState::Raw,
+    }
+}
+
+fn family_common(
+    event_id: &str,
+    event_type: &str,
+    source_engine: SourceEngine,
+    attribution_scope: AiAttributionScope,
+    vm_id: Option<&str>,
+) -> SecurityEventCommon {
+    let mut common = security_common(event_id);
+    common.event_type = event_type.to_string();
+    common.source_engine = source_engine;
+    common.attribution_scope = attribution_scope;
+    common.vm_id = vm_id.map(str::to_string);
+    common
+}
+
+fn resolved_event(event: SecurityEvent, final_action: SecurityAction) -> ResolvedSecurityEvent {
+    ResolvedSecurityEvent {
+        schema_version: RESOLVED_EVENT_SCHEMA_VERSION,
+        event,
+        steps: Vec::new(),
+        plugin_transforms: Vec::new(),
+        detection_findings: Vec::new(),
+        final_action,
+        emitter_results: Vec::new(),
+    }
+}
+
+fn ask_action(reason_code: &str) -> SecurityAction {
+    SecurityAction::Ask(AskPlan {
+        prompt_id: format!("prompt-{reason_code}"),
+        reason_code: reason_code.to_string(),
+        default_action: Box::new(SecurityAction::Continue),
+    })
+}
+
+fn rewrite_action(reason_code: &str) -> SecurityAction {
+    SecurityAction::Rewrite(RewritePatch {
+        target: reason_code.to_string(),
+        replacement_ref: "replacement:test".to_string(),
+    })
+}
+
+fn throttle_action(reason_code: &str) -> SecurityAction {
+    SecurityAction::Throttle(ThrottlePlan {
+        delay_ms: 25,
+        quota_id: format!("quota-{reason_code}"),
+        scope: "vm".to_string(),
+        reason_code: reason_code.to_string(),
+        provider_source: None,
+    })
+}
+
+fn error_action(code: &str) -> SecurityAction {
+    SecurityAction::Error(SecurityError {
+        code: code.to_string(),
+        message: format!("{code} failed"),
+    })
+}
+
+fn resolved_http_event(
+    event_id: &str,
+    request_bytes: u64,
+    response_bytes: Option<u64>,
+    final_action: SecurityAction,
+) -> ResolvedSecurityEvent {
+    resolved_event(
+        SecurityEvent::http(
+            family_common(
+                event_id,
+                "http.request",
+                SourceEngine::Network,
+                AiAttributionScope::Vm,
+                Some("vm-1"),
+            ),
+            HttpSecuritySubject {
+                method: "GET".into(),
+                scheme: Some("https".into()),
+                host: "api.example.com".into(),
+                port: Some(443),
+                path: Some("/v1".into()),
+                query: None,
+                url: Some("https://api.example.com/v1".into()),
+                path_class: "api".into(),
+                request_bytes,
+                request_headers: BTreeMap::new(),
+                request_body: None,
+                response_status: Some(200),
+                response_headers: BTreeMap::new(),
+                response_bytes,
+                response_body: None,
+            },
+        ),
+        final_action,
+    )
+}
+
+fn resolved_dns_event(event_id: &str, final_action: SecurityAction) -> ResolvedSecurityEvent {
+    resolved_event(
+        SecurityEvent::dns(
+            family_common(
+                event_id,
+                "dns.request",
+                SourceEngine::Network,
+                AiAttributionScope::Vm,
+                Some("vm-1"),
+            ),
+            DnsSecuritySubject {
+                qname: "blocked.example".into(),
+                domain_class: "external".into(),
+            },
+        ),
+        final_action,
+    )
+}
+
+fn resolved_model_event(
+    event_id: &str,
+    attribution_scope: AiAttributionScope,
+    vm_id: Option<&str>,
+    input_tokens: Option<u64>,
+    output_tokens: Option<u64>,
+    cost_micros: Option<u64>,
+    final_action: SecurityAction,
+) -> ResolvedSecurityEvent {
+    resolved_event(
+        SecurityEvent::model(
+            family_common(
+                event_id,
+                "model.request",
+                SourceEngine::HostAi,
+                attribution_scope,
+                vm_id,
+            ),
+            ModelSecuritySubject {
+                provider: "google_gemini".into(),
+                model: "gemini-2.5-pro".into(),
+                estimated_input_tokens: input_tokens,
+                estimated_output_tokens: output_tokens,
+                estimated_cost_micros: cost_micros,
+                evidence: None,
+            },
+        ),
+        final_action,
+    )
+}
+
+fn resolved_mcp_event(event_id: &str, final_action: SecurityAction) -> ResolvedSecurityEvent {
+    resolved_event(
+        SecurityEvent::mcp(
+            family_common(
+                event_id,
+                "mcp.request",
+                SourceEngine::Network,
+                AiAttributionScope::Vm,
+                Some("vm-1"),
+            ),
+            McpSecuritySubject {
+                server_id: "filesystem".into(),
+                tool_name: "read_file".into(),
+                evidence: None,
+            },
+        ),
+        final_action,
+    )
+}
+
+fn resolved_file_event(
+    event_id: &str,
+    operation: &str,
+    byte_count: Option<u64>,
+    final_action: SecurityAction,
+) -> ResolvedSecurityEvent {
+    resolved_event(
+        SecurityEvent::file(
+            family_common(
+                event_id,
+                &format!("file.{operation}"),
+                SourceEngine::File,
+                AiAttributionScope::Vm,
+                Some("vm-1"),
+            ),
+            FileSecuritySubject {
+                operation: operation.into(),
+                path: Some("/workspace/data.txt".into()),
+                path_class: "workspace".into(),
+                byte_count,
+            },
+        ),
+        final_action,
+    )
+}
+
+fn resolved_process_event(
+    event_id: &str,
+    operation: &str,
+    final_action: SecurityAction,
+) -> ResolvedSecurityEvent {
+    resolved_event(
+        SecurityEvent::process(
+            family_common(
+                event_id,
+                &format!("process.{operation}"),
+                SourceEngine::Process,
+                AiAttributionScope::Vm,
+                Some("vm-1"),
+            ),
+            ProcessSecuritySubject {
+                operation: operation.into(),
+                command_class: Some("shell".into()),
+            },
+        ),
+        final_action,
+    )
+}
+
+#[test]
+fn resolved_process_event_persists_typed_policy_fields() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("process-security.db");
+
+    {
+        let writer = DbWriter::open(&db_path, 64).unwrap();
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            writer
+                .write(WriteOp::ResolvedSecurityEvent(resolved_process_event(
+                    "evt-process-policy-fields",
+                    "exec",
+                    SecurityAction::Block(BlockResponse {
+                        reason_code: "blocked shell".into(),
+                        rule_id: Some("process.block_shell".into()),
+                    }),
+                )))
+                .await;
+        });
+    }
+
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    let row: (String, String) = conn
+        .query_row(
+            "SELECT process_operation, process_command_class
+             FROM security_events
+             WHERE event_id = 'evt-process-policy-fields'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(row, ("exec".to_owned(), "shell".to_owned()));
+}
+
+fn seed_time() -> std::time::SystemTime {
+    std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_123)
+}
+
+fn seed_net_event() -> crate::events::NetEvent {
+    crate::events::NetEvent {
+        timestamp: seed_time(),
+        domain: "api.example.com".into(),
+        port: 443,
+        decision: crate::events::Decision::Allowed,
+        process_name: Some("agent".into()),
+        pid: Some(4242),
+        method: Some("GET".into()),
+        path: Some("/v1".into()),
+        query: None,
+        status_code: Some(200),
+        bytes_sent: 100,
+        bytes_received: 250,
+        duration_ms: 25,
+        matched_rule: None,
+        request_headers: None,
+        response_headers: None,
+        request_body_preview: None,
+        response_body_preview: None,
+        conn_type: Some("https".into()),
+        policy_mode: None,
+        policy_action: None,
+        policy_rule: None,
+        policy_reason: None,
+        trace_id: Some("trace-seed".into()),
+    }
+}
+
+fn seed_dns_event() -> crate::events::DnsEvent {
+    crate::events::DnsEvent {
+        timestamp: seed_time(),
+        qname: "blocked.example".into(),
+        qtype: 1,
+        qclass: 1,
+        rcode: 3,
+        decision: "denied".into(),
+        matched_rule: Some("dns.block".into()),
+        source_proto: Some("udp".into()),
+        process_name: None,
+        upstream_resolver_ms: 0,
+        trace_id: Some("trace-seed".into()),
+        policy_mode: Some("enforce".into()),
+        policy_action: Some("block".into()),
+        policy_rule: Some("dns.block".into()),
+        policy_reason: Some("seeded dns deny".into()),
+    }
+}
+
+fn seed_model_call(
+    interaction_id: &str,
+    attribution_scope: AiAttributionScope,
+    vm_id: Option<&str>,
+    input_tokens: u64,
+    output_tokens: u64,
+    cost_micros: u64,
+) -> crate::events::ModelCall {
+    crate::events::ModelCall {
+        timestamp: seed_time(),
+        provider: "google_gemini".into(),
+        model: Some("gemini-2.5-pro".into()),
+        process_name: Some("agent".into()),
+        pid: Some(4242),
+        method: "POST".into(),
+        path: "/v1beta/models/gemini-2.5-pro:generateContent".into(),
+        stream: false,
+        system_prompt_preview: None,
+        messages_count: 1,
+        tools_count: 0,
+        request_bytes: 128,
+        request_body_preview: None,
+        message_id: Some(format!("msg-{interaction_id}")),
+        status_code: Some(200),
+        text_content: Some("ok".into()),
+        thinking_content: None,
+        stop_reason: Some("stop".into()),
+        input_tokens: Some(input_tokens),
+        output_tokens: Some(output_tokens),
+        usage_details: BTreeMap::new(),
+        duration_ms: 50,
+        response_bytes: 256,
+        estimated_cost_usd: cost_micros as f64 / 1_000_000.0,
+        trace_id: Some(format!("trace-{interaction_id}")),
+        ai_evidence: Some(ModelInteractionEvidence {
+            interaction_id: interaction_id.into(),
+            trace_id: format!("trace-{interaction_id}"),
+            attribution_scope,
+            source_engine: SourceEngine::HostAi,
+            origin_kind: AiOriginKind::HostService,
+            accounting_owner: None,
+            profile_id: Some("coding".into()),
+            vm_id: vm_id.map(str::to_string),
+            session_id: Some("session-1".into()),
+            user_id: Some("user-1".into()),
+            provider: AiProvider::GoogleGemini,
+            api_family: AiApiFamily::GoogleGeminiContent,
+            model: "gemini-2.5-pro".into(),
+            request: ModelRequestEvidence {
+                request_id: format!("req-{interaction_id}"),
+                provider: AiProvider::GoogleGemini,
+                api_family: AiApiFamily::GoogleGeminiContent,
+                model: Some("gemini-2.5-pro".into()),
+                stream: false,
+                system_prompt_preview: None,
+                message_count: 1,
+                tools_declared_count: 0,
+                raw_shape_version: "google-gemini-content.v1".into(),
+                unknown_fields_present: false,
+            },
+            response: None,
+            tool_calls: Vec::new(),
+            tool_results: Vec::new(),
+            mcp_executions: Vec::new(),
+            usage: AiUsageEvidence {
+                input_tokens: Some(input_tokens),
+                output_tokens: Some(output_tokens),
+                estimated_cost_micros: Some(cost_micros),
+                details: BTreeMap::new(),
+            },
+            parse_status: ParseStatus::Complete,
+            evidence_status: EvidenceStatus::Complete,
+        }),
+        tool_calls: Vec::new(),
+        tool_responses: Vec::new(),
+    }
+}
+
+fn seed_mcp_call() -> crate::events::McpCall {
+    crate::events::McpCall {
+        timestamp: seed_time(),
+        server_name: "filesystem".into(),
+        method: "tools/call".into(),
+        tool_name: Some("delete_file".into()),
+        request_id: Some("mcp-1".into()),
+        request_preview: Some("{}".into()),
+        response_preview: None,
+        decision: "denied".into(),
+        duration_ms: 5,
+        error_message: Some("denied".into()),
+        process_name: Some("agent".into()),
+        bytes_sent: 10,
+        bytes_received: 20,
+        policy_mode: Some("enforce".into()),
+        policy_action: Some("block".into()),
+        policy_rule: Some("mcp.block".into()),
+        policy_reason: Some("seeded mcp deny".into()),
+        trace_id: Some("trace-seed".into()),
+    }
+}
+
+fn seed_file_event() -> crate::events::FileEvent {
+    crate::events::FileEvent {
+        timestamp: seed_time(),
+        action: crate::events::FileAction::Created,
+        path: "/workspace/seed.txt".into(),
+        size: Some(64),
+        trace_id: Some("trace-seed".into()),
+    }
+}
+
+fn seed_exec_event() -> crate::events::ExecEvent {
+    crate::events::ExecEvent {
+        timestamp: seed_time(),
+        exec_id: 7,
+        command: "echo seeded".into(),
+        source: "api".into(),
+        mcp_call_id: None,
+        trace_id: Some("trace-seed".into()),
+        process_name: Some("sh".into()),
+    }
+}
+
+fn seed_audit_event() -> crate::events::AuditEvent {
+    crate::events::AuditEvent {
+        timestamp: seed_time(),
+        pid: 4242,
+        ppid: 1,
+        uid: 1000,
+        exe: "/bin/sh".into(),
+        comm: Some("sh".into()),
+        argv: "sh -c echo seeded".into(),
+        cwd: Some("/workspace".into()),
+        tty: None,
+        session_id: Some(1),
+        audit_id: Some("audit-seed".into()),
+        exec_event_id: None,
+        parent_exe: Some("/sbin/init".into()),
+        trace_id: Some("trace-seed".into()),
+    }
+}
+
+#[test]
+fn resolved_security_event_writes_structured_event_steps_findings_and_links() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("security-events.db");
+
+    let mut headers = BTreeMap::new();
+    headers.insert(
+        "authorization".to_string(),
+        vec!["Bearer secret-token".to_string()],
+    );
+    let mut event = SecurityEvent::http(
+        security_common("evt-sec-1"),
+        HttpSecuritySubject {
+            method: "POST".to_string(),
+            scheme: Some("https".to_string()),
+            host: "api.example.com".to_string(),
+            port: Some(443),
+            path: Some("/admin".to_string()),
+            query: None,
+            url: Some("https://api.example.com/admin".to_string()),
+            path_class: "admin".to_string(),
+            request_bytes: 42,
+            request_headers: headers,
+            request_body: Some(HttpBodySecuritySubject::text("secret payload")),
+            response_status: None,
+            response_headers: BTreeMap::new(),
+            response_bytes: None,
+            response_body: None,
+        },
+    );
+    event.labels.push("http".to_string());
+    event.trace.history.push(TraceHistoryEntry {
+        event_id: "evt-dns-1".to_string(),
+        event_type: "dns.request".to_string(),
+        labels: vec!["dns".to_string()],
+    });
+    event.context.history.push(TraceHistoryEntry {
+        event_id: "evt-model-1".to_string(),
+        event_type: "model.request".to_string(),
+        labels: vec!["model".to_string()],
+    });
+
+    let finding = DetectionFinding {
+        finding_id: "finding-1".to_string(),
+        event_id: "evt-sec-1".to_string(),
+        rule_id: "detect.admin_path".to_string(),
+        pack_id: "pack-detect".to_string(),
+        sigma_id: Some("sigma-admin".to_string()),
+        title: "Admin path access".to_string(),
+        severity: Severity::High,
+        confidence: Confidence::High,
+        tags: vec![
+            "attack.initial_access".to_string(),
+            "capsem.http".to_string(),
+        ],
+    };
+
+    let resolved = ResolvedSecurityEvent {
+        schema_version: RESOLVED_EVENT_SCHEMA_VERSION,
+        event,
+        steps: vec![
+            ResolvedEventStep {
+                kind: ResolvedEventStepKind::Preprocessor,
+                status: StepStatus::Applied,
+                rule_id: None,
+                pack_id: Some("pack-runtime".to_string()),
+                message: Some("credential redaction ran".to_string()),
+            },
+            ResolvedEventStep {
+                kind: ResolvedEventStepKind::DetectionMatch,
+                status: StepStatus::Matched,
+                rule_id: Some("detect.admin_path".to_string()),
+                pack_id: Some("pack-detect".to_string()),
+                message: Some("sigma matched admin path".to_string()),
+            },
+            ResolvedEventStep {
+                kind: ResolvedEventStepKind::EnforcementMatch,
+                status: StepStatus::Matched,
+                rule_id: Some("enforce.block_admin".to_string()),
+                pack_id: Some("pack-runtime".to_string()),
+                message: Some("blocked admin".to_string()),
+            },
+        ],
+        plugin_transforms: Vec::new(),
+        detection_findings: vec![finding],
+        final_action: SecurityAction::Block(BlockResponse {
+            reason_code: "blocked_admin".to_string(),
+            rule_id: Some("enforce.block_admin".to_string()),
+        }),
+        emitter_results: Vec::new(),
+    };
+
+    {
+        let writer = DbWriter::open(&db_path, 64).unwrap();
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            writer.write(WriteOp::ResolvedSecurityEvent(resolved)).await;
+        });
+    }
+
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    let event_row: (String, String, String, String, String, String, i64, i64) = conn
+        .query_row(
+            "SELECT event_family, event_type, source_engine, final_action,
+                    attribution_scope, profile_id, label_count, finding_count
+             FROM security_events WHERE event_id = 'evt-sec-1'",
+            [],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                    row.get(7)?,
+                ))
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        event_row,
+        (
+            "http".to_string(),
+            "http.request".to_string(),
+            "network".to_string(),
+            "block".to_string(),
+            "vm".to_string(),
+            "coding".to_string(),
+            1,
+            1,
+        )
+    );
+
+    let steps: Vec<(String, String, Option<String>)> = {
+        let mut stmt = conn
+            .prepare(
+                "SELECT kind, status, rule_id FROM security_event_steps
+                 WHERE event_id = 'evt-sec-1' ORDER BY step_index ASC",
+            )
+            .unwrap();
+        stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap()
+    };
+    assert_eq!(
+        steps,
+        vec![
+            ("preprocessor".to_string(), "applied".to_string(), None),
+            (
+                "detection_match".to_string(),
+                "matched".to_string(),
+                Some("detect.admin_path".to_string()),
+            ),
+            (
+                "enforcement_match".to_string(),
+                "matched".to_string(),
+                Some("enforce.block_admin".to_string()),
+            ),
+        ]
+    );
+
+    let finding_row: (String, String, String, String, String) = conn
+        .query_row(
+            "SELECT finding_id, rule_id, sigma_id, severity, confidence
+             FROM detection_findings WHERE event_id = 'evt-sec-1'",
+            [],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        finding_row,
+        (
+            "finding-1".to_string(),
+            "detect.admin_path".to_string(),
+            "sigma-admin".to_string(),
+            "high".to_string(),
+            "high".to_string(),
+        )
+    );
+
+    let tags: Vec<String> = {
+        let mut stmt = conn
+            .prepare(
+                "SELECT tag FROM detection_finding_tags
+                 WHERE finding_id = 'finding-1' ORDER BY tag_index ASC",
+            )
+            .unwrap();
+        stmt.query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap()
+    };
+    assert_eq!(tags, vec!["attack.initial_access", "capsem.http"]);
+
+    let links: Vec<(String, String)> = {
+        let mut stmt = conn
+            .prepare(
+                "SELECT linked_event_id, link_type FROM security_event_links
+                 WHERE event_id = 'evt-sec-1' ORDER BY id ASC",
+            )
+            .unwrap();
+        stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap()
+    };
+    assert_eq!(
+        links,
+        vec![
+            ("evt-parent".to_string(), "parent".to_string()),
+            ("evt-dns-1".to_string(), "trace_history".to_string()),
+            ("evt-model-1".to_string(), "context_history".to_string()),
+        ]
+    );
+}
+
+#[test]
+fn writer_metrics_snapshot_counts_resolved_security_decisions_and_findings() {
+    let writer = DbWriter::open_in_memory(64).unwrap();
+    let mut common = security_common("evt-metrics-block");
+    common.timestamp_unix_ms = 1_700_000_123_999;
+    let event = SecurityEvent::http(
+        common,
+        HttpSecuritySubject {
+            method: "GET".to_string(),
+            scheme: Some("https".to_string()),
+            host: "blocked.example".to_string(),
+            port: Some(443),
+            path: Some("/secret".to_string()),
+            query: None,
+            url: Some("https://blocked.example/secret".to_string()),
+            path_class: "secret".to_string(),
+            request_bytes: 0,
+            request_headers: BTreeMap::new(),
+            request_body: None,
+            response_status: None,
+            response_headers: BTreeMap::new(),
+            response_bytes: None,
+            response_body: None,
+        },
+    );
+    let finding = DetectionFinding {
+        finding_id: "finding-metrics".to_string(),
+        event_id: "evt-metrics-block".to_string(),
+        rule_id: "detect.secret".to_string(),
+        pack_id: "pack-detect".to_string(),
+        sigma_id: None,
+        title: "Secret path".to_string(),
+        severity: Severity::High,
+        confidence: Confidence::High,
+        tags: Vec::new(),
+    };
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .unwrap();
+    rt.block_on(async {
+        writer
+            .write(WriteOp::ResolvedSecurityEvent(ResolvedSecurityEvent {
+                schema_version: RESOLVED_EVENT_SCHEMA_VERSION,
+                event,
+                steps: Vec::new(),
+                plugin_transforms: Vec::new(),
+                detection_findings: vec![finding],
+                final_action: SecurityAction::Block(BlockResponse {
+                    reason_code: "secret blocked".to_string(),
+                    rule_id: Some("enforce.secret".to_string()),
+                }),
+                emitter_results: Vec::new(),
+            }))
+            .await;
+    });
+
+    let snapshot = writer.metrics_snapshot("vm-1", true, 1_700_000_124_000);
+
+    assert_eq!(snapshot.vm_id, "vm-1");
+    assert!(snapshot.persistent);
+    assert_eq!(snapshot.security.security_events_total, 1);
+    assert_eq!(snapshot.security.blocks_total, 1);
+    assert_eq!(snapshot.security.detection_findings_total, 1);
+    assert_eq!(
+        snapshot.security.latest_block_event_id.as_deref(),
+        Some("evt-metrics-block")
+    );
+    assert_eq!(
+        snapshot.security.latest_block_rule_id.as_deref(),
+        Some("enforce.secret")
+    );
+    assert_eq!(
+        snapshot.security.latest_detection_rule_id.as_deref(),
+        Some("detect.secret")
+    );
+}
+
+#[test]
+fn writer_metrics_snapshot_updates_https_memory_counters() {
+    let writer = DbWriter::open_in_memory(64).unwrap();
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .unwrap();
+
+    rt.block_on(async {
+        writer
+            .write(WriteOp::ResolvedSecurityEvent(resolved_http_event(
+                "evt-http-allow",
+                10,
+                Some(100),
+                SecurityAction::Continue,
+            )))
+            .await;
+        writer
+            .write(WriteOp::ResolvedSecurityEvent(resolved_http_event(
+                "evt-http-ask",
+                20,
+                Some(200),
+                ask_action("http.ask"),
+            )))
+            .await;
+        writer
+            .write(WriteOp::ResolvedSecurityEvent(resolved_http_event(
+                "evt-http-block",
+                30,
+                Some(300),
+                SecurityAction::Block(BlockResponse {
+                    reason_code: "http blocked".into(),
+                    rule_id: Some("http.block".into()),
+                }),
+            )))
+            .await;
+        writer
+            .write(WriteOp::ResolvedSecurityEvent(resolved_http_event(
+                "evt-http-error",
+                40,
+                None,
+                error_action("http.error"),
+            )))
+            .await;
+    });
+
+    let snapshot = writer.metrics_snapshot("vm-1", true, 1_700_000_124_000);
+
+    assert_eq!(snapshot.http.http_requests_total, 4);
+    assert_eq!(snapshot.http.http_requests_allowed_total, 1);
+    assert_eq!(snapshot.http.http_requests_warned_total, 1);
+    assert_eq!(snapshot.http.http_requests_denied_total, 1);
+    assert_eq!(snapshot.http.http_requests_errored_total, 1);
+    assert_eq!(snapshot.http.http_bytes_sent_total, 100);
+    assert_eq!(snapshot.http.http_bytes_received_total, 600);
+}
+
+#[test]
+fn writer_metrics_snapshot_updates_dns_memory_counters() {
+    let writer = DbWriter::open_in_memory(64).unwrap();
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .unwrap();
+
+    rt.block_on(async {
+        writer
+            .write(WriteOp::ResolvedSecurityEvent(resolved_dns_event(
+                "evt-dns-allow",
+                SecurityAction::Continue,
+            )))
+            .await;
+        writer
+            .write(WriteOp::ResolvedSecurityEvent(resolved_dns_event(
+                "evt-dns-ask",
+                ask_action("dns.ask"),
+            )))
+            .await;
+        writer
+            .write(WriteOp::ResolvedSecurityEvent(resolved_dns_event(
+                "evt-dns-block",
+                SecurityAction::Block(BlockResponse {
+                    reason_code: "dns blocked".into(),
+                    rule_id: Some("dns.block".into()),
+                }),
+            )))
+            .await;
+        writer
+            .write(WriteOp::ResolvedSecurityEvent(resolved_dns_event(
+                "evt-dns-rewrite",
+                rewrite_action("dns.rewrite"),
+            )))
+            .await;
+        writer
+            .write(WriteOp::ResolvedSecurityEvent(resolved_dns_event(
+                "evt-dns-error",
+                error_action("dns.error"),
+            )))
+            .await;
+    });
+
+    let snapshot = writer.metrics_snapshot("vm-1", true, 1_700_000_124_000);
+
+    assert_eq!(snapshot.dns.dns_queries_total, 5);
+    assert_eq!(snapshot.dns.dns_queries_allowed_total, 1);
+    assert_eq!(snapshot.dns.dns_queries_warned_total, 1);
+    assert_eq!(snapshot.dns.dns_queries_denied_total, 1);
+    assert_eq!(snapshot.dns.dns_queries_rewritten_total, 1);
+    assert_eq!(snapshot.dns.dns_queries_errored_total, 1);
+}
+
+#[test]
+fn writer_metrics_snapshot_updates_mcp_memory_counters() {
+    let writer = DbWriter::open_in_memory(64).unwrap();
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .unwrap();
+
+    rt.block_on(async {
+        writer
+            .write(WriteOp::ResolvedSecurityEvent(resolved_mcp_event(
+                "evt-mcp-allow",
+                SecurityAction::Continue,
+            )))
+            .await;
+        writer
+            .write(WriteOp::ResolvedSecurityEvent(resolved_mcp_event(
+                "evt-mcp-ask",
+                ask_action("mcp.ask"),
+            )))
+            .await;
+        writer
+            .write(WriteOp::ResolvedSecurityEvent(resolved_mcp_event(
+                "evt-mcp-block",
+                SecurityAction::Block(BlockResponse {
+                    reason_code: "mcp blocked".into(),
+                    rule_id: Some("mcp.block".into()),
+                }),
+            )))
+            .await;
+        writer
+            .write(WriteOp::ResolvedSecurityEvent(resolved_mcp_event(
+                "evt-mcp-error",
+                error_action("mcp.error"),
+            )))
+            .await;
+    });
+
+    let snapshot = writer.metrics_snapshot("vm-1", true, 1_700_000_124_000);
+
+    assert_eq!(snapshot.mcp.mcp_tool_invocations_total, 4);
+    assert_eq!(snapshot.mcp.mcp_tool_invocations_allowed_total, 1);
+    assert_eq!(snapshot.mcp.mcp_tool_invocations_warned_total, 1);
+    assert_eq!(snapshot.mcp.mcp_tool_invocations_denied_total, 1);
+    assert_eq!(snapshot.mcp.mcp_tool_invocations_errored_total, 1);
+}
+
+#[test]
+fn writer_metrics_snapshot_updates_file_memory_counters() {
+    let writer = DbWriter::open_in_memory(64).unwrap();
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .unwrap();
+
+    rt.block_on(async {
+        writer
+            .write(WriteOp::ResolvedSecurityEvent(resolved_file_event(
+                "evt-file-read",
+                "read",
+                Some(7),
+                SecurityAction::Continue,
+            )))
+            .await;
+        writer
+            .write(WriteOp::ResolvedSecurityEvent(resolved_file_event(
+                "evt-file-write",
+                "write",
+                Some(10),
+                SecurityAction::Continue,
+            )))
+            .await;
+        writer
+            .write(WriteOp::ResolvedSecurityEvent(resolved_file_event(
+                "evt-file-create",
+                "create",
+                Some(20),
+                SecurityAction::Continue,
+            )))
+            .await;
+        writer
+            .write(WriteOp::ResolvedSecurityEvent(resolved_file_event(
+                "evt-file-delete",
+                "delete",
+                None,
+                SecurityAction::Continue,
+            )))
+            .await;
+        writer
+            .write(WriteOp::ResolvedSecurityEvent(resolved_file_event(
+                "evt-file-restore",
+                "restore",
+                Some(30),
+                SecurityAction::Continue,
+            )))
+            .await;
+        writer
+            .write(WriteOp::ResolvedSecurityEvent(resolved_file_event(
+                "evt-file-error",
+                "read",
+                Some(5),
+                error_action("file.error"),
+            )))
+            .await;
+    });
+
+    let snapshot = writer.metrics_snapshot("vm-1", true, 1_700_000_124_000);
+
+    assert_eq!(snapshot.filesystem.fs_reads_total, 2);
+    assert_eq!(snapshot.filesystem.fs_writes_total, 1);
+    assert_eq!(snapshot.filesystem.fs_creates_total, 1);
+    assert_eq!(snapshot.filesystem.fs_deletes_total, 1);
+    assert_eq!(snapshot.filesystem.fs_restores_total, 1);
+    assert_eq!(snapshot.filesystem.fs_errors_total, 1);
+    assert_eq!(snapshot.filesystem.fs_bytes_read_total, 12);
+    assert_eq!(snapshot.filesystem.fs_bytes_written_total, 60);
+}
+
+#[test]
+fn writer_metrics_snapshot_updates_process_memory_counters() {
+    let writer = DbWriter::open_in_memory(64).unwrap();
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .unwrap();
+
+    rt.block_on(async {
+        writer
+            .write(WriteOp::ResolvedSecurityEvent(resolved_process_event(
+                "evt-process-exec",
+                "exec",
+                SecurityAction::Continue,
+            )))
+            .await;
+        writer
+            .write(WriteOp::ResolvedSecurityEvent(resolved_process_event(
+                "evt-process-audit",
+                "audit",
+                SecurityAction::Continue,
+            )))
+            .await;
+        writer
+            .write(WriteOp::ResolvedSecurityEvent(resolved_process_event(
+                "evt-process-error",
+                "exec",
+                error_action("process.error"),
+            )))
+            .await;
+    });
+
+    let snapshot = writer.metrics_snapshot("vm-1", true, 1_700_000_124_000);
+
+    assert_eq!(snapshot.process.process_events_total, 3);
+    assert_eq!(snapshot.process.process_exec_total, 2);
+    assert_eq!(snapshot.process.process_audit_total, 1);
+    assert_eq!(snapshot.process.process_errors_total, 1);
+}
+
+#[test]
+fn writer_metrics_snapshot_updates_security_memory_counters() {
+    let writer = DbWriter::open_in_memory(64).unwrap();
+    let finding = DetectionFinding {
+        finding_id: "finding-security-counter".to_string(),
+        event_id: "evt-security-block".to_string(),
+        rule_id: "detect.security.counter".to_string(),
+        pack_id: "pack-detect".to_string(),
+        sigma_id: None,
+        title: "Security counter finding".to_string(),
+        severity: Severity::Medium,
+        confidence: Confidence::High,
+        tags: Vec::new(),
+    };
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .unwrap();
+
+    rt.block_on(async {
+        writer
+            .write(WriteOp::ResolvedSecurityEvent(resolved_http_event(
+                "evt-security-ask",
+                0,
+                None,
+                ask_action("security.ask"),
+            )))
+            .await;
+        writer
+            .write(WriteOp::ResolvedSecurityEvent(resolved_http_event(
+                "evt-security-rewrite",
+                0,
+                None,
+                rewrite_action("security.rewrite"),
+            )))
+            .await;
+        writer
+            .write(WriteOp::ResolvedSecurityEvent(resolved_http_event(
+                "evt-security-throttle",
+                0,
+                None,
+                throttle_action("security.throttle"),
+            )))
+            .await;
+        writer
+            .write(WriteOp::ResolvedSecurityEvent(ResolvedSecurityEvent {
+                schema_version: RESOLVED_EVENT_SCHEMA_VERSION,
+                event: resolved_http_event("evt-security-block", 0, None, SecurityAction::Continue)
+                    .event,
+                steps: Vec::new(),
+                plugin_transforms: Vec::new(),
+                detection_findings: vec![finding],
+                final_action: SecurityAction::Block(BlockResponse {
+                    reason_code: "security blocked".into(),
+                    rule_id: Some("security.block".into()),
+                }),
+                emitter_results: Vec::new(),
+            }))
+            .await;
+        writer
+            .write(WriteOp::ResolvedSecurityEvent(resolved_http_event(
+                "evt-security-error",
+                0,
+                None,
+                error_action("security.error"),
+            )))
+            .await;
+    });
+
+    let snapshot = writer.metrics_snapshot("vm-1", true, 1_700_000_124_000);
+
+    assert_eq!(snapshot.security.security_events_total, 5);
+    assert_eq!(snapshot.security.blocks_total, 1);
+    assert_eq!(snapshot.security.asks_total, 1);
+    assert_eq!(snapshot.security.rewrites_total, 1);
+    assert_eq!(snapshot.security.throttles_total, 1);
+    assert_eq!(snapshot.security.errors_total, 1);
+    assert_eq!(snapshot.security.detection_findings_total, 1);
+    assert_eq!(
+        snapshot.security.latest_block_rule_id.as_deref(),
+        Some("security.block")
+    );
+    assert_eq!(
+        snapshot.security.latest_detection_rule_id.as_deref(),
+        Some("detect.security.counter")
+    );
+}
+
+#[test]
+fn writer_metrics_snapshot_counts_canonical_vm_event_families() {
+    let writer = DbWriter::open_in_memory(64).unwrap();
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .unwrap();
+
+    rt.block_on(async {
+        writer
+            .write(WriteOp::ResolvedSecurityEvent(resolved_http_event(
+                "evt-http",
+                100,
+                Some(250),
+                SecurityAction::Continue,
+            )))
+            .await;
+        writer
+            .write(WriteOp::ResolvedSecurityEvent(resolved_dns_event(
+                "evt-dns",
+                SecurityAction::Block(BlockResponse {
+                    reason_code: "dns denied".into(),
+                    rule_id: Some("dns.block".into()),
+                }),
+            )))
+            .await;
+        writer
+            .write(WriteOp::ResolvedSecurityEvent(resolved_model_event(
+                "evt-model-vm",
+                AiAttributionScope::Vm,
+                Some("vm-1"),
+                Some(11),
+                Some(29),
+                Some(700),
+                SecurityAction::Continue,
+            )))
+            .await;
+        writer
+            .write(WriteOp::ResolvedSecurityEvent(resolved_model_event(
+                "evt-model-host",
+                AiAttributionScope::Host,
+                Some("vm-1"),
+                Some(1_000),
+                Some(2_000),
+                Some(9_000_000),
+                SecurityAction::Continue,
+            )))
+            .await;
+        writer
+            .write(WriteOp::ResolvedSecurityEvent(resolved_mcp_event(
+                "evt-mcp",
+                SecurityAction::Block(BlockResponse {
+                    reason_code: "tool denied".into(),
+                    rule_id: Some("mcp.block".into()),
+                }),
+            )))
+            .await;
+        writer
+            .write(WriteOp::ResolvedSecurityEvent(resolved_file_event(
+                "evt-file-write",
+                "write",
+                Some(64),
+                SecurityAction::Continue,
+            )))
+            .await;
+        writer
+            .write(WriteOp::ResolvedSecurityEvent(resolved_file_event(
+                "evt-file-delete",
+                "delete",
+                None,
+                SecurityAction::Continue,
+            )))
+            .await;
+        writer
+            .write(WriteOp::ResolvedSecurityEvent(resolved_process_event(
+                "evt-process",
+                "exec",
+                SecurityAction::Continue,
+            )))
+            .await;
+    });
+
+    let snapshot = writer.metrics_snapshot("vm-1", true, 1_700_000_124_000);
+
+    assert_eq!(snapshot.http.http_requests_total, 1);
+    assert_eq!(snapshot.http.http_requests_allowed_total, 1);
+    assert_eq!(snapshot.http.http_bytes_sent_total, 100);
+    assert_eq!(snapshot.http.http_bytes_received_total, 250);
+    assert_eq!(snapshot.dns.dns_queries_total, 1);
+    assert_eq!(snapshot.dns.dns_queries_denied_total, 1);
+    assert_eq!(snapshot.model.model_requests_total, 1);
+    assert_eq!(snapshot.model.model_requests_allowed_total, 1);
+    assert_eq!(snapshot.model.model_input_tokens_total, 11);
+    assert_eq!(snapshot.model.model_output_tokens_total, 29);
+    assert_eq!(snapshot.model.model_estimated_cost_micros_total, 700);
+    assert_eq!(snapshot.mcp.mcp_tool_invocations_total, 1);
+    assert_eq!(snapshot.mcp.mcp_tool_invocations_denied_total, 1);
+    assert_eq!(snapshot.filesystem.fs_writes_total, 1);
+    assert_eq!(snapshot.filesystem.fs_deletes_total, 1);
+    assert_eq!(snapshot.filesystem.fs_bytes_written_total, 64);
+    assert_eq!(snapshot.process.process_events_total, 1);
+    assert_eq!(snapshot.process.process_exec_total, 1);
+    assert_eq!(snapshot.security.security_events_total, 7);
+}
+
+#[test]
+fn writer_metrics_snapshot_counts_live_vm_model_call_rows() {
+    let writer = DbWriter::open_in_memory(64).unwrap();
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .unwrap();
+
+    rt.block_on(async {
+        writer
+            .write(WriteOp::ModelCall(seed_model_call(
+                "vm-live-model",
+                AiAttributionScope::Vm,
+                Some("vm-1"),
+                123,
+                45,
+                1_250,
+            )))
+            .await;
+        writer
+            .write(WriteOp::ModelCall(seed_model_call(
+                "host-live-model",
+                AiAttributionScope::Host,
+                Some("vm-1"),
+                10_000,
+                20_000,
+                9_000_000,
+            )))
+            .await;
+        let mut errored = seed_model_call(
+            "vm-live-model-error",
+            AiAttributionScope::Vm,
+            Some("vm-1"),
+            9,
+            1,
+            500,
+        );
+        errored.status_code = Some(500);
+        writer.write(WriteOp::ModelCall(errored)).await;
+    });
+
+    let snapshot = writer.metrics_snapshot("vm-1", true, 1_700_000_124_500);
+
+    assert_eq!(snapshot.model.model_requests_total, 2);
+    assert_eq!(snapshot.model.model_requests_allowed_total, 1);
+    assert_eq!(snapshot.model.model_requests_errored_total, 1);
+    assert_eq!(snapshot.model.model_input_tokens_total, 132);
+    assert_eq!(snapshot.model.model_output_tokens_total, 46);
+    assert_eq!(snapshot.model.model_estimated_cost_micros_total, 1_750);
+}
+
+#[test]
+fn writer_metrics_snapshot_counts_realistic_live_write_sequence_once() {
+    let writer = DbWriter::open_in_memory(64).unwrap();
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .unwrap();
+
+    rt.block_on(async {
+        writer.write(WriteOp::NetEvent(seed_net_event())).await;
+        writer
+            .write(WriteOp::ResolvedSecurityEvent(resolved_http_event(
+                "evt-live-http",
+                100,
+                Some(250),
+                SecurityAction::Continue,
+            )))
+            .await;
+        writer.write(WriteOp::DnsEvent(seed_dns_event())).await;
+        writer
+            .write(WriteOp::ResolvedSecurityEvent(resolved_dns_event(
+                "evt-live-dns",
+                SecurityAction::Block(BlockResponse {
+                    reason_code: "dns denied".into(),
+                    rule_id: Some("dns.block".into()),
+                }),
+            )))
+            .await;
+        writer
+            .write(WriteOp::ModelCall(seed_model_call(
+                "vm-live-sequence",
+                AiAttributionScope::Vm,
+                Some("vm-1"),
+                321,
+                123,
+                4_500,
+            )))
+            .await;
+        writer
+            .write(WriteOp::ModelCall(seed_model_call(
+                "host-live-sequence",
+                AiAttributionScope::Host,
+                Some("vm-1"),
+                10_000,
+                20_000,
+                9_000_000,
+            )))
+            .await;
+        writer.write(WriteOp::McpCall(seed_mcp_call())).await;
+        writer
+            .write(WriteOp::ResolvedSecurityEvent(resolved_mcp_event(
+                "evt-live-mcp",
+                SecurityAction::Block(BlockResponse {
+                    reason_code: "tool denied".into(),
+                    rule_id: Some("mcp.block".into()),
+                }),
+            )))
+            .await;
+        writer.write(WriteOp::FileEvent(seed_file_event())).await;
+        writer
+            .write(WriteOp::ResolvedSecurityEvent(resolved_file_event(
+                "evt-live-file-create",
+                "create",
+                Some(64),
+                SecurityAction::Continue,
+            )))
+            .await;
+        writer.write(WriteOp::ExecEvent(seed_exec_event())).await;
+        writer.write(WriteOp::AuditEvent(seed_audit_event())).await;
+        writer
+            .write(WriteOp::ResolvedSecurityEvent(resolved_process_event(
+                "evt-live-process",
+                "exec",
+                SecurityAction::Continue,
+            )))
+            .await;
+    });
+
+    let snapshot = writer.metrics_snapshot("vm-1", true, 1_700_000_124_750);
+
+    assert_eq!(snapshot.http.http_requests_total, 1);
+    assert_eq!(snapshot.http.http_requests_allowed_total, 1);
+    assert_eq!(snapshot.http.http_bytes_sent_total, 100);
+    assert_eq!(snapshot.http.http_bytes_received_total, 250);
+    assert_eq!(snapshot.dns.dns_queries_total, 1);
+    assert_eq!(snapshot.dns.dns_queries_denied_total, 1);
+    assert_eq!(snapshot.model.model_requests_total, 1);
+    assert_eq!(snapshot.model.model_requests_allowed_total, 1);
+    assert_eq!(snapshot.model.model_input_tokens_total, 321);
+    assert_eq!(snapshot.model.model_output_tokens_total, 123);
+    assert_eq!(snapshot.model.model_estimated_cost_micros_total, 4_500);
+    assert_eq!(snapshot.mcp.mcp_tool_invocations_total, 1);
+    assert_eq!(snapshot.mcp.mcp_tool_invocations_denied_total, 1);
+    assert_eq!(snapshot.filesystem.fs_creates_total, 1);
+    assert_eq!(snapshot.filesystem.fs_bytes_written_total, 64);
+    assert_eq!(snapshot.process.process_events_total, 1);
+    assert_eq!(snapshot.process.process_exec_total, 1);
+    assert_eq!(snapshot.security.security_events_total, 5);
+}
+
+#[test]
+fn writer_open_seeds_metrics_snapshot_from_existing_session_db() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("seeded-session.db");
+
+    {
+        let writer = DbWriter::open(&db_path, 64).unwrap();
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            writer.write(WriteOp::NetEvent(seed_net_event())).await;
+            writer.write(WriteOp::DnsEvent(seed_dns_event())).await;
+            writer
+                .write(WriteOp::ModelCall(seed_model_call(
+                    "vm-model",
+                    AiAttributionScope::Vm,
+                    Some("vm-1"),
+                    11,
+                    29,
+                    700,
+                )))
+                .await;
+            writer
+                .write(WriteOp::ModelCall(seed_model_call(
+                    "host-model",
+                    AiAttributionScope::Host,
+                    Some("vm-1"),
+                    1_000,
+                    2_000,
+                    9_000_000,
+                )))
+                .await;
+            writer.write(WriteOp::McpCall(seed_mcp_call())).await;
+            writer.write(WriteOp::FileEvent(seed_file_event())).await;
+            writer.write(WriteOp::ExecEvent(seed_exec_event())).await;
+            writer.write(WriteOp::AuditEvent(seed_audit_event())).await;
+
+            let finding = DetectionFinding {
+                finding_id: "finding-seeded".into(),
+                event_id: "evt-seeded-block".into(),
+                rule_id: "detect.seeded".into(),
+                pack_id: "pack-detect".into(),
+                sigma_id: None,
+                title: "Seeded detection".into(),
+                severity: Severity::Medium,
+                confidence: Confidence::High,
+                tags: Vec::new(),
+            };
+            writer
+                .write(WriteOp::ResolvedSecurityEvent(ResolvedSecurityEvent {
+                    schema_version: RESOLVED_EVENT_SCHEMA_VERSION,
+                    event: SecurityEvent::http(
+                        family_common(
+                            "evt-seeded-block",
+                            "http.request",
+                            SourceEngine::Network,
+                            AiAttributionScope::Vm,
+                            Some("vm-1"),
+                        ),
+                        HttpSecuritySubject::default(),
+                    ),
+                    steps: vec![ResolvedEventStep {
+                        kind: ResolvedEventStepKind::EnforcementMatch,
+                        status: StepStatus::Matched,
+                        rule_id: Some("enforce.seeded".into()),
+                        pack_id: Some("pack-enforce".into()),
+                        message: Some("seeded block".into()),
+                    }],
+                    plugin_transforms: Vec::new(),
+                    detection_findings: vec![finding],
+                    final_action: SecurityAction::Block(BlockResponse {
+                        reason_code: "seeded_block".into(),
+                        rule_id: Some("enforce.seeded".into()),
+                    }),
+                    emitter_results: Vec::new(),
+                }))
+                .await;
+        });
+    }
+
+    let writer = DbWriter::open(&db_path, 64).unwrap();
+    let snapshot = writer.metrics_snapshot("vm-1", true, 1_700_000_124_000);
+
+    assert_eq!(snapshot.http.http_requests_total, 1);
+    assert_eq!(snapshot.http.http_requests_allowed_total, 1);
+    assert_eq!(snapshot.http.http_bytes_sent_total, 100);
+    assert_eq!(snapshot.http.http_bytes_received_total, 250);
+    assert_eq!(snapshot.dns.dns_queries_total, 1);
+    assert_eq!(snapshot.dns.dns_queries_denied_total, 1);
+    assert_eq!(snapshot.model.model_requests_total, 1);
+    assert_eq!(snapshot.model.model_input_tokens_total, 11);
+    assert_eq!(snapshot.model.model_output_tokens_total, 29);
+    assert_eq!(snapshot.model.model_estimated_cost_micros_total, 700);
+    assert_eq!(snapshot.mcp.mcp_tool_invocations_total, 1);
+    assert_eq!(snapshot.mcp.mcp_tool_invocations_denied_total, 1);
+    assert_eq!(snapshot.filesystem.fs_creates_total, 1);
+    assert_eq!(snapshot.filesystem.fs_bytes_written_total, 64);
+    assert_eq!(snapshot.process.process_events_total, 2);
+    assert_eq!(snapshot.process.process_exec_total, 1);
+    assert_eq!(snapshot.process.process_audit_total, 1);
+    assert_eq!(snapshot.security.security_events_total, 1);
+    assert_eq!(snapshot.security.blocks_total, 1);
+    assert_eq!(snapshot.security.detection_findings_total, 1);
+    assert_eq!(
+        snapshot.security.latest_block_event_id.as_deref(),
+        Some("evt-seeded-block")
+    );
+    assert_eq!(
+        snapshot.security.latest_block_rule_id.as_deref(),
+        Some("enforce.seeded")
+    );
+    assert_eq!(
+        snapshot.security.latest_detection_rule_id.as_deref(),
+        Some("detect.seeded")
+    );
+
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .unwrap();
+    rt.block_on(async {
+        writer
+            .write(WriteOp::ResolvedSecurityEvent(resolved_http_event(
+                "evt-live-after-seed",
+                5,
+                Some(7),
+                SecurityAction::Continue,
+            )))
+            .await;
+    });
+
+    let snapshot = writer.metrics_snapshot("vm-1", true, 1_700_000_124_001);
+    assert_eq!(snapshot.http.http_requests_total, 2);
+    assert_eq!(snapshot.http.http_bytes_sent_total, 105);
+    assert_eq!(snapshot.http.http_bytes_received_total, 257);
+    assert_eq!(snapshot.security.security_events_total, 2);
+}
 
 #[test]
 fn cap_field_none_returns_none() {
@@ -99,13 +1839,11 @@ fn db_writer_checkpoints_wal_on_drop() {
         rt.block_on(async {
             writer
                 .write(WriteOp::FileEvent(crate::events::FileEvent {
-                    event_id: None,
                     timestamp: std::time::SystemTime::now(),
                     action: crate::events::FileAction::Created,
                     path: "/tmp/test".to_string(),
                     size: Some(42),
                     trace_id: None,
-                    credential_ref: None,
                 }))
                 .await;
         });
@@ -128,9 +1866,9 @@ fn db_writer_checkpoints_wal_on_drop() {
 }
 
 #[test]
-fn writer_generates_twelve_hex_event_id_for_primary_events() {
+fn telemetry_identity_roundtrip_updates_single_session_row() {
     let dir = tempfile::tempdir().unwrap();
-    let db_path = dir.path().join("event-id.db");
+    let db_path = dir.path().join("identity.db");
 
     {
         let writer = DbWriter::open(&db_path, 64).unwrap();
@@ -139,63 +1877,46 @@ fn writer_generates_twelve_hex_event_id_for_primary_events() {
             .unwrap();
         rt.block_on(async {
             writer
-                .write(WriteOp::FileEvent(crate::events::FileEvent {
-                    event_id: None,
-                    timestamp: std::time::SystemTime::now(),
-                    action: crate::events::FileAction::Created,
-                    path: "/tmp/event-id".to_string(),
-                    size: Some(42),
-                    trace_id: None,
-                    credential_ref: None,
-                }))
+                .write(WriteOp::TelemetryIdentity(
+                    crate::events::TelemetryIdentity {
+                        timestamp: std::time::SystemTime::UNIX_EPOCH
+                            + std::time::Duration::from_secs(1_779_000_000),
+                        vm_id: "vm-a".to_string(),
+                        profile_id: "everyday-work".to_string(),
+                        user_id: "elie".to_string(),
+                    },
+                ))
                 .await;
-        });
-    }
-
-    let conn = rusqlite::Connection::open(&db_path).unwrap();
-    let event_id: String = conn
-        .query_row("SELECT event_id FROM fs_events LIMIT 1", [], |row| {
-            row.get(0)
-        })
-        .unwrap();
-    assert_eq!(event_id.len(), 12);
-    assert!(event_id
-        .chars()
-        .all(|ch| ch.is_ascii_hexdigit() && !ch.is_ascii_uppercase()));
-}
-
-#[test]
-fn writer_preserves_supplied_primary_event_id() {
-    let dir = tempfile::tempdir().unwrap();
-    let db_path = dir.path().join("supplied-event-id.db");
-
-    {
-        let writer = DbWriter::open(&db_path, 64).unwrap();
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .build()
-            .unwrap();
-        rt.block_on(async {
             writer
-                .write(WriteOp::FileEvent(crate::events::FileEvent {
-                    event_id: Some("abcdef123456".to_string()),
-                    timestamp: std::time::SystemTime::now(),
-                    action: crate::events::FileAction::Created,
-                    path: "/tmp/event-id".to_string(),
-                    size: Some(42),
-                    trace_id: None,
-                    credential_ref: None,
-                }))
+                .write(WriteOp::TelemetryIdentity(
+                    crate::events::TelemetryIdentity {
+                        timestamp: std::time::SystemTime::UNIX_EPOCH
+                            + std::time::Duration::from_secs(1_779_000_001),
+                        vm_id: "vm-a".to_string(),
+                        profile_id: "locked-down".to_string(),
+                        user_id: "elie".to_string(),
+                    },
+                ))
                 .await;
         });
     }
 
+    let reader = crate::reader::DbReader::open(&db_path).unwrap();
+    let identity = reader
+        .session_identity()
+        .unwrap()
+        .expect("identity row must exist");
+    assert_eq!(identity.vm_id, "vm-a");
+    assert_eq!(identity.profile_id, "locked-down");
+    assert_eq!(identity.user_id, "elie");
+
     let conn = rusqlite::Connection::open(&db_path).unwrap();
-    let event_id: String = conn
-        .query_row("SELECT event_id FROM fs_events LIMIT 1", [], |row| {
+    let rows: i64 = conn
+        .query_row("SELECT COUNT(*) FROM session_identity", [], |row| {
             row.get(0)
         })
         .unwrap();
-    assert_eq!(event_id, "abcdef123456");
+    assert_eq!(rows, 1, "identity must update in place, not append");
 }
 
 #[test]
@@ -211,7 +1932,6 @@ fn snapshot_event_roundtrip() {
         rt.block_on(async {
             writer
                 .write(WriteOp::SnapshotEvent(crate::events::SnapshotEvent {
-                    event_id: None,
                     timestamp: std::time::SystemTime::UNIX_EPOCH
                         + std::time::Duration::from_secs(1_700_000_000),
                     slot: 3,
@@ -225,7 +1945,6 @@ fn snapshot_event_roundtrip() {
                 .await;
             writer
                 .write(WriteOp::SnapshotEvent(crate::events::SnapshotEvent {
-                    event_id: None,
                     timestamp: std::time::SystemTime::UNIX_EPOCH
                         + std::time::Duration::from_secs(1_700_000_100),
                     slot: 10,
@@ -304,45 +2023,38 @@ fn snapshot_fs_events_cross_reference() {
             for i in 0..5 {
                 writer
                     .write(WriteOp::FileEvent(crate::events::FileEvent {
-                        event_id: None,
                         timestamp: std::time::SystemTime::now(),
                         action: crate::events::FileAction::Created,
                         path: format!("file_{i}.txt"),
                         size: Some(100),
                         trace_id: None,
-                        credential_ref: None,
                     }))
                     .await;
             }
             for i in 5..8 {
                 writer
                     .write(WriteOp::FileEvent(crate::events::FileEvent {
-                        event_id: None,
                         timestamp: std::time::SystemTime::now(),
                         action: crate::events::FileAction::Modified,
                         path: format!("file_{i}.txt"),
                         size: Some(200),
                         trace_id: None,
-                        credential_ref: None,
                     }))
                     .await;
             }
             writer
                 .write(WriteOp::FileEvent(crate::events::FileEvent {
-                    event_id: None,
                     timestamp: std::time::SystemTime::now(),
                     action: crate::events::FileAction::Deleted,
                     path: "old.txt".to_string(),
                     size: None,
                     trace_id: None,
-                    credential_ref: None,
                 }))
                 .await;
 
             // Snapshot 1: covers fs_events 1..5 (5 created)
             writer
                 .write(WriteOp::SnapshotEvent(crate::events::SnapshotEvent {
-                    event_id: None,
                     timestamp: std::time::SystemTime::now(),
                     slot: 0,
                     origin: "auto".to_string(),
@@ -357,7 +2069,6 @@ fn snapshot_fs_events_cross_reference() {
             // Snapshot 2: covers fs_events 6..9 (3 modified + 1 deleted)
             writer
                 .write(WriteOp::SnapshotEvent(crate::events::SnapshotEvent {
-                    event_id: None,
                     timestamp: std::time::SystemTime::now(),
                     slot: 1,
                     origin: "auto".to_string(),
@@ -423,7 +2134,6 @@ fn snapshot_ring_buffer_dedup_query() {
             // Slot 0, first pass.
             writer
                 .write(WriteOp::SnapshotEvent(crate::events::SnapshotEvent {
-                    event_id: None,
                     timestamp: std::time::SystemTime::UNIX_EPOCH
                         + std::time::Duration::from_secs(1000),
                     slot: 0,
@@ -438,7 +2148,6 @@ fn snapshot_ring_buffer_dedup_query() {
             // Slot 1.
             writer
                 .write(WriteOp::SnapshotEvent(crate::events::SnapshotEvent {
-                    event_id: None,
                     timestamp: std::time::SystemTime::UNIX_EPOCH
                         + std::time::Duration::from_secs(2000),
                     slot: 1,
@@ -453,7 +2162,6 @@ fn snapshot_ring_buffer_dedup_query() {
             // Slot 0 again (ring buffer wrapped).
             writer
                 .write(WriteOp::SnapshotEvent(crate::events::SnapshotEvent {
-                    event_id: None,
                     timestamp: std::time::SystemTime::UNIX_EPOCH
                         + std::time::Duration::from_secs(3000),
                     slot: 0,
@@ -518,13 +2226,11 @@ fn shutdown_blocking_through_arc_flushes_wal() {
     rt.block_on(async {
         writer
             .write(WriteOp::FileEvent(crate::events::FileEvent {
-                event_id: None,
                 timestamp: std::time::SystemTime::now(),
                 action: crate::events::FileAction::Created,
                 path: "/x".into(),
                 size: Some(1),
                 trace_id: None,
-                credential_ref: None,
             }))
             .await;
     });
@@ -566,234 +2272,13 @@ fn write_after_shutdown_is_noop() {
     writer.shutdown_blocking();
     assert!(
         !writer.try_write(WriteOp::FileEvent(crate::events::FileEvent {
-            event_id: None,
             timestamp: std::time::SystemTime::now(),
             action: crate::events::FileAction::Created,
             path: "/after".into(),
             size: None,
             trace_id: None,
-            credential_ref: None,
         }))
     );
-}
-
-#[tokio::test]
-async fn security_rule_event_roundtrip_preserves_forensic_snapshot() {
-    let dir = tempfile::tempdir().unwrap();
-    let db_path = dir.path().join("security-rule.db");
-    let writer = DbWriter::open(&db_path, 64).unwrap();
-
-    writer
-        .write(WriteOp::SecurityRuleEvent(
-            crate::events::SecurityRuleEvent {
-                timestamp_unix_ms: 1_789_000_000_000,
-                event_id: "abcdef123456".into(),
-                event_type: "model.request".into(),
-                rule_id: "openai_api_block".into(),
-                rule_action: crate::events::SecurityRuleAction::Block,
-                detection_level: crate::events::SecurityDetectionLevel::Critical,
-                rule_json: r#"{"name":"openai_api_block","match":"model.provider == \"openai\""}"#
-                    .into(),
-                event_json:
-                    r#"{"common":{"event_type":"model.request"},"model":{"provider":"openai"}}"#
-                        .into(),
-                trace_id: Some("trace_abc".into()),
-            },
-        ))
-        .await;
-    drop(writer);
-
-    let reader = crate::reader::DbReader::open(&db_path).unwrap();
-    let events = reader.recent_security_rule_events(10).unwrap();
-    assert_eq!(events.len(), 1);
-    assert_eq!(events[0].event_id, "abcdef123456");
-    assert_eq!(events[0].event_type, "model.request");
-    assert_eq!(events[0].rule_id, "openai_api_block");
-    assert_eq!(
-        events[0].rule_action,
-        crate::events::SecurityRuleAction::Block
-    );
-    assert_eq!(
-        events[0].detection_level,
-        crate::events::SecurityDetectionLevel::Critical
-    );
-    assert!(events[0].rule_json.contains("openai_api_block"));
-    assert!(events[0].event_json.contains("model.request"));
-}
-
-#[tokio::test]
-async fn security_ask_event_roundtrip_preserves_lifecycle_rows() {
-    let dir = tempfile::tempdir().unwrap();
-    let db_path = dir.path().join("security-ask.db");
-    let writer = DbWriter::open(&db_path, 64).unwrap();
-    let pending = crate::events::SecurityAskEvent::pending(crate::events::SecurityAskPending {
-        timestamp_unix_ms: 1_789_000_000_000,
-        ask_id: "abcdef123456".to_string(),
-        event_id: "111111abcdef".to_string(),
-        event_type: "http.request".to_string(),
-        rule_id: "profiles.rules.ask_openai".to_string(),
-        rule_name: "ask_openai".to_string(),
-        rule_json: r#"{"name":"ask_openai"}"#.to_string(),
-        event_json: r#"{"http":{"host":"api.openai.com"}}"#.to_string(),
-    })
-    .with_trace_id("trace_ask");
-    let approved = pending
-        .clone()
-        .with_status(crate::events::SecurityAskStatus::Approved)
-        .with_resolver("tester")
-        .with_reason("approved");
-
-    writer
-        .write(WriteOp::SecurityAskEvent(pending.clone()))
-        .await;
-    writer.write(WriteOp::SecurityAskEvent(approved)).await;
-    drop(writer);
-
-    let reader = crate::reader::DbReader::open(&db_path).unwrap();
-    let rows = reader.recent_security_ask_events(10).unwrap();
-    assert_eq!(rows.len(), 2);
-    assert_eq!(rows[0].status, crate::events::SecurityAskStatus::Approved);
-    assert_eq!(rows[0].resolver.as_deref(), Some("tester"));
-    assert_eq!(rows[1].status, crate::events::SecurityAskStatus::Pending);
-    assert_eq!(rows[1].event_id, "111111abcdef");
-    assert_eq!(rows[1].rule_id, "profiles.rules.ask_openai");
-    let latest = reader
-        .latest_security_ask_event("abcdef123456")
-        .unwrap()
-        .unwrap();
-    assert_eq!(latest.status, crate::events::SecurityAskStatus::Approved);
-}
-
-#[tokio::test]
-async fn security_decision_event_roundtrip_preserves_explicit_transition() {
-    let dir = tempfile::tempdir().unwrap();
-    let db_path = dir.path().join("security-decision.db");
-    let writer = DbWriter::open(&db_path, 64).unwrap();
-
-    writer
-        .write(WriteOp::SecurityDecisionEvent(
-            crate::events::SecurityDecisionEvent {
-                timestamp_unix_ms: 1_789_000_000_000,
-                event_id: "abcdef123456".into(),
-                event_type: "file.import".into(),
-                stage: crate::events::SecurityDecisionStage::Rewrite,
-                actor: "dummy_pre_eicar".into(),
-                rule_id: Some("profiles.rules.scan_eicar".into()),
-                plugin_id: Some("dummy_pre_eicar".into()),
-                previous_decision: crate::events::SecurityDecision::Allow,
-                requested_decision: crate::events::SecurityDecision::Block,
-                effective_decision: crate::events::SecurityDecision::Block,
-                reason: Some("EICAR test seed observed".into()),
-                event_json: r#"{"file":{"import":{"name":"eicar.txt"}}}"#.into(),
-                trace_id: Some("trace_eicar".into()),
-            },
-        ))
-        .await;
-    drop(writer);
-
-    let conn = rusqlite::Connection::open(&db_path).unwrap();
-    let row: (String, String, String, String, String, String, String) = conn
-        .query_row(
-            "SELECT stage, actor, previous_decision, requested_decision,
-                    effective_decision, reason, trace_id
-             FROM security_decision_events WHERE event_id = 'abcdef123456'",
-            [],
-            |row| {
-                Ok((
-                    row.get(0)?,
-                    row.get(1)?,
-                    row.get(2)?,
-                    row.get(3)?,
-                    row.get(4)?,
-                    row.get(5)?,
-                    row.get(6)?,
-                ))
-            },
-        )
-        .unwrap();
-    assert_eq!(
-        row,
-        (
-            "rewrite".into(),
-            "dummy_pre_eicar".into(),
-            "allow".into(),
-            "block".into(),
-            "block".into(),
-            "EICAR test seed observed".into(),
-            "trace_eicar".into(),
-        )
-    );
-}
-
-#[tokio::test]
-async fn security_rule_stats_are_regenerated_from_session_db() {
-    let dir = tempfile::tempdir().unwrap();
-    let db_path = dir.path().join("security-rule-stats.db");
-    let writer = DbWriter::open(&db_path, 64).unwrap();
-
-    for (idx, action, level) in [
-        (
-            1,
-            crate::events::SecurityRuleAction::Block,
-            crate::events::SecurityDetectionLevel::Critical,
-        ),
-        (
-            2,
-            crate::events::SecurityRuleAction::Block,
-            crate::events::SecurityDetectionLevel::Critical,
-        ),
-        (
-            3,
-            crate::events::SecurityRuleAction::Allow,
-            crate::events::SecurityDetectionLevel::None,
-        ),
-    ] {
-        writer
-            .write(WriteOp::SecurityRuleEvent(
-                crate::events::SecurityRuleEvent {
-                    timestamp_unix_ms: 1_789_000_000_000 + idx,
-                    event_id: format!("{idx:012x}"),
-                    event_type: if idx == 3 {
-                        "http.request".into()
-                    } else {
-                        "model.request".into()
-                    },
-                    rule_id: if idx == 3 {
-                        "github_api_allow".into()
-                    } else {
-                        "openai_api_block".into()
-                    },
-                    rule_action: action,
-                    detection_level: level,
-                    rule_json: "{}".into(),
-                    event_json: "{}".into(),
-                    trace_id: None,
-                },
-            ))
-            .await;
-    }
-    drop(writer);
-
-    let reader = crate::reader::DbReader::open(&db_path).unwrap();
-    let stats = reader.security_rule_stats().unwrap();
-    assert_eq!(stats.total, 3);
-    assert!(stats
-        .by_action
-        .iter()
-        .any(|entry| entry.rule_action == "block" && entry.count == 2));
-    assert!(stats
-        .by_event_type
-        .iter()
-        .any(|entry| entry.event_type == "model.request" && entry.count == 2));
-    let block = stats
-        .by_rule
-        .iter()
-        .find(|entry| entry.rule_id == "openai_api_block")
-        .unwrap();
-    assert_eq!(block.rule_action, "block");
-    assert_eq!(block.detection_level, "critical");
-    assert_eq!(block.count, 2);
-    assert_eq!(block.latest_event_id, "000000000002");
 }
 
 #[test]
@@ -827,211 +2312,13 @@ fn try_write_on_open_writer_succeeds() {
     let dir = tempfile::tempdir().unwrap();
     let writer = DbWriter::open(&dir.path().join("t.db"), 64).unwrap();
     let accepted = writer.try_write(WriteOp::FileEvent(crate::events::FileEvent {
-        event_id: None,
         timestamp: std::time::SystemTime::now(),
         action: crate::events::FileAction::Created,
         path: "/x".into(),
         size: None,
         trace_id: None,
-        credential_ref: None,
     }));
     assert!(accepted);
-}
-
-#[test]
-fn db_writer_records_enqueue_batch_and_shutdown_metrics() {
-    use metrics_util::debugging::{DebugValue, DebuggingRecorder};
-
-    let recorder = DebuggingRecorder::new();
-    let snapshotter = recorder.snapshotter();
-    let (tx, rx) = tokio::sync::mpsc::channel(16);
-    tx.blocking_send(WriteOp::FileEvent(crate::events::FileEvent {
-        event_id: None,
-        timestamp: std::time::SystemTime::now(),
-        action: crate::events::FileAction::Created,
-        path: "/metrics".into(),
-        size: None,
-        trace_id: None,
-        credential_ref: None,
-    }))
-    .unwrap();
-    drop(tx);
-
-    let conn = rusqlite::Connection::open_in_memory().unwrap();
-    crate::schema::apply_pragmas(&conn).unwrap();
-    crate::schema::create_tables(&conn).unwrap();
-    crate::schema::migrate(&conn);
-
-    metrics::with_local_recorder(&recorder, || writer_loop(conn, rx));
-
-    let snapshot = snapshotter.snapshot().into_vec();
-    assert!(snapshot.iter().any(
-        |(key, _, _, value)| key.key().name() == DB_WRITE_BATCH_TOTAL
-            && matches!(value, DebugValue::Counter(1))
-    ));
-    assert!(snapshot.iter().any(|(key, _, _, value)| {
-        key.key().name() == DB_WRITE_BATCH_DURATION_MS && matches!(value, DebugValue::Histogram(_))
-    }));
-    assert!(snapshot.iter().any(|(key, _, _, value)| {
-        key.key().name() == DB_WRITE_BATCH_SIZE && matches!(value, DebugValue::Histogram(_))
-    }));
-    assert!(snapshot.iter().any(|(key, _, _, value)| {
-        key.key().name() == DB_SHUTDOWN_FLUSH_MS && matches!(value, DebugValue::Histogram(_))
-    }));
-}
-
-#[test]
-fn db_writer_records_enqueue_metrics() {
-    use metrics_util::debugging::{DebugValue, DebuggingRecorder};
-
-    let recorder = DebuggingRecorder::new();
-    let snapshotter = recorder.snapshotter();
-    let _guard = metrics::set_default_local_recorder(&recorder);
-
-    let dir = tempfile::tempdir().unwrap();
-    let writer = DbWriter::open(&dir.path().join("enqueue.db"), 64).unwrap();
-    let accepted = writer.try_write(WriteOp::FileEvent(crate::events::FileEvent {
-        event_id: None,
-        timestamp: std::time::SystemTime::now(),
-        action: crate::events::FileAction::Created,
-        path: "/enqueue".into(),
-        size: None,
-        trace_id: None,
-        credential_ref: None,
-    }));
-    assert!(accepted);
-    writer.shutdown_blocking();
-
-    let snapshot = snapshotter.snapshot().into_vec();
-    assert!(snapshot.iter().any(|(key, _, _, value)| {
-        key.key().name() == DB_ENQUEUE_WAIT_MS && matches!(value, DebugValue::Histogram(_))
-    }));
-}
-
-#[test]
-fn write_blocking_persists_without_try_drop() {
-    let dir = tempfile::tempdir().unwrap();
-    let db_path = dir.path().join("blocking.db");
-    let writer = DbWriter::open(&db_path, 1).unwrap();
-    writer.write_blocking(WriteOp::FileEvent(crate::events::FileEvent {
-        event_id: None,
-        timestamp: std::time::SystemTime::now(),
-        action: crate::events::FileAction::Created,
-        path: "/blocking".into(),
-        size: None,
-        trace_id: None,
-        credential_ref: None,
-    }));
-    writer.shutdown_blocking();
-
-    let conn = rusqlite::Connection::open(&db_path).unwrap();
-    let count: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM fs_events WHERE path = '/blocking'",
-            [],
-            |row| row.get(0),
-        )
-        .unwrap();
-    assert_eq!(count, 1);
-}
-
-#[test]
-fn brokered_substitution_persists_reference_and_not_secret() {
-    let dir = tempfile::tempdir().unwrap();
-    let db_path = dir.path().join("broker.db");
-    let raw_secret = "ghp_raw_secret_that_must_not_be_logged";
-    let credential_ref = crate::events::credential_reference("github", raw_secret);
-
-    {
-        let writer = DbWriter::open(&db_path, 64).unwrap();
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .build()
-            .unwrap();
-        rt.block_on(async {
-            writer
-                .write(WriteOp::SubstitutionEvent(
-                    crate::events::SubstitutionEvent {
-                        event_id: None,
-                        timestamp: std::time::SystemTime::now(),
-                        material_class: "credential".into(),
-                        source: "http.authorization".into(),
-                        event_type: Some("http.request".into()),
-                        algorithm: "blake3".into(),
-                        substitution_ref: credential_ref.clone(),
-                        outcome: "substituted".into(),
-                        provider: Some("github".into()),
-                        confidence: Some(1.0),
-                        trace_id: Some("trace-credential".into()),
-                        context_json: Some(r#"{"header":"authorization"}"#.into()),
-                    },
-                ))
-                .await;
-            writer
-                .write(WriteOp::NetEvent(crate::events::NetEvent {
-                    event_id: None,
-                    timestamp: std::time::SystemTime::now(),
-                    domain: "api.github.com".into(),
-                    port: 443,
-                    decision: crate::events::Decision::Allowed,
-                    process_name: Some("git".into()),
-                    pid: Some(4242),
-                    method: Some("GET".into()),
-                    path: Some("/repos/openclaw/capsem".into()),
-                    query: None,
-                    status_code: Some(200),
-                    bytes_sent: 128,
-                    bytes_received: 512,
-                    duration_ms: 30,
-                    matched_rule: None,
-                    request_headers: Some(format!("authorization: {credential_ref}")),
-                    response_headers: None,
-                    request_body_preview: None,
-                    response_body_preview: None,
-                    conn_type: Some("https".into()),
-                    policy_mode: None,
-                    policy_action: None,
-                    policy_rule: None,
-                    policy_reason: None,
-                    trace_id: Some("trace-credential".into()),
-                    credential_ref: Some(credential_ref.clone()),
-                }))
-                .await;
-        });
-    }
-
-    let conn = rusqlite::Connection::open(&db_path).unwrap();
-    let persisted_ref: String = conn
-        .query_row(
-            "SELECT credential_ref FROM net_events WHERE domain = 'api.github.com'",
-            [],
-            |row| row.get(0),
-        )
-        .unwrap();
-    assert_eq!(persisted_ref, credential_ref);
-
-    let substitution_ref: String = conn
-        .query_row(
-            "SELECT substitution_ref FROM substitution_events WHERE source = 'http.authorization'",
-            [],
-            |row| row.get(0),
-        )
-        .unwrap();
-    assert_eq!(substitution_ref, credential_ref);
-
-    for table in ["net_events", "substitution_events"] {
-        let sql = format!(
-            "SELECT COUNT(*) FROM {table} WHERE CAST({} AS TEXT) LIKE ?1",
-            if table == "net_events" {
-                "request_headers"
-            } else {
-                "context_json"
-            }
-        );
-        let leaked: i64 = conn
-            .query_row(&sql, [format!("%{raw_secret}%")], |row| row.get(0))
-            .unwrap();
-        assert_eq!(leaked, 0, "raw secret leaked through {table}");
-    }
 }
 
 #[test]
@@ -1065,7 +2352,6 @@ fn exec_event_insert_then_update_roundtrip() {
         rt.block_on(async {
             writer
                 .write(WriteOp::ExecEvent(crate::events::ExecEvent {
-                    event_id: None,
                     timestamp: std::time::SystemTime::now(),
                     exec_id: 42,
                     command: "ls -la".into(),
@@ -1073,7 +2359,6 @@ fn exec_event_insert_then_update_roundtrip() {
                     mcp_call_id: Some(7),
                     trace_id: Some("t1".into()),
                     process_name: Some("capsem".into()),
-                    credential_ref: None,
                 }))
                 .await;
 
@@ -1134,7 +2419,6 @@ fn mcp_call_insert_populates_row() {
         rt.block_on(async {
             writer
                 .write(WriteOp::McpCall(crate::events::McpCall {
-                    event_id: None,
                     timestamp: std::time::SystemTime::now(),
                     server_name: "github".into(),
                     method: "tools/call".into(),
@@ -1153,7 +2437,6 @@ fn mcp_call_insert_populates_row() {
                     policy_rule: Some("mcp.tool.github__list_issues".into()),
                     policy_reason: Some("local policy allow".into()),
                     trace_id: None,
-                    credential_ref: None,
                 }))
                 .await;
         });
@@ -1220,7 +2503,6 @@ fn audit_event_insert_populates_row() {
         rt.block_on(async {
             writer
                 .write(WriteOp::AuditEvent(crate::events::AuditEvent {
-                    event_id: None,
                     timestamp: std::time::SystemTime::now(),
                     pid: 100,
                     ppid: 1,
@@ -1235,7 +2517,6 @@ fn audit_event_insert_populates_row() {
                     exec_event_id: Some(7),
                     parent_exe: Some("/bin/bash".into()),
                     trace_id: None,
-                    credential_ref: None,
                 }))
                 .await;
         });
@@ -1289,7 +2570,6 @@ fn dns_event_insert_populates_row() {
         rt.block_on(async {
             writer
                 .write(WriteOp::DnsEvent(crate::events::DnsEvent {
-                    event_id: None,
                     timestamp: std::time::SystemTime::now(),
                     qname: "anthropic.com".into(),
                     qtype: 1,
@@ -1305,12 +2585,10 @@ fn dns_event_insert_populates_row() {
                     policy_action: None,
                     policy_rule: None,
                     policy_reason: None,
-                    credential_ref: None,
                 }))
                 .await;
             writer
                 .write(WriteOp::DnsEvent(crate::events::DnsEvent {
-                    event_id: None,
                     timestamp: std::time::SystemTime::now(),
                     qname: "blocked.example.com".into(),
                     qtype: 28,
@@ -1325,8 +2603,7 @@ fn dns_event_insert_populates_row() {
                     policy_mode: Some("enforce".into()),
                     policy_action: Some("block".into()),
                     policy_rule: Some("policy.dns.block_example".into()),
-                    policy_reason: Some("DNS block from Policy V2".into()),
-                    credential_ref: None,
+                    policy_reason: Some("DNS block from Policy".into()),
                 }))
                 .await;
         });
@@ -1394,7 +2671,7 @@ fn dns_event_insert_populates_row() {
     assert_eq!(mode.as_deref(), Some("enforce"));
     assert_eq!(action.as_deref(), Some("block"));
     assert_eq!(rule.as_deref(), Some("policy.dns.block_example"));
-    assert_eq!(reason.as_deref(), Some("DNS block from Policy V2"));
+    assert_eq!(reason.as_deref(), Some("DNS block from Policy"));
 }
 
 #[test]

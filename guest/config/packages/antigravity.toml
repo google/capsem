@@ -1,0 +1,13 @@
+[antigravity]
+name = "Google Antigravity CLI"
+manager = "curl"
+install_cmd = "curl -fsSL"
+packages = ["agy=https://antigravity.google/cli/install.sh"]
+
+[antigravity.version_commands]
+agy = "agy --version 2>/dev/null | head -1"
+
+[antigravity.network]
+name = "Google Antigravity"
+domains = ["antigravity.google", "edgedl.me.gvt1.com"]
+allow_get = true

@@ -12,6 +12,7 @@
 
   let revealed = $state(false);
   let value = $derived(String(leaf.effective_value));
+  let isEmpty = $derived(value.length === 0);
   let hasPrefixWarning = $derived(
     leaf.metadata.prefix && value.length > 0 && !value.startsWith(leaf.metadata.prefix)
   );
@@ -21,6 +22,9 @@
   <div class="flex-1 min-w-0">
     <div class="flex items-center gap-x-2">
       <span class="text-sm font-medium text-foreground">{leaf.name}</span>
+      {#if isEmpty && !disabled}
+        <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-warning/10 text-warning font-medium">required</span>
+      {/if}
       {#if leaf.corp_locked}
         <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-destructive/10 text-destructive font-medium">corp</span>
       {/if}

@@ -75,19 +75,15 @@ mod tests {
             .unwrap();
         rt.block_on(async {
             for i in 0..3 {
-                capsem_core::security_engine::emit_security_write(
-                    &writer,
-                    WriteOp::FileEvent(FileEvent {
-                        event_id: None,
+                writer
+                    .write(WriteOp::FileEvent(FileEvent {
                         timestamp: std::time::SystemTime::now(),
                         action: FileAction::Created,
                         path: format!("/tmp/f{i}"),
                         size: Some(1),
                         trace_id: None,
-                        credential_ref: None,
-                    }),
-                )
-                .await;
+                    }))
+                    .await;
             }
         });
 

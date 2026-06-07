@@ -76,7 +76,29 @@ cargo sbom --output-format spdx_json_2_3 > capsem-sbom.spdx.json
 | Format | SPDX 2.3 JSON |
 | Scope | All Rust crate dependencies |
 | Published as | `capsem-sbom.spdx.json` in GitHub release |
-| Attestation | SBOM attested against DMG and deb artifacts |
+| Attestation | SBOM attested against `.pkg` and `.deb` artifacts |
+
+This release SBOM currently describes the Rust host workspace. Profile-derived
+guest package/tool SBOMs are tracked separately in the profile-admin image
+verification sprint and must be produced from the signed Profile V2 package
+contract before they are treated as release evidence.
+
+`capsem-admin image sbom` produces SPDX 2.3 guest-image SBOMs from the typed
+per-architecture image inventories. Those SBOMs carry the profile id,
+revision, and package-contract identity in the document name/namespace and use
+package-manager purl external references for apt, Python, and node packages.
+
+Profile-derived image verification also accepts `capsem-doctor --bundle`
+archives as in-VM probe evidence. The admin verifier reads the bundled JUnit
+result without extracting the tar archive and fails the image verification
+report when the booted VM diagnostics have failures or errors.
+
+The release-image boot gate uses the profile-backed E2E path: reconcile the
+selected profile assets, boot the host-arch image, run
+`capsem-doctor --fast --bundle`, then pass the generated doctor bundle and
+host-arch `image-inventory.json` through `capsem-admin image verify`. When
+artifact-gated tests run, the host-arch image inventory is required so this
+proof cannot silently downgrade to an asset-only boot.
 
 ## SLSA attestation
 
@@ -84,11 +106,11 @@ Release artifacts receive [SLSA build provenance](https://slsa.dev/) attestation
 
 | Artifact | Attestation |
 |----------|-------------|
-| `.dmg` (macOS installer) | Build provenance |
+| `.pkg` (macOS installer) | Build provenance |
 | `.deb` (Linux package) | Build provenance |
 | `rootfs.squashfs` (arm64) | Build provenance |
 | `rootfs.squashfs` (x86_64) | Build provenance |
-| `.dmg`, `.deb` | SBOM (SPDX 2.3) |
+| `.pkg`, `.deb` | SBOM (SPDX 2.3) |
 
 Attestations are published to the GitHub Attestations API and can be verified with `gh attestation verify`.
 

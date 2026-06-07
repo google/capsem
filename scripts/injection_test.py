@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""End-to-end injection test: generate configs, boot VMs, verify all injection paths.
+"""End-to-end injection test: generate Profile V2 state, boot VMs, verify injection paths.
 
-Each scenario writes a temporary user.toml (and optionally corp.toml), boots the VM
-with `capsem-doctor -k injection`, and checks the exit code. The in-VM tests read
-/tmp/capsem-injection-manifest.json to verify every env var and file arrived.
+Each scenario writes temporary `service.toml` and profile TOML under an isolated
+CAPSEM_HOME, boots the VM with `capsem-doctor -k injection`, and checks the exit
+code. The in-VM tests read /tmp/capsem-injection-manifest.json to verify every
+env var and file arrived.
 
 Usage:
     python3 scripts/injection_test.py              # uses target/debug/capsem
@@ -24,6 +25,8 @@ RED = "\033[31m"
 YELLOW = "\033[33m"
 CYAN = "\033[36m"
 RESET = "\033[0m"
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+INJECTION_TMP_ROOT = PROJECT_ROOT / "target" / "it"
 
 
 class Results:
@@ -52,92 +55,75 @@ class Results:
         return len(self.failed) == 0
 
 
+def _provider_sections(anthropic: bool, google: bool, openai: bool) -> str:
+    return f"""\
+[ai.providers.anthropic]
+enabled = {str(anthropic).lower()}
+credential_refs = ["anthropic-api-key"]
+
+[ai.providers.google]
+enabled = {str(google).lower()}
+credential_refs = ["google-api-key"]
+
+[ai.providers.openai]
+enabled = {str(openai).lower()}
+credential_refs = ["openai-api-key"]
+"""
+
+
+def _profile_toml(profile_id: str, provider_sections: str) -> str:
+    return f"""\
+version = 1
+id = "{profile_id}"
+name = "Injection {profile_id}"
+best_for = "Injection diagnostics."
+profile_type = "coding"
+extends_profile_id = "everyday-work"
+
+{provider_sections}
+"""
+
+
+def _service_toml(profile_id: str, profile_dir: Path) -> str:
+    return f"""\
+version = 1
+
+[profiles]
+user_dirs = ["{profile_dir}"]
+default_profile = "{profile_id}"
+
+[credentials.items.anthropic-api-key]
+value = "sk-ant-test-key-injection"
+
+[credentials.items.google-api-key]
+value = "AIzaSy_test_key_injection"
+
+[credentials.items.openai-api-key]
+value = "sk-test-key-injection"
+
+[credentials.items.github-token]
+value = "ghp_test_token_injection"
+"""
+
+
 # -- Scenario definitions --
-# Each scenario is a dict with:
-#   name: human-readable label
-#   user_toml: TOML string for CAPSEM_USER_CONFIG
-#   corp_toml: optional TOML string for CAPSEM_CORP_CONFIG (None = no corp override)
+# Each scenario selects a temporary Profile V2 profile.
 
 SCENARIOS = [
     {
         "name": "all_enabled",
-        "description": "All AI providers on, both repo tokens set, git identity set",
-        "user_toml": """\
-[settings]
-"ai.anthropic.allow" = { value = true, modified = "2026-01-01T00:00:00Z" }
-"ai.google.allow" = { value = true, modified = "2026-01-01T00:00:00Z" }
-"ai.openai.allow" = { value = true, modified = "2026-01-01T00:00:00Z" }
-"ai.anthropic.api_key" = { value = "sk-ant-test-key-injection", modified = "2026-01-01T00:00:00Z" }
-"ai.google.api_key" = { value = "AIzaSy_test_key_injection", modified = "2026-01-01T00:00:00Z" }
-"repository.providers.github.allow" = { value = true, modified = "2026-01-01T00:00:00Z" }
-"repository.providers.github.token" = { value = "ghp_test_token_injection", modified = "2026-01-01T00:00:00Z" }
-"repository.providers.gitlab.allow" = { value = true, modified = "2026-01-01T00:00:00Z" }
-"repository.providers.gitlab.token" = { value = "glpat-test_token_injection", modified = "2026-01-01T00:00:00Z" }
-"repository.git.identity.author_name" = { value = "Test User", modified = "2026-01-01T00:00:00Z" }
-"repository.git.identity.author_email" = { value = "test@example.com", modified = "2026-01-01T00:00:00Z" }
-""",
-        "corp_toml": None,
+        "description": "All AI providers on through Profile V2",
+        "providers": (True, True, True),
     },
     {
         "name": "partial",
-        "description": "Only Google enabled, only GitHub token, no git identity",
-        "user_toml": """\
-[settings]
-"ai.anthropic.allow" = { value = false, modified = "2026-01-01T00:00:00Z" }
-"ai.google.allow" = { value = true, modified = "2026-01-01T00:00:00Z" }
-"ai.openai.allow" = { value = false, modified = "2026-01-01T00:00:00Z" }
-"ai.google.api_key" = { value = "AIzaSy_partial_key", modified = "2026-01-01T00:00:00Z" }
-"repository.providers.github.allow" = { value = true, modified = "2026-01-01T00:00:00Z" }
-"repository.providers.github.token" = { value = "ghp_partial_token", modified = "2026-01-01T00:00:00Z" }
-"repository.providers.gitlab.allow" = { value = false, modified = "2026-01-01T00:00:00Z" }
-""",
-        "corp_toml": None,
+        "description": "Only Google enabled through Profile V2",
+        "providers": (False, True, False),
     },
     {
         "name": "all_disabled",
-        "description": "All providers off, tokens set but allow=false -- .git-credentials must NOT exist",
-        "user_toml": """\
-[settings]
-"ai.anthropic.allow" = { value = false, modified = "2026-01-01T00:00:00Z" }
-"ai.google.allow" = { value = false, modified = "2026-01-01T00:00:00Z" }
-"ai.openai.allow" = { value = false, modified = "2026-01-01T00:00:00Z" }
-"repository.providers.github.allow" = { value = false, modified = "2026-01-01T00:00:00Z" }
-"repository.providers.github.token" = { value = "ghp_should_not_appear", modified = "2026-01-01T00:00:00Z" }
-"repository.providers.gitlab.allow" = { value = false, modified = "2026-01-01T00:00:00Z" }
-"repository.providers.gitlab.token" = { value = "glpat-should_not_appear", modified = "2026-01-01T00:00:00Z" }
-""",
-        "corp_toml": None,
-    },
-    {
-        "name": "empty_tokens",
-        "description": "Providers on but tokens empty -- .git-credentials must NOT exist",
-        "user_toml": """\
-[settings]
-"ai.anthropic.allow" = { value = true, modified = "2026-01-01T00:00:00Z" }
-"ai.google.allow" = { value = true, modified = "2026-01-01T00:00:00Z" }
-"ai.openai.allow" = { value = true, modified = "2026-01-01T00:00:00Z" }
-"repository.providers.github.allow" = { value = true, modified = "2026-01-01T00:00:00Z" }
-"repository.providers.github.token" = { value = "", modified = "2026-01-01T00:00:00Z" }
-"repository.providers.gitlab.allow" = { value = true, modified = "2026-01-01T00:00:00Z" }
-"repository.providers.gitlab.token" = { value = "", modified = "2026-01-01T00:00:00Z" }
-""",
-        "corp_toml": None,
-    },
-    {
-        "name": "corp_override",
-        "description": "User enables all, corp blocks Anthropic -- CAPSEM_ANTHROPIC_ALLOWED=0",
-        "user_toml": """\
-[settings]
-"ai.anthropic.allow" = { value = true, modified = "2026-01-01T00:00:00Z" }
-"ai.google.allow" = { value = true, modified = "2026-01-01T00:00:00Z" }
-"ai.openai.allow" = { value = true, modified = "2026-01-01T00:00:00Z" }
-"ai.anthropic.api_key" = { value = "sk-ant-corp-test-key", modified = "2026-01-01T00:00:00Z" }
-"ai.google.api_key" = { value = "AIzaSy_corp_test_key", modified = "2026-01-01T00:00:00Z" }
-""",
-        "corp_toml": """\
-[settings]
-"ai.anthropic.allow" = { value = false, modified = "2026-01-01T00:00:00Z" }
-""",
+        "description": "All providers off through Profile V2",
+        "providers": (False, False, False),
     },
 ]
 
@@ -148,75 +134,68 @@ def run_scenario(
     scenario: dict,
     results: Results,
 ) -> None:
-    """Write temp config(s), boot VM with capsem-doctor -k injection, check exit code."""
+    """Write temporary Profile V2 state, boot VM, and check the doctor exit code."""
     name = scenario["name"]
     print(f"\n{BOLD}--- Scenario: {name} ---{RESET}")
     print(f"  {DIM}{scenario['description']}{RESET}")
 
-    # Write temporary user.toml.
-    user_file = tempfile.NamedTemporaryFile(
-        mode="w", suffix=".toml", prefix=f"capsem-injection-{name}-user-", delete=False,
-    )
-    user_file.write(scenario["user_toml"])
-    user_file.close()
-
-    # Write temporary corp.toml if specified.
-    corp_path = None
-    if scenario.get("corp_toml"):
-        corp_file = tempfile.NamedTemporaryFile(
-            mode="w", suffix=".toml", prefix=f"capsem-injection-{name}-corp-", delete=False,
-        )
-        corp_file.write(scenario["corp_toml"])
-        corp_file.close()
-        corp_path = corp_file.name
-
-    env = {
-        **os.environ,
-        "CAPSEM_ASSETS_DIR": assets_dir,
-        "RUST_LOG": "capsem=warn",
-        "CAPSEM_USER_CONFIG": user_file.name,
-    }
-    if corp_path:
-        env["CAPSEM_CORP_CONFIG"] = corp_path
-    else:
-        # Ensure no stale corp config leaks through.
-        env.pop("CAPSEM_CORP_CONFIG", None)
-
-    vm_command = "capsem-doctor -k injection"
     try:
-        proc = subprocess.run(
-            [binary, "run", vm_command],
-            env=env,
-            capture_output=True,
-            text=True,
-            timeout=120,
-        )
-        exit_code = proc.returncode
-        stdout = proc.stdout.strip()
-        stderr = proc.stderr.strip()
+        INJECTION_TMP_ROOT.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(
+            prefix=f"ci-{name}-",
+            dir=INJECTION_TMP_ROOT,
+        ) as capsem_home:
+            capsem_home_path = Path(capsem_home)
+            profile_dir = capsem_home_path / "profiles"
+            profile_dir.mkdir(parents=True, exist_ok=True)
+            profile_id = f"injection-{name.replace('_', '-')}"
+            profile_path = profile_dir / f"{profile_id}.toml"
+            profile_path.write_text(
+                _profile_toml(profile_id, _provider_sections(*scenario["providers"])),
+                encoding="utf-8",
+            )
+            (capsem_home_path / "service.toml").write_text(
+                _service_toml(profile_id, profile_dir),
+                encoding="utf-8",
+            )
 
-        if exit_code == 0:
-            results.ok(f"{name}: all injection tests passed")
-        else:
-            results.fail(f"{name}: injection tests failed (exit {exit_code})")
-            # Show full output so failures are easy to diagnose.
-            if stdout:
-                print(f"    {CYAN}--- stdout ---{RESET}")
-                for line in stdout.splitlines():
-                    color = RED if ("FAILED" in line or "AssertionError" in line) else ""
-                    end = RESET if color else ""
-                    print(f"    {color}{line}{end}")
-            if stderr:
-                print(f"    {YELLOW}--- stderr ---{RESET}")
-                for line in stderr.splitlines():
-                    print(f"    {line}")
+            env = {
+                **os.environ,
+                "CAPSEM_ASSETS_DIR": assets_dir,
+                "CAPSEM_HOME": str(capsem_home_path),
+                "CAPSEM_RUN_DIR": str(capsem_home_path / "run"),
+                "RUST_LOG": "capsem=warn",
+            }
+
+            vm_command = "capsem-doctor -k injection"
+            proc = subprocess.run(
+                [binary, "run", vm_command],
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+            exit_code = proc.returncode
+            stdout = proc.stdout.strip()
+            stderr = proc.stderr.strip()
+
+            if exit_code == 0:
+                results.ok(f"{name}: all injection tests passed")
+            else:
+                results.fail(f"{name}: injection tests failed (exit {exit_code})")
+                # Show full output so failures are easy to diagnose.
+                if stdout:
+                    print(f"    {CYAN}--- stdout ---{RESET}")
+                    for line in stdout.splitlines():
+                        color = RED if ("FAILED" in line or "AssertionError" in line) else ""
+                        end = RESET if color else ""
+                        print(f"    {color}{line}{end}")
+                if stderr:
+                    print(f"    {YELLOW}--- stderr ---{RESET}")
+                    for line in stderr.splitlines():
+                        print(f"    {line}")
     except subprocess.TimeoutExpired:
         results.fail(f"{name}: VM timed out after 120s")
-    finally:
-        # Clean up temp files.
-        os.unlink(user_file.name)
-        if corp_path:
-            os.unlink(corp_path)
 
 
 def main():
@@ -239,10 +218,11 @@ def main():
         help="Run only this scenario (by name). Default: run all.",
     )
     args = parser.parse_args()
+    assets_dir = str(Path(args.assets).resolve())
 
     print(f"{BOLD}=== Capsem Injection Test ==={RESET}")
     print(f"  binary: {args.binary}")
-    print(f"  assets: {args.assets}")
+    print(f"  assets: {assets_dir}")
 
     results = Results()
 
@@ -255,7 +235,7 @@ def main():
             sys.exit(1)
 
     for scenario in scenarios:
-        run_scenario(args.binary, args.assets, scenario, results)
+        run_scenario(args.binary, assets_dir, scenario, results)
 
     # Summary.
     print(f"\n{BOLD}{'=' * 60}{RESET}")

@@ -2,11 +2,15 @@
   import { onMount } from 'svelte';
   import { themeStore, PRELINE_THEMES, FONT_SIZES, FONT_FAMILIES, UI_FONT_SIZES } from '../../stores/theme.svelte.ts';
   import { settingsStore } from '../../stores/settings.svelte.ts';
+  import { vmStore } from '../../stores/vms.svelte.ts';
+  import { getDebugReport } from '../../api';
   import { THEME_FAMILIES, getTheme, resolveThemeKey } from '../../terminal/themes';
   import SettingsSection from '../settings/SettingsSection.svelte';
   import McpSection from '../settings/McpSection.svelte';
+  import ProfileCatalogSection from '../settings/ProfileCatalogSection.svelte';
   import PolicyRulesSection from '../settings/PolicyRulesSection.svelte';
-  import ProviderStatusSection from '../settings/ProviderStatusSection.svelte';
+  import RuntimeSecurityRulesSection from '../settings/RuntimeSecurityRulesSection.svelte';
+  import SecurityEngineHealthSection from '../settings/SecurityEngineHealthSection.svelte';
   import Palette from 'phosphor-svelte/lib/Palette';
   import GearSix from 'phosphor-svelte/lib/GearSix';
   import Brain from 'phosphor-svelte/lib/Brain';
@@ -19,6 +23,9 @@
   import Moon from 'phosphor-svelte/lib/Moon';
   import Export from 'phosphor-svelte/lib/Export';
   import DownloadSimple from 'phosphor-svelte/lib/DownloadSimple';
+  import ClipboardText from 'phosphor-svelte/lib/ClipboardText';
+
+  const appVersion = __APP_VERSION__;
 
   // Live preview: resolve current terminal theme to get colors
   let previewTheme = $derived(getTheme(resolveThemeKey(themeStore.terminalTheme, themeStore.mode)));
@@ -37,6 +44,14 @@
     return dynamicSections.find(s => s.key === activeSection);
   });
 
+  let reloadActiveSessionIds = $derived(vmStore.vms
+    .filter(vm => vm.status === 'Running' || vm.status === 'Booting')
+    .map(vm => vm.id));
+
+  $effect(() => {
+    settingsStore.clearReloadStateIfAffectedSessionsStopped(reloadActiveSessionIds);
+  });
+
   // Icon map for dynamic sections
   const SECTION_ICONS: Record<string, any> = {
     app: GearSix,
@@ -46,7 +61,7 @@
     vm: Desktop,
   };
 
-  // Build full nav list: Appearance + dynamic + Policy + MCP + About
+  // Build full nav list: Appearance + dynamic + Profiles + Policy + MCP + About
   let navItems = $derived.by(() => {
     const items: { key: string; label: string; icon: any }[] = [
       { key: 'appearance', label: 'Appearance', icon: Palette },
@@ -58,6 +73,7 @@
         icon: SECTION_ICONS[section.key] ?? GearSix,
       });
     }
+    items.push({ key: 'profiles', label: 'Profiles', icon: GitBranch });
     items.push({ key: 'policy', label: 'Policy', icon: Shield });
     items.push({ key: 'mcp', label: 'MCP Servers', icon: Plugs });
     items.push({ key: 'about', label: 'About', icon: Info });
@@ -70,6 +86,8 @@
 
   let importInput = $state<HTMLInputElement>(null!);
   let importMessage = $state<{ text: string; error: boolean } | null>(null);
+  let debugCopyBusy = $state(false);
+  let debugCopyMessage = $state<{ text: string; error: boolean } | null>(null);
 
   async function handleSave() {
     await settingsStore.save();
@@ -97,6 +115,26 @@
       importMessage = { text: String(err instanceof Error ? err.message : err), error: true };
     }
     input.value = '';
+  }
+
+  async function handleCopyDebugInfo() {
+    debugCopyBusy = true;
+    debugCopyMessage = null;
+    try {
+      const report = await getDebugReport();
+      const payload = report.json ?? report.text;
+      await navigator.clipboard.writeText(
+        typeof payload === 'string' ? payload : JSON.stringify(payload, null, 2)
+      );
+      debugCopyMessage = { text: 'Copied debug report.', error: false };
+    } catch (err) {
+      debugCopyMessage = {
+        text: String(err instanceof Error ? err.message : err),
+        error: true,
+      };
+    } finally {
+      debugCopyBusy = false;
+    }
   }
 </script>
 
@@ -140,6 +178,25 @@
       </div>
     {:else}
     <div class="py-6 px-8">
+      {#if settingsStore.reloadError}
+        <div class="mb-4 border border-warning/30 bg-warning/10 rounded-lg px-4 py-3 flex items-center gap-x-3">
+          <div class="flex-1">
+            <p class="text-sm text-warning">{settingsStore.reloadError}</p>
+            {#if settingsStore.reloadState && !settingsStore.reloadState.applied && settingsStore.reloadState.failed_session_ids.length > 0}
+              <p class="mt-1 text-xs text-warning/80">
+                Affected sessions: {settingsStore.reloadState.failed_session_ids.join(', ')}
+              </p>
+            {/if}
+          </div>
+          <button
+            type="button"
+            class="py-1.5 px-3 text-xs font-medium rounded-lg border border-warning/30 bg-layer text-foreground hover:bg-layer-hover transition-colors"
+            onclick={() => settingsStore.retryReload()}
+          >
+            Retry reload
+          </button>
+        </div>
+      {/if}
 
       {#if activeSection === 'appearance'}
         <!-- ===== Appearance (custom, not from backend tree) ===== -->
@@ -324,34 +381,55 @@
         <!-- ===== MCP ===== -->
         <McpSection />
 
+      {:else if activeSection === 'profiles'}
+        <!-- ===== Profiles ===== -->
+        <ProfileCatalogSection />
+
       {:else if activeSection === 'policy'}
         <!-- ===== Policy ===== -->
-        <PolicyRulesSection />
+        <div class="space-y-8">
+          <SecurityEngineHealthSection />
+          <PolicyRulesSection />
+          <RuntimeSecurityRulesSection />
+        </div>
 
       {:else if activeSection === 'about'}
         <!-- ===== About ===== -->
         <h2 class="text-xl font-medium text-foreground mb-6">About</h2>
-
-        <!-- App settings (auto-update, check for updates) -->
-        {@const appGroup = settingsStore.findGroup('App')}
-        {#if appGroup}
-          <SettingsSection group={appGroup} depth={1} />
-        {/if}
 
         <!-- Version info -->
         <h3 class="text-xs font-semibold text-foreground uppercase tracking-wider mb-2 mt-6">Version</h3>
         <div class="bg-card border border-card-line rounded-xl divide-y divide-card-divider">
           <div class="flex items-center justify-between p-4">
             <p class="text-sm text-foreground">Version</p>
-            <p class="text-sm text-muted-foreground-1">0.1.0-dev</p>
+            <p class="text-sm text-muted-foreground-1">{appVersion}</p>
           </div>
-          <div class="flex items-center justify-between p-4">
-            <p class="text-sm text-foreground">Runtime</p>
-            <p class="text-sm text-muted-foreground-1">Apple Virtualization.framework</p>
-          </div>
-          <div class="flex items-center justify-between p-4">
-            <p class="text-sm text-foreground">Kernel</p>
-            <p class="text-sm text-muted-foreground-1">6.12-capsem</p>
+        </div>
+
+        <!-- Debug report -->
+        <h3 class="text-xs font-semibold text-foreground uppercase tracking-wider mb-2 mt-6">Debug</h3>
+        <div class="bg-card border border-card-line rounded-xl divide-y divide-card-divider">
+          <div class="p-4">
+            <div class="flex items-center justify-between gap-x-4">
+              <div>
+                <p class="text-sm font-medium text-foreground">Debug report</p>
+                <p class="text-xs text-muted-foreground-1 mt-0.5">Redacted version, runtime, and asset fingerprints for bug reports</p>
+              </div>
+              <button
+                type="button"
+                class="py-2 px-4 inline-flex items-center gap-x-2 text-sm font-medium rounded-lg border border-line-2 bg-layer text-foreground hover:bg-layer-hover transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                disabled={debugCopyBusy}
+                onclick={handleCopyDebugInfo}
+              >
+                <ClipboardText size={16} />
+                {debugCopyBusy ? 'Collecting...' : 'Copy debug report'}
+              </button>
+            </div>
+            {#if debugCopyMessage}
+              <p class="text-xs mt-2 {debugCopyMessage.error ? 'text-destructive-foreground' : 'text-muted-foreground-1'}">
+                {debugCopyMessage.text}
+              </p>
+            {/if}
           </div>
         </div>
 
@@ -404,12 +482,6 @@
 
       {:else if activeDynamicGroup}
         <!-- ===== Dynamic section from settings tree ===== -->
-        {#if activeDynamicGroup.key === 'ai'}
-          <ProviderStatusSection
-            providers={settingsStore.model?.providers ?? []}
-            toolConfigSources={settingsStore.model?.toolConfigSources ?? {}}
-          />
-        {/if}
         <SettingsSection group={activeDynamicGroup} />
       {/if}
     </div>

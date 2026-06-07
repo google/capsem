@@ -2,28 +2,6 @@ use super::*;
 use crate::mcp::policy::{McpManualServer, McpUserConfig};
 use std::io::Write;
 
-struct EnvVarGuard {
-    key: &'static str,
-    old: Option<String>,
-}
-
-impl EnvVarGuard {
-    fn set(key: &'static str, value: impl AsRef<std::ffi::OsStr>) -> Self {
-        let old = std::env::var(key).ok();
-        std::env::set_var(key, value);
-        Self { key, old }
-    }
-}
-
-impl Drop for EnvVarGuard {
-    fn drop(&mut self) {
-        match &self.old {
-            Some(value) => std::env::set_var(self.key, value),
-            None => std::env::remove_var(self.key),
-        }
-    }
-}
-
 fn make_tool(ns_name: &str, orig_name: &str, server: &str, desc: Option<&str>) -> McpToolDef {
     McpToolDef {
         namespaced_name: ns_name.into(),
@@ -262,9 +240,8 @@ fn tool_cache_roundtrip() {
 
 #[test]
 fn tool_cache_missing_file_returns_empty() {
-    let _lock = crate::credential_broker::TEST_ENV_LOCK.blocking_lock();
     // load_tool_cache with nonexistent HOME
-    let _home_guard = EnvVarGuard::set("HOME", "/nonexistent_test_dir_xyz");
+    std::env::set_var("HOME", "/nonexistent_test_dir_xyz");
     let cache = load_tool_cache();
     assert!(cache.is_empty());
 }
@@ -287,8 +264,13 @@ fn build_server_list_manual_servers() {
         servers: vec![McpManualServer {
             name: "myserver".into(),
             url: "https://mcp.example.com/v1".into(),
+            command: None,
+            args: vec![],
+            env: HashMap::new(),
             headers: HashMap::new(),
             bearer_token: None,
+            pool_size: Some(2),
+            pool_safe_tools: vec!["search".to_string()],
             enabled: true,
         }],
         ..Default::default()
@@ -298,6 +280,9 @@ fn build_server_list_manual_servers() {
     assert!(list
         .iter()
         .any(|s| s.name == "myserver" && s.source == "manual"));
+    let myserver = list.iter().find(|s| s.name == "myserver").unwrap();
+    assert_eq!(myserver.pool_size, Some(2));
+    assert_eq!(myserver.pool_safe_tools, vec!["search".to_string()]);
 }
 
 #[test]
@@ -307,8 +292,13 @@ fn build_server_list_corp_servers_added() {
         servers: vec![McpManualServer {
             name: "corp-server".into(),
             url: "https://corp.internal/mcp".into(),
+            command: None,
+            args: vec![],
+            env: HashMap::new(),
             headers: HashMap::new(),
             bearer_token: None,
+            pool_size: None,
+            pool_safe_tools: Vec::new(),
             enabled: true,
         }],
         ..Default::default()
@@ -325,8 +315,13 @@ fn build_server_list_reject_builtin_name() {
         servers: vec![McpManualServer {
             name: "builtin".into(),
             url: "https://evil.com/mcp".into(),
+            command: None,
+            args: vec![],
+            env: HashMap::new(),
             headers: HashMap::new(),
             bearer_token: None,
+            pool_size: None,
+            pool_safe_tools: Vec::new(),
             enabled: true,
         }],
         ..Default::default()
@@ -342,8 +337,13 @@ fn build_server_list_empty_name_rejected() {
         servers: vec![McpManualServer {
             name: "".into(),
             url: "https://test.com/mcp".into(),
+            command: None,
+            args: vec![],
+            env: HashMap::new(),
             headers: HashMap::new(),
             bearer_token: None,
+            pool_size: None,
+            pool_safe_tools: Vec::new(),
             enabled: true,
         }],
         ..Default::default()
@@ -356,15 +356,20 @@ fn build_server_list_empty_name_rejected() {
 #[test]
 fn build_server_list_corp_shadows_user_on_same_name() {
     // AB-002: user manual servers must not shadow corp-defined servers with
-    // the same name. The corp.toml policy is the highest-trust layer; if a
+    // the same name. Corp Profile policy is the highest-trust layer; if a
     // user defines `github` and corp also defines `github`, the corp URL,
     // headers, and bearer token must be the surviving definition.
     let user = McpUserConfig {
         servers: vec![McpManualServer {
             name: "github".into(),
             url: "https://user.example/mcp".into(),
+            command: None,
+            args: vec![],
+            env: HashMap::new(),
             headers: HashMap::new(),
             bearer_token: Some("user-token".into()),
+            pool_size: None,
+            pool_safe_tools: Vec::new(),
             enabled: true,
         }],
         ..Default::default()
@@ -373,8 +378,13 @@ fn build_server_list_corp_shadows_user_on_same_name() {
         servers: vec![McpManualServer {
             name: "github".into(),
             url: "https://corp.internal/mcp".into(),
+            command: None,
+            args: vec![],
+            env: HashMap::new(),
             headers: HashMap::new(),
             bearer_token: Some("corp-token".into()),
+            pool_size: None,
+            pool_safe_tools: Vec::new(),
             enabled: true,
         }],
         ..Default::default()
@@ -402,8 +412,13 @@ fn build_server_list_unique_user_server_survives_with_corp_present() {
         servers: vec![McpManualServer {
             name: "user-only".into(),
             url: "https://user.example/mcp".into(),
+            command: None,
+            args: vec![],
+            env: HashMap::new(),
             headers: HashMap::new(),
             bearer_token: None,
+            pool_size: None,
+            pool_safe_tools: Vec::new(),
             enabled: true,
         }],
         ..Default::default()
@@ -412,8 +427,13 @@ fn build_server_list_unique_user_server_survives_with_corp_present() {
         servers: vec![McpManualServer {
             name: "corp-only".into(),
             url: "https://corp.internal/mcp".into(),
+            command: None,
+            args: vec![],
+            env: HashMap::new(),
             headers: HashMap::new(),
             bearer_token: None,
+            pool_size: None,
+            pool_safe_tools: Vec::new(),
             enabled: true,
         }],
         ..Default::default()
@@ -436,8 +456,13 @@ fn build_server_list_corp_enabled_override_on_user_server() {
         servers: vec![McpManualServer {
             name: "user-server".into(),
             url: "https://user.example/mcp".into(),
+            command: None,
+            args: vec![],
+            env: HashMap::new(),
             headers: HashMap::new(),
             bearer_token: None,
+            pool_size: None,
+            pool_safe_tools: Vec::new(),
             enabled: true,
         }],
         ..Default::default()
@@ -464,8 +489,13 @@ fn build_server_list_enabled_override() {
         servers: vec![McpManualServer {
             name: "myserver".into(),
             url: "https://mcp.example.com/v1".into(),
+            command: None,
+            args: vec![],
+            env: HashMap::new(),
             headers: HashMap::new(),
             bearer_token: None,
+            pool_size: None,
+            pool_safe_tools: Vec::new(),
             enabled: true,
         }],
         server_enabled: {
@@ -479,6 +509,59 @@ fn build_server_list_enabled_override() {
     let list = build_server_list(&user, &corp);
     let s = list.iter().find(|s| s.name == "myserver").unwrap();
     assert!(!s.enabled);
+}
+
+#[test]
+fn build_server_list_builtin_local_honors_enabled_override() {
+    let dir = tempfile::tempdir().unwrap();
+    let builtin = dir.path().join("capsem-mcp-builtin");
+    std::fs::write(&builtin, "#!/bin/sh\n").unwrap();
+    let user = McpUserConfig {
+        server_enabled: {
+            let mut m = HashMap::new();
+            m.insert("local".into(), false);
+            m
+        },
+        ..Default::default()
+    };
+    let corp = McpUserConfig::default();
+
+    let list = build_server_list_with_builtin(&user, &corp, Some(&builtin), HashMap::new());
+    let local = list.iter().find(|s| s.name == "local").unwrap();
+    assert!(
+        !local.enabled,
+        "mcp.servers.local.enabled=false must disable the built-in local MCP server"
+    );
+}
+
+#[test]
+fn build_server_list_builtin_local_corp_override_wins() {
+    let dir = tempfile::tempdir().unwrap();
+    let builtin = dir.path().join("capsem-mcp-builtin");
+    std::fs::write(&builtin, "#!/bin/sh\n").unwrap();
+    let user = McpUserConfig {
+        server_enabled: {
+            let mut m = HashMap::new();
+            m.insert("local".into(), true);
+            m
+        },
+        ..Default::default()
+    };
+    let corp = McpUserConfig {
+        server_enabled: {
+            let mut m = HashMap::new();
+            m.insert("local".into(), false);
+            m
+        },
+        ..Default::default()
+    };
+
+    let list = build_server_list_with_builtin(&user, &corp, Some(&builtin), HashMap::new());
+    let local = list.iter().find(|s| s.name == "local").unwrap();
+    assert!(
+        !local.enabled,
+        "corp mcp.servers.local.enabled=false must override user local=true"
+    );
 }
 
 // ── original parse tests ────────────────────────────────────────
@@ -582,15 +665,25 @@ fn build_server_list_rejects_names_with_separator() {
     user.servers.push(crate::mcp::policy::McpManualServer {
         name: "bad__name".to_string(),
         url: "http://localhost".to_string(),
+        command: None,
+        args: vec![],
+        env: HashMap::new(),
         headers: HashMap::new(),
         bearer_token: None,
+        pool_size: None,
+        pool_safe_tools: Vec::new(),
         enabled: true,
     });
     user.servers.push(crate::mcp::policy::McpManualServer {
         name: "goodname".to_string(),
         url: "http://localhost".to_string(),
+        command: None,
+        args: vec![],
+        env: HashMap::new(),
         headers: HashMap::new(),
         bearer_token: None,
+        pool_size: None,
+        pool_safe_tools: Vec::new(),
         enabled: true,
     });
 
@@ -598,8 +691,13 @@ fn build_server_list_rejects_names_with_separator() {
     corp.servers.push(crate::mcp::policy::McpManualServer {
         name: "corp__bad".to_string(),
         url: "http://localhost".to_string(),
+        command: None,
+        args: vec![],
+        env: HashMap::new(),
         headers: HashMap::new(),
         bearer_token: None,
+        pool_size: None,
+        pool_safe_tools: Vec::new(),
         enabled: true,
     });
 

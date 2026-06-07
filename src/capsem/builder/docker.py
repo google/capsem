@@ -20,14 +20,12 @@ from typing import Any
 from jinja2 import Environment, FileSystemLoader
 
 from capsem.builder.doctor import check_container_runtime
+from capsem.builder.image_verify import ImageInventory, dump_image_inventory_json
+from capsem.builder.manifest_version import next_asset_version
 from capsem.builder.models import GuestImageConfig, PackageManager
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
-FALLBACK_KERNEL_VERSION = "7.0.11"
-DEFAULT_EROFS_UTILS_IMAGE = "debian:bookworm-slim"
-ZSTD_EROFS_UTILS_IMAGE = "debian:trixie-slim"
-BOOT_ASSETS = ("vmlinuz", "initrd.img")
-ROOTFS_ASSET_PREFERENCE = ("rootfs.erofs", "rootfs.squashfs")
+FALLBACK_KERNEL_VERSION = "6.6.127"
 
 # Guest binaries COPY'd into the rootfs (cross-compiled Rust binaries).
 GUEST_BINARIES = [
@@ -83,6 +81,12 @@ def _rootfs_context(config: GuestImageConfig, arch_name: str) -> dict[str, Any]:
     npm_packages: list[str] = []
     npm_prefix = "/opt/ai-clis"
     curl_installs: list[str] = []
+    for package_set in config.package_sets.values():
+        if package_set.manager == PackageManager.NPM:
+            npm_packages.extend(package_set.packages)
+        elif package_set.manager == PackageManager.CURL:
+            curl_installs.extend(_curl_install_urls(package_set.packages))
+
     for provider in config.ai_providers.values():
         if provider.enabled and provider.install:
             if provider.install.manager == PackageManager.NPM:
@@ -90,7 +94,10 @@ def _rootfs_context(config: GuestImageConfig, arch_name: str) -> dict[str, Any]:
                 if provider.install.prefix:
                     npm_prefix = provider.install.prefix
             elif provider.install.manager == PackageManager.CURL:
-                curl_installs.extend(provider.install.packages)
+                curl_installs.extend(_curl_install_urls(provider.install.packages))
+
+    npm_packages = list(dict.fromkeys(npm_packages))
+    curl_installs = list(dict.fromkeys(curl_installs))
 
     return {
         "arch": arch,
@@ -103,6 +110,17 @@ def _rootfs_context(config: GuestImageConfig, arch_name: str) -> dict[str, Any]:
         "curl_installs": curl_installs,
         "guest_binaries": GUEST_BINARIES,
     }
+
+
+def _curl_install_urls(packages: list[str]) -> list[str]:
+    urls: list[str] = []
+    for spec in packages:
+        if "=" in spec:
+            _, url = spec.split("=", 1)
+            urls.append(url)
+        else:
+            urls.append(spec)
+    return urls
 
 
 def _kernel_context(
@@ -141,7 +159,7 @@ def generate_build_context(
     if template_name == "Dockerfile.rootfs.j2":
         ctx = _rootfs_context(config, arch_name)
     elif template_name == "Dockerfile.kernel.j2":
-        kernel_version = kwargs.get("kernel_version", FALLBACK_KERNEL_VERSION)
+        kernel_version = kwargs.get("kernel_version", "6.6.127")
         ctx = _kernel_context(config, arch_name, kernel_version)
     else:
         raise ValueError(f"Unknown template: {template_name}")
@@ -255,8 +273,8 @@ def resolve_kernel_version(branch: str = "auto") -> str:
     `branch` controls selection:
       - "auto" (default): newest non-EOL longterm (LTS) branch, latest patch.
         Always-fresh; no human bumps required.
-      - "X.Y" (e.g. "7.0" or "6.18"): pin to that stable/LTS branch,
-        latest patch. Use for reproducibility / security freeze.
+      - "X.Y" (e.g. "6.6"): pin to that LTS branch, latest patch.
+        Use for reproducibility / security freeze.
 
     Falls back to `FALLBACK_KERNEL_VERSION` on any network/parse error.
     """
@@ -272,32 +290,25 @@ def resolve_kernel_version(branch: str = "auto") -> str:
         print(f"  Falling back to hardcoded {FALLBACK_KERNEL_VERSION}")
         return FALLBACK_KERNEL_VERSION
 
-    # Collect (major, minor, patch) for every non-EOL stable/LTS release with
-    # a strict X.Y.Z version string. Mainline rc releases are deliberately
-    # excluded from reproducible guest builds.
-    stable_or_lts: list[tuple[int, int, int, str]] = []
+    # Collect (major, minor, patch) for every non-EOL longterm release with
+    # a strict X.Y.Z version string.
+    lts: list[tuple[int, int, int]] = []
     for release in data.get("releases", []):
         version = release.get("version", "")
-        moniker = release.get("moniker")
-        if moniker not in {"stable", "longterm"} or release.get("iseol"):
+        if release.get("moniker") != "longterm" or release.get("iseol"):
             continue
         if not re.fullmatch(r"\d+\.\d+\.\d+", version):
             continue
         a, b, c = (int(x) for x in version.split("."))
-        stable_or_lts.append((a, b, c, moniker))
+        lts.append((a, b, c))
 
-    if not stable_or_lts:
-        print("  Warning: no stable/LTS releases found in kernel.org feed")
+    if not lts:
+        print("  Warning: no longterm releases found in kernel.org feed")
         print(f"  Falling back to hardcoded {FALLBACK_KERNEL_VERSION}")
         return FALLBACK_KERNEL_VERSION
 
     if branch == "auto":
         # Highest LTS branch (by major, minor), then highest patch on it.
-        lts = [(a, b, c) for (a, b, c, moniker) in stable_or_lts if moniker == "longterm"]
-        if not lts:
-            print("  Warning: no longterm releases found in kernel.org feed")
-            print(f"  Falling back to hardcoded {FALLBACK_KERNEL_VERSION}")
-            return FALLBACK_KERNEL_VERSION
         lts.sort()
         a, b, _ = lts[-1]
         patches = sorted(c for (x, y, c) in lts if (x, y) == (a, b))
@@ -312,9 +323,9 @@ def resolve_kernel_version(branch: str = "auto") -> str:
         print(f"  Warning: invalid kernel_branch {branch!r} (want 'auto' or 'X.Y')")
         print(f"  Falling back to hardcoded {FALLBACK_KERNEL_VERSION}")
         return FALLBACK_KERNEL_VERSION
-    patches = sorted(c for (a, b, c, _) in stable_or_lts if (a, b) == (want_a, want_b))
+    patches = sorted(c for (a, b, c) in lts if (a, b) == (want_a, want_b))
     if not patches:
-        print(f"  Warning: no non-EOL {branch}.x stable/LTS releases on kernel.org")
+        print(f"  Warning: no non-EOL {branch}.x LTS releases on kernel.org")
         print(f"  Falling back to hardcoded {FALLBACK_KERNEL_VERSION}")
         return FALLBACK_KERNEL_VERSION
     return f"{want_a}.{want_b}.{patches[-1]}"
@@ -429,7 +440,7 @@ def create_squashfs(
     output_path: Path,
     compression: str,
     compression_level: int,
-    block_size: str = "64K",
+    block_size: str = "128K",
 ) -> None:
     """Create a squashfs image from a tar archive using a container."""
     abs_dir = str(tar_path.parent.resolve())
@@ -449,78 +460,6 @@ def create_squashfs(
         f"mkdir /rootfs && tar xf /assets/{tar_name} -C /rootfs && "
         f"mksquashfs /rootfs /assets/{out_name} -comp {compression}{level_flag} -b {block_size} -noappend",
     ])
-
-
-def create_erofs(
-    runtime: str,
-    tar_path: Path,
-    output_path: Path,
-    compression: str,
-    cluster_size: str | None = None,
-    compression_level: str | None = None,
-) -> None:
-    """Create an EROFS image from a tar archive using a container."""
-    if compression not in {"lz4", "lz4hc", "zstd"}:
-        raise ValueError(f"unsupported EROFS compression: {compression}")
-    if compression == "zstd" and compression_level is None:
-        compression_level = "15"
-
-    if compression_level is not None:
-        level = int(compression_level)
-        if compression == "lz4":
-            raise ValueError("lz4 EROFS compression does not accept a level")
-        if compression == "lz4hc" and not 0 <= level <= 12:
-            raise ValueError("lz4hc EROFS compression level must be between 0 and 12")
-        if compression == "zstd" and not 0 <= level <= 22:
-            raise ValueError("zstd EROFS compression level must be between 0 and 22")
-
-    tar_abs = tar_path.resolve()
-    output_abs = output_path.resolve()
-    common_dir = Path(os.path.commonpath([tar_abs.parent, output_abs.parent]))
-    tar_rel = tar_abs.relative_to(common_dir).as_posix()
-    out_rel = output_abs.relative_to(common_dir).as_posix()
-    out_dir = Path(out_rel).parent.as_posix()
-    image = ZSTD_EROFS_UTILS_IMAGE if compression == "zstd" else DEFAULT_EROFS_UTILS_IMAGE
-    cluster_flag = f" -C{cluster_size}" if cluster_size else ""
-    level_flag = f",level={compression_level}" if compression_level else ""
-    mkdir_output = "" if out_dir == "." else f"mkdir -p /assets/{out_dir} && "
-
-    run_cmd([
-        runtime, "run", "--rm",
-        "-v", f"{common_dir}:/assets",
-        image, "bash", "-c",
-        f"DEBIAN_FRONTEND=noninteractive apt-get "
-        f"-o Acquire::Check-Valid-Until=false -o Acquire::Check-Date=false update && "
-        f"DEBIAN_FRONTEND=noninteractive apt-get install -y erofs-utils && "
-        f"mkdir /rootfs && {mkdir_output}tar xf /assets/{tar_rel} -C /rootfs && "
-        f"mkfs.erofs -z{compression}{level_flag}{cluster_flag} /assets/{out_rel} /rootfs",
-    ])
-
-
-def experimental_erofs_build_config(
-    env: dict[str, str] | os._Environ[str] | None = None,
-) -> tuple[bool, str, str | None, str | None]:
-    """Return optional EROFS build settings from environment variables."""
-    source = os.environ if env is None else env
-    enabled = source.get("CAPSEM_BUILD_EXPERIMENTAL_EROFS") == "1"
-    compression = source.get("CAPSEM_BUILD_EROFS_COMPRESSION", "lz4hc")
-    if compression not in {"lz4", "lz4hc", "zstd"}:
-        raise ValueError(
-            "CAPSEM_BUILD_EROFS_COMPRESSION must be one of: lz4, lz4hc, zstd"
-        )
-    cluster_size = source.get("CAPSEM_BUILD_EROFS_CLUSTER_SIZE")
-    compression_level = source.get("CAPSEM_BUILD_EROFS_COMPRESSION_LEVEL")
-    if compression == "zstd" and compression_level is None:
-        compression_level = "15"
-    if compression_level is not None:
-        level = int(compression_level)
-        if compression == "lz4":
-            raise ValueError("CAPSEM_BUILD_EROFS_COMPRESSION_LEVEL is not valid for lz4")
-        if compression == "lz4hc" and not 0 <= level <= 12:
-            raise ValueError("CAPSEM_BUILD_EROFS_COMPRESSION_LEVEL must be 0..12 for lz4hc")
-        if compression == "zstd" and not 0 <= level <= 22:
-            raise ValueError("CAPSEM_BUILD_EROFS_COMPRESSION_LEVEL must be 0..22 for zstd")
-    return enabled, compression, cluster_size, compression_level
 
 
 def container_compile_agent(
@@ -638,6 +577,8 @@ def cross_compile_agent(
         if not src.exists():
             raise RuntimeError(f"Expected binary not found: {src}")
         dst = output_dir / binary
+        if dst.exists():
+            dst.unlink()
         shutil.copy2(str(src), str(dst))
         if dst.stat().st_size == 0:
             raise RuntimeError(f"Binary is empty: {dst}")
@@ -686,6 +627,131 @@ def build_version_script(config: GuestImageConfig) -> str:
             lines.append(f'echo "{key}=$({cmd} || echo \'N/A\')";')
 
     return "\n".join(lines)
+
+
+def _npm_prefix(config: GuestImageConfig) -> str:
+    npm_prefix = "/opt/ai-clis"
+    for provider in config.ai_providers.values():
+        install = provider.install
+        if (
+            provider.enabled
+            and install is not None
+            and install.manager == PackageManager.NPM
+            and install.prefix
+        ):
+            npm_prefix = install.prefix
+    return npm_prefix
+
+
+def _inventory_version_commands(config: GuestImageConfig) -> dict[str, str]:
+    commands: dict[str, str] = {
+        "capsem_doctor": "capsem-doctor --version",
+    }
+    commands.update(config.build.version_commands)
+    for package_set in config.package_sets.values():
+        commands.update(package_set.version_commands)
+    for provider in config.ai_providers.values():
+        if provider.enabled and provider.cli and provider.cli.version_command:
+            commands[provider.cli.key] = provider.cli.version_command
+    return dict(sorted(commands.items()))
+
+
+def build_image_inventory_script(config: GuestImageConfig) -> str:
+    """Build a guest-side script that emits capsem.image-inventory.v1 JSON."""
+    payload = json.dumps(
+        {
+            "npm_prefix": _npm_prefix(config),
+            "version_commands": _inventory_version_commands(config),
+        },
+        sort_keys=True,
+    )
+    return f"""python3 - <<'PY'
+import json
+import subprocess
+
+CONFIG = json.loads({payload!r})
+
+
+def run(args):
+    completed = subprocess.run(
+        args,
+        check=True,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    return completed.stdout
+
+
+def run_optional(args, fallback):
+    completed = subprocess.run(
+        args,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+    )
+    if completed.returncode != 0:
+        return fallback
+    return completed.stdout
+
+
+def run_shell(command):
+    completed = subprocess.run(
+        command,
+        shell=True,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+    )
+    if completed.returncode != 0:
+        return "N/A"
+    value = completed.stdout.strip()
+    return value.splitlines()[0].strip() if value else "N/A"
+
+
+apt = {{}}
+for line in run(["dpkg-query", "-W", "-f=${{Package}}\\t${{Version}}\\n"]).splitlines():
+    if "\\t" not in line:
+        continue
+    name, version = line.split("\\t", 1)
+    if name and version:
+        apt[name] = version
+
+python_modules = {{}}
+for item in json.loads(run(["python3", "-m", "pip", "list", "--format=json"])):
+    name = item.get("name")
+    version = item.get("version")
+    if name and version:
+        python_modules[name.lower()] = version
+
+node_packages = {{}}
+npm_data = json.loads(run_optional([
+    "npm",
+    "ls",
+    "-g",
+    "--depth=0",
+    "--json",
+    "--prefix",
+    CONFIG["npm_prefix"],
+], "{{}}"))
+for name, info in npm_data.get("dependencies", {{}}).items():
+    version = info.get("version") if isinstance(info, dict) else None
+    if name and version:
+        node_packages[name] = version
+
+tools = {{
+    key: run_shell(command)
+    for key, command in CONFIG["version_commands"].items()
+}}
+
+print(json.dumps({{
+    "schema": "capsem.image-inventory.v1",
+    "apt": apt,
+    "python_modules": python_modules,
+    "node_packages": node_packages,
+    "tools": tools,
+}}, sort_keys=True))
+PY"""
 
 
 def _validate_tool_versions(
@@ -738,6 +804,34 @@ def extract_tool_versions(
         _validate_tool_versions(result.stdout, config)
 
 
+def extract_image_inventory(
+    runtime: str,
+    image_tag: str,
+    platform: str,
+    output_dir: Path,
+    config: GuestImageConfig,
+) -> Path:
+    """Extract a typed package/tool inventory from the built rootfs image."""
+    result = run_cmd(
+        [
+            runtime,
+            "run",
+            "--rm",
+            "--platform",
+            platform,
+            image_tag,
+            "bash",
+            "-c",
+            build_image_inventory_script(config),
+        ],
+        capture=True,
+    )
+    inventory = ImageInventory.model_validate_json(result.stdout)
+    inventory_path = output_dir / "image-inventory.json"
+    inventory_path.write_text(dump_image_inventory_json(inventory), encoding="utf-8")
+    return inventory_path
+
+
 def _blake3_hex(path: Path) -> str:
     """Compute BLAKE3 hash of a file, returning the hex digest."""
     import blake3
@@ -748,14 +842,6 @@ def _blake3_hex(path: Path) -> str:
     return hasher.hexdigest()
 
 
-def _select_rootfs_asset(asset_dir: Path) -> str | None:
-    """Return the canonical rootfs asset name for a directory."""
-    for filename in ROOTFS_ASSET_PREFERENCE:
-        if (asset_dir / filename).is_file():
-            return filename
-    return None
-
-
 def generate_checksums(output_dir: Path, version: str) -> Path:
     """Generate BLAKE3 checksums and manifest.json for all assets."""
     # Collect all asset files across arch subdirs
@@ -763,19 +849,15 @@ def generate_checksums(output_dir: Path, version: str) -> Path:
     all_files: list[str] = []
     for arch_dir in sorted(arch_dirs):
         arch_name = arch_dir.name
-        for filename in BOOT_ASSETS:
-            if (arch_dir / filename).is_file():
-                all_files.append(f"{arch_name}/{filename}")
-        if rootfs_name := _select_rootfs_asset(arch_dir):
-            all_files.append(f"{arch_name}/{rootfs_name}")
+        for f in sorted(arch_dir.iterdir()):
+            if f.is_file() and f.name in ("vmlinuz", "initrd.img", "rootfs.squashfs"):
+                all_files.append(f"{arch_name}/{f.name}")
 
     if not all_files:
         # Flat layout fallback
-        for f in BOOT_ASSETS:
+        for f in ("vmlinuz", "initrd.img", "rootfs.squashfs"):
             if (output_dir / f).is_file():
                 all_files.append(f)
-        if rootfs_name := _select_rootfs_asset(output_dir):
-            all_files.append(rootfs_name)
 
     # Compute BLAKE3 hashes using Python blake3 library.
     b3sums_lines = []
@@ -787,11 +869,17 @@ def generate_checksums(output_dir: Path, version: str) -> Path:
         b3sums_lines.append(f"{b3hash}  {filepath}")
     (output_dir / "B3SUMS").write_text("\n".join(b3sums_lines) + "\n")
 
-    # Build v2 manifest with separate assets/binaries sections
+    # Build v2 manifest with separate assets/binaries sections.
     import datetime
     today = datetime.date.today()
-    date_prefix = today.strftime("%Y.%m%d")
-    asset_version = f"{date_prefix}.1"
+    manifest_path = output_dir / "manifest.json"
+    existing_manifest = None
+    if manifest_path.exists():
+        try:
+            existing_manifest = json.loads(manifest_path.read_text())
+        except (json.JSONDecodeError, OSError):
+            existing_manifest = None
+    asset_version = next_asset_version(existing_manifest, today=today)
 
     arch_assets: dict[str, dict[str, dict]] = {}
     for filepath in all_files:
@@ -833,7 +921,6 @@ def generate_checksums(output_dir: Path, version: str) -> Path:
             },
         },
     }
-    manifest_path = output_dir / "manifest.json"
     manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
 
     # Create assets/current symlink pointing to the most recently built arch.
@@ -1021,33 +1108,21 @@ def build_image(
                 runtime, tar_path, squashfs_path,
                 config.build.compression.value,
                 config.build.compression_level,
+                config.build.squashfs_block_size,
             )
-
-            erofs_enabled, erofs_compression, erofs_cluster_size, erofs_level = (
-                experimental_erofs_build_config()
-            )
-            erofs_path = arch_output / "rootfs.erofs"
-            if erofs_enabled:
-                print(
-                    f"Creating EROFS ({erofs_compression} compression"
-                    f"{', level ' + erofs_level if erofs_level else ''}"
-                    f"{', cluster ' + erofs_cluster_size if erofs_cluster_size else ''})..."
-                )
-                create_erofs(
-                    runtime, tar_path, erofs_path,
-                    erofs_compression,
-                    erofs_cluster_size,
-                    erofs_level,
-                )
             tar_path.unlink(missing_ok=True)
 
             print("Extracting tool versions...")
-            extract_tool_versions(runtime, tag, arch.docker_platform, arch_output, config)
+            extract_tool_versions(
+                runtime, tag, arch.docker_platform, arch_output, config,
+            )
+            print("Extracting image inventory...")
+            extract_image_inventory(
+                runtime, tag, arch.docker_platform, arch_output, config,
+            )
             remove_image(runtime, tag)
 
             print(f"  rootfs.squashfs: {squashfs_path}")
-            if erofs_enabled:
-                print(f"  rootfs.erofs:    {erofs_path}")
 
 
 def build_all_architectures(

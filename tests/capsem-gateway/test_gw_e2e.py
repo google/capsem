@@ -4,21 +4,46 @@ These tests boot real VMs through the gateway TCP endpoint.
 Requires capsem-service binary, VM assets, and codesigned binaries.
 """
 
+import subprocess
 import uuid
+
+from pathlib import Path
 
 import pytest
 
 from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT, EXEC_TIMEOUT_SECS, HTTP_TIMEOUT
 from helpers.gateway import GatewayInstance, TcpHttpClient
-from helpers.service import ServiceInstance, wait_exec_ready, vm_name
+from helpers.profile_asset_fixture import asset_source_dir, find_asset, write_profile_home
+from helpers.service import ServiceInstance, vm_name
 
 pytestmark = [pytest.mark.gateway, pytest.mark.e2e]
+PROJECT_ROOT = Path(__file__).parent.parent.parent
+TUI_BINARY = PROJECT_ROOT / "target/debug/capsem-tui"
 
 
 @pytest.fixture(scope="module")
-def e2e_env():
-    """Start real capsem-service + capsem-gateway."""
-    svc = ServiceInstance()
+def e2e_env(tmp_path_factory):
+    """Start real capsem-service + capsem-gateway with Profile V2 assets."""
+    source_dir = asset_source_dir()
+    if not source_dir.exists():
+        pytest.skip(f"asset source dir missing: {source_dir}")
+
+    assets = {
+        "vmlinuz": find_asset(source_dir, "vmlinuz"),
+        "initrd.img": find_asset(source_dir, "initrd.img"),
+        "rootfs.squashfs": find_asset(source_dir, "rootfs.squashfs"),
+    }
+    capsem_home = tmp_path_factory.mktemp("gw-profile-home")
+    asset_cache = tmp_path_factory.getbasetemp() / f"gw-profile-assets-{uuid.uuid4().hex[:8]}"
+    write_profile_home(capsem_home, asset_cache, assets)
+
+    svc = ServiceInstance(
+        extra_env={
+            "CAPSEM_HOME": str(capsem_home),
+            "CAPSEM_ASSETS_DIR": str(asset_cache),
+        },
+        assets_dir=asset_cache,
+    )
     svc.start()
     gw = GatewayInstance(uds_path=svc.uds_path)
     gw.start()
@@ -34,6 +59,104 @@ def e2e_client(e2e_env):
 
 
 class TestGatewayE2E:
+
+    def test_tui_empty_create_uses_real_gateway_profiles(self, e2e_env, e2e_client):
+        """Real TUI snapshot + gateway provision prove create does not use a fake profile."""
+        gw, _ = e2e_env
+        profiles = e2e_client.get("/profiles", timeout=30)
+        profile_rows = profiles.get("profiles", [])
+        assert profile_rows, profiles
+        profile_id = profiles.get("default_profile") or profile_rows[0]["profile"]["id"]
+
+        snapshot = subprocess.run(
+            [
+                str(TUI_BINARY),
+                "--gateway-url",
+                gw.base_url,
+                "--snapshot",
+                "--width",
+                "100",
+                "--height",
+                "24",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        assert snapshot.returncode == 0, snapshot.stderr
+        assert profile_id in snapshot.stdout
+        assert "profiles unavailable" not in snapshot.stdout
+        assert "▶  default" not in snapshot.stdout
+
+        name = vm_name("gw-tui-create")
+        resp = e2e_client.post(
+            "/provision",
+            {
+                "name": name,
+                "ram_mb": DEFAULT_RAM_MB,
+                "cpus": DEFAULT_CPUS,
+                "profile_id": profile_id,
+            },
+            timeout=240,
+        )
+        assert resp is not None, "TUI create gateway contract provision failed"
+        vm_id = resp.get("id", name)
+        try:
+            assert wait_exec_ready_tcp(e2e_client, vm_id, timeout=180), (
+                f"VM {vm_id} never became exec-ready through gateway"
+            )
+        finally:
+            e2e_client.delete(f"/delete/{vm_id}")
+
+    def test_profile_selected_create_download_boot_via_gateway(self, e2e_client):
+        """HTTP create selects a profile, reconciles its assets, boots, and pins."""
+        status_before = e2e_client.get("/setup/assets", timeout=30)
+        assert status_before["profile_id"] == "profile-asset-boot"
+
+        name = vm_name("gw-profile")
+        resp = e2e_client.post(
+            "/provision",
+            {
+                "name": name,
+                "ram_mb": DEFAULT_RAM_MB,
+                "cpus": DEFAULT_CPUS,
+                "profile_id": "profile-asset-boot",
+                "profile_revision": "2026.0519.e2e",
+            },
+            timeout=240,
+        )
+        assert resp is not None, "profile-selected provision failed"
+        assert "error" not in resp, resp
+        vm_id = resp.get("id", name)
+        assert resp["profile_id"] == "profile-asset-boot"
+        assert resp["profile_revision"] == "2026.0519.e2e"
+        assert resp["profile_status"] == "current"
+        assert resp["profile_pin"]["profile_id"] == "profile-asset-boot"
+        assert resp["profile_pin"]["profile_revision"] == "2026.0519.e2e"
+        assert resp["profile_pin"]["profile_payload_hash"].startswith("blake3:")
+        assert resp["profile_pin"]["package_contract_hash"].startswith("blake3:")
+        assert resp["profile_pin"]["base_assets"]["rootfs_hash"]
+        assert resp["asset_health"]["ready"] is True
+        assert resp["asset_health"]["profile_id"] == "profile-asset-boot"
+        assert len(resp["asset_health"]["profile_assets"]) == 3
+
+        try:
+            assert wait_exec_ready_tcp(e2e_client, vm_id, timeout=180), (
+                f"VM {vm_id} never became exec-ready through gateway"
+            )
+            exec_resp = e2e_client.post(
+                f"/exec/{vm_id}",
+                {"command": "echo gateway-profile-boot"},
+                timeout=HTTP_TIMEOUT,
+            )
+            assert "gateway-profile-boot" in exec_resp.get("stdout", "")
+
+            info = e2e_client.get(f"/info/{vm_id}", timeout=60)
+            assert info["profile_id"] == "profile-asset-boot"
+            assert info["profile_revision"] == "2026.0519.e2e"
+            assert info["profile_status"] == "current"
+        finally:
+            e2e_client.delete(f"/delete/{vm_id}")
 
     def test_provision_list_exec_stop_delete(self, e2e_client):
         """Full VM lifecycle through gateway TCP endpoint."""
@@ -156,16 +279,11 @@ class TestGatewayFileIO:
 
         try:
             # Write file
-            write_resp = e2e_client.post(f"/write_file/{vm_id}", {
-                "path": "/root/gw-test.txt",
-                "content": "gateway file io test",
-            })
+            write_resp = e2e_client.write_file(vm_id, "/root/gw-test.txt", "gateway file io test")
             assert write_resp is not None
 
             # Read file back
-            read_resp = e2e_client.post(f"/read_file/{vm_id}", {
-                "path": "/root/gw-test.txt",
-            })
+            read_resp = e2e_client.read_file(vm_id, "/root/gw-test.txt")
             assert read_resp is not None
             assert "gateway file io test" in str(read_resp)
         finally:
@@ -181,10 +299,7 @@ class TestGatewayFileIO:
         assert wait_exec_ready_tcp(e2e_client, vm_id, timeout=60)
 
         try:
-            write_resp = e2e_client.post(f"/write_file/{vm_id}", {
-                "path": "/root/special.txt",
-                "content": "line1\nline2\ttab\n",
-            })
+            write_resp = e2e_client.write_file(vm_id, "/root/special.txt", "line1\nline2\ttab\n")
             assert write_resp is not None
 
             exec_resp = e2e_client.post(f"/exec/{vm_id}", {
@@ -213,10 +328,7 @@ class TestGatewayPersistence:
 
         try:
             # Write a marker file
-            e2e_client.post(f"/write_file/{vm_id}", {
-                "path": "/root/persist-marker.txt",
-                "content": "survived-restart",
-            })
+            e2e_client.write_file(vm_id, "/root/persist-marker.txt", "survived-restart")
 
             # Stop
             e2e_client.post(f"/stop/{vm_id}", {})
@@ -262,7 +374,7 @@ class TestGatewayLogs:
     """Log retrieval through the gateway."""
 
     def test_logs_for_running_vm(self, e2e_client):
-        """GET /logs/{id} returns boot logs for a running VM."""
+        """GET /logs/{id} returns the typed log envelope for a running VM."""
         name = vm_name("gw-logs")
         resp = e2e_client.post("/provision", {
             "name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS,
@@ -274,6 +386,7 @@ class TestGatewayLogs:
             logs_resp = e2e_client.get(f"/logs/{vm_id}")
             assert logs_resp is not None
             assert "logs" in logs_resp
+            assert "security_logs" in logs_resp or "serial_logs" in logs_resp
         finally:
             e2e_client.delete(f"/delete/{vm_id}")
 

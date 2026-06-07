@@ -168,6 +168,7 @@ class TestBuildConfig:
         b = _build()
         assert b.compression is Compression.ZSTD
         assert b.compression_level == 15
+        assert b.squashfs_block_size == "128K"
 
     def test_compression_level_min(self):
         b = _build(compression_level=1)
@@ -184,6 +185,16 @@ class TestBuildConfig:
     def test_compression_level_too_high(self):
         with pytest.raises(ValidationError):
             _build(compression_level=23)
+
+    @pytest.mark.parametrize("block_size", ["64K", "128K", "256K", "1M"])
+    def test_squashfs_block_size_valid(self, block_size):
+        b = _build(squashfs_block_size=block_size)
+        assert b.squashfs_block_size == block_size
+
+    @pytest.mark.parametrize("block_size", ["96K", "2M", "128KB", "banana"])
+    def test_squashfs_block_size_invalid(self, block_size):
+        with pytest.raises(ValidationError):
+            _build(squashfs_block_size=block_size)
 
     def test_empty_architectures_rejected(self):
         with pytest.raises(ValidationError):
@@ -598,7 +609,7 @@ class TestVmResourcesConfig:
     def test_defaults(self):
         r = VmResourcesConfig()
         assert r.cpu_count == 4
-        assert r.ram_gb == 4
+        assert r.ram_gb == 8
         assert r.scratch_disk_size_gb == 16
         assert r.log_bodies is False
         assert r.max_body_capture == 4096
@@ -709,6 +720,7 @@ class TestGuestImageConfig:
         assert g.mcp_servers == {}
         assert g.web_security.allow_read is False
         assert g.vm_resources.cpu_count == 4
+        assert g.vm_resources.ram_gb == 8
         assert g.vm_environment.shell.term == "xterm-256color"
 
     def test_full(self):

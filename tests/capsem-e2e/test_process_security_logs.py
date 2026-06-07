@@ -1,0 +1,165 @@
+"""Process Security Engine decisions are visible through real `capsem logs`.
+
+This is intentionally a real CLI/service/VM test: the lower unit tests prove
+each boundary in isolation, while this catches the full propagation path:
+runtime rule install -> capsem-process eval -> process.log -> /logs -> CLI.
+"""
+
+from contextlib import closing
+import json
+import sqlite3
+import time
+import uuid
+
+import pytest
+
+pytestmark = pytest.mark.e2e
+
+
+def _name(prefix: str) -> str:
+    return f"{prefix}-{uuid.uuid4().hex[:8]}"
+
+
+def _logs_until(service, vm: str, needles: list[str], *, timeout: float = 10.0) -> str:
+    deadline = time.time() + timeout
+    last_output = ""
+    while time.time() < deadline:
+        logs = service.cli_ok("logs", "--tail", "120", vm, timeout=30)
+        last_output = logs.stdout
+        if all(needle in last_output for needle in needles):
+            return last_output
+        time.sleep(0.25)
+    return last_output
+
+
+def _session_security_step_until(
+    service,
+    vm: str,
+    rule_id: str,
+    *,
+    timeout: float = 10.0,
+) -> tuple[str, str, str, str, str]:
+    deadline = time.time() + timeout
+    last_error = ""
+    while time.time() < deadline:
+        candidates = [
+            service.tmp_dir / "sessions" / vm / "session.db",
+            service.tmp_dir / "persistent" / vm / "session.db",
+            *sorted((service.tmp_dir / "sessions").glob(f"{vm}*/session.db")),
+        ]
+        db_path = next((path for path in candidates if path.exists()), None)
+        if db_path is None:
+            last_error = f"session.db for {vm} does not exist yet"
+            time.sleep(0.25)
+            continue
+        try:
+            with closing(sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)) as conn:
+                row = conn.execute(
+                    """
+                    SELECT se.event_type, se.final_action, se.vm_id,
+                           step.rule_id, step.message
+                      FROM security_events se
+                      JOIN security_event_steps step
+                        ON step.event_id = se.event_id
+                     WHERE se.event_type = 'process.exec'
+                       AND step.rule_id = ?
+                     ORDER BY se.timestamp_unix_ms DESC
+                     LIMIT 1
+                    """,
+                    (rule_id,),
+                ).fetchone()
+            if row is not None:
+                return row
+            last_error = f"no process security step for {rule_id}"
+        except sqlite3.Error as error:
+            last_error = str(error)
+        time.sleep(0.25)
+    raise AssertionError(last_error)
+
+
+def test_runtime_process_block_is_visible_in_capsem_logs(service):
+    vm = _name("plog")
+    rule_id = f"runtime.block-shell-e2e.{uuid.uuid4().hex[:8]}"
+    condition = (
+        "process.activity.operation == 'exec' "
+        "&& process.activity.command_class == 'shell'"
+    )
+    reason = "shell exec blocked by e2e"
+
+    service.cli_ok("create", vm, timeout=180)
+    try:
+        assert service.wait_exec_ready(vm, timeout=180), f"VM {vm} never exec-ready"
+        service.cli_ok(
+            "enforcement",
+            "install",
+            rule_id,
+            "--condition",
+            condition,
+            "--decision",
+            "block",
+            "--reason",
+            reason,
+            "--json",
+            timeout=60,
+        )
+
+        blocked = service.cli("exec", vm, "bash -lc 'echo should-not-run'", timeout=60)
+        combined = blocked.stdout + blocked.stderr
+        assert blocked.returncode != 0, combined
+        assert "process exec blocked" in combined
+        assert rule_id in combined
+
+        logs = _logs_until(
+            service,
+            vm,
+            [
+                "process_exec_security_decision",
+                '"target":"security.process"',
+                '"event_type":"process.exec"',
+                '"final_action":"block"',
+                f'"rule_id":"{rule_id}"',
+                f'"reason":"{reason}"',
+                f'"vm_id":"{vm}"',
+                '"command_class":"shell"',
+            ],
+        )
+        assert "process_exec_security_decision" in logs, logs
+        assert '"target":"security.process"' in logs
+        assert '"event_type":"process.exec"' in logs
+        assert '"final_action":"block"' in logs
+        assert f'"rule_id":"{rule_id}"' in logs
+        assert f'"reason":"{reason}"' in logs
+        assert f'"vm_id":"{vm}"' in logs
+        assert '"command_class":"shell"' in logs
+
+        row = _session_security_step_until(service, vm, rule_id)
+        assert row == (
+            "process.exec",
+            "block",
+            vm,
+            rule_id,
+            reason,
+        )
+
+        export = service.cli_ok("export-policy-contexts", vm, timeout=60)
+        fixtures = [
+            json.loads(line)
+            for line in export.stdout.splitlines()
+            if line.strip()
+        ]
+        process_fixtures = [
+            fixture
+            for fixture in fixtures
+            if fixture["context"]["common"]["event_type"] == "process.exec"
+        ]
+        assert process_fixtures, export.stdout
+        process_fixture = process_fixtures[-1]
+        assert process_fixture["schema"] == "capsem.policy-context-fixture.v1"
+        assert process_fixture["event_ref"]["corpus"] == "session_db"
+        assert process_fixture["event_ref"]["session_id"] == vm
+        assert process_fixture["context"]["common"]["vm_id"] == vm
+        assert process_fixture["context"]["process"]["activity"]["operation"] == "exec"
+        assert process_fixture["context"]["process"]["activity"]["command_class"] == "shell"
+    finally:
+        service.cli("enforcement", "delete", rule_id, timeout=60)
+        service.cli("delete", vm, timeout=120)

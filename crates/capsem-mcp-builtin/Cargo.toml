@@ -12,6 +12,7 @@ authors.workspace = true
 [dependencies]
 capsem-core = { path = "../capsem-core" }
 capsem-logger = { path = "../capsem-logger" }
+capsem-network-engine = { path = "../capsem-network-engine" }
 rmcp = { workspace = true, features = ["server", "transport-io"] }
 tokio.workspace = true
 serde.workspace = true
@@ -24,7 +25,7 @@ regex.workspace = true
 scraper = "0.25"
 walkdir = "2"
 blake3 = "1"
-capsem-guard = { version = "1.0.1776688771", path = "../capsem-guard" }
+capsem-guard = { path = "../capsem-guard" }
 
 [lints]
 workspace = true

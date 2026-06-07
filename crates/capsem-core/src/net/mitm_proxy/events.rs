@@ -17,7 +17,7 @@
 
 use bytes::Bytes;
 
-use crate::net::parsers::sse_parser::SseEvent;
+use capsem_network_engine::sse_parser::SseEvent;
 
 /// Stateless placeholder shapes for L2/L3 event payloads that ship in
 /// later phases (T3 DNS, T4 MCP). Defined here so the pipeline + hook

@@ -13,10 +13,6 @@ pub(crate) struct JobStore {
     /// captured, so no-output commands don't pay a blanket timeout to
     /// cover the deposit race.
     pub(crate) active_exec: Mutex<Option<ActiveExec>>,
-    /// In-flight explicit file operations keyed by service job id. The guest
-    /// response only carries enough context for reads; writes need the original
-    /// path and payload to emit the security-event ledger row after success.
-    pub(crate) active_file_ops: Mutex<HashMap<u64, ActiveFileOp>>,
     /// Channel for snapshot ready signal.
     pub(crate) snapshot_ready: Mutex<Option<oneshot::Sender<()>>>,
     /// Pending-ack map for the control bridge's reliability layer:
@@ -38,7 +34,6 @@ pub(crate) struct JobStore {
 /// "deposit still in flight" without sleeping unconditionally.
 pub(crate) struct ActiveExec {
     pub(crate) id: u64,
-    pub(crate) event_id: Option<capsem_core::security_engine::SecurityEventId>,
     pub(crate) captured: Vec<u8>,
     pub(crate) deposited: Arc<Notify>,
 }
@@ -47,7 +42,6 @@ impl ActiveExec {
     pub(crate) fn new(id: u64) -> Self {
         Self {
             id,
-            event_id: None,
             captured: Vec::new(),
             deposited: Arc::new(Notify::new()),
         }
@@ -59,7 +53,6 @@ impl JobStore {
         Self {
             jobs: Mutex::new(HashMap::new()),
             active_exec: Mutex::new(None),
-            active_file_ops: Mutex::new(HashMap::new()),
             snapshot_ready: Mutex::new(None),
             pending_acks: Mutex::new(HashMap::new()),
         }
@@ -87,14 +80,7 @@ impl JobStore {
         if let Some(active) = self.active_exec.lock().unwrap().take() {
             active.deposited.notify_waiters();
         }
-        self.active_file_ops.lock().unwrap().clear();
     }
-}
-
-#[derive(Debug)]
-pub(crate) enum ActiveFileOp {
-    Write { path: String, data: Vec<u8> },
-    Read { path: String },
 }
 
 #[derive(Debug)]
@@ -110,10 +96,6 @@ pub(crate) enum JobResult {
     },
     ReadFile {
         data: Option<Vec<u8>>,
-        error: Option<String>,
-    },
-    LogFileBoundary {
-        success: bool,
         error: Option<String>,
     },
     Error {

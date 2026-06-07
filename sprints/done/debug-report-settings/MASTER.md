@@ -1,0 +1,16 @@
+# Settings Debug Report Master
+
+## Status
+
+| Slice | Status | Proof |
+| --- | --- | --- |
+| Sprint setup | Done | `plan.md`, `tracker.md`, `MASTER.md` |
+| Service report endpoint | Done | `cargo test -p capsem-service debug_report -- --nocapture` |
+| Settings copy UI | Done | Focused frontend API/UI vitest tests |
+| CLI debug report | Done | `cargo test -p capsem parse_debug -- --nocapture` |
+| Docs | Done | `docs/src/content/docs/debugging/debug-report.md` |
+| Verification | In Progress | Targeted Rust/frontend tests green; broader checks pending |
+
+## Release Hold
+
+Active until the report can be copied from Settings, printed by `capsem debug`, and includes initrd attribution from the installed assets.

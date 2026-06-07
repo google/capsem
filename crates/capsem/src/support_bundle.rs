@@ -11,7 +11,7 @@
 //! host/run-snapshot/{service.pid,gateway.pid,gateway.port}
 //! sessions/<id>/{session.db,serial.log,process.log,metadata.json,...}
 //! assets/manifest.json                   # ~/.capsem/assets/manifest.json
-//! config/{user.toml,corp.toml}           # secrets redacted
+//! config/{service.toml,profiles/**}      # secrets redacted
 //! system/{version.json,os.txt,proxy.json,dmesg.log,mitm-ca-fingerprint.txt}
 //! ```
 //!
@@ -38,7 +38,7 @@ const SCHEMA_VERSION: u32 = 1;
 const MAX_LOG_TAIL_BYTES: u64 = 5 * 1024 * 1024;
 const MAX_SESSIONS: usize = 10;
 
-/// Bundle options. Use `Default::default()` for the legacy three-flag
+/// Bundle options. Use `Default::default()` for the compatibility three-flag
 /// signature; `max_session_bytes = 0` disables the cap.
 pub struct Opts {
     pub output: Option<PathBuf>,
@@ -350,8 +350,9 @@ pub fn run_with_opts(opts: Opts) -> Result<PathBuf> {
         }
     }
 
-    // -- configs (redacted) --
-    for name in ["user.toml", "corp.toml", "corp-source.json"] {
+    // -- Profile V2 settings (redacted) --
+    {
+        let name = "service.toml";
         let path = home.join(name);
         let entry_path = format!("{bundle_root}/config/{name}");
         if let Ok(text) = fs::read_to_string(&path) {
@@ -381,6 +382,26 @@ pub fn run_with_opts(opts: Opts) -> Result<PathBuf> {
                 truncated_to_last_bytes: None,
             });
         }
+    }
+    let profiles_dir = home.join("profiles");
+    if profiles_dir.exists() {
+        add_redacted_config_dir(
+            &mut tar,
+            &mut sections,
+            &bundle_root,
+            &profiles_dir,
+            Path::new("profiles"),
+            no_redact,
+        )?;
+    } else {
+        sections.push(Section {
+            path: format!("{bundle_root}/config/profiles"),
+            kind: "config-dir",
+            bytes: None,
+            missing: true,
+            reason: Some("file-not-found".into()),
+            truncated_to_last_bytes: None,
+        });
     }
 
     // -- system info --
@@ -638,6 +659,66 @@ fn read_tail(path: &Path, max_bytes: u64) -> Option<Vec<u8>> {
         tail.drain(..=idx);
     }
     Some(tail)
+}
+
+fn add_redacted_config_dir<W: Write>(
+    tar: &mut TarBuilder<W>,
+    sections: &mut Vec<Section>,
+    bundle_root: &str,
+    dir: &Path,
+    relative_dir: &Path,
+    no_redact: bool,
+) -> Result<()> {
+    let mut entries: Vec<_> = fs::read_dir(dir)
+        .with_context(|| format!("read {}", dir.display()))?
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .with_context(|| format!("read {}", dir.display()))?;
+    entries.sort_by_key(|entry| entry.path());
+
+    for entry in entries {
+        let path = entry.path();
+        let relative_path = relative_dir.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            add_redacted_config_dir(tar, sections, bundle_root, &path, &relative_path, no_redact)?;
+            continue;
+        }
+        if !entry.file_type()?.is_file() {
+            continue;
+        }
+        let entry_path = format!(
+            "{bundle_root}/config/{}",
+            relative_path.to_string_lossy().replace('\\', "/")
+        );
+        match fs::read_to_string(&path) {
+            Ok(text) => {
+                let text = if no_redact {
+                    text
+                } else {
+                    redact::redact_config_text(&text)
+                };
+                let bytes = text.into_bytes();
+                let len = bytes.len() as u64;
+                add_bytes(tar, &entry_path, &bytes)?;
+                sections.push(Section {
+                    path: entry_path,
+                    kind: "config",
+                    bytes: Some(len),
+                    missing: false,
+                    reason: None,
+                    truncated_to_last_bytes: None,
+                });
+            }
+            Err(source) => sections.push(Section {
+                path: entry_path,
+                kind: "config",
+                bytes: None,
+                missing: true,
+                reason: Some(source.to_string()),
+                truncated_to_last_bytes: None,
+            }),
+        }
+    }
+    Ok(())
 }
 
 fn redact_log_bytes(bytes: &[u8]) -> Vec<u8> {

@@ -15,9 +15,9 @@
 //!
 //! - `server`: the [`DnsHandler`] -- bytes-in / bytes-out async
 //!   processor. Decodes the query (via `parsers::dns_parser`), checks
-//!   the shared `NetworkPolicy::is_fully_blocked` for the qname, and
+//!   the shared Policy DNS rules for the qname, and
 //!   either synthesizes an NXDOMAIN response or forwards to the upstream
-//!   resolver. Returns a [`server::DnsHandlerResult`] carrying the
+//!   resolver. Returns a [`DnsHandlerResult`] carrying the
 //!   answer bytes plus structured metadata for telemetry (decision,
 //!   matched_rule, upstream_resolver_ms, rcode).
 //! - `resolver`: the [`DnsResolver`] -- a UDP-based forwarder that
@@ -33,19 +33,17 @@
 //! tightly coupled to its own `Request` / `Response` types built around
 //! owned UDP/TCP server-side state. We accept raw bytes from a vsock
 //! envelope, so the cleanest path is `hickory-proto` (wire codec) +
-//! a thin async handler wrapping our existing `NetworkPolicy`. Half
-//! the dep weight, none of the impedance mismatch. The guest agent
-//! depends on neither -- it only forwards bytes.
+//! a thin async handler wrapping resolver/cache state. The guest agent depends
+//! on neither -- it only forwards bytes.
 
 pub mod cache;
 pub mod resolver;
 pub mod server;
-pub mod telemetry;
 
 #[cfg(test)]
 mod tests;
 
 pub use cache::{DnsAnswerCache, DEFAULT_CAPACITY, DEFAULT_MAX_TTL_SECS, MIN_TTL_SECS};
+pub use capsem_network_engine::dns_transport::DnsHandlerResult;
 pub use resolver::{DnsResolver, DEFAULT_UPSTREAMS};
-pub use server::{DnsHandler, DnsHandlerResult, SharedPolicy};
-pub use telemetry::{build_dns_event, security_event_from_dns_event};
+pub use server::DnsHandler;

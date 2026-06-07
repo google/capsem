@@ -1,6 +1,7 @@
 //! Compile-time hash of the protocol enum source bytes. Detects "I added
 //! a variant in the middle without bumping PROTOCOL_VERSION" -- silent
-//! re-numbering of bincode variants. Hashes the source bytes (FNV-1a 64),
+//! re-numbering of bincode variants. Hashes protocol type source bytes
+//! (FNV-1a 64),
 //! emits a `schema_hash.txt` file containing a `u64` literal which
 //! `lib.rs` includes via `include!()`.
 //!
@@ -13,9 +14,10 @@ use std::path::Path;
 fn main() {
     let src_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     // Files whose bytes we hash. Adding a new file that defines protocol
-    // types? Add it here. Comment-only edits trip the hash; we accept
-    // that fast-and-loud cost in exchange for not pulling in `syn`.
-    let files = ["lib.rs", "ipc.rs", "handshake.rs"];
+    // types carried by IPC/vsock? Add it here. Comment-only edits trip the
+    // hash; we accept that fast-and-loud cost in exchange for not pulling in
+    // `syn`.
+    let files = ["lib.rs", "ipc.rs", "handshake.rs", "metrics.rs"];
 
     let mut hash: u64 = 0xcbf29ce484222325; // FNV-1a 64 offset basis
     for f in files {

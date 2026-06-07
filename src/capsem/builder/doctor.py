@@ -1,4 +1,4 @@
-"""Composable build prerequisite checks for capsem-builder.
+"""Composable build prerequisite checks for Capsem admin/build tooling.
 
 Each check returns a CheckResult with pass/fail status, detail, and
 optional fix instructions. Checks are pure functions that can be called
@@ -260,7 +260,10 @@ def check_guest_config(guest_dir: Path) -> CheckResult:
             name="guest-config",
             passed=False,
             detail=f"config directory not found: {config_dir}",
-            fix=f"capsem-builder init {guest_dir}",
+            fix=(
+                "restore the typed guest config bridge or generate profiles with "
+                f"capsem-admin profile init-builtins --guest-dir {guest_dir}"
+            ),
         )
 
     if not build_toml.is_file():
@@ -268,7 +271,10 @@ def check_guest_config(guest_dir: Path) -> CheckResult:
             name="guest-config",
             passed=False,
             detail=f"build.toml not found in {config_dir}",
-            fix=f"capsem-builder init {guest_dir}",
+            fix=(
+                "restore the typed guest config bridge or generate profiles with "
+                f"capsem-admin profile init-builtins --guest-dir {guest_dir}"
+            ),
         )
 
     try:
@@ -298,16 +304,22 @@ def check_guest_config(guest_dir: Path) -> CheckResult:
 
 def check_source_files(repo_root: Path) -> CheckResult:
     """Check that required source files exist for build context assembly."""
+    from capsem.builder.docker import (
+        ROOTFS_SCRIPTS,
+        ROOTFS_SCRIPT_DIRS,
+        ROOTFS_SUPPORT_FILES,
+    )
+
+    artifacts = repo_root / "guest" / "artifacts"
     required = {
-        "guest/artifacts/capsem-init": repo_root / "guest" / "artifacts" / "capsem-init",
-        "guest/artifacts/capsem-bashrc": repo_root / "guest" / "artifacts" / "capsem-bashrc",
-        "guest/artifacts/banner.txt": repo_root / "guest" / "artifacts" / "banner.txt",
-        "guest/artifacts/tips.txt": repo_root / "guest" / "artifacts" / "tips.txt",
-        "guest/artifacts/capsem-doctor": repo_root / "guest" / "artifacts" / "capsem-doctor",
-        "guest/artifacts/capsem-bench": repo_root / "guest" / "artifacts" / "capsem-bench",
-        "guest/artifacts/snapshots": repo_root / "guest" / "artifacts" / "snapshots",
-        "guest/artifacts/capsem_bench/": repo_root / "guest" / "artifacts" / "capsem_bench",
-        "guest/artifacts/diagnostics/": repo_root / "guest" / "artifacts" / "diagnostics",
+        **{
+            f"guest/artifacts/{name}": artifacts / name
+            for name in ["capsem-init", *ROOTFS_SUPPORT_FILES, *ROOTFS_SCRIPTS]
+        },
+        **{
+            f"guest/artifacts/{name}/": artifacts / name
+            for name in ROOTFS_SCRIPT_DIRS
+        },
         "config/capsem-ca.crt": repo_root / "config" / "capsem-ca.crt",
     }
 
@@ -368,8 +380,8 @@ def run_all_checks(guest_dir: Path, repo_root: Path) -> list[CheckResult]:
 def format_results(results: list[CheckResult]) -> str:
     """Format check results as human-readable output."""
     lines: list[str] = []
-    lines.append("capsem-builder doctor")
-    lines.append("=" * 21)
+    lines.append("capsem-admin doctor")
+    lines.append("=" * 20)
 
     # Group by category based on check name
     categories: dict[str, list[CheckResult]] = {}

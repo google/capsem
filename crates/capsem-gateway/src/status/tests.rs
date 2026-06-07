@@ -171,6 +171,9 @@ fn test_vm(id: &str, name: Option<&str>, status: &str, persistent: bool) -> VmSu
         name: name.map(|s| s.into()),
         status: status.into(),
         persistent,
+        profile_id: None,
+        profile_revision: None,
+        profile_status: None,
         uptime_secs: None,
         total_input_tokens: None,
         total_output_tokens: None,
@@ -254,6 +257,122 @@ async fn fetch_status_multiple_vms() {
     assert_eq!(rs.total_cpus, 7);
     assert_eq!(rs.running_count, 2);
     assert_eq!(rs.stopped_count, 1);
+    h.abort();
+}
+
+#[tokio::test]
+async fn fetch_status_preserves_service_asset_state() {
+    let mock = axum::Router::new().route(
+        "/list",
+        axum::routing::get(|| async {
+            axum::Json(serde_json::json!({
+                "sandboxes": [],
+                "asset_health": {
+                    "ready": false,
+                    "state": "updating",
+                    "profile_id": "everyday-work",
+                    "profile_revision": "2026.0520.1",
+                    "profile_payload_hash": "blake3:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                    "profile_assets": [{
+                        "logical_name": "rootfs.squashfs",
+                        "hash": "blake3:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                        "source_url": "https://assets.example.test/rootfs.squashfs",
+                        "size": 24,
+                        "content_type": "application/vnd.squashfs"
+                    }],
+                    "version": "2026.0513.1",
+                    "arch": "arm64",
+                    "missing": ["rootfs.squashfs"],
+                    "progress": {
+                        "logical_name": "rootfs.squashfs",
+                        "bytes_done": 12,
+                        "bytes_total": 24,
+                        "done": false
+                    },
+                    "retry_count": 2,
+                    "retryable": true,
+                    "error": "GET fixture returned 503",
+                    "saved_vm_dependencies": [{
+                        "vm": "saved-old",
+                        "asset_version": "2026.0415.1",
+                        "arch": "arm64",
+                        "missing": ["rootfs.squashfs"],
+                        "recovery_hint": "restore assets"
+                    }]
+                }
+            }))
+        }),
+    );
+    let (path, h, _d) = mock_uds(mock).await;
+
+    let state = test_app_state(&path);
+    let resp = fetch_status(&state).await;
+    let assets = resp.assets.expect("gateway should preserve asset health");
+    assert_eq!(assets.state, "updating");
+    assert!(!assets.ready);
+    assert_eq!(assets.version.as_deref(), Some("2026.0513.1"));
+    assert_eq!(assets.profile_id.as_deref(), Some("everyday-work"));
+    assert_eq!(assets.profile_revision.as_deref(), Some("2026.0520.1"));
+    assert_eq!(
+        assets.profile_payload_hash.as_deref(),
+        Some("blake3:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee")
+    );
+    assert_eq!(assets.profile_assets.len(), 1);
+    assert_eq!(assets.profile_assets[0].logical_name, "rootfs.squashfs");
+    assert_eq!(
+        assets.profile_assets[0].source_url,
+        "https://assets.example.test/rootfs.squashfs"
+    );
+    assert_eq!(assets.arch.as_deref(), Some("arm64"));
+    assert_eq!(assets.missing, vec!["rootfs.squashfs"]);
+    assert_eq!(assets.retry_count, 2);
+    assert!(assets.retryable);
+    assert_eq!(assets.error.as_deref(), Some("GET fixture returned 503"));
+    assert_eq!(assets.saved_vm_dependencies.len(), 1);
+    assert_eq!(assets.saved_vm_dependencies[0].vm, "saved-old");
+    assert_eq!(
+        assets.saved_vm_dependencies[0].missing,
+        vec!["rootfs.squashfs"]
+    );
+    let progress = assets.progress.expect("progress should pass through");
+    assert_eq!(progress.logical_name, "rootfs.squashfs");
+    assert_eq!(progress.bytes_done, 12);
+    assert_eq!(progress.bytes_total, Some(24));
+    assert!(!progress.done);
+    h.abort();
+}
+
+#[tokio::test]
+async fn fetch_status_preserves_vm_profile_identity() {
+    let mock = axum::Router::new().route(
+        "/list",
+        axum::routing::get(|| async {
+            axum::Json(serde_json::json!({
+                "sandboxes": [{
+                    "id": "vm-profiled",
+                    "name": "profiled",
+                    "status": "Running",
+                    "persistent": true,
+                    "ram_mb": 2048,
+                    "cpus": 2,
+                    "profile_id": "everyday-work",
+                    "profile_revision": "2026.0520.1",
+                    "profile_status": "current"
+                }]
+            }))
+        }),
+    );
+    let (path, h, _d) = mock_uds(mock).await;
+
+    let state = test_app_state(&path);
+    let resp = fetch_status(&state).await;
+    assert_eq!(resp.service, "running");
+    assert_eq!(resp.vms.len(), 1);
+    assert_eq!(resp.vms[0].profile_id.as_deref(), Some("everyday-work"));
+    assert_eq!(resp.vms[0].profile_revision.as_deref(), Some("2026.0520.1"));
+    assert_eq!(resp.vms[0].profile_status.as_deref(), Some("current"));
+    let json = serde_json::to_value(&resp).unwrap();
+    assert_eq!(json["vms"][0]["profile_status"], "current");
     h.abort();
 }
 

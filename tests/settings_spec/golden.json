@@ -187,6 +187,21 @@
                 "hidden": false,
                 "builtin": false
               }
+            },
+            {
+              "kind": "setting",
+              "key": "test_ai.provider.rerun",
+              "name": "Rerun wizard",
+              "description": "Re-run the setup wizard",
+              "setting_type": "action",
+              "metadata": {
+                "domains": [],
+                "choices": [],
+                "rules": {},
+                "action": "rerun_wizard",
+                "hidden": false,
+                "builtin": false
+              }
             }
           ]
         }

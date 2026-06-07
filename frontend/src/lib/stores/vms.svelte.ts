@@ -2,23 +2,17 @@
 // VM list + resource summary. Also provides lifecycle methods (stop, delete, etc.).
 
 import * as api from '../api';
-import type { AssetStatusResponse } from '../types/assets';
-import type { VmSummary, ResourceSummary, ProvisionRequest, ForkRequest, ForkResponse } from '../types/gateway';
-
-function assetStatusError(e: unknown): string {
-  if (!(e instanceof Error)) return 'Asset status unavailable';
-  const stripped = e.message.replace(/^API error \d+:\s*/, '').trim();
-  return stripped || 'Asset status unavailable';
-}
+import type { VmSummary, ResourceSummary, AssetHealth, ProvisionRequest, ForkRequest, ForkResponse } from '../types/gateway';
 
 class VmStore {
   vms = $state<VmSummary[]>([]);
   resourceSummary = $state<ResourceSummary | null>(null);
   serviceStatus = $state<string>('unknown');
-  assetHealth = $state<AssetStatusResponse | null>(null);
+  assetHealth = $state<AssetHealth | null>(null);
   acting = $state(false);
   polled = $state(false);
   showCreateModal = $state(false);
+  showAssetReadinessModal = $state(false);
 
   get loading(): boolean {
     return !this.polled || this.acting;
@@ -35,16 +29,7 @@ class VmStore {
       this.vms = status.vms;
       this.resourceSummary = status.resource_summary;
       this.serviceStatus = status.service;
-      try {
-        this.assetHealth = await api.getAssetsStatus();
-      } catch (e) {
-        this.assetHealth = {
-          ready: false,
-          downloading: false,
-          assets: [],
-          error: assetStatusError(e),
-        };
-      }
+      this.assetHealth = status.assets ?? null;
       this.polled = true;
       this.error = null;
       // Only log state transitions, not every 2s poll.
@@ -139,25 +124,12 @@ class VmStore {
 
   async provision(opts: ProvisionRequest): Promise<{ id: string; name: string }> {
     console.log('[vmStore] provision(%o)', opts);
-    if (this.assetHealth?.ready !== true) {
-      throw new Error('VM assets are not ready');
-    }
     this.acting = true;
     try {
       const result = await api.provisionVm(opts);
       await this.refresh();
       const vm = this.vms.find(v => v.id === result.id);
       return { id: result.id, name: vm?.name ?? result.id };
-    } finally {
-      this.acting = false;
-    }
-  }
-
-  async ensureAssets(): Promise<void> {
-    this.acting = true;
-    try {
-      this.assetHealth = await api.ensureAssets();
-      await this.refresh();
     } finally {
       this.acting = false;
     }

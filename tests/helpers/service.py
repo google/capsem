@@ -11,15 +11,25 @@ import uuid
 from pathlib import Path
 
 from .constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
+from .profile_asset_fixture import find_asset, write_profile_home
 from .sign import sign_binary
 from .uds_client import UdsHttpClient
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
-SERVICE_BINARY = PROJECT_ROOT / "target/debug/capsem-service"
-PROCESS_BINARY = PROJECT_ROOT / "target/debug/capsem-process"
-GATEWAY_BINARY = PROJECT_ROOT / "target/debug/capsem-gateway"
-TRAY_BINARY = PROJECT_ROOT / "target/debug/capsem-tray"
-ASSETS_DIR = PROJECT_ROOT / "assets"
+
+
+def binary_dir_from_env(project_root):
+    configured = os.environ.get("CAPSEM_TEST_BIN_DIR", "target/debug")
+    path = Path(configured)
+    return path if path.is_absolute() else project_root / path
+
+
+BIN_DIR = binary_dir_from_env(PROJECT_ROOT)
+SERVICE_BINARY = BIN_DIR / "capsem-service"
+PROCESS_BINARY = BIN_DIR / "capsem-process"
+GATEWAY_BINARY = BIN_DIR / "capsem-gateway"
+TRAY_BINARY = BIN_DIR / "capsem-tray"
+ASSETS_DIR = Path(os.environ.get("CAPSEM_ASSETS_DIR", PROJECT_ROOT / "assets"))
 
 
 ARTIFACT_MAX_FILE_BYTES = 25 * 1024 * 1024  # 25 MB hard cap per file
@@ -172,11 +182,15 @@ def _rotate_artifacts(root, keep):
 class ServiceInstance:
     """A running capsem-service instance on an isolated socket."""
 
-    def __init__(self):
+    def __init__(self, extra_env=None, service_toml=None, pass_assets_dir=True, assets_dir=None):
         self.tmp_dir = Path(tempfile.mkdtemp(prefix="capsem-test-"))
         self.uds_path = self.tmp_dir / f"service-{uuid.uuid4().hex[:8]}.sock"
         self.proc = None
         self._log_file = None
+        self.extra_env = extra_env or {}
+        self.service_toml = service_toml
+        self.pass_assets_dir = pass_assets_dir
+        self.assets_dir = Path(assets_dir) if assets_dir is not None else None
 
     def start(self):
         # Sign binaries before spawning (macOS needs virtualization entitlement)
@@ -186,40 +200,73 @@ class ServiceInstance:
         sign_binary(TRAY_BINARY)
 
         arch = "arm64" if os.uname().machine == "arm64" else "x86_64"
-        assets_dir = ASSETS_DIR / arch
+        assets_dir = self.assets_dir or (ASSETS_DIR / arch)
+        asset_cache = self.tmp_dir / "assets"
 
         env = os.environ.copy()
         env["RUST_LOG"] = "debug"
         env["CAPSEM_RUN_DIR"] = str(self.tmp_dir)
         env["CAPSEM_HOME"] = str(self.tmp_dir)
         env["HOME"] = str(self.tmp_dir)
+        env.update(self.extra_env)
 
         log_path = self.tmp_dir / "service.log"
         print(f"SERVICE LOG: {log_path}")
-        self._log_file = open(log_path, "w")
+
+        if self.service_toml is not None:
+            (self.tmp_dir / "service.toml").write_text(self.service_toml)
+        else:
+            assets = {
+                "vmlinuz": find_asset(assets_dir, "vmlinuz"),
+                "initrd.img": find_asset(assets_dir, "initrd.img"),
+                "rootfs.squashfs": find_asset(assets_dir, "rootfs.squashfs"),
+            }
+            write_profile_home(self.tmp_dir, asset_cache, assets)
+            assets_dir = asset_cache
 
         # Deliberately omit --tray-binary: the tray is a user-facing macOS
         # menu bar icon and spawning it on every test instance flashes the
         # menu bar dozens of times during a full suite run. Companion
         # lifecycle tests exercise the tray via their own spawn.
-        self.proc = subprocess.Popen(
-            [
-                str(SERVICE_BINARY),
-                "--uds-path", str(self.uds_path),
-                "--assets-dir", str(assets_dir),
-                "--process-binary", str(PROCESS_BINARY),
-                "--gateway-binary", str(GATEWAY_BINARY),
-                "--gateway-port", "0",
-                "--parent-pid", str(os.getpid()),
-                "--foreground",
-            ],
-            env=env,
-            stdout=self._log_file,
-            stderr=self._log_file,
-        )
+        cmd = [
+            str(SERVICE_BINARY),
+            "--uds-path",
+            str(self.uds_path),
+            "--process-binary",
+            str(PROCESS_BINARY),
+            "--gateway-binary",
+            str(GATEWAY_BINARY),
+            "--gateway-port",
+            "0",
+            "--parent-pid",
+            str(os.getpid()),
+            "--foreground",
+        ]
+        if self.pass_assets_dir:
+            cmd += ["--assets-dir", str(assets_dir)]
+
+        log_fd = os.open(log_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
+        try:
+            self.proc = subprocess.Popen(
+                cmd,
+                env=env,
+                stdout=log_fd,
+                stderr=log_fd,
+            )
+        finally:
+            os.close(log_fd)
 
         start = time.time()
         while time.time() - start < 15:
+            if self.proc.poll() is not None:
+                code = self.proc.returncode
+                log_text = log_path.read_text() if log_path.exists() else ""
+                self.stop()
+                if log_text:
+                    print(f"\n--- SERVICE LOG ---\n{log_text}\n---", file=sys.stderr)
+                raise RuntimeError(
+                    f"capsem-service exited before accepting connections (exit={code})"
+                )
             if self.uds_path.exists():
                 # Socket file exists -- verify server is actually accepting connections
                 try:
@@ -234,9 +281,10 @@ class ServiceInstance:
                     pass
             time.sleep(0.5)
 
+        log_text = log_path.read_text() if log_path.exists() else ""
         self.stop()
-        if log_path.exists():
-            print(f"\n--- SERVICE LOG ---\n{log_path.read_text()}\n---", file=sys.stderr)
+        if log_text:
+            print(f"\n--- SERVICE LOG ---\n{log_text}\n---", file=sys.stderr)
         raise RuntimeError("capsem-service failed to accept connections within 15s")
 
     def client(self):
@@ -284,6 +332,28 @@ def wait_exec_ready(client, vm_name, timeout=EXEC_READY_TIMEOUT):
         return resp is not None and "ready" in resp.get("stdout", "")
     except Exception:
         return False
+
+
+def select_editable_profile(client, source_profile="profile-asset-boot", prefix="pytest"):
+    """Fork the locked E2E profile and select the fork for mutation tests."""
+    profile_id = f"{prefix}-{uuid.uuid4().hex[:8]}"
+    created = client.post(
+        f"/profiles/{source_profile}/fork",
+        {"id": profile_id, "name": f"{prefix} editable profile"},
+    )
+    assert created is not None and created.get("profile", {}).get("id") == profile_id, (
+        f"failed to fork editable profile: {created}"
+    )
+    selected = client.post(f"/settings/presets/{profile_id}", {})
+    selected_default = (
+        selected.get("settings_profiles", {}).get("service", {}).get("default_profile")
+        if selected
+        else None
+    )
+    assert selected is not None and selected_default == profile_id, (
+        f"failed to select editable profile {profile_id}: {selected}"
+    )
+    return profile_id
 
 
 def vm_name(prefix="test"):

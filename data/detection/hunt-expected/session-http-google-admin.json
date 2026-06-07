@@ -1,0 +1,112 @@
+{
+  "total_matches": 1,
+  "unique_evidence_matches": 1,
+  "truncated": false,
+  "rows": [
+    {
+      "event_ref": {
+        "corpus": "session_db",
+        "session_id": "hunt-session",
+        "event_id": "evt-admin-google",
+        "sequence_no": null,
+        "timestamp_unix_ms": 1700000000001
+      },
+      "rule_id": "detect-google-admin",
+      "pack_id": "runtime-detection",
+      "evidence_signature": "9afe8a591e967a2b329a922846770d68e105fad83b172fdeea470e3e337f661e",
+      "matched_fields": [
+        {
+          "path": "common.event_id",
+          "value": "evt-admin-google"
+        },
+        {
+          "path": "common.event_type",
+          "value": "http.request"
+        },
+        {
+          "path": "common.source_engine",
+          "value": "network"
+        },
+        {
+          "path": "common.enforceability",
+          "value": "inline_blockable"
+        },
+        {
+          "path": "common.attribution_scope",
+          "value": "vm"
+        },
+        {
+          "path": "common.origin_kind",
+          "value": "guest_network"
+        },
+        {
+          "path": "common.timestamp_unix_ms",
+          "value": 1700000000001
+        },
+        {
+          "path": "common.vm_id",
+          "value": "hunt-vm"
+        },
+        {
+          "path": "common.session_id",
+          "value": "hunt-session"
+        },
+        {
+          "path": "common.profile_id",
+          "value": "coding"
+        },
+        {
+          "path": "common.user_id",
+          "value": "user-1"
+        },
+        {
+          "path": "common.accounting_owner",
+          "value": "vm:hunt-vm"
+        },
+        {
+          "path": "http.request.method",
+          "value": "GET"
+        },
+        {
+          "path": "http.request.host",
+          "value": "google.example.test"
+        },
+        {
+          "path": "http.request.path_class",
+          "value": "/admin/settings"
+        },
+        {
+          "path": "http.request.bytes",
+          "value": 12
+        },
+        {
+          "path": "http.request.scheme",
+          "value": "https"
+        },
+        {
+          "path": "http.request.port",
+          "value": 443
+        },
+        {
+          "path": "http.request.path",
+          "value": "/admin/settings"
+        },
+        {
+          "path": "http.request.url",
+          "value": "https://google.example.test/admin/settings"
+        },
+        {
+          "path": "http.response.status",
+          "value": 200
+        },
+        {
+          "path": "http.response.bytes",
+          "value": 34
+        }
+      ],
+      "outcome": {
+        "outcome": "matched"
+      }
+    }
+  ]
+}

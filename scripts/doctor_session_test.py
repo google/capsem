@@ -70,7 +70,7 @@ class Results:
 def run_doctor(binary: str, assets_dir: str) -> tuple[str, int]:
     """Boot the VM with capsem-doctor, return (session_id, exit_code).
 
-    Finds the session by looking for the newest run-* dir created during
+    Finds the session by looking for the newest temp-run dir created during
     this invocation (the service preserves session dirs after `capsem run`).
     """
     env = {
@@ -96,7 +96,11 @@ def run_doctor(binary: str, assets_dir: str) -> tuple[str, int]:
 
     # Find the new session dir.
     new_sessions = sorted(
-        (p for p in SESSIONS_DIR.iterdir() if p.name not in existing and p.name.startswith("run-")),
+        (
+            p
+            for p in SESSIONS_DIR.iterdir()
+            if p.name not in existing and _is_capsem_run_session_name(p.name)
+        ),
         key=lambda p: p.stat().st_mtime,
         reverse=True,
     ) if SESSIONS_DIR.exists() else []
@@ -111,6 +115,11 @@ def run_doctor(binary: str, assets_dir: str) -> tuple[str, int]:
     session_id = new_sessions[0].name
     print(f"  session: {CYAN}{session_id}{RESET}  exit_code: {exit_code}")
     return session_id, exit_code
+
+
+def _is_capsem_run_session_name(name: str) -> bool:
+    """Return true for temp VM session names created by `capsem run`."""
+    return name.endswith("-tmp") or name.startswith("run-")
 
 
 def verify_session(session_id: str) -> bool:

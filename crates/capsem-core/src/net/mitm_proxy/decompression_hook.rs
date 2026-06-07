@@ -72,6 +72,11 @@ fn parse_gzip_header(buf: &[u8]) -> HeaderParse {
         return HeaderParse::Malformed;
     }
     let flg = buf[3];
+    // RFC 1952 reserves FLG bits 5-7. If any are set, this is not a
+    // valid gzip member; pass it through rather than silently eating bytes.
+    if flg & 0b1110_0000 != 0 {
+        return HeaderParse::Malformed;
+    }
     let mut pos = MIN_HEADER_LEN;
 
     if flg & FEXTRA != 0 {

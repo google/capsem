@@ -3,10 +3,10 @@
 //! provider-agnostic `LlmEvent`s into a shared [`LlmEventStream`] slot.
 //!
 //! T1 slice 6. Three concrete hooks (Anthropic / OpenAI / Google),
-//! each gating on the model protocol resolved by MITM from the live
-//! endpoint registry. Only the matching hook does work for a given
-//! connection; the other two short-circuit before touching state.
-//! Together they replace the inline parsing in `ai_traffic::ai_body::AiResponseBody`.
+//! each gating on its provider's domain. Only the matching hook does
+//! work for a given connection; the other two short-circuit before
+//! touching state. Together they replace the inline parsing in
+//! `ai_traffic::ai_body::AiResponseBody`.
 //!
 //! Slot ownership:
 //! - `SseEventStream` (owned by `SseParserHook`): producer-only here.
@@ -23,11 +23,11 @@ use bytes::Bytes;
 
 use super::hooks::{ChunkCtx, ChunkHook, ConnMeta};
 use super::sse_parser_hook::SseEventStream;
-use crate::net::ai_traffic::events::{LlmEvent, ProviderStreamParser};
 use crate::net::ai_traffic::provider::ProviderKind;
 use crate::net::interpreters::anthropic_interpreter::AnthropicStreamParserWithState;
 use crate::net::interpreters::google_interpreter::GoogleStreamParser;
 use crate::net::interpreters::openai_interpreter::OpenAiStreamParser;
+use capsem_network_engine::model_stream::{LlmEvent, ProviderStreamParser};
 
 /// Per-request shared accumulator of provider-agnostic `LlmEvent`s.
 /// All three interpreter hooks write to the same slot (only one
@@ -40,8 +40,19 @@ pub struct LlmEventStream {
     pub provider: Option<ProviderKind>,
 }
 
+fn detect_ai_provider(domain: &str) -> Option<ProviderKind> {
+    match domain {
+        "api.anthropic.com" => Some(ProviderKind::Anthropic),
+        "api.openai.com" => Some(ProviderKind::OpenAi),
+        "generativelanguage.googleapis.com" => Some(ProviderKind::Google),
+        _ => None,
+    }
+}
+
 fn conn_matches_provider(conn: &ConnMeta, provider: ProviderKind) -> bool {
-    conn.ai_provider == Some(provider)
+    conn.ai_provider
+        .or_else(|| detect_ai_provider(&conn.domain))
+        == Some(provider)
 }
 
 /// Run an interpreter pass: drain `SseEventStream`, parse via the

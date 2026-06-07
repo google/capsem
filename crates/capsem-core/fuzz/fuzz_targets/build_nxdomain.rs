@@ -9,5 +9,5 @@
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {
-    let _ = capsem_core::net::parsers::dns_parser::build_nxdomain(data);
+    let _ = capsem_network_engine::dns_parser::build_nxdomain(data);
 });

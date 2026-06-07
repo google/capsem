@@ -32,6 +32,10 @@ pub struct ProvisionRequest {
     pub env: Option<HashMap<String, String>>,
     #[serde(skip_serializing_if = "Option::is_none", alias = "image")]
     pub from: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile_revision: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -42,6 +46,16 @@ pub struct ProvisionResponse {
     /// when talking to an older service that pre-dates this field.
     #[serde(default)]
     pub uds_path: Option<std::path::PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile_revision: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile_status: Option<SessionProfileStatus>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile_pin: Option<SavedVmProfilePin>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub asset_health: Option<AssetHealth>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -73,9 +87,19 @@ pub struct SessionInfo {
     #[serde(default)]
     pub version: Option<String>,
     #[serde(default)]
+    pub base_assets: Option<SavedVmBaseAssets>,
+    #[serde(default)]
+    pub profile_pin: Option<SavedVmProfilePin>,
+    #[serde(default)]
     pub forked_from: Option<String>,
     #[serde(default)]
     pub description: Option<String>,
+    #[serde(default)]
+    pub profile_id: Option<String>,
+    #[serde(default)]
+    pub profile_revision: Option<String>,
+    #[serde(default)]
+    pub profile_status: Option<SessionProfileStatus>,
     #[serde(default)]
     pub created_at: Option<String>,
     #[serde(default)]
@@ -107,10 +131,123 @@ pub struct SessionInfo {
     pub last_error: Option<String>,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionProfileStatus {
+    Current,
+    NeedsUpdate,
+    Deprecated,
+    Revoked,
+    Corrupted,
+    Unknown,
+}
+
+impl SessionProfileStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Current => "current",
+            Self::NeedsUpdate => "needs_update",
+            Self::Deprecated => "deprecated",
+            Self::Revoked => "revoked",
+            Self::Corrupted => "corrupted",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ListResponse {
     #[serde(rename = "sandboxes")]
     pub sessions: Vec<SessionInfo>,
+    #[serde(default)]
+    pub asset_health: Option<AssetHealth>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct AssetProgress {
+    pub logical_name: String,
+    pub bytes_done: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bytes_total: Option<u64>,
+    pub done: bool,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct AssetHealth {
+    pub ready: bool,
+    #[serde(default = "default_asset_state")]
+    pub state: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile_revision: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile_payload_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub profile_assets: Vec<ProfileAssetProvenance>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub arch: Option<String>,
+    #[serde(default)]
+    pub missing: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub progress: Option<AssetProgress>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    #[serde(default)]
+    pub retry_count: u32,
+    #[serde(default)]
+    pub retryable: bool,
+    #[serde(default)]
+    pub saved_vm_dependencies: Vec<SavedVmAssetDependency>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checked_at_unix_secs: Option<u64>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct ProfileAssetProvenance {
+    pub logical_name: String,
+    pub hash: String,
+    pub source_url: String,
+    pub size: u64,
+    pub content_type: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct SavedVmBaseAssets {
+    pub asset_version: String,
+    pub arch: String,
+    pub kernel_hash: String,
+    pub initrd_hash: String,
+    pub rootfs_hash: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub guest_abi: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct SavedVmProfilePin {
+    pub profile_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile_revision: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile_payload_hash: Option<String>,
+    pub package_contract_hash: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_assets: Option<SavedVmBaseAssets>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct SavedVmAssetDependency {
+    pub vm: String,
+    pub asset_version: String,
+    pub arch: String,
+    pub missing: Vec<String>,
+    pub recovery_hint: String,
+}
+
+fn default_asset_state() -> String {
+    "unknown".to_string()
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -123,6 +260,10 @@ pub struct RunRequest {
     pub command: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeout_secs: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile_revision: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub env: Option<HashMap<String, String>>,
 }
@@ -144,6 +285,7 @@ pub struct LogsResponse {
     pub logs: String,
     pub serial_logs: Option<String>,
     pub process_logs: Option<String>,
+    pub security_logs: Option<String>,
 }
 
 /// A single command history entry from the service.
@@ -178,39 +320,6 @@ pub struct ExecResponse {
     pub stdout: String,
     pub stderr: String,
     pub exit_code: i32,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct AssetEntry {
-    pub name: String,
-    pub status: String,
-    #[serde(default)]
-    pub path: Option<String>,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct AssetStatusResponse {
-    pub ready: bool,
-    #[serde(default)]
-    pub downloading: bool,
-    #[serde(default)]
-    pub current_asset: Option<String>,
-    #[serde(default)]
-    pub bytes_done: Option<u64>,
-    #[serde(default)]
-    pub bytes_total: Option<u64>,
-    #[serde(default)]
-    pub asset_version: Option<String>,
-    #[serde(default)]
-    pub assets: Vec<AssetEntry>,
-    #[serde(default)]
-    pub error: Option<String>,
-    #[serde(default)]
-    pub ensured: Option<bool>,
-    #[serde(default)]
-    pub downloaded: Option<usize>,
-    #[serde(default)]
-    pub reconcile_error: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -398,30 +507,43 @@ impl UdsClient {
         // CAPSEM_HOME.
         if !isolation_mode_active() && service_install::is_service_installed() {
             info!("Service unit installed, using service manager");
-            match paths::try_start_via_service_manager().await {
-                Ok(true) => {
-                    info!("Service start requested via service manager");
-                    return self
-                        .connect_with_timeout(ConnectMode::AwaitStartup)
-                        .await
-                        .context(
-                            "Service manager started capsem but socket not ready. \
+            match tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                paths::try_start_via_service_manager(),
+            )
+            .await
+            {
+                Err(_) => {
+                    return Err(anyhow::anyhow!(
+                        "Service manager start timed out. \
+                         Check logs or reinstall with `capsem install`"
+                    ));
+                }
+                Ok(result) => match result {
+                    Ok(true) => {
+                        info!("Service start requested via service manager");
+                        return self
+                            .connect_with_timeout(ConnectMode::AwaitStartup)
+                            .await
+                            .context(
+                                "Service manager started capsem but socket not ready. \
                              Check logs: journalctl --user -u capsem (Linux) or \
                              ~/Library/Logs/capsem/service.log (macOS)",
-                        );
-                }
-                Ok(false) => {
-                    return Err(anyhow::anyhow!(
-                        "Service unit found but service manager reports not installed"
-                    ));
-                }
-                Err(e) => {
-                    return Err(anyhow::anyhow!(
-                        "Service manager start failed: {}. \
+                            );
+                    }
+                    Ok(false) => {
+                        return Err(anyhow::anyhow!(
+                            "Service unit found but service manager reports not installed"
+                        ));
+                    }
+                    Err(e) => {
+                        return Err(anyhow::anyhow!(
+                            "Service manager start failed: {}. \
                          Check logs or reinstall with `capsem install`",
-                        e
-                    ));
-                }
+                            e
+                        ));
+                    }
+                },
             }
         }
 
@@ -462,7 +584,19 @@ impl UdsClient {
             .spawn()
             .context("failed to spawn capsem-service")?;
 
-        match self.connect_with_timeout(ConnectMode::AwaitStartup).await {
+        let connect = self.connect_with_timeout(ConnectMode::AwaitStartup);
+        tokio::pin!(connect);
+
+        match tokio::select! {
+            result = &mut connect => result,
+            status = child.wait() => status
+                .context("failed to wait for capsem-service startup")
+                .and_then(|status| {
+                    Err(anyhow::anyhow!(
+                        "capsem-service exited before becoming ready: {status}"
+                    ))
+                }),
+        } {
             Ok(stream) => {
                 info!("Service spawned and responding");
                 tokio::spawn(async move {
@@ -470,7 +604,10 @@ impl UdsClient {
                 });
                 Ok(stream)
             }
-            Err(e) => Err(e).context("capsem-service failed to start"),
+            Err(e) => {
+                let _ = child.kill().await;
+                Err(e).context("capsem-service failed to start")
+            }
         }
     }
 
@@ -545,6 +682,14 @@ impl UdsClient {
         body: T,
     ) -> Result<R> {
         self.request("POST", path, Some(body)).await
+    }
+
+    pub async fn put<T: Serialize, R: for<'de> Deserialize<'de>>(
+        &self,
+        path: &str,
+        body: T,
+    ) -> Result<R> {
+        self.request("PUT", path, Some(body)).await
     }
 
     pub async fn get<R: for<'de> Deserialize<'de>>(&self, path: &str) -> Result<R> {

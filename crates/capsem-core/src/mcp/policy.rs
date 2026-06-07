@@ -3,10 +3,10 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
 // ---------------------------------------------------------------------------
-// MCP user/corp config (stored in user.toml / corp.toml under [mcp])
+// MCP user/corp config projected from Profile V2 effective settings
 // ---------------------------------------------------------------------------
 
-/// MCP configuration from user.toml or corp.toml `[mcp]` section.
+/// MCP configuration projected from Profile V2 effective settings.
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 pub struct McpUserConfig {
     /// Global MCP policy: "allow" (default) or "block".
@@ -27,6 +27,9 @@ pub struct McpUserConfig {
     /// Per-tool permission overrides (namespaced_name -> decision).
     #[serde(default)]
     pub tool_permissions: HashMap<String, ToolDecision>,
+    /// Conditional request/response rules projected from Profile V2.
+    #[serde(skip)]
+    pub audit_rules: Vec<McpDecisionRule>,
 }
 
 impl McpUserConfig {
@@ -70,12 +73,15 @@ impl McpUserConfig {
             tool_decisions.insert(k.clone(), *v);
         }
 
+        let mut audit_rules = self.audit_rules.clone();
+        audit_rules.extend(corp.audit_rules.clone());
+
         McpPolicy {
             blocked_servers,
             allowed_servers: Vec::new(),
             tool_decisions,
             default_tool_decision: default_perm,
-            audit_rules: Vec::new(),
+            audit_rules,
         }
     }
 }
@@ -84,14 +90,30 @@ impl McpUserConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct McpManualServer {
     pub name: String,
-    /// HTTP endpoint URL for the MCP server.
+    /// HTTP endpoint URL for the MCP server. Empty for stdio servers.
+    #[serde(default)]
     pub url: String,
+    /// Binary path for stdio MCP servers.
+    #[serde(default)]
+    pub command: Option<String>,
+    /// Command-line arguments for stdio MCP servers.
+    #[serde(default)]
+    pub args: Vec<String>,
+    /// Environment variables for stdio MCP servers.
+    #[serde(default)]
+    pub env: HashMap<String, String>,
     /// Custom HTTP headers to send with every request.
     #[serde(default)]
     pub headers: HashMap<String, String>,
     /// Bearer token for Authorization header.
     #[serde(default)]
     pub bearer_token: Option<String>,
+    /// Optional process pool size for MCP servers with stateless tools.
+    #[serde(default)]
+    pub pool_size: Option<u32>,
+    /// Tool names that may be safely round-robined across pool peers.
+    #[serde(default)]
+    pub pool_safe_tools: Vec<String>,
     #[serde(default = "default_true")]
     pub enabled: bool,
 }
@@ -118,6 +140,7 @@ pub enum ToolDecision {
 pub enum McpDecisionRuleAction {
     Allow,
     Deny,
+    Rewrite,
 }
 
 /// A request/response matcher for audit-only MCP decisions.
@@ -143,6 +166,10 @@ pub enum McpDecisionRuleMatch {
         path: String,
         equals: serde_json::Value,
     },
+    Condition {
+        callback: String,
+        condition: String,
+    },
 }
 
 /// A local MCP audit rule. T2 keeps these in the runtime policy so the
@@ -154,6 +181,8 @@ pub struct McpDecisionRule {
     pub action: McpDecisionRuleAction,
     pub matches: McpDecisionRuleMatch,
     pub reason: Option<String>,
+    pub rewrite_target: Option<String>,
+    pub rewrite_value: Option<String>,
 }
 
 impl ToolDecision {
@@ -363,8 +392,13 @@ mod tests {
             servers: vec![McpManualServer {
                 name: "test".into(),
                 url: "https://mcp.example.com/v1".into(),
+                command: None,
+                args: vec![],
+                env: HashMap::new(),
                 headers: HashMap::new(),
                 bearer_token: Some("tok_123".into()),
+                pool_size: None,
+                pool_safe_tools: Vec::new(),
                 enabled: true,
             }],
             server_enabled: {
@@ -377,6 +411,7 @@ mod tests {
                 m.insert("github__delete_repo".into(), ToolDecision::Block);
                 m
             },
+            audit_rules: Vec::new(),
         };
         let toml_str = toml::to_string(&cfg).unwrap();
         let decoded: McpUserConfig = toml::from_str(&toml_str).unwrap();

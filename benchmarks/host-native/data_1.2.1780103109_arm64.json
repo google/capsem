@@ -1,0 +1,164 @@
+{
+  "kind": "host_native_baseline",
+  "version": "0.1.0",
+  "timestamp": 1780149845.810327,
+  "filesystem": {
+    "directory": "/Users/elie/git/capsem-tui-control/target/host-native-benchmark/tmp5i2863d0",
+    "disk_usage": {
+      "total_bytes": 3996276899840,
+      "used_bytes": 961723437056,
+      "free_bytes": 3034553462784
+    }
+  },
+  "disk": {
+    "directory": "/Users/elie/git/capsem-tui-control/target/host-native-benchmark/tmp5i2863d0",
+    "size_mb": 256,
+    "seq_write": {
+      "size_bytes": 268435456,
+      "block_size": 1048576,
+      "duration_ms": 22.5,
+      "throughput_mbps": 11381.3
+    },
+    "seq_read": {
+      "size_bytes": 268435456,
+      "block_size": 1048576,
+      "duration_ms": 13.2,
+      "throughput_mbps": 19417.4
+    },
+    "rand_write_4k": {
+      "count": 10000,
+      "block_size": 4096,
+      "duration_ms": 510.4,
+      "iops": 19592.2,
+      "throughput_mbps": 76.5
+    },
+    "rand_read_4k": {
+      "count": 10000,
+      "block_size": 4096,
+      "duration_ms": 10.9,
+      "iops": 913471.4,
+      "throughput_mbps": 3568.2
+    }
+  },
+  "startup": {
+    "runs_per_command": 3,
+    "commands": {
+      "python3": {
+        "command": [
+          "python3",
+          "--version"
+        ],
+        "timings_ms": [
+          10.9,
+          10.7,
+          10.7
+        ],
+        "min_ms": 10.7,
+        "mean_ms": 10.8,
+        "max_ms": 10.9
+      },
+      "node": {
+        "command": [
+          "node",
+          "--version"
+        ],
+        "timings_ms": [
+          21.2,
+          21.3,
+          26.8
+        ],
+        "min_ms": 21.2,
+        "mean_ms": 23.1,
+        "max_ms": 26.8
+      },
+      "claude": {
+        "command": [
+          "claude",
+          "--version"
+        ],
+        "timings_ms": [
+          2534.3,
+          74.9,
+          44.0
+        ],
+        "min_ms": 44.0,
+        "mean_ms": 884.4,
+        "max_ms": 2534.3
+      },
+      "gemini": {
+        "command": [
+          "gemini",
+          "--version"
+        ],
+        "error": "not found or timed out"
+      },
+      "codex": {
+        "command": [
+          "codex",
+          "--version"
+        ],
+        "timings_ms": [
+          20.7,
+          11.2,
+          20.2
+        ],
+        "min_ms": 11.2,
+        "mean_ms": 17.4,
+        "max_ms": 20.7
+      }
+    }
+  },
+  "small_file_read": {
+    "count": 5000,
+    "files_sampled": 128,
+    "bytes_read": 3280000,
+    "duration_ms": 47.5,
+    "ops_per_sec": 105356.4,
+    "throughput_mbps": 65.9
+  },
+  "metadata_stat": {
+    "entries": 5050,
+    "files": 5000,
+    "dirs": 50,
+    "errors": 0,
+    "duration_ms": 14.2,
+    "stats_per_sec": 356587.0
+  },
+  "io_shape": {
+    "sequential_block_size": 1048576,
+    "random_block_size": 4096,
+    "size_mb": 256
+  },
+  "schema": "capsem.benchmark-artifact.v1",
+  "project_version": "1.2.1780103109",
+  "arch": "arm64",
+  "recorded_at": 1780149849.75119,
+  "recorded_at_utc": "2026-05-30T14:04:09.751193+00:00",
+  "command": "uv run pytest tests/capsem-serial/test_host_native_benchmark.py -xvs",
+  "host": {
+    "platform": "Darwin",
+    "release": "25.5.0",
+    "version": "Darwin Kernel Version 25.5.0: Mon Apr 27 20:41:12 PDT 2026; root:xnu-12377.121.6~2/RELEASE_ARM64_T6050",
+    "machine": "arm64",
+    "processor": "arm",
+    "python_version": "3.14.4",
+    "cpu_count": 18,
+    "cpu_count_logical": 18,
+    "cpu_model": "Apple M5 Max",
+    "cpu_count_physical": 18,
+    "memory_total_bytes": 137438953472,
+    "os_product_version": "26.5",
+    "memory_total_gb": 128.0
+  },
+  "git": {
+    "commit": "0a425541fbdc03cc9821aafb238a0dd4b26ccdcd",
+    "dirty": true,
+    "source_dirty": false,
+    "dirty_paths": [
+      "benchmarks/endpoint-latency/data_1.2.1780103109_arm64.json",
+      "benchmarks/capsem-bench/data_1.2.1780103109_arm64.json",
+      "benchmarks/security-engine/data_1.2.1780103109_arm64_cel_microbench.json",
+      "benchmarks/security-engine/data_1.2.1780103109_arm64_security_packs_microbench.json"
+    ]
+  }
+}

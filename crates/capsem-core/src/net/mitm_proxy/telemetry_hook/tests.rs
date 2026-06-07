@@ -1,9 +1,11 @@
 use super::super::body::BodyStats;
 use super::super::hooks::{ChunkCtx, ChunkHook, ConnMeta, HookState};
 use super::*;
-use crate::credential_broker::{CredentialObservation, CredentialProvider};
-use crate::net::policy_config::{SecurityRuleProfile, SecurityRuleSet, SecurityRuleSource};
-use capsem_logger::{credential_reference, Decision};
+use capsem_logger::Decision;
+use capsem_security_engine::{
+    BlockResponse, ResolvedEventStep, ResolvedEventStepKind, SecurityAction, StepStatus,
+    RESOLVED_EVENT_SCHEMA_VERSION,
+};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -32,52 +34,10 @@ fn any_conn() -> ConnMeta {
     }
 }
 
-struct EnvGuard {
-    old_user: Option<String>,
-    old_home: Option<String>,
-    old_store: Option<String>,
-}
-
-impl EnvGuard {
-    fn install(
-        user_config: &std::path::Path,
-        home: &std::path::Path,
-        test_store: &std::path::Path,
-    ) -> Self {
-        let old_user = std::env::var("CAPSEM_USER_CONFIG").ok();
-        let old_home = std::env::var("HOME").ok();
-        let old_store = std::env::var(crate::credential_broker::TEST_STORE_ENV).ok();
-        std::env::set_var("CAPSEM_USER_CONFIG", user_config);
-        std::env::set_var("HOME", home);
-        std::env::set_var(crate::credential_broker::TEST_STORE_ENV, test_store);
-        Self {
-            old_user,
-            old_home,
-            old_store,
-        }
-    }
-}
-
-impl Drop for EnvGuard {
-    fn drop(&mut self) {
-        match &self.old_user {
-            Some(v) => std::env::set_var("CAPSEM_USER_CONFIG", v),
-            None => std::env::remove_var("CAPSEM_USER_CONFIG"),
-        }
-        match &self.old_home {
-            Some(v) => std::env::set_var("HOME", v),
-            None => std::env::remove_var("HOME"),
-        }
-        match &self.old_store {
-            Some(v) => std::env::set_var(crate::credential_broker::TEST_STORE_ENV, v),
-            None => std::env::remove_var(crate::credential_broker::TEST_STORE_ENV),
-        }
-    }
-}
-
 /// Returns a generic request context for an allowed Anthropic POST.
 fn anthropic_req_ctx() -> TelemetryRequestContext {
     TelemetryRequestContext {
+        event_id_seed: "test-request-seed".into(),
         domain: "api.anthropic.com".into(),
         process_name: Some("agent".into()),
         ai_provider: Some(ProviderKind::Anthropic),
@@ -94,17 +54,132 @@ fn anthropic_req_ctx() -> TelemetryRequestContext {
         max_response_preview: 4096,
         port: 443,
         conn_type: "https-mitm",
+        identity: TelemetryIdentityContext::default(),
         policy_mode: None,
         policy_action: None,
         policy_rule: None,
         policy_reason: None,
-        credential_ref: None,
-        credential_observations: Vec::new(),
+        runtime_security_results: Vec::new(),
     }
 }
 
 fn empty_resp_stats() -> TelemetryResponseStats {
     TelemetryResponseStats::default()
+}
+
+#[test]
+fn http_event_id_seed_prevents_same_millisecond_collisions() {
+    let timestamp_unix_ms = 1779544024000;
+    let mut first = anthropic_req_ctx();
+    let mut second = anthropic_req_ctx();
+    first.event_id_seed = "same-ms-request-1".into();
+    second.event_id_seed = "same-ms-request-2".into();
+
+    let first_event = build_http_security_event(
+        &first,
+        timestamp_unix_ms,
+        Some("trace-winterfell".into()),
+        None,
+        None,
+    );
+    let second_event = build_http_security_event(
+        &second,
+        timestamp_unix_ms,
+        Some("trace-winterfell".into()),
+        None,
+        None,
+    );
+
+    assert_ne!(first_event.common.event_id, second_event.common.event_id);
+}
+
+#[tokio::test]
+async fn same_millisecond_http_events_are_not_collapsed_in_session_db() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("session.db");
+    let db = DbWriter::open(&db_path, 64).expect("db writer");
+    let timestamp_unix_ms = 1779544024000;
+
+    let mut first = anthropic_req_ctx();
+    first.event_id_seed = "same-ms-request-1".into();
+    first.decision = Decision::Denied;
+    first.status_code = Some(403);
+    first.policy_rule = Some("runtime.block_same_ms".into());
+    first.policy_reason = Some("same millisecond regression".into());
+
+    let mut second = first.clone();
+    second.event_id_seed = "same-ms-request-2".into();
+
+    for req_ctx in [&first, &second] {
+        let event = build_http_security_event(
+            req_ctx,
+            timestamp_unix_ms,
+            Some("trace-winterfell".into()),
+            Some(0),
+            None,
+        );
+        let event_id = event.common.event_id.clone();
+        db.write(WriteOp::ResolvedSecurityEvent(ResolvedSecurityEvent {
+            schema_version: RESOLVED_EVENT_SCHEMA_VERSION,
+            event,
+            steps: vec![ResolvedEventStep {
+                kind: ResolvedEventStepKind::EnforcementMatch,
+                status: StepStatus::Matched,
+                rule_id: Some("runtime.block_same_ms".into()),
+                pack_id: None,
+                message: Some("same millisecond regression".into()),
+            }],
+            plugin_transforms: Vec::new(),
+            detection_findings: Vec::new(),
+            final_action: SecurityAction::Block(BlockResponse {
+                reason_code: "same millisecond regression".into(),
+                rule_id: Some("runtime.block_same_ms".into()),
+            }),
+            emitter_results: Vec::new(),
+        }))
+        .await;
+        assert!(event_id.starts_with("net-http-"));
+    }
+    db.shutdown_blocking();
+
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    let row: (i64, i64) = conn
+        .query_row(
+            "SELECT COUNT(*), COUNT(DISTINCT event_id) FROM security_events",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(row, (2, 2));
+}
+
+#[tokio::test]
+async fn synthetic_http_response_emits_without_body_finalization() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("session.db");
+    let db = Arc::new(DbWriter::open(&db_path, 64).expect("db writer"));
+    let deps = deps_with_db(Arc::clone(&db));
+    let mut req_ctx = anthropic_req_ctx();
+    req_ctx.event_id_seed = "synthetic-deny".into();
+    req_ctx.decision = Decision::Denied;
+    req_ctx.status_code = Some(403);
+    req_ctx.policy_rule = Some("runtime.block_synthetic".into());
+    req_ctx.policy_reason = Some("synthetic response regression".into());
+
+    emit_synthetic_http_response(&deps, req_ctx, b"blocked").await;
+    db.shutdown_blocking();
+
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    let row: (i64, i64) = conn
+        .query_row(
+            "SELECT COUNT(*), COUNT(*) FROM security_events se \
+             JOIN security_event_steps steps ON steps.event_id = se.event_id \
+             WHERE steps.rule_id = 'runtime.block_synthetic'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(row, (1, 1));
 }
 
 /// `build_net_event` populates the basic fields straight from the
@@ -129,36 +204,118 @@ fn build_net_event_carries_request_fields() {
 }
 
 #[test]
-fn build_net_event_and_model_call_carry_credential_ref() {
-    let credential_ref = credential_reference("anthropic", "sk-ant-test");
-    let mut req_ctx = anthropic_req_ctx();
-    req_ctx.credential_ref = Some(credential_ref.clone());
-    req_ctx.credential_observations = vec![CredentialObservation {
-        provider: CredentialProvider::Anthropic,
-        raw_value: "sk-ant-test".to_string(),
-        source: "http.header.x-api-key".to_string(),
-        event_type: Some("http.request".to_string()),
-        confidence: 1.0,
-        trace_id: None,
-        context_json: None,
-    }];
-    let pricing = Arc::new(PricingTable::load());
-    let trace = Arc::new(Mutex::new(TraceState::new()));
+fn build_http_resolved_security_event_carries_http_subject_and_allow_action() {
+    let req_ctx = anthropic_req_ctx();
+    let mut resp_stats = empty_resp_stats();
+    resp_stats.bytes = 4567;
+    resp_stats.preview = b"chunk-preview".to_vec();
+    let net_event = build_net_event(&req_ctx, &resp_stats);
 
-    let net = build_net_event(&req_ctx, &empty_resp_stats());
-    let model = maybe_build_model_call(&req_ctx, &empty_resp_stats(), &[], &pricing, &trace)
-        .expect("AI POST to /v1/messages must produce a model call");
+    let resolved = build_http_resolved_security_event(&req_ctx, &resp_stats, &net_event);
 
-    assert_eq!(net.credential_ref.as_deref(), Some(credential_ref.as_str()));
+    assert_eq!(resolved.event.common.event_type, "http.request");
     assert_eq!(
-        model.credential_ref.as_deref(),
-        Some(credential_ref.as_str())
+        resolved.event.common.trace_id.as_deref(),
+        net_event.trace_id.as_deref()
     );
-    assert!(!net
-        .credential_ref
-        .as_deref()
-        .unwrap()
-        .contains("sk-ant-test"));
+    assert_eq!(resolved.event.common.source_engine, SourceEngine::Network);
+    assert_eq!(
+        resolved.event.common.attribution_scope,
+        AiAttributionScope::Vm
+    );
+    assert!(matches!(
+        resolved.final_action,
+        capsem_security_engine::SecurityAction::Continue
+    ));
+    let capsem_security_engine::SecurityEventSubject::Http(subject) = &resolved.event.subject
+    else {
+        panic!("expected http subject");
+    };
+    assert_eq!(subject.method, "POST");
+    assert_eq!(subject.host, "api.anthropic.com");
+    assert_eq!(subject.port, Some(443));
+    assert_eq!(subject.path.as_deref(), Some("/v1/messages"));
+    assert_eq!(
+        subject.url.as_deref(),
+        Some("https://api.anthropic.com/v1/messages")
+    );
+    assert_eq!(subject.request_bytes, 37);
+    assert_eq!(subject.response_status, Some(200));
+    assert_eq!(subject.response_bytes, Some(4567));
+    assert_eq!(
+        subject
+            .response_body
+            .as_ref()
+            .and_then(|body| body.text.as_deref()),
+        Some("chunk-preview")
+    );
+}
+
+#[test]
+fn build_http_resolved_security_event_carries_vm_profile_and_user_identity() {
+    let mut req_ctx = anthropic_req_ctx();
+    req_ctx.identity = TelemetryIdentityContext {
+        vm_id: Some("vm-winterfell".into()),
+        session_id: Some("session-winterfell".into()),
+        profile_id: Some("coding".into()),
+        profile_revision: Some("2026.0522.1".into()),
+        user_id: Some("arya".into()),
+    };
+    let resp_stats = empty_resp_stats();
+    let net_event = build_net_event(&req_ctx, &resp_stats);
+
+    let resolved = build_http_resolved_security_event(&req_ctx, &resp_stats, &net_event);
+
+    assert_eq!(
+        resolved.event.common.vm_id.as_deref(),
+        Some("vm-winterfell")
+    );
+    assert_eq!(
+        resolved.event.common.session_id.as_deref(),
+        Some("session-winterfell")
+    );
+    assert_eq!(resolved.event.common.profile_id.as_deref(), Some("coding"));
+    assert_eq!(
+        resolved.event.common.profile_revision.as_deref(),
+        Some("2026.0522.1")
+    );
+    assert_eq!(resolved.event.common.user_id.as_deref(), Some("arya"));
+}
+
+#[test]
+fn build_http_resolved_security_event_maps_denied_network_decision_to_block() {
+    let mut req_ctx = anthropic_req_ctx();
+    req_ctx.decision = Decision::Denied;
+    req_ctx.status_code = Some(403);
+    req_ctx.matched_rule = Some("runtime.block_metadata".into());
+    req_ctx.policy_rule = Some("policy.http.block_metadata".into());
+    req_ctx.policy_reason = Some("metadata access".into());
+    let resp_stats = empty_resp_stats();
+    let net_event = build_net_event(&req_ctx, &resp_stats);
+
+    let resolved = build_http_resolved_security_event(&req_ctx, &resp_stats, &net_event);
+
+    assert!(matches!(
+        resolved.final_action,
+        capsem_security_engine::SecurityAction::Block(_)
+    ));
+    assert_eq!(
+        resolved
+            .event
+            .decision
+            .as_ref()
+            .and_then(|d| d.rule.as_deref()),
+        Some("policy.http.block_metadata")
+    );
+    assert_eq!(resolved.steps.len(), 1);
+    assert_eq!(
+        resolved.steps[0].kind,
+        capsem_security_engine::ResolvedEventStepKind::EnforcementMatch
+    );
+    assert_eq!(
+        resolved.steps[0].status,
+        capsem_security_engine::StepStatus::Matched
+    );
 }
 
 /// HEAD request to an AI domain is *not* a model call (probe).
@@ -202,9 +359,16 @@ fn non_ai_provider_is_not_a_model_call() {
 /// `text_content` / `tool_calls` / `stop_reason`.
 #[test]
 fn llm_events_flow_into_model_call() {
-    use crate::net::ai_traffic::events::{LlmEvent, StopReason};
+    use capsem_network_engine::model_stream::{LlmEvent, StopReason};
 
-    let req_ctx = anthropic_req_ctx();
+    let mut req_ctx = anthropic_req_ctx();
+    req_ctx.identity = TelemetryIdentityContext {
+        vm_id: Some("vm-ai".into()),
+        session_id: Some("session-ai".into()),
+        profile_id: Some("coding".into()),
+        profile_revision: Some("2026.0522.1".into()),
+        user_id: Some("bran".into()),
+    };
     let pricing = Arc::new(PricingTable::load());
     let trace = Arc::new(Mutex::new(TraceState::new()));
     let events = vec![
@@ -227,6 +391,27 @@ fn llm_events_flow_into_model_call() {
     assert_eq!(mc.text_content.as_deref(), Some("hello"));
     assert_eq!(mc.stop_reason.as_deref(), Some("end_turn"));
     assert_eq!(mc.message_id.as_deref(), Some("msg_1"));
+    let evidence = mc.ai_evidence.as_ref().expect("canonical AI evidence");
+    assert_eq!(evidence.trace_id, mc.trace_id.as_deref().unwrap());
+    assert_eq!(evidence.provider.as_str(), "anthropic");
+    assert!(evidence
+        .request
+        .request_id
+        .starts_with(&format!("request:{}:", evidence.trace_id)));
+    assert_eq!(evidence.source_engine, SourceEngine::Network);
+    assert_eq!(evidence.attribution_scope, AiAttributionScope::Vm);
+    assert_eq!(evidence.origin_kind, AiOriginKind::GuestNetwork);
+    assert_eq!(evidence.vm_id.as_deref(), Some("vm-ai"));
+    assert_eq!(evidence.session_id.as_deref(), Some("session-ai"));
+    assert_eq!(evidence.profile_id.as_deref(), Some("coding"));
+    assert_eq!(evidence.user_id.as_deref(), Some("bran"));
+    assert_eq!(
+        evidence
+            .response
+            .as_ref()
+            .and_then(|r| r.text_preview.as_deref()),
+        Some("hello")
+    );
 }
 
 /// Tool-use stop reason registers tool_call IDs in the trace state so
@@ -234,7 +419,7 @@ fn llm_events_flow_into_model_call() {
 /// trace_id.
 #[test]
 fn tool_use_chains_traces_across_requests() {
-    use crate::net::ai_traffic::events::{LlmEvent, StopReason};
+    use capsem_network_engine::model_stream::{LlmEvent, StopReason};
     let pricing = Arc::new(PricingTable::load());
     let trace = Arc::new(Mutex::new(TraceState::new()));
 
@@ -282,14 +467,15 @@ fn fake_deps() -> Arc<TelemetryDeps> {
         db,
         pricing: Arc::new(PricingTable::load()),
         trace_state: Arc::new(Mutex::new(TraceState::new())),
-        security_rules: empty_security_rules(),
     })
 }
 
-fn empty_security_rules() -> Arc<std::sync::RwLock<Arc<SecurityRuleSet>>> {
-    Arc::new(std::sync::RwLock::new(Arc::new(SecurityRuleSet::new(
-        Vec::new(),
-    ))))
+fn deps_with_db(db: Arc<DbWriter>) -> Arc<TelemetryDeps> {
+    Arc::new(TelemetryDeps {
+        db,
+        pricing: Arc::new(PricingTable::load()),
+        trace_state: Arc::new(Mutex::new(TraceState::new())),
+    })
 }
 
 /// Without a seeded request context, the hook is shadow-mode: it
@@ -351,301 +537,55 @@ async fn chunk_counting_with_seeded_context() {
 }
 
 #[tokio::test]
-async fn hook_writes_substitution_event_and_shared_credential_ref() {
-    let _lock = crate::credential_broker::TEST_ENV_LOCK.lock().await;
+async fn response_end_writes_net_event_and_resolved_security_event() {
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("session.db");
-    let user_config = dir.path().join("user.toml");
-    let test_store = dir.path().join("credential-store.json");
-    let _guard = EnvGuard::install(&user_config, dir.path(), &test_store);
-
-    let db = Arc::new(DbWriter::open(&db_path, 64).expect("test db"));
-    let deps = Arc::new(TelemetryDeps {
-        db: Arc::clone(&db),
-        pricing: Arc::new(PricingTable::load()),
-        trace_state: Arc::new(Mutex::new(TraceState::new())),
-        security_rules: empty_security_rules(),
-    });
-    let hook = TelemetryHook::new(deps);
-    let raw = "sk-ant-hook-test";
-    let credential_ref = credential_reference("anthropic", raw);
-    let mut req_ctx = anthropic_req_ctx();
-    req_ctx.credential_ref = Some(credential_ref.clone());
-    req_ctx.credential_observations = vec![CredentialObservation {
-        provider: CredentialProvider::Anthropic,
-        raw_value: raw.to_string(),
-        source: "http.header.x-api-key".to_string(),
-        event_type: Some("http.request".to_string()),
-        confidence: 1.0,
-        trace_id: Some("trace-hook".to_string()),
-        context_json: Some(r#"{"domain":"api.anthropic.com"}"#.to_string()),
-    }];
-
+    let db = Arc::new(DbWriter::open(&db_path, 64).expect("db writer"));
+    let hook = TelemetryHook::new(deps_with_db(Arc::clone(&db)));
     let mut state = HookState::default();
     let conn = any_conn();
+
     {
-        let mut c = ctx_for(&mut state, &conn);
-        *c.state::<Option<TelemetryRequestContext>>(|| None) = Some(req_ctx);
-    }
-    {
-        let mut c = ctx_for(&mut state, &conn);
-        hook.on_response_end(&mut c);
-    }
-
-    let mut seen = false;
-    for _ in 0..50 {
-        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-        let conn = rusqlite::Connection::open(&db_path).unwrap();
-        let net_count: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM net_events WHERE credential_ref = ?1",
-                [&credential_ref],
-                |row| row.get(0),
-            )
-            .unwrap();
-        let sub_count: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM substitution_events WHERE substitution_ref = ?1 AND outcome = 'substituted'",
-                [&credential_ref],
-                |row| row.get(0),
-            )
-            .unwrap();
-        if net_count == 1 && sub_count == 1 {
-            seen = true;
-            break;
-        }
-    }
-
-    assert!(
-        seen,
-        "expected net and substitution rows with shared credential_ref"
-    );
-    let db_bytes = std::fs::read(&db_path).unwrap();
-    assert!(
-        !String::from_utf8_lossy(&db_bytes).contains(raw),
-        "raw credential leaked into session db"
-    );
-}
-
-#[tokio::test]
-async fn hook_writes_security_rule_ledger_for_matching_http_event() {
-    let dir = tempfile::tempdir().unwrap();
-    let db_path = dir.path().join("session.db");
-    let rules_profile = SecurityRuleProfile::parse_toml(
-        r#"
-[profiles.rules.anthropic_http_seen]
-name = "anthropic_http_seen"
-action = "allow"
-detection_level = "informational"
-match = 'http.host == "api.anthropic.com" && http.path == "/v1/messages"'
-"#,
-    )
-    .expect("rules parse");
-    let rules = SecurityRuleSet::compile_profile(&rules_profile, SecurityRuleSource::User)
-        .expect("rules compile");
-    let db = Arc::new(DbWriter::open(&db_path, 64).expect("test db"));
-    let deps = Arc::new(TelemetryDeps {
-        db: Arc::clone(&db),
-        pricing: Arc::new(PricingTable::load()),
-        trace_state: Arc::new(Mutex::new(TraceState::new())),
-        security_rules: Arc::new(std::sync::RwLock::new(Arc::new(rules))),
-    });
-    let hook = TelemetryHook::new(deps);
-
-    let mut state = HookState::default();
-    let conn = any_conn();
-    {
-        let mut c = ctx_for(&mut state, &conn);
-        *c.state::<Option<TelemetryRequestContext>>(|| None) = Some(anthropic_req_ctx());
-    }
-    {
-        let mut c = ctx_for(&mut state, &conn);
-        hook.on_response_end(&mut c);
-    }
-
-    let mut seen = false;
-    for _ in 0..50 {
-        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-        let conn = rusqlite::Connection::open(&db_path).unwrap();
-        let joined: Option<(String, String, String)> = conn
-            .query_row(
-                "SELECT net_events.event_id, security_rule_events.rule_id, security_rule_events.detection_level
-                 FROM net_events
-                 JOIN security_rule_events ON security_rule_events.event_id = net_events.event_id
-                 WHERE net_events.domain = 'api.anthropic.com'",
-                [],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-            )
-            .ok();
-        let Some((event_id, rule_id, detection_level)) = joined else {
-            continue;
+        let mut c = ChunkCtx {
+            state: &mut state,
+            conn: &conn,
+            trace_id: None,
         };
-        assert_eq!(event_id.len(), 12);
-        assert!(event_id
-            .chars()
-            .all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c)));
-        assert_eq!(rule_id, "profiles.rules.anthropic_http_seen");
-        assert_eq!(detection_level, "informational");
-        seen = true;
-        break;
+        let slot = c.state::<Option<TelemetryRequestContext>>(|| None);
+        *slot = Some(anthropic_req_ctx());
     }
 
-    assert!(
-        seen,
-        "expected HTTP telemetry to write a joined rule ledger row"
-    );
-}
-
-#[tokio::test]
-async fn hook_writes_security_rule_ledger_for_matching_model_event() {
-    let dir = tempfile::tempdir().unwrap();
-    let db_path = dir.path().join("session.db");
-    let rules_profile = SecurityRuleProfile::parse_toml(
-        r#"
-[profiles.rules.anthropic_model_seen]
-name = "anthropic_model_seen"
-action = "allow"
-detection_level = "informational"
-match = 'model.provider == "anthropic" && model.name == "claude-test"'
-"#,
-    )
-    .expect("rules parse");
-    let rules = SecurityRuleSet::compile_profile(&rules_profile, SecurityRuleSource::User)
-        .expect("rules compile");
-    let db = Arc::new(DbWriter::open(&db_path, 64).expect("test db"));
-    let deps = Arc::new(TelemetryDeps {
-        db: Arc::clone(&db),
-        pricing: Arc::new(PricingTable::load()),
-        trace_state: Arc::new(Mutex::new(TraceState::new())),
-        security_rules: Arc::new(std::sync::RwLock::new(Arc::new(rules))),
-    });
-    let hook = TelemetryHook::new(deps);
-
-    let mut state = HookState::default();
-    let conn = any_conn();
+    let mut chunk = Bytes::from_static(b"ok");
     {
-        let mut c = ctx_for(&mut state, &conn);
-        *c.state::<Option<TelemetryRequestContext>>(|| None) = Some(anthropic_req_ctx());
+        let mut ctx = ctx_for(&mut state, &conn);
+        hook.on_response_chunk(&mut chunk, &mut ctx);
     }
     {
-        let mut c = ctx_for(&mut state, &conn);
-        hook.on_response_end(&mut c);
+        let mut ctx = ctx_for(&mut state, &conn);
+        hook.on_response_end(&mut ctx);
     }
+    tokio::task::yield_now().await;
+    db.shutdown_blocking();
 
-    let mut seen = false;
-    for _ in 0..50 {
-        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-        let conn = rusqlite::Connection::open(&db_path).unwrap();
-        let joined: Option<(String, String, String)> = conn
-            .query_row(
-                "SELECT model_calls.event_id, security_rule_events.rule_id, security_rule_events.detection_level
-                 FROM model_calls
-                 JOIN security_rule_events ON security_rule_events.event_id = model_calls.event_id
-                 WHERE model_calls.provider = 'anthropic'",
-                [],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-            )
-            .ok();
-        let Some((event_id, rule_id, detection_level)) = joined else {
-            continue;
-        };
-        assert_eq!(event_id.len(), 12);
-        assert!(event_id
-            .chars()
-            .all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c)));
-        assert_eq!(rule_id, "profiles.rules.anthropic_model_seen");
-        assert_eq!(detection_level, "informational");
-        seen = true;
-        break;
-    }
-
-    assert!(
-        seen,
-        "expected model telemetry to write a joined rule ledger row"
-    );
-}
-
-#[tokio::test]
-async fn hook_detects_response_body_token_exchange_and_redacts_preview() {
-    let _lock = crate::credential_broker::TEST_ENV_LOCK.lock().await;
-    let dir = tempfile::tempdir().unwrap();
-    let db_path = dir.path().join("session.db");
-    let user_config = dir.path().join("user.toml");
-    let test_store = dir.path().join("credential-store.json");
-    let _guard = EnvGuard::install(&user_config, dir.path(), &test_store);
-
-    let db = Arc::new(DbWriter::open(&db_path, 64).expect("test db"));
-    let deps = Arc::new(TelemetryDeps {
-        db: Arc::clone(&db),
-        pricing: Arc::new(PricingTable::load()),
-        trace_state: Arc::new(Mutex::new(TraceState::new())),
-        security_rules: empty_security_rules(),
-    });
-    let hook = TelemetryHook::new(deps);
-    let raw = "github_pat_exchange_secret";
-
-    let mut req_ctx = anthropic_req_ctx();
-    req_ctx.domain = "api.github.com".to_string();
-    req_ctx.ai_provider = None;
-    req_ctx.path = "/login/oauth/access_token".to_string();
-    req_ctx.request_headers = Some("host: api.github.com".to_string());
-    req_ctx.response_headers = Some("content-type: application/json".to_string());
-
-    let mut state = HookState::default();
-    let conn = ConnMeta {
-        domain: "api.github.com".to_string(),
-        port: 443,
-        process_name: None,
-        ..Default::default()
-    };
-    {
-        let mut c = ctx_for(&mut state, &conn);
-        *c.state::<Option<TelemetryRequestContext>>(|| None) = Some(req_ctx);
-        *c.state::<TelemetryResponseStats>(TelemetryResponseStats::default) =
-            TelemetryResponseStats {
-                bytes: raw.len() as u64,
-                preview: format!(r#"{{"access_token":"{raw}","token_type":"bearer"}}"#)
-                    .into_bytes(),
-                max_preview: 4096,
-            };
-    }
-    {
-        let mut c = ctx_for(&mut state, &conn);
-        hook.on_response_end(&mut c);
-    }
-
-    let mut seen = false;
-    for _ in 0..50 {
-        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-        let conn = rusqlite::Connection::open(&db_path).unwrap();
-        let row: Option<(String, String)> = conn
-            .query_row(
-                "SELECT credential_ref, response_body_preview FROM net_events WHERE domain = 'api.github.com'",
-                [],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .ok();
-        let Some((credential_ref, preview)) = row else {
-            continue;
-        };
-        let sub_count: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM substitution_events WHERE substitution_ref = ?1 AND source = 'http.body.response.$.access_token'",
-                [&credential_ref],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert!(credential_ref.starts_with("credential:blake3:"));
-        assert!(preview.contains("credential:blake3:"));
-        assert!(!preview.contains(raw));
-        if sub_count == 1 {
-            seen = true;
-            break;
-        }
-    }
-
-    assert!(
-        seen,
-        "expected token exchange response to be brokered and redacted"
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    let net_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM net_events", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(net_count, 1);
+    let security_row: (String, String, String, String) = conn
+        .query_row(
+            "SELECT event_family, event_type, source_engine, final_action FROM security_events",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .unwrap();
+    assert_eq!(
+        security_row,
+        (
+            "http".to_string(),
+            "http.request".to_string(),
+            "network".to_string(),
+            "continue".to_string(),
+        )
     );
 }

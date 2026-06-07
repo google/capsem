@@ -163,7 +163,76 @@ describe('Settings export/import', () => {
           },
         },
       });
-      expect(() => model.importFromJSON(importData)).toThrow('Invalid policy rule');
+      expect(() => model.importFromJSON(importData)).toThrow('requires a non-empty CEL condition');
+    });
+
+    it('throws on mismatched policy callback bucket', () => {
+      const model = loadModel();
+      const importData = JSON.stringify({
+        version: '1',
+        settings: {},
+        policy: {
+          model: {
+            bad: { on: 'http.request', if: 'request.host == "example.com"', decision: 'block', priority: 1 },
+          },
+        },
+      });
+      expect(() => model.importFromJSON(importData)).toThrow('different policy type');
+    });
+
+    it('throws on non-shipping hook policy imports', () => {
+      const model = loadModel();
+      const importData = JSON.stringify({
+        version: '1',
+        settings: {},
+        policy: {
+          hook: {
+            external_decision: {
+              on: 'hook.decision',
+              if: 'decision == "block"',
+              decision: 'block',
+              priority: 10,
+            },
+          },
+        },
+      });
+      expect(() => model.importFromJSON(importData)).toThrow('hook policy rules are not editable in this release');
+    });
+
+    it('throws on invalid rewrite fields before staging', () => {
+      const model = loadModel();
+      const importData = JSON.stringify({
+        version: '1',
+        settings: {},
+        policy: {
+          http: {
+            bad: {
+              on: 'http.request',
+              if: 'request.host == "example.com"',
+              decision: 'allow',
+              priority: 1,
+              rewrite_target: 'request.path =~ "/secret"',
+              rewrite_value: '/redacted',
+            },
+          },
+        },
+      });
+      expect(() => model.importFromJSON(importData)).toThrow('only rewrite decisions may carry rewrite fields');
+    });
+
+    it('throws on duplicate policy rule keys before staging', () => {
+      const model = loadModel();
+      const importData = `{
+        "version": "1",
+        "settings": {},
+        "policy": {
+          "http": {
+            "dup": {"on": "http.request", "if": "request.host == \\"a.com\\"", "decision": "block", "priority": 1},
+            "dup": {"on": "http.request", "if": "request.host == \\"b.com\\"", "decision": "block", "priority": 2}
+          }
+        }
+      }`;
+      expect(() => model.importFromJSON(importData)).toThrow('Duplicate policy rule key: policy.http.dup');
     });
 
     it('throws on invalid JSON', () => {

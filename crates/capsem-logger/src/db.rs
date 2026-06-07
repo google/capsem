@@ -51,7 +51,6 @@ mod tests {
 
     fn make_net_event(domain: &str, decision: Decision) -> NetEvent {
         NetEvent {
-            event_id: None,
             timestamp: SystemTime::now(),
             domain: domain.to_string(),
             port: 443,
@@ -76,13 +75,11 @@ mod tests {
             policy_rule: None,
             policy_reason: None,
             trace_id: None,
-            credential_ref: None,
         }
     }
 
     fn make_model_call() -> ModelCall {
         ModelCall {
-            event_id: None,
             timestamp: SystemTime::now(),
             provider: "anthropic".into(),
             model: Some("claude-sonnet-4-20250514".into()),
@@ -108,7 +105,7 @@ mod tests {
             response_bytes: 2048,
             estimated_cost_usd: 0.003,
             trace_id: Some("trace_abc".into()),
-            credential_ref: None,
+            ai_evidence: None,
             tool_calls: vec![ToolCallEntry {
                 call_index: 0,
                 call_id: "call_001".into(),
@@ -199,7 +196,6 @@ mod tests {
         let writer = DbWriter::open(&p, 16).unwrap();
 
         let mcp = McpCall {
-            event_id: None,
             timestamp: SystemTime::now(),
             server_name: "builtin".into(),
             method: "tools/call".into(),
@@ -218,7 +214,6 @@ mod tests {
             policy_rule: None,
             policy_reason: None,
             trace_id: None,
-            credential_ref: None,
         };
         writer.write(crate::WriteOp::McpCall(mcp)).await;
         drop(writer);

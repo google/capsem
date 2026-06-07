@@ -13,21 +13,16 @@ CONFIG_DIR = PROJECT_ROOT / "config"
 
 pytestmark = pytest.mark.rootfs
 
-# The canonical list of required rootfs artifacts (files and dirs)
-REQUIRED_FILES = [
-    "capsem-init",
-    "capsem-bashrc",
-    "banner.txt",
-    "tips.txt",
-    "capsem-doctor",
-    "capsem-bench",
-    "snapshots",
-]
+from capsem.builder.docker import (
+    GUEST_BINARIES,
+    ROOTFS_SCRIPTS,
+    ROOTFS_SCRIPT_DIRS,
+    ROOTFS_SUPPORT_FILES,
+)
 
-REQUIRED_DIRS = [
-    "diagnostics",
-    "capsem_bench",
-]
+# The canonical list of required rootfs artifacts (files and dirs)
+REQUIRED_FILES = ["capsem-init", *ROOTFS_SUPPORT_FILES, *ROOTFS_SCRIPTS]
+REQUIRED_DIRS = list(ROOTFS_SCRIPT_DIRS)
 
 
 class TestArtifactsExist:
@@ -83,6 +78,91 @@ class TestBuildContext:
                 assert (context_dir / name).exists(), f"{name}/ not in context"
 
 
+class TestRootfsValidationContract:
+
+    def test_guest_binaries_include_release_critical_helpers(self):
+        """The canonical guest list includes helpers required by capsem-init."""
+        assert "capsem-dns-proxy" in GUEST_BINARIES
+        assert "capsem-sysutil" in GUEST_BINARIES
+
+    def test_capsem_init_creates_console_fallback_before_redirect(self):
+        """PID 1 must keep logging even when devtmpfs omits /dev/console."""
+        init_script = (ARTIFACTS_DIR / "capsem-init").read_text()
+        redirect = "exec 0<\"$CONSOLE_DEV\" 1>\"$CONSOLE_DEV\" 2>\"$CONSOLE_DEV\""
+        fallback = "mknod -m 600 /dev/console c 5 1"
+        ttyS0_node = "mknod -m 600 /dev/ttyS0 c 4 64"
+        ttyS0 = "CONSOLE_DEV=/dev/ttyS0"
+        hvc0 = "CONSOLE_DEV=/dev/hvc0"
+
+        assert fallback in init_script
+        assert ttyS0_node in init_script
+        assert ttyS0 in init_script
+        assert hvc0 in init_script
+        assert init_script.index(fallback) < init_script.index(redirect)
+
+    def test_capsem_init_writes_host_visible_stage_markers(self):
+        """VirtioFS boots must leave a host-readable stage marker for triage."""
+        init_script = (ARTIFACTS_DIR / "capsem-init").read_text()
+        stage_file = "/mnt/shared/system/capsem-init-stage.log"
+        agent_log = "/mnt/shared/system/capsem-agent.log"
+
+        assert stage_file in init_script
+        assert agent_log in init_script
+        assert 'init_stage "virtiofs-mounted"' in init_script
+        assert 'init_stage "overlay-mounted"' in init_script
+        assert 'init_stage "starting-agent"' in init_script
+        assert 'init_stage "agent-exited-$AGENT_STATUS"' in init_script
+
+    def test_capsem_init_marks_virtio_block_devices_non_rotational(self):
+        """Virtio block disks must advertise non-rotational behavior to Linux."""
+        init_script = (ARTIFACTS_DIR / "capsem-init").read_text()
+
+        assert 'echo none > "$dev/queue/scheduler"' in init_script
+        assert 'echo 0 > "$dev/queue/rotational"' in init_script
+        assert 'echo 4096 > "$dev/queue/read_ahead_kb"' in init_script
+        assert 'echo 256 > "$dev/queue/nr_requests"' in init_script
+
+    def test_capsem_init_keeps_network_proxies_alive_or_fails(self):
+        """Network proxy launch must survive shell transitions and fail closed."""
+        init_script = (ARTIFACTS_DIR / "capsem-init").read_text()
+
+        assert "nohup '$NET_PROXY_PATH' </dev/null >/run/capsem-net-proxy.log 2>&1 &" in init_script
+        assert "nohup '$DNS_PROXY_PATH' </dev/null >/run/capsem-dns-proxy.log 2>&1 &" in init_script
+        assert "[capsem-init] FATAL: capsem-net-proxy did not become ready" in init_script
+        assert "[capsem-init] FATAL: capsem-dns-proxy did not become ready" in init_script
+        assert "[capsem-init] FATAL: capsem-net-proxy not found" in init_script
+        assert "[capsem-init] FATAL: capsem-dns-proxy not found" in init_script
+
+    def test_capsem_init_keeps_python_venv_off_virtiofs_workspace(self):
+        """The Python venv must live on the guest overlay, not /root VirtioFS."""
+        init_script = (ARTIFACTS_DIR / "capsem-init").read_text()
+
+        assert "/var/lib/capsem/venv" in init_script
+        assert "/root/.venv" not in init_script
+
+    def test_capsem_init_keeps_uv_cache_off_virtiofs_workspace(self):
+        """uv cache must live on guest overlay so wheel symlinks work."""
+        init_script = (ARTIFACTS_DIR / "capsem-init").read_text()
+
+        assert "UV_CACHE_DIR=/var/cache/capsem/uv" in init_script
+        assert "mkdir -p /var/lib/capsem /var/cache/capsem/uv" in init_script
+
+    def test_capsem_init_trusts_guest_git_workspaces(self):
+        """Git must work in /root even though VirtioFS files use host uid/gid."""
+        init_script = (ARTIFACTS_DIR / "capsem-init").read_text()
+
+        assert "cat > /newroot/etc/gitconfig" in init_script
+        assert "directory = *" in init_script
+        assert "defaultBranch = main" in init_script
+
+    def test_validate_rootfs_derives_binary_requirements_from_guest_binaries(self):
+        """The release validator imports GUEST_BINARIES and checks /usr/local/bin."""
+        validator = (PROJECT_ROOT / "scripts" / "validate-rootfs.sh").read_text()
+        assert "GUEST_BINARIES" in validator
+        assert "for name in [*GUEST_BINARIES, *ROOTFS_SCRIPTS]" in validator
+        assert 'print(f"file /usr/local/bin/{name}")' in validator
+
+
 class TestDoctorConsistency:
 
     def test_doctor_check_source_files_passes(self):
@@ -105,7 +185,6 @@ class TestDoctorConsistency:
         docker_src = (PROJECT_ROOT / "src/capsem/builder/docker.py").read_text()
         doctor_src = (PROJECT_ROOT / "src/capsem/builder/doctor.py").read_text()
 
-        # Both should reference capsem-bashrc, banner.txt, snapshots, etc.
-        for name in ["capsem-bashrc", "banner.txt", "capsem-init", "snapshots"]:
-            assert name in docker_src, f"docker.py missing reference to {name}"
-            assert name in doctor_src, f"doctor.py missing reference to {name}"
+        for constant in ("ROOTFS_SCRIPTS", "ROOTFS_SCRIPT_DIRS", "ROOTFS_SUPPORT_FILES"):
+            assert constant in docker_src, f"docker.py missing {constant}"
+            assert constant in doctor_src, f"doctor.py missing {constant}"

@@ -6,15 +6,8 @@ import pytest
 
 from conftest import run
 
-PUBLIC_NETWORK_SMOKE_ENV = "CAPSEM_RUN_PUBLIC_NETWORK_SMOKE"
 
-
-def _require_public_network_smoke(reason):
-    if os.environ.get(PUBLIC_NETWORK_SMOKE_ENV) != "1":
-        pytest.skip(f"{reason}; set {PUBLIC_NETWORK_SMOKE_ENV}=1")
-
-
-@pytest.mark.parametrize("cli", ["claude", "gemini", "codex"])
+@pytest.mark.parametrize("cli", ["claude", "gemini", "codex", "agy"])
 def test_ai_cli_installed(cli):
     """AI CLI binary must be in PATH."""
     result = run(f"command -v {cli}")
@@ -46,7 +39,7 @@ def test_npm_prefix_is_opt_ai_clis():
     )
 
 
-@pytest.mark.parametrize("cli", ["claude", "gemini", "codex"])
+@pytest.mark.parametrize("cli", ["claude", "gemini", "codex", "agy"])
 def test_ai_cli_in_login_shell(cli):
     """AI CLI must be findable from a login shell (what the user actually sees)."""
     result = run(f"bash -lc 'which {cli}'", timeout=10)
@@ -55,7 +48,7 @@ def test_ai_cli_in_login_shell(cli):
     )
 
 
-@pytest.mark.parametrize("cli", ["gemini", "claude", "codex"])
+@pytest.mark.parametrize("cli", ["gemini", "claude", "codex", "agy"])
 def test_ai_cli_help(cli):
     """AI CLI --help must execute without runtime errors."""
     result = run(f"{cli} --help 2>&1", timeout=15)
@@ -81,6 +74,17 @@ def test_gemini_api_key_no_duplicate():
             "Both GOOGLE_API_KEY and GEMINI_API_KEY are set -- "
             "gemini CLI will warn. Only GEMINI_API_KEY should be injected."
         )
+
+
+def test_gemini_noninteractive_wrapper_defaults_to_yolo():
+    """Non-interactive exec must get Gemini YOLO mode without relying on bash aliases."""
+    result = run("command -v gemini")
+    assert result.returncode == 0, f"gemini not on PATH: {result.stderr}"
+    assert result.stdout.strip() == "/root/.local/bin/gemini", (
+        f"gemini wrapper must win on PATH, got {result.stdout!r}"
+    )
+    wrapper = run("grep -F -- '--yolo' /root/.local/bin/gemini")
+    assert wrapper.returncode == 0, "Gemini wrapper does not inject --yolo"
 
 
 def test_gemini_settings_exist():
@@ -115,7 +119,6 @@ def test_gemini_installation_id_exist():
 
 def test_google_ai_domain_allowed():
     """Google AI domain must be reachable through the MITM proxy."""
-    _require_public_network_smoke("public Google AI domain smoke")
     result = run(
         "curl -sI --connect-timeout 10 https://generativelanguage.googleapis.com 2>&1",
         timeout=20,

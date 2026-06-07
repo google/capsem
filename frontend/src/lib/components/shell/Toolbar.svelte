@@ -3,6 +3,7 @@
   import type { TabView } from '../../stores/tabs.svelte.ts';
   import { vmStore } from '../../stores/vms.svelte.ts';
   import { gatewayStore } from '../../stores/gateway.svelte.ts';
+  import { onboardingStore } from '../../stores/onboarding.svelte.ts';
   import Modal from './Modal.svelte';
   import ArrowClockwise from 'phosphor-svelte/lib/ArrowClockwise';
   import Stop from 'phosphor-svelte/lib/Stop';
@@ -12,6 +13,7 @@
   import DotsThreeVertical from 'phosphor-svelte/lib/DotsThreeVertical';
   import Info from 'phosphor-svelte/lib/Info';
   import GearSix from 'phosphor-svelte/lib/GearSix';
+  import MagicWand from 'phosphor-svelte/lib/MagicWand';
   import Pause from 'phosphor-svelte/lib/Pause';
   import Terminal from 'phosphor-svelte/lib/Terminal';
   import ChartBar from 'phosphor-svelte/lib/ChartBar';
@@ -206,6 +208,14 @@
           <button
             type="button"
             class="w-full flex items-center gap-x-3 py-2 px-3 text-sm text-dropdown-item-foreground rounded-lg hover:bg-dropdown-item-hover"
+            onclick={() => { onboardingStore.needsOnboarding = true; onboardingStore.loading = false; onboardingStore.currentStep = 0; menuOpen = false; }}
+          >
+            <MagicWand size={16} />
+            <span>Setup Wizard</span>
+          </button>
+          <button
+            type="button"
+            class="w-full flex items-center gap-x-3 py-2 px-3 text-sm text-dropdown-item-foreground rounded-lg hover:bg-dropdown-item-hover"
             onclick={() => { tabStore.openSingleton('settings', 'Settings'); menuOpen = false; }}
           >
             <GearSix size={16} />
@@ -266,14 +276,13 @@
     {/if}
   </div>
 
-  <!-- Right: stats + build timestamp -->
+  <!-- Right: session stats -->
   <div class="flex items-center gap-x-3 text-[11px] text-muted-foreground-1 tabular-nums">
     {#if isVM && activeVm}
       <span title="Tokens">{formatTokens((activeVm.total_input_tokens ?? 0) + (activeVm.total_output_tokens ?? 0))} tok</span>
       <span title="Tool calls">{activeVm.total_tool_calls ?? 0} calls</span>
       <span title="Cost">{formatCost(activeVm.total_estimated_cost ?? 0)}</span>
     {/if}
-    <span title="Frontend build" class="opacity-60 font-mono">build {__BUILD_TS__}</span>
   </div>
 </div>
 

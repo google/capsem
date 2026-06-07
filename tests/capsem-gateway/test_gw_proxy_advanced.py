@@ -44,16 +44,14 @@ class TestProxyEndpointCoverage:
         assert resp is not None
 
     def test_post_write_file(self, gw_client):
-        """POST /write_file/{id} returns success."""
-        resp = gw_client.post("/write_file/vm-001", {
-            "path": "/root/test.txt",
-            "content": "hello",
-        })
+        """POST /files/{id}/content returns success."""
+        resp = gw_client.write_file("vm-001", "/root/test.txt", "hello")
         assert resp is not None
 
     def test_post_read_file(self, gw_client):
-        """POST /read_file/{id} returns file content."""
-        resp = gw_client.post("/read_file/vm-001", {"path": "/root/test.txt"})
+        """GET /files/{id}/content returns file content."""
+        gw_client.write_file("vm-001", "/root/test.txt", "hello")
+        resp = gw_client.read_file("vm-001", "/root/test.txt")
         assert resp is not None
 
     def test_post_inspect(self, gw_client):
@@ -89,10 +87,12 @@ class TestProxyEndpointCoverage:
         assert resp.get("name") == "snapshot1"
 
     def test_get_logs(self, gw_client):
-        """GET /logs/{id} returns boot logs."""
+        """GET /logs/{id} returns boot and security logs."""
         resp = gw_client.get("/logs/vm-001")
         assert resp is not None
         assert "logs" in resp
+        assert "security_logs" in resp
+        assert "resolved_security_event" in resp["security_logs"]
 
     def test_delete_vm(self, gw_client):
         """DELETE /delete/{id} destroys a VM."""
@@ -103,6 +103,93 @@ class TestProxyEndpointCoverage:
         """POST /reload-config reloads settings."""
         resp = gw_client.post("/reload-config", {})
         assert resp is not None
+
+    def test_post_detection_hunt_session(self, gw_client):
+        """POST /sessions/{id}/detection/hunt preserves forensic evidence rows."""
+        resp = gw_client.post(
+            "/sessions/vm-001/detection/hunt",
+            {
+                "rules": [
+                    {
+                        "id": "detect-gateway",
+                        "pack_id": "runtime-detection",
+                        "title": "Gateway smoke",
+                        "condition": "http.request.host.contains('example')",
+                        "severity": "medium",
+                        "confidence": "high",
+                        "tags": ["gateway"],
+                        "enabled": True,
+                    }
+                ]
+            },
+        )
+        assert resp is not None
+        assert resp.get("total_matches") == 1
+        assert resp["rows"][0]["event_ref"]["corpus"] == "session_db"
+        assert resp["rows"][0]["matched_fields"][0]["path"] == "http.request.host"
+
+    def test_post_enforcement_validate(self, gw_client):
+        """POST /enforcement/validate forwards runtime enforcement validation."""
+        resp = gw_client.post(
+            "/enforcement/validate",
+            {
+                "id": "block-gateway",
+                "condition": "http.request.host.contains('example')",
+                "decision": "block",
+                "reason": "gateway smoke",
+                "enabled": True,
+            },
+        )
+        assert resp is not None
+        assert resp.get("compiled") is True
+        assert resp.get("id") == "block-gateway"
+
+    def test_security_runtime_route_groups(self, gw_client):
+        """Gateway mirrors the S08b enforcement and detection route groups."""
+        enforcement_rule = {
+            "id": "block-gateway",
+            "condition": "http.request.host.contains('example')",
+            "decision": "block",
+            "reason": "gateway smoke",
+            "enabled": True,
+        }
+        detection_rule = {
+            "id": "detect-gateway",
+            "pack_id": "runtime-detection",
+            "title": "Gateway smoke",
+            "condition": "http.request.host.contains('example')",
+            "severity": "medium",
+            "confidence": "high",
+            "tags": ["gateway"],
+            "enabled": True,
+        }
+
+        assert gw_client.post("/enforcement/compile", enforcement_rule)["compiled"] is True
+        assert gw_client.post("/enforcement/backtest", {
+            "rule": enforcement_rule,
+            "events": [],
+        })["total_matches"] == 0
+        assert gw_client.post("/enforcement", enforcement_rule)["rule"]["id"] == "block-gateway"
+        assert gw_client.put("/enforcement/block-gateway", enforcement_rule)["rule"]["id"] == "block-gateway"
+        assert gw_client.get("/enforcement")["kind"] == "enforcement"
+        assert gw_client.get("/enforcement/stats")["kind"] == "enforcement"
+        assert gw_client.delete("/enforcement/block-gateway")["removed"] is True
+
+        assert gw_client.post("/detection/validate", detection_rule)["compiled"] is True
+        assert gw_client.post("/detection/compile", detection_rule)["compiled"] is True
+        assert gw_client.post("/detection/backtest", {
+            "rule": detection_rule,
+            "events": [],
+        })["total_matches"] == 0
+        assert gw_client.post("/detection/hunt", {
+            "rules": [detection_rule],
+            "events": [],
+        })["total_matches"] == 0
+        assert gw_client.post("/detection", detection_rule)["rule"]["id"] == "detect-gateway"
+        assert gw_client.put("/detection/detect-gateway", detection_rule)["rule"]["id"] == "detect-gateway"
+        assert gw_client.get("/detection")["kind"] == "detection"
+        assert gw_client.get("/detection/stats")["kind"] == "detection"
+        assert gw_client.delete("/detection/detect-gateway")["removed"] is True
 
 
 class TestProxyEdgeCases:

@@ -7,6 +7,58 @@ sidebar:
 
 Capsem uses a service-oriented architecture with multiple cooperating binaries. Every VM operation flows through a single path: client -> service -> per-VM process -> guest.
 
+## Process overview
+
+At the top level, Capsem is a small process tree. The background service owns lifecycle. It starts desktop companion processes, and it spawns one `capsem-process` per running VM. Each VM process owns the hypervisor instance, guest vsock bridges, and a separate MCP aggregator subprocess for external MCP server connections.
+
+```mermaid
+flowchart TD
+    subgraph Clients["Client processes"]
+        CLI["capsem<br/>CLI"]
+        APP["capsem-app<br/>desktop UI"]
+        HOSTMCP["capsem-mcp<br/>host MCP server"]
+    end
+
+    SVC["capsem-service<br/>daemon process"]
+    GW["capsem-gateway<br/>HTTP + WebSocket process"]
+    TRAY["capsem-tray<br/>menu bar process"]
+
+    subgraph VMHost["Per running VM"]
+        PROC["capsem-process<br/>VM supervisor process"]
+        AGG["capsem-mcp-aggregator<br/>isolated subprocess"]
+        VM["Linux VM<br/>hardware-isolated guest"]
+
+        subgraph Guest["Guest processes"]
+            PTY["capsem-pty-agent"]
+            NET["capsem-net-proxy"]
+            DNS["capsem-dns-proxy"]
+            GMCP["capsem-mcp-server"]
+            SYS["capsem-sysutil"]
+        end
+    end
+
+    EXT["External MCP servers<br/>HTTP/SSE"]
+
+    SVC -->|spawns companion| GW
+    SVC -->|spawns companion| TRAY
+    SVC ==>|spawns one per VM| PROC
+
+    APP -->|HTTP| GW
+    TRAY -->|HTTP| GW
+    GW -->|HTTP/UDS| SVC
+    CLI -->|HTTP/UDS| SVC
+    HOSTMCP -->|HTTP/UDS| SVC
+
+    PROC -->|spawns| AGG
+    AGG -->|MCP over HTTP/SSE| EXT
+    PROC ==>|boots + owns| VM
+    PROC -->|vsock bridges| PTY
+    PROC -->|vsock:5002| NET
+    PROC -->|vsock:5007| DNS
+    PROC -->|framed MCP over vsock:5002| GMCP
+    PROC -->|vsock:5004| SYS
+```
+
 ## Host binaries
 
 Seven binaries run on the host machine. They are installed to `~/.capsem/bin/` by `capsem setup`.
@@ -33,7 +85,7 @@ Five binaries run inside each Linux VM, cross-compiled for `aarch64-unknown-linu
 | **capsem-net-proxy** | Redirects HTTPS to host MITM proxy | 5002 |
 | **capsem-dns-proxy** | Redirects DNS queries to the host DNS policy/resolver path | 5007 |
 | **capsem-mcp-server** | Guest MCP stdio-to-framed-vsock relay | 5002 |
-| **capsem-sysutil** | Lifecycle multi-call (shutdown/halt/poweroff/reboot/suspend) | 5004 |
+| **capsem-sysutil** | Guest suspend helper; in-VM shutdown commands disabled | 5004 |
 
 ## Communication diagram
 
@@ -100,7 +152,7 @@ Each layer uses a different protocol optimized for its role:
 | 5000 | Control messages (resize, heartbeat, exec, file I/O) | capsem-pty-agent |
 | 5001 | Terminal data (PTY I/O) | capsem-pty-agent |
 | 5002 | MITM proxy and framed guest MCP endpoint | capsem-net-proxy, capsem-mcp-server |
-| 5004 | Lifecycle commands (shutdown/suspend) | capsem-sysutil |
+| 5004 | Lifecycle commands (suspend; shutdown frames ignored for compatibility) | capsem-sysutil |
 | 5005 | Exec output (direct child stdout) | capsem-pty-agent |
 | 5006 | Kernel audit stream | capsem-pty-agent |
 | 5007 | DNS proxy queries | capsem-dns-proxy |
@@ -160,9 +212,9 @@ The service exposes a REST API over UDS. The gateway proxies this transparently.
 | POST | `/resume/{name}` | Resume a stopped persistent VM |
 | POST | `/persist/{id}` | Convert ephemeral to persistent |
 | POST | `/purge` | Kill all temp VMs (`all: true` includes persistent) |
-| POST | `/write_file/{id}` | Write file to guest |
-| POST | `/read_file/{id}` | Read file from guest |
-| GET | `/logs/{id}` | Serial/boot logs |
+| POST | `/files/{id}/content?path=<relpath>` | Write workspace file |
+| GET | `/files/{id}/content?path=<relpath>` | Read workspace file |
+| GET | `/logs/{id}` | Security, process, and serial logs |
 | POST | `/inspect/{id}` | SQL query against session.db |
 | DELETE | `/delete/{id}` | Destroy VM and wipe state |
 | POST | `/suspend/{id}` | Suspend VM to disk (persistent only) |
@@ -190,17 +242,16 @@ Auto-runs non-interactively on first CLI use if `~/.capsem/setup-state.json` is 
 ```
 ~/.capsem/
   bin/                 capsem, capsem-service, capsem-process, capsem-mcp, capsem-gateway, capsem-tray
-  assets/              manifest.json, v{VERSION}/{vmlinuz, initrd.img, rootfs.squashfs}
+  assets/              manifest.json, manifest.json.minisig, {arch}/{vmlinuz-<hash16>, initrd-<hash16>.img, rootfs-<hash16>.squashfs}
   run/                 service.sock, service.pid, gateway.token, gateway.port, instances/
   setup-state.json     Wizard progress (resumable)
-  update-check.json    Self-update cache (24h TTL)
   user.toml            User settings
   corp.toml            Enterprise config (optional)
 ```
 
-### Self-update
+### Asset update
 
-`capsem update` checks GitHub for new asset versions, downloads in background, cleans up old versions. Binary swap is handled by the platform package manager (DMG/deb).
+`capsem update-assets` checks GitHub for new VM asset versions, downloads hash-named per-arch assets, verifies the signed manifest and BLAKE3 hashes, and cleans up stale asset aliases. Binary updates are handled by the platform package manager (`.pkg`/`.deb`).
 
 ## Rust crate architecture
 

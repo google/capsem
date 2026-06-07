@@ -8,6 +8,7 @@
 //! - CAPSEM_SESSION_DIR: Session directory (parent of workspace). Enables snapshot tools.
 //! - CAPSEM_DOMAIN_ALLOW: Comma-separated allowed domain patterns
 //! - CAPSEM_DOMAIN_BLOCK: Comma-separated blocked domain patterns
+//! - CAPSEM_DOMAIN_DEFAULT: Default domain action, "allow" or "deny"
 //! - CAPSEM_SESSION_DB: Path to session DB for telemetry (optional)
 
 use std::path::PathBuf;
@@ -25,9 +26,8 @@ use tracing::info;
 use capsem_core::auto_snapshot::AutoSnapshotScheduler;
 use capsem_core::mcp::types::JsonRpcResponse;
 use capsem_core::mcp::{builtin_tools, file_tools};
-use capsem_core::net::domain_policy::{Action, DomainPolicy};
-use capsem_core::net::policy_config::SecurityRuleSet;
 use capsem_logger::DbWriter;
+use capsem_network_engine::domain_policy::{Action, DomainPolicy};
 
 // -- Tool parameter types --
 
@@ -149,7 +149,6 @@ struct BuiltinHandler {
     http_client: reqwest::Client,
     domain_policy: Arc<DomainPolicy>,
     db: Arc<DbWriter>,
-    security_rules: Arc<SecurityRuleSet>,
     scheduler: Option<Arc<Mutex<AutoSnapshotScheduler>>>,
     workspace_dir: Option<PathBuf>,
 }
@@ -277,18 +276,9 @@ impl BuiltinHandler {
         Parameters(params): Parameters<SnapshotRevertParams>,
     ) -> Result<String, String> {
         let (sched, ws) = self.snapshot_state()?;
-        let (resp, file_event) = {
-            let sched = sched.lock().await;
-            file_tools::handle_revert_file_with_security_event(&to_args(&params), &sched, &ws, None)
-        };
-        if let Some(file_event) = file_event {
-            capsem_core::security_engine::emit_file_security_write_and_rules(
-                &self.db,
-                &self.security_rules,
-                file_event,
-            )
-            .await;
-        }
+        let sched = sched.lock().await;
+        let resp =
+            file_tools::handle_revert_file(&to_args(&params), &sched, &ws, None, Some(&self.db));
         extract_text(resp)
     }
 
@@ -477,15 +467,17 @@ async fn main() -> Result<()> {
         .filter(|s| !s.is_empty())
         .map(String::from)
         .collect();
-    let default_action = if allow.is_empty() && block.is_empty() {
-        Action::Allow
-    } else {
-        Action::Deny
+    let default_action = match std::env::var("CAPSEM_DOMAIN_DEFAULT")
+        .unwrap_or_default()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "allow" => Action::Allow,
+        "deny" => Action::Deny,
+        _ if allow.is_empty() && block.is_empty() => Action::Allow,
+        _ => Action::Deny,
     };
     let domain_policy = Arc::new(DomainPolicy::new(&allow, &block, default_action));
-    let (user_sf, corp_sf) = capsem_core::net::policy_config::load_settings_files();
-    let merged = capsem_core::net::policy_config::MergedPolicies::from_files(&user_sf, &corp_sf);
-    let security_rules = Arc::new(merged.security_rules);
 
     // Session DB writer (optional).
     let db = match std::env::var("CAPSEM_SESSION_DB") {
@@ -528,7 +520,6 @@ async fn main() -> Result<()> {
         http_client: reqwest::Client::new(),
         domain_policy,
         db,
-        security_rules,
         scheduler,
         workspace_dir,
     };

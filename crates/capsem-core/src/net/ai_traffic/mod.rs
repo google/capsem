@@ -3,34 +3,39 @@
 /// traffic flowing through the MITM proxy (vsock:5002).
 ///
 /// All AI traffic goes through the MITM proxy, which uses these modules for:
-/// - Typed protocol adapters and legacy path routing (`provider.rs`)
+/// - Provider detection and routing (`provider.rs`)
 /// - Request body parsing for metadata (`request_parser.rs`)
 /// - SSE stream parsing for response events (`sse.rs`, `ai_body.rs`)
-/// - Protocol-specific response parsers (`anthropic.rs`, `openai.rs`, `google.rs`)
+/// - Provider-specific SSE parsers (`anthropic.rs`, `openai.rs`, `google.rs`)
 /// - Unified event collection and summarization (`events.rs`)
 /// - Model pricing estimation (`pricing.rs`)
 ///
-/// # Provider identity vs protocol
+/// # Tool call data paths (3 parallel systems)
 ///
-/// Provider identity is settings/profile data (`ai.openai`, `ai.ollama`,
-/// custom private gateways). Rust owns typed wire protocol adapters such as
-/// OpenAI, Anthropic, Google, and native Ollama. A new OpenAI-compatible
-/// endpoint must not need a new Rust enum variant.
+/// 1. **model_calls.tool_calls** (MITM proxy): every tool_use block in an
+///    LLM response is recorded with origin ("native"/"local"/"mcp_proxy")
+///    via `provider::tool_origin()`. Linked to model_calls by FK.
+/// 2. **mcp_calls** (MITM MCP endpoint, vsock:5002): every guest MCP
+///    JSON-RPC request is recorded independently by the framed MCP layer.
+/// 3. **net_events** (builtin HTTP tools): `fetch_http`/`grep_http`/
+///    `http_headers` emit NetEvents for domain policy enforcement.
 ///
-/// # Tool-call telemetry contract
+/// # Correlation gaps (next-gen TODOs)
 ///
-/// Model-native tool calls, observed MCP calls, and builtin network events are
-/// separate first-party security events. They are correlated by event IDs,
-/// trace IDs, and turn/tool identifiers in the logger-owned session DB; no
-/// helper table or MCP-only path is allowed to become the source of truth.
-pub mod events;
+/// - `tool_calls.mcp_call_id` is populated opportunistically when the framed
+///   MCP call shares the same trace id and normalized tool name as a model
+///   tool-use event. The canonical AI evidence tables carry the richer link
+///   status (`linked`, `ambiguous`, `orphan_mcp_execution`, etc.).
+/// - `mcp_calls.trace_id` is present, but guest/provider trace propagation can
+///   still be partial; unknown linkage must remain explicit rather than being
+///   inferred from tool-name heuristics alone.
+/// - Builtin tool NetEvents are not linked to their tool_call entries.
 pub mod pricing;
 pub mod provider;
-pub mod request_parser;
 
 use std::collections::HashMap;
 
-pub use provider::{ModelProtocol, Provider, ProviderKind};
+pub use provider::{Provider, ProviderKind};
 
 /// Tracks in-flight traces: maps pending tool call_ids to their trace_id.
 ///

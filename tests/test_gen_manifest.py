@@ -8,6 +8,7 @@ correct hash/size entries.
 import json
 import subprocess
 import sys
+import datetime
 from pathlib import Path
 
 import pytest
@@ -29,12 +30,12 @@ class TestGenManifestV2:
         arm64.mkdir()
         (arm64 / "vmlinuz").write_bytes(b"kernel")
         (arm64 / "initrd.img").write_bytes(b"initrd")
-        (arm64 / "rootfs.erofs").write_bytes(b"rootfs")
+        (arm64 / "rootfs.squashfs").write_bytes(b"rootfs")
 
         (tmp_path / "B3SUMS").write_text(
             "aaa111aaa111aaa111aaa111aaa111aaa111aaa111aaa111aaa111aaa111aaa1  arm64/vmlinuz\n"
             "bbb222bbb222bbb222bbb222bbb222bbb222bbb222bbb222bbb222bbb222bbb2  arm64/initrd.img\n"
-            "ccc333ccc333ccc333ccc333ccc333ccc333ccc333ccc333ccc333ccc333ccc3  arm64/rootfs.erofs\n"
+            "ccc333ccc333ccc333ccc333ccc333ccc333ccc333ccc333ccc333ccc333ccc3  arm64/rootfs.squashfs\n"
         )
         cargo = _make_cargo_toml(tmp_path)
 
@@ -57,7 +58,7 @@ class TestGenManifestV2:
         assert "arm64" in release["arches"]
 
         arm64_assets = release["arches"]["arm64"]
-        assert set(arm64_assets.keys()) == {"vmlinuz", "initrd.img", "rootfs.erofs"}
+        assert set(arm64_assets.keys()) == {"vmlinuz", "initrd.img", "rootfs.squashfs"}
         assert arm64_assets["vmlinuz"]["hash"].startswith("aaa111")
         assert arm64_assets["vmlinuz"]["size"] == 6  # len(b"kernel")
 
@@ -144,3 +145,32 @@ class TestGenManifestV2:
         m2 = json.loads((tmp_path / "manifest.json").read_text())
         v2 = m2["assets"]["current"]
         assert v2.endswith(".2")
+
+    def test_patch_auto_increment_uses_numeric_order(self, tmp_path):
+        """A same-day `.9` manifest advances to `.10`."""
+        (tmp_path / "vmlinuz").write_bytes(b"kernel")
+        (tmp_path / "B3SUMS").write_text(
+            "aaa111aaa111aaa111aaa111aaa111aaa111aaa111aaa111aaa111aaa111aaa1  vmlinuz\n"
+        )
+        cargo = _make_cargo_toml(tmp_path)
+        today_prefix = datetime.date.today().strftime("%Y.%m%d")
+        (tmp_path / "manifest.json").write_text(json.dumps({
+            "format": 2,
+            "assets": {
+                "current": f"{today_prefix}.9",
+                "releases": {
+                    f"{today_prefix}.2": {},
+                    f"{today_prefix}.9": {},
+                },
+            },
+            "binaries": {"current": "1.0.1000000000", "releases": {}},
+        }))
+
+        result = subprocess.run(
+            [sys.executable, str(GEN_MANIFEST), str(tmp_path), str(cargo)],
+            capture_output=True, text=True,
+        )
+        assert result.returncode == 0, result.stderr
+
+        manifest = json.loads((tmp_path / "manifest.json").read_text())
+        assert manifest["assets"]["current"] == f"{today_prefix}.10"

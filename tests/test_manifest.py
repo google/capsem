@@ -60,10 +60,10 @@ NPM_NO_DEPS_KEY = json.dumps({"name": "root"})
 B3SUMS_OUTPUT = """\
 a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2  vmlinuz
 b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3  initrd.img
-c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4  rootfs.erofs
+c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4  rootfs.squashfs
 """
 
-SIZES = {"vmlinuz": 12_345_678, "initrd.img": 5_678_901, "rootfs.erofs": 999_999_999}
+SIZES = {"vmlinuz": 12_345_678, "initrd.img": 5_678_901, "rootfs.squashfs": 999_999_999}
 
 
 # ---------------------------------------------------------------------------

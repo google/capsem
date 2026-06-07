@@ -54,6 +54,16 @@ function textResponse(text: string, status = 200) {
   });
 }
 
+function blobResponse(text: string, status = 200, contentType = 'text/plain') {
+  const blob = new Blob([text], { type: contentType });
+  return Promise.resolve({
+    ok: status >= 200 && status < 300,
+    status,
+    blob: () => Promise.resolve(blob),
+    text: () => Promise.resolve(text),
+  });
+}
+
 describe('api', () => {
   beforeEach(() => {
     mockFetch.mockReset();
@@ -128,10 +138,35 @@ describe('api', () => {
       // Force disconnected state.
       mockFetch.mockRejectedValueOnce(new Error('fail'));
       await api.init();
+      mockFetch.mockRejectedValueOnce(new Error('still down'));
 
       const status = await api.getStatus();
       expect(status.service).toBe('offline');
       expect(status.vms).toEqual([]);
+    });
+
+    it('reconnects before reporting the dashboard status offline', async () => {
+      mockFetch.mockRejectedValueOnce(new Error('startup race'));
+      await api.init();
+
+      mockFetch
+        .mockReturnValueOnce(jsonResponse({ ok: true, version: '1.2.0', service_socket: '/tmp/service.sock' }))
+        .mockReturnValueOnce(jsonResponse({ token: 'fresh-token' }))
+        .mockReturnValueOnce(jsonResponse({
+          service: 'running',
+          gateway_version: '1.2.0',
+          vm_count: 0,
+          vms: [],
+          resource_summary: null,
+          assets: { ready: true, state: 'ready', profile_id: 'everyday-work' },
+        }));
+
+      const status = await api.getStatus();
+      expect(status.service).toBe('running');
+      expect(api.isConnected()).toBe(true);
+      expect(mockFetch.mock.calls.at(-3)?.[0]).toContain('/health');
+      expect(mockFetch.mock.calls.at(-2)?.[0]).toContain('/token');
+      expect(mockFetch.mock.calls.at(-1)?.[0]).toContain('/status');
     });
   });
 
@@ -222,20 +257,22 @@ describe('api', () => {
       expect(result.exit_code).toBe(0);
     });
 
-    it('readFile sends POST /read_file/{id}', async () => {
-      mockFetch.mockReturnValueOnce(jsonResponse({ content: 'file contents' }));
+    it('readFile sends GET /files/{id}/content', async () => {
+      mockFetch.mockReturnValueOnce(blobResponse('file contents'));
       const result = await api.readFile('vm-1', '/etc/hosts');
       expect(result.content).toBe('file contents');
+      const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
+      expect(call[0]).toContain('/files/vm-1/content?path=etc%2Fhosts');
+      expect(call[1].method).toBeUndefined();
     });
 
-    it('writeFile sends POST /write_file/{id}', async () => {
-      mockFetch.mockReturnValueOnce(jsonResponse(null));
+    it('writeFile sends POST /files/{id}/content', async () => {
+      mockFetch.mockReturnValueOnce(jsonResponse({ success: true, size: 4 }));
       await api.writeFile('vm-1', '/tmp/test', 'data');
       const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
-      expect(call[0]).toContain('/write_file/vm-1');
-      const body = JSON.parse(call[1].body);
-      expect(body.path).toBe('/tmp/test');
-      expect(body.content).toBe('data');
+      expect(call[0]).toContain('/files/vm-1/content?path=tmp%2Ftest');
+      expect(call[1].method).toBe('POST');
+      expect(call[1].headers['Content-Type']).toBe('application/octet-stream');
     });
 
     it('inspectQuery sends POST /inspect/{id}', async () => {
@@ -276,6 +313,18 @@ describe('api', () => {
       expect(JSON.parse(call[1].body)).toEqual(changes);
     });
 
+    it('saveCredential writes Profile V2 credentials by credential id', async () => {
+      mockFetch.mockReturnValueOnce(jsonResponse({ configured: true }));
+      await api.saveCredential('google-api-key', 'gemini-test-key', 'Google AI API key');
+      const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
+      expect(call[0]).toContain('/credentials/google-api-key');
+      expect(call[1].method).toBe('POST');
+      expect(JSON.parse(call[1].body)).toEqual({
+        value: 'gemini-test-key',
+        description: 'Google AI API key',
+      });
+    });
+
     it('getPresets sends GET /settings/presets', async () => {
       const presets = [{ id: 'high', name: 'High', description: 'desc', settings: {}, mcp: null }];
       mockFetch.mockReturnValueOnce(jsonResponse(presets));
@@ -296,6 +345,94 @@ describe('api', () => {
       mockFetch.mockReturnValueOnce(jsonResponse(issues));
       const result = await api.lintConfig();
       expect(result).toEqual(issues);
+    });
+
+    it('getDebugReport sends GET /debug/report', async () => {
+      mockFetch.mockReturnValueOnce(jsonResponse({ text: 'Capsem Debug Report\ninitrd_manifest_hash: abc' }));
+      const result = await api.getDebugReport();
+      expect(result.text).toContain('Capsem Debug Report');
+      const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
+      expect(call[0]).toContain('/debug/report');
+      expect(call[1].method).toBeUndefined();
+    });
+
+    it('getProfileCatalog sends GET /profiles/catalog', async () => {
+      mockFetch.mockReturnValueOnce(jsonResponse({
+        mode: 'settings_profiles_v2',
+        manifest_present: true,
+        profiles: [],
+      }));
+      const result = await api.getProfileCatalog();
+      expect(result.mode).toBe('settings_profiles_v2');
+      const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
+      expect(call[0]).toContain('/profiles/catalog');
+      expect(call[1].method).toBeUndefined();
+    });
+
+    it('listProfiles sends GET /profiles', async () => {
+      const mockResp = {
+        mode: 'settings_profiles_v2',
+        default_profile: 'coding',
+        profiles: [],
+      };
+      mockFetch.mockReturnValueOnce(jsonResponse(mockResp));
+      const result = await api.listProfiles();
+      expect(result).toEqual(mockResp);
+      const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
+      expect(call[0]).toContain('/profiles');
+      expect(call[1].method).toBeUndefined();
+    });
+
+    it('refreshes the gateway token once when a profile request gets 401', async () => {
+      mockFetch
+        .mockReturnValueOnce(textResponse('{"error":"unauthorized"}', 401))
+        .mockReturnValueOnce(jsonResponse({ token: 'fresh-token' }))
+        .mockReturnValueOnce(jsonResponse({
+          mode: 'settings_profiles_v2',
+          manifest_present: true,
+          profiles: [],
+        }));
+
+      const result = await api.getProfileCatalog();
+      expect(result.mode).toBe('settings_profiles_v2');
+
+      const failed = mockFetch.mock.calls.at(-3);
+      const refresh = mockFetch.mock.calls.at(-2);
+      const retry = mockFetch.mock.calls.at(-1);
+      expect(failed?.[0]).toContain('/profiles/catalog');
+      expect(failed?.[1].headers.Authorization).toBe('Bearer tok');
+      expect(refresh?.[0]).toContain('/token');
+      expect(retry?.[0]).toContain('/profiles/catalog');
+      expect(retry?.[1].headers.Authorization).toBe('Bearer fresh-token');
+    });
+
+    it('getProfileRevisions sends GET /profiles/{id}/revisions', async () => {
+      mockFetch.mockReturnValueOnce(jsonResponse({
+        mode: 'settings_profiles_v2',
+        profile_id: 'everyday-work',
+        current_revision: '2026.0520.2',
+        installed_revision: '2026.0520.1',
+        revisions: [],
+      }));
+      const result = await api.getProfileRevisions('everyday-work');
+      expect(result.profile_id).toBe('everyday-work');
+      const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
+      expect(call[0]).toContain('/profiles/everyday-work/revisions');
+      expect(call[1].method).toBeUndefined();
+    });
+
+    it('selectProfile sends POST /profiles/{id}/select', async () => {
+      mockFetch.mockReturnValueOnce(jsonResponse({
+        mode: 'settings_profiles_v2',
+        manifest_present: true,
+        default_profile: 'everyday-work',
+        profiles: [],
+      }));
+      const result = await api.selectProfile('everyday-work');
+      expect(result.default_profile).toBe('everyday-work');
+      const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
+      expect(call[0]).toContain('/profiles/everyday-work/select');
+      expect(call[1].method).toBe('POST');
     });
   });
 
@@ -460,6 +597,132 @@ describe('api', () => {
     });
   });
 
+  // ---- Runtime security rules ----
+
+  describe('Runtime security rules', () => {
+    beforeEach(async () => {
+      mockFetch
+        .mockReturnValueOnce(jsonResponse({ ok: true, version: '1.0.0', service_socket: '/tmp/s' }))
+        .mockReturnValueOnce(jsonResponse({ token: 'tok' }));
+      await api.init();
+    });
+
+    it('getRuntimeDetectionRules sends GET /detection', async () => {
+      const rules = [
+        {
+          id: 'detect-google',
+          pack_id: 'runtime',
+          scope: 'runtime',
+          origin: 'runtime',
+          enabled: true,
+          compiled: true,
+          compile_status: { status: 'compiled' },
+          priority: 25,
+          generation: 1,
+          condition: "dns.request.qname.contains('google')",
+          compiled_plan: 'cel:123',
+          match_count: 2,
+          last_matched_event: 'evt-1',
+          last_matched_unix_ms: 1700000000000,
+        },
+      ];
+      mockFetch.mockReturnValueOnce(jsonResponse({ kind: 'detection', rules }));
+
+      const result = await api.getRuntimeDetectionRules();
+
+      expect(result.rules).toEqual(rules);
+      const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
+      expect(call[0]).toContain('/detection');
+      expect(call[1].method).toBeUndefined();
+    });
+
+    it('validateRuntimeEnforcementRule sends POST /enforcement/validate', async () => {
+      mockFetch.mockReturnValueOnce(jsonResponse({
+        compiled: true,
+        id: 'block-admin',
+        compiled_plan: 'cel:admin',
+      }));
+      const rule = {
+        id: 'block-admin',
+        pack_id: 'runtime',
+        condition: "http.request.path.startsWith('/admin')",
+        priority: 10,
+        decision: 'block' as const,
+        reason: 'admin path',
+        enabled: true,
+      };
+
+      const result = await api.validateRuntimeEnforcementRule(rule);
+
+      expect(result.compiled).toBe(true);
+      const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
+      expect(call[0]).toContain('/enforcement/validate');
+      expect(call[1].method).toBe('POST');
+      expect(JSON.parse(call[1].body)).toEqual(rule);
+    });
+
+    it('installRuntimeDetectionRule posts to /detection', async () => {
+      const rule = {
+        id: 'detect-secret',
+        pack_id: 'runtime-detection',
+        title: 'Secret egress',
+        condition: "http.request.body.text.contains('secret')",
+        priority: 20,
+        severity: 'high' as const,
+        confidence: 'high' as const,
+        tags: ['http', 'egress'],
+        enabled: true,
+      };
+      mockFetch.mockReturnValueOnce(jsonResponse({ kind: 'detection', rule: { id: rule.id } }));
+
+      const result = await api.installRuntimeDetectionRule(rule);
+
+      expect(result.rule.id).toBe(rule.id);
+      const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
+      expect(call[0]).toContain('/detection');
+      expect(call[1].method).toBe('POST');
+      expect(JSON.parse(call[1].body)).toEqual(rule);
+    });
+
+    it('huntSessionRuntimeDetectionRules posts rules to /sessions/{id}/detection/hunt', async () => {
+      const rules = [{
+        id: 'detect-tool-result',
+        pack_id: 'runtime-detection',
+        title: 'Tool result returned',
+        condition: 'model.response.tool_results[0].returned_to_model == true',
+        priority: 30,
+        severity: 'medium' as const,
+        confidence: 'high' as const,
+        tags: ['model'],
+        enabled: true,
+      }];
+      mockFetch.mockReturnValueOnce(jsonResponse({
+        total_matches: 1,
+        unique_evidence_matches: 1,
+        truncated: false,
+        rows: [],
+      }));
+
+      const result = await api.huntSessionRuntimeDetectionRules('vm 1', { rules, limit: 50 });
+
+      expect(result.total_matches).toBe(1);
+      const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
+      expect(call[0]).toContain('/sessions/vm%201/detection/hunt');
+      expect(call[1].method).toBe('POST');
+      expect(JSON.parse(call[1].body)).toEqual({ rules, limit: 50 });
+    });
+
+    it('deleteRuntimeEnforcementRule sends DELETE /enforcement/{id}', async () => {
+      mockFetch.mockReturnValueOnce(jsonResponse({ kind: 'enforcement', id: 'block admin', removed: true }));
+
+      await api.deleteRuntimeEnforcementRule('block admin');
+
+      const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
+      expect(call[0]).toContain('/enforcement/block%20admin');
+      expect(call[1].method).toBe('DELETE');
+    });
+  });
+
   // ---- VM state ----
 
   describe('VM state', () => {
@@ -532,9 +795,9 @@ describe('api', () => {
     });
   });
 
-  // ---- App actions ----
+  // ---- Validation / app actions ----
 
-  describe('checkForAppUpdate', () => {
+  describe('validateApiKey', () => {
     beforeEach(async () => {
       mockFetch
         .mockReturnValueOnce(jsonResponse({ ok: true, version: '1.0.0', service_socket: '/tmp/s' }))
@@ -542,16 +805,16 @@ describe('api', () => {
       await api.init();
     });
 
-    it('returns update info when available', async () => {
-      mockFetch.mockReturnValueOnce(jsonResponse({ version: '2.0.0', current_version: '1.0.0' }));
-      const result = await api.checkForAppUpdate();
-      expect(result).toEqual({ version: '2.0.0', current_version: '1.0.0' });
+    it('returns validation result from API', async () => {
+      mockFetch.mockReturnValueOnce(jsonResponse({ valid: true, message: 'ok' }));
+      const result = await api.validateApiKey('anthropic', 'sk-ant-xxx');
+      expect(result.valid).toBe(true);
     });
 
-    it('returns null on error', async () => {
+    it('returns invalid on error', async () => {
       mockFetch.mockRejectedValueOnce(new Error('fail'));
-      const result = await api.checkForAppUpdate();
-      expect(result).toBeNull();
+      const result = await api.validateApiKey('anthropic', 'bad');
+      expect(result.valid).toBe(false);
     });
   });
 
@@ -606,16 +869,4 @@ describe('api', () => {
     });
   });
 
-  describe('getImages', () => {
-    it('sends GET /images', async () => {
-      mockFetch
-        .mockReturnValueOnce(jsonResponse({ ok: true, version: '1.0.0', service_socket: '/tmp/s' }))
-        .mockReturnValueOnce(jsonResponse({ token: 'tok' }));
-      await api.init();
-
-      mockFetch.mockReturnValueOnce(jsonResponse({ images: [{ name: 'default' }] }));
-      const result = await api.getImages();
-      expect(result.images).toHaveLength(1);
-    });
-  });
 });

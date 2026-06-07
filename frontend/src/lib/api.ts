@@ -13,6 +13,21 @@ import type {
   ForkRequest,
   ForkResponse,
   StatsResponse,
+  RuntimeEnforcementRuleRequest,
+  RuntimeDetectionRuleRequest,
+  RuntimeRuleListResponse,
+  RuntimeRuleCompileResponse,
+  RuntimeRuleInstallResponse,
+  RuntimeRuleDeleteResponse,
+  RuntimeEnforcementBacktestRequest,
+  RuntimeDetectionBacktestRequest,
+  RuntimeDetectionHuntRequest,
+  RuntimeSessionDetectionHuntRequest,
+  RuntimeBacktestResult,
+  DebugReport,
+  ProfileCatalogResponse,
+  ProfileListResponse,
+  ProfileRevisionsResponse,
 } from './types/gateway';
 import type {
   SettingsResponse,
@@ -56,6 +71,27 @@ function _detectBaseUrl(): string {
 }
 
 let _baseUrl = _detectBaseUrl();
+
+export type ReloadConfigFailure = {
+  session_id: string;
+  message: string;
+};
+
+export type ReloadConfigResult = {
+  success: boolean;
+  reloaded: number;
+  failed_session_count: number;
+  failed_session_ids: string[];
+  failures: ReloadConfigFailure[];
+  message: string | null;
+};
+
+export class ReloadConfigError extends Error {
+  constructor(public result: ReloadConfigResult) {
+    super(result.message ?? 'reload failed');
+    this.name = 'ReloadConfigError';
+  }
+}
 
 // -- Public getters --
 
@@ -134,9 +170,7 @@ class ApiError extends Error {
 }
 
 async function _get(path: string): Promise<Response> {
-  const resp = await fetch(`${_baseUrl}${path}`, {
-    headers: { Authorization: `Bearer ${_token}` },
-  });
+  const resp = await _authFetch(path);
   if (!resp.ok) {
     const body = await resp.text();
     throw new ApiError(resp.status, body);
@@ -145,10 +179,9 @@ async function _get(path: string): Promise<Response> {
 }
 
 async function _post(path: string, body?: unknown): Promise<Response> {
-  const resp = await fetch(`${_baseUrl}${path}`, {
+  const resp = await _authFetch(path, {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${_token}`,
       ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
     },
     body: body !== undefined ? JSON.stringify(body) : undefined,
@@ -161,14 +194,49 @@ async function _post(path: string, body?: unknown): Promise<Response> {
 }
 
 async function _delete(path: string): Promise<Response> {
-  const resp = await fetch(`${_baseUrl}${path}`, {
+  const resp = await _authFetch(path, {
     method: 'DELETE',
-    headers: { Authorization: `Bearer ${_token}` },
   });
   if (!resp.ok) {
     const text = await resp.text();
     throw new ApiError(resp.status, text);
   }
+  return resp;
+}
+
+async function _refreshAuthToken(): Promise<void> {
+  const tokenResp = await fetch(`${_baseUrl}/token`);
+  if (!tokenResp.ok) {
+    _connected = false;
+    _token = null;
+    const body = await tokenResp.text();
+    throw new ApiError(tokenResp.status, body);
+  }
+  const tokenData: TokenResponse = await tokenResp.json();
+  _token = tokenData.token;
+  _connected = true;
+}
+
+async function _authFetch(path: string, init: RequestInit = {}, retry = true): Promise<Response> {
+  if (!_token) {
+    await _refreshAuthToken();
+  }
+
+  const headers = {
+    ...((init.headers as Record<string, string> | undefined) ?? {}),
+    Authorization: `Bearer ${_token}`,
+  };
+  const resp = await fetch(`${_baseUrl}${path}`, {
+    ...init,
+    headers,
+  });
+
+  if (resp.status === 401 && retry) {
+    _token = null;
+    await _refreshAuthToken();
+    return _authFetch(path, init, false);
+  }
+
   return resp;
 }
 
@@ -181,8 +249,11 @@ function isNetworkError(err: unknown): boolean {
 
 export async function getStatus(): Promise<StatusResponse> {
   if (!_connected) {
-    console.log('[api] getStatus() skipped: not connected');
-    return emptyStatus();
+    console.log('[api] getStatus() reconnecting before status poll');
+    const result = await init();
+    if (!result.connected) {
+      return emptyStatus();
+    }
   }
   try {
     const resp = await _get('/status');
@@ -194,6 +265,26 @@ export async function getStatus(): Promise<StatusResponse> {
     }
     throw err;
   }
+}
+
+export async function getProfileCatalog(): Promise<ProfileCatalogResponse> {
+  const resp = await _get('/profiles/catalog');
+  return await resp.json();
+}
+
+export async function listProfiles(): Promise<ProfileListResponse> {
+  const resp = await _get('/profiles');
+  return await resp.json();
+}
+
+export async function getProfileRevisions(profileId: string): Promise<ProfileRevisionsResponse> {
+  const resp = await _get(`/profiles/${encodeURIComponent(profileId)}/revisions`);
+  return await resp.json();
+}
+
+export async function selectProfile(profileId: string): Promise<ProfileCatalogResponse> {
+  const resp = await _post(`/profiles/${encodeURIComponent(profileId)}/select`);
+  return await resp.json();
 }
 
 function emptyStatus(): StatusResponse {
@@ -316,25 +407,80 @@ export async function inspectQuery(id: string, sql: string): Promise<InspectResp
 }
 
 export async function readFile(id: string, path: string): Promise<ReadFileResponse> {
-  const resp = await _post(`/read_file/${encodeURIComponent(id)}`, { path });
-  return await resp.json();
+  const result = await getFileContent(id, path);
+  return { content: result.text };
 }
 
 export async function writeFile(id: string, path: string, content: string): Promise<void> {
-  await _post(`/write_file/${encodeURIComponent(id)}`, { path, content });
-}
-
-// -- Images --
-
-export async function getImages(): Promise<{ images: { name: string }[] }> {
-  const resp = await _get('/images');
-  return await resp.json();
+  await uploadFile(id, path, content);
 }
 
 // -- Config --
 
-export async function reloadConfig(): Promise<void> {
-  await _post('/reload-config');
+export async function reloadConfig(): Promise<ReloadConfigResult> {
+  const resp = await _authFetch('/reload-config', {
+    method: 'POST',
+  });
+  const text = await resp.text();
+  const parsed = text ? parseReloadConfigBody(text) : null;
+  const result = normalizeReloadConfigResult(parsed, resp.ok, text);
+  if (!resp.ok || !result.success) {
+    throw new ReloadConfigError(result);
+  }
+  return result;
+}
+
+function parseReloadConfigBody(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+function normalizeReloadConfigResult(
+  raw: unknown,
+  ok: boolean,
+  fallbackText: string,
+): ReloadConfigResult {
+  if (raw && typeof raw === 'object') {
+    const body = raw as Partial<ReloadConfigResult> & { error?: unknown };
+    if (typeof body.success === 'boolean') {
+      return {
+        success: body.success,
+        reloaded: typeof body.reloaded === 'number' ? body.reloaded : 0,
+        failed_session_count: typeof body.failed_session_count === 'number' ? body.failed_session_count : 0,
+        failed_session_ids: Array.isArray(body.failed_session_ids) ? body.failed_session_ids.filter((id): id is string => typeof id === 'string') : [],
+        failures: Array.isArray(body.failures)
+          ? body.failures
+              .filter((failure): failure is ReloadConfigFailure =>
+                Boolean(failure)
+                && typeof failure === 'object'
+                && typeof (failure as ReloadConfigFailure).session_id === 'string'
+                && typeof (failure as ReloadConfigFailure).message === 'string')
+          : [],
+        message: typeof body.message === 'string' ? body.message : null,
+      };
+    }
+    if (typeof body.error === 'string') {
+      return {
+        success: false,
+        reloaded: 0,
+        failed_session_count: 0,
+        failed_session_ids: [],
+        failures: [],
+        message: body.error,
+      };
+    }
+  }
+  return {
+    success: ok,
+    reloaded: ok ? 0 : 0,
+    failed_session_count: 0,
+    failed_session_ids: [],
+    failures: [],
+    message: ok ? null : fallbackText,
+  };
 }
 
 // -- Stats --
@@ -579,6 +725,18 @@ export async function saveSettings(changes: Record<string, unknown>): Promise<Se
   return await resp.json();
 }
 
+/** Save a Profile V2 service credential by credential id. */
+export async function saveCredential(
+  credentialId: string,
+  value: string,
+  description?: string,
+): Promise<void> {
+  await _post(`/credentials/${encodeURIComponent(credentialId)}`, {
+    value,
+    ...(description ? { description } : {}),
+  });
+}
+
 /** List available security presets. */
 export async function getPresets(): Promise<SecurityPreset[]> {
   const resp = await _get('/settings/presets');
@@ -594,6 +752,12 @@ export async function applyPreset(id: string): Promise<SettingsResponse> {
 /** Validate config and return issues. */
 export async function lintConfig(): Promise<ConfigIssue[]> {
   const resp = await _post('/settings/lint');
+  return await resp.json();
+}
+
+/** Build a redacted pasteable debug report for bug reports. */
+export async function getDebugReport(): Promise<DebugReport> {
+  const resp = await _get('/debug/report');
   return await resp.json();
 }
 
@@ -615,7 +779,7 @@ function _extractMcpPolicy(settings: SettingsResponse): McpPolicyInfo {
     blocked_servers: [],
     tool_permissions: {},
   };
-  function walk(nodes: typeof settings.tree) {
+  function walk(nodes: NonNullable<SettingsResponse['tree']>) {
     for (const node of nodes) {
       if (node.kind === 'leaf') {
         if (node.id === 'mcp.policy.global') {
@@ -629,8 +793,8 @@ function _extractMcpPolicy(settings: SettingsResponse): McpPolicyInfo {
       }
     }
   }
-  walk(settings.tree);
-  for (const rule of Object.values(settings.policy?.mcp ?? {})) {
+  walk(settings.tree ?? []);
+  for (const rule of Object.values((settings.policy ?? settings.effective_rules)?.mcp ?? {})) {
     const tool = policyToolName(rule);
     if (!tool) continue;
     if (rule.decision === 'allow' || rule.decision === 'ask' || rule.decision === 'block') {
@@ -745,20 +909,150 @@ export async function callMcpTool(name: string, args: Record<string, unknown>): 
   return await resp.json();
 }
 
-// -- Assets --
+// -- Runtime security rules --
 
-import type { AssetStatusResponse } from './types/assets';
-
-/** Get first-class VM asset status. */
-export async function getAssetsStatus(): Promise<AssetStatusResponse> {
-  const resp = await _get('/assets/status');
+export async function getRuntimeEnforcementRules(): Promise<RuntimeRuleListResponse> {
+  const resp = await _get('/enforcement');
   return await resp.json();
 }
 
-/** Ensure missing/corrupt VM assets, then return refreshed status. */
-export async function ensureAssets(): Promise<AssetStatusResponse> {
-  const resp = await _post('/assets/ensure', {});
+export async function getRuntimeEnforcementStats(): Promise<RuntimeRuleListResponse> {
+  const resp = await _get('/enforcement/stats');
   return await resp.json();
+}
+
+export async function validateRuntimeEnforcementRule(
+  rule: RuntimeEnforcementRuleRequest,
+): Promise<RuntimeRuleCompileResponse> {
+  const resp = await _post('/enforcement/validate', rule);
+  return await resp.json();
+}
+
+export async function compileRuntimeEnforcementRule(
+  rule: RuntimeEnforcementRuleRequest,
+): Promise<RuntimeRuleCompileResponse> {
+  const resp = await _post('/enforcement/compile', rule);
+  return await resp.json();
+}
+
+export async function installRuntimeEnforcementRule(
+  rule: RuntimeEnforcementRuleRequest,
+): Promise<RuntimeRuleInstallResponse> {
+  const resp = await _post('/enforcement', rule);
+  return await resp.json();
+}
+
+export async function backtestRuntimeEnforcementRule(
+  request: RuntimeEnforcementBacktestRequest,
+): Promise<RuntimeBacktestResult> {
+  const resp = await _post('/enforcement/backtest', request);
+  return await resp.json();
+}
+
+export async function deleteRuntimeEnforcementRule(id: string): Promise<RuntimeRuleDeleteResponse> {
+  const resp = await _delete(`/enforcement/${encodeURIComponent(id)}`);
+  return await resp.json();
+}
+
+export async function getRuntimeDetectionRules(): Promise<RuntimeRuleListResponse> {
+  const resp = await _get('/detection');
+  return await resp.json();
+}
+
+export async function getRuntimeDetectionStats(): Promise<RuntimeRuleListResponse> {
+  const resp = await _get('/detection/stats');
+  return await resp.json();
+}
+
+export async function validateRuntimeDetectionRule(
+  rule: RuntimeDetectionRuleRequest,
+): Promise<RuntimeRuleCompileResponse> {
+  const resp = await _post('/detection/validate', rule);
+  return await resp.json();
+}
+
+export async function compileRuntimeDetectionRule(
+  rule: RuntimeDetectionRuleRequest,
+): Promise<RuntimeRuleCompileResponse> {
+  const resp = await _post('/detection/compile', rule);
+  return await resp.json();
+}
+
+export async function installRuntimeDetectionRule(
+  rule: RuntimeDetectionRuleRequest,
+): Promise<RuntimeRuleInstallResponse> {
+  const resp = await _post('/detection', rule);
+  return await resp.json();
+}
+
+export async function backtestRuntimeDetectionRule(
+  request: RuntimeDetectionBacktestRequest,
+): Promise<RuntimeBacktestResult> {
+  const resp = await _post('/detection/backtest', request);
+  return await resp.json();
+}
+
+export async function huntRuntimeDetectionRules(
+  request: RuntimeDetectionHuntRequest,
+): Promise<RuntimeBacktestResult> {
+  const resp = await _post('/detection/hunt', request);
+  return await resp.json();
+}
+
+export async function huntSessionRuntimeDetectionRules(
+  sessionId: string,
+  request: RuntimeSessionDetectionHuntRequest,
+): Promise<RuntimeBacktestResult> {
+  const resp = await _post(`/sessions/${encodeURIComponent(sessionId)}/detection/hunt`, request);
+  return await resp.json();
+}
+
+export async function deleteRuntimeDetectionRule(id: string): Promise<RuntimeRuleDeleteResponse> {
+  const resp = await _delete(`/detection/${encodeURIComponent(id)}`);
+  return await resp.json();
+}
+
+// -- Validation --
+
+/** Validate an API key against a provider endpoint. */
+export async function validateApiKey(provider: string, key: string): Promise<{ valid: boolean; message: string }> {
+  try {
+    const resp = await _post('/settings/validate-key', { provider, key });
+    return await resp.json();
+  } catch {
+    return { valid: false, message: 'Validation failed (gateway unreachable)' };
+  }
+}
+
+// -- Setup / Onboarding --
+
+import type {
+  SetupStateResponse,
+  DetectedConfigSummary,
+} from './types/onboarding';
+
+/** Get setup/onboarding state (setup-state.json). */
+export async function getSetupState(): Promise<SetupStateResponse> {
+  const resp = await _get('/setup/state');
+  return await resp.json();
+}
+
+/** Run host detection, write found values to settings, return summary. */
+export async function runDetection(): Promise<DetectedConfigSummary> {
+  const resp = await _get('/setup/detect');
+  return await resp.json();
+}
+
+/** Mark GUI onboarding as completed. */
+export async function completeOnboarding(): Promise<void> {
+  await _post('/setup/complete');
+}
+
+/** Retry `capsem setup --non-interactive --accept-detected` server-side.
+ *  Blocks until the subprocess exits. Throws ApiError with stderr tail on
+ *  non-zero exit so the UI can surface a useful message. */
+export async function retrySetup(): Promise<void> {
+  await _post('/setup/retry');
 }
 
 // -- App actions --
@@ -773,16 +1067,6 @@ export async function openUrl(url: string): Promise<void> {
     return;
   }
   window.open(url, '_blank', 'noopener,noreferrer');
-}
-
-/** Check for app updates. Returns null if no update available. */
-export async function checkForAppUpdate(): Promise<{ version: string; current_version: string } | null> {
-  try {
-    const resp = await _get('/update/check');
-    return await resp.json();
-  } catch {
-    return null;
-  }
 }
 
 // -- Files API (host-side VirtioFS) --
@@ -806,9 +1090,7 @@ export async function listFiles(id: string, path?: string, depth?: number): Prom
 /** Download a file from a VM workspace. Returns text, blob, and size. */
 export async function getFileContent(id: string, path: string): Promise<FileContentResult> {
   const sanitized = sanitizePath(path);
-  const resp = await fetch(`${_baseUrl}/files/${encodeURIComponent(id)}/content?path=${encodeURIComponent(sanitized)}`, {
-    headers: { Authorization: `Bearer ${_token}` },
-  });
+  const resp = await _authFetch(`/files/${encodeURIComponent(id)}/content?path=${encodeURIComponent(sanitized)}`);
   if (!resp.ok) {
     const body = await resp.text();
     throw new ApiError(resp.status, body);
@@ -822,10 +1104,9 @@ export async function getFileContent(id: string, path: string): Promise<FileCont
 export async function uploadFile(id: string, path: string, content: Blob | string): Promise<FileUploadResponse> {
   const sanitized = sanitizePath(path);
   const body = typeof content === 'string' ? new Blob([content]) : content;
-  const resp = await fetch(`${_baseUrl}/files/${encodeURIComponent(id)}/content?path=${encodeURIComponent(sanitized)}`, {
+  const resp = await _authFetch(`/files/${encodeURIComponent(id)}/content?path=${encodeURIComponent(sanitized)}`, {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${_token}`,
       'Content-Type': 'application/octet-stream',
     },
     body,

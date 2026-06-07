@@ -24,7 +24,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from helpers.constants import EXEC_READY_TIMEOUT
 from helpers.mcp import content_text, kill_mcp_proc, parse_content, wait_exec_ready as mcp_wait_exec_ready
-from helpers.service import preserve_tmp_dir_on_failure
+from helpers.profile_asset_fixture import find_asset, write_profile_home
+from helpers.service import UdsHttpClient, preserve_tmp_dir_on_failure, select_editable_profile
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 MCP_BINARY = PROJECT_ROOT / "target/debug/capsem-mcp"
@@ -136,6 +137,13 @@ def _start_capsem_service():
 
     arch = "arm64" if os.uname().machine == "arm64" else "x86_64"
     assets_dir = ASSETS_DIR / arch
+    asset_cache = tmp_dir / "assets"
+    assets = {
+        "vmlinuz": find_asset(assets_dir, "vmlinuz"),
+        "initrd.img": find_asset(assets_dir, "initrd.img"),
+        "rootfs.squashfs": find_asset(assets_dir, "rootfs.squashfs"),
+    }
+    write_profile_home(tmp_dir, asset_cache, assets)
 
     env = os.environ.copy()
     env["RUST_LOG"] = "debug"
@@ -145,32 +153,49 @@ def _start_capsem_service():
 
     log_path = tmp_dir / "service.log"
     stderr_path = tmp_dir / "service.stderr.log"
-    stderr_file = open(stderr_path, "w")
 
     # Skip --tray-binary: macOS menu bar icon; flashes on every test.
-    proc = subprocess.Popen(
-        [
-            str(SERVICE_BINARY),
-            "--uds-path", str(uds_path),
-            "--assets-dir", str(assets_dir),
-            "--process-binary", str(PROCESS_BINARY),
-            "--gateway-binary", str(GATEWAY_BINARY),
-            "--gateway-port", "0",
-            "--parent-pid", str(os.getpid()),
-            "--foreground",
-        ],
-        env=env,
-        stdout=subprocess.DEVNULL,
-        stderr=stderr_file,
-    )
+    stderr_fd = os.open(stderr_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
+    try:
+        proc = subprocess.Popen(
+            [
+                str(SERVICE_BINARY),
+                "--uds-path", str(uds_path),
+                "--assets-dir", str(asset_cache),
+                "--process-binary", str(PROCESS_BINARY),
+                "--gateway-binary", str(GATEWAY_BINARY),
+                "--gateway-port", "0",
+                "--parent-pid", str(os.getpid()),
+                "--foreground",
+            ],
+            env=env,
+            stdout=subprocess.DEVNULL,
+            stderr=stderr_fd,
+        )
+    finally:
+        os.close(stderr_fd)
     start = time.time()
     while time.time() - start < 15:
         if uds_path.exists():
-            break
+            result = subprocess.run(
+                [
+                    "curl",
+                    "-s",
+                    "--unix-socket",
+                    str(uds_path),
+                    "--max-time",
+                    "2",
+                    "http://localhost/list",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if result.returncode == 0:
+                break
         time.sleep(0.5)
     else:
         proc.terminate()
-        stderr_file.close()
         if log_path.exists():
             print(f"\n--- SERVICE LOG ---\n{log_path.read_text()}\n---",
                   file=sys.stderr)
@@ -189,8 +214,6 @@ def _start_capsem_service():
             print(f"\n@@@ capsem-service did not exit within 10s, killing it", file=sys.stderr)
             proc.kill()
             proc.wait()
-
-        stderr_file.close()
 
         if log_path.exists():
             print(f"\n--- SERVICE LOG ---\n{log_path.read_text()}\n---", file=sys.stderr)
@@ -230,8 +253,31 @@ def isolated_mcp_session():
     Running such tests on the shared `capsem_service` would destroy
     session-scoped fixtures (`shared_vm`) on the same xdist worker and
     cause 404s in unrelated subsequent tests.
+
+    This fixture keeps the signed catalog-backed default profile selected.
+    VM lifecycle tests must prove the production path: every created VM
+    gets a profile revision/payload/asset pin from the signed profile
+    catalog, not from an editable user fork.
     """
     uds_path, teardown = _start_capsem_service()
+    session, proc = _make_mcp_session(uds_path)
+    try:
+        yield session
+    finally:
+        _kill_proc(proc)
+        teardown()
+
+
+@pytest.fixture
+def editable_isolated_mcp_session():
+    """Dedicated MCP session selected onto an editable user profile fork.
+
+    Use this only for tests that mutate profile-scoped state such as MCP
+    connectors, skills, or rules. The fork is intentionally not a signed
+    catalog revision, so tests using this fixture must not create VMs.
+    """
+    uds_path, teardown = _start_capsem_service()
+    select_editable_profile(UdsHttpClient(uds_path), prefix="mcp")
     session, proc = _make_mcp_session(uds_path)
     try:
         yield session
