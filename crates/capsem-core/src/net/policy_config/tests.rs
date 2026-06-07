@@ -1428,8 +1428,7 @@ fn all_three_providers_injected() {
     assert_eq!(env.get("GEMINI_API_KEY").unwrap(), "AIza");
     // 3 API keys + 7 built-in env vars (TERM, HOME, PATH, LANG, 3x CA)
     // + 3 CAPSEM_*_ALLOWED provider flags
-    // + 2 CAPSEM_WEB_ALLOW_{READ,WRITE} toggles
-    assert_eq!(env.len(), 15);
+    assert_eq!(env.len(), 13);
 }
 
 #[test]
@@ -1499,15 +1498,12 @@ fn provider_allowed_defaults_to_one() {
 }
 
 #[test]
-fn web_default_toggles_exposed_as_env_vars() {
-    // CAPSEM_WEB_ALLOW_{READ,WRITE} let in-VM diagnostics adapt their
-    // "denied domain" assertions when the user has opted to let unknown
-    // domains through by default.
+fn web_default_toggles_not_exposed_as_guest_authority() {
     let defaults = resolve_settings(&empty_file(), &empty_file());
     let gc_defaults = settings_to_guest_config(&defaults);
     let env_defaults = gc_defaults.env.unwrap();
-    assert_eq!(env_defaults.get("CAPSEM_WEB_ALLOW_READ").unwrap(), "0");
-    assert_eq!(env_defaults.get("CAPSEM_WEB_ALLOW_WRITE").unwrap(), "0");
+    assert!(!env_defaults.contains_key("CAPSEM_WEB_ALLOW_READ"));
+    assert!(!env_defaults.contains_key("CAPSEM_WEB_ALLOW_WRITE"));
 
     let user = file_with(vec![
         ("security.web.allow_read", SettingValue::Bool(true)),
@@ -1516,8 +1512,8 @@ fn web_default_toggles_exposed_as_env_vars() {
     let resolved = resolve_settings(&user, &empty_file());
     let gc = settings_to_guest_config(&resolved);
     let env = gc.env.unwrap();
-    assert_eq!(env.get("CAPSEM_WEB_ALLOW_READ").unwrap(), "1");
-    assert_eq!(env.get("CAPSEM_WEB_ALLOW_WRITE").unwrap(), "1");
+    assert!(!env.contains_key("CAPSEM_WEB_ALLOW_READ"));
+    assert!(!env.contains_key("CAPSEM_WEB_ALLOW_WRITE"));
 }
 
 #[test]

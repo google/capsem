@@ -161,6 +161,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `NetworkPolicy` itself. The network object can no longer carry hidden
   domain enforcement state; tests now assert default and provider behavior
   through compiled `SecurityRuleSet` entries.
+- Stopped exporting retired web default toggles as guest authority env vars
+  (`CAPSEM_WEB_ALLOW_READ` and `CAPSEM_WEB_ALLOW_WRITE`). The guest now relies
+  on security events and rules for HTTP/DNS behavior rather than stale
+  settings-derived hints.
 - Replaced the old callback-demux rule authoring language with CEL over
   first-party event roots. Admin-visible rules use `match = ...` and typed
   actions rather than callback-local `on`/`if`/`decision` fields.
