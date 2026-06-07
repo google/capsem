@@ -2,28 +2,30 @@
 
 ## S0: Inventory And Classification
 
-- [ ] Capture `git diff --name-status 82e7a58c^1 82e7a58c` into this
-  sub-sprint or a generated evidence file.
-- [ ] Mark every deleted cluster as exact restore, conceptual port,
-  intentional burn, or Linux handoff.
-- [ ] Confirm restore work will not change the current security event object,
+- [x] Capture `git diff --name-status 82e7a58c^1 82e7a58c` into this
+  sub-sprint or a generated evidence file. Evidence:
+  `S0-loss-inventory.md`.
+- [x] Mark every deleted cluster as exact restore, conceptual port,
+  intentional burn, or Linux handoff. Initial capability-level classification
+  is in `S0-loss-inventory.md`; commit-by-commit ledger remains open below.
+- [x] Confirm restore work will not change the current security event object,
   plugin contract, rule format, detection format, or plugin/rule/detection
   corp/profile file locations. If blocked, stop and ask; no schema migration
   escape hatch.
-- [ ] Confirm corp rules may use negative priority. If a corp rule omits
+- [x] Confirm corp rules may use negative priority. If a corp rule omits
   `priority`, it resolves to the corp source default (`-10`).
   `priority = "default"` remains profile/built-in fallback only.
-- [ ] Confirm corp source implies corporate lock/ownership. Do not require or
+- [x] Confirm corp source implies corporate lock/ownership. Do not require or
   accept `corp_locked = true` inside corp-owned rule files.
-- [ ] Confirm old policy-v2/domain/MCP decision rails stay burned.
-- [ ] Confirm old `capsem setup` and provider onboarding wizard stay burned.
-- [ ] Confirm `[credentials] broker_enabled` stays burned; credential brokering
+- [x] Confirm old policy-v2/domain/MCP decision rails stay burned.
+- [x] Confirm old `capsem setup` and provider onboarding wizard stay burned.
+- [x] Confirm `[credentials] broker_enabled` stays burned; credential brokering
   is owned only by `[plugins.credential_broker]`.
-- [ ] Confirm static `[ai.*]` provider metadata stays burned unless it is
+- [x] Confirm static `[ai.*]` provider metadata stays burned unless it is
   replaced by real provider status computed from rules, VM plugin runtime
   status, observed tool config hashes, routing config, and runtime security
   events.
-- [ ] Confirm old `config/defaults.toml` `settings.ai.*` defaults and
+- [x] Confirm old `config/defaults.toml` `settings.ai.*` defaults and
   host-credential injection blocks are burned or reshaped into profile-owned
   rules plus plugin-owned runtime status. They must not remain UI settings.
 - [ ] Commit S0.

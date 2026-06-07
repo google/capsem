@@ -22,6 +22,11 @@ git diff --name-status 82e7a58c^1 82e7a58c
 Parent `82e7a58c^1` is restored main with the lost work. The merge result is
 the cleanup snapshot tree.
 
+Initial S0 evidence and capability-level classification live in
+`S0-loss-inventory.md`. The commit-by-commit inspection ledger in `tracker.md`
+remains the source of truth for exact restore/conceptual port/burn decisions as
+implementation proceeds.
+
 ## What Happened
 
 During the 1.3 cleanup, we deliberately burned old decision systems: policy-v2
