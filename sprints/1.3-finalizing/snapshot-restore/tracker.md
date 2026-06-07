@@ -6,6 +6,10 @@
   sub-sprint or a generated evidence file.
 - [ ] Mark every deleted cluster as exact restore, conceptual port,
   intentional burn, or Linux handoff.
+- [ ] Confirm restore work will not change the current security event object,
+  plugin contract, rule format, detection format, or plugin/rule/detection
+  corp/profile file locations. If blocked, stop and ask; no schema migration
+  escape hatch.
 - [ ] Confirm old policy-v2/domain/MCP decision rails stay burned.
 - [ ] Confirm old `capsem setup` and provider onboarding wizard stay burned.
 - [ ] Commit S0.

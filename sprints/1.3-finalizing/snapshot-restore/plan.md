@@ -21,6 +21,11 @@ discipline must come back on `SecurityRuleSet`.
 No fallback, no compatibility shape, no second decision engine. The restored
 system should be simpler after the port, not a layer cake.
 
+Do not change the current 1.3 security event object, plugin contract, rule
+format, detection format, or plugin/rule/detection corp/profile file locations.
+If a restore slice appears blocked by those contracts, stop and ask. There is no
+schema migration escape hatch in this sprint.
+
 ## S0: Inventory And Classification
 
 Goal: make the blast radius auditable before restoring code.

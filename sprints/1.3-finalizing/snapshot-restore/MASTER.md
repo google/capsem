@@ -128,6 +128,11 @@ These are not optional:
 
 - Do not blindly cherry-pick large ranges. Port by capability into the current
   architecture.
+- Do not change the security event object, plugin contract, rule format,
+  detection format, or plugin/rule/detection corp/profile file locations during
+  this restore sprint. Those are current 1.3 contracts. If restore work is
+  blocked by one of these contracts, stop and ask; there is no schema migration
+  escape hatch.
 - Do not reintroduce old policy-v2/domain/MCP decision paths while restoring
   admin security pack compile/backtest behavior.
 - Do not let `settings.toml` regain ownership of profiles, assets, rules, MCP,
