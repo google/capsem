@@ -313,7 +313,6 @@ export type SettingsNode = SettingsGroup | SettingsLeaf | SettingsAction | McpSe
 export interface SettingsResponse {
   tree: SettingsNode[];
   issues: ConfigIssue[];
-  presets: SecurityPreset[];
 }
 
 /** A structured log event from the Rust backend. */
@@ -350,14 +349,6 @@ export interface HostConfig {
   github_token: string | null;
   claude_oauth_credentials: string | null;
   google_adc: string | null;
-}
-
-/** A security preset definition. */
-export interface SecurityPreset {
-  id: string;
-  name: string;
-  description: string;
-  settings: Record<string, SettingValue>;
 }
 
 // ---------------------------------------------------------------------------

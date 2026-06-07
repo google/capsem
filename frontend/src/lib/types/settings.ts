@@ -186,17 +186,8 @@ export type SettingsNode = SettingsGroup | SettingsLeaf | SettingsAction | McpSe
 export interface SettingsResponse {
   tree: SettingsNode[];
   issues: ConfigIssue[];
-  presets: SecurityPreset[];
   providers?: ProviderStatus[];
   tool_config_sources?: Record<string, ToolConfigSourceRecord>;
-}
-
-/** A security preset definition. */
-export interface SecurityPreset {
-  id: string;
-  name: string;
-  description: string;
-  settings: Record<string, SettingValue>;
 }
 
 /** Info about an available update. */

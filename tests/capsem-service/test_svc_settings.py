@@ -34,14 +34,14 @@ def isolated_client():
 class TestSettingsTree:
 
     def test_settings_response_shape(self, client):
-        """/settings/info returns tree + issues + presets bundled for the frontend."""
+        """/settings/info returns UI/app settings data without behavior presets."""
         resp = client.get("/settings/info")
         assert resp is not None
-        for key in ("tree", "issues", "presets"):
+        for key in ("tree", "issues"):
             assert key in resp, f"missing '{key}': {list(resp.keys())}"
+        assert "presets" not in resp, f"settings response leaked presets: {resp.keys()}"
         assert isinstance(resp["tree"], list) and resp["tree"], "empty tree"
         assert isinstance(resp["issues"], list)
-        assert isinstance(resp["presets"], list) and resp["presets"], "empty presets"
 
     def test_save_settings_round_trips(self, client):
         """PATCH /settings/edit toggles a bool and GET reflects the new value.
@@ -56,8 +56,8 @@ class TestSettingsTree:
 
         saved = client.patch("/settings/edit", {"app.auto_update": False})
         assert saved is not None, "PATCH /settings/edit returned no body"
-        # Response mirrors GET: tree + issues + presets.
-        assert "tree" in saved and "issues" in saved and "presets" in saved
+        # Response mirrors GET: tree + issues, without behavior presets.
+        assert "tree" in saved and "issues" in saved and "presets" not in saved
 
         after = _find_setting_value(saved["tree"], "app.auto_update")
         assert after is False, f"save did not apply: {after}"

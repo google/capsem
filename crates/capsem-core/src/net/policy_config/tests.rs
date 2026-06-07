@@ -3710,11 +3710,10 @@ fn load_settings_response_returns_all_fields() {
     with_temp_configs(vec![], vec![], |_, _| {
         let response = loader::load_settings_response();
         assert!(!response.tree.is_empty(), "tree should not be empty");
-        // Presets should include medium and high
-        assert!(
-            response.presets.len() >= 2,
-            "should have at least 2 presets"
-        );
+        assert!(response
+            .issues
+            .iter()
+            .all(|issue| !issue.id.is_empty() && !issue.message.is_empty()));
     });
 }
 

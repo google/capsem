@@ -1805,7 +1805,10 @@ async fn handle_get_settings_returns_tree() {
     let Json(val) = handle_get_settings().await;
     assert!(val.get("tree").is_some(), "response must have 'tree'");
     assert!(val.get("issues").is_some(), "response must have 'issues'");
-    assert!(val.get("presets").is_some(), "response must have 'presets'");
+    assert!(
+        val.get("presets").is_none(),
+        "settings must not expose presets"
+    );
     assert!(
         val.get("policy").is_none(),
         "retired policy compatibility payload must not be emitted"
@@ -1816,7 +1819,6 @@ async fn handle_get_settings_returns_tree() {
     );
     assert!(val["tree"].is_array());
     assert!(val["issues"].is_array());
-    assert!(val["presets"].is_array());
     assert!(val["providers"].is_array());
 }
 

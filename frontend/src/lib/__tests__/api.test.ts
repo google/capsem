@@ -256,7 +256,7 @@ describe('api', () => {
     });
 
     it('getSettings sends GET /settings/info', async () => {
-      const mockResp = { tree: [], issues: [], presets: [] };
+      const mockResp = { tree: [], issues: [] };
       mockFetch.mockReturnValueOnce(jsonResponse(mockResp));
       const result = await api.getSettings();
       expect(result).toEqual(mockResp);
@@ -267,7 +267,7 @@ describe('api', () => {
 
     it('saveSettings sends PATCH /settings/edit with changes', async () => {
       const changes = { 'vm.resources.cpu_count': 8 };
-      const mockResp = { tree: [], issues: [], presets: [] };
+      const mockResp = { tree: [], issues: [] };
       mockFetch.mockReturnValueOnce(jsonResponse(mockResp));
       const result = await api.saveSettings(changes);
       expect(result).toEqual(mockResp);
@@ -290,7 +290,7 @@ describe('api', () => {
     });
 
     it('setMcpServerEnabled calls saveSettings with correct key', async () => {
-      mockFetch.mockReturnValueOnce(jsonResponse({ tree: [], issues: [], presets: [] }));
+      mockFetch.mockReturnValueOnce(jsonResponse({ tree: [], issues: [] }));
       await api.setMcpServerEnabled('my-server', true);
       const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
       const body = JSON.parse(call[1].body);
@@ -298,7 +298,7 @@ describe('api', () => {
     });
 
     it('addMcpServer calls saveSettings with url, enabled, headers, token', async () => {
-      mockFetch.mockReturnValueOnce(jsonResponse({ tree: [], issues: [], presets: [] }));
+      mockFetch.mockReturnValueOnce(jsonResponse({ tree: [], issues: [] }));
       await api.addMcpServer('srv', 'http://x', { 'X-Key': 'val' }, 'tok123');
       const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
       const body = JSON.parse(call[1].body);
@@ -309,7 +309,7 @@ describe('api', () => {
     });
 
     it('removeMcpServer sends null for the server key', async () => {
-      mockFetch.mockReturnValueOnce(jsonResponse({ tree: [], issues: [], presets: [] }));
+      mockFetch.mockReturnValueOnce(jsonResponse({ tree: [], issues: [] }));
       await api.removeMcpServer('old-srv');
       const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
       const body = JSON.parse(call[1].body);

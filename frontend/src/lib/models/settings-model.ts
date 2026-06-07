@@ -9,7 +9,6 @@ import {
   type McpServerNode,
   type SettingsChangeValue,
   type ConfigIssue,
-  type SecurityPreset,
   type SettingsResponse,
   type ProviderStatus,
   type ToolConfigSourceRecord,
@@ -24,7 +23,6 @@ import {
 export class SettingsModel {
   private _tree: SettingsNode[];
   private _issues: ConfigIssue[];
-  private _presets: SecurityPreset[];
   private _providers: ProviderStatus[];
   private _toolConfigSources: Record<string, ToolConfigSourceRecord>;
   private _leafIndex: Map<string, SettingsLeaf>;
@@ -34,7 +32,6 @@ export class SettingsModel {
   constructor(response: SettingsResponse) {
     this._tree = response.tree;
     this._issues = response.issues;
-    this._presets = response.presets;
     this._providers = response.providers ?? [];
     this._toolConfigSources = response.tool_config_sources ?? {};
     this._leafIndex = new Map();
@@ -113,30 +110,12 @@ export class SettingsModel {
     return this._issues.filter((i) => i.id === id);
   }
 
-  // --- Presets ---
-
-  get presets(): SecurityPreset[] {
-    return this._presets;
-  }
-
   get providers(): ProviderStatus[] {
     return this._providers;
   }
 
   get toolConfigSources(): Record<string, ToolConfigSourceRecord> {
     return this._toolConfigSources;
-  }
-
-  get activePresetId(): string | null {
-    for (const preset of this._presets) {
-      const allMatch = Object.entries(preset.settings).every(([id, val]) => {
-        const leaf = this._leafIndex.get(id);
-        if (!leaf) return false;
-        return JSON.stringify(leaf.effective_value) === JSON.stringify(val);
-      });
-      if (allMatch) return preset.id;
-    }
-    return null;
   }
 
   // --- Enabled / visibility ---

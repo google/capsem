@@ -502,7 +502,7 @@ pub fn load_mcp_servers() -> Vec<McpServerDef> {
 // Unified settings response
 // ---------------------------------------------------------------------------
 
-/// Load the unified settings response (tree + issues + presets) in one call.
+/// Load the unified settings response (tree + issues) in one call.
 pub fn load_settings_response() -> super::types::SettingsResponse {
     let (user, corp) = load_settings_files();
     let resolved = super::resolver::resolve_settings(&user, &corp);
@@ -510,7 +510,6 @@ pub fn load_settings_response() -> super::types::SettingsResponse {
     super::types::SettingsResponse {
         tree: super::tree::build_settings_tree_with_mcp(&resolved, &mcp_servers),
         issues: super::lint::config_lint(&resolved),
-        presets: super::presets::security_presets(),
         providers: build_provider_statuses(&user, &corp, &resolved),
         tool_config_sources: user.tool_config_sources.clone(),
     }

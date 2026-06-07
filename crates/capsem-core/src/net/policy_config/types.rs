@@ -746,7 +746,6 @@ pub struct McpServerDef {
 pub struct SettingsResponse {
     pub tree: Vec<crate::net::policy_config::tree::SettingsNode>,
     pub issues: Vec<crate::net::policy_config::lint::ConfigIssue>,
-    pub presets: Vec<crate::net::policy_config::presets::SecurityPreset>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub providers: Vec<ProviderStatus>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]

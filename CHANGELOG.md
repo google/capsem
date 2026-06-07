@@ -104,6 +104,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   profile/corp validation and credential broker endpoints own those workflows.
 - Removed retired settings preset endpoints and UI selector; security/profile
   defaults no longer mutate behavior through `/settings/presets`.
+- Removed preset metadata from `/settings/info`; settings responses now carry
+  settings tree/issues plus status fields only, not behavior presets.
 - Replaced the global `POST /reload-config` route with
   `POST /profiles/{profile_id}/reload`; the old global reload route now fails
   closed in the service and gateway.

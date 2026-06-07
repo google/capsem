@@ -2984,7 +2984,7 @@ async fn handle_profile_reload(
 // Settings endpoints
 // ---------------------------------------------------------------------------
 
-/// GET /settings/info -- unified settings tree + issues + presets.
+/// GET /settings/info -- unified settings tree + issues.
 async fn handle_get_settings() -> Json<serde_json::Value> {
     let resp = capsem_core::net::policy_config::load_settings_response();
     Json(serde_json::to_value(resp).unwrap_or_default())

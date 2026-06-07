@@ -69,19 +69,6 @@ describe('SettingsModel', () => {
     });
   });
 
-  describe('presets', () => {
-    it('has presets available', () => {
-      const model = loadModel();
-      expect(model.presets.length).toBeGreaterThan(0);
-    });
-
-    it('activePresetId detects matching preset', () => {
-      const model = loadModel();
-      // Default mock settings match the "high" preset
-      expect(model.activePresetId).toBe('high');
-    });
-  });
-
   describe('provider status', () => {
     it('exposes provider discovery and brokered credential refs from the response', () => {
       const model = loadModel();

@@ -172,7 +172,7 @@ export function buildMockTree(): SettingsNode[] {
         ]},
       ]},
     ]},
-    { kind: 'group', enabled: true, key: 'security', name: 'Security', description: 'Network access control, web services, and security presets', collapsed: false, children: [
+    { kind: 'group', enabled: true, key: 'security', name: 'Security', description: 'Network access controls reflected from the settings contract', collapsed: false, children: [
       { kind: 'action', key: 'security.preset', name: 'Security Preset', description: 'Predefined security configurations', action: 'preset_select' } as any,
       { kind: 'group', enabled: true, key: 'security.web', name: 'Network Mechanics', description: 'Network engine mechanics. HTTP/DNS decisions are profile security rules.', collapsed: false, children: [
         leaf(mockSettings.find(s => s.id === 'security.web.http_upstream_ports')!),
@@ -363,29 +363,6 @@ export let MOCK_MCP_TOOLS: McpToolInfo[] = [
   },
 ];
 
-export const MOCK_PRESETS = [
-  {
-    id: 'medium',
-    name: 'Medium',
-    description: 'Allow default service search breadth while security decisions remain profile rules.',
-    settings: {
-      'security.services.search.google.allow': true,
-      'security.services.search.bing.allow': true,
-      'security.services.search.duckduckgo.allow': true,
-    },
-  },
-  {
-    id: 'high',
-    name: 'High',
-    description: 'Keep only Google search service metadata enabled by default.',
-    settings: {
-      'security.services.search.google.allow': true,
-      'security.services.search.bing.allow': false,
-      'security.services.search.duckduckgo.allow': false,
-    },
-  },
-];
-
 const MOCK_CREDENTIAL_REF = `credential:blake3:${'0'.repeat(64)}`;
 const MOCK_CODEX_CONFIG_HASH = `blake3:${'1'.repeat(64)}`;
 
@@ -459,7 +436,6 @@ export function buildMockSettingsResponse(): SettingsResponse {
       { id: 'ai.google.api_key', severity: 'warning', message: 'No Google AI API key configured. Gemini CLI will not be able to authenticate.', docs_url: 'https://aistudio.google.com/apikey' },
       { id: 'ai.openai.api_key', severity: 'warning', message: 'No OpenAI API key configured. Codex CLI will not be able to authenticate.', docs_url: 'https://platform.openai.com/api-keys' },
     ],
-    presets: MOCK_PRESETS,
     providers: MOCK_PROVIDER_STATUS,
     tool_config_sources: MOCK_TOOL_CONFIG_SOURCES,
   };
