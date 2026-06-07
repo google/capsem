@@ -457,6 +457,23 @@ describe('api', () => {
       expect(mockFetch.mock.calls[mockFetch.mock.calls.length - 1][0]).toContain('/profiles/default/credentials/openai/delete');
       expect(mockFetch.mock.calls[mockFetch.mock.calls.length - 1][1].method).toBe('DELETE');
     });
+
+    it('profile asset, plugin, and mcp info helpers use profile-scoped routes', async () => {
+      mockFetch.mockReturnValue(jsonResponse({ ok: true }));
+
+      await api.getProfileAssetsInfo('default');
+      expect(mockFetch.mock.calls[mockFetch.mock.calls.length - 1][0]).toContain('/profiles/default/assets/info');
+
+      await api.editProfileAssets('default', {});
+      expect(mockFetch.mock.calls[mockFetch.mock.calls.length - 1][0]).toContain('/profiles/default/assets/edit');
+      expect(mockFetch.mock.calls[mockFetch.mock.calls.length - 1][1].method).toBe('PATCH');
+
+      await api.getProfilePluginsInfo('default');
+      expect(mockFetch.mock.calls[mockFetch.mock.calls.length - 1][0]).toContain('/profiles/default/plugins/info');
+
+      await api.getProfileMcpInfo('default');
+      expect(mockFetch.mock.calls[mockFetch.mock.calls.length - 1][0]).toContain('/profiles/default/mcp/info');
+    });
   });
 
   // ---- Enforcement rules ----

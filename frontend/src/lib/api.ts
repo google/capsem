@@ -796,6 +796,26 @@ export async function deleteProfileCredential(profileId: string, credentialId: s
   return await resp.json();
 }
 
+export async function getProfileAssetsInfo(profileId: string): Promise<unknown> {
+  const resp = await _get(`/profiles/${encodeURIComponent(profileId)}/assets/info`);
+  return await resp.json();
+}
+
+export async function editProfileAssets(profileId: string, request: Record<string, unknown>): Promise<unknown> {
+  const resp = await _patch(`/profiles/${encodeURIComponent(profileId)}/assets/edit`, request);
+  return await resp.json();
+}
+
+export async function getProfilePluginsInfo(profileId: string): Promise<unknown> {
+  const resp = await _get(`/profiles/${encodeURIComponent(profileId)}/plugins/info`);
+  return await resp.json();
+}
+
+export async function getProfileMcpInfo(profileId: string): Promise<unknown> {
+  const resp = await _get(`/profiles/${encodeURIComponent(profileId)}/mcp/info`);
+  return await resp.json();
+}
+
 // -- Enforcement rules --
 
 export async function listEnforcementRules(profileId: string): Promise<EnforcementRuleListResponse> {

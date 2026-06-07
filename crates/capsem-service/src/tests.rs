@@ -388,6 +388,63 @@ async fn profile_credentials_routes_reflect_manifest_and_gate_inventory_mutation
 }
 
 #[tokio::test]
+async fn profile_assets_info_reflects_manifest_and_edit_is_gated() {
+    let Json(info) = handle_profile_assets_info(Path("default".to_string()))
+        .await
+        .expect("assets info should reflect profile manifest");
+    assert_eq!(info["profile_id"], "default");
+    assert_eq!(info["rootfs"], "rootfs.erofs");
+
+    let edit = handle_profile_assets_edit(Path("default".to_string()))
+        .await
+        .unwrap_err();
+    assert_eq!(edit.0, StatusCode::NOT_IMPLEMENTED);
+}
+
+#[tokio::test]
+async fn profile_plugins_info_summarizes_effective_plugin_policy() {
+    let state = make_test_state();
+
+    let Json(info) = handle_profile_plugins_info(State(state), Path("default".to_string()))
+        .await
+        .expect("plugins info should summarize effective profile plugin policy");
+
+    assert_eq!(info["scope"]["profile_id"], "default");
+    assert!(info["plugin_count"].as_u64().unwrap() > 0);
+    assert!(info["enabled_count"].as_u64().unwrap() > 0);
+}
+
+#[tokio::test]
+async fn profile_mcp_info_summarizes_profile_mcp_config() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+
+    let dir = tempfile::tempdir().unwrap();
+    let (_env_guard, user_path, _) = install_empty_settings_env(&dir);
+    let settings = capsem_core::net::policy_config::SettingsFile {
+        mcp: Some(capsem_core::mcp::policy::McpUserConfig {
+            servers: vec![capsem_core::mcp::policy::McpManualServer {
+                name: "local".to_string(),
+                url: "https://mcp.local".to_string(),
+                headers: Default::default(),
+                bearer_token: None,
+                enabled: true,
+            }],
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    capsem_core::net::policy_config::write_settings_file(&user_path, &settings).unwrap();
+
+    let Json(info) = handle_profile_mcp_info(Path("default".to_string()))
+        .await
+        .expect("mcp info should summarize profile mcp config");
+
+    assert_eq!(info["profile_id"], "default");
+    assert_eq!(info["server_count"], 1);
+    assert_eq!(info["user_server_count"], 1);
+}
+
+#[tokio::test]
 async fn handle_enforcement_rules_list_returns_compiled_profile_rules() {
     let _env_lock = SETTINGS_ENV_LOCK.lock().await;
 

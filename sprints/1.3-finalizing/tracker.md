@@ -82,7 +82,7 @@ commit.
   - `[x] /profiles/{profile_id}/info`
   - `[x] /profiles/{profile_id}/edit|delete|clone|validate`
   - `[x] /profiles/{profile_id}/reload`
-  - `/profiles/{profile_id}/assets/info|edit`
+  - `[x] /profiles/{profile_id}/assets/info|edit`
   - `[x] /profiles/{profile_id}/assets/status|ensure`
   - `[x] /profiles/{profile_id}/enforcement/info|reload|evaluate`
   - `[x] /profiles/{profile_id}/enforcement/rules/list`
@@ -90,9 +90,9 @@ commit.
   - `[x] /profiles/{profile_id}/detection/info|reload|evaluate`
   - `[x] /profiles/{profile_id}/detection/rules/list`
   - `[x] /profiles/{profile_id}/detection/rules/{rule_id}/edit|delete`
-  - `/profiles/{profile_id}/plugins/info|list`
+  - `[x] /profiles/{profile_id}/plugins/info|list`
   - `/profiles/{profile_id}/plugins/{plugin_id}/info|edit`
-  - `/profiles/{profile_id}/mcp/info`
+  - `[x] /profiles/{profile_id}/mcp/info`
   - `/profiles/{profile_id}/mcp/servers/list`
   - `/profiles/{profile_id}/mcp/servers/{server_id}/...`
   - `[x] /profiles/{profile_id}/skills/info|list|add`
@@ -170,6 +170,9 @@ commit.
   frontend API. Manifest-backed info/list routes are real; mutations and
   per-credential inventory operations fail explicitly until profile/credential
   persistence lands.
+- [x] Add profile-owned assets info/edit, plugins info, and MCP info routes in
+  service, gateway, and frontend API. Info routes summarize typed profile/config
+  state; asset edits fail explicitly until profile persistence lands.
 - [x] Replace the retired `/corp-config` mutation route with `PUT /corp/edit`
   in service and gateway, with regression tests proving the old route is not
   forwarded.

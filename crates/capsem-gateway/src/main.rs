@@ -311,6 +311,10 @@ fn service_proxy_routes() -> Router<Arc<AppState>> {
             get(proxy::handle_proxy),
         )
         .route(
+            "/profiles/{profile_id}/plugins/info",
+            get(proxy::handle_proxy),
+        )
+        .route(
             "/profiles/{profile_id}/plugins/{plugin_id}/info",
             get(proxy::handle_proxy),
         )
@@ -325,6 +329,14 @@ fn service_proxy_routes() -> Router<Arc<AppState>> {
         .route(
             "/profiles/{profile_id}/assets/status",
             get(proxy::handle_proxy),
+        )
+        .route(
+            "/profiles/{profile_id}/assets/info",
+            get(proxy::handle_proxy),
+        )
+        .route(
+            "/profiles/{profile_id}/assets/edit",
+            patch(proxy::handle_proxy),
         )
         .route(
             "/profiles/{profile_id}/assets/ensure",
@@ -382,6 +394,7 @@ fn service_proxy_routes() -> Router<Arc<AppState>> {
             "/profiles/{profile_id}/mcp/servers/list",
             get(proxy::handle_proxy),
         )
+        .route("/profiles/{profile_id}/mcp/info", get(proxy::handle_proxy))
         .route(
             "/profiles/{profile_id}/mcp/servers/{server_id}/tools/list",
             get(proxy::handle_proxy),
@@ -606,6 +619,8 @@ mod tests {
             ("POST", "/profiles/default/detection/reload"),
             ("GET", "/profiles/default/detection/rules/list"),
             ("GET", "/profiles/default/assets/status"),
+            ("GET", "/profiles/default/assets/info"),
+            ("PATCH", "/profiles/default/assets/edit"),
             ("POST", "/profiles/default/assets/ensure"),
             ("GET", "/profiles/default/skills/info"),
             ("GET", "/profiles/default/skills/list"),
@@ -619,8 +634,10 @@ mod tests {
             ("GET", "/profiles/default/credentials/openai/info"),
             ("DELETE", "/profiles/default/credentials/openai/delete"),
             ("GET", "/profiles/default/plugins/list"),
+            ("GET", "/profiles/default/plugins/info"),
             ("GET", "/profiles/default/plugins/dummy_pre_eicar/info"),
             ("PATCH", "/profiles/default/plugins/dummy_pre_eicar/edit"),
+            ("GET", "/profiles/default/mcp/info"),
             ("GET", "/profiles/default/mcp/servers/list"),
             ("GET", "/profiles/default/mcp/servers/local/tools/list"),
             ("POST", "/profiles/default/mcp/servers/local/refresh"),

@@ -3415,6 +3415,26 @@ async fn handle_profile_assets_ensure(
     Ok(Json(status))
 }
 
+async fn handle_profile_assets_info(
+    Path(profile_id): Path<String>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let manifest = default_profile_manifest_for_route(profile_id)?;
+    Ok(Json(json!({
+        "profile_id": manifest.id,
+        "channel": manifest.assets.channel,
+        "kernel": manifest.assets.kernel,
+        "initrd": manifest.assets.initrd,
+        "rootfs": manifest.assets.rootfs,
+    })))
+}
+
+async fn handle_profile_assets_edit(
+    Path(profile_id): Path<String>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let _profile_id = validate_profile_route_id(profile_id)?;
+    Err(profile_persistence_not_implemented("profile assets edit"))
+}
+
 /// PUT /corp/edit -- apply corporate config from URL or inline TOML.
 async fn handle_corp_config(
     Json(payload): Json<CorpConfigRequest>,
@@ -3801,6 +3821,21 @@ fn resolve_mcp_tool_id(server_id: &str, tool_id: &str) -> Result<String, AppErro
 }
 
 /// GET /profiles/:profile_id/mcp/servers/list -- list profile MCP servers with status.
+async fn handle_profile_mcp_info(
+    Path(profile_id): Path<String>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let profile_id = validate_profile_route_id(profile_id)?;
+    let (user, corp) = capsem_core::net::policy_config::load_settings_files();
+    let user_server_count = user.mcp.as_ref().map_or(0, |mcp| mcp.servers.len());
+    let corp_server_count = corp.mcp.as_ref().map_or(0, |mcp| mcp.servers.len());
+    Ok(Json(json!({
+        "profile_id": profile_id,
+        "server_count": user_server_count + corp_server_count,
+        "user_server_count": user_server_count,
+        "corp_server_count": corp_server_count,
+    })))
+}
+
 async fn handle_profile_mcp_servers(
     Path(profile_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, AppError> {
@@ -4348,6 +4383,22 @@ async fn handle_profile_plugins(
     Path(profile_id): Path<String>,
 ) -> Result<Json<PluginListResponse>, AppError> {
     list_plugins_for_scope(&state, profile_plugin_scope(profile_id)?)
+}
+
+async fn handle_profile_plugins_info(
+    State(state): State<Arc<ServiceState>>,
+    Path(profile_id): Path<String>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let scope = profile_plugin_scope(profile_id)?;
+    let plugins = effective_plugin_policy(&state, &scope.profile_id);
+    Ok(Json(json!({
+        "scope": scope,
+        "plugin_count": plugins.len(),
+        "enabled_count": plugins
+            .values()
+            .filter(|config| config.mode != SecurityPluginMode::Disable)
+            .count(),
+    })))
 }
 
 fn list_plugins_for_scope(
@@ -6232,6 +6283,10 @@ async fn main() -> Result<()> {
             get(handle_profile_plugins),
         )
         .route(
+            "/profiles/{profile_id}/plugins/info",
+            get(handle_profile_plugins_info),
+        )
+        .route(
             "/profiles/{profile_id}/plugins/{plugin_id}/info",
             get(handle_profile_plugin_info),
         )
@@ -6246,6 +6301,14 @@ async fn main() -> Result<()> {
         .route(
             "/profiles/{profile_id}/assets/status",
             get(handle_profile_assets_status),
+        )
+        .route(
+            "/profiles/{profile_id}/assets/info",
+            get(handle_profile_assets_info),
+        )
+        .route(
+            "/profiles/{profile_id}/assets/edit",
+            patch(handle_profile_assets_edit),
         )
         .route(
             "/profiles/{profile_id}/assets/ensure",
@@ -6302,6 +6365,10 @@ async fn main() -> Result<()> {
         .route(
             "/profiles/{profile_id}/mcp/servers/list",
             get(handle_profile_mcp_servers),
+        )
+        .route(
+            "/profiles/{profile_id}/mcp/info",
+            get(handle_profile_mcp_info),
         )
         .route(
             "/profiles/{profile_id}/mcp/servers/{server_id}/tools/list",

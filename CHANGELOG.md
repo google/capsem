@@ -95,6 +95,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `info|list` and credentials `info|status|list` reflect the typed profile
   manifest; add/edit/delete and per-credential operations fail explicitly until
   profile persistence and credential inventory listing are implemented.
+- Added profile-scoped assets `info|edit`, plugins `info`, and MCP `info`
+  routes. Info routes summarize existing profile/config state; asset edits
+  fail explicitly until profile persistence lands.
 
 ### Added (security event rule spine)
 - Replaced callback-shaped Policy V2 authoring with one native rule contract
