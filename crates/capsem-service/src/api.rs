@@ -267,6 +267,10 @@ pub struct EnforcementInfoResponse {
     pub action_counts: BTreeMap<String, usize>,
 }
 
+pub type DetectionRuleInfo = EnforcementRuleInfo;
+pub type DetectionRuleListResponse = EnforcementRuleListResponse;
+pub type DetectionInfoResponse = EnforcementInfoResponse;
+
 #[derive(Serialize, Deserialize, Debug)]
 pub struct PersistRequest {
     pub name: String,

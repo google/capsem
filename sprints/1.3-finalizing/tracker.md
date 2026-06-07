@@ -86,9 +86,9 @@ commit.
   - `[x] /profiles/{profile_id}/enforcement/info|reload|evaluate`
   - `[x] /profiles/{profile_id}/enforcement/rules/list`
   - `/profiles/{profile_id}/enforcement/rules/{rule_id}/edit|delete`
-  - `/profiles/{profile_id}/detection/info|reload|evaluate`
-  - `/profiles/{profile_id}/detection/rules/list`
-  - `/profiles/{profile_id}/detection/rules/{rule_id}/edit|delete`
+  - `[x] /profiles/{profile_id}/detection/info|reload|evaluate`
+  - `[x] /profiles/{profile_id}/detection/rules/list`
+  - `[x] /profiles/{profile_id}/detection/rules/{rule_id}/edit|delete`
   - `/profiles/{profile_id}/plugins/info|list`
   - `/profiles/{profile_id}/plugins/{plugin_id}/info|edit`
   - `/profiles/{profile_id}/mcp/info`
@@ -153,6 +153,10 @@ commit.
   `GET /profiles/{profile_id}/enforcement/info` in service, gateway, and
   frontend API. The response summarizes the same compiled rule inventory and
   fake profile IDs fail closed.
+- [x] Add profile-owned detection rule routes in service, gateway, and
+  frontend API. Detection routes reuse the enforcement rule DTO/engine, filter
+  inventory to rules with `detection_level`, and reject detection writes that
+  would not emit a detection.
 - [x] Replace the retired `/corp-config` mutation route with `PUT /corp/edit`
   in service and gateway, with regression tests proving the old route is not
   forwarded.

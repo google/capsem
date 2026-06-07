@@ -278,6 +278,30 @@ fn service_proxy_routes() -> Router<Arc<AppState>> {
             get(proxy::handle_proxy),
         )
         .route(
+            "/profiles/{profile_id}/detection/evaluate",
+            post(proxy::handle_proxy),
+        )
+        .route(
+            "/profiles/{profile_id}/detection/info",
+            get(proxy::handle_proxy),
+        )
+        .route(
+            "/profiles/{profile_id}/detection/rules/{rule_id}/edit",
+            put(proxy::handle_proxy),
+        )
+        .route(
+            "/profiles/{profile_id}/detection/rules/{rule_id}/delete",
+            delete(proxy::handle_proxy),
+        )
+        .route(
+            "/profiles/{profile_id}/detection/reload",
+            post(proxy::handle_proxy),
+        )
+        .route(
+            "/profiles/{profile_id}/detection/rules/list",
+            get(proxy::handle_proxy),
+        )
+        .route(
             "/profiles/{profile_id}/plugins/list",
             get(proxy::handle_proxy),
         )
@@ -512,6 +536,15 @@ mod tests {
             ),
             ("POST", "/profiles/default/enforcement/reload"),
             ("GET", "/profiles/default/enforcement/rules/list"),
+            ("POST", "/profiles/default/detection/evaluate"),
+            ("GET", "/profiles/default/detection/info"),
+            ("PUT", "/profiles/default/detection/rules/eicar_detect/edit"),
+            (
+                "DELETE",
+                "/profiles/default/detection/rules/eicar_detect/delete",
+            ),
+            ("POST", "/profiles/default/detection/reload"),
+            ("GET", "/profiles/default/detection/rules/list"),
             ("GET", "/profiles/default/plugins/list"),
             ("GET", "/profiles/default/plugins/dummy_pre_eicar/info"),
             ("PATCH", "/profiles/default/plugins/dummy_pre_eicar/edit"),

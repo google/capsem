@@ -375,6 +375,133 @@ async fn handle_enforcement_info_rejects_unknown_profiles() {
 }
 
 #[tokio::test]
+async fn handle_detection_rules_list_returns_detection_rules_only() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+
+    let dir = tempfile::tempdir().unwrap();
+    let (_env_guard, user_path, _) = install_empty_settings_env(&dir);
+    let mut settings = capsem_core::net::policy_config::SettingsFile::default();
+    settings.profiles.rules.insert(
+        "skill_loaded".to_string(),
+        capsem_core::net::policy_config::SecurityRule {
+            name: "skill_loaded".to_string(),
+            action: capsem_core::net::policy_config::SecurityRuleAction::Allow,
+            condition: r#"file.read.path.contains("skills/")"#.to_string(),
+            detection_level: Some(capsem_core::net::policy_config::DetectionLevel::Informational),
+            priority: None,
+            corp_locked: false,
+            reason: Some("record skill file reads".to_string()),
+            plugin: None,
+            plugin_config: BTreeMap::new(),
+        },
+    );
+    settings.profiles.rules.insert(
+        "pure_block".to_string(),
+        capsem_core::net::policy_config::SecurityRule {
+            name: "pure_block".to_string(),
+            action: capsem_core::net::policy_config::SecurityRuleAction::Block,
+            condition: r#"file.read.path.contains("tmp")"#.to_string(),
+            detection_level: None,
+            priority: None,
+            corp_locked: false,
+            reason: Some("block example without reporting".to_string()),
+            plugin: None,
+            plugin_config: BTreeMap::new(),
+        },
+    );
+    capsem_core::net::policy_config::write_settings_file(&user_path, &settings).unwrap();
+
+    let Json(response) = handle_detection_rules_list(Path("default".to_string()))
+        .await
+        .expect("detection rules list should compile effective profile");
+
+    assert_eq!(response.profile_id, "default");
+    assert!(
+        response
+            .rules
+            .iter()
+            .all(|rule| rule.detection_level.is_some()),
+        "detection inventory must not include non-reporting enforcement rules"
+    );
+    assert!(response
+        .rules
+        .iter()
+        .any(|rule| rule.rule_id == "profiles.rules.skill_loaded"));
+    assert!(!response
+        .rules
+        .iter()
+        .any(|rule| rule.rule_id == "profiles.rules.pure_block"));
+}
+
+#[tokio::test]
+async fn handle_detection_info_summarizes_detection_rules_only() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+
+    let dir = tempfile::tempdir().unwrap();
+    let (_env_guard, user_path, _) = install_empty_settings_env(&dir);
+    let mut settings = capsem_core::net::policy_config::SettingsFile::default();
+    settings.profiles.rules.insert(
+        "skill_loaded".to_string(),
+        capsem_core::net::policy_config::SecurityRule {
+            name: "skill_loaded".to_string(),
+            action: capsem_core::net::policy_config::SecurityRuleAction::Allow,
+            condition: r#"file.read.path.contains("skills/")"#.to_string(),
+            detection_level: Some(capsem_core::net::policy_config::DetectionLevel::Informational),
+            priority: None,
+            corp_locked: false,
+            reason: Some("record skill file reads".to_string()),
+            plugin: None,
+            plugin_config: BTreeMap::new(),
+        },
+    );
+    capsem_core::net::policy_config::write_settings_file(&user_path, &settings).unwrap();
+
+    let Json(info) = handle_detection_info(Path("default".to_string()))
+        .await
+        .expect("detection info should summarize effective detection rules");
+
+    assert_eq!(info.profile_id, "default");
+    assert!(info.rule_count >= 1);
+    assert_eq!(info.rule_count, info.detection_rule_count);
+    assert!(info.source_counts.contains_key("profile"));
+}
+
+#[tokio::test]
+async fn handle_detection_rule_upsert_requires_detection_level() {
+    let rule = capsem_core::net::policy_config::SecurityRule {
+        name: "pure_block".to_string(),
+        action: capsem_core::net::policy_config::SecurityRuleAction::Block,
+        condition: r#"file.read.path.contains("tmp")"#.to_string(),
+        detection_level: None,
+        priority: None,
+        corp_locked: false,
+        reason: Some("block without reporting".to_string()),
+        plugin: None,
+        plugin_config: BTreeMap::new(),
+    };
+
+    let err = handle_detection_rule_upsert(
+        Path(("default".to_string(), "pure_block".to_string())),
+        Json(rule),
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(err.0, StatusCode::BAD_REQUEST);
+    assert!(err.1.contains("requires detection_level"));
+}
+
+#[tokio::test]
+async fn handle_detection_rules_list_rejects_unknown_profiles() {
+    let err = handle_detection_rules_list(Path("strict".to_string()))
+        .await
+        .unwrap_err();
+
+    assert_eq!(err.0, StatusCode::NOT_FOUND);
+    assert!(err.1.contains("profile not found: strict"));
+}
+
+#[tokio::test]
 async fn profile_plugin_endpoint_matrix_dynamically_controls_enforcement_evaluation() {
     let state = make_test_state();
 

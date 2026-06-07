@@ -152,6 +152,10 @@ export interface EnforcementInfoResponse {
   action_counts: Record<string, number>;
 }
 
+export type DetectionRuleInfo = EnforcementRuleInfo;
+export type DetectionRuleListResponse = EnforcementRuleListResponse;
+export type DetectionInfoResponse = EnforcementInfoResponse;
+
 // -- Initialization --
 
 export async function init(): Promise<InitResult> {
@@ -695,6 +699,18 @@ export async function listEnforcementRules(profileId: string): Promise<Enforceme
 
 export async function getEnforcementInfo(profileId: string): Promise<EnforcementInfoResponse> {
   const resp = await _get(`/profiles/${encodeURIComponent(profileId)}/enforcement/info`);
+  return await resp.json();
+}
+
+// -- Detection rules --
+
+export async function listDetectionRules(profileId: string): Promise<DetectionRuleListResponse> {
+  const resp = await _get(`/profiles/${encodeURIComponent(profileId)}/detection/rules/list`);
+  return await resp.json();
+}
+
+export async function getDetectionInfo(profileId: string): Promise<DetectionInfoResponse> {
+  const resp = await _get(`/profiles/${encodeURIComponent(profileId)}/detection/info`);
   return await resp.json();
 }
 

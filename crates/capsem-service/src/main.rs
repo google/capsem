@@ -4276,6 +4276,14 @@ async fn handle_enforcement_evaluate(
     }))
 }
 
+async fn handle_detection_evaluate(
+    State(state): State<Arc<ServiceState>>,
+    Path(profile_id): Path<String>,
+    Json(request): Json<EnforcementEvaluateRequest>,
+) -> Result<Json<EnforcementEvaluateResponse>, AppError> {
+    handle_enforcement_evaluate(State(state), Path(profile_id), Json(request)).await
+}
+
 fn enforcement_rule_source(source: SecurityRuleSource) -> api::EnforcementRuleSource {
     match source {
         SecurityRuleSource::BuiltinDefault => api::EnforcementRuleSource::BuiltinDefault,
@@ -4380,6 +4388,16 @@ fn list_enforcement_rules_for_profile(
     Ok(rules)
 }
 
+fn list_detection_rules_for_profile(
+    user: &SettingsFile,
+    corp: &SettingsFile,
+) -> Result<Vec<api::DetectionRuleInfo>, AppError> {
+    Ok(list_enforcement_rules_for_profile(user, corp)?
+        .into_iter()
+        .filter(|rule| rule.detection_level.is_some())
+        .collect())
+}
+
 fn enforcement_info_for_rules(
     profile_id: String,
     rules: &[api::EnforcementRuleInfo],
@@ -4419,6 +4437,15 @@ async fn handle_enforcement_info(
     Ok(Json(enforcement_info_for_rules(profile_id, &rules)))
 }
 
+async fn handle_detection_info(
+    Path(profile_id): Path<String>,
+) -> Result<Json<api::DetectionInfoResponse>, AppError> {
+    let profile_id = validate_profile_route_id(profile_id)?;
+    let (user, corp) = capsem_core::net::policy_config::load_settings_files();
+    let rules = list_detection_rules_for_profile(&user, &corp)?;
+    Ok(Json(enforcement_info_for_rules(profile_id, &rules)))
+}
+
 async fn handle_enforcement_rules_list(
     Path(profile_id): Path<String>,
 ) -> Result<Json<api::EnforcementRuleListResponse>, AppError> {
@@ -4427,6 +4454,17 @@ async fn handle_enforcement_rules_list(
     Ok(Json(api::EnforcementRuleListResponse {
         profile_id,
         rules: list_enforcement_rules_for_profile(&user, &corp)?,
+    }))
+}
+
+async fn handle_detection_rules_list(
+    Path(profile_id): Path<String>,
+) -> Result<Json<api::DetectionRuleListResponse>, AppError> {
+    let profile_id = validate_profile_route_id(profile_id)?;
+    let (user, corp) = capsem_core::net::policy_config::load_settings_files();
+    Ok(Json(api::DetectionRuleListResponse {
+        profile_id,
+        rules: list_detection_rules_for_profile(&user, &corp)?,
     }))
 }
 
@@ -4462,6 +4500,19 @@ async fn handle_enforcement_rule_upsert(
     }))
 }
 
+async fn handle_detection_rule_upsert(
+    Path((profile_id, rule_id)): Path<(String, String)>,
+    Json(rule): Json<SecurityRule>,
+) -> Result<Json<EnforcementRuleResponse>, AppError> {
+    if rule.detection_level.is_none() {
+        return Err(AppError(
+            StatusCode::BAD_REQUEST,
+            "detection rule endpoint requires detection_level".to_string(),
+        ));
+    }
+    handle_enforcement_rule_upsert(Path((profile_id, rule_id)), Json(rule)).await
+}
+
 async fn handle_enforcement_rule_delete(
     Path((profile_id, rule_id)): Path<(String, String)>,
 ) -> Result<Json<EnforcementRuleDeleteResponse>, AppError> {
@@ -4486,12 +4537,25 @@ async fn handle_enforcement_rule_delete(
     }))
 }
 
+async fn handle_detection_rule_delete(
+    Path((profile_id, rule_id)): Path<(String, String)>,
+) -> Result<Json<EnforcementRuleDeleteResponse>, AppError> {
+    handle_enforcement_rule_delete(Path((profile_id, rule_id))).await
+}
+
 async fn handle_enforcement_reload(
     State(state): State<Arc<ServiceState>>,
     Path(profile_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let _profile_id = validate_profile_route_id(profile_id)?;
     handle_reload_config(State(state)).await
+}
+
+async fn handle_detection_reload(
+    State(state): State<Arc<ServiceState>>,
+    Path(profile_id): Path<String>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    handle_enforcement_reload(State(state), Path(profile_id)).await
 }
 
 fn load_user_settings_for_enforcement_write() -> Result<(PathBuf, SettingsFile), AppError> {
@@ -5943,6 +6007,30 @@ async fn main() -> Result<()> {
         .route(
             "/profiles/{profile_id}/enforcement/rules/list",
             get(handle_enforcement_rules_list),
+        )
+        .route(
+            "/profiles/{profile_id}/detection/evaluate",
+            post(handle_detection_evaluate),
+        )
+        .route(
+            "/profiles/{profile_id}/detection/info",
+            get(handle_detection_info),
+        )
+        .route(
+            "/profiles/{profile_id}/detection/rules/{rule_id}/edit",
+            put(handle_detection_rule_upsert),
+        )
+        .route(
+            "/profiles/{profile_id}/detection/rules/{rule_id}/delete",
+            delete(handle_detection_rule_delete),
+        )
+        .route(
+            "/profiles/{profile_id}/detection/reload",
+            post(handle_detection_reload),
+        )
+        .route(
+            "/profiles/{profile_id}/detection/rules/list",
+            get(handle_detection_rules_list),
         )
         .route(
             "/profiles/{profile_id}/plugins/list",

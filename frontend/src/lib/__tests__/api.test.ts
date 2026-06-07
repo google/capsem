@@ -439,6 +439,61 @@ describe('api', () => {
     });
   });
 
+  describe('detection rules', () => {
+    beforeEach(async () => {
+      mockFetch
+        .mockReturnValueOnce(jsonResponse({ ok: true, version: '1.0.0', service_socket: '/tmp/s' }))
+        .mockReturnValueOnce(jsonResponse({ token: 'tok' }));
+      await api.init();
+    });
+
+    it('listDetectionRules sends GET /profiles/{profile_id}/detection/rules/list', async () => {
+      const response = {
+        profile_id: 'default',
+        rules: [
+          {
+            rule_id: 'profiles.rules.skill_loaded',
+            source: 'profile',
+            provider: 'profiles',
+            namespace: 'profiles',
+            rule_key: 'skill_loaded',
+            default_rule: false,
+            name: 'skill_loaded',
+            action: 'allow',
+            match: 'file.read.path.contains("skills/")',
+            detection_level: 'informational',
+            priority: 10,
+            corp_locked: false,
+          },
+        ],
+      };
+      mockFetch.mockReturnValueOnce(jsonResponse(response));
+      const result = await api.listDetectionRules('default');
+      expect(result).toEqual(response);
+      const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
+      expect(call[0]).toContain('/profiles/default/detection/rules/list');
+    });
+
+    it('getDetectionInfo sends GET /profiles/{profile_id}/detection/info', async () => {
+      const response = {
+        profile_id: 'default',
+        rule_count: 2,
+        default_rule_count: 1,
+        custom_rule_count: 1,
+        detection_rule_count: 2,
+        plugin_rule_count: 0,
+        corp_locked_rule_count: 0,
+        source_counts: { builtin_default: 1, profile: 1 },
+        action_counts: { allow: 2 },
+      };
+      mockFetch.mockReturnValueOnce(jsonResponse(response));
+      const result = await api.getDetectionInfo('default');
+      expect(result).toEqual(response);
+      const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
+      expect(call[0]).toContain('/profiles/default/detection/info');
+    });
+  });
+
   // ---- Plugins ----
 
   describe('plugins', () => {

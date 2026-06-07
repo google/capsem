@@ -72,6 +72,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   enforcement configuration counts by source/action plus default/custom,
   detection, plugin, and corp-lock totals. Runtime counters remain table-backed
   under VM enforcement status.
+- Added profile-scoped detection rule routes
+  `/profiles/{profile_id}/detection/info`,
+  `/profiles/{profile_id}/detection/rules/list`,
+  `/profiles/{profile_id}/detection/evaluate`,
+  `/profiles/{profile_id}/detection/rules/{rule_id}/edit`,
+  `/profiles/{profile_id}/detection/rules/{rule_id}/delete`, and
+  `/profiles/{profile_id}/detection/reload`. They reuse the same compiled
+  security-rule contract as enforcement and only list/write rules with an
+  explicit `detection_level`.
 
 ### Added (security event rule spine)
 - Replaced callback-shaped Policy V2 authoring with one native rule contract
