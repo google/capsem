@@ -49,6 +49,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   service/gateway route contract.
 - Added `GET /vms/{vm_id}/status` as the runtime-state endpoint for one VM so
   UI state reads no longer need to treat `/vms/{vm_id}/info` as a status API.
+- Added `PATCH /vms/{vm_id}/edit` as a fail-closed VM edit gate: attempts to
+  mutate immutable `profile_id` or unknown fields are rejected, and resource
+  edits return explicit unsupported status until live edit semantics are
+  implemented.
 
 ### Added (security event rule spine)
 - Replaced callback-shaped Policy V2 authoring with one native rule contract

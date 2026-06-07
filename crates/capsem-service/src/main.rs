@@ -2270,6 +2270,39 @@ async fn handle_vm_status(
     ))
 }
 
+async fn handle_vm_edit(
+    State(state): State<Arc<ServiceState>>,
+    Path(id): Path<String>,
+    Json(request): Json<api::VmEditRequest>,
+) -> Result<Json<api::VmStatusResponse>, AppError> {
+    if request.profile_id.is_some() {
+        return Err(AppError(
+            StatusCode::BAD_REQUEST,
+            "VM profile_id is immutable; fork or create a new VM to change profiles".into(),
+        ));
+    }
+    if !request.extra.is_empty() {
+        let fields = request.extra.keys().cloned().collect::<Vec<_>>().join(", ");
+        return Err(AppError(
+            StatusCode::BAD_REQUEST,
+            format!("unknown VM edit fields: {fields}"),
+        ));
+    }
+
+    let Json(status) = handle_vm_status(State(Arc::clone(&state)), Path(id.clone())).await?;
+    let requested_resource_edit = request.ram_mb.is_some()
+        || request.cpus.is_some()
+        || request.persistent.is_some()
+        || request.name.is_some();
+    if requested_resource_edit {
+        return Err(AppError(
+            StatusCode::NOT_IMPLEMENTED,
+            "live VM resource/persistence edits are not supported yet".into(),
+        ));
+    }
+    Ok(Json(status))
+}
+
 /// GET /stats -- return full main.db aggregation in one response.
 async fn handle_stats(
     State(state): State<Arc<ServiceState>>,
@@ -5568,6 +5601,7 @@ async fn main() -> Result<()> {
         .route("/vms/list", get(handle_list))
         .route("/vms/{id}/info", get(handle_info))
         .route("/vms/{id}/status", get(handle_vm_status))
+        .route("/vms/{id}/edit", patch(handle_vm_edit))
         .route("/vms/{id}/logs", get(handle_logs))
         .route("/vms/{id}/inspect", post(handle_inspect))
         .route("/vms/{id}/exec", post(handle_exec))

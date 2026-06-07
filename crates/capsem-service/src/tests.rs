@@ -1503,6 +1503,54 @@ async fn handle_info_shows_suspended_status() {
 }
 
 #[tokio::test]
+async fn handle_vm_edit_rejects_profile_id_mutation() {
+    let state = make_test_state();
+    insert_fake_instance(&state, "edit-vm", 4242);
+    let request: api::VmEditRequest = serde_json::from_value(serde_json::json!({
+        "profile_id": "other-profile"
+    }))
+    .unwrap();
+
+    let err = handle_vm_edit(State(state), Path("edit-vm".into()), Json(request))
+        .await
+        .unwrap_err();
+    assert_eq!(err.0, StatusCode::BAD_REQUEST);
+    assert!(err.1.contains("profile_id is immutable"));
+}
+
+#[tokio::test]
+async fn handle_vm_edit_rejects_unknown_fields() {
+    let state = make_test_state();
+    insert_fake_instance(&state, "edit-vm", 4242);
+    let request: api::VmEditRequest = serde_json::from_value(serde_json::json!({
+        "surprise": true
+    }))
+    .unwrap();
+
+    let err = handle_vm_edit(State(state), Path("edit-vm".into()), Json(request))
+        .await
+        .unwrap_err();
+    assert_eq!(err.0, StatusCode::BAD_REQUEST);
+    assert!(err.1.contains("unknown VM edit fields"));
+}
+
+#[tokio::test]
+async fn handle_vm_edit_resource_changes_fail_explicitly() {
+    let state = make_test_state();
+    insert_fake_instance(&state, "edit-vm", 4242);
+    let request: api::VmEditRequest = serde_json::from_value(serde_json::json!({
+        "ram_mb": 8192
+    }))
+    .unwrap();
+
+    let err = handle_vm_edit(State(state), Path("edit-vm".into()), Json(request))
+        .await
+        .unwrap_err();
+    assert_eq!(err.0, StatusCode::NOT_IMPLEMENTED);
+    assert!(err.1.contains("not supported yet"));
+}
+
+#[tokio::test]
 async fn handle_suspend_rejects_ephemeral_vm() {
     let (state, _dir) = make_test_state_with_tempdir();
 

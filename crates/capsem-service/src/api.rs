@@ -2,6 +2,7 @@ use capsem_core::session::{
     GlobalStats, McpToolSummary, ProviderSummary, SessionRecord, ToolSummary,
 };
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::collections::HashMap;
 
 /// Response for GET /stats -- full main.db dump in one call.
@@ -164,6 +165,22 @@ pub struct VmStatusResponse {
     pub created_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_error: Option<String>,
+}
+
+#[derive(Deserialize, Debug, Default)]
+pub struct VmEditRequest {
+    #[serde(default)]
+    pub ram_mb: Option<u64>,
+    #[serde(default)]
+    pub cpus: Option<u32>,
+    #[serde(default)]
+    pub persistent: Option<bool>,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub profile_id: Option<String>,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, serde_json::Value>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
