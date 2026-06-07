@@ -23,7 +23,9 @@ macOS uses Apple's Virtualization.framework (Apple Silicon only). Linux uses KVM
 curl -fsSL https://capsem.org/install.sh | sh
 ```
 
-The script auto-detects your OS and architecture, downloads the Capsem binaries, and runs `capsem setup` to complete installation.
+The script auto-detects your OS and architecture, installs the Capsem binaries,
+and registers the background service. VM assets are downloaded and verified
+through the service asset contract.
 
 ### Manual download
 
@@ -36,24 +38,16 @@ The script auto-detects your OS and architecture, downloads the Capsem binaries,
 
 See the [Development Guide](/development/getting-started/) for instructions on cloning the repo, installing toolchain dependencies, building VM assets, and running from source.
 
-## Setup
+## Service And Assets
 
-On first use, Capsem auto-runs the setup wizard. You can also run it explicitly:
+After install, the Capsem service runs in the background and starts
+automatically on login. The desktop UI and CLI report asset status while the
+kernel, initrd, and rootfs download in the background.
 
 ```sh
-capsem setup
+capsem status
+capsem start
 ```
-
-The wizard walks through 6 steps:
-
-1. **Corp config** -- enterprise provisioning (optional, skip for personal use)
-2. **Asset download** -- downloads the Linux VM image (~200 MB) in the background
-3. **Security preset** -- choose medium or high network restriction
-4. **AI providers** -- auto-detects API keys from your environment
-5. **Repository access** -- detects Git/SSH/GitHub configuration
-6. **Service install** -- registers the background service (starts on login)
-
-After setup, the Capsem service runs in the background (like Docker). It starts automatically on login.
 
 ## First session
 
@@ -108,7 +102,9 @@ gemini    # Gemini CLI
 codex     # Codex
 ```
 
-API keys are configured in `~/.capsem/user.toml` on the host (or auto-detected by the setup wizard):
+API keys can be configured in the VM or brokered by Capsem when observed at a
+supported boundary. Brokered credentials are stored as BLAKE3 references in
+settings and logs; raw credentials stay broker-private.
 
 ```toml
 [ai.anthropic]

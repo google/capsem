@@ -102,7 +102,7 @@ VM assets (kernel, initrd, rootfs) are verified via BLAKE3 hashes at every stage
 graph TD
     A["Build<br/>generate_checksums()"] --> B["manifest.json<br/>(BLAKE3 hashes + sizes)"]
     B --> C["Release<br/>sign with minisign"]
-    C --> D["Download<br/>capsem setup"]
+    C --> D["Download<br/>asset service"]
     D --> E["Verify hashes<br/>BLAKE3 per-file check"]
     E --> F["Boot<br/>assets loaded from verified dir"]
 ```
@@ -158,7 +158,9 @@ Validation rules:
 
 ### Multi-version manifest
 
-The manifest accumulates entries across releases. Each release merges its new version entry with the previous manifest from the latest GitHub release. This allows `capsem setup` to download assets for any supported version.
+The manifest accumulates entries across releases. Each release merges its new
+version entry with the previous manifest from the latest GitHub release. This
+allows the asset service to download assets for any supported version.
 
 ## Manifest signing
 

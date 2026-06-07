@@ -135,12 +135,12 @@ fn build_event_process_name_passthrough() {
 }
 
 #[test]
-fn build_event_carries_policy_v2_fields() {
+fn build_event_carries_security_rule_fields() {
     let mut res = denied_result();
-    res.matched_rule = Some("policy.dns.block_openai".into());
+    res.matched_rule = Some("profiles.rules.block_openai_dns".into());
     res.policy_mode = Some("enforce".into());
     res.policy_action = Some("block".into());
-    res.policy_rule = Some("policy.dns.block_openai".into());
+    res.policy_rule = Some("profiles.rules.block_openai_dns".into());
     res.policy_reason = Some("DNS to OpenAI API is blocked".into());
 
     let evt = build_dns_event(
@@ -151,10 +151,16 @@ fn build_event_carries_policy_v2_fields() {
     );
 
     assert_eq!(evt.decision, "denied");
-    assert_eq!(evt.matched_rule.as_deref(), Some("policy.dns.block_openai"));
+    assert_eq!(
+        evt.matched_rule.as_deref(),
+        Some("profiles.rules.block_openai_dns")
+    );
     assert_eq!(evt.policy_mode.as_deref(), Some("enforce"));
     assert_eq!(evt.policy_action.as_deref(), Some("block"));
-    assert_eq!(evt.policy_rule.as_deref(), Some("policy.dns.block_openai"));
+    assert_eq!(
+        evt.policy_rule.as_deref(),
+        Some("profiles.rules.block_openai_dns")
+    );
     assert_eq!(
         evt.policy_reason.as_deref(),
         Some("DNS to OpenAI API is blocked")

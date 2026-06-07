@@ -200,7 +200,7 @@ See [Session Telemetry](/architecture/session-telemetry/) for the full
 | `aggregator` | `AggregatorClient` | Client handle for the isolated MCP aggregator subprocess |
 | `db` | `Arc<DbWriter>` | Async telemetry writer |
 | `security_rules` | `RwLock<Arc<SecurityRuleSet>>` | Hot-reloadable security-event rules |
-| `domain_policy` | `RwLock<Arc<DomainPolicy>>` | Domain policy for builtin HTTP tools |
+| `plugin_policy` | `RwLock<Arc<SecurityPluginPolicy>>` | Hot-reloadable plugin modes for security-event preprocessing/postprocessing |
 
 The `AggregatorClient` is cloneable (`Arc`-wrapped mpsc channel) and shared
 across endpoint sessions for a given VM. The rule set uses double-Arc style

@@ -9,7 +9,8 @@ Capsem uses a service-oriented architecture with multiple cooperating binaries. 
 
 ## Host binaries
 
-Seven binaries run on the host machine. They are installed to `~/.capsem/bin/` by `capsem setup`.
+Seven binaries run on the host machine. They are installed to
+`~/.capsem/bin/` by the platform package or source install flow.
 
 | Binary | Role | Communication |
 |--------|------|---------------|
@@ -172,27 +173,19 @@ The service exposes a REST API over UDS. The gateway proxies this transparently.
 
 ## Installation
 
-`capsem setup` is the primary install path -- an interactive wizard that runs on first use.
-
-### Setup wizard (6 steps)
-
-1. **Corp config** -- optional enterprise config from URL or file
-2. **Asset download** -- background download of VM assets (kernel, rootfs, initrd)
-3. **Security preset** -- medium or high (corp can lock this)
-4. **AI providers** -- auto-detect Anthropic, Google, OpenAI, GitHub credentials
-5. **Repository access** -- detect Git, SSH, GitHub token
-6. **Service install** -- register LaunchAgent/systemd + PATH check
-
-Auto-runs non-interactively on first CLI use if `~/.capsem/setup-state.json` is missing. Re-run with `capsem setup --force`.
+Install registers the service and places host binaries under `~/.capsem/bin/`.
+The service owns asset resolution and reports missing/downloading/ready state
+to the UI and CLI. Provider credentials are configured in normal user/corp
+settings or brokered from runtime security events; there is no setup wizard
+authority path.
 
 ### Install layout
 
 ```
 ~/.capsem/
   bin/                 capsem, capsem-service, capsem-process, capsem-mcp, capsem-gateway, capsem-tray
-  assets/              manifest.json, v{VERSION}/{vmlinuz, initrd.img, rootfs.squashfs}
+  assets/              manifest.json, v{VERSION}/{vmlinuz, initrd.img, rootfs.erofs}
   run/                 service.sock, service.pid, gateway.token, gateway.port, instances/
-  setup-state.json     Wizard progress (resumable)
   update-check.json    Self-update cache (24h TTL)
   user.toml            User settings
   corp.toml            Enterprise config (optional)

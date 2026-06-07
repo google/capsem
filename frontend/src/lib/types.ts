@@ -50,42 +50,7 @@ export type SettingValue = boolean | number | string | { path: string; content: 
 /** Where a setting's effective value came from (serde rename_all = "lowercase"). */
 export type PolicySource = 'default' | 'user' | 'corp';
 
-export type PolicyCallback =
-  | 'mcp.request'
-  | 'mcp.response'
-  | 'http.request'
-  | 'http.response'
-  | 'dns.query'
-  | 'dns.response'
-  | 'model.request'
-  | 'model.response'
-  | 'model.tool_call'
-  | 'model.tool_response'
-  | 'hook.decision';
-
-export type PolicyDecisionKind = 'allow' | 'ask' | 'block' | 'rewrite';
-
-export interface PolicyRuleConfig {
-  on: PolicyCallback;
-  if: string;
-  decision: PolicyDecisionKind;
-  priority: number;
-  reason?: string | null;
-  rewrite_target?: string | null;
-  rewrite_value?: string | null;
-  strip_request_headers?: string[];
-  strip_response_headers?: string[];
-}
-
-export interface PolicyConfig {
-  mcp?: Record<string, PolicyRuleConfig>;
-  http?: Record<string, PolicyRuleConfig>;
-  dns?: Record<string, PolicyRuleConfig>;
-  model?: Record<string, PolicyRuleConfig>;
-  hook?: Record<string, PolicyRuleConfig>;
-}
-
-export type SettingsChangeValue = SettingValue | PolicyRuleConfig | null;
+export type SettingsChangeValue = SettingValue | null;
 
 /** Per-rule HTTP method permissions. */
 export interface HttpMethodPermissions {
@@ -357,7 +322,6 @@ export interface SettingsResponse {
   tree: SettingsNode[];
   issues: ConfigIssue[];
   presets: SecurityPreset[];
-  policy?: PolicyConfig;
 }
 
 /** A structured log event from the Rust backend. */

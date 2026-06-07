@@ -72,9 +72,6 @@ action = "preset_select"
 name = "Check for updates"
 action = "check_update"
 
-[settings.vm.rerun_wizard]
-name = "Setup Wizard"
-action = "rerun_wizard"
 ```
 
 The UI renders these via a finite `ActionKind` enum -- not string comparison.
@@ -202,7 +199,8 @@ Returns the full `SettingsResponse` in one call:
 | `tree` | `SettingsNode[]` | Hierarchical tree: groups, leaves, actions, MCP servers |
 | `issues` | `ConfigIssue[]` | Validation warnings (missing API keys, invalid JSON, etc.) |
 | `presets` | `SecurityPreset[]` | Available security presets with their setting values |
-| `policy` | `PolicyConfig` | Legacy/API compatibility view for older policy consumers. New rule authoring lives in `profiles.rules`, `corp.rules`, provider convenience rules, and `rule_files`. |
+| `providers` | `ProviderStatus[]` | Provider discovery, endpoint, and credential broker status |
+| `tool_config_sources` | `ToolConfigSourceRecord` map | Observed tool-owned config metadata without raw file content |
 
 ### save_settings
 

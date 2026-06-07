@@ -1,13 +1,10 @@
 use super::loader::load_settings_files;
 use super::provider_profile::{
-    compile_provider_rules_to_policy_config, compile_provider_rules_to_security_rule_set,
-    ModelEndpointRegistry, ProviderRuleProfile,
+    compile_provider_rules_to_security_rule_set, ModelEndpointRegistry, ProviderRuleProfile,
 };
 use super::resolver::resolve_settings;
 use super::types::*;
 use super::{SecurityPluginConfig, SecurityRuleProfile, SecurityRuleSet, SecurityRuleSource};
-use crate::net::domain_policy::{Action, DomainPolicy};
-use crate::net::http_policy::{HttpPolicy, HttpRule};
 use std::collections::{BTreeMap, HashMap};
 
 // ---------------------------------------------------------------------------
@@ -45,210 +42,6 @@ fn corp_blocked_matches(candidate: &str, corp_blocked: &[String]) -> bool {
         }
     }
     false
-}
-
-/// Build a DomainPolicy from resolved settings.
-///
-/// - Bool toggles with domain metadata (registries) -> allow/block those domains
-/// - `.domains` Text settings -> allow/block parsed domain patterns
-/// - Corp-locked-off services use UNION of default + effective domains for blocking
-/// - Default action from security.web.allow_read / security.web.allow_write
-pub fn settings_to_domain_policy(resolved: &[ResolvedSetting]) -> DomainPolicy {
-    let mut allow_list: Vec<String> = Vec::new();
-    let mut block_list: Vec<String> = Vec::new();
-
-    // Existing: Bool toggles with domain metadata (registries)
-    for s in resolved {
-        if s.metadata.domains.is_empty() {
-            continue;
-        }
-        if s.setting_type != SettingType::Bool {
-            continue;
-        }
-        let enabled = s.effective_value.as_bool().unwrap_or(false);
-        if enabled {
-            allow_list.extend(s.metadata.domains.clone());
-        } else {
-            block_list.extend(s.metadata.domains.clone());
-        }
-    }
-
-    // Pass 1: collect corp-blocked domain patterns from .domains settings.
-    // When corp locks .allow to false, use UNION of default + effective so
-    // user can't shrink the block list below defaults.
-    let mut corp_blocked: Vec<String> = Vec::new();
-    for s in resolved {
-        if !s.id.ends_with(".domains") || s.setting_type != SettingType::Text {
-            continue;
-        }
-        let toggle_id = s.id.replace(".domains", ".allow");
-        let toggle = resolved.iter().find(|t| t.id == toggle_id);
-        let corp_locked_off = match toggle {
-            Some(t) => t.corp_locked && !t.effective_value.as_bool().unwrap_or(false),
-            None => false,
-        };
-        if corp_locked_off {
-            let defaults = parse_domain_list(s.default_value.as_text().unwrap_or(""));
-            let effective = parse_domain_list(s.effective_value.as_text().unwrap_or(""));
-            let mut all: Vec<String> = defaults;
-            for d in effective {
-                if !all.contains(&d) {
-                    all.push(d);
-                }
-            }
-            block_list.extend(all.clone());
-            corp_blocked.extend(all);
-        }
-    }
-
-    // Pass 2: process non-corp-locked .domains settings
-    for s in resolved {
-        if !s.id.ends_with(".domains") || s.setting_type != SettingType::Text {
-            continue;
-        }
-        let toggle_id = s.id.replace(".domains", ".allow");
-        let toggle = resolved.iter().find(|t| t.id == toggle_id);
-        let corp_locked_off = match toggle {
-            Some(t) => t.corp_locked && !t.effective_value.as_bool().unwrap_or(false),
-            None => false,
-        };
-        if corp_locked_off {
-            continue; // Already handled in pass 1
-        }
-        let toggle_on = toggle
-            .and_then(|t| t.effective_value.as_bool())
-            .unwrap_or(false);
-        let domains = parse_domain_list(s.effective_value.as_text().unwrap_or(""));
-        if toggle_on {
-            // Filter: don't allow domains that corp has blocked
-            for d in domains {
-                if corp_blocked_matches(&d, &corp_blocked) {
-                    block_list.push(d); // Override: corp says no
-                } else {
-                    allow_list.push(d);
-                }
-            }
-        } else {
-            block_list.extend(domains);
-        }
-    }
-
-    // Custom allow/block lists from security.web.custom_allow / security.web.custom_block.
-    // Block takes priority over allow for overlapping domains.
-    let custom_allow = resolved
-        .iter()
-        .find(|s| s.id == "security.web.custom_allow")
-        .and_then(|s| s.effective_value.as_text())
-        .unwrap_or("");
-    let custom_block = resolved
-        .iter()
-        .find(|s| s.id == "security.web.custom_block")
-        .and_then(|s| s.effective_value.as_text())
-        .unwrap_or("");
-    let custom_allow_domains = parse_domain_list(custom_allow);
-    let custom_block_domains = parse_domain_list(custom_block);
-
-    // Block beats allow: any domain in custom_block goes to block_list only.
-    for d in &custom_allow_domains {
-        if corp_blocked_matches(d, &corp_blocked) || corp_blocked_matches(d, &custom_block_domains)
-        {
-            block_list.push(d.clone());
-        } else {
-            allow_list.push(d.clone());
-        }
-    }
-    block_list.extend(custom_block_domains);
-
-    let allow_read = resolved
-        .iter()
-        .find(|s| s.id == "security.web.allow_read")
-        .and_then(|s| s.effective_value.as_bool())
-        .unwrap_or(false);
-    let allow_write = resolved
-        .iter()
-        .find(|s| s.id == "security.web.allow_write")
-        .and_then(|s| s.effective_value.as_bool())
-        .unwrap_or(false);
-    // Domain policy only has a single default action: allow if either read or write is allowed.
-    let default_action = if allow_read || allow_write {
-        Action::Allow
-    } else {
-        Action::Deny
-    };
-
-    DomainPolicy::new(&allow_list, &block_list, default_action)
-}
-
-/// Build an HttpPolicy from resolved settings.
-///
-/// Generates HttpRules from setting metadata.rules for enabled toggles.
-pub fn settings_to_http_policy(resolved: &[ResolvedSetting]) -> HttpPolicy {
-    let domain_policy = settings_to_domain_policy(resolved);
-
-    let mut http_rules: Vec<HttpRule> = Vec::new();
-
-    for s in resolved {
-        if s.metadata.rules.is_empty() {
-            continue;
-        }
-        if s.setting_type != SettingType::Bool {
-            continue;
-        }
-        let enabled = s.effective_value.as_bool().unwrap_or(false);
-        if !enabled {
-            continue;
-        }
-
-        // For each rule in metadata, generate HttpRules for the setting's domains
-        let rule_domains: Vec<&str> = s.metadata.domains.iter().map(|d| d.as_str()).collect();
-
-        for perms in s.metadata.rules.values() {
-            let domains_for_rule = if perms.domains.is_empty() {
-                rule_domains.clone()
-            } else {
-                perms.domains.iter().map(|d| d.as_str()).collect()
-            };
-
-            let path_pattern = perms.path.as_deref().unwrap_or("*").to_string();
-
-            for domain in &domains_for_rule {
-                // Skip wildcard domains for HTTP rules (they apply at domain level only)
-                if domain.starts_with("*.") {
-                    continue;
-                }
-                // Generate allow rules for each enabled method
-                for (method, allowed) in [
-                    ("GET", perms.get),
-                    ("POST", perms.post),
-                    ("PUT", perms.put),
-                    ("DELETE", perms.delete),
-                ] {
-                    if allowed {
-                        http_rules.push(HttpRule {
-                            domain: domain.to_lowercase(),
-                            method: method.to_string(),
-                            path_pattern: path_pattern.clone(),
-                            action: Action::Allow,
-                        });
-                    }
-                }
-            }
-        }
-    }
-
-    let log_bodies = resolved
-        .iter()
-        .find(|s| s.id == "vm.resources.log_bodies")
-        .and_then(|s| s.effective_value.as_bool())
-        .unwrap_or(false);
-
-    let max_body_capture = resolved
-        .iter()
-        .find(|s| s.id == "vm.resources.max_body_capture")
-        .and_then(|s| s.effective_value.as_number())
-        .unwrap_or(4096) as usize;
-
-    HttpPolicy::new(domain_policy, http_rules, log_bodies, max_body_capture)
 }
 
 /// Extract guest config from resolved settings.
@@ -620,10 +413,7 @@ pub fn settings_to_vm_settings(resolved: &[ResolvedSetting]) -> VmSettings {
 /// `resolve_settings()` call, ensuring consistency.
 pub struct MergedPolicies {
     pub network: crate::net::policy::NetworkPolicy,
-    pub domain: DomainPolicy,
-    pub http: HttpPolicy,
     pub mcp: crate::mcp::policy::McpPolicy,
-    pub policy: PolicyConfig,
     pub security_rules: SecurityRuleSet,
     pub plugins: BTreeMap<String, SecurityPluginConfig>,
     pub model_endpoints: ModelEndpointRegistry,
@@ -637,19 +427,6 @@ impl MergedPolicies {
         let resolved = resolve_settings(user, corp);
         let mcp_user = user.mcp.clone().unwrap_or_default();
         let mcp_corp = corp.mcp.clone().unwrap_or_default();
-        let mut policy =
-            PolicyConfig::merged_with_builtin_security_rules(&user.policy, &corp.policy);
-        match compile_provider_rules_to_policy_config(
-            &ProviderRuleProfile {
-                ai: user.ai.clone(),
-            },
-            &ProviderRuleProfile {
-                ai: corp.ai.clone(),
-            },
-        ) {
-            Ok(provider_policy) => policy.merge_first_wins(provider_policy),
-            Err(error) => tracing::warn!("provider rule profile ignored: {error}"),
-        }
         let security_rules = match compile_merged_security_rules(user, corp) {
             Ok(rules) => rules,
             Err(error) => {
@@ -667,10 +444,7 @@ impl MergedPolicies {
         let plugins = merge_plugin_policy(user, corp);
         Self {
             network: build_network_policy(&resolved),
-            domain: settings_to_domain_policy(&resolved),
-            http: settings_to_http_policy(&resolved),
             mcp: mcp_user.to_policy(&mcp_corp),
-            policy,
             security_rules,
             plugins,
             model_endpoints,
@@ -772,8 +546,8 @@ pub fn build_network_policy(resolved: &[ResolvedSetting]) -> crate::net::policy:
         }
     }
 
-    // Build rules from .domains text settings (AI providers)
-    // Corp block enforcement: same two-pass approach as settings_to_domain_policy
+    // Build network mechanics from .domains text settings (AI providers).
+    // Security allow/block decisions live in SecurityRuleSet.
     let mut corp_blocked: Vec<String> = Vec::new();
     for s in resolved {
         if !s.id.ends_with(".domains") || s.setting_type != SettingType::Text {
@@ -832,7 +606,7 @@ pub fn build_network_policy(resolved: &[ResolvedSetting]) -> crate::net::policy:
         }
     }
 
-    // Custom allow/block lists: same pattern as settings_to_domain_policy
+    // Custom allow/block network mechanics mirror the settings state.
     let custom_allow_text = resolved
         .iter()
         .find(|s| s.id == "security.web.custom_allow")
@@ -903,19 +677,6 @@ pub fn build_network_policy(resolved: &[ResolvedSetting]) -> crate::net::policy:
 // High-level entry points (thin wrappers over MergedPolicies)
 // ---------------------------------------------------------------------------
 
-/// Load and merge settings, then build an HttpPolicy.
-pub fn load_merged_policy() -> HttpPolicy {
-    MergedPolicies::from_disk().http
-}
-
-/// Build a `DomainPolicy` from merged settings.
-///
-/// Convenience wrapper matching the `load_merged_network_policy()` pattern.
-/// Used by built-in MCP HTTP tools to check domains.
-pub fn load_merged_domain_policy() -> DomainPolicy {
-    MergedPolicies::from_disk().domain
-}
-
 /// Build a `NetworkPolicy` (new policy engine) from merged settings.
 pub fn load_merged_network_policy() -> crate::net::policy::NetworkPolicy {
     MergedPolicies::from_disk().network
@@ -940,37 +701,6 @@ pub fn load_merged_settings() -> Vec<ResolvedSetting> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::net::domain_policy::Action;
-
-    fn make_setting(id: &str, typ: SettingType, value: SettingValue) -> ResolvedSetting {
-        ResolvedSetting {
-            id: id.to_string(),
-            category: "test".into(),
-            name: id.to_string(),
-            description: "".into(),
-            setting_type: typ,
-            default_value: value.clone(),
-            effective_value: value,
-            source: PolicySource::Default,
-            modified: None,
-            corp_locked: false,
-            enabled_by: None,
-            enabled: true,
-            metadata: SettingMetadata::default(),
-            collapsed: false,
-            history: vec![],
-        }
-    }
-
-    fn make_bool_setting(id: &str, value: bool, domains: Vec<String>) -> ResolvedSetting {
-        let mut s = make_setting(id, SettingType::Bool, SettingValue::Bool(value));
-        s.metadata.domains = domains;
-        s
-    }
-
-    fn make_text_setting(id: &str, value: &str) -> ResolvedSetting {
-        make_setting(id, SettingType::Text, SettingValue::Text(value.to_string()))
-    }
 
     // -----------------------------------------------------------------------
     // parse_domain_list
@@ -1053,151 +783,4 @@ mod tests {
         assert!(!corp_blocked_matches("good.com", &blocked));
     }
 
-    // -----------------------------------------------------------------------
-    // settings_to_domain_policy
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn domain_policy_empty_settings() {
-        let policy = settings_to_domain_policy(&[]);
-        // Empty settings: no allow_read, no allow_write -> default deny
-        assert_eq!(policy.evaluate("example.com").0, Action::Deny);
-    }
-
-    #[test]
-    fn domain_policy_allow_read_default_allow() {
-        let settings = vec![make_setting(
-            "security.web.allow_read",
-            SettingType::Bool,
-            SettingValue::Bool(true),
-        )];
-        let policy = settings_to_domain_policy(&settings);
-        assert_eq!(policy.evaluate("unknown.com").0, Action::Allow);
-    }
-
-    #[test]
-    fn domain_policy_bool_toggle_adds_domains() {
-        let settings = vec![
-            make_bool_setting("ai.anthropic.allow", true, vec!["api.anthropic.com".into()]),
-            make_setting(
-                "security.web.allow_read",
-                SettingType::Bool,
-                SettingValue::Bool(false),
-            ),
-        ];
-        let policy = settings_to_domain_policy(&settings);
-        assert_eq!(policy.evaluate("api.anthropic.com").0, Action::Allow);
-    }
-
-    #[test]
-    fn domain_policy_bool_toggle_off_blocks_domains() {
-        let settings = vec![
-            make_bool_setting(
-                "ai.anthropic.allow",
-                false,
-                vec!["api.anthropic.com".into()],
-            ),
-            make_setting(
-                "security.web.allow_read",
-                SettingType::Bool,
-                SettingValue::Bool(false),
-            ),
-        ];
-        let policy = settings_to_domain_policy(&settings);
-        assert_eq!(policy.evaluate("api.anthropic.com").0, Action::Deny);
-    }
-
-    #[test]
-    fn domain_policy_custom_block_beats_allow() {
-        let settings = vec![
-            make_setting(
-                "security.web.custom_allow",
-                SettingType::Text,
-                SettingValue::Text("example.com".into()),
-            ),
-            make_setting(
-                "security.web.custom_block",
-                SettingType::Text,
-                SettingValue::Text("example.com".into()),
-            ),
-            make_setting(
-                "security.web.allow_read",
-                SettingType::Bool,
-                SettingValue::Bool(true),
-            ),
-        ];
-        let policy = settings_to_domain_policy(&settings);
-        assert_eq!(policy.evaluate("example.com").0, Action::Deny);
-    }
-
-    #[test]
-    fn domain_policy_custom_allow_works() {
-        let settings = vec![
-            make_setting(
-                "security.web.custom_allow",
-                SettingType::Text,
-                SettingValue::Text("allowed.com".into()),
-            ),
-            make_setting(
-                "security.web.allow_read",
-                SettingType::Bool,
-                SettingValue::Bool(false),
-            ),
-        ];
-        let policy = settings_to_domain_policy(&settings);
-        assert_eq!(policy.evaluate("allowed.com").0, Action::Allow);
-    }
-
-    #[test]
-    fn domain_policy_corp_locked_off_blocks_union() {
-        let mut toggle = make_bool_setting("test.provider.allow", false, vec![]);
-        toggle.corp_locked = true;
-
-        let mut domains = make_text_setting("test.provider.domains", "");
-        domains.effective_value = SettingValue::Text("user-added.com".into());
-        domains.default_value = SettingValue::Text("default.com".into());
-
-        let settings = vec![toggle, domains];
-        let policy = settings_to_domain_policy(&settings);
-        assert_eq!(policy.evaluate("default.com").0, Action::Deny);
-        assert_eq!(policy.evaluate("user-added.com").0, Action::Deny);
-    }
-
-    // -----------------------------------------------------------------------
-    // settings_to_http_policy
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn http_policy_empty_settings() {
-        let policy = settings_to_http_policy(&[]);
-        assert!(!policy.log_bodies);
-    }
-
-    #[test]
-    fn http_policy_log_bodies_setting() {
-        let settings = vec![make_setting(
-            "vm.resources.log_bodies",
-            SettingType::Bool,
-            SettingValue::Bool(true),
-        )];
-        let policy = settings_to_http_policy(&settings);
-        assert!(policy.log_bodies);
-    }
-
-    #[test]
-    fn http_policy_max_body_capture_default() {
-        let policy = settings_to_http_policy(&[]);
-        assert_eq!(policy.max_body_capture, 4096);
-    }
-
-    #[test]
-    fn http_policy_max_body_capture_custom() {
-        let settings = vec![make_setting(
-            "vm.resources.max_body_capture",
-            SettingType::Number,
-            SettingValue::Number(8192),
-        )];
-        let policy = settings_to_http_policy(&settings);
-        assert_eq!(policy.max_body_capture, 8192);
-    }
 }

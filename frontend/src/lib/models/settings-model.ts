@@ -7,9 +7,6 @@ import {
   type SettingsGroup,
   type SettingsLeaf,
   type McpServerNode,
-  type PolicyConfig,
-  type PolicyCallback,
-  type PolicyRuleConfig,
   type SettingsChangeValue,
   type ConfigIssue,
   type SecurityPreset,
@@ -24,98 +21,10 @@ import {
   defaultWidget,
 } from './settings-enums';
 
-function normalizePolicyConfig(policy: PolicyConfig | undefined): PolicyConfig {
-  return {
-    mcp: policy?.mcp ?? {},
-    http: policy?.http ?? {},
-    dns: policy?.dns ?? {},
-    model: policy?.model ?? {},
-    hook: policy?.hook ?? {},
-  };
-}
-
-export const POLICY_RULE_TYPES = ['mcp', 'http', 'dns', 'model', 'hook'] as const;
-export type PolicyRuleType = (typeof POLICY_RULE_TYPES)[number];
-
-export interface PolicyRuleEntry {
-  key: string;
-  type: PolicyRuleType;
-  name: string;
-  rule: PolicyRuleConfig;
-  origin?: string;
-}
-
-const CALLBACKS_BY_TYPE: Record<PolicyRuleType, PolicyCallback[]> = {
-  mcp: ['mcp.request', 'mcp.response'],
-  http: ['http.request', 'http.response'],
-  dns: ['dns.query', 'dns.response'],
-  model: ['model.request', 'model.response', 'model.tool_call', 'model.tool_response'],
-  hook: ['hook.decision'],
-};
-
-function policyRulesFor(config: PolicyConfig, type: PolicyRuleType): Record<string, PolicyRuleConfig> {
-  return config[type] ?? {};
-}
-
-export function policyRuleKey(type: PolicyRuleType, name: string): string {
-  return `policy.${type}.${name}`;
-}
-
-export function policyRuleNameFromParts(parts: string[]): string {
-  const normalized = parts
-    .join('_')
-    .toLowerCase()
-    .replace(/[^a-z0-9_-]+/g, '_')
-    .replace(/_+/g, '_')
-    .replace(/^_+|_+$/g, '');
-  return normalized || 'rule';
-}
-
-function escapeCelString(value: string): string {
-  return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-}
-
-function parseDomainList(value: SettingValue): string[] {
-  if (Array.isArray(value)) {
-    return value
-      .filter((item): item is string => typeof item === 'string')
-      .map((item) => item.trim())
-      .filter(Boolean);
-  }
-  if (typeof value !== 'string') return [];
-  return value
-    .split(',')
-    .map((part) => part.trim())
-    .filter(Boolean);
-}
-
-function domainCondition(domain: string): string {
-  if (domain.startsWith('*.') && domain.length > 2) {
-    return `request.host.endsWith(".${escapeCelString(domain.slice(2))}")`;
-  }
-  return `request.host == "${escapeCelString(domain)}"`;
-}
-
-function methodCondition(base: string, method: string): string {
-  return `${base} && request.method == "${method}"`;
-}
-
-function isPolicyRuleConfig(value: unknown): value is PolicyRuleConfig {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
-  const rule = value as Record<string, unknown>;
-  return (
-    typeof rule.on === 'string' &&
-    typeof rule.if === 'string' &&
-    typeof rule.decision === 'string' &&
-    typeof rule.priority === 'number'
-  );
-}
-
 export class SettingsModel {
   private _tree: SettingsNode[];
   private _issues: ConfigIssue[];
   private _presets: SecurityPreset[];
-  private _policy: PolicyConfig;
   private _providers: ProviderStatus[];
   private _toolConfigSources: Record<string, ToolConfigSourceRecord>;
   private _leafIndex: Map<string, SettingsLeaf>;
@@ -126,7 +35,6 @@ export class SettingsModel {
     this._tree = response.tree;
     this._issues = response.issues;
     this._presets = response.presets;
-    this._policy = normalizePolicyConfig(response.policy);
     this._providers = response.providers ?? [];
     this._toolConfigSources = response.tool_config_sources ?? {};
     this._leafIndex = new Map();
@@ -211,169 +119,12 @@ export class SettingsModel {
     return this._presets;
   }
 
-  get policy(): PolicyConfig {
-    return this._policy;
-  }
-
   get providers(): ProviderStatus[] {
     return this._providers;
   }
 
   get toolConfigSources(): Record<string, ToolConfigSourceRecord> {
     return this._toolConfigSources;
-  }
-
-  get policyRuleEntries(): PolicyRuleEntry[] {
-    const entries: PolicyRuleEntry[] = [];
-    for (const type of POLICY_RULE_TYPES) {
-      for (const [name, rule] of Object.entries(policyRulesFor(this._policy, type))) {
-        entries.push({
-          key: policyRuleKey(type, name),
-          type,
-          name,
-          rule,
-        });
-      }
-    }
-    return entries.sort((left, right) => {
-      const priority = left.rule.priority - right.rule.priority;
-      if (priority !== 0) return priority;
-      return left.key.localeCompare(right.key);
-    });
-  }
-
-  get generatedPolicyRuleEntries(): PolicyRuleEntry[] {
-    const entries: PolicyRuleEntry[] = [];
-    const seenKeys = new Set<string>();
-    const addRule = (
-      type: PolicyRuleType,
-      name: string,
-      rule: PolicyRuleConfig,
-      origin: string,
-    ) => {
-      const key = policyRuleKey(type, name);
-      if (seenKeys.has(key)) return;
-      seenKeys.add(key);
-      entries.push({
-        key,
-        type,
-        name,
-        rule,
-        origin,
-      });
-    };
-
-    const customBlock = this._leafIndex.get('security.web.custom_block');
-    for (const domain of parseDomainList(customBlock?.effective_value ?? '')) {
-      const name = policyRuleNameFromParts(['block', 'custom', domain]);
-      addRule(
-        'http',
-        name,
-        {
-          on: 'http.request',
-          if: domainCondition(domain),
-          decision: 'block',
-          priority: 100,
-          reason: `Blocked by ${customBlock?.name ?? 'blocked domains'}`,
-        },
-        customBlock?.id ?? 'security.web.custom_block',
-      );
-    }
-
-    const customAllow = this._leafIndex.get('security.web.custom_allow');
-    for (const domain of parseDomainList(customAllow?.effective_value ?? '')) {
-      const name = policyRuleNameFromParts(['allow', 'custom', domain]);
-      addRule(
-        'http',
-        name,
-        {
-          on: 'http.request',
-          if: domainCondition(domain),
-          decision: 'allow',
-          priority: 900,
-          reason: `Allowed by ${customAllow?.name ?? 'allowed domains'}`,
-        },
-        customAllow?.id ?? 'security.web.custom_allow',
-      );
-    }
-
-    for (const leaf of this._leafIndex.values()) {
-      const rules = leaf.metadata.rules ?? {};
-      if (leaf.setting_type !== 'bool' || Object.keys(rules).length === 0) {
-        continue;
-      }
-      const baseDomains = Array.isArray(leaf.metadata.domains) ? leaf.metadata.domains : [];
-      const enabled = leaf.effective_value === true;
-
-      if (!enabled) {
-        for (const domain of baseDomains) {
-          const name = policyRuleNameFromParts(['block', leaf.id, domain]);
-          addRule(
-            'http',
-            name,
-            {
-              on: 'http.request',
-              if: domainCondition(domain),
-              decision: 'block',
-              priority: 200,
-              reason: `${leaf.name} is disabled`,
-            },
-            leaf.id,
-          );
-        }
-        continue;
-      }
-
-      for (const [ruleName, permissions] of Object.entries(rules)) {
-        const ruleDomains = Array.isArray(permissions.domains) ? permissions.domains : [];
-        const domains = ruleDomains.length > 0 ? ruleDomains : baseDomains;
-        const allowedMethods: string[] = [];
-        if (permissions.get) allowedMethods.push('GET');
-        if (permissions.post) allowedMethods.push('POST');
-        if (permissions.put) allowedMethods.push('PUT');
-        if (permissions.delete) allowedMethods.push('DELETE');
-
-        for (const domain of domains) {
-          const hostCondition = domainCondition(domain);
-          for (const method of allowedMethods) {
-            const name = policyRuleNameFromParts(['allow', leaf.id, ruleName, domain, method]);
-            addRule(
-              'http',
-              name,
-              {
-                on: 'http.request',
-                if: methodCondition(hostCondition, method),
-                decision: 'allow',
-                priority: 800,
-                reason: `${leaf.name} permits ${method} requests`,
-              },
-              leaf.id,
-            );
-          }
-        }
-      }
-    }
-
-    return entries.sort((left, right) => left.key.localeCompare(right.key));
-  }
-
-  callbacksForPolicyType(type: PolicyRuleType): PolicyCallback[] {
-    return CALLBACKS_BY_TYPE[type];
-  }
-
-  stagePolicyRule(type: PolicyRuleType, name: string, rule: PolicyRuleConfig): void {
-    this.stage(policyRuleKey(type, name), rule);
-  }
-
-  deletePolicyRule(type: PolicyRuleType, name: string): void {
-    this.stage(policyRuleKey(type, name), null);
-  }
-
-  stageGeneratedPolicyRules(): number {
-    for (const entry of this.generatedPolicyRuleEntries) {
-      this.stage(entry.key, entry.rule);
-    }
-    return this.generatedPolicyRuleEntries.length;
   }
 
   get activePresetId(): string | null {
@@ -464,7 +215,7 @@ export class SettingsModel {
 
   // --- Export / Import ---
 
-  /** Serialize all leaf settings and named policy rules to a portable JSON string. */
+  /** Serialize all leaf settings to a portable JSON string. */
   exportToJSON(): string {
     const settings: Record<string, { value: SettingValue; corp_locked: boolean }> = {};
     for (const [id, leaf] of this._leafIndex) {
@@ -478,7 +229,6 @@ export class SettingsModel {
         version: '1',
         exported_at: new Date().toISOString(),
         settings,
-        policy: this._policy,
       },
       null,
       2,
@@ -520,23 +270,6 @@ export class SettingsModel {
       // Skip if same as current
       if (JSON.stringify(leaf.effective_value) === JSON.stringify(value)) continue;
       changes.set(id, value);
-    }
-
-    if (obj.policy !== undefined) {
-      if (typeof obj.policy !== 'object' || obj.policy === null || Array.isArray(obj.policy)) {
-        throw new Error('Invalid settings file: policy must be an object');
-      }
-      const incomingPolicy = normalizePolicyConfig(obj.policy as PolicyConfig);
-      for (const type of POLICY_RULE_TYPES) {
-        for (const [name, rule] of Object.entries(policyRulesFor(incomingPolicy, type))) {
-          if (!isPolicyRuleConfig(rule)) {
-            throw new Error(`Invalid policy rule: ${policyRuleKey(type, name)}`);
-          }
-          const current = policyRulesFor(this._policy, type)[name];
-          if (JSON.stringify(current) === JSON.stringify(rule)) continue;
-          changes.set(policyRuleKey(type, name), rule);
-        }
-      }
     }
 
     return changes;

@@ -4,6 +4,7 @@ use super::*;
 use crate::credential_broker::{CredentialObservation, CredentialProvider};
 use crate::net::policy_config::{SecurityRuleProfile, SecurityRuleSet, SecurityRuleSource};
 use capsem_logger::{credential_reference, Decision};
+use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -283,6 +284,7 @@ fn fake_deps() -> Arc<TelemetryDeps> {
         pricing: Arc::new(PricingTable::load()),
         trace_state: Arc::new(Mutex::new(TraceState::new())),
         security_rules: empty_security_rules(),
+        plugin_policy: Arc::new(std::sync::RwLock::new(BTreeMap::new())),
     })
 }
 
@@ -365,6 +367,7 @@ async fn hook_writes_substitution_event_and_shared_credential_ref() {
         pricing: Arc::new(PricingTable::load()),
         trace_state: Arc::new(Mutex::new(TraceState::new())),
         security_rules: empty_security_rules(),
+        plugin_policy: Arc::new(std::sync::RwLock::new(BTreeMap::new())),
     });
     let hook = TelemetryHook::new(deps);
     let raw = "sk-ant-hook-test";
@@ -449,6 +452,7 @@ match = 'http.host == "api.anthropic.com" && http.path == "/v1/messages"'
         pricing: Arc::new(PricingTable::load()),
         trace_state: Arc::new(Mutex::new(TraceState::new())),
         security_rules: Arc::new(std::sync::RwLock::new(Arc::new(rules))),
+        plugin_policy: Arc::new(std::sync::RwLock::new(BTreeMap::new())),
     });
     let hook = TelemetryHook::new(deps);
 
@@ -518,6 +522,7 @@ match = 'model.provider == "anthropic" && model.name == "claude-test"'
         pricing: Arc::new(PricingTable::load()),
         trace_state: Arc::new(Mutex::new(TraceState::new())),
         security_rules: Arc::new(std::sync::RwLock::new(Arc::new(rules))),
+        plugin_policy: Arc::new(std::sync::RwLock::new(BTreeMap::new())),
     });
     let hook = TelemetryHook::new(deps);
 
@@ -580,6 +585,7 @@ async fn hook_detects_response_body_token_exchange_and_redacts_preview() {
         pricing: Arc::new(PricingTable::load()),
         trace_state: Arc::new(Mutex::new(TraceState::new())),
         security_rules: empty_security_rules(),
+        plugin_policy: Arc::new(std::sync::RwLock::new(BTreeMap::new())),
     });
     let hook = TelemetryHook::new(deps);
     let raw = "github_pat_exchange_secret";

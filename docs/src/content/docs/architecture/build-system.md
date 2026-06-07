@@ -85,11 +85,16 @@ Example `build.toml`:
 compression = "zstd"
 compression_level = 15
 
+[build.erofs]
+enabled = true
+compression = "lz4hc"
+compression_level = 12
+
 [build.architectures.arm64]
 base_image = "debian:bookworm-slim"
 docker_platform = "linux/arm64"
 rust_target = "aarch64-unknown-linux-musl"
-kernel_branch = "6.6"
+kernel_branch = "7.0"
 kernel_image = "arch/arm64/boot/Image"
 defconfig = "kernel/defconfig.arm64"
 node_major = 24
@@ -200,8 +205,10 @@ flowchart TD
   Render --> Context["Assemble build context\n(CA cert, bashrc, diagnostics, binaries)"]
   Context --> Build["Docker build"]
   Build --> Export["Export container filesystem"]
-  Export --> Squash["mksquashfs (zstd compression)"]
+  Export --> Squash["mksquashfs fallback (zstd)"]
+  Export --> Erofs["mkfs.erofs primary (lz4hc level 12)"]
   Squash --> Versions["Extract tool versions"]
+  Erofs --> Versions
   Versions --> Checksums["Generate B3SUMS + manifest.json"]
 ```
 

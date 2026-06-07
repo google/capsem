@@ -7,6 +7,7 @@
 /// - Telemetry records correct decisions, methods, and status codes
 ///
 /// Requires internet access (the proxy connects upstream to real servers).
+use std::collections::BTreeMap;
 use std::os::unix::io::IntoRawFd;
 use std::sync::Arc;
 
@@ -24,13 +25,106 @@ use tokio_rustls::TlsConnector;
 const CA_KEY: &str = include_str!("../../../config/capsem-ca.key");
 const CA_CERT: &str = include_str!("../../../config/capsem-ca.crt");
 
-/// Build a NetworkPolicy from allow/block lists for integration tests.
+/// Build a proxy config from allow/block lists for integration tests.
+///
+/// Enforcement intent is compiled into `SecurityRuleSet` so tests exercise the
+/// same security-event/CEL rail as production. `NetworkPolicy` remains present
+/// for non-enforcement proxy settings such as body capture and HTTP port gates.
 fn make_proxy_config(
     allowed: &[&str],
     blocked: &[&str],
     default_allow: bool,
 ) -> (Arc<MitmProxyConfig>, Arc<DbWriter>) {
     make_proxy_config_full(allowed, blocked, default_allow, &[80])
+}
+
+fn host_pattern_condition(pattern: &str) -> Option<String> {
+    let pattern = pattern.trim();
+    if pattern.is_empty() {
+        return None;
+    }
+    if let Some(suffix) = pattern.strip_prefix("*.") {
+        let escaped = regex::escape(suffix);
+        return Some(format!("http.host.matches(\"(^|.*\\\\.){escaped}$\")"));
+    }
+    Some(format!("http.host == \"{}\"", pattern.replace('"', "\\\"")))
+}
+
+fn host_pattern_negative_condition(pattern: &str) -> Option<String> {
+    let pattern = pattern.trim();
+    if pattern.is_empty() {
+        return None;
+    }
+    if let Some(suffix) = pattern.strip_prefix("*.") {
+        let escaped = regex::escape(suffix);
+        return Some(format!(
+            "http.host.matches(\"(^|.*\\\\.){escaped}$\") == false"
+        ));
+    }
+    Some(format!("http.host != \"{}\"", pattern.replace('"', "\\\"")))
+}
+
+fn security_rules_for_proxy(
+    allowed: &[&str],
+    blocked: &[&str],
+    default_allow: bool,
+) -> capsem_core::net::policy_config::SecurityRuleSet {
+    let mut toml = String::new();
+    let blocked_conditions: Vec<String> = blocked
+        .iter()
+        .filter_map(|pattern| host_pattern_condition(pattern))
+        .collect();
+    if !blocked_conditions.is_empty() {
+        toml.push_str(
+            r#"
+[profiles.rules.block_test_hosts]
+name = "block_test_hosts"
+action = "block"
+reason = "test blocked host"
+match = '''
+"#,
+        );
+        toml.push_str(&blocked_conditions.join("\n|| "));
+        toml.push_str(
+            r#"
+'''
+"#,
+        );
+    }
+
+    if !default_allow {
+        let allowed_conditions: Vec<String> = allowed
+            .iter()
+            .filter_map(|pattern| host_pattern_negative_condition(pattern))
+            .collect();
+        toml.push_str(
+            r#"
+[profiles.rules.block_test_default_deny]
+name = "block_test_default_deny"
+action = "block"
+reason = "test default deny"
+match = '''
+"#,
+        );
+        if allowed_conditions.is_empty() {
+            toml.push_str("http.host != \"\"");
+        } else {
+            toml.push_str(&allowed_conditions.join("\n&& "));
+        }
+        toml.push_str(
+            r#"
+'''
+"#,
+        );
+    }
+
+    let profile = capsem_core::net::policy_config::SecurityRuleProfile::parse_toml(&toml)
+        .expect("test security rule profile");
+    capsem_core::net::policy_config::SecurityRuleSet::compile_profile(
+        &profile,
+        capsem_core::net::policy_config::SecurityRuleSource::User,
+    )
+    .expect("test security rules")
 }
 
 /// Like `make_proxy_config` but lets the caller override the
@@ -65,28 +159,21 @@ fn make_proxy_config_full(
     let db = Arc::new(DbWriter::open(&dir.path().join("test.db"), 256).unwrap());
     // Leak the tempdir so it lives for the test
     std::mem::forget(dir);
+    let security_rules = security_rules_for_proxy(allowed, blocked, default_allow);
     let telemetry = Arc::new(mitm_proxy::telemetry_hook::TelemetryDeps {
         db: db.clone(),
         pricing: Arc::new(capsem_core::net::ai_traffic::pricing::PricingTable::load()),
         trace_state: Arc::new(std::sync::Mutex::new(
             capsem_core::net::ai_traffic::TraceState::new(),
         )),
-        security_rules: Arc::new(std::sync::RwLock::new(Arc::new(
-            capsem_core::net::policy_config::SecurityRuleSet::new(Vec::new()),
-        ))),
+        security_rules: Arc::new(std::sync::RwLock::new(Arc::new(security_rules))),
+        plugin_policy: Arc::new(std::sync::RwLock::new(BTreeMap::new())),
     });
-    let policy_v2 = Arc::new(tokio::sync::RwLock::new(Arc::new(
-        capsem_core::net::policy_config::PolicyConfig::default(),
-    )));
-    let pipeline = mitm_proxy::make_production_pipeline_with_policy_v2(
-        Arc::clone(&policy),
-        Arc::clone(&policy_v2),
-        Arc::clone(&telemetry),
-    );
+    let pipeline =
+        mitm_proxy::make_production_pipeline(Arc::clone(&policy), Arc::clone(&telemetry));
     let config = Arc::new(MitmProxyConfig {
         ca,
         policy,
-        policy_v2,
         model_endpoints: Arc::new(std::sync::RwLock::new(Arc::new(
             capsem_core::net::policy_config::ProviderRuleProfile::builtin_defaults()
                 .endpoint_registry()
@@ -389,7 +476,7 @@ async fn mitm_proxy_handles_garbage_data() {
 }
 
 /// T2.2: a plain-HTTP request to a non-allowlisted domain reaches
-/// PolicyHook and is denied with 403 -- proving the plain-HTTP path
+/// the security-event boundary and is denied with 403 -- proving the plain-HTTP path
 /// now serves through the same hyper pipeline as TLS, with the same
 /// policy gates. (T2.1 would have stopped at the sniff with an
 /// Error connection event.)
@@ -401,13 +488,13 @@ async fn mitm_proxy_plain_http_denies_disallowed_host() {
     // Plain HTTP/1.1 request directly on the TCP socket, no TLS,
     // no \0CAPSEM_META prefix. Host is not on the allowlist (which
     // is "elie.net" only); default-deny applies -> 403 from
-    // PolicyHook.
+    // the security-event boundary.
     let mut tcp = tokio::net::TcpStream::connect(addr).await.unwrap();
     tcp.write_all(b"GET / HTTP/1.1\r\nHost: example.com\r\n\r\n")
         .await
         .unwrap();
 
-    // Drain the response (a 403 produced by PolicyHook).
+    // Drain the response (a 403 produced by the security-event boundary).
     let mut buf = vec![0u8; 4096];
     let _ = tcp.read(&mut buf).await;
     drop(tcp);
@@ -945,7 +1032,7 @@ async fn mitm_proxy_plain_http_preserves_host_header_to_upstream() {
 async fn mitm_proxy_plain_http_unresolvable_upstream_emits_502_netevent() {
     // Reserved domain (RFC 6761) that DNS will NXDOMAIN. Default-deny
     // policy + explicit allow on the .invalid host so we get past
-    // PolicyHook into the upstream dial.
+    // the security-event boundary into the upstream dial.
     let (config, db) = make_proxy_config_full(&["nonexistent.invalid"], &[], false, &[80, 11434]);
     let (proxy_task, proxy_addr) = spawn_proxy(config).await;
 

@@ -98,7 +98,7 @@ class TestSideEffect:
 
 
 class TestActionKind:
-    EXPECTED = ["check_update", "preset_select", "rerun_wizard"]
+    EXPECTED = ["check_update", "preset_select"]
 
     def test_all_values_present(self):
         actual = sorted(e.value for e in ActionKind)

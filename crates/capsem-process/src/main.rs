@@ -307,6 +307,7 @@ async fn run_async_main_loop(
     let snap_settings = capsem_core::net::policy_config::resolve_settings(&user_sf, &corp_sf);
     let guest_config = merged.guest.clone();
     let security_rules = Arc::new(std::sync::RwLock::new(Arc::new(merged.security_rules)));
+    let plugin_policy = Arc::new(std::sync::RwLock::new(merged.plugins));
 
     // Start host file monitor to record fs_events.
     let workspace_dir = session_dir.join("workspace");
@@ -344,7 +345,6 @@ async fn run_async_main_loop(
         "CAPSEM_SESSION_DB".into(),
         db_path.to_string_lossy().to_string(),
     );
-    mcp_runtime::insert_builtin_domain_policy_env(&mut builtin_env, &merged.domain);
     let mcp_servers = capsem_core::mcp::build_server_list_with_builtin(
         &user_sf.mcp.clone().unwrap_or_default(),
         &corp_sf.mcp.clone().unwrap_or_default(),
@@ -451,25 +451,19 @@ async fn run_async_main_loop(
 
     let inflight_cap = capsem_core::mcp::resolve_inflight_cap();
     info!(inflight_cap, "MITM MCP endpoint in-flight handler cap");
-    let mcp_policy = Arc::new(tokio::sync::RwLock::new(Arc::new(merged.mcp)));
-    let policy_v2 = Arc::new(tokio::sync::RwLock::new(Arc::new(merged.policy)));
-    let mcp_domain_policy = Arc::new(std::sync::RwLock::new(Arc::new(merged.domain)));
     let model_endpoints = Arc::new(std::sync::RwLock::new(Arc::new(merged.model_endpoints)));
     let mcp_inflight = Arc::new(tokio::sync::Semaphore::new(inflight_cap));
     let mcp_endpoint = Arc::new(capsem_core::net::mitm_proxy::McpEndpointState::new(
         aggregator_client.clone(),
-        Arc::clone(&mcp_policy),
-        Arc::clone(&policy_v2),
         Arc::clone(&security_rules),
+        Arc::clone(&plugin_policy),
         Arc::clone(&mcp_inflight),
         capsem_core::net::mitm_proxy::McpTimeouts::from_env(),
     ));
     let mcp_runtime = Arc::new(McpRuntime {
         aggregator: aggregator_client,
-        policy: Arc::clone(&mcp_policy),
-        policy_v2: Arc::clone(&policy_v2),
         security_rules: Arc::clone(&security_rules),
-        domain_policy: Arc::clone(&mcp_domain_policy),
+        plugin_policy: Arc::clone(&plugin_policy),
         model_endpoints: Arc::clone(&model_endpoints),
     });
 
@@ -481,17 +475,16 @@ async fn run_async_main_loop(
                 capsem_core::net::ai_traffic::TraceState::new(),
             )),
             security_rules: Arc::clone(&security_rules),
+            plugin_policy: Arc::clone(&plugin_policy),
         },
     );
-    let mitm_pipeline = capsem_core::net::mitm_proxy::make_production_pipeline_with_policy_v2(
+    let mitm_pipeline = capsem_core::net::mitm_proxy::make_production_pipeline(
         Arc::clone(&net_state.policy),
-        Arc::clone(&policy_v2),
         Arc::clone(&telemetry_deps),
     );
     let mitm_config = Arc::new(capsem_core::net::mitm_proxy::MitmProxyConfig {
         ca: Arc::clone(&net_state.ca),
         policy: Arc::clone(&net_state.policy),
-        policy_v2: Arc::clone(&policy_v2),
         model_endpoints,
         db: Arc::clone(&db),
         upstream_tls: Arc::clone(&net_state.upstream_tls),
@@ -500,16 +493,15 @@ async fn run_async_main_loop(
         mcp_endpoint: Some(mcp_endpoint),
     });
 
-    // T3.2 -- DNS handler shares the same `NetworkPolicy` as the MITM
-    // proxy so an admin policy edit takes effect for both protocols at
-    // once. Default upstream nameservers (1.1.1.1, 8.8.8.8) until T5
-    // adds operator-configurable upstreams.
-    let dns_handler = Arc::new(
-        capsem_core::net::dns::DnsHandler::with_default_resolver_and_policy_v2(
-            Arc::clone(&net_state.policy),
-            Arc::clone(&policy_v2),
-        ),
-    );
+    // DNS handler shares the same security rule/plugin handles as MITM
+    // so admin enforcement edits take effect across protocols at once.
+    // Default upstream nameservers (1.1.1.1, 8.8.8.8) until operator-
+    // configurable upstreams land.
+    let dns_handler = Arc::new(capsem_core::net::dns::DnsHandler::with_default_resolver(
+        Arc::clone(&net_state.policy),
+        Arc::clone(&security_rules),
+        Arc::clone(&plugin_policy),
+    ));
 
     let db_clone = Arc::clone(&db);
     let sched_clone = Arc::clone(&scheduler);

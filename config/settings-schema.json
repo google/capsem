@@ -4,8 +4,7 @@
       "description": "Action identifier for action-type settings.",
       "enum": [
         "check_update",
-        "preset_select",
-        "rerun_wizard"
+        "preset_select"
       ],
       "title": "ActionKind",
       "type": "string"

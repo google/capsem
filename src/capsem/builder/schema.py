@@ -70,7 +70,6 @@ class ActionKind(str, Enum):
 
     CHECK_UPDATE = "check_update"
     PRESET_SELECT = "preset_select"
-    RERUN_WIZARD = "rerun_wizard"
 
 
 class McpTransport(str, Enum):

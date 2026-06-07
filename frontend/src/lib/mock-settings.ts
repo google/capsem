@@ -3,7 +3,6 @@
 // Do not simplify or fabricate data; this must match what the backend produces.
 
 import type {
-  PolicyConfig,
   ProviderStatus,
   ResolvedSetting,
   SettingsNode,
@@ -344,30 +343,6 @@ export const MOCK_PRESETS = [
   },
 ];
 
-export const MOCK_POLICY: PolicyConfig = {
-  mcp: {
-    ask_prod_issue: {
-      on: 'mcp.request',
-      if: 'method == "tools/call" && arguments.issue == "prod"',
-      decision: 'ask',
-      priority: 20,
-      reason: 'Require approval before production issue tools run',
-    },
-  },
-  http: {
-    block_openai_github: {
-      on: 'http.request',
-      if: 'request.host == "github.com" && request.path.matches("^/openai(/|$)")',
-      decision: 'block',
-      priority: 10,
-      reason: 'Block OpenAI organization GitHub paths',
-    },
-  },
-  dns: {},
-  model: {},
-  hook: {},
-};
-
 const MOCK_CREDENTIAL_REF = `credential:blake3:${'0'.repeat(64)}`;
 const MOCK_CODEX_CONFIG_HASH = `blake3:${'1'.repeat(64)}`;
 
@@ -433,10 +408,6 @@ export const MOCK_TOOL_CONFIG_SOURCES: Record<string, ToolConfigSourceRecord> = 
   },
 };
 
-function clonePolicy(policy: PolicyConfig): PolicyConfig {
-  return JSON.parse(JSON.stringify(policy)) as PolicyConfig;
-}
-
 // ---------------------------------------------------------------------------
 // Build the full mock response
 // ---------------------------------------------------------------------------
@@ -450,7 +421,6 @@ export function buildMockSettingsResponse(): SettingsResponse {
       { id: 'ai.openai.api_key', severity: 'warning', message: 'No OpenAI API key configured. Codex CLI will not be able to authenticate.', docs_url: 'https://platform.openai.com/api-keys' },
     ],
     presets: MOCK_PRESETS,
-    policy: clonePolicy(MOCK_POLICY),
     providers: MOCK_PROVIDER_STATUS,
     tool_config_sources: MOCK_TOOL_CONFIG_SOURCES,
   };

@@ -672,11 +672,6 @@
       "name": "VM",
       "description": "Virtual machine configuration",
       "collapsed": false,
-      "rerun_wizard": {
-        "name": "Setup Wizard",
-        "description": "Re-run the first-time setup wizard to reconfigure providers, repositories, and security.",
-        "action": "rerun_wizard"
-      },
       "snapshots": {
         "name": "Snapshots",
         "description": "Automatic and manual workspace snapshot settings",

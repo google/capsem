@@ -21,15 +21,13 @@ mod mcp_endpoint;
 mod mcp_frame;
 pub mod metrics;
 pub mod pipeline;
-pub mod policy_hook;
-pub mod policy_v2_http_hook;
-pub mod policy_v2_model;
 pub mod protocol;
 pub mod spans;
 pub mod sse_parser_hook;
 pub mod telemetry_hook;
 mod util;
 
+use std::io::Read;
 use std::mem::ManuallyDrop;
 use std::os::unix::io::{FromRawFd, RawFd};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -52,6 +50,7 @@ impl<T> TokioReadWrite for T where T: AsyncRead + AsyncWrite {}
 use super::cert_authority::{CertAuthority, MitmCertResolver};
 use super::policy::NetworkPolicy;
 use crate::net::ai_traffic::provider::ProviderKind;
+use crate::security_engine::{HttpSecurityEvent, ModelSecurityEvent, SecurityEvent};
 use body::{BodyStats, ProxyBoxBody, TrackedBody};
 use fd_stream::{set_nonblocking, AsyncFdStream, ReplayReader};
 use protocol::Protocol;
@@ -79,10 +78,6 @@ pub struct MitmProxyConfig {
     /// that disabling a provider blocks the next request even on an
     /// existing keep-alive connection.
     pub policy: Arc<std::sync::RwLock<Arc<NetworkPolicy>>>,
-    /// Live Policy V2 config shared with HTTP, DNS, MCP, model, and
-    /// hook enforcement. Held here for model request rules, which need
-    /// the request body before upstream dispatch.
-    pub policy_v2: Arc<tokio::sync::RwLock<Arc<crate::net::policy_config::PolicyConfig>>>,
     /// Live model endpoint registry from settings/profile provider blocks.
     /// MITM resolves host -> model protocol once per request and then passes
     /// that typed metadata to enforcement, hooks, broker substitution, and
@@ -100,8 +95,8 @@ pub struct MitmProxyConfig {
     /// hook only points at this `TelemetryDeps`, not the surrounding
     /// `MitmProxyConfig`.
     pub telemetry: Arc<telemetry_hook::TelemetryDeps>,
-    /// Hook pipeline. `make_production_pipeline` registers PolicyHook
-    /// plus the sync ChunkHook chain (decompression → SSE parse →
+    /// Hook pipeline. `make_production_pipeline` registers the sync
+    /// ChunkHook chain (decompression → SSE parse →
     /// provider interpreters → telemetry). `handle_request` dispatches
     /// L1 events through this pipeline and seeds per-request context
     /// into the `ChunkDispatchBody`'s `HookState` before serving.
@@ -132,8 +127,7 @@ impl Drop for ConnectionGauge {
     }
 }
 
-/// Build the production hook pipeline. Registers PolicyHook (async,
-/// for `RawRequestHead`) plus the full sync ChunkHook chain
+/// Build the production hook pipeline. Registers the full sync ChunkHook chain
 /// (decompression → SSE parse → provider interpreters → telemetry).
 ///
 /// All four ChunkHook stages are pure-sync: per-chunk work runs
@@ -146,22 +140,8 @@ pub fn make_production_pipeline(
     policy: Arc<std::sync::RwLock<Arc<NetworkPolicy>>>,
     telemetry: Arc<telemetry_hook::TelemetryDeps>,
 ) -> Arc<pipeline::Pipeline> {
-    let policy_v2 = Arc::new(tokio::sync::RwLock::new(Arc::new(
-        crate::net::policy_config::PolicyConfig::with_builtin_security_rules(),
-    )));
-    make_production_pipeline_with_policy_v2(policy, policy_v2, telemetry)
-}
-
-pub fn make_production_pipeline_with_policy_v2(
-    policy: Arc<std::sync::RwLock<Arc<NetworkPolicy>>>,
-    policy_v2: Arc<tokio::sync::RwLock<Arc<crate::net::policy_config::PolicyConfig>>>,
-    telemetry: Arc<telemetry_hook::TelemetryDeps>,
-) -> Arc<pipeline::Pipeline> {
+    let _ = policy;
     let p = pipeline::Pipeline::builder()
-        .register(Arc::new(policy_hook::PolicyHook::new(policy)))
-        .register(Arc::new(policy_v2_http_hook::PolicyV2HttpHook::new(
-            policy_v2,
-        )))
         // Chunk-hook order is load-bearing:
         //   1. DecompressionHook -- gzip detection on first chunk's
         //      magic; subsequent chunks fed through flate2::Decompress.
@@ -205,6 +185,55 @@ fn ai_provider_for_target(
 
 fn provider_label(provider: Option<ProviderKind>) -> &'static str {
     provider.map(|provider| provider.as_str()).unwrap_or("none")
+}
+
+#[derive(Clone, Debug, Default)]
+struct SecurityBoundaryDecisionFields {
+    policy_mode: Option<String>,
+    policy_action: Option<String>,
+    policy_rule: Option<String>,
+    policy_reason: Option<String>,
+}
+
+impl SecurityBoundaryDecisionFields {
+    fn from_enforcement(decision: &crate::security_engine::SecurityEnforcementDecision) -> Self {
+        Self {
+            policy_mode: Some("enforce".to_string()),
+            policy_action: Some(decision.action.as_str().to_string()),
+            policy_rule: decision.rule_id.clone(),
+            policy_reason: decision.reason.clone(),
+        }
+    }
+
+    fn matched_rule(&self, fallback: String) -> String {
+        self.policy_rule.clone().unwrap_or(fallback)
+    }
+}
+
+fn model_security_event(
+    callback: crate::net::policy_config::PolicyCallback,
+    provider: ProviderKind,
+    model: Option<String>,
+    request_body: Option<&[u8]>,
+    response_body: Option<&[u8]>,
+) -> SecurityEvent {
+    SecurityEvent::new(callback).with_model(ModelSecurityEvent {
+        provider: Some(provider.as_str().to_string()),
+        name: model,
+        request_body: request_body.map(|body| String::from_utf8_lossy(body).to_string()),
+        response_body: response_body.map(|body| String::from_utf8_lossy(body).to_string()),
+        tool_calls: None,
+    })
+}
+
+fn maybe_decompress_gzip_body(body: Bytes, is_gzip: bool) -> anyhow::Result<Bytes> {
+    if !is_gzip {
+        return Ok(body);
+    }
+    let mut decoder = flate2::read::GzDecoder::new(&body[..]);
+    let mut decompressed = Vec::new();
+    decoder.read_to_end(&mut decompressed)?;
+    Ok(Bytes::from(decompressed))
 }
 
 /// Build the upstream TLS client config (trusts standard webpki roots).
@@ -702,7 +731,7 @@ async fn handle_request(
     };
 
     let start_time = Instant::now();
-    let (mut parts, req_body) = req.into_parts();
+    let (parts, req_body) = req.into_parts();
     let initial_method = parts.method.to_string();
 
     // Span fields for the #[instrument] decoration -- sets method
@@ -732,89 +761,18 @@ async fn handle_request(
         });
     }
 
-    // Hook-driven policy. The pipeline runs PolicyHook (and any
-    // other RawRequestHead-registered hooks). PolicyHook stashes its
-    // PolicyDecision in HookCtx::state so we can read matched_rule +
-    // reason back here. On deny it returns Stop(Reject(403)); the
-    // 403 body is wrapped in ChunkDispatchBody seeded with a
-    // TelemetryRequestContext so TelemetryHook still emits a
-    // NetEvent for the deny path.
-    let dispatch_outcome;
-    let policy_decision;
-    let policy_v2_decision;
-    {
-        let conn = hooks::ConnMeta {
-            domain: domain.to_string(),
-            process_name: process_name.clone(),
-            port: upstream_port,
-            protocol,
-            ai_provider,
-        };
-        let mut state = hooks::HookState::default();
-        let trace_id = crate::telemetry::ambient_capsem_trace_id();
-        let policy_span = tracing::debug_span!(
-            target: "capsem.mitm",
-            spans::MITM_POLICY_REQUEST,
-            protocol = protocol.label(),
-            provider = provider_label(ai_provider),
-            decision = tracing::field::Empty,
-            rule_count = tracing::field::Empty,
-            status = tracing::field::Empty,
-            error_kind = tracing::field::Empty,
-        );
-        dispatch_outcome = config
-            .pipeline
-            .dispatch(
-                events::Event::RawRequestHead(&mut parts),
-                &mut state,
-                trace_id,
-                &conn,
-            )
-            .instrument(policy_span.clone())
-            .await;
-        let decision = match &dispatch_outcome {
-            pipeline::DispatchOutcome::Completed => "allow",
-            pipeline::DispatchOutcome::Stopped(_) => "block",
-        };
-        policy_span.record("decision", decision);
-        policy_span.record("status", "ok");
-        // Lift the policy decision out of the per-dispatch state so we
-        // can use it for the telemetry emitter. Cloned because state
-        // drops at the end of this scope.
-        policy_decision = state
-            .peek::<policy_hook::LastPolicyDecision>()
-            .cloned()
-            .unwrap_or_default();
-        policy_v2_decision = state
-            .peek::<policy_v2_http_hook::LastHttpPolicyV2Decision>()
-            .cloned()
-            .unwrap_or_default();
-    }
-
     let method = parts.method.to_string();
     let (path, query) = split_path_query(&parts.uri);
     let formatted_req_headers = format_headers_for_domain(domain, &parts.headers);
     let req_hdrs = formatted_req_headers.formatted;
     let credential_observations = formatted_req_headers.observations;
     let credential_ref = formatted_req_headers.credential_ref;
-    let response_policy_context =
-        policy_v2_http_hook::HttpResponsePolicyContext::from_request_parts(
-            protocol, domain, &parts,
-        );
-    let matched_rule = policy_v2_decision
-        .policy_rule
-        .clone()
-        .unwrap_or_else(|| policy_decision.matched_rule.clone());
+    let mut request_security_decision = SecurityBoundaryDecisionFields::default();
+    let matched_rule = "security.http.default".to_string();
 
-    // T1 slice 4: per-request counter, partitioned by decision.
-    // upstream_error increments are handled at the dial site below.
-    let req_decision_label = match &dispatch_outcome {
-        pipeline::DispatchOutcome::Completed => "allow",
-        pipeline::DispatchOutcome::Stopped(_) => "deny",
-    };
-    tracing::Span::current().record("decision", req_decision_label);
+    tracing::Span::current().record("decision", "allow");
     ::metrics::counter!(metrics::REQUESTS_TOTAL,
-        "protocol" => protocol.label(), "decision" => req_decision_label)
+        "protocol" => protocol.label(), "decision" => "allow")
     .increment(1);
 
     // Helper: wrap an already-built response body in
@@ -840,59 +798,6 @@ async fn handle_request(
             .seed::<Option<TelemetryRequestContext>>(Some(req_ctx));
             dispatched.boxed()
         };
-
-    if let pipeline::DispatchOutcome::Stopped(stop_action) = dispatch_outcome {
-        // Today only the Reject variant ships; Drop / DnsReject land
-        // in T2 / T3. Future Stop variants get matched here.
-        let hook_resp = match stop_action {
-            hooks::StopAction::Reject(r) => r,
-            other => {
-                // Drop / DnsReject: synthesize a 502 fallback so we
-                // emit telemetry consistently. Real handling lands in
-                // T2 (plain HTTP) and T3 (DNS).
-                let _ = other;
-                let body = Full::new(Bytes::from_static(b"capsem: request stopped"))
-                    .map_err(|never| match never {})
-                    .boxed();
-                http::Response::builder()
-                    .status(http::StatusCode::BAD_GATEWAY)
-                    .body(body)
-                    .expect("static response build")
-            }
-        };
-
-        let (resp_parts, resp_body) = hook_resp.into_parts();
-
-        let req_ctx = TelemetryRequestContext {
-            domain: domain.to_string(),
-            process_name: process_name.clone(),
-            ai_provider,
-            method: method.clone(),
-            path: path.clone(),
-            query: query.clone(),
-            status_code: Some(resp_parts.status.as_u16()),
-            decision: Decision::Denied,
-            matched_rule: Some(matched_rule.clone()),
-            request_headers: Some(req_hdrs),
-            response_headers: None,
-            start_time,
-            request_body_stats: Arc::new(Mutex::new(BodyStats::new(0))),
-            max_response_preview: 0,
-            port: upstream_port,
-            conn_type,
-            policy_mode: policy_v2_decision.policy_mode.clone(),
-            policy_action: policy_v2_decision.policy_action.clone(),
-            policy_rule: policy_v2_decision.policy_rule.clone(),
-            policy_reason: policy_v2_decision.policy_reason.clone(),
-            credential_ref: credential_ref.clone(),
-            credential_observations: credential_observations.clone(),
-        };
-
-        return Ok(hyper::Response::from_parts(
-            resp_parts,
-            seal_with_telemetry(resp_body, req_ctx),
-        ));
-    }
 
     if is_upgrade {
         let original_headers = parts.headers.clone();
@@ -927,10 +832,10 @@ async fn handle_request(
                 max_response_preview: 0,
                 port: upstream_port,
                 conn_type,
-                policy_mode: policy_v2_decision.policy_mode.clone(),
-                policy_action: policy_v2_decision.policy_action.clone(),
-                policy_rule: policy_v2_decision.policy_rule.clone(),
-                policy_reason: policy_v2_decision.policy_reason.clone(),
+                policy_mode: request_security_decision.policy_mode.clone(),
+                policy_action: request_security_decision.policy_action.clone(),
+                policy_rule: request_security_decision.policy_rule.clone(),
+                policy_reason: request_security_decision.policy_reason.clone(),
                 credential_ref: credential_ref.clone(),
                 credential_observations: credential_observations.clone(),
             };
@@ -1091,10 +996,10 @@ async fn handle_request(
             max_response_preview: 0,
             port: upstream_port,
             conn_type,
-            policy_mode: policy_v2_decision.policy_mode.clone(),
-            policy_action: policy_v2_decision.policy_action.clone(),
-            policy_rule: policy_v2_decision.policy_rule.clone(),
-            policy_reason: policy_v2_decision.policy_reason.clone(),
+            policy_mode: request_security_decision.policy_mode.clone(),
+            policy_action: request_security_decision.policy_action.clone(),
+            policy_rule: request_security_decision.policy_rule.clone(),
+            policy_reason: request_security_decision.policy_reason.clone(),
             credential_ref: credential_ref.clone(),
             credential_observations: credential_observations.clone(),
         };
@@ -1112,7 +1017,6 @@ async fn handle_request(
     // Save original request headers.
     let mut original_headers = parts.headers.clone();
     let original_method = parts.method.clone();
-    let mut request_policy_v2_decision = policy_v2_decision.clone();
 
     // Helper: build a 502 Bad Gateway response with telemetry so upstream
     // errors don't kill keep-alive connections (returns Ok, not Err).
@@ -1122,7 +1026,7 @@ async fn handle_request(
                     query: &Option<String>,
                     req_hdrs: &str,
                     start: Instant,
-                    policy_v2: &policy_v2_http_hook::LastHttpPolicyV2Decision|
+                    policy_fields: &SecurityBoundaryDecisionFields|
      -> hyper::Response<ProxyBoxBody> {
         warn!(domain, method, path, error = %error, "MITM proxy: upstream error");
         let body_text = format!("Capsem: upstream error ({error})\n");
@@ -1143,10 +1047,10 @@ async fn handle_request(
             max_response_preview: 0,
             port: upstream_port,
             conn_type,
-            policy_mode: policy_v2.policy_mode.clone(),
-            policy_action: policy_v2.policy_action.clone(),
-            policy_rule: policy_v2.policy_rule.clone(),
-            policy_reason: policy_v2.policy_reason.clone(),
+            policy_mode: policy_fields.policy_mode.clone(),
+            policy_action: policy_fields.policy_action.clone(),
+            policy_rule: policy_fields.policy_rule.clone(),
+            policy_reason: policy_fields.policy_reason.clone(),
             credential_ref: credential_ref.clone(),
             credential_observations: credential_observations.clone(),
         };
@@ -1162,35 +1066,37 @@ async fn handle_request(
     let http_security_event = crate::security_engine::SecurityEvent::new(
         crate::net::policy_config::PolicyCallback::HttpRequest,
     )
+    .with_http(crate::security_engine::HttpSecurityEvent {
+        host: Some(domain.to_string()),
+        method: Some(method.clone()),
+        path: Some(path.clone()),
+        status: None,
+        body: None,
+    })
     .with_http_request(crate::security_engine::HttpRequestSecurityEvent::new(
         domain,
         ai_provider,
         original_headers.clone(),
         query.clone(),
     ));
-    let security_emitter = Arc::new(crate::security_engine::TracingSecurityEventEmitter);
-    let security_engine =
-        crate::security_engine::SecurityEventEngine::with_builtin_actions(security_emitter);
-    let action_rules = request_policy_v2_decision
-        .matched_action_rules
-        .iter()
-        .chain(request_policy_v2_decision.matched_rule.iter())
-        .cloned()
-        .collect::<Vec<_>>();
+    let rules = config.telemetry.security_rules.read().unwrap().clone();
     let actions_span = tracing::debug_span!(
         target: "capsem.mitm",
         spans::MITM_SECURITY_ACTIONS,
         protocol = protocol.label(),
         provider = provider_label(ai_provider),
-        action_count = action_rules.len() as u64,
         decision = tracing::field::Empty,
         status = tracing::field::Empty,
         error_kind = tracing::field::Empty,
     );
-    let http_security_event = match actions_span
-        .in_scope(|| security_engine.apply_rules_and_emit(&action_rules, http_security_event))
-    {
-        Ok(event) => event,
+    let http_evaluation = match actions_span.in_scope(|| {
+        crate::security_engine::evaluate_security_boundary(
+            &rules,
+            config.telemetry.plugin_policy.read().unwrap().clone(),
+            http_security_event,
+        )
+    }) {
+        Ok(evaluation) => evaluation,
         Err(error) => {
             actions_span.record("decision", "error");
             actions_span.record("status", "error");
@@ -1202,14 +1108,59 @@ async fn handle_request(
                 &query,
                 &req_hdrs,
                 start_time,
-                &request_policy_v2_decision,
+                &request_security_decision,
             ));
         }
     };
+    request_security_decision =
+        SecurityBoundaryDecisionFields::from_enforcement(&http_evaluation.enforcement);
+    if !http_evaluation.enforcement.is_allowed() {
+        actions_span.record("decision", http_evaluation.enforcement.action.as_str());
+        actions_span.record("status", "ok");
+        let body_text = format!(
+            "capsem: HTTP request blocked by security rule: {}\n",
+            http_evaluation
+                .enforcement
+                .rule_id
+                .as_deref()
+                .unwrap_or("unknown")
+        );
+        let req_ctx = TelemetryRequestContext {
+            domain: domain.to_string(),
+            process_name: process_name.clone(),
+            ai_provider,
+            method: method.clone(),
+            path: path.clone(),
+            query: query.clone(),
+            status_code: Some(403),
+            decision: Decision::Denied,
+            matched_rule: http_evaluation.enforcement.rule_id.clone(),
+            request_headers: Some(req_hdrs.clone()),
+            response_headers: None,
+            start_time,
+            request_body_stats: Arc::new(Mutex::new(BodyStats::new(0))),
+            max_response_preview: 0,
+            port: upstream_port,
+            conn_type,
+            policy_mode: request_security_decision.policy_mode.clone(),
+            policy_action: request_security_decision.policy_action.clone(),
+            policy_rule: request_security_decision.policy_rule.clone(),
+            policy_reason: request_security_decision.policy_reason.clone(),
+            credential_ref: credential_ref.clone(),
+            credential_observations: credential_observations.clone(),
+        };
+        let deny_body = Full::new(Bytes::from(body_text))
+            .map_err(|never| match never {})
+            .boxed();
+        return Ok(hyper::Response::builder()
+            .status(403)
+            .body(seal_with_telemetry(deny_body, req_ctx))
+            .unwrap());
+    }
     actions_span.record("decision", "allow");
     actions_span.record("status", "ok");
     let upstream_materialized = match actions_span.in_scope(|| {
-        crate::security_engine::materialize_http_request_for_upstream(&http_security_event)
+        crate::security_engine::materialize_http_request_for_upstream(&http_evaluation.event)
     }) {
         Ok(materialized) => materialized,
         Err(error) => {
@@ -1223,7 +1174,7 @@ async fn handle_request(
                 &query,
                 &req_hdrs,
                 start_time,
-                &request_policy_v2_decision,
+                &request_security_decision,
             ));
         }
     };
@@ -1262,10 +1213,10 @@ async fn handle_request(
             max_response_preview: 0,
             port: upstream_port,
             conn_type,
-            policy_mode: policy_v2_decision.policy_mode.clone(),
-            policy_action: policy_v2_decision.policy_action.clone(),
-            policy_rule: policy_v2_decision.policy_rule.clone(),
-            policy_reason: policy_v2_decision.policy_reason.clone(),
+            policy_mode: request_security_decision.policy_mode.clone(),
+            policy_action: request_security_decision.policy_action.clone(),
+            policy_rule: request_security_decision.policy_rule.clone(),
+            policy_reason: request_security_decision.policy_reason.clone(),
             credential_ref: credential_ref.clone(),
             credential_observations: credential_observations.clone(),
         };
@@ -1295,15 +1246,12 @@ async fn handle_request(
         max_preview: req_max_preview,
     }));
 
-    let policy_v2_snapshot = config.policy_v2.read().await.clone();
-    let should_evaluate_model_request = ai_provider.is_some_and(|provider| {
-        is_llm_api_path(provider, &path)
-            && policy_v2_model::has_model_request_rules(&policy_v2_snapshot)
-    });
+    let should_evaluate_model_request =
+        ai_provider.is_some_and(|provider| is_llm_api_path(provider, &path));
     let upstream_req_body: ProxyBoxBody = if should_evaluate_model_request {
         let model_request_span = tracing::debug_span!(
             target: "capsem.mitm",
-            spans::MITM_MODEL_REQUEST_POLICY,
+            spans::MITM_SECURITY_ACTIONS,
             protocol = protocol.label(),
             provider = provider_label(ai_provider),
             decision = tracing::field::Empty,
@@ -1327,7 +1275,7 @@ async fn handle_request(
                     &query,
                     &req_hdrs,
                     start_time,
-                    &request_policy_v2_decision,
+                    &request_security_decision,
                 ));
             }
         };
@@ -1341,90 +1289,111 @@ async fn handle_request(
         }
 
         if let Some(provider) = ai_provider {
-            if let Some(outcome) = policy_v2_model::evaluate_model_request_policy(
-                &policy_v2_snapshot,
+            let request_meta =
+                crate::net::ai_traffic::request_parser::parse_request(provider, &body_bytes);
+            let model_event = model_security_event(
+                crate::net::policy_config::PolicyCallback::ModelRequest,
                 provider,
-                &original_headers,
-                &body_bytes,
+                request_meta.model.clone(),
+                Some(&body_bytes),
+                None,
+            )
+            .with_http(HttpSecurityEvent {
+                host: Some(domain.to_string()),
+                method: Some(method.clone()),
+                path: Some(path.clone()),
+                status: None,
+                body: Some(String::from_utf8_lossy(&body_bytes).to_string()),
+            });
+            let model_evaluation = match crate::security_engine::evaluate_security_boundary(
+                &rules,
+                config.telemetry.plugin_policy.read().unwrap().clone(),
+                model_event,
             ) {
-                match outcome {
-                    policy_v2_model::ModelRequestPolicyOutcome::Continue(decision) => {
-                        model_request_span.record("decision", "allow");
-                        model_request_span.record("status", "ok");
-                        request_policy_v2_decision.policy_mode = decision.policy_mode;
-                        request_policy_v2_decision.policy_action = decision.policy_action;
-                        request_policy_v2_decision.policy_rule = decision.policy_rule;
-                        request_policy_v2_decision.policy_reason = decision.policy_reason;
-                    }
-                    policy_v2_model::ModelRequestPolicyOutcome::Deny(decision) => {
-                        model_request_span.record("decision", "block");
-                        model_request_span.record("status", "ok");
-                        let body_text = format!(
-                            "capsem: model request blocked by policy: {}\n",
-                            decision
-                                .policy_rule
-                                .as_deref()
-                                .unwrap_or("policy.model.unknown")
-                        );
-                        let mut scrubbed_stats = BodyStats::new(0);
-                        scrubbed_stats.bytes = body_bytes.len() as u64;
-                        let req_ctx = TelemetryRequestContext {
-                            domain: domain.to_string(),
-                            process_name: process_name.clone(),
-                            ai_provider,
-                            method: method.clone(),
-                            path: path.clone(),
-                            query: query.clone(),
-                            status_code: Some(403),
-                            decision: Decision::Denied,
-                            matched_rule: decision.policy_rule.clone(),
-                            request_headers: Some(req_hdrs.clone()),
-                            response_headers: None,
-                            start_time,
-                            request_body_stats: Arc::new(Mutex::new(scrubbed_stats)),
-                            max_response_preview: 0,
-                            port: upstream_port,
-                            conn_type,
-                            policy_mode: decision.policy_mode,
-                            policy_action: decision.policy_action,
-                            policy_rule: decision.policy_rule,
-                            policy_reason: decision.policy_reason,
-                            credential_ref: credential_ref.clone(),
-                            credential_observations: credential_observations.clone(),
-                        };
-                        let deny_body = Full::new(Bytes::from(body_text))
-                            .map_err(|never| match never {})
-                            .boxed();
-                        return Ok(hyper::Response::builder()
-                            .status(403)
-                            .body(seal_with_telemetry(deny_body, req_ctx))
-                            .unwrap());
-                    }
-                    policy_v2_model::ModelRequestPolicyOutcome::RewriteBody { decision, body } => {
-                        model_request_span.record("decision", "preprocess");
-                        model_request_span.record("status", "ok");
-                        request_policy_v2_decision.policy_mode = decision.policy_mode;
-                        request_policy_v2_decision.policy_action = decision.policy_action;
-                        request_policy_v2_decision.policy_rule = decision.policy_rule;
-                        request_policy_v2_decision.policy_reason = decision.policy_reason;
-
+                Ok(evaluation) => evaluation,
+                Err(error) => {
+                    model_request_span.record("decision", "error");
+                    model_request_span.record("status", "error");
+                    model_request_span.record("error_kind", "security_actions");
+                    return Ok(make_502(
+                        &error,
+                        &method,
+                        &path,
+                        &query,
+                        &req_hdrs,
+                        start_time,
+                        &request_security_decision,
+                    ));
+                }
+            };
+            request_security_decision =
+                SecurityBoundaryDecisionFields::from_enforcement(&model_evaluation.enforcement);
+            if !model_evaluation.enforcement.is_allowed() {
+                model_request_span.record("decision", model_evaluation.enforcement.action.as_str());
+                model_request_span.record("status", "ok");
+                let body_text = format!(
+                    "capsem: model request blocked by security rule: {}\n",
+                    model_evaluation
+                        .enforcement
+                        .rule_id
+                        .as_deref()
+                        .unwrap_or("unknown")
+                );
+                let mut scrubbed_stats = BodyStats::new(0);
+                scrubbed_stats.bytes = body_bytes.len() as u64;
+                let req_ctx = TelemetryRequestContext {
+                    domain: domain.to_string(),
+                    process_name: process_name.clone(),
+                    ai_provider,
+                    method: method.clone(),
+                    path: path.clone(),
+                    query: query.clone(),
+                    status_code: Some(403),
+                    decision: Decision::Denied,
+                    matched_rule: model_evaluation.enforcement.rule_id.clone(),
+                    request_headers: Some(req_hdrs.clone()),
+                    response_headers: None,
+                    start_time,
+                    request_body_stats: Arc::new(Mutex::new(scrubbed_stats)),
+                    max_response_preview: 0,
+                    port: upstream_port,
+                    conn_type,
+                    policy_mode: request_security_decision.policy_mode.clone(),
+                    policy_action: request_security_decision.policy_action.clone(),
+                    policy_rule: request_security_decision.policy_rule.clone(),
+                    policy_reason: request_security_decision.policy_reason.clone(),
+                    credential_ref: credential_ref.clone(),
+                    credential_observations: credential_observations.clone(),
+                };
+                let deny_body = Full::new(Bytes::from(body_text))
+                    .map_err(|never| match never {})
+                    .boxed();
+                return Ok(hyper::Response::builder()
+                    .status(403)
+                    .body(seal_with_telemetry(deny_body, req_ctx))
+                    .unwrap());
+            }
+            model_request_span.record("decision", "allow");
+            model_request_span.record("status", "ok");
+            if let Some(model) = model_evaluation.event.model.as_ref() {
+                if let Some(updated_body) = model.request_body.as_ref() {
+                    if updated_body.as_bytes() != body_bytes.as_ref() {
+                        body_for_upstream = Bytes::from(updated_body.clone());
                         {
                             let mut st = req_stats.lock().expect("req body stats lock");
-                            st.bytes = body.len() as u64;
+                            st.bytes = body_for_upstream.len() as u64;
                             st.preview.clear();
-                            let to_copy = st.max_preview.min(body.len());
-                            st.preview.extend_from_slice(&body[..to_copy]);
+                            let to_copy = st.max_preview.min(body_for_upstream.len());
+                            st.preview.extend_from_slice(&body_for_upstream[..to_copy]);
                         }
                         original_headers.remove(http::header::CONTENT_LENGTH);
-                        if let Ok(value) = http::HeaderValue::from_str(&body.len().to_string()) {
+                        if let Ok(value) =
+                            http::HeaderValue::from_str(&body_for_upstream.len().to_string())
+                        {
                             original_headers.insert(http::header::CONTENT_LENGTH, value);
                         }
-                        body_for_upstream = Bytes::from(body);
                     }
                 }
-            } else {
-                model_request_span.record("decision", "allow");
-                model_request_span.record("status", "ok");
             }
         }
 
@@ -1515,7 +1484,7 @@ async fn handle_request(
                     &query,
                     &req_hdrs,
                     start_time,
-                    &request_policy_v2_decision,
+                    &request_security_decision,
                 ));
             }
         };
@@ -1537,7 +1506,7 @@ async fn handle_request(
                             &query,
                             &req_hdrs,
                             start_time,
-                            &request_policy_v2_decision,
+                            &request_security_decision,
                         ));
                     }
                 };
@@ -1568,7 +1537,7 @@ async fn handle_request(
                             &query,
                             &req_hdrs,
                             start_time,
-                            &request_policy_v2_decision,
+                            &request_security_decision,
                         ));
                     }
                 };
@@ -1591,7 +1560,7 @@ async fn handle_request(
                             &query,
                             &req_hdrs,
                             start_time,
-                            &request_policy_v2_decision,
+                            &request_security_decision,
                         ));
                     }
                 };
@@ -1625,7 +1594,7 @@ async fn handle_request(
                             &query,
                             &req_hdrs,
                             start_time,
-                            &request_policy_v2_decision,
+                            &request_security_decision,
                         ));
                     }
                 };
@@ -1705,7 +1674,7 @@ async fn handle_request(
                 &query,
                 &req_hdrs,
                 start_time,
-                &request_policy_v2_decision,
+                &request_security_decision,
             ));
         }
     };
@@ -1718,111 +1687,8 @@ async fn handle_request(
     cached_upstream.lock().await.replace(sender);
     let (mut resp_parts, resp_body) = resp.into_parts();
 
-    // Dispatch RawResponseHead before any telemetry capture or guest
-    // delivery. Policy V2 response rules can strip/rewrite the head in
-    // place or fail closed with a synthetic response.
-    let response_dispatch_outcome;
-    let response_policy_v2_decision;
-    {
-        let conn = hooks::ConnMeta {
-            domain: domain.to_string(),
-            process_name: process_name.clone(),
-            port: upstream_port,
-            protocol,
-            ai_provider,
-        };
-        let mut state = hooks::HookState::default();
-        state.set(response_policy_context);
-        let trace_id = crate::telemetry::ambient_capsem_trace_id();
-        let response_policy_span = tracing::debug_span!(
-            target: "capsem.mitm",
-            spans::MITM_POLICY_RESPONSE,
-            protocol = protocol.label(),
-            provider = provider_label(ai_provider),
-            decision = tracing::field::Empty,
-            rule_count = tracing::field::Empty,
-            status = tracing::field::Empty,
-            error_kind = tracing::field::Empty,
-        );
-        response_dispatch_outcome = config
-            .pipeline
-            .dispatch(
-                events::Event::RawResponseHead(&mut resp_parts),
-                &mut state,
-                trace_id,
-                &conn,
-            )
-            .instrument(response_policy_span.clone())
-            .await;
-        let decision = match &response_dispatch_outcome {
-            pipeline::DispatchOutcome::Completed => "allow",
-            pipeline::DispatchOutcome::Stopped(_) => "block",
-        };
-        response_policy_span.record("decision", decision);
-        response_policy_span.record("status", "ok");
-        response_policy_v2_decision = state
-            .peek::<policy_v2_http_hook::LastHttpPolicyV2Decision>()
-            .cloned()
-            .unwrap_or_default();
-    }
-
-    let mut effective_policy_v2_decision = if response_policy_v2_decision.policy_action.is_some() {
-        response_policy_v2_decision
-    } else {
-        request_policy_v2_decision.clone()
-    };
-    let effective_matched_rule = effective_policy_v2_decision
-        .policy_rule
-        .clone()
-        .unwrap_or_else(|| matched_rule.clone());
-
-    if let pipeline::DispatchOutcome::Stopped(stop_action) = response_dispatch_outcome {
-        let hook_resp = match stop_action {
-            hooks::StopAction::Reject(r) => r,
-            other => {
-                let _ = other;
-                let body = Full::new(Bytes::from_static(b"capsem: response stopped"))
-                    .map_err(|never| match never {})
-                    .boxed();
-                http::Response::builder()
-                    .status(http::StatusCode::BAD_GATEWAY)
-                    .body(body)
-                    .expect("static response build")
-            }
-        };
-        let (deny_parts, deny_body) = hook_resp.into_parts();
-        let deny_status = deny_parts.status.as_u16();
-        tracing::Span::current().record("status", deny_status);
-        let req_ctx = TelemetryRequestContext {
-            domain: domain.to_string(),
-            process_name: process_name.clone(),
-            ai_provider,
-            method,
-            path,
-            query,
-            status_code: Some(deny_status),
-            decision: Decision::Denied,
-            matched_rule: Some(effective_matched_rule),
-            request_headers: Some(req_hdrs),
-            response_headers: None,
-            start_time,
-            request_body_stats: Arc::clone(&req_stats),
-            max_response_preview: 0,
-            port: upstream_port,
-            conn_type,
-            policy_mode: effective_policy_v2_decision.policy_mode.clone(),
-            policy_action: effective_policy_v2_decision.policy_action.clone(),
-            policy_rule: effective_policy_v2_decision.policy_rule.clone(),
-            policy_reason: effective_policy_v2_decision.policy_reason.clone(),
-            credential_ref: credential_ref.clone(),
-            credential_observations: credential_observations.clone(),
-        };
-
-        return Ok(hyper::Response::from_parts(
-            deny_parts,
-            seal_with_telemetry(deny_body, req_ctx),
-        ));
-    }
+    let mut effective_security_decision = request_security_decision.clone();
+    let mut effective_matched_rule = effective_security_decision.matched_rule(matched_rule.clone());
 
     let resp_status = resp_parts.status.as_u16();
     tracing::Span::current().record("status", resp_status);
@@ -1861,15 +1727,13 @@ async fn handle_request(
         0
     };
 
-    let should_evaluate_model_response = ai_provider.is_some_and(|provider| {
-        is_llm_api_path(provider, &path)
-            && policy_v2_model::has_model_response_rules(&policy_v2_snapshot)
-    });
+    let should_evaluate_model_response =
+        ai_provider.is_some_and(|provider| is_llm_api_path(provider, &path));
 
     let resp_body: ProxyBoxBody = if should_evaluate_model_response {
         let model_response_span = tracing::debug_span!(
             target: "capsem.mitm",
-            spans::MITM_MODEL_RESPONSE_POLICY,
+            spans::MITM_SECURITY_ACTIONS,
             protocol = protocol.label(),
             provider = provider_label(ai_provider),
             decision = tracing::field::Empty,
@@ -1893,11 +1757,27 @@ async fn handle_request(
                     &query,
                     &req_hdrs,
                     start_time,
-                    &effective_policy_v2_decision,
+                    &effective_security_decision,
                 ));
             }
         };
-        let mut response_body = collected.to_bytes();
+        let mut response_body = match maybe_decompress_gzip_body(collected.to_bytes(), is_gzip) {
+            Ok(body) => body,
+            Err(error) => {
+                model_response_span.record("decision", "error");
+                model_response_span.record("status", "error");
+                model_response_span.record("error_kind", "decompress_model_response_body");
+                return Ok(make_502(
+                    &error,
+                    &method,
+                    &path,
+                    &query,
+                    &req_hdrs,
+                    start_time,
+                    &effective_security_decision,
+                ));
+            }
+        };
 
         if let Some(provider) = ai_provider {
             let request_preview = {
@@ -1906,83 +1786,103 @@ async fn handle_request(
             };
             let request_meta =
                 crate::net::ai_traffic::request_parser::parse_request(provider, &request_preview);
-            if let Some(outcome) = policy_v2_model::evaluate_model_response_policy(
-                &policy_v2_snapshot,
+            let model_event = model_security_event(
+                crate::net::policy_config::PolicyCallback::ModelResponse,
                 provider,
-                &request_meta,
-                &response_body,
+                request_meta.model,
+                Some(&request_preview),
+                Some(&response_body),
+            )
+            .with_http(HttpSecurityEvent {
+                host: Some(domain.to_string()),
+                method: Some(method.clone()),
+                path: Some(path.clone()),
+                status: Some(resp_status.to_string()),
+                body: Some(String::from_utf8_lossy(&response_body).to_string()),
+            });
+            let model_evaluation = match crate::security_engine::evaluate_security_boundary(
+                &rules,
+                config.telemetry.plugin_policy.read().unwrap().clone(),
+                model_event,
             ) {
-                match outcome {
-                    policy_v2_model::ModelResponsePolicyOutcome::Continue(decision) => {
-                        model_response_span.record("decision", "allow");
-                        model_response_span.record("status", "ok");
-                        effective_policy_v2_decision.policy_mode = decision.policy_mode;
-                        effective_policy_v2_decision.policy_action = decision.policy_action;
-                        effective_policy_v2_decision.policy_rule = decision.policy_rule;
-                        effective_policy_v2_decision.policy_reason = decision.policy_reason;
-                    }
-                    policy_v2_model::ModelResponsePolicyOutcome::Deny(decision) => {
-                        model_response_span.record("decision", "block");
-                        model_response_span.record("status", "ok");
-                        let body_text = format!(
-                            "capsem: model response blocked by policy: {}\n",
-                            decision
-                                .policy_rule
-                                .as_deref()
-                                .unwrap_or("policy.model.unknown")
-                        );
-                        let req_ctx = TelemetryRequestContext {
-                            domain: domain.to_string(),
-                            process_name: process_name.clone(),
-                            ai_provider,
-                            method,
-                            path,
-                            query,
-                            status_code: Some(403),
-                            decision: Decision::Denied,
-                            matched_rule: decision.policy_rule.clone(),
-                            request_headers: Some(req_hdrs),
-                            response_headers: None,
-                            start_time,
-                            request_body_stats: Arc::clone(&req_stats),
-                            max_response_preview: 0,
-                            port: upstream_port,
-                            conn_type,
-                            policy_mode: decision.policy_mode,
-                            policy_action: decision.policy_action,
-                            policy_rule: decision.policy_rule,
-                            policy_reason: decision.policy_reason,
-                            credential_ref: credential_ref.clone(),
-                            credential_observations: credential_observations.clone(),
-                        };
-                        let deny_body = Full::new(Bytes::from(body_text))
-                            .map_err(|never| match never {})
-                            .boxed();
-                        return Ok(hyper::Response::builder()
-                            .status(403)
-                            .body(seal_with_telemetry(deny_body, req_ctx))
-                            .unwrap());
-                    }
-                    policy_v2_model::ModelResponsePolicyOutcome::RewriteBody { decision, body } => {
-                        model_response_span.record("decision", "postprocess");
-                        model_response_span.record("status", "ok");
-                        effective_policy_v2_decision.policy_mode = decision.policy_mode;
-                        effective_policy_v2_decision.policy_action = decision.policy_action;
-                        effective_policy_v2_decision.policy_rule = decision.policy_rule;
-                        effective_policy_v2_decision.policy_reason = decision.policy_reason;
-                        resp_parts.headers.remove(http::header::CONTENT_LENGTH);
-                        if let Ok(value) = http::HeaderValue::from_str(&body.len().to_string()) {
-                            resp_parts
-                                .headers
-                                .insert(http::header::CONTENT_LENGTH, value);
-                        }
-                        response_body = Bytes::from(body);
+                Ok(evaluation) => evaluation,
+                Err(error) => {
+                    model_response_span.record("decision", "error");
+                    model_response_span.record("status", "error");
+                    model_response_span.record("error_kind", "security_actions");
+                    return Ok(make_502(
+                        &error,
+                        &method,
+                        &path,
+                        &query,
+                        &req_hdrs,
+                        start_time,
+                        &effective_security_decision,
+                    ));
+                }
+            };
+            effective_security_decision =
+                SecurityBoundaryDecisionFields::from_enforcement(&model_evaluation.enforcement);
+            effective_matched_rule = effective_security_decision.matched_rule(matched_rule.clone());
+            if !model_evaluation.enforcement.is_allowed() {
+                model_response_span
+                    .record("decision", model_evaluation.enforcement.action.as_str());
+                model_response_span.record("status", "ok");
+                let body_text = format!(
+                    "capsem: model response blocked by security rule: {}\n",
+                    model_evaluation
+                        .enforcement
+                        .rule_id
+                        .as_deref()
+                        .unwrap_or("unknown")
+                );
+                let req_ctx = TelemetryRequestContext {
+                    domain: domain.to_string(),
+                    process_name: process_name.clone(),
+                    ai_provider,
+                    method,
+                    path,
+                    query,
+                    status_code: Some(403),
+                    decision: Decision::Denied,
+                    matched_rule: model_evaluation.enforcement.rule_id.clone(),
+                    request_headers: Some(req_hdrs),
+                    response_headers: None,
+                    start_time,
+                    request_body_stats: Arc::clone(&req_stats),
+                    max_response_preview: 0,
+                    port: upstream_port,
+                    conn_type,
+                    policy_mode: effective_security_decision.policy_mode.clone(),
+                    policy_action: effective_security_decision.policy_action.clone(),
+                    policy_rule: effective_security_decision.policy_rule.clone(),
+                    policy_reason: effective_security_decision.policy_reason.clone(),
+                    credential_ref: credential_ref.clone(),
+                    credential_observations: credential_observations.clone(),
+                };
+                let deny_body = Full::new(Bytes::from(body_text))
+                    .map_err(|never| match never {})
+                    .boxed();
+                return Ok(hyper::Response::builder()
+                    .status(403)
+                    .body(seal_with_telemetry(deny_body, req_ctx))
+                    .unwrap());
+            }
+            model_response_span.record("decision", "allow");
+            model_response_span.record("status", "ok");
+            if let Some(model) = model_evaluation.event.model.as_ref() {
+                if let Some(updated_body) = model.response_body.as_ref() {
+                    if updated_body.as_bytes() != response_body.as_ref() {
+                        response_body = Bytes::from(updated_body.clone());
                     }
                 }
-            } else {
-                model_response_span.record("decision", "allow");
-                model_response_span.record("status", "ok");
             }
+        }
+        resp_parts.headers.remove(http::header::CONTENT_LENGTH);
+        if let Ok(value) = http::HeaderValue::from_str(&response_body.len().to_string()) {
+            resp_parts
+                .headers
+                .insert(http::header::CONTENT_LENGTH, value);
         }
 
         Full::new(response_body)
@@ -2001,12 +1901,7 @@ async fn handle_request(
         query,
         status_code: Some(resp_status),
         decision: Decision::Allowed,
-        matched_rule: Some(
-            effective_policy_v2_decision
-                .policy_rule
-                .clone()
-                .unwrap_or(effective_matched_rule),
-        ),
+        matched_rule: Some(effective_security_decision.matched_rule(effective_matched_rule)),
         request_headers: Some(req_hdrs),
         response_headers: Some(resp_hdrs),
         start_time,
@@ -2014,10 +1909,10 @@ async fn handle_request(
         max_response_preview: resp_max_preview,
         port: upstream_port,
         conn_type,
-        policy_mode: effective_policy_v2_decision.policy_mode.clone(),
-        policy_action: effective_policy_v2_decision.policy_action.clone(),
-        policy_rule: effective_policy_v2_decision.policy_rule.clone(),
-        policy_reason: effective_policy_v2_decision.policy_reason.clone(),
+        policy_mode: effective_security_decision.policy_mode.clone(),
+        policy_action: effective_security_decision.policy_action.clone(),
+        policy_rule: effective_security_decision.policy_rule.clone(),
+        policy_reason: effective_security_decision.policy_reason.clone(),
         credential_ref: credential_ref.clone(),
         credential_observations: credential_observations.clone(),
     };
@@ -2052,6 +1947,3 @@ async fn handle_request(
     let response = hyper::Response::from_parts(resp_parts, chunk_dispatched.boxed());
     Ok(response)
 }
-
-#[cfg(test)]
-mod tests;

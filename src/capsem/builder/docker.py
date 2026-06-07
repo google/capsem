@@ -20,7 +20,7 @@ from typing import Any
 from jinja2 import Environment, FileSystemLoader
 
 from capsem.builder.doctor import check_container_runtime
-from capsem.builder.models import GuestImageConfig, PackageManager
+from capsem.builder.models import ErofsConfig, GuestImageConfig, PackageManager
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 FALLBACK_KERNEL_VERSION = "7.0.11"
@@ -499,17 +499,29 @@ def create_erofs(
 
 def experimental_erofs_build_config(
     env: dict[str, str] | os._Environ[str] | None = None,
+    defaults: ErofsConfig | None = None,
 ) -> tuple[bool, str, str | None, str | None]:
-    """Return optional EROFS build settings from environment variables."""
+    """Return EROFS build settings from config defaults and env overrides."""
     source = os.environ if env is None else env
-    enabled = source.get("CAPSEM_BUILD_EXPERIMENTAL_EROFS") == "1"
-    compression = source.get("CAPSEM_BUILD_EROFS_COMPRESSION", "lz4hc")
+    enabled = defaults.enabled if defaults is not None else False
+    if "CAPSEM_BUILD_EXPERIMENTAL_EROFS" in source:
+        enabled = source.get("CAPSEM_BUILD_EXPERIMENTAL_EROFS") == "1"
+    compression = (
+        source.get("CAPSEM_BUILD_EROFS_COMPRESSION")
+        or (defaults.compression.value if defaults is not None else "lz4hc")
+    )
     if compression not in {"lz4", "lz4hc", "zstd"}:
         raise ValueError(
             "CAPSEM_BUILD_EROFS_COMPRESSION must be one of: lz4, lz4hc, zstd"
         )
-    cluster_size = source.get("CAPSEM_BUILD_EROFS_CLUSTER_SIZE")
-    compression_level = source.get("CAPSEM_BUILD_EROFS_COMPRESSION_LEVEL")
+    cluster_size = source.get("CAPSEM_BUILD_EROFS_CLUSTER_SIZE") or (
+        str(defaults.cluster_size) if defaults is not None and defaults.cluster_size else None
+    )
+    compression_level = source.get("CAPSEM_BUILD_EROFS_COMPRESSION_LEVEL") or (
+        str(defaults.compression_level)
+        if defaults is not None and defaults.compression_level is not None
+        else None
+    )
     if compression == "zstd" and compression_level is None:
         compression_level = "15"
     if compression_level is not None:
@@ -1024,7 +1036,7 @@ def build_image(
             )
 
             erofs_enabled, erofs_compression, erofs_cluster_size, erofs_level = (
-                experimental_erofs_build_config()
+                experimental_erofs_build_config(defaults=config.build.erofs)
             )
             erofs_path = arch_output / "rootfs.erofs"
             if erofs_enabled:

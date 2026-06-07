@@ -4,8 +4,8 @@ use crate::credential_broker::{
 };
 use crate::net::ai_traffic::provider::ProviderKind;
 use crate::net::policy_config::{
-    CompiledSecurityRule, PolicyDecisionKind, PolicyRuleConfig, SecurityPluginConfig,
-    SecurityPluginMode, SecurityRuleProfile, SecurityRuleSet, SecurityRuleSource,
+    CompiledSecurityRule, SecurityPluginConfig, SecurityPluginMode, SecurityRuleProfile,
+    SecurityRuleSet, SecurityRuleSource,
 };
 use capsem_logger::{
     AuditEvent, Decision, DnsEvent, ExecEvent, ExecEventComplete, FileAction, FileEvent, McpCall,
@@ -35,28 +35,6 @@ impl Drop for EnvVarGuard {
             Some(value) => std::env::set_var(self.key, value),
             None => std::env::remove_var(self.key),
         }
-    }
-}
-
-struct TracePlugin {
-    id: PolicyActionId,
-}
-
-impl SecurityActionPlugin for TracePlugin {
-    fn id(&self) -> PolicyActionId {
-        self.id
-    }
-
-    fn apply(
-        &self,
-        _rule: &PolicyRuleConfig,
-        mut event: SecurityEvent,
-    ) -> Result<SecurityEvent, SecurityActionError> {
-        event.action_trace.push(self.id);
-        if self.id == PolicyActionId::CredentialBrokerSubstitute {
-            event.credential_ref = Some("credential:blake3:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".to_string());
-        }
-        Ok(event)
     }
 }
 
@@ -128,21 +106,6 @@ impl SecurityRulePlugin for DecisionRulePlugin {
     }
 }
 
-fn rule(actions: Vec<PolicyActionId>) -> PolicyRuleConfig {
-    PolicyRuleConfig {
-        on: PolicyCallback::HttpRequest,
-        condition: "request.host == \"example.com\"".to_string(),
-        decision: PolicyDecisionKind::Allow,
-        priority: 10,
-        reason: None,
-        actions,
-        rewrite_target: None,
-        rewrite_value: None,
-        strip_request_headers: Vec::new(),
-        strip_response_headers: Vec::new(),
-    }
-}
-
 fn security_rule_set(input: &str) -> SecurityRuleSet {
     let profile = SecurityRuleProfile::parse_toml(input).expect("security rule profile");
     SecurityRuleSet::compile_profile(&profile, SecurityRuleSource::User)
@@ -157,146 +120,6 @@ fn plugin_config(
         mode,
         detection_level,
     }
-}
-
-#[test]
-fn action_registry_runs_plugins_in_rule_order() {
-    let registry = SecurityActionRegistry::new()
-        .register(TracePlugin {
-            id: PolicyActionId::CredentialBrokerCapture,
-        })
-        .unwrap()
-        .register(TracePlugin {
-            id: PolicyActionId::CredentialBrokerSubstitute,
-        })
-        .unwrap();
-    let rule = rule(vec![
-        PolicyActionId::CredentialBrokerCapture,
-        PolicyActionId::CredentialBrokerSubstitute,
-    ]);
-
-    let event = registry
-        .apply_rule_actions(&rule, SecurityEvent::new(PolicyCallback::HttpRequest))
-        .unwrap();
-
-    assert_eq!(
-        event.action_trace,
-        [
-            PolicyActionId::CredentialBrokerCapture,
-            PolicyActionId::CredentialBrokerSubstitute
-        ]
-    );
-    assert!(
-        event
-            .credential_ref
-            .as_deref()
-            .is_some_and(capsem_logger::is_credential_reference),
-        "later plugins must receive and return the event from earlier plugins"
-    );
-}
-
-#[test]
-fn builtin_action_registry_runs_credential_broker_actions() {
-    let rule = rule(vec![
-        PolicyActionId::CredentialBrokerCapture,
-        PolicyActionId::CredentialBrokerSubstitute,
-    ]);
-
-    let event = SecurityActionRegistry::with_builtin_actions()
-        .apply_rule_actions(&rule, SecurityEvent::new(PolicyCallback::HttpRequest))
-        .unwrap();
-
-    assert_eq!(
-        event.action_trace,
-        [
-            PolicyActionId::CredentialBrokerCapture,
-            PolicyActionId::CredentialBrokerSubstitute
-        ]
-    );
-}
-
-#[test]
-fn credential_broker_capture_action_brokers_observation_into_event_ref() {
-    let _lock = crate::credential_broker::TEST_ENV_LOCK.blocking_lock();
-    let tmp = tempfile::tempdir().unwrap();
-    let store_path = tmp.path().join("broker-store.json");
-    let user_path = tmp.path().join("user.toml");
-    let _store_guard = EnvVarGuard::set(crate::credential_broker::TEST_STORE_ENV, &store_path);
-    let _user_guard = EnvVarGuard::set("CAPSEM_USER_CONFIG", &user_path);
-    let raw = "github_pat_capture_action_secret";
-    let rule = rule(vec![PolicyActionId::CredentialBrokerCapture]);
-    let event =
-        SecurityEvent::new(PolicyCallback::HttpResponse).with_credential_observations(vec![
-            CredentialObservation {
-                provider: CredentialProvider::Github,
-                raw_value: raw.to_string(),
-                source: "http.body.response.$.access_token".to_string(),
-                event_type: Some("http.response".to_string()),
-                confidence: 1.0,
-                trace_id: None,
-                context_json: None,
-            },
-        ]);
-
-    let event = SecurityActionRegistry::with_builtin_actions()
-        .apply_rule_actions(&rule, event)
-        .unwrap();
-
-    let credential_ref = event
-        .credential_ref
-        .as_deref()
-        .expect("capture action should return a broker reference");
-    assert!(capsem_logger::is_credential_reference(credential_ref));
-    assert!(!credential_ref.contains(raw));
-    assert_eq!(
-        crate::credential_broker::resolve_broker_reference_for_provider(
-            CredentialProvider::Github,
-            credential_ref,
-        )
-        .unwrap()
-        .as_deref(),
-        Some(raw)
-    );
-}
-
-#[test]
-fn action_registry_rejects_missing_plugin_at_execution_boundary() {
-    let registry = SecurityActionRegistry::new();
-    let rule = rule(vec![PolicyActionId::CredentialBrokerCapture]);
-
-    let error = registry
-        .apply_rule_actions(&rule, SecurityEvent::new(PolicyCallback::HttpRequest))
-        .unwrap_err();
-
-    assert!(
-        error
-            .to_string()
-            .contains("credential_broker.capture' is not registered"),
-        "{error}"
-    );
-}
-
-#[test]
-fn action_registry_rejects_duplicate_plugin_registration() {
-    let result = SecurityActionRegistry::new()
-        .register(TracePlugin {
-            id: PolicyActionId::CredentialBrokerCapture,
-        })
-        .unwrap()
-        .register(TracePlugin {
-            id: PolicyActionId::CredentialBrokerCapture,
-        });
-    let error = match result {
-        Ok(_) => panic!("duplicate action plugin registration should fail"),
-        Err(error) => error,
-    };
-
-    assert!(
-        error
-            .to_string()
-            .contains("credential_broker.capture' registered twice"),
-        "{error}"
-    );
 }
 
 struct RecordingEmitter {
@@ -330,42 +153,6 @@ fn security_event_emitter_is_the_auditable_event_boundary() {
     emitter.emit(event.clone()).unwrap();
 
     assert_eq!(emitter.events.lock().unwrap().as_slice(), [event]);
-}
-
-#[test]
-fn security_event_engine_emits_only_post_action_event() {
-    let emitter = Arc::new(RecordingEmitter::new());
-    let registry = SecurityActionRegistry::new()
-        .register(TracePlugin {
-            id: PolicyActionId::CredentialBrokerCapture,
-        })
-        .unwrap()
-        .register(TracePlugin {
-            id: PolicyActionId::CredentialBrokerSubstitute,
-        })
-        .unwrap();
-    let engine = SecurityEventEngine::new(registry, Arc::clone(&emitter));
-    let rule = rule(vec![
-        PolicyActionId::CredentialBrokerCapture,
-        PolicyActionId::CredentialBrokerSubstitute,
-    ]);
-
-    let returned = engine
-        .apply_rules_and_emit(&[rule], SecurityEvent::new(PolicyCallback::HttpRequest))
-        .unwrap();
-
-    assert_eq!(
-        returned.action_trace,
-        [
-            PolicyActionId::CredentialBrokerCapture,
-            PolicyActionId::CredentialBrokerSubstitute
-        ]
-    );
-    assert_eq!(
-        emitter.events.lock().unwrap().as_slice(),
-        [returned],
-        "the emitter boundary must see the final post-action event only"
-    );
 }
 
 #[test]

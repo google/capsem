@@ -21,7 +21,8 @@ Register the server in your AI CLI settings. For Claude Code:
 }
 ```
 
-The binary is installed to `~/.capsem/bin/capsem-mcp` by `capsem setup`.
+The binary is installed to `~/.capsem/bin/capsem-mcp` by the platform package
+or source install flow.
 
 ## Session lifecycle
 

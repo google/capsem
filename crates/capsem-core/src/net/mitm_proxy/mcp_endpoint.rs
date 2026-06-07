@@ -1,13 +1,12 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::sync::RwLock;
 
 use crate::mcp::aggregator::AggregatorClient;
-use crate::mcp::policy::McpPolicy;
 use crate::mcp::types::{JsonRpcRequest, JsonRpcResponse, McpToolDef};
-use crate::net::policy_config::{PolicyConfig, SecurityRuleSet};
+use crate::net::policy_config::{SecurityPluginConfig, SecurityRuleSet};
 
 const DEFAULT_MCP_TIMEOUT_SECS: u64 = 60;
 const DEFAULT_MCP_TOOL_CALL_TIMEOUT_SECS: u64 = 300;
@@ -63,9 +62,8 @@ fn env_duration_secs(key: &str, default_secs: u64) -> Duration {
 
 pub struct McpEndpointState {
     pub aggregator: AggregatorClient,
-    pub policy: Arc<RwLock<Arc<McpPolicy>>>,
-    pub policy_v2: Arc<RwLock<Arc<PolicyConfig>>>,
     pub security_rules: Arc<std::sync::RwLock<Arc<SecurityRuleSet>>>,
+    pub plugin_policy: Arc<std::sync::RwLock<BTreeMap<String, SecurityPluginConfig>>>,
     pub inflight: Arc<tokio::sync::Semaphore>,
     pub timeouts: McpTimeouts,
     tool_timeout_overrides: RwLock<HashMap<String, Duration>>,
@@ -74,17 +72,15 @@ pub struct McpEndpointState {
 impl McpEndpointState {
     pub fn new(
         aggregator: AggregatorClient,
-        policy: Arc<RwLock<Arc<McpPolicy>>>,
-        policy_v2: Arc<RwLock<Arc<PolicyConfig>>>,
         security_rules: Arc<std::sync::RwLock<Arc<SecurityRuleSet>>>,
+        plugin_policy: Arc<std::sync::RwLock<BTreeMap<String, SecurityPluginConfig>>>,
         inflight: Arc<tokio::sync::Semaphore>,
         timeouts: McpTimeouts,
     ) -> Self {
         Self {
             aggregator,
-            policy,
-            policy_v2,
             security_rules,
+            plugin_policy,
             inflight,
             timeouts,
             tool_timeout_overrides: RwLock::new(HashMap::new()),

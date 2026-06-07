@@ -99,6 +99,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added a closed runtime security-event identity contract and routed HTTP/net,
   model, MCP, DNS, file, process exec/audit/completion, broker substitution,
   and snapshot session DB rows through the security-engine emitter handoff.
+- Removed the old MITM PolicyHook/Policy V2 runtime rails and the MCP built-in
+  legacy domain bridge. HTTP request, model request/response, framed MCP
+  request/response, MCP built-in HTTP tools, and DNS query blocking now enforce
+  through the canonical `SecurityEvent` + CEL rule path before dispatch.
 - Routed explicit file import/export/read/write boundaries through the
   process-owned security-event emitter so `fs_events` and
   `security_rule_events` share the same primary event id without a service-side
@@ -5576,8 +5580,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - SNI proxy replaced by MITM transparent proxy for full HTTP-level traffic inspection and policy enforcement
-- Domain policy (`DomainPolicy`) wrapped by `HttpPolicy` which adds method+path rules while preserving backward compatibility
-- `load_merged_policy()` now returns `HttpPolicy` instead of `DomainPolicy`
 - HTTPS proxy connections spawn as async tokio tasks instead of blocking threads
 - Control protocol split into disjoint `HostToGuest`/`GuestToHost` enums with reserved variants for file operations and lifecycle management
 - Guest agent boot sequence restructured: vsock connects first, receives clock + env from host before forking bash

@@ -26,6 +26,11 @@ _BUILD_TOML = """\
 compression = "zstd"
 compression_level = 15
 
+[build.erofs]
+enabled = true
+compression = "lz4hc"
+compression_level = 12
+
 [build.architectures.arm64]
 base_image = "debian:bookworm-slim"
 docker_platform = "linux/arm64"

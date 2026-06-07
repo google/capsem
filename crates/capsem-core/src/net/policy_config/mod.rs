@@ -22,7 +22,6 @@ mod security_rule_profile;
 mod tree;
 mod types;
 
-// Re-export everything to preserve the existing public API.
 pub use builder::*;
 pub use lint::*;
 pub use loader::*;
@@ -33,10 +32,6 @@ pub use resolver::*;
 pub use security_rule_profile::*;
 pub use tree::*;
 pub use types::*;
-
-// Re-export sibling types used by tests and downstream code.
-pub use super::domain_policy::{Action, DomainPolicy};
-pub use super::http_policy::{HttpPolicy, HttpRule};
 
 #[cfg(test)]
 #[allow(unused_imports)]

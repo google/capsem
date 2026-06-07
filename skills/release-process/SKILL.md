@@ -170,17 +170,28 @@ When features change (settings, CLI flags, MCP tools, security invariants, bench
 
 ### Update benchmarks before release
 
-Run the host-side benchmarks to generate versioned data files and update the results page:
+Run the host-side and VM benchmarks to generate versioned data files and update
+the results page. Benchmark evidence is part of the release ledger, not an
+optional performance curiosity.
 
 ```bash
 # Generate benchmarks/fork/data_{version}.json and benchmarks/lifecycle/data_{version}.json
 uv run pytest tests/capsem-serial/test_lifecycle_benchmark.py -xvs
 
-# Update docs/src/content/docs/benchmarks/results.md with new numbers
-# (manual -- copy from the benchmark summary tables)
+# Run the VM benchmark suite against the current release candidate.
+just bench
 ```
 
-Benchmark data files in `benchmarks/` are committed to git for historical tracking. The `test_fork_benchmark` gates ensure fork stays under 500ms and images under 12MB -- these must pass before release.
+Update `docs/src/content/docs/benchmarks/results.md` with the new numbers and
+commit the corresponding `benchmarks/**/data_*.json` artifacts. Include short
+release notes for any major performance decision. For 1.3, record that EROFS
+`lz4hc` level `12` is the default because macOS and Linux comparisons showed
+zstd was not worth the speed trade-off for Capsem's workload, even though zstd
+remains available as an experimental build option.
+
+Benchmark data files in `benchmarks/` are committed to git for historical
+tracking. The `test_fork_benchmark` gates ensure fork stays under 500ms and
+images under 12MB -- these must pass before release.
 
 ## Changelog
 

@@ -5,8 +5,8 @@ use serde::{Deserialize, Serialize};
 use crate::net::ai_traffic::provider::ModelProtocol;
 
 use super::{
-    CompiledSecurityRule, PolicyConfig, ProviderDiscovery, SecurityRuleProfile,
-    SecurityRuleProvider, SecurityRuleSet, SecurityRuleSource,
+    CompiledSecurityRule, ProviderDiscovery, SecurityRuleProfile, SecurityRuleProvider,
+    SecurityRuleSet, SecurityRuleSource,
 };
 
 const DEFAULT_PROVIDER_RULES_TOML: &str = include_str!("default_provider_rules.toml");
@@ -271,11 +271,6 @@ impl ProviderRuleProfile {
         ModelEndpointRegistry::from_provider_profile(self)
     }
 
-    pub fn compile_policy_config(&self) -> Result<PolicyConfig, String> {
-        self.validate()?;
-        Ok(PolicyConfig::default())
-    }
-
     pub fn merge_override(base: &Self, overrides: &Self) -> Result<Self, String> {
         base.validate()?;
         overrides.validate()?;
@@ -351,14 +346,6 @@ impl ProviderRuleProfile {
     }
 }
 
-pub fn compile_provider_rules_to_policy_config(
-    user: &ProviderRuleProfile,
-    corp: &ProviderRuleProfile,
-) -> Result<PolicyConfig, String> {
-    let merged = ProviderRuleProfile::merge_defaults_user_and_corp(user, corp)?;
-    merged.compile_policy_config()
-}
-
 pub fn compile_provider_rules_to_security_rule_set(
     user: &ProviderRuleProfile,
     corp: &ProviderRuleProfile,
@@ -409,17 +396,6 @@ mod tests {
         assert!(compiled
             .iter()
             .all(|rule| !rule.condition.contains("credential.name")));
-    }
-
-    #[test]
-    fn provider_defaults_do_not_emit_old_policy_callbacks() {
-        let policy = ProviderRuleProfile::builtin_defaults()
-            .compile_policy_config()
-            .expect("adapter compiles");
-        assert!(policy.http.is_empty());
-        assert!(policy.dns.is_empty());
-        assert!(policy.mcp.is_empty());
-        assert!(policy.model.is_empty());
     }
 
     #[test]
@@ -657,12 +633,5 @@ match = 'model.provider == "openai"'
             Some("pii")
         )));
 
-        let policy = profile
-            .compile_policy_config()
-            .expect("provider rules do not generate old Policy V2 callbacks");
-        assert!(policy.http.is_empty());
-        assert!(policy.dns.is_empty());
-        assert!(policy.model.is_empty());
-        assert!(policy.mcp.is_empty());
     }
 }

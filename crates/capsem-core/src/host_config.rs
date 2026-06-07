@@ -1,9 +1,9 @@
 //! Host configuration detection and API key validation.
 //!
 //! Scans the user's macOS host for pre-existing developer configuration
-//! (git identity, SSH keys, API keys, GitHub tokens) to pre-fill the
-//! first-run setup wizard. All detection is best-effort -- any error
-//! returns None for that field.
+//! (git identity, SSH keys, API keys, GitHub tokens) for settings discovery
+//! and credential brokerage. All detection is best-effort -- any error returns
+//! None for that field.
 //!
 //! Also provides async API key validation against provider endpoints.
 
@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
-/// Detected host configuration for the setup wizard.
+/// Detected host configuration for settings discovery.
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct HostConfig {
     pub git_name: Option<String>,

@@ -266,24 +266,6 @@ The background service (`capsem-service`) runs as a daemon. It auto-starts on lo
 
 ## Misc commands
 
-### setup
-
-Run the first-time setup wizard. Auto-runs on first CLI use if not previously completed.
-
-```sh
-capsem setup
-capsem setup --non-interactive --preset medium
-capsem setup --corp-config https://internal.corp/capsem.toml
-```
-
-| Flag | Description |
-|------|-------------|
-| `--non-interactive` | Run without prompts (accept defaults) |
-| `--preset <PRESET>` | Security preset: `medium` or `high` |
-| `--force` | Re-run all steps even if previously completed |
-| `--accept-detected` | Auto-accept detected credentials |
-| `--corp-config <URL\|FILE>` | Provision corporate config |
-
 ### update
 
 Check for updates and install the latest version.

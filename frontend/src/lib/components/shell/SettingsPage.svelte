@@ -5,7 +5,7 @@
   import { THEME_FAMILIES, getTheme, resolveThemeKey } from '../../terminal/themes';
   import SettingsSection from '../settings/SettingsSection.svelte';
   import McpSection from '../settings/McpSection.svelte';
-  import PolicyRulesSection from '../settings/PolicyRulesSection.svelte';
+  import PluginSection from '../settings/PluginSection.svelte';
   import ProviderStatusSection from '../settings/ProviderStatusSection.svelte';
   import Palette from 'phosphor-svelte/lib/Palette';
   import GearSix from 'phosphor-svelte/lib/GearSix';
@@ -59,6 +59,7 @@
       });
     }
     items.push({ key: 'policy', label: 'Policy', icon: Shield });
+    items.push({ key: 'plugins', label: 'Plugins', icon: Plugs });
     items.push({ key: 'mcp', label: 'MCP Servers', icon: Plugs });
     items.push({ key: 'about', label: 'About', icon: Info });
     return items;
@@ -324,9 +325,9 @@
         <!-- ===== MCP ===== -->
         <McpSection />
 
-      {:else if activeSection === 'policy'}
-        <!-- ===== Policy ===== -->
-        <PolicyRulesSection />
+      {:else if activeSection === 'plugins'}
+        <!-- ===== Plugins ===== -->
+        <PluginSection />
 
       {:else if activeSection === 'about'}
         <!-- ===== About ===== -->

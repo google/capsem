@@ -104,6 +104,11 @@ pub struct TelemetryDeps {
     pub pricing: Arc<PricingTable>,
     pub trace_state: Arc<Mutex<TraceState>>,
     pub security_rules: Arc<std::sync::RwLock<Arc<SecurityRuleSet>>>,
+    pub plugin_policy: Arc<
+        std::sync::RwLock<
+            std::collections::BTreeMap<String, crate::net::policy_config::SecurityPluginConfig>,
+        >,
+    >,
 }
 
 /// Sync `ChunkHook` that tracks response bytes/preview and, on

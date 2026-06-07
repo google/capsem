@@ -1790,10 +1790,18 @@ async fn handle_get_settings_returns_tree() {
     assert!(val.get("tree").is_some(), "response must have 'tree'");
     assert!(val.get("issues").is_some(), "response must have 'issues'");
     assert!(val.get("presets").is_some(), "response must have 'presets'");
-    assert!(val.get("policy").is_some(), "response must have 'policy'");
+    assert!(
+        val.get("policy").is_none(),
+        "retired policy compatibility payload must not be emitted"
+    );
+    assert!(
+        val.get("providers").is_some(),
+        "response must have provider status"
+    );
     assert!(val["tree"].is_array());
     assert!(val["issues"].is_array());
     assert!(val["presets"].is_array());
+    assert!(val["providers"].is_array());
 }
 
 #[tokio::test]
@@ -1823,7 +1831,7 @@ async fn handle_save_settings_rejects_unknown_key() {
 }
 
 #[tokio::test]
-async fn handle_save_settings_accepts_policy_rule_object() {
+async fn handle_save_settings_rejects_retired_policy_rule_keys_atomically() {
     let _env_lock = SETTINGS_ENV_LOCK.lock().await;
 
     let dir = tempfile::tempdir().unwrap();
@@ -1834,97 +1842,7 @@ async fn handle_save_settings_accepts_policy_rule_object() {
         "policy.http.block_openai_github".into(),
         serde_json::json!({
             "on": "http.request",
-            "if": "request.host == 'github.com' && request.path.matches('^/openai(/|$)')",
-            "decision": "block",
-            "priority": 10,
-            "reason": "Do not let this session fetch OpenAI-owned GitHub code"
-        }),
-    );
-
-    let result = handle_save_settings(Json(changes)).await;
-
-    let Json(val) = result.expect("policy rule save should succeed");
-    assert_eq!(
-        val["policy"]["http"]["block_openai_github"]["priority"],
-        serde_json::json!(10)
-    );
-    let loaded = capsem_core::net::policy_config::load_settings_file(&user_path).unwrap();
-    assert!(loaded.policy.http.contains_key("block_openai_github"));
-}
-
-#[tokio::test]
-async fn handle_save_settings_accepts_mcp_policy_rule_object() {
-    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
-
-    let dir = tempfile::tempdir().unwrap();
-    let (_env_guard, user_path, _) = install_empty_settings_env(&dir);
-
-    let mut changes = HashMap::new();
-    changes.insert(
-        "policy.mcp.block_prod_token".into(),
-        serde_json::json!({
-            "on": "mcp.request",
-            "if": "method == 'tools/call' && tool.name == 'local__echo' && has(arguments.prod_token)",
-            "decision": "block",
-            "priority": 10,
-            "reason": "Do not send production tokens to MCP tools"
-        }),
-    );
-
-    let result = handle_save_settings(Json(changes)).await;
-
-    let Json(val) = result.expect("MCP policy rule save should succeed");
-    assert_eq!(
-        val["policy"]["mcp"]["block_prod_token"]["decision"],
-        serde_json::json!("block")
-    );
-    let loaded = capsem_core::net::policy_config::load_settings_file(&user_path).unwrap();
-    assert!(loaded.policy.mcp.contains_key("block_prod_token"));
-}
-
-#[tokio::test]
-async fn handle_save_settings_accepts_model_policy_rule_object() {
-    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
-
-    let dir = tempfile::tempdir().unwrap();
-    let (_env_guard, user_path, _) = install_empty_settings_env(&dir);
-
-    let mut changes = HashMap::new();
-    changes.insert(
-        "policy.model.block_secret_prompt".into(),
-        serde_json::json!({
-            "on": "model.request",
-            "if": "provider == 'openai' && model == 'gpt-4o-mini' && request.body.contains('prod-secret')",
-            "decision": "block",
-            "priority": 10,
-            "reason": "Keep secret-bearing prompts local"
-        }),
-    );
-
-    let result = handle_save_settings(Json(changes)).await;
-
-    let Json(val) = result.expect("model policy rule save should succeed");
-    assert_eq!(
-        val["policy"]["model"]["block_secret_prompt"]["decision"],
-        serde_json::json!("block")
-    );
-    let loaded = capsem_core::net::policy_config::load_settings_file(&user_path).unwrap();
-    assert!(loaded.policy.model.contains_key("block_secret_prompt"));
-}
-
-#[tokio::test]
-async fn handle_save_settings_rejects_policy_rule_callback_mismatch() {
-    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
-
-    let dir = tempfile::tempdir().unwrap();
-    let (_env_guard, user_path, _) = install_empty_settings_env(&dir);
-
-    let mut changes = HashMap::new();
-    changes.insert(
-        "policy.model.bad_callback".into(),
-        serde_json::json!({
-            "on": "http.request",
-            "if": "request.host == 'api.openai.com'",
+            "if": "http.host == 'github.com'",
             "decision": "block",
             "priority": 10
         }),
@@ -1932,53 +1850,19 @@ async fn handle_save_settings_rejects_policy_rule_callback_mismatch() {
 
     let err = handle_save_settings(Json(changes))
         .await
-        .expect_err("wrong callback type should be rejected");
+        .expect_err("retired policy rule key should be rejected by settings handler");
 
     assert_eq!(err.0, StatusCode::BAD_REQUEST);
     assert!(
-        err.1.contains("uses callback for a different policy type"),
-        "error should explain callback mismatch, got: {}",
+        err.1
+            .contains("unknown setting: policy.http.block_openai_github"),
+        "error should point to the retired policy key, got: {}",
         err.1
     );
     let loaded = capsem_core::net::policy_config::load_settings_file(&user_path).unwrap();
     assert!(
-        loaded.policy.model.is_empty(),
-        "rejected model policy update must not mutate user config"
-    );
-}
-
-#[tokio::test]
-async fn handle_save_settings_rejects_invalid_policy_condition() {
-    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
-
-    let dir = tempfile::tempdir().unwrap();
-    let (_env_guard, user_path, _) = install_empty_settings_env(&dir);
-
-    let mut changes = HashMap::new();
-    changes.insert(
-        "policy.http.bad_condition".into(),
-        serde_json::json!({
-            "on": "http.request",
-            "if": "request.path.match('^/openai')",
-            "decision": "block",
-            "priority": 10
-        }),
-    );
-
-    let err = handle_save_settings(Json(changes))
-        .await
-        .expect_err("invalid CEL condition should be rejected by settings handler");
-
-    assert_eq!(err.0, StatusCode::BAD_REQUEST);
-    assert!(
-        err.1.contains("unsupported CEL condition term"),
-        "error should explain CEL validation failure, got: {}",
-        err.1
-    );
-    let loaded = capsem_core::net::policy_config::load_settings_file(&user_path).unwrap();
-    assert!(
-        loaded.policy.http.is_empty(),
-        "rejected policy update must not mutate user config"
+        loaded.settings.is_empty(),
+        "rejected retired policy update must not mutate user config"
     );
 }
 

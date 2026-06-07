@@ -357,15 +357,10 @@ describe('api', () => {
       await api.setMcpToolPermission('bash', 'block');
       const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
       const body = JSON.parse(call[1].body);
-      expect(body['policy.mcp.tool_bash']).toMatchObject({
-        on: 'mcp.request',
-        if: 'method == "tools/call" && tool.name == "bash"',
-        decision: 'block',
-        priority: 500,
-      });
+      expect(body['mcp.tool_permissions.bash']).toBe('block');
     });
 
-    it('getMcpPolicy extracts named policy tool rules from settings', async () => {
+    it('getMcpPolicy does not infer per-tool permissions from retired policy payloads', async () => {
       mockFetch.mockReturnValueOnce(jsonResponse({
         tree: [],
         issues: [],
@@ -382,7 +377,7 @@ describe('api', () => {
         },
       }));
       const policy = await api.getMcpPolicy();
-      expect(policy.tool_permissions.bash).toBe('ask');
+      expect(policy.tool_permissions).toEqual({});
     });
   });
 

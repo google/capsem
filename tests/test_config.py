@@ -21,6 +21,7 @@ from capsem.builder.config import (
 )
 from capsem.builder.models import (
     Compression,
+    ErofsCompression,
     GuestImageConfig,
     PackageManager,
 )
@@ -36,6 +37,11 @@ MINIMAL_BUILD_TOML = """\
 [build]
 compression = "zstd"
 compression_level = 15
+
+[build.erofs]
+enabled = true
+compression = "lz4hc"
+compression_level = 12
 
 [build.architectures.arm64]
 base_image = "debian:bookworm-slim"
@@ -257,6 +263,9 @@ class TestLoadGuestConfigMinimal:
         cfg = load_guest_config(guest_minimal)
         assert cfg.build.compression is Compression.ZSTD
         assert cfg.build.compression_level == 15
+        assert cfg.build.erofs.enabled is True
+        assert cfg.build.erofs.compression is ErofsCompression.LZ4HC
+        assert cfg.build.erofs.compression_level == 12
 
     def test_build_has_arm64(self, guest_minimal):
         cfg = load_guest_config(guest_minimal)

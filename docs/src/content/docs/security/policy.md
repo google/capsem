@@ -162,17 +162,17 @@ The current CEL subset supports:
 | contains | `mcp.tool_call.name.contains("email")` |
 | prefix/suffix | `file.read.name.endsWith(".md")` |
 | regex | `dns.qname.matches("(^|.*\\.)openai\\.com$")` |
-| simple PII helper | `model.request.body.contains_pii()` |
+| regex | `file.read.path.matches("(^|.*/)skills/.+\\.md$")` |
 
 Missing roots evaluate as non-matches. That means a cross-root rule can safely
 match HTTP or model events without callback fan-out:
 
 ```toml
-[profiles.rules.openai_boundary]
-name = "openai_boundary"
+[profiles.rules.openai_http_boundary]
+name = "openai_http_boundary"
 action = "allow"
 detection_level = "informational"
-match = 'http.host == "api.openai.com" || model.provider == "openai"'
+match = 'http.host.matches("(^|.*\\.)(openai\\.com|chatgpt\\.com|oaistatic\\.com|oaiusercontent\\.com)$")'
 ```
 
 ## First-Party Fields

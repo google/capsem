@@ -19,9 +19,9 @@ use uuid::Uuid;
 use crate::credential_broker::{BrokeredUpstreamCredentials, CredentialObservation};
 use crate::net::ai_traffic::provider::ProviderKind;
 use crate::net::policy_config::{
-    CompiledSecurityRule, DetectionLevel, PolicyActionId, PolicyCallback, PolicyRuleConfig,
-    PolicySubject, PolicySubjectValue, SecurityPluginConfig, SecurityPluginMode,
-    SecurityRuleAction, SecurityRuleSet,
+    CompiledSecurityRule, DetectionLevel, PolicyActionId, PolicyCallback, PolicySubject,
+    PolicySubjectValue, SecurityPluginConfig, SecurityPluginMode, SecurityRuleAction,
+    SecurityRuleSet,
 };
 
 pub const SECURITY_EVENT_EMIT_SPAN: &str = "capsem.security_event.emit";
@@ -191,8 +191,8 @@ impl RuntimeSecurityEventType {
         }
     }
 
-    /// Runtime events that are intentionally enforceable through the Policy V2
-    /// CEL callback rail today. Values not listed here must be documented as
+    /// Runtime events that are intentionally enforceable through the
+    /// security-event CEL callback rail today. Values not listed here must be documented as
     /// emit-only until their boundary has a pre-operation subject and gate.
     pub const fn policy_callback(self) -> Option<PolicyCallback> {
         match self {
@@ -813,6 +813,13 @@ pub struct SecurityRuleEmission {
     pub enforcement: SecurityEnforcementDecision,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct SecurityBoundaryEvaluation {
+    pub event: SecurityEvent,
+    pub enforcement: SecurityEnforcementDecision,
+    pub matched_rule_count: usize,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SecurityEnforcementDecision {
     pub action: SecurityEnforcementAction,
@@ -1156,6 +1163,53 @@ fn security_enforcement_decision(
         reason: rule.reason.clone(),
         ask_id: None,
     }
+}
+
+pub fn evaluate_security_boundary(
+    rules: &SecurityRuleSet,
+    plugin_policy: BTreeMap<String, SecurityPluginConfig>,
+    mut event: SecurityEvent,
+) -> Result<SecurityBoundaryEvaluation, SecurityActionError> {
+    let action_registry =
+        SecurityActionRegistry::with_builtin_actions().with_plugin_policy(plugin_policy);
+
+    let preprocess = rules.evaluate(&event).map_err(SecurityActionError::new)?;
+    for rule in preprocess.preprocess_rules() {
+        record_rule_detection(&mut event, rule);
+        event = action_registry.apply_security_rule_plugin(rule, event)?;
+    }
+
+    let evaluation = rules.evaluate(&event).map_err(SecurityActionError::new)?;
+    for rule in evaluation.matched_rules() {
+        record_rule_detection(&mut event, rule);
+    }
+
+    let selected_rule = selected_enforcement_rule(&evaluation);
+    if let Some(rule) = selected_rule {
+        event.request_decision(requested_decision_for_rule(rule.action));
+    }
+    let mut enforcement = security_enforcement_decision(selected_rule);
+    if matches!(event.decision.effective, SecurityDecisionKind::Block) {
+        enforcement.action = SecurityEnforcementAction::Block;
+    } else if matches!(event.decision.effective, SecurityDecisionKind::Ask)
+        && matches!(enforcement.action, SecurityEnforcementAction::Allow)
+    {
+        enforcement.action = SecurityEnforcementAction::Ask;
+    }
+
+    let postprocess = rules.evaluate(&event).map_err(SecurityActionError::new)?;
+    for rule in postprocess.postprocess_rules() {
+        event = action_registry.apply_security_rule_plugin(rule, event)?;
+    }
+    if matches!(event.decision.effective, SecurityDecisionKind::Block) {
+        enforcement.action = SecurityEnforcementAction::Block;
+    }
+
+    Ok(SecurityBoundaryEvaluation {
+        event,
+        enforcement,
+        matched_rule_count: evaluation.matched_rules().len(),
+    })
 }
 
 pub async fn emit_security_rule_match(
@@ -2144,18 +2198,6 @@ impl fmt::Display for SecurityActionError {
 
 impl std::error::Error for SecurityActionError {}
 
-/// A rule action plugin. The rule matched already; the plugin transforms the
-/// event and returns the next auditable event.
-pub trait SecurityActionPlugin: Send + Sync {
-    fn id(&self) -> PolicyActionId;
-
-    fn apply(
-        &self,
-        rule: &PolicyRuleConfig,
-        event: SecurityEvent,
-    ) -> Result<SecurityEvent, SecurityActionError>;
-}
-
 /// A plugin invoked by a matched typed `SecurityRule`.
 ///
 /// The plugin receives the compiled rule that matched and the current
@@ -2172,7 +2214,6 @@ pub trait SecurityRulePlugin: Send + Sync {
 
 #[derive(Default)]
 pub struct SecurityActionRegistry {
-    plugins: HashMap<PolicyActionId, Arc<dyn SecurityActionPlugin>>,
     rule_plugins: HashMap<String, Arc<dyn SecurityRulePlugin>>,
     plugin_policy: BTreeMap<String, SecurityPluginConfig>,
 }
@@ -2184,10 +2225,6 @@ impl SecurityActionRegistry {
 
     pub fn with_builtin_actions() -> Self {
         Self::new()
-            .register(CredentialBrokerCaptureAction)
-            .expect("built-in security action ids are unique")
-            .register(CredentialBrokerSubstituteAction)
-            .expect("built-in security action ids are unique")
             .register_rule_plugin(CredentialBrokerRulePlugin)
             .expect("built-in security rule plugin ids are unique")
             .register_rule_plugin(DummyPreEicarRulePlugin)
@@ -2204,21 +2241,6 @@ impl SecurityActionRegistry {
         self
     }
 
-    pub fn register(
-        mut self,
-        plugin: impl SecurityActionPlugin + 'static,
-    ) -> Result<Self, SecurityActionError> {
-        let id = plugin.id();
-        if self.plugins.contains_key(&id) {
-            return Err(SecurityActionError::new(format!(
-                "security action '{}' registered twice",
-                id.as_str()
-            )));
-        }
-        self.plugins.insert(id, Arc::new(plugin));
-        Ok(self)
-    }
-
     pub fn register_rule_plugin(
         mut self,
         plugin: impl SecurityRulePlugin + 'static,
@@ -2231,23 +2253,6 @@ impl SecurityActionRegistry {
         }
         self.rule_plugins.insert(id.to_string(), Arc::new(plugin));
         Ok(self)
-    }
-
-    pub fn apply_rule_actions(
-        &self,
-        rule: &PolicyRuleConfig,
-        mut event: SecurityEvent,
-    ) -> Result<SecurityEvent, SecurityActionError> {
-        for action in &rule.actions {
-            let Some(plugin) = self.plugins.get(action) else {
-                return Err(SecurityActionError::new(format!(
-                    "security action '{}' is not registered",
-                    action.as_str()
-                )));
-            };
-            event = plugin.apply(rule, event)?;
-        }
-        Ok(event)
     }
 
     pub fn apply_security_rule_plugin(
@@ -2307,47 +2312,6 @@ fn plugin_mode_decision(mode: SecurityPluginMode) -> Option<SecurityDecisionKind
         }
         SecurityPluginMode::Ask => Some(SecurityDecisionKind::Ask),
         SecurityPluginMode::Block => Some(SecurityDecisionKind::Block),
-    }
-}
-
-pub struct CredentialBrokerCaptureAction;
-
-impl SecurityActionPlugin for CredentialBrokerCaptureAction {
-    fn id(&self) -> PolicyActionId {
-        PolicyActionId::CredentialBrokerCapture
-    }
-
-    fn apply(
-        &self,
-        _rule: &PolicyRuleConfig,
-        mut event: SecurityEvent,
-    ) -> Result<SecurityEvent, SecurityActionError> {
-        for observation in &event.credential_observations {
-            let brokered = crate::credential_broker::broker_to_user_settings(observation)
-                .map_err(SecurityActionError::new)?;
-            if event.credential_ref.is_none() {
-                event.credential_ref = Some(brokered.credential_ref);
-            }
-        }
-        event.action_trace.push(self.id());
-        Ok(event)
-    }
-}
-
-pub struct CredentialBrokerSubstituteAction;
-
-impl SecurityActionPlugin for CredentialBrokerSubstituteAction {
-    fn id(&self) -> PolicyActionId {
-        PolicyActionId::CredentialBrokerSubstitute
-    }
-
-    fn apply(
-        &self,
-        _rule: &PolicyRuleConfig,
-        mut event: SecurityEvent,
-    ) -> Result<SecurityEvent, SecurityActionError> {
-        event.action_trace.push(self.id());
-        Ok(event)
     }
 }
 
@@ -2513,20 +2477,6 @@ impl<E: SecurityEventEmitter> SecurityEventEngine<E> {
 
     pub fn with_builtin_actions(emitter: Arc<E>) -> Self {
         Self::new(SecurityActionRegistry::with_builtin_actions(), emitter)
-    }
-
-    pub fn apply_rules_and_emit(
-        &self,
-        rules: &[PolicyRuleConfig],
-        mut event: SecurityEvent,
-    ) -> Result<SecurityEvent, SecurityActionError> {
-        for rule in rules {
-            event = self.action_registry.apply_rule_actions(rule, event)?;
-        }
-        self.emitter
-            .emit(event.clone())
-            .map_err(|error| SecurityActionError::new(error.to_string()))?;
-        Ok(event)
     }
 
     pub fn apply_matching_rules_and_emit(

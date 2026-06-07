@@ -632,11 +632,6 @@ name = "VM"
 description = "Virtual machine configuration"
 collapsed = false
 
-[settings.vm.rerun_wizard]
-name = "Setup Wizard"
-description = "Re-run the first-time setup wizard to reconfigure providers, repositories, and security."
-action = "rerun_wizard"
-
 # -- VM > Snapshots ----------------------------------------------------------
 
 [settings.vm.snapshots]

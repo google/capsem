@@ -6,10 +6,9 @@
 //!
 //! Config via environment variables:
 //! - CAPSEM_SESSION_DIR: Session directory (parent of workspace). Enables snapshot tools.
-//! - CAPSEM_DOMAIN_ALLOW: Comma-separated allowed domain patterns
-//! - CAPSEM_DOMAIN_BLOCK: Comma-separated blocked domain patterns
 //! - CAPSEM_SESSION_DB: Path to session DB for telemetry (optional)
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -25,8 +24,7 @@ use tracing::info;
 use capsem_core::auto_snapshot::AutoSnapshotScheduler;
 use capsem_core::mcp::types::JsonRpcResponse;
 use capsem_core::mcp::{builtin_tools, file_tools};
-use capsem_core::net::domain_policy::{Action, DomainPolicy};
-use capsem_core::net::policy_config::SecurityRuleSet;
+use capsem_core::net::policy_config::{SecurityPluginConfig, SecurityRuleSet};
 use capsem_logger::DbWriter;
 
 // -- Tool parameter types --
@@ -147,9 +145,9 @@ struct SnapshotCompactParams {
 #[derive(Clone)]
 struct BuiltinHandler {
     http_client: reqwest::Client,
-    domain_policy: Arc<DomainPolicy>,
     db: Arc<DbWriter>,
     security_rules: Arc<SecurityRuleSet>,
+    plugin_policy: Arc<BTreeMap<String, SecurityPluginConfig>>,
     scheduler: Option<Arc<Mutex<AutoSnapshotScheduler>>>,
     workspace_dir: Option<PathBuf>,
 }
@@ -378,7 +376,8 @@ async fn call_builtin(
         name,
         &args,
         &handler.http_client,
-        &handler.domain_policy,
+        &handler.security_rules,
+        &handler.plugin_policy,
         None,
         &handler.db,
     )
@@ -464,28 +463,10 @@ async fn main() -> Result<()> {
         }
     }
 
-    // Domain policy from env vars.
-    let allow: Vec<String> = std::env::var("CAPSEM_DOMAIN_ALLOW")
-        .unwrap_or_default()
-        .split(',')
-        .filter(|s| !s.is_empty())
-        .map(String::from)
-        .collect();
-    let block: Vec<String> = std::env::var("CAPSEM_DOMAIN_BLOCK")
-        .unwrap_or_default()
-        .split(',')
-        .filter(|s| !s.is_empty())
-        .map(String::from)
-        .collect();
-    let default_action = if allow.is_empty() && block.is_empty() {
-        Action::Allow
-    } else {
-        Action::Deny
-    };
-    let domain_policy = Arc::new(DomainPolicy::new(&allow, &block, default_action));
     let (user_sf, corp_sf) = capsem_core::net::policy_config::load_settings_files();
     let merged = capsem_core::net::policy_config::MergedPolicies::from_files(&user_sf, &corp_sf);
     let security_rules = Arc::new(merged.security_rules);
+    let plugin_policy = Arc::new(merged.plugins);
 
     // Session DB writer (optional).
     let db = match std::env::var("CAPSEM_SESSION_DB") {
@@ -526,9 +507,9 @@ async fn main() -> Result<()> {
 
     let handler = BuiltinHandler {
         http_client: reqwest::Client::new(),
-        domain_policy,
         db,
         security_rules,
+        plugin_policy,
         scheduler,
         workspace_dir,
     };

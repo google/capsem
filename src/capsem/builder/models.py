@@ -27,6 +27,14 @@ class Compression(str, Enum):
     XZ = "xz"
 
 
+class ErofsCompression(str, Enum):
+    """Compression algorithm for EROFS rootfs assets."""
+
+    LZ4 = "lz4"
+    LZ4HC = "lz4hc"
+    ZSTD = "zstd"
+
+
 class PackageManager(str, Enum):
     """Package manager for installing packages."""
 
@@ -57,6 +65,38 @@ class ArchConfig(BaseModel):
     node_major: int = 24
 
 
+class ErofsConfig(BaseModel):
+    """EROFS rootfs asset settings.
+
+    Squashfs remains as a legacy fallback asset. EROFS is the primary 1.3
+    asset path and defaults to lz4hc level 12 based on macOS/Linux benchmarks.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    enabled: bool = True
+    compression: ErofsCompression = ErofsCompression.LZ4HC
+    compression_level: int | None = 12
+    cluster_size: int | None = None
+
+    @model_validator(mode="after")
+    def _compression_level_valid(self):
+        if self.compression is ErofsCompression.LZ4:
+            if self.compression_level is not None:
+                raise ValueError("lz4 EROFS compression does not accept a level")
+        elif self.compression is ErofsCompression.LZ4HC:
+            if self.compression_level is None:
+                raise ValueError("lz4hc EROFS compression requires a level")
+            if not 0 <= self.compression_level <= 12:
+                raise ValueError("lz4hc EROFS compression level must be between 0 and 12")
+        elif self.compression is ErofsCompression.ZSTD:
+            if self.compression_level is None:
+                raise ValueError("zstd EROFS compression requires a level")
+            if not 0 <= self.compression_level <= 22:
+                raise ValueError("zstd EROFS compression level must be between 0 and 22")
+        return self
+
+
 class BuildConfig(BaseModel):
     """Top-level build settings from build.toml."""
 
@@ -64,6 +104,7 @@ class BuildConfig(BaseModel):
 
     compression: Compression = Compression.ZSTD
     compression_level: int = Field(default=15, ge=1, le=22)
+    erofs: ErofsConfig = Field(default_factory=ErofsConfig)
     architectures: dict[str, ArchConfig]
     version_commands: dict[str, str] = Field(default_factory=dict)
 

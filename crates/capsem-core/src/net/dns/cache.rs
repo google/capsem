@@ -10,19 +10,15 @@
 //!   Expiry is enforced lazily on lookup: an expired entry is
 //!   removed and counted as a miss.
 //! * **Eligibility**: only `Decision::Allowed` answers are cached.
-//!   Block + redirect re-evaluate the policy on every query (the
-//!   admin can change either at any moment), and SERVFAIL responses
-//!   should not be persisted.
+//!   Security blocks run before the cache. Redirect settings are still
+//!   re-checked on every query, and SERVFAIL responses should not be
+//!   persisted.
 //! * **Bound**: an LRU on entry count (default 1024). Evictions are
 //!   counted via the `mitm.dns_cache_evictions_total` counter.
 //!
-//! The cache **does** read policy on every hit -- the cached
-//! Allowed answer is only returned if the current policy snapshot
-//! still says the qname is allowed (no later block, no later
-//! redirect that would override). This keeps cache + policy
-//! coherent without a per-policy version counter; the cost is one
-//! `is_fully_blocked` + one `find_dns_redirect` per cache hit, both
-//! O(N rules) on the slow path and unmeasurable in practice.
+//! The cache **does** read the network-policy snapshot on every hit so
+//! redirect/cache mechanics stay coherent without a per-policy version
+//! counter.
 
 use std::num::NonZeroUsize;
 use std::sync::Mutex;

@@ -7,6 +7,12 @@
 # Only overrides need to be listed here. Settings not listed use defaults.
 # Full setting registry: see `capsem --settings` or the Settings UI tab.
 
+[plugins.credential_broker]
+# Broker observed credentials into BLAKE3 references and substitute only on
+# allowed materialization. Raw credentials stay broker-private.
+mode = "rewrite"
+detection_level = "informational"
+
 [settings]
 # -- AI Providers (all enabled by default) --
 # "ai.anthropic.allow" = { value = true, modified = "2026-04-21T00:00:00Z" }

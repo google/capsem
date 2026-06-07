@@ -18,9 +18,7 @@ import type {
   SettingsResponse,
   SecurityPreset,
   ConfigIssue,
-  PolicyRuleConfig,
 } from './types/settings';
-import { policyRuleKey, policyRuleNameFromParts } from './models/settings-model';
 import type {
   DownloadProgress,
   McpServerInfo,
@@ -72,6 +70,33 @@ export type InitResult = {
   reachable: boolean;
   version: string | null;
 };
+
+export type PluginMode = 'allow' | 'ask' | 'block' | 'disable' | 'rewrite';
+export type PluginDetectionLevel = 'informational' | 'low' | 'medium' | 'high' | 'critical';
+
+export interface PluginConfig {
+  mode: PluginMode;
+  detection_level: PluginDetectionLevel;
+}
+
+export interface PluginScope {
+  kind: 'global' | 'vm';
+  vm_id?: string;
+}
+
+export interface PluginInfo {
+  id: string;
+  config: PluginConfig;
+  default_config: PluginConfig;
+  overridden: boolean;
+  scope: PluginScope;
+  description: string;
+}
+
+export interface PluginListResponse {
+  scope: PluginScope;
+  plugins: PluginInfo[];
+}
 
 // -- Initialization --
 
@@ -597,6 +622,26 @@ export async function lintConfig(): Promise<ConfigIssue[]> {
   return await resp.json();
 }
 
+// -- Plugins --
+
+export async function listPlugins(vmId?: string): Promise<PluginListResponse> {
+  const path = vmId ? `/plugins/${encodeURIComponent(vmId)}` : '/plugins';
+  const resp = await _get(path);
+  return await resp.json();
+}
+
+export async function updatePlugin(
+  pluginId: string,
+  update: Partial<PluginConfig>,
+  vmId?: string,
+): Promise<PluginInfo> {
+  const path = vmId
+    ? `/plugins/${encodeURIComponent(vmId)}/${encodeURIComponent(pluginId)}`
+    : `/plugins/global/${encodeURIComponent(pluginId)}`;
+  const resp = await _post(path, update);
+  return await resp.json();
+}
+
 // -- MCP config (mutations via settings API) --
 
 /** Get MCP policy from settings. */
@@ -630,20 +675,7 @@ function _extractMcpPolicy(settings: SettingsResponse): McpPolicyInfo {
     }
   }
   walk(settings.tree);
-  for (const rule of Object.values(settings.policy?.mcp ?? {})) {
-    const tool = policyToolName(rule);
-    if (!tool) continue;
-    if (rule.decision === 'allow' || rule.decision === 'ask' || rule.decision === 'block') {
-      policy.tool_permissions[tool] = rule.decision;
-    }
-  }
   return policy;
-}
-
-function policyToolName(rule: PolicyRuleConfig): string | null {
-  if (rule.on !== 'mcp.request') return null;
-  const match = rule.if.match(/tool\.name\s*==\s*["']([^"']+)["']/);
-  return match?.[1] ?? null;
 }
 
 /** Enable/disable an MCP server via settings. */
@@ -692,15 +724,7 @@ export async function setMcpToolPermission(tool: string, permission: string): Pr
   if (decision !== 'allow' && decision !== 'ask' && decision !== 'block') {
     throw new Error(`Unsupported MCP policy decision: ${permission}`);
   }
-  const ruleName = policyRuleNameFromParts(['tool', tool]);
-  const rule: PolicyRuleConfig = {
-    on: 'mcp.request',
-    if: `method == "tools/call" && tool.name == "${tool.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`,
-    decision,
-    priority: 500,
-    reason: `MCP tool ${tool} set from settings UI`,
-  };
-  await saveSettings({ [policyRuleKey('mcp', ruleName)]: rule });
+  await saveSettings({ [`mcp.tool_permissions.${tool}`]: decision });
 }
 
 // -- MCP runtime --

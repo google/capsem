@@ -14,6 +14,7 @@ from unittest.mock import MagicMock, call, patch
 import pytest
 
 from capsem.builder.config import load_guest_config
+from capsem.builder.models import ErofsConfig
 from capsem.builder.docker import (
     GUEST_BINARIES,
     ROOTFS_SCRIPTS,
@@ -1002,8 +1003,16 @@ class TestCreateErofs:
         assert "tar xf /assets/rootfs.tar -C /rootfs" in cmd_str
         assert " /assets/out/rootfs.erofs /rootfs" in cmd_str
 
-    def test_env_config_defaults_disabled(self):
-        assert experimental_erofs_build_config({}) == (False, "lz4hc", None, None)
+    def test_config_defaults_enable_release_lz4hc(self):
+        assert experimental_erofs_build_config({}, ErofsConfig()) == (
+            True, "lz4hc", None, "12",
+        )
+
+    def test_env_can_disable_config_default(self):
+        assert experimental_erofs_build_config(
+            {"CAPSEM_BUILD_EXPERIMENTAL_EROFS": "0"},
+            ErofsConfig(),
+        ) == (False, "lz4hc", None, "12")
 
     def test_env_config_parses_enabled_zstd(self):
         assert experimental_erofs_build_config({
@@ -1040,6 +1049,11 @@ class TestKernelConfig:
     def test_real_config_pins_stable_kernel_branch(self, real_config):
         assert real_config.build.architectures["arm64"].kernel_branch == "7.0"
         assert real_config.build.architectures["x86_64"].kernel_branch == "7.0"
+
+    def test_real_config_defaults_erofs_lz4hc_level_12(self, real_config):
+        assert real_config.build.erofs.enabled is True
+        assert real_config.build.erofs.compression.value == "lz4hc"
+        assert real_config.build.erofs.compression_level == 12
 
     @pytest.mark.parametrize("name", ["defconfig.arm64", "defconfig.x86_64"])
     def test_erofs_zstd_enabled(self, name):

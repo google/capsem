@@ -608,18 +608,14 @@ pub(crate) async fn handle_ipc_connection(
                 let merged =
                     capsem_core::net::policy_config::MergedPolicies::from_files(&user_sf, &corp_sf);
 
-                let new_domain = Arc::new(merged.domain);
                 let new_network = Arc::new(merged.network);
-                let new_mcp = Arc::new(merged.mcp);
-                let new_policy_v2 = Arc::new(merged.policy);
                 let new_security_rules = Arc::new(merged.security_rules);
+                let new_plugin_policy = merged.plugins;
                 let new_model_endpoints = Arc::new(merged.model_endpoints);
 
                 *net_state.policy.write().unwrap() = new_network;
-                *mcp_runtime.domain_policy.write().unwrap() = Arc::clone(&new_domain);
-                *mcp_runtime.policy.write().await = new_mcp;
-                *mcp_runtime.policy_v2.write().await = new_policy_v2;
                 *mcp_runtime.security_rules.write().unwrap() = new_security_rules;
+                *mcp_runtime.plugin_policy.write().unwrap() = new_plugin_policy;
                 *mcp_runtime.model_endpoints.write().unwrap() = new_model_endpoints;
 
                 capsem_core::try_send!(

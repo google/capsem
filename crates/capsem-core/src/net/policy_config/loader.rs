@@ -4,7 +4,6 @@ use std::path::Path;
 use super::provider_profile::ProviderDiscoveryPatch;
 use super::types::{McpServerDef, McpTransport, PolicySource};
 use super::{
-    is_policy_rule_key, parse_policy_rule_key, validate_imported_policy_rule_json,
     validate_stored_setting_contract, ProviderRuleProfile, ProviderStatus, SecurityRuleAction,
     SettingValue, SettingsFile, SETTING_ANTHROPIC_API_KEY, SETTING_GOOGLE_API_KEY,
     SETTING_OPENAI_API_KEY,
@@ -274,8 +273,6 @@ pub fn load_settings_files() -> (SettingsFile, SettingsFile) {
                 if corp.mcp.is_none() && file.mcp.is_some() {
                     corp.mcp = file.mcp;
                 }
-                // Policy V2 config: first corp path wins per named rule.
-                corp.policy.merge_first_wins(file.policy);
                 // External rule files: first corp path wins per reference.
                 corp.rule_files.merge_first_wins(file.rule_files);
                 corp.corp_rule_files.merge_first_wins(file.corp_rule_files);
@@ -502,24 +499,10 @@ pub fn load_settings_response() -> super::types::SettingsResponse {
     let (user, corp) = load_settings_files();
     let resolved = super::resolver::resolve_settings(&user, &corp);
     let mcp_servers = load_mcp_servers();
-    let mut policy =
-        super::types::PolicyConfig::merged_with_builtin_security_rules(&user.policy, &corp.policy);
-    match super::provider_profile::compile_provider_rules_to_policy_config(
-        &super::provider_profile::ProviderRuleProfile {
-            ai: user.ai.clone(),
-        },
-        &super::provider_profile::ProviderRuleProfile {
-            ai: corp.ai.clone(),
-        },
-    ) {
-        Ok(provider_policy) => policy.merge_first_wins(provider_policy),
-        Err(error) => tracing::warn!("provider rule profile ignored in settings response: {error}"),
-    }
     super::types::SettingsResponse {
         tree: super::tree::build_settings_tree_with_mcp(&resolved, &mcp_servers),
         issues: super::lint::config_lint(&resolved),
         presets: super::presets::security_presets(),
-        policy,
         providers: build_provider_statuses(&user, &corp, &resolved),
         tool_config_sources: user.tool_config_sources.clone(),
     }
@@ -642,40 +625,14 @@ fn batch_update_settings_json_with_provider_discoveries(
     let corp_file = load_settings_file(&corp_path)?;
     let defs = setting_definitions();
     let mut setting_changes = HashMap::new();
-    let mut policy_changes = Vec::new();
 
     // Validate all changes upfront
     let mut errors = Vec::new();
     for (id, value) in changes {
-        if is_policy_rule_key(id) {
-            match parse_policy_rule_key(id) {
-                Ok((_rule_type, _)) => {
-                    match corp_file.policy.contains_rule_key(id) {
-                        Ok(true) => {
-                            errors.push(format!("corp-locked: {id}"));
-                            continue;
-                        }
-                        Ok(false) => {}
-                        Err(e) => {
-                            errors.push(e);
-                            continue;
-                        }
-                    }
-
-                    if value.is_null() {
-                        policy_changes.push((id.clone(), None));
-                        continue;
-                    }
-
-                    match validate_imported_policy_rule_json("settings-json", id, value.clone()) {
-                        Ok(rule) => {
-                            policy_changes.push((id.clone(), Some(rule)));
-                        }
-                        Err(e) => errors.push(format!("invalid policy rule {id}: {e}")),
-                    }
-                }
-                Err(e) => errors.push(e),
-            }
+        if id.starts_with("policy.") {
+            errors.push(format!(
+                "unknown setting: {id}; use profiles.rules, corp.rules, ai.<provider>.rules, or rule_files"
+            ));
             continue;
         }
 
@@ -724,13 +681,6 @@ fn batch_update_settings_json_with_provider_discoveries(
             },
         );
         applied.push(id.clone());
-    }
-    for (id, rule) in policy_changes {
-        match rule {
-            Some(rule) => user_file.policy.upsert_rule_key(&id, rule)?,
-            None => user_file.policy.remove_rule_key(&id)?,
-        }
-        applied.push(id);
     }
     for patch in provider_discoveries {
         patch

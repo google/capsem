@@ -15,6 +15,8 @@ from capsem.builder.models import (
     BuildConfig,
     CliToolConfig,
     Compression,
+    ErofsCompression,
+    ErofsConfig,
     FileConfig,
     GuestImageConfig,
     InstallConfig,
@@ -102,6 +104,33 @@ class TestCompression:
         assert Compression("zstd") is Compression.ZSTD
 
 
+class TestErofsCompression:
+    def test_values(self):
+        assert set(ErofsCompression) == {
+            ErofsCompression.LZ4, ErofsCompression.LZ4HC, ErofsCompression.ZSTD,
+        }
+
+    def test_default_config_is_release_lz4hc(self):
+        e = ErofsConfig()
+        assert e.enabled is True
+        assert e.compression is ErofsCompression.LZ4HC
+        assert e.compression_level == 12
+        assert e.cluster_size is None
+
+    def test_lz4_rejects_level(self):
+        with pytest.raises(ValidationError):
+            ErofsConfig(compression=ErofsCompression.LZ4, compression_level=1)
+
+    def test_lz4hc_rejects_too_high_level(self):
+        with pytest.raises(ValidationError):
+            ErofsConfig(compression=ErofsCompression.LZ4HC, compression_level=13)
+
+    def test_zstd_remains_supported_option(self):
+        e = ErofsConfig(compression=ErofsCompression.ZSTD, compression_level=15)
+        assert e.compression is ErofsCompression.ZSTD
+        assert e.compression_level == 15
+
+
 class TestPackageManager:
     def test_values(self):
         assert set(PackageManager) == {
@@ -168,6 +197,8 @@ class TestBuildConfig:
         b = _build()
         assert b.compression is Compression.ZSTD
         assert b.compression_level == 15
+        assert b.erofs.compression is ErofsCompression.LZ4HC
+        assert b.erofs.compression_level == 12
 
     def test_compression_level_min(self):
         b = _build(compression_level=1)
