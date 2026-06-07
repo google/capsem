@@ -97,11 +97,65 @@ Guest MCP   -> framed vsock:5002      -> MITM MCP endpoint -> external MCP serve
 
 Vsock ports: 5000 (control), 5001 (terminal), 5002 (MITM + framed guest MCP), 5004 (lifecycle/capsem-sysutil), 5005 (exec output).
 
-## Config hierarchy
+## Service API endpoint vocabulary
 
-1. Corp config (`/etc/capsem/corp.toml`) -- highest priority, MDM-distributed
-2. User config (`~/.capsem/user.toml`) -- user overrides
-3. Settings registry (`config/defaults.toml`) -- compiled-in defaults
+When adding or changing HTTP/UDS endpoints, use explicit path verbs. Do not mix
+configuration reads with runtime counters behind a bare `GET`.
+
+| Path word | Meaning |
+|-----------|---------|
+| `info` | Configuration, metadata, or contract state. No counters. |
+| `status` | Runtime/live state, counters, readiness, health, or progress. |
+| `list` | Collection of child resources. |
+| `latest` | DB-backed latest ledger rows. |
+| `evaluate` | Run a supplied fixture through an engine without mutating config. |
+| `reload` | Re-read/apply owned config files and push to running VMs when applicable. |
+| `edit` | Mutate configuration. |
+| `create` | Create a resource. |
+| `delete` | Delete a resource. |
+
+Contract discipline:
+
+- HTTP and UDS expose the same route, DTO, and error shape.
+- Profile authoring endpoints are profile-addressed:
+  `/profiles/{profile_id}/...`.
+- Service-global endpoints are only for daemon health, install/assets cache,
+  VM runtime state, and DB-backed runtime ledger views.
+- VM behavior is not a UI setting. Assets, VM config, rules, detection, MCP,
+  skills, credentials/plugins, and other execution behavior belong to profile.
+- Settings are UI/app preferences only.
+- Corp config owns constraints, locks, and reporting endpoints over profiles.
+- MCP tools/resources/prompts are per server:
+  `/profiles/{profile_id}/mcp/servers/{server_id}/tools/list`, etc. There is
+  no global MCP tool list.
+- Plugin documentation lives on the docs site under `/plugins/...`; do not add
+  `/plugins/{id}/man` API routes.
+- Provider is not a 1.3 profile API object. Credential brokerage and rules own
+  that behavior.
+
+UI reflection discipline:
+
+- The UI reads and writes through approved endpoints; it does not keep a second
+  configuration model.
+- The UI does not rename backend-owned objects or invent explanatory text for
+  profile/rule/plugin/MCP/skill/credential/asset config.
+- Backend fields such as `name`, `reason`, `description`, `status`, `source`,
+  `group`, and validation messages are the copy/meaning source of truth.
+- The UI may add presentation-only structure: grouping, sorting, filtering,
+  tabs, buttons, icons, empty/loading/error shell states.
+- UI settings are UI/app preferences only. Do not put VM behavior, security
+  rules, MCP config, plugin config, credentials, or assets in frontend settings
+  stores.
+
+## Config/profile hierarchy
+
+Capsem runs VMs from profiles. Keep the ownership split sharp:
+
+1. Corp config (`/etc/capsem/corp.toml`) -- constraints, locks, and reporting
+   endpoints over profiles.
+2. Profile config -- VM behavior: assets, VM config, enforcement, detection,
+   MCP, skills, credentials/plugins, and default rules.
+3. UI settings -- appearance, notifications, and local UI/app preferences only.
 
 ## Key invariants
 
