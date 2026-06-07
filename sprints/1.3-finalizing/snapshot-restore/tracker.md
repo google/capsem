@@ -277,6 +277,8 @@ the guarantee or explicitly burn it.
 ## S1: Profile/Admin Command Spine
 
 - [ ] Restore base profile files as profile-owned release inputs.
+- [x] Write canonical `config/settings.toml`, `config/profiles/code.toml`, and
+  `config/corp.toml`; remove stale `config/user.toml.default`.
 - [ ] Restore profile/settings schemas and fixtures updated to the modern 1.3
   profile contract.
 - [ ] Restore per-architecture profile asset declarations and update/catalog

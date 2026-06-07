@@ -1,0 +1,304 @@
+# Capsem code profile.
+#
+# This is the canonical profile for coding agents. The UI, TUI, CLI, and
+# service status must reflect this contract instead of inventing names,
+# descriptions, assets, rules, MCP servers, or plugin copy.
+
+id = "code"
+name = "Code"
+description = "Coding agent VM with EROFS/LZ4HC assets, MCP mechanics, AI provider rules, credential brokerage, and default security-event rules."
+icon_svg = "<svg viewBox=\"0 0 16 16\" aria-hidden=\"true\"><path d=\"M5.5 3 1.5 8l4 5 1.2-1-3.2-4 3.2-4L5.5 3Zm5 0-1.2 1 3.2 4-3.2 4 1.2 1 4-5-4-5Z\"/></svg>"
+revision = "2026.06.07.1"
+
+[availability]
+web = true
+shell = true
+mobile = false
+
+[catalog]
+channel = "stable"
+update_policy = "auto"
+manifest_url = "https://github.com/google/capsem/releases/latest/download/profile-code.manifest.json"
+manifest_pubkey = "minisign:capsem-profile-code"
+
+[vm]
+cpu_count = 6
+ram_gb = 8
+scratch_disk_size_gb = 32
+
+[assets]
+format = "profile-assets.v1"
+filesystem = "erofs"
+compression = "lz4hc"
+compression_level = 12
+
+[assets.arch.arm64.kernel]
+name = "vmlinuz"
+url = "https://github.com/google/capsem/releases/download/v1.0.1780763638/arm64-vmlinuz"
+hash = "blake3:fa3b65bf6bb2b0adab0af8694338a793963f93d6218f5120219b14e9866d7561"
+signature = "minisig:release-manifest"
+size = 8786432
+content_type = "application/octet-stream"
+
+[assets.arch.arm64.initrd]
+name = "initrd.img"
+url = "https://github.com/google/capsem/releases/download/v1.0.1780763638/arm64-initrd.img"
+hash = "blake3:23fa4f6baf1d8a83d6f3ab76c20fd8608341ab8d6f8b60c9f1dc6a362d826782"
+signature = "minisig:release-manifest"
+size = 2841320
+content_type = "application/octet-stream"
+
+[assets.arch.arm64.rootfs]
+name = "rootfs.erofs"
+url = "https://github.com/google/capsem/releases/download/v1.0.1780763638/arm64-rootfs.erofs"
+hash = "blake3:b0a8616d5dd179a6f2fd42d519120f34b4fad1470ea85b97a783fd8952d5d30f"
+signature = "minisig:release-manifest"
+size = 904286208
+content_type = "application/vnd.capsem.erofs"
+filesystem = "erofs"
+compression = "lz4hc"
+compression_level = 12
+
+[assets.arch.x86_64.kernel]
+name = "vmlinuz"
+url = "https://github.com/google/capsem/releases/download/v1.0.1780763638/x86_64-vmlinuz"
+hash = "blake3:e8651b1408688748a0b986a7f429502fd3ed2e66fddc9b0f837de7d8dddc1400"
+signature = "minisig:release-manifest"
+size = 5764096
+content_type = "application/octet-stream"
+
+[assets.arch.x86_64.initrd]
+name = "initrd.img"
+url = "https://github.com/google/capsem/releases/download/v1.0.1780763638/x86_64-initrd.img"
+hash = "blake3:1d130dd66eebeceb416aa47565c184bb3045c51d2fc1dc06087957016e8fc60a"
+signature = "minisig:release-manifest"
+size = 1038649
+content_type = "application/octet-stream"
+
+[assets.arch.x86_64.rootfs]
+name = "rootfs.erofs"
+url = "https://github.com/google/capsem/releases/download/v1.0.1780763638/x86_64-rootfs.erofs"
+hash = "blake3:b2f447609a094d41d825cb4dd1dd7800e16b4fb771faeb1a2791f91eb805e56f"
+signature = "minisig:release-manifest"
+size = 933675008
+content_type = "application/vnd.capsem.erofs"
+filesystem = "erofs"
+compression = "lz4hc"
+compression_level = 12
+
+[rule_files]
+enforcement = "profiles/code/enforcement.toml"
+sigma = "profiles/code/detection.yaml"
+
+[profiles.defaults.default_http_requests]
+name = "default_http_requests"
+action = "allow"
+priority = "default"
+reason = "Default allow for HTTP requests."
+match = "has(http.host)"
+
+[profiles.defaults.default_dns_queries]
+name = "default_dns_queries"
+action = "allow"
+priority = "default"
+reason = "Default allow for DNS queries."
+match = "has(dns.qname)"
+
+[profiles.defaults.default_mcp_activity]
+name = "default_mcp_activity"
+action = "allow"
+priority = "default"
+reason = "Default allow for MCP server activity and tool calls."
+match = "has(mcp.method) || has(mcp.server.name) || has(mcp.tool_call.name) || has(mcp.tool_list)"
+
+[profiles.defaults.default_model_calls]
+name = "default_model_calls"
+action = "allow"
+priority = "default"
+reason = "Default allow for model calls."
+match = "has(model.provider) || has(model.name) || has(model.request.body) || has(model.response.body) || has(model.request.tool_calls)"
+
+[profiles.defaults.default_file_activity]
+name = "default_file_activity"
+action = "allow"
+priority = "default"
+reason = "Default allow for file reads, writes, creates, deletes, imports, and exports."
+match = "has(file.read.path) || has(file.write.path) || has(file.create.path) || has(file.delete.path) || has(file.import.path) || has(file.export.path) || has(file.content)"
+
+[profiles.defaults.default_process_activity]
+name = "default_process_activity"
+action = "allow"
+priority = "default"
+reason = "Default allow for process execution and audit activity."
+match = "has(process.exec.path) || has(process.command) || has(process.exec.id)"
+
+[profiles.defaults.default_credentials]
+name = "default_credentials"
+action = "allow"
+priority = "default"
+reason = "Default allow for brokered credential references."
+match = "has(credential.provider) || has(credential.reference)"
+
+[profiles.rules.skill_loaded]
+name = "skill_loaded"
+action = "allow"
+detection_level = "informational"
+reason = "Record when a skill file is loaded."
+match = 'file.read.path.matches("(^|.*/)skills/.+\\.md$") && file.read.ext == "md"'
+
+[plugins.credential_broker]
+mode = "rewrite"
+detection_level = "informational"
+
+[profiles.rules.credential_broker_http]
+name = "credential_broker_http"
+plugin = "credential_broker"
+action = "postprocess"
+reason = "Broker credentials observed in approved HTTP provider flows."
+match = "has(http.host)"
+
+[ai.openai]
+name = "OpenAI"
+protocol = "openai"
+url = "https://api.openai.com/v1"
+aliases = ["api.openai.com", "chatgpt.com", "oaistatic.com", "oaiusercontent.com"]
+listen_ports = [443]
+allowed_remote_targets = ["api.openai.com:443"]
+files = ["/root/.codex/config.toml"]
+
+[ai.openai.rules.http_api]
+name = "openai_http_api_observed"
+action = "allow"
+detection_level = "informational"
+reason = "Observe OpenAI HTTP traffic."
+match = 'http.host.matches("(^|.*\\.)(openai\\.com|chatgpt\\.com|oaistatic\\.com|oaiusercontent\\.com)$")'
+
+[ai.openai.rules.dns_api]
+name = "openai_dns_api_observed"
+action = "allow"
+detection_level = "informational"
+reason = "Observe OpenAI DNS traffic."
+match = 'dns.qname.matches("(^|.*\\.)(openai\\.com|chatgpt\\.com|oaistatic\\.com|oaiusercontent\\.com)$")'
+
+[ai.openai.rules.config_credential_broker]
+name = "openai_config_credential_broker"
+plugin = "credential_broker"
+action = "postprocess"
+type = "api-key"
+credential = "api_key"
+reason = "Broker OpenAI credentials from Codex config reads."
+match = 'file.read.path == "/root/.codex/config.toml" && has(file.read.content)'
+
+[ai.anthropic]
+name = "Anthropic"
+protocol = "anthropic"
+url = "https://api.anthropic.com/v1"
+aliases = ["api.anthropic.com", "claude.ai", "claude.com"]
+listen_ports = [443]
+allowed_remote_targets = ["api.anthropic.com:443"]
+files = ["/root/.claude/settings.json", "/root/.claude.json", "/root/.claude/.credentials.json"]
+
+[ai.anthropic.rules.http_api]
+name = "anthropic_http_api_observed"
+action = "allow"
+detection_level = "informational"
+reason = "Observe Anthropic HTTP traffic."
+match = 'http.host.matches("(^|.*\\.)(anthropic\\.com|claude\\.ai|claude\\.com)$")'
+
+[ai.anthropic.rules.dns_api]
+name = "anthropic_dns_api_observed"
+action = "allow"
+detection_level = "informational"
+reason = "Observe Anthropic DNS traffic."
+match = 'dns.qname.matches("(^|.*\\.)(anthropic\\.com|claude\\.ai|claude\\.com)$")'
+
+[ai.anthropic.rules.config_credential_broker]
+name = "anthropic_config_credential_broker"
+plugin = "credential_broker"
+action = "postprocess"
+type = "api-key"
+credential = "api_key"
+reason = "Broker Anthropic credentials from Claude config reads."
+match = '(file.read.path == "/root/.claude/settings.json" || file.read.path == "/root/.claude.json" || file.read.path == "/root/.claude/.credentials.json") && has(file.read.content)'
+
+[ai.google]
+name = "Google Gemini"
+protocol = "gemini"
+url = "https://generativelanguage.googleapis.com/v1beta"
+aliases = ["generativelanguage.googleapis.com", "aistudio.google.com", "gemini.google.com"]
+listen_ports = [443]
+allowed_remote_targets = ["generativelanguage.googleapis.com:443"]
+files = ["/root/.gemini/settings.json", "/root/.gemini/oauth_creds.json"]
+
+[ai.google.rules.http_api]
+name = "google_gemini_http_api_observed"
+action = "allow"
+detection_level = "informational"
+reason = "Observe Google Gemini HTTP traffic."
+match = 'http.host.matches("(^|.*\\.)(generativelanguage\\.googleapis\\.com|aistudio\\.google\\.com|gemini\\.google\\.com)$")'
+
+[ai.google.rules.dns_api]
+name = "google_gemini_dns_api_observed"
+action = "allow"
+detection_level = "informational"
+reason = "Observe Google Gemini DNS traffic."
+match = 'dns.qname.matches("(^|.*\\.)(generativelanguage\\.googleapis\\.com|aistudio\\.google\\.com|gemini\\.google\\.com)$")'
+
+[ai.google.rules.config_credential_broker]
+name = "google_gemini_config_credential_broker"
+plugin = "credential_broker"
+action = "postprocess"
+type = "oauth"
+credential = "oauth"
+reason = "Broker Google Gemini credentials from Gemini config reads."
+match = '(file.read.path == "/root/.gemini/settings.json" || file.read.path == "/root/.gemini/oauth_creds.json") && has(file.read.content)'
+
+[ai.ollama]
+name = "Ollama"
+protocol = "ollama"
+url = "http://host.capsem.internal:11434"
+aliases = ["localhost", "127.0.0.1", "host.capsem.internal", "local.ollama"]
+listen_ports = [11434]
+allowed_remote_targets = ["host.capsem.internal:11434", "127.0.0.1:11434"]
+files = []
+
+[ai.ollama.rules.http_api]
+name = "ollama_http_api_observed"
+action = "allow"
+detection_level = "informational"
+reason = "Observe Ollama HTTP traffic."
+match = 'http.host.contains("ollama") || http.host == "127.0.0.1" || http.host == "localhost" || http.port == 11434'
+
+[mcp]
+health_check_interval_secs = 60
+
+[[mcp.servers]]
+id = "filesystem"
+name = "filesystem"
+url = "http://127.0.0.1:9000"
+enabled = true
+
+[[mcp.servers.tools]]
+id = "read_file"
+name = "read_file"
+enabled = true
+
+[[mcp.servers.tools]]
+id = "write_file"
+name = "write_file"
+enabled = true
+
+[skills]
+paths = ["/root/.codex/skills/security/SKILL.md"]
+
+[credentials]
+broker_enabled = true
+
+[tool_config_sources.codex]
+tool_id = "codex"
+guest_path = "/root/.codex/config.toml"
+format = "toml"
+observed_hash = "blake3:2222222222222222222222222222222222222222222222222222222222222222"
+inferred_endpoint_ref = "ai.openai"
+credential_refs = ["credential:blake3:1111111111111111111111111111111111111111111111111111111111111111"]
+allowed_overlays = ["mcp_injection", "broker_placeholders", "endpoint_selection"]
