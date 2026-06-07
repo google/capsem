@@ -22,7 +22,7 @@ def test_exec_curl_creates_net_event(session_env, session_db):
     """An HTTPS request from the guest should appear in net_events."""
     client, vm_name, _ = session_env
     # Make a request to an allowed domain (this may fail if no network, but the attempt is logged)
-    client.post(f"/exec/{vm_name}", {"command": "curl -s -o /dev/null https://elie.net/ 2>&1 || true"})
+    client.post(f"/vms/{vm_name}/exec", {"command": "curl -s -o /dev/null https://elie.net/ 2>&1 || true"})
 
     # Give the async writer time to flush
     import time

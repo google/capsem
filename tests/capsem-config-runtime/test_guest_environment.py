@@ -22,7 +22,7 @@ def test_env_var_injected(config_svc):
         })
         assert wait_exec_ready(client, name, timeout=EXEC_READY_TIMEOUT)
 
-        resp = client.post(f"/exec/{name}", {"command": "echo $TEST_VAR"})
+        resp = client.post(f"/vms/{name}/exec", {"command": "echo $TEST_VAR"})
         stdout = resp.get("stdout", "") if resp else ""
         assert "hello_from_host" in stdout, f"Env var not found in guest: {stdout}"
 
@@ -42,7 +42,7 @@ def test_guest_has_python3(config_svc):
         client.post("/vms/create", {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
         assert wait_exec_ready(client, name, timeout=EXEC_READY_TIMEOUT)
 
-        resp = client.post(f"/exec/{name}", {"command": "python3 --version"})
+        resp = client.post(f"/vms/{name}/exec", {"command": "python3 --version"})
         stdout = resp.get("stdout", "") if resp else ""
         assert "Python 3" in stdout, f"python3 not available: {stdout}"
 
@@ -63,7 +63,7 @@ def test_guest_arch_matches_host(config_svc):
         client.post("/vms/create", {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
         assert wait_exec_ready(client, name, timeout=EXEC_READY_TIMEOUT)
 
-        resp = client.post(f"/exec/{name}", {"command": "uname -m"})
+        resp = client.post(f"/vms/{name}/exec", {"command": "uname -m"})
         stdout = resp.get("stdout", "").strip() if resp else ""
 
         host_arch = os.uname().machine

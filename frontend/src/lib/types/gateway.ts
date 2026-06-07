@@ -101,7 +101,7 @@ export interface ProvisionResponse {
   id: string;
 }
 
-// POST /exec/{id}
+// POST /vms/{id}/exec
 export interface ExecRequest {
   command: string;
   timeout_secs?: number;
@@ -113,7 +113,7 @@ export interface ExecResponse {
   exit_code: number;
 }
 
-// POST /inspect/{id}
+// POST /vms/{id}/inspect
 export interface InspectRequest {
   sql: string;
 }
@@ -123,7 +123,7 @@ export interface InspectResponse {
   rows: Record<string, string | number | null>[];
 }
 
-// POST /read_file/{id}
+// POST /vms/{id}/files/read
 export interface ReadFileRequest {
   path: string;
 }
@@ -132,7 +132,7 @@ export interface ReadFileResponse {
   content: string;
 }
 
-// POST /write_file/{id}
+// POST /vms/{id}/files/write
 export interface WriteFileRequest {
   path: string;
   content: string;

@@ -27,7 +27,7 @@ def test_create_delete_reuse_name():
             assert wait_exec_ready(client, name, timeout=EXEC_READY_TIMEOUT), \
                 f"Cycle {cycle}: VM never exec-ready"
 
-            exec_resp = client.post(f"/exec/{name}", {"command": f"echo cycle-{cycle}"})
+            exec_resp = client.post(f"/vms/{name}/exec", {"command": f"echo cycle-{cycle}"})
             assert f"cycle-{cycle}" in exec_resp.get("stdout", ""), \
                 f"Cycle {cycle}: exec output wrong"
 

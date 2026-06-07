@@ -36,7 +36,7 @@ PERSIST_PATHS = [
 
 def _exec(client, name, command):
     return client.post(
-        f"/exec/{name}",
+        f"/vms/{name}/exec",
         {"command": command, "timeout_secs": EXEC_TIMEOUT_SECS},
     )
 

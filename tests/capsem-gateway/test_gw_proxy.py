@@ -30,8 +30,8 @@ class TestProxyForwarding:
         assert "id" in resp
 
     def test_post_exec_returns_stdout(self, gw_client):
-        """POST /exec/{id} returns command output."""
-        resp = gw_client.post("/exec/vm-001", {"command": "echo hello"})
+        """POST /vms/{id}/exec returns command output."""
+        resp = gw_client.post("/vms/vm-001/exec", {"command": "echo hello"})
         assert resp is not None
         assert resp.get("exit_code") == 0
         assert "echo hello" in resp.get("stdout", "")

@@ -136,7 +136,7 @@ payload = {
 print(json.dumps(payload))
 """
         result = svc.client().post(
-            f"/exec/{vm}",
+            f"/vms/{vm}/exec",
             {"command": _guest_python(inspect_script), "timeout_secs": 30},
             timeout=40,
         )
@@ -151,7 +151,7 @@ print(json.dumps(payload))
 
         for cli in ("claude", "gemini"):
             cli_result = svc.client().post(
-                f"/exec/{vm}",
+                f"/vms/{vm}/exec",
                 {"command": f"{cli} --help >/tmp/{cli}.help 2>&1; echo rc=$?", "timeout_secs": 20},
                 timeout=30,
             )
@@ -160,7 +160,7 @@ print(json.dumps(payload))
 
         db_path = _session_db(svc, vm)
         curl_result = svc.client().post(
-            f"/exec/{vm}",
+            f"/vms/{vm}/exec",
             {
                 "command": (
                     "curl -sS --max-time 15 -o /dev/null "

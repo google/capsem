@@ -204,7 +204,7 @@ fn build_purge_body(params: &PurgeParams) -> Value {
     json!({ "all": params.all.unwrap_or(false) })
 }
 
-/// Body for POST /read_file/{id}.
+/// Body for POST /vms/{id}/files/read.
 fn build_read_file_body(params: &FileReadParams) -> Value {
     json!({ "path": params.path })
 }
@@ -593,7 +593,7 @@ impl CapsemHandler {
     async fn vm_logs(&self, Parameters(params): Parameters<LogsParams>) -> Result<String, String> {
         match self
             .client
-            .request::<Value, Value>("GET", &format!("/logs/{}", params.id), None)
+            .request::<Value, Value>("GET", &format!("/vms/{}/logs", params.id), None)
             .await
         {
             Ok(mut val) => {
@@ -711,7 +711,7 @@ impl CapsemHandler {
         Parameters(params): Parameters<TimelineMcpParams>,
     ) -> Result<String, String> {
         let path = format!(
-            "/timeline/{}{}",
+            "/vms/{}/timeline{}",
             params.id,
             query_string(&[
                 ("trace_id", params.trace_id.clone()),
@@ -763,7 +763,7 @@ impl CapsemHandler {
         let body = build_exec_body(&params);
         let resp = self
             .client
-            .request::<Value, Value>("POST", &format!("/exec/{}", params.id), Some(body))
+            .request::<Value, Value>("POST", &format!("/vms/{}/exec", params.id), Some(body))
             .await;
         format_service_response(resp)
     }
@@ -779,7 +779,11 @@ impl CapsemHandler {
         let body = build_read_file_body(&params);
         let resp = self
             .client
-            .request::<Value, Value>("POST", &format!("/read_file/{}", params.id), Some(body))
+            .request::<Value, Value>(
+                "POST",
+                &format!("/vms/{}/files/read", params.id),
+                Some(body),
+            )
             .await;
         format_service_response(resp)
     }
@@ -792,7 +796,7 @@ impl CapsemHandler {
         &self,
         Parameters(params): Parameters<FileWriteParams>,
     ) -> Result<String, String> {
-        let path = format!("/write_file/{}", params.id);
+        let path = format!("/vms/{}/files/write", params.id);
         let resp = self
             .client
             .request::<FileWriteParams, Value>("POST", &path, Some(params))
@@ -816,7 +820,7 @@ impl CapsemHandler {
         &self,
         Parameters(params): Parameters<InspectParams>,
     ) -> Result<String, String> {
-        let path = format!("/inspect/{}", params.id);
+        let path = format!("/vms/{}/inspect", params.id);
         let resp = self
             .client
             .request::<InspectParams, Value>("POST", &path, Some(params))

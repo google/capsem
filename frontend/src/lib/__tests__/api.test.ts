@@ -215,32 +215,38 @@ describe('api', () => {
       await api.init();
     });
 
-    it('execCommand sends POST /exec/{id}', async () => {
+    it('execCommand sends POST /vms/{id}/exec', async () => {
       mockFetch.mockReturnValueOnce(jsonResponse({ stdout: 'hello', stderr: '', exit_code: 0 }));
       const result = await api.execCommand('vm-1', 'echo hello');
+      const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
+      expect(call[0]).toContain('/vms/vm-1/exec');
       expect(result.stdout).toBe('hello');
       expect(result.exit_code).toBe(0);
     });
 
-    it('readFile sends POST /read_file/{id}', async () => {
+    it('readFile sends POST /vms/{id}/files/read', async () => {
       mockFetch.mockReturnValueOnce(jsonResponse({ content: 'file contents' }));
       const result = await api.readFile('vm-1', '/etc/hosts');
+      const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
+      expect(call[0]).toContain('/vms/vm-1/files/read');
       expect(result.content).toBe('file contents');
     });
 
-    it('writeFile sends POST /write_file/{id}', async () => {
+    it('writeFile sends POST /vms/{id}/files/write', async () => {
       mockFetch.mockReturnValueOnce(jsonResponse(null));
       await api.writeFile('vm-1', '/tmp/test', 'data');
       const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
-      expect(call[0]).toContain('/write_file/vm-1');
+      expect(call[0]).toContain('/vms/vm-1/files/write');
       const body = JSON.parse(call[1].body);
       expect(body.path).toBe('/tmp/test');
       expect(body.content).toBe('data');
     });
 
-    it('inspectQuery sends POST /inspect/{id}', async () => {
+    it('inspectQuery sends POST /vms/{id}/inspect', async () => {
       mockFetch.mockReturnValueOnce(jsonResponse({ columns: ['n'], rows: [{ n: 1 }] }));
       const result = await api.inspectQuery('vm-1', 'SELECT 1 as n');
+      const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
+      expect(call[0]).toContain('/vms/vm-1/inspect');
       expect(result.columns).toEqual(['n']);
     });
   });

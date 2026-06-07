@@ -23,7 +23,7 @@ def test_wal_absent_after_clean_shutdown():
         assert wait_exec_ready(client, name, timeout=EXEC_READY_TIMEOUT)
 
         # Generate some activity to create WAL entries
-        client.post(f"/exec/{name}", {"command": "echo wal-test"})
+        client.post(f"/vms/{name}/exec", {"command": "echo wal-test"})
 
         # Clean shutdown
         client.delete(f"/vms/{name}/delete")

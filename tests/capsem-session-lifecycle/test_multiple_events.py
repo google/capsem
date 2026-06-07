@@ -18,7 +18,7 @@ def test_multiple_execs_create_ordered_events(lifecycle_env, lifecycle_db):
         "echo event-gamma",
     ]
     for cmd in commands:
-        client.post(f"/exec/{vm_name}", {"command": cmd})
+        client.post(f"/vms/{vm_name}/exec", {"command": cmd})
 
     # Wait for async writer
     time.sleep(3)
@@ -41,7 +41,7 @@ def test_net_event_has_domain_field(lifecycle_env, lifecycle_db):
     client, vm_name, _, _ = lifecycle_env
 
     # Trigger a request to a default-allowed domain so it reaches HTTP telemetry.
-    client.post(f"/exec/{vm_name}", {
+    client.post(f"/vms/{vm_name}/exec", {
         "command": "curl -s -o /dev/null https://elie.net/ 2>&1 || true"
     })
 

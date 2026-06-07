@@ -50,7 +50,7 @@ def test_service_healthy_after_orphan_cleanup():
             assert wait_exec_ready(client2, name2, timeout=EXEC_READY_TIMEOUT), \
                 "New VM should become exec-ready after recovery"
 
-            exec_resp = client2.post(f"/exec/{name2}", {"command": "echo recovered"})
+            exec_resp = client2.post(f"/vms/{name2}/exec", {"command": "echo recovered"})
             assert "recovered" in exec_resp.get("stdout", ""), "Exec should work after recovery"
 
             client2.delete(f"/vms/{name2}/delete")

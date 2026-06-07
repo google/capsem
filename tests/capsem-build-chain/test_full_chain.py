@@ -25,7 +25,7 @@ def test_full_chain_boot_exec_delete(signed_binaries):
             f"VM {name} never became exec-ready"
         )
 
-        resp = client.post(f"/exec/{name}", {"command": "echo chain-works"})
+        resp = client.post(f"/vms/{name}/exec", {"command": "echo chain-works"})
         assert resp is not None
         assert "chain-works" in resp.get("stdout", ""), (
             f"Expected 'chain-works' in stdout, got: {resp}"

@@ -1391,7 +1391,7 @@ async fn main() -> Result<()> {
                 timeout_secs: *timeout,
             };
             let resp: ApiResponse<ExecResponse> =
-                client.post(&format!("/exec/{}", session), req).await?;
+                client.post(&format!("/vms/{}/exec", session), req).await?;
             let resp = resp.into_result()?;
             if !resp.stdout.is_empty() {
                 print!("{}", resp.stdout);
@@ -1487,7 +1487,8 @@ async fn main() -> Result<()> {
         }
         Commands::Session(SessionCommands::Logs { session, tail }) => {
             client::validate_id(session)?;
-            let resp: ApiResponse<LogsResponse> = client.get(&format!("/logs/{}", session)).await?;
+            let resp: ApiResponse<LogsResponse> =
+                client.get(&format!("/vms/{}/logs", session)).await?;
             let logs = resp.into_result()?;
 
             let tail_lines = |text: &str, n: usize| -> String {
@@ -1534,7 +1535,7 @@ async fn main() -> Result<()> {
         }) => {
             client::validate_id(session)?;
             let limit = if *all { 100_000 } else { *tail };
-            let mut url = format!("/history/{}?limit={}&layer={}", session, limit, layer);
+            let mut url = format!("/vms/{}/history?limit={}&layer={}", session, limit, layer);
             if let Some(q) = search {
                 url.push_str(&format!(
                     "&search={}",
@@ -2041,7 +2042,7 @@ async fn handle_cp(client: &client::UdsClient, src: &str, dst: &str) -> Result<(
         (Some((session, guest_path)), None) => {
             client::validate_id(session)?;
             let url = format!(
-                "/files/{session}/content?path={}",
+                "/vms/{session}/files/content?path={}",
                 urlencoding::encode(guest_path)
             );
             let (bytes, _ct) = client.request_bytes("GET", &url, None, None).await?;
@@ -2071,7 +2072,7 @@ async fn handle_cp(client: &client::UdsClient, src: &str, dst: &str) -> Result<(
                 std::fs::read(src).with_context(|| format!("read {src}"))?
             };
             let url = format!(
-                "/files/{session}/content?path={}",
+                "/vms/{session}/files/content?path={}",
                 urlencoding::encode(guest_path)
             );
             let (resp_body, _ct) = client

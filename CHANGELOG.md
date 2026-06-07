@@ -41,6 +41,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   discovered or brokered through runtime security events and settings references
   instead of being copied through a setup wizard.
 
+### Changed (service/API)
+- Moved VM APIs under the explicit `/vms/...` contract. VM creation, listing,
+  info, stop, pause, delete, resume, save, fork, exec, logs, inspect, history,
+  timeline, and file read/write/list/content routes now live under
+  `/vms`/`/vms/{vm_id}`; the retired top-level routes fail closed in the
+  service/gateway route contract.
+
 ### Added (security event rule spine)
 - Replaced callback-shaped Policy V2 authoring with one native rule contract
   over canonical `SecurityEvent`: `[corp.rules.*]`, `[profiles.rules.*]`, and

@@ -32,8 +32,8 @@ class TestProxyEndpointCoverage:
         assert "error" in resp
 
     def test_post_exec_command(self, gw_client):
-        """POST /exec/{id} returns stdout, stderr, exit_code."""
-        resp = gw_client.post("/exec/vm-001", {"command": "whoami"})
+        """POST /vms/{id}/exec returns stdout, stderr, exit_code."""
+        resp = gw_client.post("/vms/vm-001/exec", {"command": "whoami"})
         assert resp is not None
         assert "stdout" in resp
         assert resp.get("exit_code") == 0
@@ -44,21 +44,21 @@ class TestProxyEndpointCoverage:
         assert resp is not None
 
     def test_post_write_file(self, gw_client):
-        """POST /write_file/{id} returns success."""
-        resp = gw_client.post("/write_file/vm-001", {
+        """POST /vms/{id}/files/write returns success."""
+        resp = gw_client.post("/vms/vm-001/files/write", {
             "path": "/root/test.txt",
             "content": "hello",
         })
         assert resp is not None
 
     def test_post_read_file(self, gw_client):
-        """POST /read_file/{id} returns file content."""
-        resp = gw_client.post("/read_file/vm-001", {"path": "/root/test.txt"})
+        """POST /vms/{id}/files/read returns file content."""
+        resp = gw_client.post("/vms/vm-001/files/read", {"path": "/root/test.txt"})
         assert resp is not None
 
     def test_post_inspect(self, gw_client):
-        """POST /inspect/{id} returns SQL query results."""
-        resp = gw_client.post("/inspect/vm-001", {"query": "SELECT 1"})
+        """POST /vms/{id}/inspect returns SQL query results."""
+        resp = gw_client.post("/vms/vm-001/inspect", {"query": "SELECT 1"})
         assert resp is not None
 
     def test_post_persist(self, gw_client):
@@ -89,8 +89,8 @@ class TestProxyEndpointCoverage:
         assert resp.get("name") == "snapshot1"
 
     def test_get_logs(self, gw_client):
-        """GET /logs/{id} returns boot logs."""
-        resp = gw_client.get("/logs/vm-001")
+        """GET /vms/{id}/logs returns boot logs."""
+        resp = gw_client.get("/vms/vm-001/logs")
         assert resp is not None
         assert "logs" in resp
 
@@ -135,7 +135,7 @@ class TestProxyEdgeCases:
             "env": {"FOO": "bar", "BAZ": "qux"},
             "options": {"timeout": 30, "verbose": True},
         }
-        resp = gw_client.post("/exec/vm-001", payload)
+        resp = gw_client.post("/vms/vm-001/exec", payload)
         assert resp is not None
         assert resp.get("exit_code") == 0
 

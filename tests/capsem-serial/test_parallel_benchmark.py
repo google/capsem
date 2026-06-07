@@ -38,7 +38,7 @@ def _run_benchmark_in_vm(client, vm_name):
     t0 = time.monotonic()
     # capsem-bench all might take ~2 min, so set a large timeout
     resp = client.post(
-        f"/exec/{vm_name}",
+        f"/vms/{vm_name}/exec",
         {"command": "capsem-bench all", "timeout_secs": 300},
         timeout=310,
     )

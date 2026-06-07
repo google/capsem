@@ -47,7 +47,7 @@ Tray app  -> capsem-gateway (TCP)-> HTTP/UDS -> capsem-service
 ```
 
 **Entry points for exec:**
-- `capsem exec <id> "cmd"` -> service HTTP `/exec/{id}` -> process IPC -> vsock
+- `capsem exec <id> "cmd"` -> service HTTP `/vms/{id}/exec` -> process IPC -> vsock
 - `capsem run "cmd"` -> service HTTP `/run` -> provision + exec + destroy
 - MCP `capsem_exec` / `capsem_run` -> service HTTP -> same path
 
@@ -71,16 +71,16 @@ Tray app  -> capsem-gateway (TCP)-> HTTP/UDS -> capsem-service
 | POST | `/vms/create` | Create a new sandbox VM (set `persistent: true` for named VMs) |
 | GET | `/vms/list` | List all sandboxes (running + stopped persistent) |
 | GET | `/vms/{id}/info` | Sandbox details (config, status, persistent) |
-| POST | `/exec/{id}` | Execute command, return stdout/stderr/exit_code |
+| POST | `/vms/{id}/exec` | Execute command, return stdout/stderr/exit_code |
 | POST | `/run` | One-shot: provision temp VM, exec command, destroy, return output |
 | POST | `/vms/{id}/stop` | Stop VM (persistent: preserve state; ephemeral: destroy) |
 | POST | `/vms/{id}/resume` | Resume a stopped persistent VM |
 | POST | `/vms/{id}/save` | Convert running ephemeral VM to persistent |
 | POST | `/purge` | Kill all temp VMs (set `all: true` to include persistent) |
-| POST | `/write_file/{id}` | Write file to guest |
-| GET | `/read_file/{id}?path=...` | Read file from guest |
-| GET | `/logs/{id}` | Serial/boot logs |
-| POST | `/inspect/{id}` | Raw SQL query against session.db |
+| POST | `/vms/{id}/files/write` | Write file to guest |
+| POST | `/vms/{id}/files/read` | Read file from guest |
+| GET | `/vms/{id}/logs` | Serial/boot logs |
+| POST | `/vms/{id}/inspect` | Raw SQL query against session.db |
 | DELETE | `/vms/{id}/delete` | Destroy VM and wipe all state |
 | POST | `/vms/{id}/fork` | Fork a VM into a reusable image |
 | GET | `/images` | List all user images |

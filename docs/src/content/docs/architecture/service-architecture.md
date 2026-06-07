@@ -155,16 +155,16 @@ The service exposes a REST API over UDS. The gateway proxies this transparently.
 | POST | `/vms/create` | Create a new VM (`persistent: true` for named VMs) |
 | GET | `/vms/list` | List all VMs (running + stopped persistent) |
 | GET | `/vms/{id}/info` | VM details (config, status, persistent) |
-| POST | `/exec/{id}` | Execute command, return stdout/stderr/exit_code |
+| POST | `/vms/{id}/exec` | Execute command, return stdout/stderr/exit_code |
 | POST | `/run` | One-shot: provision + exec + destroy |
 | POST | `/vms/{id}/stop` | Stop VM (persistent: preserve; ephemeral: destroy) |
 | POST | `/vms/{id}/resume` | Resume a stopped persistent VM |
 | POST | `/vms/{id}/save` | Convert ephemeral to persistent |
 | POST | `/purge` | Kill all temp VMs (`all: true` includes persistent) |
-| POST | `/write_file/{id}` | Write file to guest |
-| POST | `/read_file/{id}` | Read file from guest |
-| GET | `/logs/{id}` | Serial/boot logs |
-| POST | `/inspect/{id}` | SQL query against session.db |
+| POST | `/vms/{id}/files/write` | Write file to guest |
+| POST | `/vms/{id}/files/read` | Read file from guest |
+| GET | `/vms/{id}/logs` | Serial/boot logs |
+| POST | `/vms/{id}/inspect` | SQL query against session.db |
 | DELETE | `/vms/{id}/delete` | Destroy VM and wipe state |
 | POST | `/vms/{id}/pause` | Suspend VM to disk (persistent only) |
 | POST | `/vms/{id}/fork` | Fork VM into reusable image |

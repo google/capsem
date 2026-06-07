@@ -489,16 +489,16 @@ fn server_info_name_and_version() {
 fn path_construction_with_traversal() {
     // Verify how VM IDs flow into URL paths -- a malicious ID could cause path traversal
     let id = "../../../etc/passwd";
-    let path = format!("/exec/{}", id);
-    assert_eq!(path, "/exec/../../../etc/passwd");
+    let path = format!("/vms/{}/exec", id);
+    assert_eq!(path, "/vms/../../../etc/passwd/exec");
     // This gets sent as an HTTP path; the service must validate the ID
 }
 
 #[test]
 fn path_construction_with_empty_id() {
     let id = "";
-    let path = format!("/exec/{}", id);
-    assert_eq!(path, "/exec/");
+    let path = format!("/vms/{}/exec", id);
+    assert_eq!(path, "/vms//exec");
     // Empty IDs should be rejected by the service
 }
 

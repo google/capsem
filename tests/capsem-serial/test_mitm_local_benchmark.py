@@ -266,7 +266,7 @@ def test_mitm_local_benchmark_artifact():
             ]
         )
         resp = client.post(
-            f"/exec/{name}",
+            f"/vms/{name}/exec",
             {"command": command, "timeout_secs": 300},
             timeout=310,
         )
@@ -278,7 +278,7 @@ def test_mitm_local_benchmark_artifact():
         )
 
         resp = client.post(
-            f"/exec/{name}",
+            f"/vms/{name}/exec",
             {"command": "cat /tmp/capsem-benchmark.json", "timeout_secs": 15},
             timeout=20,
         )

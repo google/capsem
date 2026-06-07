@@ -297,6 +297,19 @@ VM must name a profile.
 | `POST` | `/vms/{vm_id}/fork` | Fork this VM into a reusable image/profile target. |
 | `GET` | `/vms/{vm_id}/fork/status` | Runtime status/progress for the most recent fork operation. |
 | `POST` | `/vms/{vm_id}/reload-profile` | Apply the current profile config to this VM when supported. |
+| `POST` | `/vms/{vm_id}/exec` | Execute a command in the VM. |
+| `GET` | `/vms/{vm_id}/logs` | Read VM serial/process logs. |
+| `POST` | `/vms/{vm_id}/inspect` | Run an explicit diagnostic query against the VM session ledger. |
+| `GET` | `/vms/{vm_id}/timeline` | Read the VM timeline projection. |
+| `GET` | `/vms/{vm_id}/history` | Read command/history ledger rows. |
+| `GET` | `/vms/{vm_id}/history/processes` | Read process-grouped history rows. |
+| `GET` | `/vms/{vm_id}/history/counts` | Read history counters. |
+| `GET` | `/vms/{vm_id}/history/transcript` | Read the base64 transcript projection. |
+| `POST` | `/vms/{vm_id}/files/read` | Read a guest file through the structured file I/O body. |
+| `POST` | `/vms/{vm_id}/files/write` | Write a guest file through the structured file I/O body. |
+| `GET` | `/vms/{vm_id}/files/list` | List guest/workspace files. |
+| `GET` | `/vms/{vm_id}/files/content` | Download guest/workspace file bytes. |
+| `POST` | `/vms/{vm_id}/files/content` | Upload guest/workspace file bytes. |
 
 VM records store the immutable profile id they execute plus any explicit
 VM-specific resource overrides. Runtime events carry profile id and VM id when
@@ -366,6 +379,10 @@ These are not final 1.3 contracts:
 | `/corp/endpoints/info` | Fold into `/corp/info` and `/corp/edit`. |
 | `/mcp/tools` | Burn. MCP tools live under `/profiles/{profile_id}/mcp/servers/{server_id}/tools/list`. |
 | `/mcp/policy` | Burn. MCP decisions are profile rules. |
+| `/provision`, `/list`, `/info/{id}`, `/stop/{id}` | Burn. Use `/vms/create`, `/vms/list`, `/vms/{vm_id}/info`, and `/vms/{vm_id}/stop`. |
+| `/suspend/{id}`, `/delete/{id}`, `/resume/{id}`, `/persist/{id}`, `/fork/{id}` | Burn. Use `/vms/{vm_id}/pause`, `/vms/{vm_id}/delete`, `/vms/{vm_id}/resume`, `/vms/{vm_id}/save`, and `/vms/{vm_id}/fork`. |
+| `/exec/{id}`, `/logs/{id}`, `/inspect/{id}`, `/timeline/{id}` | Burn. Use `/vms/{vm_id}/exec`, `/vms/{vm_id}/logs`, `/vms/{vm_id}/inspect`, and `/vms/{vm_id}/timeline`. |
+| `/read_file/{id}`, `/write_file/{id}`, `/files/{id}`, `/files/{id}/content`, `/history/{id}` | Burn. Use `/vms/{vm_id}/files/read`, `/vms/{vm_id}/files/write`, `/vms/{vm_id}/files/list`, `/vms/{vm_id}/files/content`, and `/vms/{vm_id}/history`. |
 | `/providers` | Burn. Provider is not a profile API object in 1.3. |
 | MCP permission mutation in settings | Move to profile MCP config plus profile rules. |
 | Provider/model config in settings | Burn/reshape as profile credentials plus rules. |

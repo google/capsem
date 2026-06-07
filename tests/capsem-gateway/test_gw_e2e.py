@@ -57,7 +57,7 @@ class TestGatewayE2E:
         assert vm_id in ids, f"VM {vm_id} not in list: {ids}"
 
         # Exec
-        exec_resp = e2e_client.post(f"/exec/{vm_id}", {
+        exec_resp = e2e_client.post(f"/vms/{vm_id}/exec", {
             "command": "echo gateway-works",
         })
         assert exec_resp is not None
@@ -116,7 +116,7 @@ class TestGatewayE2E:
         # Server must internally wait for VM readiness.
         try:
             exec_resp = e2e_client.post(
-                f"/exec/{vm_id}",
+                f"/vms/{vm_id}/exec",
                 {"command": "echo race-ok", "timeout_secs": EXEC_TIMEOUT_SECS},
                 timeout=HTTP_TIMEOUT,
             )
@@ -156,14 +156,14 @@ class TestGatewayFileIO:
 
         try:
             # Write file
-            write_resp = e2e_client.post(f"/write_file/{vm_id}", {
+            write_resp = e2e_client.post(f"/vms/{vm_id}/files/write", {
                 "path": "/root/gw-test.txt",
                 "content": "gateway file io test",
             })
             assert write_resp is not None
 
             # Read file back
-            read_resp = e2e_client.post(f"/read_file/{vm_id}", {
+            read_resp = e2e_client.post(f"/vms/{vm_id}/files/read", {
                 "path": "/root/gw-test.txt",
             })
             assert read_resp is not None
@@ -181,13 +181,13 @@ class TestGatewayFileIO:
         assert wait_exec_ready_tcp(e2e_client, vm_id, timeout=60)
 
         try:
-            write_resp = e2e_client.post(f"/write_file/{vm_id}", {
+            write_resp = e2e_client.post(f"/vms/{vm_id}/files/write", {
                 "path": "/root/special.txt",
                 "content": "line1\nline2\ttab\n",
             })
             assert write_resp is not None
 
-            exec_resp = e2e_client.post(f"/exec/{vm_id}", {
+            exec_resp = e2e_client.post(f"/vms/{vm_id}/exec", {
                 "command": "wc -l /root/special.txt",
             })
             assert exec_resp is not None
@@ -213,7 +213,7 @@ class TestGatewayPersistence:
 
         try:
             # Write a marker file
-            e2e_client.post(f"/write_file/{vm_id}", {
+            e2e_client.post(f"/vms/{vm_id}/files/write", {
                 "path": "/root/persist-marker.txt",
                 "content": "survived-restart",
             })
@@ -232,7 +232,7 @@ class TestGatewayPersistence:
             assert wait_exec_ready_tcp(e2e_client, resumed_id, timeout=60)
 
             # Check marker file survived
-            exec_resp = e2e_client.post(f"/exec/{resumed_id}", {
+            exec_resp = e2e_client.post(f"/vms/{resumed_id}/exec", {
                 "command": "cat /root/persist-marker.txt",
             })
             assert exec_resp is not None
@@ -262,7 +262,7 @@ class TestGatewayLogs:
     """Log retrieval through the gateway."""
 
     def test_logs_for_running_vm(self, e2e_client):
-        """GET /logs/{id} returns boot logs for a running VM."""
+        """GET /vms/{id}/logs returns boot logs for a running VM."""
         name = vm_name("gw-logs")
         resp = e2e_client.post("/vms/create", {
             "name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS,
@@ -271,7 +271,7 @@ class TestGatewayLogs:
         assert wait_exec_ready_tcp(e2e_client, vm_id, timeout=60)
 
         try:
-            logs_resp = e2e_client.get(f"/logs/{vm_id}")
+            logs_resp = e2e_client.get(f"/vms/{vm_id}/logs")
             assert logs_resp is not None
             assert "logs" in logs_resp
         finally:
@@ -293,7 +293,7 @@ class TestGatewayEnvVars:
         assert wait_exec_ready_tcp(e2e_client, vm_id, timeout=60)
 
         try:
-            exec_resp = e2e_client.post(f"/exec/{vm_id}", {
+            exec_resp = e2e_client.post(f"/vms/{vm_id}/exec", {
                 "command": "echo $GW_TEST_VAR",
             })
             assert exec_resp is not None
@@ -310,7 +310,7 @@ def wait_exec_ready_tcp(client, vm_id, timeout=EXEC_READY_TIMEOUT):
     """
     try:
         resp = client.post(
-            f"/exec/{vm_id}",
+            f"/vms/{vm_id}/exec",
             {"command": "echo ready", "timeout_secs": timeout},
             timeout=timeout + 5,
         )

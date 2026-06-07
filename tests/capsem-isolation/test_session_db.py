@@ -27,7 +27,7 @@ def test_exec_event_only_in_own_db(multi_vm_env):
 
     # Run a distinctive command in VM-A only
     marker = "isolation-marker-12345"
-    client.post(f"/exec/{vm_a}", {"command": f"echo {marker}"})
+    client.post(f"/vms/{vm_a}/exec", {"command": f"echo {marker}"})
 
     # Check VM-B's session.db does NOT contain the marker
     db_b = tmp_dir / "sessions" / vm_b / "session.db"

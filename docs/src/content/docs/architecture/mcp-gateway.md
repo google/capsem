@@ -54,7 +54,7 @@ sequenceDiagram
     participant Svc as capsem-service
 
     Agent->>MCP: tools/call (capsem_exec)
-    MCP->>Svc: POST /exec/{id} (HTTP/UDS)
+    MCP->>Svc: POST /vms/{id}/exec (HTTP/UDS)
     Svc-->>MCP: {stdout, stderr, exit_code}
     MCP-->>Agent: tool result
 ```
@@ -68,10 +68,10 @@ sequenceDiagram
 | `capsem_create` | Create a new VM (name, RAM, CPUs, env, image) | `POST /vms/create` |
 | `capsem_list` | List all VMs with status and config | `GET /vms/list` |
 | `capsem_info` | VM details (ID, PID, status, persistent) | `GET /vms/{id}/info` |
-| `capsem_exec` | Run shell command inside VM (timeout param) | `POST /exec/{id}` |
+| `capsem_exec` | Run shell command inside VM (timeout param) | `POST /vms/{id}/exec` |
 | `capsem_run` | One-shot: provision + exec + destroy | `POST /run` |
-| `capsem_read_file` | Read file from guest filesystem | `GET /read_file/{id}` |
-| `capsem_write_file` | Write file to guest filesystem | `POST /write_file/{id}` |
+| `capsem_read_file` | Read file from guest filesystem | `POST /vms/{id}/files/read` |
+| `capsem_write_file` | Write file to guest filesystem | `POST /vms/{id}/files/write` |
 | `capsem_stop` | Stop VM (persistent: preserve, ephemeral: destroy) | `POST /vms/{id}/stop` |
 | `capsem_suspend` | Suspend VM (save RAM/CPU state) | `POST /vms/{id}/pause` |
 | `capsem_resume` | Resume stopped persistent VM | `POST /vms/{id}/resume` |
@@ -79,14 +79,14 @@ sequenceDiagram
 | `capsem_delete` | Permanently destroy VM and all state | `DELETE /vms/{id}/delete` |
 | `capsem_purge` | Kill all temp VMs (all=true includes persistent) | `POST /purge` |
 | `capsem_fork` | Fork VM into reusable image | `POST /vms/{id}/fork` |
-| `capsem_vm_logs` | Get serial/process logs (grep + tail params) | `GET /logs/{id}` |
+| `capsem_vm_logs` | Get serial/process logs (grep + tail params) | `GET /vms/{id}/logs` |
 | `capsem_service_logs` | Get service logs (grep + tail params) | Service log file |
 | `capsem_host_logs` | Get an allowlisted host log by symbolic name | `GET /host-logs/{name}` |
 | `capsem_panics` | Extract structured panics and backtraces from host logs | `GET /panics` |
 | `capsem_triage` | Summarize recent panics, IPC drops, server errors, and slow ops | `GET /triage` |
-| `capsem_timeline` | Render a time-ordered session timeline by event layer and trace ID | `GET /timeline/{id}` |
+| `capsem_timeline` | Render a time-ordered session timeline by event layer and trace ID | `GET /vms/{id}/timeline` |
 | `capsem_inspect_schema` | Get CREATE TABLE statements for telemetry DB | Schema constant |
-| `capsem_inspect` | Run SQL query against VM's session.db | `POST /inspect/{id}` |
+| `capsem_inspect` | Run SQL query against VM's session.db | `POST /vms/{id}/inspect` |
 | `capsem_version` | MCP server version and service connectivity | Local + service |
 | `capsem_mcp_servers` | List configured guest MCP servers | Service MCP IPC |
 | `capsem_mcp_tools` | List discovered guest MCP tools | Service MCP IPC |

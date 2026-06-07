@@ -28,7 +28,7 @@ def exhaustive_env():
 
     # Run workloads to populate tables
     # Network event: curl an allowed domain
-    client.post(f"/exec/{vm_name}", {
+    client.post(f"/vms/{vm_name}/exec", {
         "command": "curl -s -o /dev/null https://elie.net/ 2>&1 || true"
     })
     # File event: write a file

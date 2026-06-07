@@ -19,7 +19,7 @@ def test_workspace_writable(config_svc):
         client.post("/vms/create", {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
         assert wait_exec_ready(client, name, timeout=EXEC_READY_TIMEOUT)
 
-        resp = client.post(f"/exec/{name}", {
+        resp = client.post(f"/vms/{name}/exec", {
             "command": "echo test_data > /root/write_test.txt && cat /root/write_test.txt"
         })
         stdout = resp.get("stdout", "") if resp else ""

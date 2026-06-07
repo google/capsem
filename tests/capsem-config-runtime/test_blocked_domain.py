@@ -21,7 +21,7 @@ def test_blocked_domain_denied(config_svc):
 
         # Try to access a domain that should be blocked by default policy
         # Most policies block everything except an allowlist
-        resp = client.post(f"/exec/{name}", {
+        resp = client.post(f"/vms/{name}/exec", {
             "command": "curl -s -o /dev/null -w '%{http_code}' --max-time 5 https://malware.example.com 2>&1; echo exit=$?"
         })
         stdout = resp.get("stdout", "") if resp else ""

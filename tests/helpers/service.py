@@ -277,7 +277,7 @@ def wait_exec_ready(client, vm_name, timeout=EXEC_READY_TIMEOUT):
     """
     try:
         resp = client.post(
-            f"/exec/{vm_name}",
+            f"/vms/{vm_name}/exec",
             {"command": "echo ready", "timeout_secs": timeout},
             timeout=timeout + 5,
         )

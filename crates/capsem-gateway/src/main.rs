@@ -220,11 +220,11 @@ fn service_proxy_routes() -> Router<Arc<AppState>> {
         .route("/vms/create", post(proxy::handle_proxy))
         .route("/vms/list", get(proxy::handle_proxy))
         .route("/vms/{id}/info", get(proxy::handle_proxy))
-        .route("/logs/{id}", get(proxy::handle_proxy))
-        .route("/inspect/{id}", post(proxy::handle_proxy))
-        .route("/exec/{id}", post(proxy::handle_proxy))
-        .route("/write_file/{id}", post(proxy::handle_proxy))
-        .route("/read_file/{id}", post(proxy::handle_proxy))
+        .route("/vms/{id}/logs", get(proxy::handle_proxy))
+        .route("/vms/{id}/inspect", post(proxy::handle_proxy))
+        .route("/vms/{id}/exec", post(proxy::handle_proxy))
+        .route("/vms/{id}/files/write", post(proxy::handle_proxy))
+        .route("/vms/{id}/files/read", post(proxy::handle_proxy))
         .route("/vms/{id}/stop", post(proxy::handle_proxy))
         .route("/vms/{id}/pause", post(proxy::handle_proxy))
         .route("/vms/{id}/delete", delete(proxy::handle_proxy))
@@ -237,7 +237,7 @@ fn service_proxy_routes() -> Router<Arc<AppState>> {
         .route("/triage", get(proxy::handle_proxy))
         .route("/panics", get(proxy::handle_proxy))
         .route("/host-logs/{name}", get(proxy::handle_proxy))
-        .route("/timeline/{id}", get(proxy::handle_proxy))
+        .route("/vms/{id}/timeline", get(proxy::handle_proxy))
         .route("/vms/{id}/security/latest", get(proxy::handle_proxy))
         .route("/vms/{id}/security/status", get(proxy::handle_proxy))
         .route("/vms/{id}/detection/latest", get(proxy::handle_proxy))
@@ -302,13 +302,13 @@ fn service_proxy_routes() -> Router<Arc<AppState>> {
             "/profiles/{profile_id}/mcp/servers/{server_id}/tools/{tool_id}/call",
             post(proxy::handle_proxy),
         )
-        .route("/history/{id}", get(proxy::handle_proxy))
-        .route("/history/{id}/processes", get(proxy::handle_proxy))
-        .route("/history/{id}/counts", get(proxy::handle_proxy))
-        .route("/history/{id}/transcript", get(proxy::handle_proxy))
-        .route("/files/{id}", get(proxy::handle_proxy))
+        .route("/vms/{id}/history", get(proxy::handle_proxy))
+        .route("/vms/{id}/history/processes", get(proxy::handle_proxy))
+        .route("/vms/{id}/history/counts", get(proxy::handle_proxy))
+        .route("/vms/{id}/history/transcript", get(proxy::handle_proxy))
+        .route("/vms/{id}/files/list", get(proxy::handle_proxy))
         .route(
-            "/files/{id}/content",
+            "/vms/{id}/files/content",
             get(proxy::handle_proxy).post(proxy::handle_proxy),
         )
 }
@@ -455,6 +455,19 @@ mod tests {
             ("POST", "/vms/create"),
             ("GET", "/vms/list"),
             ("GET", "/vms/test-vm/info"),
+            ("GET", "/vms/test-vm/logs"),
+            ("POST", "/vms/test-vm/inspect"),
+            ("POST", "/vms/test-vm/exec"),
+            ("POST", "/vms/test-vm/files/write"),
+            ("POST", "/vms/test-vm/files/read"),
+            ("GET", "/vms/test-vm/files/list"),
+            ("GET", "/vms/test-vm/files/content?path=/root/a.txt"),
+            ("POST", "/vms/test-vm/files/content?path=/root/a.txt"),
+            ("GET", "/vms/test-vm/history"),
+            ("GET", "/vms/test-vm/history/processes"),
+            ("GET", "/vms/test-vm/history/counts"),
+            ("GET", "/vms/test-vm/history/transcript"),
+            ("GET", "/vms/test-vm/timeline"),
             ("POST", "/vms/test-vm/stop"),
             ("POST", "/vms/test-vm/pause"),
             ("DELETE", "/vms/test-vm/delete"),
@@ -519,6 +532,19 @@ mod tests {
             ("GET", "/list"),
             ("GET", "/info/test-vm"),
             ("POST", "/stop/test-vm"),
+            ("GET", "/logs/test-vm"),
+            ("POST", "/inspect/test-vm"),
+            ("POST", "/exec/test-vm"),
+            ("POST", "/write_file/test-vm"),
+            ("POST", "/read_file/test-vm"),
+            ("GET", "/files/test-vm"),
+            ("GET", "/files/test-vm/content?path=/root/a.txt"),
+            ("POST", "/files/test-vm/content?path=/root/a.txt"),
+            ("GET", "/history/test-vm"),
+            ("GET", "/history/test-vm/processes"),
+            ("GET", "/history/test-vm/counts"),
+            ("GET", "/history/test-vm/transcript"),
+            ("GET", "/timeline/test-vm"),
             ("POST", "/suspend/test-vm"),
             ("DELETE", "/delete/test-vm"),
             ("POST", "/resume/test-vm"),

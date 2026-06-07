@@ -111,43 +111,55 @@ class MockServiceHandler(BaseHTTPRequestHandler):
                 self._send_json(MOCK_VMS[vm_id])
             else:
                 self._send_error(404, f"sandbox {vm_id} not found")
-        elif self.clean_path.startswith("/logs/"):
+        elif path_only.startswith("/vms/") and path_only.endswith("/logs"):
             self._send_json({"logs": "mock boot log\n", "serial_logs": None, "process_logs": None})
+        elif path_only.startswith("/vms/") and path_only.endswith("/files/list"):
+            self._send_json({"entries": []})
+        elif path_only.startswith("/vms/") and path_only.endswith("/files/content"):
+            body = b"mock file bytes"
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
         else:
             self._send_error(404, f"unknown endpoint: {self.clean_path}")
 
     def do_POST(self):
         body = self._read_body()
-        if self.clean_path == "/vms/create":
+        path_only = self.clean_path.split("?", 1)[0]
+        if path_only == "/vms/create":
             data = json.loads(body) if body else {}
             vm_id = f"vm-{uuid.uuid4().hex[:8]}"
             self._send_json({"id": vm_id})
-        elif self.clean_path.startswith("/exec/"):
+        elif path_only.startswith("/vms/") and path_only.endswith("/exec"):
             data = json.loads(body) if body else {}
             cmd = data.get("command", "")
             self._send_json({"stdout": f"mock: {cmd}\n", "stderr": "", "exit_code": 0})
-        elif self.clean_path.startswith("/vms/") and self.clean_path.endswith("/stop"):
+        elif path_only.startswith("/vms/") and path_only.endswith("/stop"):
             self._send_json({"ok": True})
-        elif self.clean_path.startswith("/write_file/"):
+        elif path_only.startswith("/vms/") and path_only.endswith("/files/write"):
             self._send_json({"success": True})
-        elif self.clean_path.startswith("/read_file/"):
+        elif path_only.startswith("/vms/") and path_only.endswith("/files/read"):
             self._send_json({"content": "mock file content"})
-        elif self.clean_path.startswith("/inspect/"):
+        elif path_only.startswith("/vms/") and path_only.endswith("/files/content"):
+            self._send_json({"success": True, "size": len(body)})
+        elif path_only.startswith("/vms/") and path_only.endswith("/inspect"):
             self._send_json({"columns": [], "rows": []})
-        elif self.clean_path.startswith("/vms/") and self.clean_path.endswith("/save"):
+        elif path_only.startswith("/vms/") and path_only.endswith("/save"):
             self._send_json({"ok": True})
-        elif self.clean_path == "/purge":
+        elif path_only == "/purge":
             self._send_json({"purged": 0, "persistent_purged": 0, "ephemeral_purged": 0})
-        elif self.clean_path == "/run":
+        elif path_only == "/run":
             self._send_json({"stdout": "mock run output\n", "stderr": "", "exit_code": 0})
-        elif self.clean_path.startswith("/vms/") and self.clean_path.endswith("/resume"):
+        elif path_only.startswith("/vms/") and path_only.endswith("/resume"):
             self._send_json({"id": "vm-resumed"})
-        elif self.clean_path.startswith("/vms/") and self.clean_path.endswith("/fork"):
+        elif path_only.startswith("/vms/") and path_only.endswith("/fork"):
             data = json.loads(body) if body else {}
             self._send_json({"name": data.get("name", "fork"), "size_bytes": 1024})
-        elif self.clean_path.startswith("/profiles/") and self.clean_path.endswith("/reload"):
+        elif path_only.startswith("/profiles/") and path_only.endswith("/reload"):
             self._send_json({"ok": True})
-        elif self.clean_path == "/echo":
+        elif path_only == "/echo":
             # Echo back the request body for proxy testing
             self.send_response(200)
             self.send_header("Content-Type", "application/octet-stream")

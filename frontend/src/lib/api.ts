@@ -292,7 +292,7 @@ export async function forkVm(id: string, opts: ForkRequest): Promise<ForkRespons
 
 // -- VM inspection --
 
-/** Raw log response from GET /logs/{id}. */
+/** Raw log response from GET /vms/{id}/logs. */
 export interface RawLogsResponse {
   logs: string;
   serial_logs: string | null;
@@ -302,7 +302,7 @@ export interface RawLogsResponse {
 export async function getVmLogs(id: string): Promise<RawLogsResponse> {
   if (!_connected) return { logs: '', serial_logs: null, process_logs: null };
   try {
-    const resp = await _get(`/logs/${encodeURIComponent(id)}`);
+    const resp = await _get(`/vms/${encodeURIComponent(id)}/logs`);
     return await resp.json();
   } catch (err) {
     if (isNetworkError(err)) {
@@ -332,7 +332,7 @@ export async function execCommand(
   command: string,
   timeoutSecs?: number,
 ): Promise<ExecResponse> {
-  const resp = await _post(`/exec/${encodeURIComponent(id)}`, {
+  const resp = await _post(`/vms/${encodeURIComponent(id)}/exec`, {
     command,
     timeout_secs: timeoutSecs,
   });
@@ -342,7 +342,7 @@ export async function execCommand(
 export async function inspectQuery(id: string, sql: string): Promise<InspectResponse> {
   if (!_connected) return { columns: [], rows: [] };
   try {
-    const resp = await _post(`/inspect/${encodeURIComponent(id)}`, { sql });
+    const resp = await _post(`/vms/${encodeURIComponent(id)}/inspect`, { sql });
     return await resp.json();
   } catch (err) {
     if (isNetworkError(err)) {
@@ -354,12 +354,12 @@ export async function inspectQuery(id: string, sql: string): Promise<InspectResp
 }
 
 export async function readFile(id: string, path: string): Promise<ReadFileResponse> {
-  const resp = await _post(`/read_file/${encodeURIComponent(id)}`, { path });
+  const resp = await _post(`/vms/${encodeURIComponent(id)}/files/read`, { path });
   return await resp.json();
 }
 
 export async function writeFile(id: string, path: string, content: string): Promise<void> {
-  await _post(`/write_file/${encodeURIComponent(id)}`, { path, content });
+  await _post(`/vms/${encodeURIComponent(id)}/files/write`, { path, content });
 }
 
 // -- Images --
@@ -782,7 +782,7 @@ export async function listFiles(id: string, path?: string, depth?: number): Prom
   if (path) params.set('path', sanitizePath(path));
   if (depth != null) params.set('depth', String(depth));
   const qs = params.toString();
-  const url = `/files/${encodeURIComponent(id)}${qs ? `?${qs}` : ''}`;
+  const url = `/vms/${encodeURIComponent(id)}/files/list${qs ? `?${qs}` : ''}`;
   const resp = await _get(url);
   return await resp.json();
 }
@@ -790,7 +790,7 @@ export async function listFiles(id: string, path?: string, depth?: number): Prom
 /** Download a file from a VM workspace. Returns text, blob, and size. */
 export async function getFileContent(id: string, path: string): Promise<FileContentResult> {
   const sanitized = sanitizePath(path);
-  const resp = await fetch(`${_baseUrl}/files/${encodeURIComponent(id)}/content?path=${encodeURIComponent(sanitized)}`, {
+  const resp = await fetch(`${_baseUrl}/vms/${encodeURIComponent(id)}/files/content?path=${encodeURIComponent(sanitized)}`, {
     headers: { Authorization: `Bearer ${_token}` },
   });
   if (!resp.ok) {
@@ -806,7 +806,7 @@ export async function getFileContent(id: string, path: string): Promise<FileCont
 export async function uploadFile(id: string, path: string, content: Blob | string): Promise<FileUploadResponse> {
   const sanitized = sanitizePath(path);
   const body = typeof content === 'string' ? new Blob([content]) : content;
-  const resp = await fetch(`${_baseUrl}/files/${encodeURIComponent(id)}/content?path=${encodeURIComponent(sanitized)}`, {
+  const resp = await fetch(`${_baseUrl}/vms/${encodeURIComponent(id)}/files/content?path=${encodeURIComponent(sanitized)}`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${_token}`,

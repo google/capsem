@@ -64,7 +64,7 @@ def test_capsem_bench_baseline():
         # 10-minute cap covers the 256MB disk tests + 10MB download +
         # 50 HTTP requests + snapshot ops without false-timing.
         resp = client.post(
-            f"/exec/{name}",
+            f"/vms/{name}/exec",
             {"command": "capsem-bench all", "timeout_secs": 600},
             timeout=610,
         )
@@ -78,7 +78,7 @@ def test_capsem_bench_baseline():
         # guest/artifacts/capsem_bench/__main__.py). Pull it out before
         # the VM is torn down.
         resp = client.post(
-            f"/exec/{name}",
+            f"/vms/{name}/exec",
             {"command": "cat /tmp/capsem-benchmark.json", "timeout_secs": 15},
             timeout=20,
         )

@@ -3650,7 +3650,7 @@ async fn handle_inspect(
     ))
 }
 
-/// `GET /timeline/{id}?trace_id=<X>&since=10m&limit=200&layers=mcp,exec,...`
+/// `GET /vms/{id}/timeline?trace_id=<X>&since=10m&limit=200&layers=mcp,exec,...`
 /// -- unified time-ordered event stream for one session, joining
 /// `exec_events`, `mcp_calls`, `net_events`, `fs_events`, and
 /// `model_calls` via UNION ALL. Used by the `capsem_timeline` MCP tool.
@@ -4263,7 +4263,7 @@ fn resolve_session_dir(state: &ServiceState, id: &str) -> Result<PathBuf, AppErr
     ))
 }
 
-/// GET /history/{id} -- unified command history (exec + audit events).
+/// GET /vms/{id}/history -- unified command history (exec + audit events).
 async fn handle_history(
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
@@ -4301,7 +4301,7 @@ async fn handle_history(
     }))
 }
 
-/// GET /history/{id}/processes -- process-centric view of audit events.
+/// GET /vms/{id}/history/processes -- process-centric view of audit events.
 async fn handle_history_processes(
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
@@ -4326,7 +4326,7 @@ async fn handle_history_processes(
     Ok(Json(api::HistoryProcessesResponse { processes }))
 }
 
-/// GET /history/{id}/counts -- exec and audit event counts.
+/// GET /vms/{id}/history/counts -- exec and audit event counts.
 async fn handle_history_counts(
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
@@ -4354,7 +4354,7 @@ async fn handle_history_counts(
     }))
 }
 
-/// GET /history/{id}/transcript -- raw PTY output (base64-encoded).
+/// GET /vms/{id}/history/transcript -- raw PTY output (base64-encoded).
 async fn handle_history_transcript(
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
@@ -5520,11 +5520,11 @@ async fn main() -> Result<()> {
         .route("/vms/create", post(handle_provision))
         .route("/vms/list", get(handle_list))
         .route("/vms/{id}/info", get(handle_info))
-        .route("/logs/{id}", get(handle_logs))
-        .route("/inspect/{id}", post(handle_inspect))
-        .route("/exec/{id}", post(handle_exec))
-        .route("/write_file/{id}", post(handle_write_file))
-        .route("/read_file/{id}", post(handle_read_file))
+        .route("/vms/{id}/logs", get(handle_logs))
+        .route("/vms/{id}/inspect", post(handle_inspect))
+        .route("/vms/{id}/exec", post(handle_exec))
+        .route("/vms/{id}/files/write", post(handle_write_file))
+        .route("/vms/{id}/files/read", post(handle_read_file))
         .route("/vms/{id}/stop", post(handle_stop))
         .route("/vms/{id}/pause", post(handle_suspend))
         .route("/vms/{id}/delete", delete(handle_delete))
@@ -5537,7 +5537,7 @@ async fn main() -> Result<()> {
         .route("/triage", get(handle_triage))
         .route("/panics", get(handle_panics))
         .route("/host-logs/{name}", get(handle_host_logs))
-        .route("/timeline/{id}", get(handle_timeline))
+        .route("/vms/{id}/timeline", get(handle_timeline))
         .route("/vms/{id}/security/latest", get(handle_security_latest))
         .route("/vms/{id}/security/status", get(handle_security_info))
         .route("/vms/{id}/detection/latest", get(handle_security_latest))
@@ -5602,13 +5602,16 @@ async fn main() -> Result<()> {
             "/profiles/{profile_id}/mcp/servers/{server_id}/tools/{tool_id}/call",
             post(handle_profile_mcp_tool_call),
         )
-        .route("/history/{id}", get(handle_history))
-        .route("/history/{id}/processes", get(handle_history_processes))
-        .route("/history/{id}/counts", get(handle_history_counts))
-        .route("/history/{id}/transcript", get(handle_history_transcript))
-        .route("/files/{id}", get(handle_list_files))
+        .route("/vms/{id}/history", get(handle_history))
+        .route("/vms/{id}/history/processes", get(handle_history_processes))
+        .route("/vms/{id}/history/counts", get(handle_history_counts))
         .route(
-            "/files/{id}/content",
+            "/vms/{id}/history/transcript",
+            get(handle_history_transcript),
+        )
+        .route("/vms/{id}/files/list", get(handle_list_files))
+        .route(
+            "/vms/{id}/files/content",
             get(handle_download_file).post(handle_upload_file),
         )
         .layer(TraceLayer::new_for_http())

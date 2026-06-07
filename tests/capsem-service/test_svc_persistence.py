@@ -106,13 +106,13 @@ class TestResumeLifecycle:
 
         # 2. Write a file inside the VM
         marker = f"persistence-test-{uuid.uuid4().hex[:8]}"
-        client.post(f"/write_file/{name}", {
+        client.post(f"/vms/{name}/files/write", {
             "path": f"/root/{marker}",
             "content": f"hello from {marker}",
         })
 
         # 3. Verify file exists
-        read_resp = client.post(f"/read_file/{name}", {"path": f"/root/{marker}"})
+        read_resp = client.post(f"/vms/{name}/files/read", {"path": f"/root/{marker}"})
         assert marker in str(read_resp), f"File not found before stop: {read_resp}"
 
         # 4. Stop the VM (preserves state)
@@ -125,7 +125,7 @@ class TestResumeLifecycle:
         wait_exec_ready(client, resumed_id, timeout=EXEC_READY_TIMEOUT)
 
         # 6. Read the file back -- it must survive
-        read_resp2 = client.post(f"/read_file/{resumed_id}", {"path": f"/root/{marker}"})
+        read_resp2 = client.post(f"/vms/{resumed_id}/files/read", {"path": f"/root/{marker}"})
         assert marker in str(read_resp2), (
             f"File did not survive stop+resume! Before: had marker. After: {read_resp2}"
         )

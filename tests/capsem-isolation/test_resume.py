@@ -27,7 +27,7 @@ def test_resume_after_neighbor_delete():
         assert wait_exec_ready(client, vm_b), f"VM-B never exec-ready"
 
         # Write a file in VM-A
-        client.post(f"/write_file/{vm_a}", {
+        client.post(f"/vms/{vm_a}/files/write", {
             "path": "/root/resume-test.txt",
             "content": "still-here",
         })
@@ -36,11 +36,11 @@ def test_resume_after_neighbor_delete():
         client.delete(f"/vms/{vm_b}/delete")
 
         # VM-A file should still be there
-        resp = client.post(f"/read_file/{vm_a}", {"path": "/root/resume-test.txt"})
+        resp = client.post(f"/vms/{vm_a}/files/read", {"path": "/root/resume-test.txt"})
         assert resp.get("content") == "still-here"
 
         # VM-A exec should still work
-        resp = client.post(f"/exec/{vm_a}", {"command": "echo alive"})
+        resp = client.post(f"/vms/{vm_a}/exec", {"command": "echo alive"})
         assert "alive" in resp.get("stdout", "")
 
         # VM-B should be gone from list

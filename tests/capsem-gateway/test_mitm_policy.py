@@ -40,7 +40,7 @@ def test_mitm_policy_telemetry(service_env, client):
         blocked_domain = "malware.example.com"
         
         # Run curl in guest
-        client.post(f"/exec/{vm_name}", {
+        client.post(f"/vms/{vm_name}/exec", {
             "command": f"curl -s https://{blocked_domain} || true"
         })
         

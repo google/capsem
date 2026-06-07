@@ -30,7 +30,7 @@ def test_virtiofs_path_traversal(client):
         
         traversal_path = "/root/../session.db"
         
-        resp = client.post(f"/exec/{vm_name}", {"command": f"cat {traversal_path} 2>&1"})
+        resp = client.post(f"/vms/{vm_name}/exec", {"command": f"cat {traversal_path} 2>&1"})
         stdout = resp.get("stdout", "") if resp else ""
         
         # If it leaked, we might see SQLite header or content.

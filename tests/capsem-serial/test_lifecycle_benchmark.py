@@ -88,7 +88,7 @@ def _run_lifecycle(client):
     assert ready, f"VM {name} never became exec-ready"
 
     t0 = time.monotonic()
-    resp = client.post(f"/exec/{name}", {"command": "echo ok", "timeout_secs": 10}, timeout=15)
+    resp = client.post(f"/vms/{name}/exec", {"command": "echo ok", "timeout_secs": 10}, timeout=15)
     exec_ms = (time.monotonic() - t0) * 1000
     assert resp is not None and "ok" in resp.get("stdout", "")
 
@@ -120,14 +120,14 @@ def _run_fork_benchmark(client):
         assert wait_exec_ready(client, src, timeout=EXEC_READY_TIMEOUT), f"{src} not ready"
 
         # Install a package (rootfs overlay change)
-        resp = client.post(f"/exec/{src}", {
+        resp = client.post(f"/vms/{src}/exec", {
             "command": "apt-get update -qq && apt-get install -y -qq jq 2>&1 | tail -1",
             "timeout_secs": 120,
         }, timeout=130)
         assert resp and resp.get("exit_code") == 0, f"apt-get failed: {resp}"
 
         # Write workspace file
-        client.post(f"/write_file/{src}", {
+        client.post(f"/vms/{src}/files/write", {
             "path": "/root/bench.txt",
             "content": "fork-benchmark-marker",
         })
@@ -153,11 +153,11 @@ def _run_fork_benchmark(client):
         boot_ready_ms = (time.monotonic() - t0) * 1000
 
         # Verify packages survived (rootfs overlay)
-        resp = client.post(f"/exec/{dst}", {"command": "which jq", "timeout_secs": 10}, timeout=15)
+        resp = client.post(f"/vms/{dst}/exec", {"command": "which jq", "timeout_secs": 10}, timeout=15)
         pkg_survived = resp is not None and resp.get("exit_code") == 0
 
         # Verify workspace survived
-        resp = client.post(f"/exec/{dst}", {
+        resp = client.post(f"/vms/{dst}/exec", {
             "command": "cat /root/bench.txt", "timeout_secs": 10,
         }, timeout=15)
         ws_survived = resp is not None and "fork-benchmark-marker" in resp.get("stdout", "")

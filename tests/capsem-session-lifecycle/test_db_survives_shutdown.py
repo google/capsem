@@ -25,7 +25,7 @@ def test_db_survives_clean_shutdown():
         assert wait_exec_ready(client, vm_name), f"VM {vm_name} never exec-ready"
 
         # Run a command to generate some data
-        client.post(f"/exec/{vm_name}", {"command": "echo session-test"})
+        client.post(f"/vms/{vm_name}/exec", {"command": "echo session-test"})
 
         import time
         time.sleep(3)

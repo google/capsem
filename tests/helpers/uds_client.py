@@ -58,7 +58,7 @@ class UdsHttpClient:
         return self._curl("DELETE", path, timeout=timeout)
 
     def post_bytes(self, path, data, timeout=60):
-        """POST with a raw bytes body (for /files/{id}/content uploads). Returns parsed JSON."""
+        """POST with a raw bytes body (for /vms/{id}/files/content uploads). Returns parsed JSON."""
         cmd = [
             "curl", "-s", "-S",
             "--unix-socket", self.socket_path,

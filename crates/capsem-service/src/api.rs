@@ -242,13 +242,13 @@ pub struct FileListEntry {
     pub children: Option<Vec<FileListEntry>>,
 }
 
-/// Response for GET /files/{id}.
+/// Response for GET /vms/{id}/files/list.
 #[derive(Serialize, Debug)]
 pub struct FileListResponse {
     pub entries: Vec<FileListEntry>,
 }
 
-/// Response for POST /files/{id}/content (upload).
+/// Response for POST /vms/{id}/files/content (upload).
 #[derive(Serialize, Debug)]
 pub struct UploadResponse {
     pub success: bool,
@@ -322,7 +322,7 @@ pub struct InspectResponse {
     pub rows: Vec<Vec<serde_json::Value>>,
 }
 
-/// Query parameters for GET /history/{id}.
+/// Query parameters for GET /vms/{id}/history.
 #[derive(Deserialize, Debug)]
 #[allow(dead_code)]
 pub struct HistoryQuery {
@@ -344,7 +344,7 @@ fn default_history_layer() -> String {
     "all".to_string()
 }
 
-/// Response for GET /history/{id}.
+/// Response for GET /vms/{id}/history.
 #[derive(Serialize, Debug)]
 #[allow(dead_code)]
 pub struct HistoryResponse {
@@ -353,14 +353,14 @@ pub struct HistoryResponse {
     pub has_more: bool,
 }
 
-/// Response for GET /history/{id}/processes.
+/// Response for GET /vms/{id}/history/processes.
 #[derive(Serialize, Debug)]
 #[allow(dead_code)]
 pub struct HistoryProcessesResponse {
     pub processes: Vec<capsem_logger::ProcessEntry>,
 }
 
-/// Response for GET /history/{id}/counts.
+/// Response for GET /vms/{id}/history/counts.
 #[derive(Serialize, Debug)]
 #[allow(dead_code)]
 pub struct HistoryCountsResponse {
@@ -368,7 +368,7 @@ pub struct HistoryCountsResponse {
     pub audit_count: u64,
 }
 
-/// Query parameters for GET /history/{id}/transcript.
+/// Query parameters for GET /vms/{id}/history/transcript.
 #[derive(Deserialize, Debug)]
 #[allow(dead_code)]
 pub struct TranscriptQuery {
@@ -381,7 +381,7 @@ fn default_tail_lines() -> usize {
     500
 }
 
-/// Response for GET /history/{id}/transcript.
+/// Response for GET /vms/{id}/history/transcript.
 #[derive(Serialize, Debug)]
 #[allow(dead_code)]
 pub struct TranscriptResponse {

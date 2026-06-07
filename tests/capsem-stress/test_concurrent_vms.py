@@ -29,7 +29,7 @@ def test_create_five_vms():
 
         # Exec in each, verify isolation
         for i, name in enumerate(vms):
-            resp = client.post(f"/exec/{name}", {"command": f"echo vm-{i}"})
+            resp = client.post(f"/vms/{name}/exec", {"command": f"echo vm-{i}"})
             assert f"vm-{i}" in resp.get("stdout", "")
 
         # All in list

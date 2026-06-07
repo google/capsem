@@ -12,7 +12,7 @@ def test_exec_curl_creates_net_event(lifecycle_env, lifecycle_db):
     client, vm_name, _, _ = lifecycle_env
 
     # Trigger a network request
-    client.post(f"/exec/{vm_name}", {
+    client.post(f"/vms/{vm_name}/exec", {
         "command": "curl -s -o /dev/null https://elie.net/ 2>&1 || true"
     })
 

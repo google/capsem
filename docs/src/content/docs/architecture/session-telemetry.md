@@ -565,11 +565,11 @@ The `DbReader` provides pre-built aggregate queries:
 
 | Access point | Protocol | Query type |
 |-------------|----------|------------|
-| `capsem inspect <id> "SQL"` | CLI -> service HTTP `/inspect/{id}` | Raw SQL (read-only) |
+| `capsem inspect <id> "SQL"` | CLI -> service HTTP `/vms/{id}/inspect` | Raw SQL (read-only) |
 | `capsem info <id> --stats` | CLI -> service HTTP `/vms/{id}/info` | Pre-built `SessionStats` |
-| MCP `capsem_inspect` | MCP -> service HTTP `/inspect/{id}` | Raw SQL (read-only) |
+| MCP `capsem_inspect` | MCP -> service HTTP `/vms/{id}/inspect` | Raw SQL (read-only) |
 | MCP `capsem_inspect_schema` | MCP -> service HTTP | Table schemas for LLM context |
-| Frontend dashboard | Gateway -> `/inspect/{id}` | sql.js in-browser (downloads session.db) |
+| Frontend dashboard | Gateway -> `/vms/{id}/inspect` | sql.js in-browser (downloads session.db) |
 
 The `/inspect` endpoint executes arbitrary SQL against the session database in read-only mode (`query_only` pragma). The reader connection uses separate pragmas from the writer.
 

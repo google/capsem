@@ -426,7 +426,7 @@ export interface FileNode {
   sizeBytes?: number;
 }
 
-/** A file entry from the host-side files API (GET /files/{id}). */
+/** A file entry from the host-side files API (GET /vms/{id}/files/list). */
 export interface FileEntry {
   name: string;
   path: string;
@@ -439,12 +439,12 @@ export interface FileEntry {
   children?: FileEntry[];
 }
 
-/** Response from GET /files/{id}. */
+/** Response from GET /vms/{id}/files/list. */
 export interface FileListResponse {
   entries: FileEntry[];
 }
 
-/** Response from POST /files/{id}/content (upload). */
+/** Response from POST /vms/{id}/files/content (upload). */
 export interface FileUploadResponse {
   success: boolean;
   size: number;

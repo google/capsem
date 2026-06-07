@@ -1,6 +1,8 @@
 # 1.3 Model Breakage Audit
 
-Status: initial audit after approving the endpoint/profile posture.
+Status: living audit after approving the endpoint/profile posture. VM
+core/lifecycle/utility route breaks listed below have been resolved; remaining
+items still need burn-down.
 
 ## Target Model
 
@@ -28,14 +30,22 @@ Status: initial audit after approving the endpoint/profile posture.
 
 Evidence: `crates/capsem-service/src/main.rs:5531`.
 
-Current service routes still expose:
+Resolved VM route breaks:
 
-- `/provision`, `/list`, `/info/{id}` instead of `/vms/create`,
-  `/vms/list`, `/vms/{vm_id}/info`.
-- `/suspend/{id}` instead of `/vms/{vm_id}/pause`.
-- `/persist/{id}` instead of `/vms/{vm_id}/save`.
-- `/fork/{id}` instead of `/vms/{vm_id}/fork`.
-- `/resume/{name}` resumes by name, not immutable VM id.
+- `/provision`, `/list`, `/info/{id}`, and `/stop/{id}` now fail closed;
+  `/vms/create`, `/vms/list`, `/vms/{vm_id}/info`, and
+  `/vms/{vm_id}/stop` are live.
+- `/suspend/{id}`, `/persist/{id}`, `/fork/{id}`, `/resume/{name}`, and
+  `/delete/{id}` now fail closed; `/vms/{vm_id}/pause`,
+  `/vms/{vm_id}/save`, `/vms/{vm_id}/fork`, `/vms/{vm_id}/resume`, and
+  `/vms/{vm_id}/delete` are live.
+- `/exec/{id}`, `/logs/{id}`, `/inspect/{id}`, `/timeline/{id}`,
+  `/history/{id}`, `/read_file/{id}`, `/write_file/{id}`, `/files/{id}`, and
+  `/files/{id}/content` now fail closed; the VM utility surface lives under
+  `/vms/{vm_id}/...`.
+
+Current service routes still expose or still need replacement:
+
 - Retired `/security/{id}/info`, `/detections/{id}/info`, and
   `/enforcements/{id}/info` used `info` for ledger counters. VM-filtered
   ledger routes now live under `/vms/{vm_id}/security|detection|enforcement`
@@ -59,9 +69,11 @@ Current service routes still expose:
 
 Evidence: `crates/capsem-gateway/src/main.rs:218`.
 
-Gateway proxy routes mirror the service's old route set. The gateway must be
-updated in lock-step with service routes because HTTP and UDS must expose the
-same contract.
+Gateway proxy routes for VM core/lifecycle/utility, profile plugin/MCP,
+profile enforcement, settings, corp, profile reload, and ledger routes have
+been updated in lock-step with service routes. Remaining gateway work must keep
+following the same rule: HTTP and UDS expose the same contract, and retired
+routes fail closed.
 
 ### Config Builder Still Treats Settings As Behavior Owner
 
@@ -112,14 +124,10 @@ decisions must move to the CEL/security-rule rail.
 
 Evidence: `frontend/src/lib/api.ts:267`.
 
-Current frontend functions call:
+Resolved frontend VM route breaks:
 
-- `/provision`
-- `/stop/{id}`
-- `/suspend/{id}`
-- `/resume/{name}`
-- `/persist/{id}`
-- `/fork/{id}`
+- VM create/list/info/stop/lifecycle helpers now call `/vms/...`.
+- VM exec/logs/inspect/history/file helpers now call `/vms/{vm_id}/...`.
 
 Target functions should use `/vms/...` and expose `pause`, `resume`, `save`,
 `fork`, and `status`. VM profile id must not be editable.
