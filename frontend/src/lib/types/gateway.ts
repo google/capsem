@@ -98,6 +98,15 @@ export interface VmStatusResponse {
   last_error?: string;
 }
 
+// GET /vms/{id}/save/status, GET /vms/{id}/fork/status
+export interface VmOperationStatusResponse {
+  vm_id: string;
+  operation: string;
+  status: string;
+  in_progress: boolean;
+  message?: string;
+}
+
 // POST /vms/create, POST /run
 export interface ProvisionRequest {
   name?: string;

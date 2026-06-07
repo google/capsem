@@ -232,6 +232,8 @@ fn service_proxy_routes() -> Router<Arc<AppState>> {
         .route("/vms/{id}/delete", delete(proxy::handle_proxy))
         .route("/vms/{id}/resume", post(proxy::handle_proxy))
         .route("/vms/{id}/save", post(proxy::handle_proxy))
+        .route("/vms/{id}/save/status", get(proxy::handle_proxy))
+        .route("/vms/{id}/fork/status", get(proxy::handle_proxy))
         .route("/purge", post(proxy::handle_proxy))
         .route("/run", post(proxy::handle_proxy))
         .route("/stats", get(proxy::handle_proxy))
@@ -477,6 +479,8 @@ mod tests {
             ("DELETE", "/vms/test-vm/delete"),
             ("POST", "/vms/test-vm/resume"),
             ("POST", "/vms/test-vm/save"),
+            ("GET", "/vms/test-vm/save/status"),
+            ("GET", "/vms/test-vm/fork/status"),
             ("POST", "/vms/test-vm/fork"),
             ("POST", "/profiles/default/enforcement/evaluate"),
             (

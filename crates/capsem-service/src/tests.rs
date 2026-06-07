@@ -1551,6 +1551,37 @@ async fn handle_vm_edit_resource_changes_fail_explicitly() {
 }
 
 #[tokio::test]
+async fn handle_vm_operation_status_reports_idle_for_existing_vm() {
+    let state = make_test_state();
+    insert_fake_instance(&state, "ops-vm", 5150);
+
+    let Json(save) = handle_vm_save_status(State(Arc::clone(&state)), Path("ops-vm".into()))
+        .await
+        .unwrap();
+    assert_eq!(save.vm_id, "ops-vm");
+    assert_eq!(save.operation, "save");
+    assert_eq!(save.status, "idle");
+    assert!(!save.in_progress);
+
+    let Json(fork) = handle_vm_fork_status(State(state), Path("ops-vm".into()))
+        .await
+        .unwrap();
+    assert_eq!(fork.operation, "fork");
+    assert_eq!(fork.status, "idle");
+    assert!(!fork.in_progress);
+}
+
+#[tokio::test]
+async fn handle_vm_operation_status_rejects_unknown_vm() {
+    let state = make_test_state();
+
+    let err = handle_vm_save_status(State(state), Path("missing-vm".into()))
+        .await
+        .unwrap_err();
+    assert_eq!(err.0, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
 async fn handle_suspend_rejects_ephemeral_vm() {
     let (state, _dir) = make_test_state_with_tempdir();
 

@@ -2303,6 +2303,35 @@ async fn handle_vm_edit(
     Ok(Json(status))
 }
 
+async fn vm_operation_status(
+    state: Arc<ServiceState>,
+    id: String,
+    operation: &'static str,
+) -> Result<Json<api::VmOperationStatusResponse>, AppError> {
+    let _ = handle_vm_status(State(Arc::clone(&state)), Path(id.clone())).await?;
+    Ok(Json(api::VmOperationStatusResponse {
+        vm_id: id,
+        operation: operation.into(),
+        status: "idle".into(),
+        in_progress: false,
+        message: Some("operation progress is not asynchronous in this build".into()),
+    }))
+}
+
+async fn handle_vm_save_status(
+    State(state): State<Arc<ServiceState>>,
+    Path(id): Path<String>,
+) -> Result<Json<api::VmOperationStatusResponse>, AppError> {
+    vm_operation_status(state, id, "save").await
+}
+
+async fn handle_vm_fork_status(
+    State(state): State<Arc<ServiceState>>,
+    Path(id): Path<String>,
+) -> Result<Json<api::VmOperationStatusResponse>, AppError> {
+    vm_operation_status(state, id, "fork").await
+}
+
 /// GET /stats -- return full main.db aggregation in one response.
 async fn handle_stats(
     State(state): State<Arc<ServiceState>>,
@@ -5612,6 +5641,8 @@ async fn main() -> Result<()> {
         .route("/vms/{id}/delete", delete(handle_delete))
         .route("/vms/{id}/resume", post(handle_resume))
         .route("/vms/{id}/save", post(handle_persist))
+        .route("/vms/{id}/save/status", get(handle_vm_save_status))
+        .route("/vms/{id}/fork/status", get(handle_vm_fork_status))
         .route("/purge", post(handle_purge))
         .route("/run", post(handle_run))
         .route("/stats", get(handle_stats))

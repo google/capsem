@@ -53,6 +53,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   mutate immutable `profile_id` or unknown fields are rejected, and resource
   edits return explicit unsupported status until live edit semantics are
   implemented.
+- Added `GET /vms/{vm_id}/save/status` and
+  `GET /vms/{vm_id}/fork/status`; because save/fork are synchronous today,
+  existing VMs report explicit `idle` operation state rather than fake progress.
 
 ### Added (security event rule spine)
 - Replaced callback-shaped Policy V2 authoring with one native rule contract

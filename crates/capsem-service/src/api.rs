@@ -184,6 +184,16 @@ pub struct VmEditRequest {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
+pub struct VmOperationStatusResponse {
+    pub vm_id: String,
+    pub operation: String,
+    pub status: String,
+    pub in_progress: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
 pub struct PersistRequest {
     pub name: String,
 }
