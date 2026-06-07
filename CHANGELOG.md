@@ -68,6 +68,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   compiled profile rule inventory with source, default-rule, priority, action,
   detection level, plugin, and lock metadata so the UI can reflect backend rule
   truth instead of inventing grouping state.
+- Added `GET /profiles/{profile_id}/enforcement/info`, returning compiled
+  enforcement configuration counts by source/action plus default/custom,
+  detection, plugin, and corp-lock totals. Runtime counters remain table-backed
+  under VM enforcement status.
 
 ### Added (security event rule spine)
 - Replaced callback-shaped Policy V2 authoring with one native rule contract

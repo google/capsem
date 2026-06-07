@@ -4284,6 +4284,14 @@ fn enforcement_rule_source(source: SecurityRuleSource) -> api::EnforcementRuleSo
     }
 }
 
+fn enforcement_rule_source_str(source: api::EnforcementRuleSource) -> &'static str {
+    match source {
+        api::EnforcementRuleSource::BuiltinDefault => "builtin_default",
+        api::EnforcementRuleSource::Profile => "profile",
+        api::EnforcementRuleSource::Corp => "corp",
+    }
+}
+
 fn enforcement_rule_info(
     source: SecurityRuleSource,
     rule: CompiledSecurityRule,
@@ -4370,6 +4378,45 @@ fn list_enforcement_rules_for_profile(
             .then_with(|| left.rule_id.cmp(&right.rule_id))
     });
     Ok(rules)
+}
+
+fn enforcement_info_for_rules(
+    profile_id: String,
+    rules: &[api::EnforcementRuleInfo],
+) -> api::EnforcementInfoResponse {
+    let mut source_counts = BTreeMap::new();
+    let mut action_counts = BTreeMap::new();
+    for rule in rules {
+        *source_counts
+            .entry(enforcement_rule_source_str(rule.source).to_string())
+            .or_insert(0) += 1;
+        *action_counts
+            .entry(rule.action.as_str().to_string())
+            .or_insert(0) += 1;
+    }
+    api::EnforcementInfoResponse {
+        profile_id,
+        rule_count: rules.len(),
+        default_rule_count: rules.iter().filter(|rule| rule.default_rule).count(),
+        custom_rule_count: rules.iter().filter(|rule| !rule.default_rule).count(),
+        detection_rule_count: rules
+            .iter()
+            .filter(|rule| rule.detection_level.is_some())
+            .count(),
+        plugin_rule_count: rules.iter().filter(|rule| rule.plugin.is_some()).count(),
+        corp_locked_rule_count: rules.iter().filter(|rule| rule.corp_locked).count(),
+        source_counts,
+        action_counts,
+    }
+}
+
+async fn handle_enforcement_info(
+    Path(profile_id): Path<String>,
+) -> Result<Json<api::EnforcementInfoResponse>, AppError> {
+    let profile_id = validate_profile_route_id(profile_id)?;
+    let (user, corp) = capsem_core::net::policy_config::load_settings_files();
+    let rules = list_enforcement_rules_for_profile(&user, &corp)?;
+    Ok(Json(enforcement_info_for_rules(profile_id, &rules)))
 }
 
 async fn handle_enforcement_rules_list(
@@ -5876,6 +5923,10 @@ async fn main() -> Result<()> {
         .route(
             "/profiles/{profile_id}/enforcement/evaluate",
             post(handle_enforcement_evaluate),
+        )
+        .route(
+            "/profiles/{profile_id}/enforcement/info",
+            get(handle_enforcement_info),
         )
         .route(
             "/profiles/{profile_id}/enforcement/rules/{rule_id}/edit",

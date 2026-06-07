@@ -140,6 +140,18 @@ export interface EnforcementRuleListResponse {
   rules: EnforcementRuleInfo[];
 }
 
+export interface EnforcementInfoResponse {
+  profile_id: string;
+  rule_count: number;
+  default_rule_count: number;
+  custom_rule_count: number;
+  detection_rule_count: number;
+  plugin_rule_count: number;
+  corp_locked_rule_count: number;
+  source_counts: Record<string, number>;
+  action_counts: Record<string, number>;
+}
+
 // -- Initialization --
 
 export async function init(): Promise<InitResult> {
@@ -678,6 +690,11 @@ export async function getProfileInfo(profileId: string): Promise<ProfileInfoResp
 
 export async function listEnforcementRules(profileId: string): Promise<EnforcementRuleListResponse> {
   const resp = await _get(`/profiles/${encodeURIComponent(profileId)}/enforcement/rules/list`);
+  return await resp.json();
+}
+
+export async function getEnforcementInfo(profileId: string): Promise<EnforcementInfoResponse> {
+  const resp = await _get(`/profiles/${encodeURIComponent(profileId)}/enforcement/info`);
   return await resp.json();
 }
 

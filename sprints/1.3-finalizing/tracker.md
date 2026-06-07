@@ -62,7 +62,7 @@ commit.
   - `[ ] /profiles/{profile_id}/edit|delete|clone|validate`
   - `[x] /profiles/{profile_id}/reload`
   - `/profiles/{profile_id}/assets/info|edit|status|ensure`
-  - `/profiles/{profile_id}/enforcement/info|reload|evaluate`
+  - `[x] /profiles/{profile_id}/enforcement/info|reload|evaluate`
   - `[x] /profiles/{profile_id}/enforcement/rules/list`
   - `/profiles/{profile_id}/enforcement/rules/{rule_id}/edit|delete`
   - `/profiles/{profile_id}/detection/info|reload|evaluate`
@@ -127,6 +127,10 @@ commit.
   `GET /profiles/{profile_id}/enforcement/rules/list` in service, gateway, and
   frontend API. The response is compiled rule truth with source/default/priority
   metadata, and fake profile IDs fail closed.
+- [x] Add profile-owned enforcement info:
+  `GET /profiles/{profile_id}/enforcement/info` in service, gateway, and
+  frontend API. The response summarizes the same compiled rule inventory and
+  fake profile IDs fail closed.
 - [x] Replace the retired `/corp-config` mutation route with `PUT /corp/edit`
   in service and gateway, with regression tests proving the old route is not
   forwarded.

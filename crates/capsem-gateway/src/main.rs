@@ -258,6 +258,10 @@ fn service_proxy_routes() -> Router<Arc<AppState>> {
             post(proxy::handle_proxy),
         )
         .route(
+            "/profiles/{profile_id}/enforcement/info",
+            get(proxy::handle_proxy),
+        )
+        .route(
             "/profiles/{profile_id}/enforcement/rules/{rule_id}/edit",
             put(proxy::handle_proxy),
         )
@@ -497,6 +501,7 @@ mod tests {
             ("POST", "/vms/test-vm/fork"),
             ("POST", "/vms/test-vm/reload-profile"),
             ("POST", "/profiles/default/enforcement/evaluate"),
+            ("GET", "/profiles/default/enforcement/info"),
             (
                 "PUT",
                 "/profiles/default/enforcement/rules/eicar_block/edit",

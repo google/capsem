@@ -418,6 +418,25 @@ describe('api', () => {
       const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
       expect(call[0]).toContain('/profiles/default/enforcement/rules/list');
     });
+
+    it('getEnforcementInfo sends GET /profiles/{profile_id}/enforcement/info', async () => {
+      const response = {
+        profile_id: 'default',
+        rule_count: 8,
+        default_rule_count: 7,
+        custom_rule_count: 1,
+        detection_rule_count: 2,
+        plugin_rule_count: 1,
+        corp_locked_rule_count: 0,
+        source_counts: { builtin_default: 7, profile: 1 },
+        action_counts: { allow: 7, block: 1 },
+      };
+      mockFetch.mockReturnValueOnce(jsonResponse(response));
+      const result = await api.getEnforcementInfo('default');
+      expect(result).toEqual(response);
+      const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
+      expect(call[0]).toContain('/profiles/default/enforcement/info');
+    });
   });
 
   // ---- Plugins ----

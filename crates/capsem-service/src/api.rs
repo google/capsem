@@ -254,6 +254,19 @@ pub struct EnforcementRuleListResponse {
     pub rules: Vec<EnforcementRuleInfo>,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct EnforcementInfoResponse {
+    pub profile_id: String,
+    pub rule_count: usize,
+    pub default_rule_count: usize,
+    pub custom_rule_count: usize,
+    pub detection_rule_count: usize,
+    pub plugin_rule_count: usize,
+    pub corp_locked_rule_count: usize,
+    pub source_counts: BTreeMap<String, usize>,
+    pub action_counts: BTreeMap<String, usize>,
+}
+
 #[derive(Serialize, Deserialize, Debug)]
 pub struct PersistRequest {
     pub name: String,

@@ -327,6 +327,53 @@ async fn handle_enforcement_rules_list_rejects_unknown_profiles() {
 }
 
 #[tokio::test]
+async fn handle_enforcement_info_summarizes_compiled_rules() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+
+    let dir = tempfile::tempdir().unwrap();
+    let (_env_guard, user_path, _) = install_empty_settings_env(&dir);
+    let mut settings = capsem_core::net::policy_config::SettingsFile::default();
+    settings.profiles.rules.insert(
+        "skill_loaded".to_string(),
+        capsem_core::net::policy_config::SecurityRule {
+            name: "skill_loaded".to_string(),
+            action: capsem_core::net::policy_config::SecurityRuleAction::Allow,
+            condition: r#"file.read.path.contains("skills/")"#.to_string(),
+            detection_level: Some(capsem_core::net::policy_config::DetectionLevel::Informational),
+            priority: None,
+            corp_locked: false,
+            reason: Some("record skill file reads".to_string()),
+            plugin: None,
+            plugin_config: BTreeMap::new(),
+        },
+    );
+    capsem_core::net::policy_config::write_settings_file(&user_path, &settings).unwrap();
+
+    let Json(info) = handle_enforcement_info(Path("default".to_string()))
+        .await
+        .expect("info should summarize effective rules");
+
+    assert_eq!(info.profile_id, "default");
+    assert!(info.rule_count > 0);
+    assert!(info.default_rule_count > 0);
+    assert!(info.custom_rule_count >= 1);
+    assert!(info.detection_rule_count >= 1);
+    assert_eq!(info.source_counts["profile"], 1);
+    assert!(info.source_counts["builtin_default"] > 0);
+    assert!(info.action_counts.contains_key("allow"));
+}
+
+#[tokio::test]
+async fn handle_enforcement_info_rejects_unknown_profiles() {
+    let err = handle_enforcement_info(Path("strict".to_string()))
+        .await
+        .unwrap_err();
+
+    assert_eq!(err.0, StatusCode::NOT_FOUND);
+    assert!(err.1.contains("profile not found: strict"));
+}
+
+#[tokio::test]
 async fn profile_plugin_endpoint_matrix_dynamically_controls_enforcement_evaluation() {
     let state = make_test_state();
 
