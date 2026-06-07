@@ -95,10 +95,10 @@ commit.
   - `/profiles/{profile_id}/mcp/info`
   - `/profiles/{profile_id}/mcp/servers/list`
   - `/profiles/{profile_id}/mcp/servers/{server_id}/...`
-  - `/profiles/{profile_id}/skills/info|list|add`
-  - `/profiles/{profile_id}/skills/{skill_id}/edit|delete`
-  - `/profiles/{profile_id}/credentials/info|status|list|reload`
-  - `/profiles/{profile_id}/credentials/{credential_id}/info|delete`
+  - `[x] /profiles/{profile_id}/skills/info|list|add`
+  - `[x] /profiles/{profile_id}/skills/{skill_id}/edit|delete`
+  - `[x] /profiles/{profile_id}/credentials/info|status|list|reload`
+  - `[x] /profiles/{profile_id}/credentials/{credential_id}/info|delete`
 - [ ] Add approved VM routes:
   - `/vms/list|create`
   - `/vms/{vm_id}/info|status|edit|delete`
@@ -166,6 +166,10 @@ commit.
   `/profiles/{profile_id}/assets/status` and
   `/profiles/{profile_id}/assets/ensure` in service, gateway, frontend API,
   CLI, and service integration tests. Old global asset routes fail closed.
+- [x] Add profile-owned skills and credentials routes in service, gateway, and
+  frontend API. Manifest-backed info/list routes are real; mutations and
+  per-credential inventory operations fail explicitly until profile/credential
+  persistence lands.
 - [x] Replace the retired `/corp-config` mutation route with `PUT /corp/edit`
   in service and gateway, with regression tests proving the old route is not
   forwarded.

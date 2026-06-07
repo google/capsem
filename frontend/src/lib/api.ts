@@ -728,6 +728,74 @@ export async function cloneProfile(profileId: string, request: Record<string, un
   return await resp.json();
 }
 
+export async function getProfileSkillsInfo(profileId: string): Promise<unknown> {
+  const resp = await _get(`/profiles/${encodeURIComponent(profileId)}/skills/info`);
+  return await resp.json();
+}
+
+export async function listProfileSkills(profileId: string): Promise<unknown> {
+  const resp = await _get(`/profiles/${encodeURIComponent(profileId)}/skills/list`);
+  return await resp.json();
+}
+
+export async function addProfileSkill(profileId: string, request: Record<string, unknown>): Promise<unknown> {
+  const resp = await _post(`/profiles/${encodeURIComponent(profileId)}/skills/add`, request);
+  return await resp.json();
+}
+
+export async function editProfileSkill(
+  profileId: string,
+  skillId: string,
+  request: Record<string, unknown>,
+): Promise<unknown> {
+  const resp = await _patch(
+    `/profiles/${encodeURIComponent(profileId)}/skills/${encodeURIComponent(skillId)}/edit`,
+    request,
+  );
+  return await resp.json();
+}
+
+export async function deleteProfileSkill(profileId: string, skillId: string): Promise<unknown> {
+  const resp = await _delete(
+    `/profiles/${encodeURIComponent(profileId)}/skills/${encodeURIComponent(skillId)}/delete`,
+  );
+  return await resp.json();
+}
+
+export async function getProfileCredentialsInfo(profileId: string): Promise<unknown> {
+  const resp = await _get(`/profiles/${encodeURIComponent(profileId)}/credentials/info`);
+  return await resp.json();
+}
+
+export async function getProfileCredentialsStatus(profileId: string): Promise<unknown> {
+  const resp = await _get(`/profiles/${encodeURIComponent(profileId)}/credentials/status`);
+  return await resp.json();
+}
+
+export async function listProfileCredentials(profileId: string): Promise<unknown> {
+  const resp = await _get(`/profiles/${encodeURIComponent(profileId)}/credentials/list`);
+  return await resp.json();
+}
+
+export async function reloadProfileCredentials(profileId: string): Promise<unknown> {
+  const resp = await _post(`/profiles/${encodeURIComponent(profileId)}/credentials/reload`, {});
+  return await resp.json();
+}
+
+export async function getProfileCredentialInfo(profileId: string, credentialId: string): Promise<unknown> {
+  const resp = await _get(
+    `/profiles/${encodeURIComponent(profileId)}/credentials/${encodeURIComponent(credentialId)}/info`,
+  );
+  return await resp.json();
+}
+
+export async function deleteProfileCredential(profileId: string, credentialId: string): Promise<unknown> {
+  const resp = await _delete(
+    `/profiles/${encodeURIComponent(profileId)}/credentials/${encodeURIComponent(credentialId)}/delete`,
+  );
+  return await resp.json();
+}
+
 // -- Enforcement rules --
 
 export async function listEnforcementRules(profileId: string): Promise<EnforcementRuleListResponse> {

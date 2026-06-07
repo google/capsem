@@ -326,6 +326,68 @@ async fn profile_mutation_routes_fail_explicitly_until_profile_files_exist() {
 }
 
 #[tokio::test]
+async fn profile_skills_routes_reflect_manifest_and_gate_mutations() {
+    let Json(info) = handle_profile_skills_info(Path("default".to_string()))
+        .await
+        .expect("skills info should reflect profile manifest");
+    assert_eq!(info["profile_id"], "default");
+    assert_eq!(info["skill_count"], 0);
+
+    let Json(list) = handle_profile_skills_list(Path("default".to_string()))
+        .await
+        .expect("skills list should reflect profile manifest");
+    assert_eq!(list["profile_id"], "default");
+    assert!(list["skills"].as_array().unwrap().is_empty());
+
+    let add = handle_profile_skill_add(Path("default".to_string()))
+        .await
+        .unwrap_err();
+    assert_eq!(add.0, StatusCode::NOT_IMPLEMENTED);
+
+    let edit = handle_profile_skill_edit(Path(("default".to_string(), "build".to_string())))
+        .await
+        .unwrap_err();
+    assert_eq!(edit.0, StatusCode::NOT_IMPLEMENTED);
+
+    let delete = handle_profile_skill_delete(Path(("default".to_string(), "build".to_string())))
+        .await
+        .unwrap_err();
+    assert_eq!(delete.0, StatusCode::NOT_IMPLEMENTED);
+}
+
+#[tokio::test]
+async fn profile_credentials_routes_reflect_manifest_and_gate_inventory_mutations() {
+    let Json(info) = handle_profile_credentials_info(Path("default".to_string()))
+        .await
+        .expect("credentials info should reflect profile manifest");
+    assert_eq!(info["profile_id"], "default");
+    assert_eq!(info["broker_enabled"], true);
+
+    let Json(status) = handle_profile_credentials_status(Path("default".to_string()))
+        .await
+        .expect("credentials status should reflect profile manifest");
+    assert_eq!(status["profile_id"], "default");
+    assert_eq!(status["credential_count"], 0);
+
+    let Json(list) = handle_profile_credentials_list(Path("default".to_string()))
+        .await
+        .expect("credentials list should be explicit");
+    assert_eq!(list["profile_id"], "default");
+    assert!(list["credentials"].as_array().unwrap().is_empty());
+
+    let info = handle_profile_credential_info(Path(("default".to_string(), "openai".to_string())))
+        .await
+        .unwrap_err();
+    assert_eq!(info.0, StatusCode::NOT_IMPLEMENTED);
+
+    let delete =
+        handle_profile_credential_delete(Path(("default".to_string(), "openai".to_string())))
+            .await
+            .unwrap_err();
+    assert_eq!(delete.0, StatusCode::NOT_IMPLEMENTED);
+}
+
+#[tokio::test]
 async fn handle_enforcement_rules_list_returns_compiled_profile_rules() {
     let _env_lock = SETTINGS_ENV_LOCK.lock().await;
 

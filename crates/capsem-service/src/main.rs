@@ -3613,6 +3613,18 @@ fn profile_persistence_not_implemented(operation: &str) -> AppError {
     )
 }
 
+fn default_profile_manifest_for_route(profile_id: String) -> Result<ProfileConfigFile, AppError> {
+    let profile_id = validate_profile_route_id(profile_id)?;
+    let manifest = ProfileConfigFile::builtin_default();
+    if manifest.id != profile_id {
+        return Err(AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "built-in profile manifest id does not match default route".to_string(),
+        ));
+    }
+    Ok(manifest)
+}
+
 async fn handle_profile_create() -> Result<Json<serde_json::Value>, AppError> {
     Err(profile_persistence_not_implemented("profile create"))
 }
@@ -3671,6 +3683,101 @@ async fn handle_profile_validate(
         valid: true,
         profile_id: profile.id,
     }))
+}
+
+async fn handle_profile_skills_info(
+    Path(profile_id): Path<String>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let manifest = default_profile_manifest_for_route(profile_id)?;
+    Ok(Json(json!({
+        "profile_id": manifest.id,
+        "skill_count": manifest.skills.paths.len(),
+        "paths": manifest.skills.paths,
+    })))
+}
+
+async fn handle_profile_skills_list(
+    Path(profile_id): Path<String>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let manifest = default_profile_manifest_for_route(profile_id)?;
+    Ok(Json(json!({
+        "profile_id": manifest.id,
+        "skills": manifest.skills.paths.into_iter().map(|path| json!({ "path": path })).collect::<Vec<_>>(),
+    })))
+}
+
+async fn handle_profile_skill_add(
+    Path(profile_id): Path<String>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let _profile_id = validate_profile_route_id(profile_id)?;
+    Err(profile_persistence_not_implemented("profile skill add"))
+}
+
+async fn handle_profile_skill_edit(
+    Path((profile_id, _skill_id)): Path<(String, String)>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let _profile_id = validate_profile_route_id(profile_id)?;
+    Err(profile_persistence_not_implemented("profile skill edit"))
+}
+
+async fn handle_profile_skill_delete(
+    Path((profile_id, _skill_id)): Path<(String, String)>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let _profile_id = validate_profile_route_id(profile_id)?;
+    Err(profile_persistence_not_implemented("profile skill delete"))
+}
+
+async fn handle_profile_credentials_info(
+    Path(profile_id): Path<String>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let manifest = default_profile_manifest_for_route(profile_id)?;
+    Ok(Json(json!({
+        "profile_id": manifest.id,
+        "broker_enabled": manifest.credentials.broker_enabled,
+    })))
+}
+
+async fn handle_profile_credentials_status(
+    Path(profile_id): Path<String>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let manifest = default_profile_manifest_for_route(profile_id)?;
+    Ok(Json(json!({
+        "profile_id": manifest.id,
+        "broker_enabled": manifest.credentials.broker_enabled,
+        "credential_count": 0,
+    })))
+}
+
+async fn handle_profile_credentials_list(
+    Path(profile_id): Path<String>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let manifest = default_profile_manifest_for_route(profile_id)?;
+    Ok(Json(json!({
+        "profile_id": manifest.id,
+        "credentials": [],
+    })))
+}
+
+async fn handle_profile_credentials_reload(
+    State(state): State<Arc<ServiceState>>,
+    Path(profile_id): Path<String>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let _profile_id = validate_profile_route_id(profile_id)?;
+    handle_reload_config(State(state)).await
+}
+
+async fn handle_profile_credential_info(
+    Path((profile_id, _credential_id)): Path<(String, String)>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let _profile_id = validate_profile_route_id(profile_id)?;
+    Err(profile_persistence_not_implemented("credential info"))
+}
+
+async fn handle_profile_credential_delete(
+    Path((profile_id, _credential_id)): Path<(String, String)>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let _profile_id = validate_profile_route_id(profile_id)?;
+    Err(profile_persistence_not_implemented("credential delete"))
 }
 
 fn resolve_mcp_tool_id(server_id: &str, tool_id: &str) -> Result<String, AppError> {
@@ -6143,6 +6250,50 @@ async fn main() -> Result<()> {
         .route(
             "/profiles/{profile_id}/assets/ensure",
             post(handle_profile_assets_ensure),
+        )
+        .route(
+            "/profiles/{profile_id}/skills/info",
+            get(handle_profile_skills_info),
+        )
+        .route(
+            "/profiles/{profile_id}/skills/list",
+            get(handle_profile_skills_list),
+        )
+        .route(
+            "/profiles/{profile_id}/skills/add",
+            post(handle_profile_skill_add),
+        )
+        .route(
+            "/profiles/{profile_id}/skills/{skill_id}/edit",
+            patch(handle_profile_skill_edit),
+        )
+        .route(
+            "/profiles/{profile_id}/skills/{skill_id}/delete",
+            delete(handle_profile_skill_delete),
+        )
+        .route(
+            "/profiles/{profile_id}/credentials/info",
+            get(handle_profile_credentials_info),
+        )
+        .route(
+            "/profiles/{profile_id}/credentials/status",
+            get(handle_profile_credentials_status),
+        )
+        .route(
+            "/profiles/{profile_id}/credentials/list",
+            get(handle_profile_credentials_list),
+        )
+        .route(
+            "/profiles/{profile_id}/credentials/reload",
+            post(handle_profile_credentials_reload),
+        )
+        .route(
+            "/profiles/{profile_id}/credentials/{credential_id}/info",
+            get(handle_profile_credential_info),
+        )
+        .route(
+            "/profiles/{profile_id}/credentials/{credential_id}/delete",
+            delete(handle_profile_credential_delete),
         )
         .route("/corp/info", get(handle_corp_info))
         .route("/corp/edit", put(handle_corp_config))

@@ -411,6 +411,52 @@ describe('api', () => {
       expect(mockFetch.mock.calls[mockFetch.mock.calls.length - 1][0]).toContain('/profiles/default/clone');
       expect(mockFetch.mock.calls[mockFetch.mock.calls.length - 1][1].method).toBe('POST');
     });
+
+    it('profile skill helpers use profile-scoped routes', async () => {
+      mockFetch.mockReturnValue(jsonResponse({ ok: true }));
+
+      await api.getProfileSkillsInfo('default');
+      expect(mockFetch.mock.calls[mockFetch.mock.calls.length - 1][0]).toContain('/profiles/default/skills/info');
+
+      await api.listProfileSkills('default');
+      expect(mockFetch.mock.calls[mockFetch.mock.calls.length - 1][0]).toContain('/profiles/default/skills/list');
+
+      await api.addProfileSkill('default', {});
+      expect(mockFetch.mock.calls[mockFetch.mock.calls.length - 1][0]).toContain('/profiles/default/skills/add');
+      expect(mockFetch.mock.calls[mockFetch.mock.calls.length - 1][1].method).toBe('POST');
+
+      await api.editProfileSkill('default', 'build', {});
+      expect(mockFetch.mock.calls[mockFetch.mock.calls.length - 1][0]).toContain('/profiles/default/skills/build/edit');
+      expect(mockFetch.mock.calls[mockFetch.mock.calls.length - 1][1].method).toBe('PATCH');
+
+      await api.deleteProfileSkill('default', 'build');
+      expect(mockFetch.mock.calls[mockFetch.mock.calls.length - 1][0]).toContain('/profiles/default/skills/build/delete');
+      expect(mockFetch.mock.calls[mockFetch.mock.calls.length - 1][1].method).toBe('DELETE');
+    });
+
+    it('profile credential helpers use profile-scoped routes', async () => {
+      mockFetch.mockReturnValue(jsonResponse({ ok: true }));
+
+      await api.getProfileCredentialsInfo('default');
+      expect(mockFetch.mock.calls[mockFetch.mock.calls.length - 1][0]).toContain('/profiles/default/credentials/info');
+
+      await api.getProfileCredentialsStatus('default');
+      expect(mockFetch.mock.calls[mockFetch.mock.calls.length - 1][0]).toContain('/profiles/default/credentials/status');
+
+      await api.listProfileCredentials('default');
+      expect(mockFetch.mock.calls[mockFetch.mock.calls.length - 1][0]).toContain('/profiles/default/credentials/list');
+
+      await api.reloadProfileCredentials('default');
+      expect(mockFetch.mock.calls[mockFetch.mock.calls.length - 1][0]).toContain('/profiles/default/credentials/reload');
+      expect(mockFetch.mock.calls[mockFetch.mock.calls.length - 1][1].method).toBe('POST');
+
+      await api.getProfileCredentialInfo('default', 'openai');
+      expect(mockFetch.mock.calls[mockFetch.mock.calls.length - 1][0]).toContain('/profiles/default/credentials/openai/info');
+
+      await api.deleteProfileCredential('default', 'openai');
+      expect(mockFetch.mock.calls[mockFetch.mock.calls.length - 1][0]).toContain('/profiles/default/credentials/openai/delete');
+      expect(mockFetch.mock.calls[mockFetch.mock.calls.length - 1][1].method).toBe('DELETE');
+    });
   });
 
   // ---- Enforcement rules ----

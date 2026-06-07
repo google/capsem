@@ -91,6 +91,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `/profiles/{profile_id}/assets/status` and
   `/profiles/{profile_id}/assets/ensure`; retired global `/assets/status` and
   `/assets/ensure` so asset selection stays under the profile contract.
+- Added profile-scoped skills and credentials route surfaces. Skills
+  `info|list` and credentials `info|status|list` reflect the typed profile
+  manifest; add/edit/delete and per-credential operations fail explicitly until
+  profile persistence and credential inventory listing are implemented.
 
 ### Added (security event rule spine)
 - Replaced callback-shaped Policy V2 authoring with one native rule contract

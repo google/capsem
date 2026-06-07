@@ -330,6 +330,50 @@ fn service_proxy_routes() -> Router<Arc<AppState>> {
             "/profiles/{profile_id}/assets/ensure",
             post(proxy::handle_proxy),
         )
+        .route(
+            "/profiles/{profile_id}/skills/info",
+            get(proxy::handle_proxy),
+        )
+        .route(
+            "/profiles/{profile_id}/skills/list",
+            get(proxy::handle_proxy),
+        )
+        .route(
+            "/profiles/{profile_id}/skills/add",
+            post(proxy::handle_proxy),
+        )
+        .route(
+            "/profiles/{profile_id}/skills/{skill_id}/edit",
+            patch(proxy::handle_proxy),
+        )
+        .route(
+            "/profiles/{profile_id}/skills/{skill_id}/delete",
+            delete(proxy::handle_proxy),
+        )
+        .route(
+            "/profiles/{profile_id}/credentials/info",
+            get(proxy::handle_proxy),
+        )
+        .route(
+            "/profiles/{profile_id}/credentials/status",
+            get(proxy::handle_proxy),
+        )
+        .route(
+            "/profiles/{profile_id}/credentials/list",
+            get(proxy::handle_proxy),
+        )
+        .route(
+            "/profiles/{profile_id}/credentials/reload",
+            post(proxy::handle_proxy),
+        )
+        .route(
+            "/profiles/{profile_id}/credentials/{credential_id}/info",
+            get(proxy::handle_proxy),
+        )
+        .route(
+            "/profiles/{profile_id}/credentials/{credential_id}/delete",
+            delete(proxy::handle_proxy),
+        )
         .route("/corp/info", get(proxy::handle_proxy))
         .route("/corp/edit", put(proxy::handle_proxy))
         .route("/corp/validate", post(proxy::handle_proxy))
@@ -563,6 +607,17 @@ mod tests {
             ("GET", "/profiles/default/detection/rules/list"),
             ("GET", "/profiles/default/assets/status"),
             ("POST", "/profiles/default/assets/ensure"),
+            ("GET", "/profiles/default/skills/info"),
+            ("GET", "/profiles/default/skills/list"),
+            ("POST", "/profiles/default/skills/add"),
+            ("PATCH", "/profiles/default/skills/build/edit"),
+            ("DELETE", "/profiles/default/skills/build/delete"),
+            ("GET", "/profiles/default/credentials/info"),
+            ("GET", "/profiles/default/credentials/status"),
+            ("GET", "/profiles/default/credentials/list"),
+            ("POST", "/profiles/default/credentials/reload"),
+            ("GET", "/profiles/default/credentials/openai/info"),
+            ("DELETE", "/profiles/default/credentials/openai/delete"),
             ("GET", "/profiles/default/plugins/list"),
             ("GET", "/profiles/default/plugins/dummy_pre_eicar/info"),
             ("PATCH", "/profiles/default/plugins/dummy_pre_eicar/edit"),
