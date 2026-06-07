@@ -109,7 +109,9 @@ These are not optional:
 - Capsem service status must report profile inventory and readiness: which
   profiles exist, their revision/status, asset readiness, download/reconcile
   progress, and errors.
-- Profile-aware asset supervisor/reconcile/status/ensure.
+- Profile-aware asset supervisor/reconcile/status/ensure/download/check/refresh.
+  The service owns managing asset downloads, hash/signature checks, refreshes,
+  and error reporting for each profile.
 - Persistent VM profile/base-asset pins and fail-closed resume/fork/save.
 - TUI-backed `capsem shell`, functionally equivalent to the lost multi-VM TUI:
   keyboard shortcuts, multi-VM/session manipulation, profile selection,

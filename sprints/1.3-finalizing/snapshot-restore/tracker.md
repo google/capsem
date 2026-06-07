@@ -305,6 +305,10 @@ the guarantee or explicitly burn it.
   launchability, asset readiness, reconcile/download state, and errors.
 - [ ] Restore profile list/info/status/reload/reconcile/assets-ensure routes
   needed by UI, TUI, CLI, and install checks.
+- [ ] Restore profile asset download/check/refresh management in the service.
+- [ ] Ensure profile asset management verifies hashes/signatures and reports
+  progress/errors per profile.
+- [ ] Ensure VM launch fails closed on missing/corrupt profile-selected assets.
 - [ ] Restore per-arch profile asset declarations with URL/hash/signature/size.
 - [ ] Restore profile-aware asset supervisor/reconcile/status/ensure.
 - [ ] Ensure VM create requires and persists immutable `profile_id`.
