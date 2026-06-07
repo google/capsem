@@ -43,15 +43,17 @@ The biggest accidental losses are:
 - TUI-backed `capsem shell`,
 - Linux-team KVM/filesystem/EROFS/LZ4HC and benchmark proof,
 - security corpus/backtest/benchmark gates that need to be ported to the new
-  rule engine.
+  rule engine,
+- final VM boot proof: boot a profile-selected EROFS/LZ4HC VM, take a file
+  snapshot, run `capsem-doctor`, and record benchmark numbers.
 
 ## Product Contract To Preserve
 
 Capsem operates on independent profiles. A VM executes exactly one immutable
 profile id. Settings are UI/application preferences only. Corp config owns
 constraints, locks, and reporting integrations over profiles. Profile owns the
-runtime behavior: assets, VM defaults, rules, detections, MCP, skills,
-credential/plugin config, availability, name, description, and icon.
+runtime behavior: assets, VM defaults, rules, detections, MCP, plugin config,
+availability, name, description, and icon.
 
 The runtime asset chain must be:
 
@@ -65,8 +67,9 @@ vm.profile_id
 
 The profile is the root of personalization and boot truth. It is how corp/user
 configuration selects different VM assets, UI behavior, MCP servers/tools,
-skills, credentials/plugins, and security posture. If assets are resolved from a
-service-global manifest without profile identity, the contract is broken.
+plugins, and security posture. Credential truth is plugin runtime evidence, not
+static profile content. If assets are resolved from a service-global manifest
+without profile identity, the contract is broken.
 
 ## Burned On Purpose
 
@@ -96,8 +99,8 @@ These are not optional:
 - Profile and service-settings schemas/fixtures, updated to the modern 1.3
   profile contract.
 - Profile syntax must carry per-architecture assets, profile identity/metadata,
-  update/catalog information, default rules, the modern rules system, AI
-  provider/rule declarations, MCP, skills, credentials, and plugin config.
+  refresh policy, default rules, the modern rules system, optional AI
+  provider control rules, MCP, and plugin config.
 - Profile-derived image plan/verify/workspace/build commands.
 - Manifest check/download-check/generate/sign/verify commands.
 - `just`/CI/release using the typed admin rail instead of shell-only ad hoc
@@ -123,6 +126,13 @@ These are not optional:
   merely keep benchmark artifacts.
 - Detection/enforcement corpus, Sigma facade, backtests, and benchmarks ported
   to the new security rule rail.
+- A real VM boot succeeds from the restored profile asset chain, `capsem-doctor`
+  is green inside the VM, and a file snapshot can be created/listed/restored
+  through the accepted runtime path.
+- EROFS/LZ4HC build proof and benchmark numbers are recorded. The benchmark
+  gate must show no unacceptable regression from the accepted 1.3 baseline; if
+  Linux-only proof cannot run locally, it must be an explicit Linux-team
+  release handoff with owner and date.
 
 ## Gotchas
 
@@ -136,13 +146,25 @@ These are not optional:
 - Do not reintroduce old policy-v2/domain/MCP decision paths while restoring
   admin security pack compile/backtest behavior.
 - Do not let `settings.toml` regain ownership of profiles, assets, rules, MCP,
-  skills, credentials, or VM defaults.
+  credentials, or VM defaults.
 - Do not keep a `default`-only profile validator. Real profile ids must load
   real profile contracts.
 - Do not use service-global asset status as profile asset truth. Service-global
   status may report runtime/cache health only.
+- HTTP gateway routes are an explicit allowlist. Unknown paths and retired
+  paths must hard 404 and must never be proxied, guessed, rewritten, or
+  fallback-forwarded to the service.
 - Do not invent UI copy for profile/rule/plugin names and descriptions. UI
   reflects backend/profile contracts.
+- Plugin descriptors own version, name, description, info, execution stages,
+  status/stats schemas, benchmark specs, and capabilities. Profile/corp config
+  only selects plugin policy/config.
+- Plugin runtime and the security engine must expose in-memory performance
+  counters for plugin stages, CEL compile/evaluation, rule matching, logging
+  enqueue, and total boundary latency so regressions can be attributed.
+- VM info/status hot paths must be served from in-memory runtime state,
+  including plugin health summaries. Do not read `session.db` on those paths;
+  forensic latest/history routes are separate ledger queries.
 - Linux-team scoped commits are authoritative. If they conflict with cleanup,
   adapt cleanup around them unless they violate the security/profile contract.
 - Debug/status diagnostics are useful but lower priority than restoring the
@@ -171,9 +193,16 @@ These are not optional:
 | S3 TUI/Shell | Not Started | `capsem shell` works through the TUI again; profile/session readiness is visible in terminal. |
 | S4 Linux/KVM/Bench | Not Started | Linux-team KVM/filesystem/EROFS/LZ4HC work and benchmark harness/proof are restored or handed off explicitly. |
 | S5 Security Corpus | Not Started | Detection/enforcement corpus, Sigma/pack/backtest, and benchmark gates exist on the new `SecurityRuleSet`/CEL rail. |
-| S6 Docs/Verification | Not Started | Current-truth docs, changelog, tests, smoke/install, and benchmark records are updated. |
+| S6 Docs/Verification | Not Started | Current-truth docs, changelog, tests, smoke/install, VM boot, `capsem-doctor`, file snapshot, and benchmark records are updated. |
 
 ## Release Hold
 
 1.3 is blocked until S1-S5 are complete or each remaining item is documented as
 an explicit owner-accepted release blocker.
+
+Final release hold: do not call the sprint complete unless a profile-selected
+VM boots, file snapshot create/list/restore works, `capsem-doctor` is green,
+EROFS/LZ4HC build proof is recorded, and benchmark numbers are present and not
+horrible against the accepted baseline. Benchmark records must include plugin
+and CEL/security-engine latency attribution. Linux-only execution can be handed
+off only with an explicit Linux owner and blocker note.

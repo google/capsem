@@ -10,11 +10,22 @@
   plugin contract, rule format, detection format, or plugin/rule/detection
   corp/profile file locations. If blocked, stop and ask; no schema migration
   escape hatch.
-- [ ] Confirm corp default rules omit `priority` and therefore resolve to the
-  corp source default (`-10`). `priority = "default"` remains profile/built-in
-  fallback only.
+- [ ] Confirm corp rules may use negative priority. If a corp rule omits
+  `priority`, it resolves to the corp source default (`-10`).
+  `priority = "default"` remains profile/built-in fallback only.
+- [ ] Confirm corp source implies corporate lock/ownership. Do not require or
+  accept `corp_locked = true` inside corp-owned rule files.
 - [ ] Confirm old policy-v2/domain/MCP decision rails stay burned.
 - [ ] Confirm old `capsem setup` and provider onboarding wizard stay burned.
+- [ ] Confirm `[credentials] broker_enabled` stays burned; credential brokering
+  is owned only by `[plugins.credential_broker]`.
+- [ ] Confirm static `[ai.*]` provider metadata stays burned unless it is
+  replaced by real provider status computed from rules, VM plugin runtime
+  status, observed tool config hashes, routing config, and runtime security
+  events.
+- [ ] Confirm old `config/defaults.toml` `settings.ai.*` defaults and
+  host-credential injection blocks are burned or reshaped into profile-owned
+  rules plus plugin-owned runtime status. They must not remain UI settings.
 - [ ] Commit S0.
 
 ## Commit Inspection Ledger
@@ -284,11 +295,117 @@ the guarantee or explicitly burn it.
   `config/corp.toml`; remove stale `config/user.toml.default`.
 - [ ] Restore profile/settings schemas and fixtures updated to the modern 1.3
   profile contract.
-- [ ] Restore per-architecture profile asset declarations and update/catalog
-  metadata in profile syntax.
+- [ ] Restore per-architecture profile asset declarations, top-level
+  `refresh_policy`, and `[assets].refresh_policy` in profile syntax. Channel,
+  manifest URL, and trust keys are catalog/manifest fields, not profile payload
+  fields.
+- [ ] Restore signed manifest chain: release/root manifest signs corp and
+  profile manifests; corp manifest signs corp config/rule/detection files;
+  profile manifest signs profile/rule/detection/MCP metadata; profile asset
+  manifest signs profile-selected assets. Each signed layer carries its own
+  `refresh_policy`.
 - [ ] Ensure profile syntax carries modern default rules, enforcement rules,
-  detection levels, AI/provider convenience declarations, MCP, skills,
-  credential broker config, and plugin config.
+  detection levels, provider control rules, MCP, and plugin config.
+- [ ] Do not add a credential broker invocation rule. `[plugins.credential_broker]`
+  governs broker behavior; the broker owns its HTTP-boundary materialization
+  hook internally.
+- [ ] Enforce the plugin contract: plugins own their own filtering/scope and
+  materialization hooks. CEL rules do not invoke plugins.
+- [ ] Preserve the rule/plugin boundary: if behavior can be expressed as a
+  CEL/Sigma rule, it is a rule; plugins are only for mutation, materialization,
+  external scanning, credential substitution, protocol rewrites, or other
+  audited side effects.
+- [ ] Extend the plugin object contract with `id`, `name`, `description`,
+  `info`, `version`, `mode`, `detection_level`, typed `stages`,
+  plugin-owned `scope`, `status_schema`, `stats_schema`, benchmark spec, and
+  declared `supports` capabilities.
+- [ ] Define plugin stages as a typed enum, not strings in call sites:
+  `pre_decision`, `post_decision`, and `runtime_status`. Tests must prove the
+  UI/API can tell whether each plugin runs before enforcement, after
+  enforcement, or only reports runtime state.
+- [ ] Replace the current service `plugin_catalog()` tuple shape with a typed
+  plugin descriptor/registry. The descriptor owns `name`, `description`,
+  `info`, `version`, stages, status schema, stats schema, benchmark spec,
+  capability list, and default config so UI/API surfaces reflect plugin truth
+  rather than invented labels.
+- [ ] Add plugin descriptor contract tests proving every registered plugin has
+  a stable id, semver version, name, description, info, at least one stage,
+  status schema, stats schema, benchmark spec, and supported capability list.
+- [ ] Ensure profile/corp plugin config tracks policy/config only. Plugin
+  registry/runtime owns name, description, info, status schemas, and capability
+  metadata for UI reflection.
+- [ ] Add plugin benchmark discovery and execution tests. Benchmarks must
+  report plugin id, version, stage, fixture id, event count, latency, mutation
+  count, and error count. Keep them fast enough for local release smoke.
+- [ ] Add required plugin runtime performance counters: invocation count,
+  match/skip count, mutation count, allow/ask/block/rewrite count, error count,
+  total latency, p50/p95/p99 latency, max latency, and per-stage latency.
+- [ ] Add plugin latency attribution tests using dummy plugins: a fast no-op,
+  a mutating plugin, and an intentionally delayed plugin. Tests must prove
+  counters identify which plugin/stage added latency without reading the DB.
+- [ ] Add profile plugin lifecycle routes: list, add, info, edit, delete, and
+  reload.
+- [ ] Add VM plugin runtime routes: list, status, stats, and reload where the
+  plugin supports reload.
+- [ ] Enforce HTTP gateway explicit-route allowlist. Every reachable service
+  route must be declared in `crates/capsem-gateway/src/main.rs`; unknown,
+  retired, typo, or compatibility paths must return 404 without contacting the
+  UDS service.
+- [ ] Add/extend gateway route tests proving supported profile/plugin/VM
+  routes are explicitly forwarded and unsupported paths are not forwarded. The
+  test must use an unreachable UDS path so accidental fallback proxying fails.
+- [ ] Extend `/vms/{vm_id}/info` to include active plugin descriptors,
+  versions, modes, stages, health, and last status snapshot.
+- [ ] Extend `/vms/{vm_id}/status` to include active plugin health summaries
+  from in-memory runtime state only. Add an adversarial test that fails if the
+  VM status path opens or reads `session.db`.
+- [ ] Expose security-engine/CEL performance counters from in-memory runtime
+  state: CEL compile count/errors/latency, CEL evaluation count/errors/latency,
+  matched-rule count, no-match count, latency by event family/type, per-rule
+  hot counters, plugin stage time, logging enqueue time, and total boundary
+  time.
+- [ ] Add CEL latency attribution tests proving expensive rule sets increase
+  CEL counters, plugin delays increase plugin counters, and logging enqueue
+  delays show separately. No counter source may require a DB read on VM status.
+- [ ] Make credential broker UI state come only from VM plugin runtime status.
+  Do not expose an AI broker or infer credential state from provider/rule files.
+- [ ] Burn `credential` as a first-party CEL/security-event root. Keep
+  `credential_ref` only as shared forensic evidence on real event families and
+  expose broker state only through plugin runtime status/stats.
+- [ ] Burn `snapshot` as a first-party CEL/security-event root unless a real
+  snapshot parser/rule contract is deliberately designed later. Workspace
+  snapshot operations remain MCP/tool/runtime mechanics for 1.3.
+- [ ] Remove `Credential` and `Snapshot` from `RuntimeSecurityEventFamily`,
+  `RuntimeSecurityEventType`, `SecurityEvent`, `SerializableSecurityEvent`,
+  `SECURITY_EVENT_CEL_ROOTS`, CEL coverage tests, default rules, and logger DB
+  event-type checks where they only exist to support those fake roots.
+  Programmatic hunt locations:
+  `crates/capsem-core/src/security_engine/mod.rs`,
+  `crates/capsem-core/src/security_engine/tests.rs`,
+  `crates/capsem-core/src/net/policy_config/security_rule_profile.rs`,
+  `crates/capsem-core/src/net/policy_config/security_rule_profile/tests.rs`,
+  `crates/capsem-core/src/net/policy_config/provider_profile.rs`,
+  and `crates/capsem-logger/src/schema.rs`.
+- [ ] Delete `/profiles/{profile_id}/credentials/*` service and gateway routes,
+  handlers, and tests. Credential state is opaque plugin runtime state exposed
+  through `/vms/{vm_id}/plugins/credential_broker/status|stats`.
+- [ ] Burn stale settings/defaults `settings.ai.*` and credential injection
+  blocks that pretend to write host credentials into the VM. Credential
+  brokering is plugin-owned and logs only brokered BLAKE3 references.
+- [ ] Replace legacy `[profiles.defaults.*]` parsing with `[default.<domain>]`
+  rule parsing. A rule is default because `priority = "default"`, not because
+  its table path says defaults twice.
+- [ ] Burn `default_credentials` / `[default.credential]`; brokered credential
+  references are evidence on real security events, not a standalone default
+  traffic family.
+- [ ] Delete `ProfileCredentialConfig` / `credentials.broker_enabled` parser
+  support and add a rejection test for `[credentials]`.
+- [ ] Delete or reshape static `ProfileConfigFile.ai` / `[ai.*]` parser support
+  so provider UI/status cannot be invented from metadata without allow/configured
+  truth.
+- [ ] Delete `tool_config_sources` from static profile parsing and add a
+  rejection test. Observed tool config sources belong to runtime status/security
+  ledger evidence with real BLAKE3 hashes and credential refs.
 - [ ] Validate profile parsing compiles into the new `SecurityRuleSet`/CEL rail;
   no second policy syntax or compatibility rail.
 - [ ] Restore `capsem-admin` CLI package and entry point.
@@ -317,6 +434,8 @@ the guarantee or explicitly burn it.
 - [ ] Restore profile asset download/check/refresh management in the service.
 - [ ] Ensure profile asset management verifies hashes/signatures and reports
   progress/errors per profile.
+- [ ] Enforce refresh policy at every signed layer: corp manifest, profile
+  manifest, and profile asset manifest.
 - [ ] Ensure VM launch fails closed on missing/corrupt profile-selected assets.
 - [ ] Restore per-arch profile asset declarations with URL/hash/signature/size.
 - [ ] Restore profile-aware asset supervisor/reconcile/status/ensure.
@@ -356,9 +475,16 @@ the guarantee or explicitly burn it.
   supported architecture.
 - [ ] Ensure profile/admin asset generation emits EROFS/LZ4HC for every
   supported architecture.
+- [ ] Verify the built boot assets are EROFS/LZ4HC level 12 from the
+  profile-selected asset chain, not from a stale benchmark artifact.
 - [ ] Restore/verify multi-arch asset proof.
 - [ ] Restore advanced benchmark harness/artifacts for EROFS/LZ4HC.
 - [ ] Record zstd comparison evidence and decision.
+- [ ] Record benchmark numbers with image format, compression, compression
+  level, architecture, kernel, host OS, command line, event/workload counts,
+  latency, and throughput where applicable.
+- [ ] Compare benchmark numbers against the accepted 1.3 baseline and mark any
+  material regression as a release blocker unless explicitly accepted by owner.
 - [ ] Mark Linux-only execution proof as passed or owner-accepted handoff
   blocker.
 - [ ] Commit S4.
@@ -384,6 +510,11 @@ the guarantee or explicitly burn it.
 - [ ] Run focused tests for S1-S5.
 - [ ] Run smoke.
 - [ ] Run install cycle.
+- [ ] Boot a profile-selected VM from restored EROFS/LZ4HC assets.
+- [ ] Run `capsem-doctor` inside the VM and require green output.
+- [ ] Prove file snapshot create/list/restore through the accepted runtime path.
 - [ ] Run UI and TUI sanity.
 - [ ] Run benchmark gate or record Linux handoff.
+- [ ] Update benchmark docs/page with current EROFS/LZ4HC numbers and note any
+  Linux handoff explicitly.
 - [ ] Commit S6.

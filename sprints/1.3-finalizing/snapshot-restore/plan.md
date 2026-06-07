@@ -48,11 +48,43 @@ Required capabilities:
 - Profile base files exist and are first-class release inputs.
 - Profile/settings schemas and fixtures exist and match the modern 1.3
   contract, not the old profile-v2 surface verbatim.
-- Profile syntax supports per-architecture asset declarations and update/catalog
-  metadata.
+- Profile syntax supports per-architecture asset declarations, top-level
+  `refresh_policy`, and `[assets].refresh_policy`. Channel, manifest URL, and
+  trust keys are catalog/manifest-owned, not self-referential profile fields.
+- Manifest signing chain is explicit: release/root manifest signs corp and
+  profile manifests; corp manifest signs corp config/rule/detection files;
+  profile manifest signs profile/rule/detection/MCP metadata; profile asset
+  manifest signs profile-selected assets.
 - Profile syntax carries the modern security rule system, including default
-  rules, detection levels, AI/provider convenience declarations, MCP, skills,
-  credential broker config, and plugin config.
+  rules, detection levels, provider control rules, MCP, credential broker plugin
+  config, and plugin-owned HTTP materialization behavior.
+- Profile/corp plugin config tracks plugin policy/config only. A typed plugin
+  registry owns plugin `name`, `description`, `info`, status schema, stats
+  schema, capabilities, benchmark spec, semver `version`, typed execution
+  `stages`, and default config so UI/API surfaces reflect plugin truth instead
+  of invented labels.
+- Plugin stages are explicit typed values: `pre_decision`, `post_decision`, and
+  `runtime_status`. Operators must be able to see whether a plugin can mutate
+  before CEL enforcement, mutate after CEL enforcement, or only report runtime
+  state.
+- Static `[ai.*]` provider metadata stays burned. Provider-scoped rule syntax
+  may exist as one real control rule, while configured/credentialed/routed state
+  is computed from runtime evidence, VM plugin runtime status, routing config,
+  and security events.
+- Credential state is not a profile credential API. Delete
+  `/profiles/{profile_id}/credentials/*` and expose opaque credential broker
+  state only through VM plugin runtime status/stats.
+- VM `info` and `status` expose active plugin descriptors, versions, modes,
+  stages, health, and in-memory status snapshots. These hot-path routes must
+  not read `session.db`; ledger/latest routes are separate.
+- HTTP gateway route exposure is explicit allowlist only. Every service route
+  that is reachable over HTTP must be named in `capsem-gateway`; unknown paths,
+  retired paths, and typo paths must hard 404 without contacting the UDS
+  service.
+- MCP profile syntax represents the real built-in `mcp.local` server
+  (`/run/capsem-mcp-server` / `capsem-mcp-builtin`) with HTTP fetch and
+  workspace snapshot tools. It must not model fake filesystem MCP tools or hide
+  built-in server injection outside profile ownership.
 - Profile parsing/validation merges old profile/admin guarantees with the new
   security-event/CEL engine. There must not be a second policy syntax or hidden
   compatibility rail.
@@ -135,6 +167,12 @@ Required capabilities:
 - EROFS/LZ4HC benchmark harness and artifacts are restored.
 - zstd comparison evidence is recorded as "not worth it for 1.3" with numbers
   if available.
+- EROFS/LZ4HC build output is verified from the profile asset chain, not just
+  from benchmark artifacts.
+- Benchmark output records the exact image format, compression, compression
+  level, architecture, kernel, host OS, and command line. Numbers must be
+  compared against the accepted 1.3 baseline and called out if they are
+  materially worse.
 - Linux-only run proof is either passed by Linux or tracked as a release
   blocker owned by Linux.
 
@@ -148,6 +186,11 @@ Required capabilities:
 - Sigma facade/import/export tests exist where detection level is present.
 - Backtests compile and execute against `SecurityRuleSet`.
 - Benchmarks cover HTTP, DNS, MCP, model, process/file security events.
+- Benchmarks and runtime status expose latency attribution across plugin
+  stages, CEL compile/evaluation, rule matching, logging enqueue, and total
+  boundary time.
+- Plugin benchmarks prove overhead by plugin id, version, stage, fixture,
+  event count, mutation count, error count, and latency percentiles.
 - Old policy-v2/domain/MCP decision rails remain burned.
 
 ## S6: Docs, Changelog, And Verification
@@ -158,4 +201,14 @@ Goal: make the release auditable.
 - Restore command-line docs for changed admin/build/test commands.
 - Update changelog with implemented behavior only.
 - Run focused unit/integration tests for each restored rail.
+- Run gateway explicit-route tests proving all supported profile/plugin/VM
+  routes are forwarded and unknown/retired paths are not forwarded.
 - Run smoke, install, UI/TUI sanity, and benchmark gates before closing.
+- Boot a profile-selected VM from restored EROFS/LZ4HC assets.
+- Run `capsem-doctor` inside the VM and require green output.
+- Prove file snapshot create/list/restore through the accepted runtime path.
+- Record EROFS/LZ4HC benchmark numbers in the benchmark docs/page; do not close
+  on missing or obviously bad numbers without an owner-accepted blocker.
+- Record plugin and CEL/security-engine performance counters in the benchmark
+  docs/page so latency regressions can be attributed to plugins, CEL/rules,
+  logging enqueue, or runtime work.

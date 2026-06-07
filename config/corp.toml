@@ -3,7 +3,7 @@
 # Corp owns constraints, locks, and reporting integrations over profiles. It
 # does not own UI/application settings.
 
-refresh_interval_hours = 24
+refresh_policy = "24h"
 
 [corp_rule_files]
 enforcement = "corp/enforcement.toml"
@@ -15,26 +15,3 @@ remote_enforcement = "https://security.example.invalid/capsem/enforcement"
 [plugins.credential_broker]
 mode = "rewrite"
 detection_level = "informational"
-
-[corp.defaults.default_http_unknown]
-name = "corp_default_http_unknown"
-action = "allow"
-corp_locked = true
-reason = "Corp default for HTTP requests not matched by a more specific corp rule."
-match = "has(http.host)"
-
-[corp.defaults.default_dns_unknown]
-name = "corp_default_dns_unknown"
-action = "allow"
-corp_locked = true
-reason = "Corp default for DNS queries not matched by a more specific corp rule."
-match = "has(dns.qname)"
-
-[corp.rules.block_openai_example]
-name = "block_openai_example"
-action = "block"
-priority = -100
-corp_locked = true
-detection_level = "high"
-reason = "Example corp rule: block OpenAI destinations when corp policy requires it."
-match = 'http.host.matches("(^|.*\\.)(openai\\.com|chatgpt\\.com|oaistatic\\.com|oaiusercontent\\.com)$")'
