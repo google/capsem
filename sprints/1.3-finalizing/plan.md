@@ -120,8 +120,10 @@ part of the 1.3 end posture:
 - **Runtime ledger is truth.** Detection/enforcement/latest/status endpoints
   report stored ledger facts and effects, not recomputed active policy state.
 - **Security event abstraction is first-class.** HTTP, DNS, MCP, model, file,
-  process, credential, and snapshot events must be represented as typed security
-  events before rules/plugins operate on them.
+  and process events must be represented as typed security events before
+  rules/plugins operate on them. Credential substitution and snapshot lifecycle
+  writes remain ledger event types, but 1.3 does not expose fake `credential.*`
+  or `snapshot.*` rule roots.
 
 ## UI Reflection Contract
 
@@ -208,7 +210,9 @@ There is uncommitted partial work from the default-rule discussion:
   - Added `priority = "default"` syntax compiling to a sentinel after numeric user priorities.
   - Added plugin reachability validation with a `dummy_*` exception.
 - `crates/capsem-core/src/net/policy_config/default_provider_rules.toml`
-  - Added default allow rules for HTTP, DNS, MCP, model, file, process, credential, and snapshot.
+  - Added default allow rules for HTTP, DNS, MCP, model, file, and process.
+  - Removed fake credential/snapshot default rules; credential broker state is
+    plugin-owned and snapshots remain runtime mechanics for 1.3.
   - Moved them toward `profiles.defaults.*`.
   - Added `[plugins.credential_broker]`.
 - `crates/capsem-core/src/net/policy_config/provider_profile.rs`

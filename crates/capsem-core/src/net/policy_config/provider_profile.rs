@@ -18,8 +18,6 @@ const REQUIRED_DEFAULT_RULE_KEYS: &[&str] = &[
     "default_model_calls",
     "default_file_activity",
     "default_process_activity",
-    "default_credentials",
-    "default_snapshots",
 ];
 
 pub type AiProviderProfile = SecurityRuleProvider;

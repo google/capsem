@@ -63,11 +63,11 @@ impl SecurityRulePlugin for TraceRulePlugin {
     }
 }
 
-struct MarkCredentialRulePlugin;
+struct MarkDecisionRulePlugin;
 
-impl SecurityRulePlugin for MarkCredentialRulePlugin {
+impl SecurityRulePlugin for MarkDecisionRulePlugin {
     fn id(&self) -> &'static str {
-        "mark_credential"
+        "mark_decision"
     }
 
     fn apply(
@@ -75,10 +75,7 @@ impl SecurityRulePlugin for MarkCredentialRulePlugin {
         _rule: &CompiledSecurityRule,
         mut event: SecurityEvent,
     ) -> Result<SecurityEvent, SecurityActionError> {
-        event.credential = Some(CredentialSecurityEvent {
-            reference: Some("credential:blake3:marked".to_string()),
-            ..Default::default()
-        });
+        event.request_decision(SecurityDecisionKind::Block);
         event
             .action_trace
             .push(PolicyActionId::CredentialBrokerCapture);
@@ -234,7 +231,7 @@ match = 'http.host == "example.com"'
 fn security_event_engine_reevaluates_postprocess_after_preprocess_mutation() {
     let emitter = Arc::new(RecordingEmitter::new());
     let registry = SecurityActionRegistry::new()
-        .register_rule_plugin(MarkCredentialRulePlugin)
+        .register_rule_plugin(MarkDecisionRulePlugin)
         .unwrap()
         .register_rule_plugin(TraceRulePlugin { id: "trace" })
         .unwrap();
@@ -243,7 +240,7 @@ fn security_event_engine_reevaluates_postprocess_after_preprocess_mutation() {
         r#"
 [profiles.rules.mark]
 name = "mark_rule"
-plugin = "mark_credential"
+plugin = "mark_decision"
 action = "preprocess"
 match = 'http.host == "example.com"'
 
@@ -251,7 +248,7 @@ match = 'http.host == "example.com"'
 name = "after_mark_rule"
 plugin = "trace"
 action = "postprocess"
-match = 'credential.reference.contains("marked")'
+match = 'security.decision == "block"'
 "#,
     );
     let event =
@@ -619,22 +616,20 @@ http.host.matches("(^|.*\.)openai\.com$")
 }
 
 #[test]
-fn security_event_cel_credential_name_is_not_exposed_without_parser() {
-    let event = SecurityEvent::new(RuntimeSecurityEventType::HttpRequest).with_credential(
-        CredentialSecurityEvent {
-            reference: Some("credential:blake3:test".to_string()),
-            ..Default::default()
-        },
-    );
+fn security_event_cel_rejects_credential_and_snapshot_roots() {
+    let event = SecurityEvent::new(RuntimeSecurityEventType::HttpRequest);
 
-    assert!(
-        !crate::net::policy_config::evaluate_security_event_match(
-            r#"credential.name == "OPENAI_API_KEY""#,
-            &event
-        )
-        .unwrap(),
-        "credential.name must not match until a real parser emits it"
-    );
+    for condition in [
+        r#"credential.ref == "credential:blake3:test""#,
+        r#"snapshot.action == "create""#,
+    ] {
+        let error = crate::net::policy_config::evaluate_security_event_match(condition, &event)
+            .expect_err("fake first-party roots must be rejected");
+        assert!(
+            error.contains("not a first-party security-event root"),
+            "{condition}: {error}"
+        );
+    }
 }
 
 #[test]
@@ -710,13 +705,6 @@ fn security_event_cel_exposes_all_first_party_roots() {
         .with_process(ProcessSecurityEvent {
             command: Some("python main.py".to_string()),
             ..Default::default()
-        })
-        .with_credential(CredentialSecurityEvent {
-            reference: Some("credential:blake3:test".to_string()),
-            ..Default::default()
-        })
-        .with_snapshot(SnapshotSecurityEvent {
-            action: Some("create".to_string()),
         });
 
     let conditions = [
@@ -755,8 +743,6 @@ fn security_event_cel_exposes_all_first_party_roots() {
         r#"file.delete.mime_type == "text/plain""#,
         r#"file.delete.content.contains("stale")"#,
         r#"process.command.contains("python")"#,
-        r#"credential.ref == "credential:blake3:test""#,
-        r#"snapshot.action == "create""#,
         r#"security.decision == "allow""#,
     ];
     let covered_roots = conditions
@@ -2090,25 +2076,11 @@ match = 'process.exec.id == "42" && process.exec.exit_code == "0" && process.exe
 }
 
 #[tokio::test]
-async fn emit_snapshot_security_write_and_rules_maps_snapshot_action() {
+async fn emit_snapshot_security_write_and_rules_does_not_emit_fake_root_rules() {
     let tmp = tempfile::tempdir().unwrap();
     let db_path = tmp.path().join("session.db");
     let writer = capsem_logger::DbWriter::open(&db_path, 16).unwrap();
-    let profile = SecurityRuleProfile::parse_toml(
-        r#"
-[profiles.rules.snapshot_auto_seen]
-name = "snapshot_auto_seen"
-action = "allow"
-detection_level = "informational"
-match = 'snapshot.action == "auto"'
-"#,
-    )
-    .unwrap();
-    let rules = crate::net::policy_config::SecurityRuleSet::compile_profile(
-        &profile,
-        SecurityRuleSource::User,
-    )
-    .unwrap();
+    let rules = SecurityRuleSet::new(Vec::new());
 
     let event_id = emit_snapshot_security_write_and_rules(
         &writer,
@@ -2133,35 +2105,21 @@ match = 'snapshot.action == "auto"'
     let snapshot_event_id: String = conn
         .query_row("SELECT event_id FROM snapshot_events", [], |row| row.get(0))
         .unwrap();
-    let rule_event_id: String = conn
-        .query_row("SELECT event_id FROM security_rule_events", [], |row| {
+    let rule_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM security_rule_events", [], |row| {
             row.get(0)
         })
         .unwrap();
     assert_eq!(snapshot_event_id, event_id.as_str());
-    assert_eq!(rule_event_id, event_id.as_str());
+    assert_eq!(rule_count, 0);
 }
 
 #[tokio::test]
-async fn emit_substitution_security_write_and_rules_maps_credential_ref() {
+async fn emit_substitution_security_write_and_rules_keeps_ref_without_fake_root() {
     let tmp = tempfile::tempdir().unwrap();
     let db_path = tmp.path().join("session.db");
     let writer = capsem_logger::DbWriter::open(&db_path, 16).unwrap();
-    let profile = SecurityRuleProfile::parse_toml(
-        r#"
-[profiles.rules.credential_brokered_seen]
-name = "credential_brokered_seen"
-action = "allow"
-detection_level = "informational"
-match = 'credential.provider == "openai" && credential.ref.contains("credential:blake3:")'
-"#,
-    )
-    .unwrap();
-    let rules = crate::net::policy_config::SecurityRuleSet::compile_profile(
-        &profile,
-        SecurityRuleSource::User,
-    )
-    .unwrap();
+    let rules = SecurityRuleSet::new(Vec::new());
     let credential_ref = capsem_logger::credential_reference("openai", "sk-test-secret");
 
     let event_id = emit_substitution_security_write_and_rules(
@@ -2174,7 +2132,7 @@ match = 'credential.provider == "openai" && credential.ref.contains("credential:
             source: "http.response".to_string(),
             event_type: Some("http.request".to_string()),
             algorithm: "blake3".to_string(),
-            substitution_ref: credential_ref,
+            substitution_ref: credential_ref.clone(),
             outcome: "substituted".to_string(),
             provider: Some("openai".to_string()),
             confidence: Some(1.0),
@@ -2192,16 +2150,21 @@ match = 'credential.provider == "openai" && credential.ref.contains("credential:
             row.get(0)
         })
         .unwrap();
-    let rule_row: (String, String) = conn
+    let persisted_ref: String = conn
         .query_row(
-            "SELECT event_id, rule_id FROM security_rule_events",
+            "SELECT substitution_ref FROM substitution_events",
             [],
-            |row| Ok((row.get(0)?, row.get(1)?)),
+            |row| row.get(0),
         )
         .unwrap();
+    let rule_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM security_rule_events", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
     assert_eq!(substitution_event_id, event_id.as_str());
-    assert_eq!(rule_row.0, event_id.as_str());
-    assert_eq!(rule_row.1, "profiles.rules.credential_brokered_seen");
+    assert_eq!(persisted_ref, credential_ref);
+    assert_eq!(rule_count, 0);
 }
 
 #[tokio::test]

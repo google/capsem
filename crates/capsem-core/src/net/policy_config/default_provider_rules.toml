@@ -57,20 +57,6 @@ priority = "default"
 reason = "Default allow for process execution and audit activity."
 match = 'has(process.exec.path) || has(process.command) || has(process.exec.id)'
 
-[profiles.defaults.default_credentials]
-name = "default_credentials"
-action = "allow"
-priority = "default"
-reason = "Default allow for brokered credential references."
-match = 'has(credential.provider) || has(credential.reference)'
-
-[profiles.defaults.default_snapshots]
-name = "default_snapshots"
-action = "allow"
-priority = "default"
-reason = "Default allow for snapshot actions."
-match = 'has(snapshot.action)'
-
 [ai.openai]
 name = "OpenAI"
 protocol = "openai"

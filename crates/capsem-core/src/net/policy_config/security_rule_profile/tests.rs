@@ -1,8 +1,7 @@
 use super::*;
 use crate::security_engine::{
-    CredentialSecurityEvent, DnsSecurityEvent, FileSecurityEvent, HttpSecurityEvent,
-    McpSecurityEvent, ModelSecurityEvent, ProcessSecurityEvent, RuntimeSecurityEventType,
-    SecurityEvent, SnapshotSecurityEvent,
+    DnsSecurityEvent, FileSecurityEvent, HttpSecurityEvent, McpSecurityEvent, ModelSecurityEvent,
+    ProcessSecurityEvent, RuntimeSecurityEventType, SecurityEvent,
 };
 
 const RULE_FIXTURE: &str = include_str!(concat!(
@@ -460,14 +459,6 @@ fn built_in_defaults_cover_each_runtime_boundary_last() {
             "profiles.rules.default_process_activity",
             "Default allow for process execution and audit activity.",
         ),
-        (
-            "profiles.rules.default_credentials",
-            "Default allow for brokered credential references.",
-        ),
-        (
-            "profiles.rules.default_snapshots",
-            "Default allow for snapshot actions.",
-        ),
     ];
 
     for (rule_id, reason) in expected {
@@ -541,23 +532,6 @@ fn built_in_defaults_match_each_first_party_security_event_family() {
                     exec_path: Some("/usr/bin/python3".to_string()),
                     command: Some("python3 script.py".to_string()),
                     ..Default::default()
-                },
-            ),
-        ),
-        (
-            "profiles.rules.default_credentials",
-            SecurityEvent::new(RuntimeSecurityEventType::CredentialSubstitution).with_credential(
-                CredentialSecurityEvent {
-                    provider: Some("openai".to_string()),
-                    reference: Some("credential:blake3:abc123".to_string()),
-                },
-            ),
-        ),
-        (
-            "profiles.rules.default_snapshots",
-            SecurityEvent::new(RuntimeSecurityEventType::SnapshotEvent).with_snapshot(
-                SnapshotSecurityEvent {
-                    action: Some("save".to_string()),
                 },
             ),
         ),

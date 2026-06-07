@@ -269,8 +269,9 @@ DNS queries handled by the host DNS proxy.
 
 ### security_rule_events
 
-Every matched security rule, across HTTP, DNS, MCP, model, file, process,
-credential, and snapshot events.
+Every matched security rule, across HTTP, DNS, MCP, model, file, and process
+events. Credential substitution and snapshot lifecycle rows may appear in the
+ledger, but 1.3 does not expose fake `credential.*` or `snapshot.*` rule roots.
 
 | Column | Type | Description |
 |--------|------|-------------|

@@ -253,8 +253,9 @@ commit.
   checked-in integration fixtures. `security.web` now carries network mechanics
   only (`http_upstream_ports`).
 - [x] Ensure HTTP/DNS/domain decisions evaluate through `SecurityRuleSet`.
-- [x] Ensure model/file/process/credential/snapshot decisions evaluate through
-  `SecurityRuleSet`.
+- [x] Ensure model/file/process decisions evaluate through `SecurityRuleSet`;
+  burn fake credential/snapshot rule roots instead of pretending they have
+  parsers.
 - [x] Add tests proving defaults execute after specific corp/profile/user rules.
 - [x] Add tests proving default catch-alls cover non-matching events.
 - [x] Add tests proving mutating defaults changes evaluation behavior.
@@ -275,7 +276,7 @@ commit.
   MCP decision providers, or domain-policy engines as security authorities.
 - `cargo test -p capsem-core security_rule_profile::tests` passed with 27
   rule-profile tests, including default coverage for HTTP, DNS, MCP, model,
-  file, process, credential, and snapshot events.
+  file, and process events.
 - `cargo clippy -p capsem-core --all-targets -- -D warnings` passed after the
   `NetworkPolicy: Default` and test assertion clippy fixes.
 - `rg -n 'allow_read|allow_write|custom_allow|custom_block|Policy V2|policy_v2|McpPolicy|ToolDecision|DecisionProvider|PolicyHook|is_fully_blocked|default_allow|Domain policy|domain policy|default-deny|default deny|allow list|block list|/enforcements/|/detections/|/plugins/global' docs/src/content/docs -S`

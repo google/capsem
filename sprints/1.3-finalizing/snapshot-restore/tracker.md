@@ -371,16 +371,17 @@ the guarantee or explicitly burn it.
   delays show separately. No counter source may require a DB read on VM status.
 - [ ] Make credential broker UI state come only from VM plugin runtime status.
   Do not expose an AI broker or infer credential state from provider/rule files.
-- [ ] Burn `credential` as a first-party CEL/security-event root. Keep
+- [x] Burn `credential` as a first-party CEL/security-event root. Keep
   `credential_ref` only as shared forensic evidence on real event families and
   expose broker state only through plugin runtime status/stats.
-- [ ] Burn `snapshot` as a first-party CEL/security-event root unless a real
+- [x] Burn `snapshot` as a first-party CEL/security-event root unless a real
   snapshot parser/rule contract is deliberately designed later. Workspace
   snapshot operations remain MCP/tool/runtime mechanics for 1.3.
 - [ ] Remove `Credential` and `Snapshot` from `RuntimeSecurityEventFamily`,
-  `RuntimeSecurityEventType`, `SecurityEvent`, `SerializableSecurityEvent`,
-  `SECURITY_EVENT_CEL_ROOTS`, CEL coverage tests, default rules, and logger DB
-  event-type checks where they only exist to support those fake roots.
+  `RuntimeSecurityEventType`, logger DB event-type checks, or keep them
+  explicitly documented as ledger-only emitted types. `SecurityEvent`,
+  `SerializableSecurityEvent`, `SECURITY_EVENT_CEL_ROOTS`, CEL coverage tests,
+  and default rules no longer expose fake credential/snapshot object roots.
   Programmatic hunt locations:
   `crates/capsem-core/src/security_engine/mod.rs`,
   `crates/capsem-core/src/security_engine/tests.rs`,

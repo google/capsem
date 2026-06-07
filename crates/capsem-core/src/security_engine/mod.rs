@@ -710,11 +710,7 @@ pub fn security_event_from_audit_event(event: &AuditEvent) -> SecurityEvent {
 }
 
 pub fn security_event_from_snapshot_event(event: &SnapshotEvent) -> SecurityEvent {
-    let security_event = SecurityEvent::new(RuntimeSecurityEventType::SnapshotEvent).with_snapshot(
-        SnapshotSecurityEvent {
-            action: Some(event.origin.clone()),
-        },
-    );
+    let security_event = SecurityEvent::new(RuntimeSecurityEventType::SnapshotEvent);
     match event.trace_id.clone() {
         Some(trace_id) => security_event.with_trace_id(trace_id),
         None => security_event,
@@ -723,10 +719,7 @@ pub fn security_event_from_snapshot_event(event: &SnapshotEvent) -> SecurityEven
 
 pub fn security_event_from_substitution_event(event: &SubstitutionEvent) -> SecurityEvent {
     let security_event = SecurityEvent::new(RuntimeSecurityEventType::CredentialSubstitution)
-        .with_credential(CredentialSecurityEvent {
-            provider: event.provider.clone(),
-            reference: Some(event.substitution_ref.clone()),
-        });
+        .with_credential_ref(event.substitution_ref.clone());
     match event.trace_id.clone() {
         Some(trace_id) => security_event.with_trace_id(trace_id),
         None => security_event,
@@ -1424,8 +1417,6 @@ fn security_event_forensic_json(event: &SecurityEvent) -> serde_json::Value {
         "model": event.model,
         "file": event.file,
         "process": event.process,
-        "credential": event.credential,
-        "snapshot": event.snapshot,
     })
 }
 
@@ -1642,8 +1633,6 @@ pub struct SecurityEvent {
     pub model: Option<ModelSecurityEvent>,
     pub file: Option<FileSecurityEvent>,
     pub process: Option<ProcessSecurityEvent>,
-    pub credential: Option<CredentialSecurityEvent>,
-    pub snapshot: Option<SnapshotSecurityEvent>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -1660,8 +1649,6 @@ pub struct SerializableSecurityEvent {
     pub model: Option<ModelSecurityEvent>,
     pub file: Option<FileSecurityEvent>,
     pub process: Option<ProcessSecurityEvent>,
-    pub credential: Option<CredentialSecurityEvent>,
-    pub snapshot: Option<SnapshotSecurityEvent>,
 }
 
 impl From<&SecurityEvent> for SerializableSecurityEvent {
@@ -1683,8 +1670,6 @@ impl From<&SecurityEvent> for SerializableSecurityEvent {
             model: event.model.clone(),
             file: event.file.clone(),
             process: event.process.clone(),
-            credential: event.credential.clone(),
-            snapshot: event.snapshot.clone(),
         }
     }
 }
@@ -1706,13 +1691,16 @@ impl SecurityEvent {
             model: None,
             file: None,
             process: None,
-            credential: None,
-            snapshot: None,
         }
     }
 
     pub fn with_trace_id(mut self, trace_id: impl Into<String>) -> Self {
         self.trace_id = Some(trace_id.into());
+        self
+    }
+
+    pub fn with_credential_ref(mut self, credential_ref: impl Into<String>) -> Self {
+        self.credential_ref = Some(credential_ref.into());
         self
     }
 
@@ -1759,16 +1747,6 @@ impl SecurityEvent {
         self
     }
 
-    pub fn with_credential(mut self, credential: CredentialSecurityEvent) -> Self {
-        self.credential = Some(credential);
-        self
-    }
-
-    pub fn with_snapshot(mut self, snapshot: SnapshotSecurityEvent) -> Self {
-        self.snapshot = Some(snapshot);
-        self
-    }
-
     pub fn trace_id(&self) -> Option<String> {
         self.trace_id.clone().or_else(|| {
             self.credential_observations
@@ -1812,12 +1790,6 @@ impl PolicySubject for SecurityEvent {
         }
         if let Some(rest) = field.strip_prefix("process.") {
             return self.process.as_ref().and_then(|event| event.get(rest));
-        }
-        if let Some(rest) = field.strip_prefix("credential.") {
-            return self.credential.as_ref().and_then(|event| event.get(rest));
-        }
-        if let Some(rest) = field.strip_prefix("snapshot.") {
-            return self.snapshot.as_ref().and_then(|event| event.get(rest));
         }
         if let Some(rest) = field.strip_prefix("security.") {
             return self.security_get(rest);
@@ -2010,37 +1982,6 @@ impl ProcessSecurityEvent {
             "exec.stdout" => borrowed_string(self.stdout.as_deref()),
             "exec.stderr" => borrowed_string(self.stderr.as_deref()),
             "command" => borrowed_string(self.command.as_deref()),
-            _ => None,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize)]
-pub struct CredentialSecurityEvent {
-    pub provider: Option<String>,
-    pub reference: Option<String>,
-}
-
-impl CredentialSecurityEvent {
-    fn get(&self, field: &str) -> Option<PolicySubjectValue<'_>> {
-        match field {
-            "provider" => borrowed_string(self.provider.as_deref()),
-            "reference" => borrowed_string(self.reference.as_deref()),
-            "ref" => borrowed_string(self.reference.as_deref()),
-            _ => None,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize)]
-pub struct SnapshotSecurityEvent {
-    pub action: Option<String>,
-}
-
-impl SnapshotSecurityEvent {
-    fn get(&self, field: &str) -> Option<PolicySubjectValue<'_>> {
-        match field {
-            "action" => borrowed_string(self.action.as_deref()),
             _ => None,
         }
     }

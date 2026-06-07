@@ -53,8 +53,10 @@ Required properties:
 - Profile id when known.
 - VM id when known.
 - Event type and family from the typed security event contract.
-- Typed first-party event body for HTTP, DNS, MCP, model, file, process,
-  credential, snapshot, or future explicitly supported families.
+- Typed first-party event body for HTTP, DNS, MCP, model, file, process, or
+  future explicitly supported families. Credential substitution and snapshot
+  lifecycle writes may be ledger event types, but they are not fake
+  first-party rule roots in 1.3.
 - Rule/plugin effects as first-class vectors, not reconstructed summaries.
 - Detection events vector. Empty is valid. `detection_level = "none"` is the
   non-detection value.
