@@ -330,6 +330,59 @@ describe('api', () => {
     });
   });
 
+  // ---- Profiles ----
+
+  describe('profiles', () => {
+    beforeEach(async () => {
+      mockFetch
+        .mockReturnValueOnce(jsonResponse({ ok: true, version: '1.0.0', service_socket: '/tmp/s' }))
+        .mockReturnValueOnce(jsonResponse({ token: 'tok' }));
+      await api.init();
+    });
+
+    it('listProfiles sends GET /profiles/list', async () => {
+      const profiles = {
+        profiles: [
+          {
+            id: 'default',
+            name: 'Default',
+            description: 'Current effective profile from user and corp configuration',
+            source: 'effective',
+            rule_count: 3,
+            default_rule_count: 2,
+            plugin_count: 1,
+            mcp_server_count: 0,
+          },
+        ],
+      };
+      mockFetch.mockReturnValueOnce(jsonResponse(profiles));
+      const result = await api.listProfiles();
+      expect(result).toEqual(profiles);
+      const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
+      expect(call[0]).toContain('/profiles/list');
+    });
+
+    it('getProfileInfo sends GET /profiles/{profile_id}/info', async () => {
+      const info = {
+        profile: {
+          id: 'default',
+          name: 'Default',
+          description: 'Current effective profile from user and corp configuration',
+          source: 'effective',
+          rule_count: 3,
+          default_rule_count: 2,
+          plugin_count: 1,
+          mcp_server_count: 0,
+        },
+      };
+      mockFetch.mockReturnValueOnce(jsonResponse(info));
+      const result = await api.getProfileInfo('default');
+      expect(result).toEqual(info);
+      const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
+      expect(call[0]).toContain('/profiles/default/info');
+    });
+  });
+
   // ---- Plugins ----
 
   describe('plugins', () => {

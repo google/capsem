@@ -8,8 +8,9 @@ use axum::{
 use capsem_core::poll::{poll_until, PollOpts};
 use capsem_core::{
     net::policy_config::{
-        DetectionLevel, SecurityPluginConfig, SecurityPluginMode, SecurityRule, SecurityRuleGroup,
-        SecurityRuleProfile, SecurityRuleSet, SecurityRuleSource, SettingsFile,
+        DetectionLevel, ProviderRuleProfile, SecurityPluginConfig, SecurityPluginMode,
+        SecurityRule, SecurityRuleGroup, SecurityRuleProfile, SecurityRuleSet, SecurityRuleSource,
+        SettingsFile,
     },
     security_engine::{
         FileSecurityEvent, RuntimeSecurityEventType, SecurityActionRegistry, SecurityEmitError,
@@ -82,6 +83,8 @@ const PROCESS_ENV_ALLOWLIST: &[&str] = &[
     // capsem.rootfs=erofs-dax when booting a .erofs rootfs.
     "CAPSEM_EXPERIMENTAL_EROFS_DAX",
 ];
+
+const DEFAULT_PROFILE_ID: &str = "default";
 
 // ---------------------------------------------------------------------------
 // Service state
@@ -3506,9 +3509,91 @@ fn validate_profile_route_id(profile_id: String) -> Result<String, AppError> {
             StatusCode::BAD_REQUEST,
             "profile id must not be empty".to_string(),
         ))
+    } else if profile_id != DEFAULT_PROFILE_ID {
+        Err(AppError(
+            StatusCode::NOT_FOUND,
+            format!("profile not found: {profile_id}"),
+        ))
     } else {
         Ok(profile_id)
     }
+}
+
+fn security_rule_group_len(group: &SecurityRuleGroup) -> usize {
+    group.defaults.len() + group.rules.len()
+}
+
+fn build_default_profile_summary(
+    user: &SettingsFile,
+    corp: &SettingsFile,
+    plugin_count: usize,
+) -> api::ProfileSummary {
+    let builtin = ProviderRuleProfile::builtin_security_defaults();
+    let default_rule_count = security_rule_group_len(&builtin.profiles)
+        + builtin
+            .ai
+            .values()
+            .map(|provider| provider.rules.len())
+            .sum::<usize>()
+        + user.profiles.defaults.len()
+        + corp.profiles.defaults.len();
+    let profile_rule_count = default_rule_count
+        + user.profiles.rules.len()
+        + corp.profiles.rules.len()
+        + corp.corp.rules.len()
+        + corp.corp.defaults.len()
+        + user
+            .ai
+            .values()
+            .map(|provider| provider.rules.len())
+            .sum::<usize>()
+        + corp
+            .ai
+            .values()
+            .map(|provider| provider.rules.len())
+            .sum::<usize>();
+    let mcp_server_count = user.mcp.as_ref().map_or(0, |mcp| mcp.servers.len())
+        + corp.mcp.as_ref().map_or(0, |mcp| mcp.servers.len());
+
+    api::ProfileSummary {
+        id: DEFAULT_PROFILE_ID.to_string(),
+        name: "Default".to_string(),
+        description: "Current effective profile from user and corp configuration".to_string(),
+        source: "effective".to_string(),
+        rule_count: profile_rule_count,
+        default_rule_count,
+        plugin_count,
+        mcp_server_count,
+    }
+}
+
+async fn handle_profiles_list(
+    State(state): State<Arc<ServiceState>>,
+) -> Result<Json<api::ProfilesListResponse>, AppError> {
+    let (user, corp) = capsem_core::net::policy_config::load_settings_files();
+    let profile = build_default_profile_summary(
+        &user,
+        &corp,
+        effective_plugin_policy(&state, DEFAULT_PROFILE_ID).len(),
+    );
+    Ok(Json(api::ProfilesListResponse {
+        profiles: vec![profile],
+    }))
+}
+
+async fn handle_profile_info(
+    State(state): State<Arc<ServiceState>>,
+    Path(profile_id): Path<String>,
+) -> Result<Json<api::ProfileInfoResponse>, AppError> {
+    validate_profile_route_id(profile_id)?;
+    let (user, corp) = capsem_core::net::policy_config::load_settings_files();
+    Ok(Json(api::ProfileInfoResponse {
+        profile: build_default_profile_summary(
+            &user,
+            &corp,
+            effective_plugin_policy(&state, DEFAULT_PROFILE_ID).len(),
+        ),
+    }))
 }
 
 fn resolve_mcp_tool_id(server_id: &str, tool_id: &str) -> Result<String, AppError> {
@@ -4017,17 +4102,10 @@ fn plugin_catalog() -> BTreeMap<String, (&'static str, SecurityPluginConfig)> {
 }
 
 fn profile_plugin_scope(profile_id: String) -> Result<PluginScope, AppError> {
-    if profile_id.is_empty() {
-        Err(AppError(
-            StatusCode::BAD_REQUEST,
-            "profile plugin scope id must not be empty".to_string(),
-        ))
-    } else {
-        Ok(PluginScope {
-            kind: PluginScopeKind::Profile,
-            profile_id,
-        })
-    }
+    Ok(PluginScope {
+        kind: PluginScopeKind::Profile,
+        profile_id: validate_profile_route_id(profile_id)?,
+    })
 }
 
 fn effective_plugin_policy(
@@ -5686,6 +5764,8 @@ async fn main() -> Result<()> {
         .route("/vms/{id}/detection/status", get(handle_security_info))
         .route("/vms/{id}/enforcement/latest", get(handle_security_latest))
         .route("/vms/{id}/enforcement/status", get(handle_security_info))
+        .route("/profiles/list", get(handle_profiles_list))
+        .route("/profiles/{profile_id}/info", get(handle_profile_info))
         .route(
             "/profiles/{profile_id}/enforcement/evaluate",
             post(handle_enforcement_evaluate),

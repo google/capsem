@@ -56,8 +56,11 @@ commit.
 ## T1: Service And Gateway API Routes
 
 - [ ] Add approved service routes:
-  - `/profiles/list|create`
-  - `/profiles/{profile_id}/info|edit|delete|clone|validate|reload`
+  - `[x] /profiles/list`
+  - `[ ] /profiles/create`
+  - `[x] /profiles/{profile_id}/info`
+  - `[ ] /profiles/{profile_id}/edit|delete|clone|validate`
+  - `[x] /profiles/{profile_id}/reload`
   - `/profiles/{profile_id}/assets/info|edit|status|ensure`
   - `/profiles/{profile_id}/enforcement/info|reload|evaluate`
   - `/profiles/{profile_id}/enforcement/rules/list`
@@ -101,6 +104,10 @@ commit.
   `/profiles/{profile_id}/plugins/{plugin_id}/info`, and
   `PATCH /profiles/{profile_id}/plugins/{plugin_id}/edit` in service,
   gateway, and frontend API.
+- [x] Add profile inventory routes in service, gateway, and frontend API:
+  `GET /profiles/list` and `GET /profiles/{profile_id}/info`. Until T0 defines
+  real independent profile files, only `default` is accepted and fake profile
+  IDs fail closed.
 - [x] Add adversarial gateway tests proving retired `/plugins`,
   `/plugins/{vm_id}`, and `/plugins/global/{plugin_id}` routes are not
   forwarded.

@@ -221,6 +221,51 @@ async fn security_latest_returns_full_session_db_rule_ledger_rows() {
     assert_eq!(event.trace_id.as_deref(), Some("trace_ollama"));
 }
 
+#[test]
+fn default_profile_summary_reflects_effective_contract() {
+    let summary =
+        build_default_profile_summary(&SettingsFile::default(), &SettingsFile::default(), 3);
+
+    assert_eq!(summary.id, "default");
+    assert_eq!(summary.name, "Default");
+    assert_eq!(summary.source, "effective");
+    assert_eq!(summary.plugin_count, 3);
+    assert!(
+        summary.default_rule_count > 0,
+        "default profile inventory must include built-in default security rules"
+    );
+    assert!(
+        summary.rule_count >= summary.default_rule_count,
+        "total rules cannot be lower than default rules"
+    );
+}
+
+#[tokio::test]
+async fn handle_profiles_list_returns_default_profile_inventory() {
+    let state = make_test_state();
+
+    let Json(response) = handle_profiles_list(State(state)).await.unwrap();
+
+    assert_eq!(response.profiles.len(), 1);
+    assert_eq!(response.profiles[0].id, "default");
+    assert!(
+        response.profiles[0].plugin_count > 0,
+        "profile inventory should reflect editable plugin policy"
+    );
+}
+
+#[tokio::test]
+async fn handle_profile_info_rejects_unknown_profiles() {
+    let state = make_test_state();
+
+    let err = handle_profile_info(State(state), Path("strict".to_string()))
+        .await
+        .unwrap_err();
+
+    assert_eq!(err.0, StatusCode::NOT_FOUND);
+    assert!(err.1.contains("profile not found: strict"));
+}
+
 #[tokio::test]
 async fn profile_plugin_endpoint_matrix_dynamically_controls_enforcement_evaluation() {
     let state = make_test_state();
@@ -299,7 +344,7 @@ async fn profile_plugin_endpoint_matrix_dynamically_controls_enforcement_evaluat
         "rule detection remains, disabled plugin detection disappears"
     );
 
-    let Json(profile_override) = handle_profile_plugin_update(
+    let unknown_profile = handle_profile_plugin_update(
         State(Arc::clone(&state)),
         Path(("strict".to_string(), "dummy_pre_eicar".to_string())),
         Json(PluginUpdate {
@@ -308,31 +353,9 @@ async fn profile_plugin_endpoint_matrix_dynamically_controls_enforcement_evaluat
         }),
     )
     .await
-    .expect("per-profile plugin override");
-    assert_eq!(profile_override.scope.profile_id, "strict");
-    assert_eq!(
-        profile_override.config.mode,
-        capsem_core::net::policy_config::SecurityPluginMode::Block
-    );
-
-    let strict_request = request.clone();
-    let Json(strict_evaluated) = handle_enforcement_evaluate(
-        State(Arc::clone(&state)),
-        Path("strict".to_string()),
-        Json(strict_request),
-    )
-    .await
-    .expect("per-profile plugin override evaluates");
-    let strict_evaluated_event = serde_json::to_value(&strict_evaluated.event).unwrap();
-    assert_eq!(strict_evaluated_event["decision"]["effective"], "block");
-    assert!(strict_evaluated_event["detections"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|detection| detection["source"] == "plugin"
-            && detection["plugin_id"] == "dummy_pre_eicar"
-            && detection["detection_level"] == "medium"
-            && detection["plugin_mode"] == "block"));
+    .unwrap_err();
+    assert_eq!(unknown_profile.0, StatusCode::NOT_FOUND);
+    assert!(unknown_profile.1.contains("profile not found: strict"));
 
     let Json(reenabled) = handle_profile_plugin_update(
         State(Arc::clone(&state)),

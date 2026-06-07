@@ -60,6 +60,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `POST /vms/{vm_id}/restart`, and `POST /vms/{vm_id}/reload-profile`.
   `start` uses the existing resume/start path; restart and reload-profile
   verify the VM exists and fail explicitly until real semantics land.
+- Added profile inventory routes `GET /profiles/list` and
+  `GET /profiles/{profile_id}/info`. The current backend exposes only the
+  truthful effective `default` profile and rejects unknown profile IDs until
+  independent profile files land.
 
 ### Added (security event rule spine)
 - Replaced callback-shaped Policy V2 authoring with one native rule contract

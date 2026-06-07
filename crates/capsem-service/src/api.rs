@@ -193,6 +193,28 @@ pub struct VmOperationStatusResponse {
     pub message: Option<String>,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct ProfileSummary {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub source: String,
+    pub rule_count: usize,
+    pub default_rule_count: usize,
+    pub plugin_count: usize,
+    pub mcp_server_count: usize,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct ProfilesListResponse {
+    pub profiles: Vec<ProfileSummary>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct ProfileInfoResponse {
+    pub profile: ProfileSummary,
+}
+
 #[derive(Serialize, Deserialize, Debug)]
 pub struct PersistRequest {
     pub name: String,

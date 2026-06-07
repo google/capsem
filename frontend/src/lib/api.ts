@@ -95,6 +95,25 @@ export interface PluginListResponse {
   plugins: PluginInfo[];
 }
 
+export interface ProfileSummary {
+  id: string;
+  name: string;
+  description: string;
+  source: string;
+  rule_count: number;
+  default_rule_count: number;
+  plugin_count: number;
+  mcp_server_count: number;
+}
+
+export interface ProfilesListResponse {
+  profiles: ProfileSummary[];
+}
+
+export interface ProfileInfoResponse {
+  profile: ProfileSummary;
+}
+
 // -- Initialization --
 
 export async function init(): Promise<InitResult> {
@@ -614,6 +633,18 @@ export async function getSettings(): Promise<SettingsResponse> {
 /** Save settings changes. Returns the updated settings tree. */
 export async function saveSettings(changes: Record<string, unknown>): Promise<SettingsResponse> {
   const resp = await _patch('/settings/edit', changes);
+  return await resp.json();
+}
+
+// -- Profiles --
+
+export async function listProfiles(): Promise<ProfilesListResponse> {
+  const resp = await _get('/profiles/list');
+  return await resp.json();
+}
+
+export async function getProfileInfo(profileId: string): Promise<ProfileInfoResponse> {
+  const resp = await _get(`/profiles/${encodeURIComponent(profileId)}/info`);
   return await resp.json();
 }
 
