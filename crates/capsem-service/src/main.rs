@@ -2,7 +2,7 @@ use anyhow::{anyhow, Context, Result};
 use axum::{
     extract::{Path, Query, State},
     response::IntoResponse,
-    routing::{delete, get, patch, post},
+    routing::{delete, get, patch, post, put},
     Json, Router,
 };
 use capsem_core::poll::{poll_until, PollOpts};
@@ -212,7 +212,6 @@ struct McpToolEditRequest {
 
 #[derive(Debug, Clone, Deserialize)]
 struct EnforcementEvaluateRequest {
-    profile_id: String,
     rules_toml: String,
     event: EnforcementEventInput,
 }
@@ -221,7 +220,6 @@ impl EnforcementEvaluateRequest {
     #[cfg(test)]
     fn eicar_fixture() -> Self {
         Self {
-            profile_id: "default".to_string(),
             rules_toml: r#"
 [profiles.rules.eicar]
 name = "eicar_rewrite_scan"
@@ -3987,8 +3985,10 @@ impl SecurityEventEmitter for ServiceEvaluateEmitter {
 
 async fn handle_enforcement_evaluate(
     State(state): State<Arc<ServiceState>>,
+    Path(profile_id): Path<String>,
     Json(request): Json<EnforcementEvaluateRequest>,
 ) -> Result<Json<EnforcementEvaluateResponse>, AppError> {
+    let profile_id = validate_profile_route_id(profile_id)?;
     let profile = SecurityRuleProfile::parse_toml(&request.rules_toml).map_err(|error| {
         AppError(
             StatusCode::BAD_REQUEST,
@@ -4004,7 +4004,7 @@ async fn handle_enforcement_evaluate(
         })?;
     let rule_set = SecurityRuleSet::new(rules);
     let event = request.event.into_security_event()?;
-    let policy = effective_plugin_policy(&state, &request.profile_id);
+    let policy = effective_plugin_policy(&state, &profile_id);
     let engine = SecurityEventEngine::new(
         SecurityActionRegistry::with_builtin_actions().with_plugin_policy(policy),
         Arc::new(ServiceEvaluateEmitter),
@@ -4023,9 +4023,10 @@ async fn handle_enforcement_evaluate(
 }
 
 async fn handle_enforcement_rule_upsert(
-    Path(rule_id): Path<String>,
+    Path((profile_id, rule_id)): Path<(String, String)>,
     Json(rule): Json<SecurityRule>,
 ) -> Result<Json<EnforcementRuleResponse>, AppError> {
+    let _profile_id = validate_profile_route_id(profile_id)?;
     if rule.corp_locked {
         return Err(AppError(
             StatusCode::BAD_REQUEST,
@@ -4054,8 +4055,9 @@ async fn handle_enforcement_rule_upsert(
 }
 
 async fn handle_enforcement_rule_delete(
-    Path(rule_id): Path<String>,
+    Path((profile_id, rule_id)): Path<(String, String)>,
 ) -> Result<Json<EnforcementRuleDeleteResponse>, AppError> {
+    let _profile_id = validate_profile_route_id(profile_id)?;
     let (path, mut settings) = load_user_settings_for_enforcement_write()?;
     if settings.profiles.rules.remove(&rule_id).is_none() {
         return Err(AppError(
@@ -4078,7 +4080,9 @@ async fn handle_enforcement_rule_delete(
 
 async fn handle_enforcement_reload(
     State(state): State<Arc<ServiceState>>,
+    Path(profile_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, AppError> {
+    let _profile_id = validate_profile_route_id(profile_id)?;
     handle_reload_config(State(state)).await
 }
 
@@ -5499,12 +5503,22 @@ async fn main() -> Result<()> {
         .route("/detections/{id}/info", get(handle_security_info))
         .route("/enforcements/{id}/latest", get(handle_security_latest))
         .route("/enforcements/{id}/info", get(handle_security_info))
-        .route("/enforcements/evaluate", post(handle_enforcement_evaluate))
         .route(
-            "/enforcements/rules/{rule_id}",
-            post(handle_enforcement_rule_upsert).delete(handle_enforcement_rule_delete),
+            "/profiles/{profile_id}/enforcement/evaluate",
+            post(handle_enforcement_evaluate),
         )
-        .route("/enforcements/reload", post(handle_enforcement_reload))
+        .route(
+            "/profiles/{profile_id}/enforcement/rules/{rule_id}/edit",
+            put(handle_enforcement_rule_upsert),
+        )
+        .route(
+            "/profiles/{profile_id}/enforcement/rules/{rule_id}/delete",
+            delete(handle_enforcement_rule_delete),
+        )
+        .route(
+            "/profiles/{profile_id}/enforcement/reload",
+            post(handle_enforcement_reload),
+        )
         .route(
             "/profiles/{profile_id}/plugins/list",
             get(handle_profile_plugins),

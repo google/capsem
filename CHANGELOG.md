@@ -115,6 +115,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   routes: servers live under `/profiles/{profile_id}/mcp/servers/list`, tools
   live under `/profiles/{profile_id}/mcp/servers/{server_id}/tools/list`, and
   tool edit/call/refresh operations are scoped to the same profile/server path.
+- Replaced global enforcement authoring routes with profile-owned routes:
+  `/profiles/{profile_id}/enforcement/evaluate`,
+  `/profiles/{profile_id}/enforcement/rules/{rule_id}/edit`,
+  `/profiles/{profile_id}/enforcement/rules/{rule_id}/delete`, and
+  `/profiles/{profile_id}/enforcement/reload`.
 - Routed explicit file import/export/read/write boundaries through the
   process-owned security-event emitter so `fs_events` and
   `security_rule_events` share the same primary event id without a service-side

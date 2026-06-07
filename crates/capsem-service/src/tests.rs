@@ -254,10 +254,13 @@ async fn profile_plugin_endpoint_matrix_dynamically_controls_enforcement_evaluat
     );
 
     let request = EnforcementEvaluateRequest::eicar_fixture();
-    let Json(enabled) =
-        handle_enforcement_evaluate(State(Arc::clone(&state)), Json(request.clone()))
-            .await
-            .expect("enabled plugin evaluates");
+    let Json(enabled) = handle_enforcement_evaluate(
+        State(Arc::clone(&state)),
+        Path("default".to_string()),
+        Json(request.clone()),
+    )
+    .await
+    .expect("enabled plugin evaluates");
     let enabled_event = serde_json::to_value(&enabled.event).unwrap();
     assert_eq!(enabled_event["decision"]["effective"], "block");
     assert_eq!(enabled_event["detections"].as_array().unwrap().len(), 2);
@@ -281,10 +284,13 @@ async fn profile_plugin_endpoint_matrix_dynamically_controls_enforcement_evaluat
         capsem_core::net::policy_config::SecurityPluginMode::Disable
     );
 
-    let Json(after_disable) =
-        handle_enforcement_evaluate(State(Arc::clone(&state)), Json(request.clone()))
-            .await
-            .expect("disabled plugin evaluates");
+    let Json(after_disable) = handle_enforcement_evaluate(
+        State(Arc::clone(&state)),
+        Path("default".to_string()),
+        Json(request.clone()),
+    )
+    .await
+    .expect("disabled plugin evaluates");
     let after_disable_event = serde_json::to_value(&after_disable.event).unwrap();
     assert_eq!(after_disable_event["decision"]["effective"], "allow");
     assert_eq!(
@@ -309,12 +315,14 @@ async fn profile_plugin_endpoint_matrix_dynamically_controls_enforcement_evaluat
         capsem_core::net::policy_config::SecurityPluginMode::Block
     );
 
-    let mut strict_request = request.clone();
-    strict_request.profile_id = "strict".to_string();
-    let Json(strict_evaluated) =
-        handle_enforcement_evaluate(State(Arc::clone(&state)), Json(strict_request))
-            .await
-            .expect("per-profile plugin override evaluates");
+    let strict_request = request.clone();
+    let Json(strict_evaluated) = handle_enforcement_evaluate(
+        State(Arc::clone(&state)),
+        Path("strict".to_string()),
+        Json(strict_request),
+    )
+    .await
+    .expect("per-profile plugin override evaluates");
     let strict_evaluated_event = serde_json::to_value(&strict_evaluated.event).unwrap();
     assert_eq!(strict_evaluated_event["decision"]["effective"], "block");
     assert!(strict_evaluated_event["detections"]
@@ -345,9 +353,10 @@ async fn profile_plugin_endpoint_matrix_dynamically_controls_enforcement_evaluat
         capsem_core::net::policy_config::DetectionLevel::Critical
     );
 
-    let Json(after_enable) = handle_enforcement_evaluate(State(state), Json(request))
-        .await
-        .expect("reenabled plugin evaluates");
+    let Json(after_enable) =
+        handle_enforcement_evaluate(State(state), Path("default".to_string()), Json(request))
+            .await
+            .expect("reenabled plugin evaluates");
     let after_enable_event = serde_json::to_value(&after_enable.event).unwrap();
     assert_eq!(after_enable_event["decision"]["effective"], "block");
     let detections = after_enable_event["detections"].as_array().unwrap();
@@ -378,10 +387,12 @@ async fn enforcement_rule_endpoints_add_delete_reload_and_reject_invalid_rules_a
         plugin_config: BTreeMap::new(),
     };
 
-    let Json(saved) =
-        handle_enforcement_rule_upsert(Path("eicar_block".to_string()), Json(rule.clone()))
-            .await
-            .expect("valid profile enforcement rule should save");
+    let Json(saved) = handle_enforcement_rule_upsert(
+        Path(("default".to_string(), "eicar_block".to_string())),
+        Json(rule.clone()),
+    )
+    .await
+    .expect("valid profile enforcement rule should save");
     assert_eq!(saved.rule_id, "eicar_block");
     assert_eq!(saved.compiled_rule_id, "profiles.rules.eicar_block");
 
@@ -391,9 +402,10 @@ async fn enforcement_rule_endpoints_add_delete_reload_and_reject_invalid_rules_a
         capsem_core::net::policy_config::SecurityRuleAction::Block
     );
 
-    let Json(reload) = handle_enforcement_reload(State(make_test_state()))
-        .await
-        .expect("reload alias should broadcast to zero instances");
+    let Json(reload) =
+        handle_enforcement_reload(State(make_test_state()), Path("default".to_string()))
+            .await
+            .expect("reload alias should broadcast to zero instances");
     assert_eq!(reload["success"], serde_json::json!(true));
     assert_eq!(reload["reloaded"], serde_json::json!(0));
 
@@ -401,7 +413,7 @@ async fn enforcement_rule_endpoints_add_delete_reload_and_reject_invalid_rules_a
     bad_priority.priority =
         Some(capsem_core::net::policy_config::SecurityRulePriority::Explicit(-100));
     let err = handle_enforcement_rule_upsert(
-        Path("bad_negative_priority".to_string()),
+        Path(("default".to_string(), "bad_negative_priority".to_string())),
         Json(bad_priority),
     )
     .await
@@ -415,9 +427,12 @@ async fn enforcement_rule_endpoints_add_delete_reload_and_reject_invalid_rules_a
 
     let mut corp_locked = rule.clone();
     corp_locked.corp_locked = true;
-    let err = handle_enforcement_rule_upsert(Path("corp_locked".to_string()), Json(corp_locked))
-        .await
-        .expect_err("user rule endpoint must not create corp-locked rules");
+    let err = handle_enforcement_rule_upsert(
+        Path(("default".to_string(), "corp_locked".to_string())),
+        Json(corp_locked),
+    )
+    .await
+    .expect_err("user rule endpoint must not create corp-locked rules");
     assert_eq!(err.0, StatusCode::BAD_REQUEST);
 
     let loaded = capsem_core::net::policy_config::load_settings_file(&user_path).unwrap();
@@ -434,17 +449,19 @@ async fn enforcement_rule_endpoints_add_delete_reload_and_reject_invalid_rules_a
         "valid existing rule must remain after rejected writes"
     );
 
-    let Json(deleted) = handle_enforcement_rule_delete(Path("eicar_block".to_string()))
-        .await
-        .expect("delete should remove existing rule");
+    let Json(deleted) =
+        handle_enforcement_rule_delete(Path(("default".to_string(), "eicar_block".to_string())))
+            .await
+            .expect("delete should remove existing rule");
     assert!(deleted.deleted);
     assert_eq!(deleted.rule_id, "eicar_block");
     let loaded = capsem_core::net::policy_config::load_settings_file(&user_path).unwrap();
     assert!(!loaded.profiles.rules.contains_key("eicar_block"));
 
-    let err = handle_enforcement_rule_delete(Path("eicar_block".to_string()))
-        .await
-        .expect_err("deleting a missing rule should return not found");
+    let err =
+        handle_enforcement_rule_delete(Path(("default".to_string(), "eicar_block".to_string())))
+            .await
+            .expect_err("deleting a missing rule should return not found");
     assert_eq!(err.0, StatusCode::NOT_FOUND);
 }
 
