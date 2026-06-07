@@ -31,15 +31,15 @@ class TestServiceStartup:
             sock.close()
 
     def test_list_endpoint_responds(self, client):
-        """The /list endpoint must respond (proves Axum routing works)."""
-        resp = client.get("/list")
-        assert resp is not None, "/list returned empty response"
-        assert isinstance(resp, (dict, list)), f"Unexpected /list response: {resp}"
+        """The /vms/list endpoint must respond (proves Axum routing works)."""
+        resp = client.get("/vms/list")
+        assert resp is not None, "/vms/list returned empty response"
+        assert isinstance(resp, (dict, list)), f"Unexpected /vms/list response: {resp}"
 
     def test_provision_creates_vm_socket(self, client):
         """Provisioning a VM must create a per-VM socket that accepts connections."""
         name = vm_name("startup")
-        resp = client.post("/provision", {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
+        resp = client.post("/vms/create", {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
         try:
             assert resp is not None, "Provision returned empty response"
             vm_id = resp.get("id", name)
@@ -81,7 +81,7 @@ class TestServiceStartup:
         try:
             client = svc.client()
             name = vm_name("shut")
-            resp = client.post("/provision", {
+            resp = client.post("/vms/create", {
                 "name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS,
             })
             assert resp is not None
@@ -89,7 +89,7 @@ class TestServiceStartup:
                 f"VM {name} never exec-ready"
             )
 
-            info = client.get(f"/info/{name}")
+            info = client.get(f"/vms/{name}/info")
             vm_pid = info.get("pid")
             assert vm_pid and vm_pid > 0, f"no pid in /info response: {info}"
         finally:

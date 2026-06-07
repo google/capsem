@@ -25,13 +25,13 @@ def test_provision_at_limit_rejected():
         max_vms = 10
         for i in range(max_vms):
             name = f"limit-{i}-{uuid.uuid4().hex[:6]}"
-            resp = client.post("/provision", {"name": name, "ram_mb": 512, "cpus": 1})
+            resp = client.post("/vms/create", {"name": name, "ram_mb": 512, "cpus": 1})
             assert resp is not None and "id" in str(resp), f"VM {i} should succeed: {resp}"
             created.append(name)
 
         # VM #11 should be rejected
         name = f"limit-over-{uuid.uuid4().hex[:6]}"
-        resp = client.post("/provision", {"name": name, "ram_mb": 512, "cpus": 1})
+        resp = client.post("/vms/create", {"name": name, "ram_mb": 512, "cpus": 1})
         # Should be rejected
         assert resp is None or "error" in str(resp).lower() or "limit" in str(resp).lower() or "maximum" in str(resp).lower(), (
             f"Expected limit error, got: {resp}"
@@ -58,7 +58,7 @@ def test_delete_frees_slot():
         max_vms = 10
         for i in range(max_vms):
             name = f"slot-{i}-{uuid.uuid4().hex[:6]}"
-            client.post("/provision", {"name": name, "ram_mb": 512, "cpus": 1})
+            client.post("/vms/create", {"name": name, "ram_mb": 512, "cpus": 1})
             created.append(name)
 
         # Delete one
@@ -67,7 +67,7 @@ def test_delete_frees_slot():
 
         # Should be able to create one more
         name = f"slot-new-{uuid.uuid4().hex[:6]}"
-        resp = client.post("/provision", {"name": name, "ram_mb": 512, "cpus": 1})
+        resp = client.post("/vms/create", {"name": name, "ram_mb": 512, "cpus": 1})
         assert resp is not None and "error" not in str(resp).lower(), (
             f"Should succeed after freeing a slot: {resp}"
         )

@@ -225,7 +225,7 @@ class ServiceInstance:
                 try:
                     result = subprocess.run(
                         ["curl", "-s", "--unix-socket", str(self.uds_path),
-                         "--max-time", "2", "http://localhost/list"],
+                         "--max-time", "2", "http://localhost/vms/list"],
                         capture_output=True, text=True, timeout=5,
                     )
                     if result.returncode == 0:

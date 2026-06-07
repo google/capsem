@@ -210,7 +210,7 @@ async fn mock_uds(app: axum::Router) -> (String, tokio::task::JoinHandle<()>, te
 #[tokio::test]
 async fn fetch_status_empty_vm_list() {
     let mock = axum::Router::new().route(
-        "/list",
+        "/vms/list",
         axum::routing::get(|| async { axum::Json(serde_json::json!({"sandboxes": []})) }),
     );
     let (path, h, _d) = mock_uds(mock).await;
@@ -231,7 +231,7 @@ async fn fetch_status_empty_vm_list() {
 #[tokio::test]
 async fn fetch_status_multiple_vms() {
     let mock = axum::Router::new()
-        .route("/list", axum::routing::get(|| async {
+        .route("/vms/list", axum::routing::get(|| async {
             axum::Json(serde_json::json!({
                 "sandboxes": [
                     {"id": "vm1", "name": "dev", "pid": 100, "status": "Running", "persistent": true, "ram_mb": 2048, "cpus": 2},
@@ -247,7 +247,7 @@ async fn fetch_status_multiple_vms() {
     assert_eq!(resp.service, "running");
     assert_eq!(resp.vm_count, 3);
     assert_eq!(resp.vms[0].name, Some("dev".into()));
-    assert_eq!(resp.vms[1].name, None); // no name in /list response
+    assert_eq!(resp.vms[1].name, None); // no name in /vms/list response
     assert_eq!(resp.vms[2].name, Some("ci".into()));
     let rs = resp.resource_summary.unwrap();
     assert_eq!(rs.total_ram_mb, 7168);
@@ -268,8 +268,10 @@ async fn fetch_status_service_unavailable() {
 
 #[tokio::test]
 async fn fetch_status_malformed_list_json() {
-    let mock =
-        axum::Router::new().route("/list", axum::routing::get(|| async { "not json at all" }));
+    let mock = axum::Router::new().route(
+        "/vms/list",
+        axum::routing::get(|| async { "not json at all" }),
+    );
     let (path, h, _d) = mock_uds(mock).await;
 
     let state = test_app_state(&path);
@@ -285,7 +287,7 @@ async fn cache_prevents_duplicate_fetches() {
     let counter = Arc::new(AtomicUsize::new(0));
     let c = counter.clone();
     let mock = axum::Router::new().route(
-        "/list",
+        "/vms/list",
         axum::routing::get(move || {
             let c = c.clone();
             async move {
@@ -323,7 +325,7 @@ async fn cache_prevents_duplicate_fetches() {
 #[tokio::test]
 async fn fetch_status_counts_suspended_vms() {
     let mock = axum::Router::new()
-        .route("/list", axum::routing::get(|| async {
+        .route("/vms/list", axum::routing::get(|| async {
             axum::Json(serde_json::json!({
                 "sandboxes": [
                     {"id": "vm1", "pid": 100, "status": "Running", "persistent": true, "ram_mb": 2048, "cpus": 2},
@@ -393,7 +395,7 @@ fn list_response_deserializes_telemetry() {
 #[tokio::test]
 async fn fetch_status_passes_through_telemetry() {
     let mock = axum::Router::new().route(
-        "/list",
+        "/vms/list",
         axum::routing::get(|| async {
             axum::Json(serde_json::json!({
                 "sandboxes": [{

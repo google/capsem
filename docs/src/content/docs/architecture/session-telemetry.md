@@ -566,7 +566,7 @@ The `DbReader` provides pre-built aggregate queries:
 | Access point | Protocol | Query type |
 |-------------|----------|------------|
 | `capsem inspect <id> "SQL"` | CLI -> service HTTP `/inspect/{id}` | Raw SQL (read-only) |
-| `capsem info <id> --stats` | CLI -> service HTTP `/info/{id}` | Pre-built `SessionStats` |
+| `capsem info <id> --stats` | CLI -> service HTTP `/vms/{id}/info` | Pre-built `SessionStats` |
 | MCP `capsem_inspect` | MCP -> service HTTP `/inspect/{id}` | Raw SQL (read-only) |
 | MCP `capsem_inspect_schema` | MCP -> service HTTP | Table schemas for LLM context |
 | Frontend dashboard | Gateway -> `/inspect/{id}` | sql.js in-browser (downloads session.db) |

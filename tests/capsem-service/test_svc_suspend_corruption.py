@@ -40,7 +40,7 @@ class TestSuspendOverlayDurability:
         """Files on the EXT4 overlay (e.g. /tmp, /etc) must read back cleanly after resume."""
         name = vm_name("ovl")
         client.post(
-            "/provision",
+            "/vms/create",
             {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS, "persistent": True},
         )
         try:
@@ -76,7 +76,7 @@ class TestSuspendOverlayDurability:
         """`ls /root` must succeed after suspend+resume (the bug repro)."""
         name = vm_name("lsroot")
         client.post(
-            "/provision",
+            "/vms/create",
             {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS, "persistent": True},
         )
         try:
@@ -114,7 +114,7 @@ class TestSuspendOverlayDurability:
         """
         name = vm_name("brick")
         client.post(
-            "/provision",
+            "/vms/create",
             {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS, "persistent": True},
         )
         try:

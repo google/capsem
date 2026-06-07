@@ -160,6 +160,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `POST /vms/{vm_id}/resume`, `POST /vms/{vm_id}/save`, and
   `POST /vms/{vm_id}/fork`. The gateway now rejects the old
   `/suspend`, `/delete`, `/resume`, `/persist`, and `/fork` route family.
+- Moved core VM create/list/info/stop routes into the same VM namespace across
+  service, gateway, CLI, MCP, tray, frontend, status aggregation, docs, and
+  tests: `POST /vms/create`, `GET /vms/list`,
+  `GET /vms/{vm_id}/info`, and `POST /vms/{vm_id}/stop`. The gateway now
+  rejects retired `/provision`, `/list`, `/info/{id}`, and `/stop/{id}` paths.
 - Added built-in provider-owned AI rules for OpenAI/Codex, Anthropic/Claude,
   Google/Gemini, and Ollama. The rules live under `[ai.<provider>.rules.*]`,
   merge as defaults < user < corp, enforce corp-only negative priorities, and

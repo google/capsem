@@ -194,7 +194,7 @@ struct SessionInfo {
     ram_mb: Option<u64>,
     #[serde(default)]
     cpus: Option<u32>,
-    // Telemetry pass-through from service /list
+    // Telemetry pass-through from service /vms/list
     #[serde(default)]
     uptime_secs: Option<u64>,
     #[serde(default)]
@@ -229,7 +229,7 @@ async fn fetch_status(state: &AppState) -> StatusResponse {
         assets: None,
     };
 
-    let list = match uds_get(&state.uds_path, "/list").await {
+    let list = match uds_get(&state.uds_path, "/vms/list").await {
         Ok(body) => match serde_json::from_slice::<ListResponse>(&body) {
             Ok(l) => l,
             Err(_) => return unavailable,

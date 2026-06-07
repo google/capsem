@@ -838,7 +838,7 @@ def _spawn_service_on_fixed_port(
             try:
                 r = subprocess.run(
                     ["curl", "-s", "--unix-socket", str(uds_path),
-                     "--max-time", "2", "http://localhost/list"],
+                     "--max-time", "2", "http://localhost/vms/list"],
                     capture_output=True, timeout=5,
                 )
                 if r.returncode == 0:

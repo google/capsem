@@ -20,8 +20,8 @@ def test_resume_after_neighbor_delete():
     vm_b = f"resume-b-{uuid.uuid4().hex[:8]}"
 
     try:
-        client.post("/provision", {"name": vm_a, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
-        client.post("/provision", {"name": vm_b, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
+        client.post("/vms/create", {"name": vm_a, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
+        client.post("/vms/create", {"name": vm_b, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
 
         assert wait_exec_ready(client, vm_a), f"VM-A never exec-ready"
         assert wait_exec_ready(client, vm_b), f"VM-B never exec-ready"
@@ -44,7 +44,7 @@ def test_resume_after_neighbor_delete():
         assert "alive" in resp.get("stdout", "")
 
         # VM-B should be gone from list
-        list_resp = client.get("/list")
+        list_resp = client.get("/vms/list")
         ids = [s["id"] for s in list_resp["sandboxes"]]
         assert vm_b not in ids
         assert vm_a in ids

@@ -24,22 +24,22 @@ class TestPersistentCreate:
     def test_named_vm_is_persistent(self, client):
         """Named VMs should have persistent=true in info."""
         name = vm_name("pers")
-        resp = client.post("/provision", {
+        resp = client.post("/vms/create", {
             "name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS, "persistent": True,
         })
         assert resp is not None
         try:
-            info = client.get(f"/info/{name}")
+            info = client.get(f"/vms/{name}/info")
             assert info["persistent"] is True
         finally:
             client.delete(f"/vms/{name}/delete")
 
     def test_unnamed_vm_is_ephemeral(self, client):
         """Unnamed VMs should have persistent=false."""
-        resp = client.post("/provision", {"ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
+        resp = client.post("/vms/create", {"ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
         vm_id = resp["id"]
         try:
-            info = client.get(f"/info/{vm_id}")
+            info = client.get(f"/vms/{vm_id}/info")
             assert info["persistent"] is False
         finally:
             client.delete(f"/vms/{vm_id}/delete")
@@ -47,11 +47,11 @@ class TestPersistentCreate:
     def test_create_duplicate_persistent_rejected(self, client):
         """Creating a persistent VM with an existing name must fail."""
         name = vm_name("dup")
-        client.post("/provision", {
+        client.post("/vms/create", {
             "name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS, "persistent": True,
         })
         try:
-            resp = client.post("/provision", {
+            resp = client.post("/vms/create", {
                 "name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS, "persistent": True,
             })
             assert resp is None or "error" in str(resp).lower() or "already exists" in str(resp).lower(), (
@@ -66,13 +66,13 @@ class TestStopSemantics:
     def test_stop_persistent_preserves_in_list(self, client):
         """Stopping a persistent VM should keep it in list as Stopped."""
         name = vm_name("stp")
-        client.post("/provision", {
+        client.post("/vms/create", {
             "name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS, "persistent": True,
         })
         wait_exec_ready(client, name, timeout=EXEC_READY_TIMEOUT)
-        client.post(f"/stop/{name}", {})
+        client.post(f"/vms/{name}/stop", {})
 
-        listing = client.get("/list")
+        listing = client.get("/vms/list")
         vm = next((s for s in listing["sandboxes"] if s["id"] == name), None)
         assert vm is not None, f"Persistent VM {name} not in list after stop"
         assert vm["status"] == "Stopped"
@@ -83,12 +83,12 @@ class TestStopSemantics:
 
     def test_stop_ephemeral_removes_from_list(self, client):
         """Stopping an ephemeral VM should destroy it completely."""
-        resp = client.post("/provision", {"ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
+        resp = client.post("/vms/create", {"ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
         vm_id = resp["id"]
         wait_exec_ready(client, vm_id, timeout=EXEC_READY_TIMEOUT)
-        client.post(f"/stop/{vm_id}", {})
+        client.post(f"/vms/{vm_id}/stop", {})
 
-        listing = client.get("/list")
+        listing = client.get("/vms/list")
         ids = [s["id"] for s in listing["sandboxes"]]
         assert vm_id not in ids, f"Ephemeral VM {vm_id} still in list after stop"
 
@@ -99,7 +99,7 @@ class TestResumeLifecycle:
         """The core persistence test: create VM, write file, stop, resume, read file back."""
         name = vm_name("life")
         # 1. Create persistent VM
-        client.post("/provision", {
+        client.post("/vms/create", {
             "name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS, "persistent": True,
         })
         wait_exec_ready(client, name, timeout=EXEC_READY_TIMEOUT)
@@ -116,7 +116,7 @@ class TestResumeLifecycle:
         assert marker in str(read_resp), f"File not found before stop: {read_resp}"
 
         # 4. Stop the VM (preserves state)
-        client.post(f"/stop/{name}", {})
+        client.post(f"/vms/{name}/stop", {})
 
         # 5. Resume
         resume_resp = client.post(f"/vms/{name}/resume", {})
@@ -141,7 +141,7 @@ class TestResumeLifecycle:
     def test_resume_running_returns_id(self, client):
         """Resuming an already-running persistent VM should return its ID."""
         name = vm_name("runres")
-        client.post("/provision", {
+        client.post("/vms/create", {
             "name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS, "persistent": True,
         })
         wait_exec_ready(client, name, timeout=EXEC_READY_TIMEOUT)
@@ -158,7 +158,7 @@ class TestPersistConvert:
 
     def test_persist_converts_ephemeral(self, client):
         """The persist endpoint should convert an ephemeral VM to persistent."""
-        resp = client.post("/provision", {"ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
+        resp = client.post("/vms/create", {"ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
         vm_id = resp["id"]
         wait_exec_ready(client, vm_id, timeout=EXEC_READY_TIMEOUT)
 
@@ -168,7 +168,7 @@ class TestPersistConvert:
         assert "success" in str(persist_resp).lower() or new_name in str(persist_resp)
 
         # Verify it shows as persistent
-        info = client.get(f"/info/{new_name}")
+        info = client.get(f"/vms/{new_name}/info")
         assert info is not None
         assert info["persistent"] is True
 
@@ -178,12 +178,12 @@ class TestPersistConvert:
         """Converting to a name that already exists should fail."""
         # Create a persistent VM with a name
         taken = vm_name("taken")
-        client.post("/provision", {
+        client.post("/vms/create", {
             "name": taken, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS, "persistent": True,
         })
 
         # Create an ephemeral VM
-        resp = client.post("/provision", {"ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
+        resp = client.post("/vms/create", {"ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
         vm_id = resp["id"]
 
         try:
@@ -200,16 +200,16 @@ class TestPurge:
     def test_purge_kills_ephemeral_only(self, client):
         """Purge without --all should only kill ephemeral VMs."""
         persistent_name = vm_name("pkeep")
-        client.post("/provision", {
+        client.post("/vms/create", {
             "name": persistent_name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS, "persistent": True,
         })
-        eph_resp = client.post("/provision", {"ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
+        eph_resp = client.post("/vms/create", {"ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
         eph_id = eph_resp["id"]
 
         purge_resp = client.post("/purge", {"all": False})
         assert purge_resp is not None
 
-        listing = client.get("/list")
+        listing = client.get("/vms/list")
         ids = [s["id"] for s in listing["sandboxes"]]
         assert persistent_name in ids, "Persistent VM was killed by purge without --all"
         assert eph_id not in ids, "Ephemeral VM survived purge"
@@ -219,7 +219,7 @@ class TestPurge:
     def test_purge_all_destroys_persistent(self, client):
         """Purge with all=true should destroy persistent VMs too."""
         persistent_name = vm_name("pall")
-        client.post("/provision", {
+        client.post("/vms/create", {
             "name": persistent_name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS, "persistent": True,
         })
 
@@ -227,14 +227,14 @@ class TestPurge:
         assert purge_resp is not None
         assert purge_resp.get("persistent_purged", 0) >= 1
 
-        listing = client.get("/list")
+        listing = client.get("/vms/list")
         ids = [s["id"] for s in listing["sandboxes"]]
         assert persistent_name not in ids, "Persistent VM survived purge --all"
 
     def test_purge_default_all_is_false(self, client):
         """Purge with empty body defaults all=false (safe default)."""
         persistent_name = vm_name("pdef")
-        client.post("/provision", {
+        client.post("/vms/create", {
             "name": persistent_name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS, "persistent": True,
         })
 
@@ -242,7 +242,7 @@ class TestPurge:
         purge_resp = client.post("/purge", {})
         assert purge_resp is not None
 
-        listing = client.get("/list")
+        listing = client.get("/vms/list")
         ids = [s["id"] for s in listing["sandboxes"]]
         assert persistent_name in ids, "Persistent VM was killed by purge with default all=false"
 
@@ -276,13 +276,13 @@ class TestListPersistence:
     def test_list_shows_stopped_persistent(self, client):
         """Stopped persistent VMs should appear in list with status Stopped."""
         name = vm_name("lstp")
-        client.post("/provision", {
+        client.post("/vms/create", {
             "name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS, "persistent": True,
         })
         wait_exec_ready(client, name, timeout=EXEC_READY_TIMEOUT)
-        client.post(f"/stop/{name}", {})
+        client.post(f"/vms/{name}/stop", {})
 
-        listing = client.get("/list")
+        listing = client.get("/vms/list")
         vm = next((s for s in listing["sandboxes"] if s["id"] == name), None)
         assert vm is not None, "Stopped persistent VM not in list"
         assert vm["status"] == "Stopped"
@@ -293,11 +293,11 @@ class TestListPersistence:
     def test_list_persistent_field(self, client):
         """List should include the persistent field for all VMs."""
         name = vm_name("lpf")
-        client.post("/provision", {
+        client.post("/vms/create", {
             "name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS, "persistent": True,
         })
         try:
-            listing = client.get("/list")
+            listing = client.get("/vms/list")
             vm = next((s for s in listing["sandboxes"] if s["id"] == name), None)
             assert vm is not None
             assert "persistent" in vm

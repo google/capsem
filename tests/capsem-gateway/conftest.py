@@ -13,7 +13,7 @@ by:
   tests/capsem-e2e/        (full CLI -> gateway -> service -> VM paths
                             for a handful of flagship flows)
 
-If a gateway-proxied response shape changes (e.g. /list returns a new
+If a gateway-proxied response shape changes (e.g. /vms/list returns a new
 field), update the mock here AND the corresponding service test in
 tests/capsem-service/. If you find yourself writing an assertion about
 what the service should return, you're in the wrong directory.
@@ -92,7 +92,8 @@ class MockServiceHandler(BaseHTTPRequestHandler):
         self._send_json({"error": msg}, status=status)
 
     def do_GET(self):
-        if self.clean_path == "/list" or self.clean_path.startswith("/list?"):
+        path_only = self.clean_path.split("?", 1)[0]
+        if path_only == "/vms/list":
             sandboxes = []
             for vm in MOCK_VMS.values():
                 sandboxes.append({
@@ -104,8 +105,8 @@ class MockServiceHandler(BaseHTTPRequestHandler):
                     "cpus": vm["cpus"],
                 })
             self._send_json({"sandboxes": sandboxes})
-        elif self.clean_path.startswith("/info/"):
-            vm_id = self.clean_path.split("/info/", 1)[1].split("?")[0]
+        elif path_only.startswith("/vms/") and path_only.endswith("/info"):
+            vm_id = path_only.split("/vms/", 1)[1].rsplit("/info", 1)[0]
             if vm_id in MOCK_VMS:
                 self._send_json(MOCK_VMS[vm_id])
             else:
@@ -117,7 +118,7 @@ class MockServiceHandler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         body = self._read_body()
-        if self.clean_path == "/provision":
+        if self.clean_path == "/vms/create":
             data = json.loads(body) if body else {}
             vm_id = f"vm-{uuid.uuid4().hex[:8]}"
             self._send_json({"id": vm_id})
@@ -125,7 +126,7 @@ class MockServiceHandler(BaseHTTPRequestHandler):
             data = json.loads(body) if body else {}
             cmd = data.get("command", "")
             self._send_json({"stdout": f"mock: {cmd}\n", "stderr": "", "exit_code": 0})
-        elif self.clean_path.startswith("/stop/"):
+        elif self.clean_path.startswith("/vms/") and self.clean_path.endswith("/stop"):
             self._send_json({"ok": True})
         elif self.clean_path.startswith("/write_file/"):
             self._send_json({"success": True})

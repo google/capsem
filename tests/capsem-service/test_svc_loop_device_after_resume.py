@@ -72,7 +72,7 @@ class TestLoopDeviceAfterResume:
         """
         name = vm_name("loopio")
         client.post(
-            "/provision",
+            "/vms/create",
             {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS, "persistent": True},
         )
         try:

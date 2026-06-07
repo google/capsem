@@ -56,7 +56,7 @@ export interface ResourceSummary {
   suspended_count: number;
 }
 
-// GET /list (proxied to service)
+// GET /vms/list (proxied to service)
 export interface ListResponse {
   sandboxes: SandboxInfo[];
 }
@@ -72,7 +72,7 @@ export interface SandboxInfo {
   version?: string;
   forked_from?: string;
   description?: string;
-  // Telemetry (populated by /info, absent from /list)
+  // Telemetry (populated by /vms/{id}/info, absent from /vms/list)
   created_at?: string;
   uptime_secs?: number;
   total_input_tokens?: number;
@@ -87,7 +87,7 @@ export interface SandboxInfo {
   model_call_count?: number;
 }
 
-// POST /provision, POST /run
+// POST /vms/create, POST /run
 export interface ProvisionRequest {
   name?: string;
   ram_mb: number;

@@ -21,7 +21,7 @@ def test_db_survives_clean_shutdown():
     vm_name = f"survive-{uuid.uuid4().hex[:8]}"
 
     try:
-        client.post("/provision", {"name": vm_name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
+        client.post("/vms/create", {"name": vm_name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
         assert wait_exec_ready(client, vm_name), f"VM {vm_name} never exec-ready"
 
         # Run a command to generate some data

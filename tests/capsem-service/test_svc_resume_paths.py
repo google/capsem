@@ -70,7 +70,7 @@ class TestResumePathPersistence:
         """Write marker files to overlay + workspace paths, stop, resume, verify all survive."""
         name = vm_name("paths")
         client.post(
-            "/provision",
+            "/vms/create",
             {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS, "persistent": True},
         )
         try:
@@ -81,7 +81,7 @@ class TestResumePathPersistence:
             self._write_markers(client, name, marker)
 
             # Stop the VM (preserves state for persistent VMs).
-            client.post(f"/stop/{name}", {})
+            client.post(f"/vms/{name}/stop", {})
 
             # Resume.
             resume_resp = client.post(f"/vms/{name}/resume", {})
@@ -102,7 +102,7 @@ class TestResumePathPersistence:
         """Same coverage as the stop test, but using the warm suspend/resume path."""
         name = vm_name("susp")
         client.post(
-            "/provision",
+            "/vms/create",
             {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS, "persistent": True},
         )
         try:
@@ -134,7 +134,7 @@ class TestResumePathPersistence:
         """Two stop/resume cycles on the same VM, accumulating writes."""
         name = vm_name("backtoback")
         client.post(
-            "/provision",
+            "/vms/create",
             {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS, "persistent": True},
         )
         try:
@@ -142,7 +142,7 @@ class TestResumePathPersistence:
 
             marker_a = f"cycle-a-{uuid.uuid4().hex[:6]}"
             self._write_markers(client, name, marker_a)
-            client.post(f"/stop/{name}", {})
+            client.post(f"/vms/{name}/stop", {})
             client.post(f"/vms/{name}/resume", {})
             assert wait_exec_ready(client, name, timeout=EXEC_READY_TIMEOUT)
             assert not self._check_markers(client, name, marker_a), \
@@ -150,7 +150,7 @@ class TestResumePathPersistence:
 
             marker_b = f"cycle-b-{uuid.uuid4().hex[:6]}"
             self._write_markers(client, name, marker_b)
-            client.post(f"/stop/{name}", {})
+            client.post(f"/vms/{name}/stop", {})
             client.post(f"/vms/{name}/resume", {})
             assert wait_exec_ready(client, name, timeout=EXEC_READY_TIMEOUT)
             # Both A (from before first stop) and B (from before second stop)

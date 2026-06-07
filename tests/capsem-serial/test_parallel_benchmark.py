@@ -63,7 +63,7 @@ def test_parallel_benchmark():
         # 1. Spawn VMs sequentially (to separate spawning from execution contention)
         print(f"Spawning {NUM_VMS} VMs...")
         for vm_name in vms:
-            client.post("/provision", {"name": vm_name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
+            client.post("/vms/create", {"name": vm_name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
             assert wait_exec_ready(client, vm_name, timeout=EXEC_READY_TIMEOUT), f"{vm_name} not ready"
             print(f"VM {vm_name} spawned and ready.")
 

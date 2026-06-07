@@ -43,7 +43,7 @@ def _start_service():
 def _create_vm(svc: ServiceInstance, prefix: str, *, persistent: bool = False) -> str:
     vm = f"{prefix}-{uuid.uuid4().hex[:8]}"
     svc.client().post(
-        "/provision",
+        "/vms/create",
         {
             "name": vm,
             "ram_mb": DEFAULT_RAM_MB,
@@ -1170,7 +1170,7 @@ def test_framed_guest_mcp_reconnects_after_persistent_resume():
         assert first.returncode == 0, first.stderr
         assert "local__echo" in json.dumps(_responses_by_id(first.stdout)["before-resume-list"])
 
-        stop_response = svc.client().post(f"/stop/{vm}", {}, timeout=90)
+        stop_response = svc.client().post(f"/vms/{vm}/stop", {}, timeout=90)
         assert stop_response["success"] is True
         resume_response = svc.client().post(f"/vms/{vm}/resume", {}, timeout=120)
         assert resume_response["id"] == vm

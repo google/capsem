@@ -823,7 +823,7 @@ async fn check_service_health() -> Result<Vec<String>> {
             .await;
 
             // Check token validity (authenticated endpoint)
-            let auth_url = format!("http://127.0.0.1:{}/list", port);
+            let auth_url = format!("http://127.0.0.1:{}/vms/list", port);
             let token_ok = client
                 .get(&auth_url)
                 .header("Authorization", format!("Bearer {}", token))
@@ -1046,7 +1046,7 @@ async fn main() -> Result<()> {
                         .await;
 
                         // Check token validity (authenticated endpoint)
-                        let auth_url = format!("http://127.0.0.1:{}/list", port);
+                        let auth_url = format!("http://127.0.0.1:{}/vms/list", port);
                         let token_ok = client
                             .get(&auth_url)
                             .header("Authorization", format!("Bearer {}", token))
@@ -1129,7 +1129,7 @@ async fn main() -> Result<()> {
                 let sock = home.join("run/service.sock");
                 let list_client = client::UdsClient::new(sock, false);
                 if let Ok(resp) = list_client
-                    .get::<client::ApiResponse<client::ListResponse>>("/list")
+                    .get::<client::ApiResponse<client::ListResponse>>("/vms/list")
                     .await
                 {
                     if let Ok(list) = resp.into_result() {
@@ -1228,7 +1228,7 @@ async fn main() -> Result<()> {
                 from: from.clone(),
             };
 
-            let resp: ApiResponse<ProvisionResponse> = client.post("/provision", &req).await?;
+            let resp: ApiResponse<ProvisionResponse> = client.post("/vms/create", &req).await?;
             let info = resp.into_result()?;
 
             if persistent {
@@ -1294,7 +1294,7 @@ async fn main() -> Result<()> {
                         from: None,
                     };
                     let resp: ApiResponse<ProvisionResponse> =
-                        client.post("/provision", &req).await?;
+                        client.post("/vms/create", &req).await?;
                     let info = resp.into_result()?;
 
                     // Poll until the socket is connectable (not just present on disk).
@@ -1326,7 +1326,7 @@ async fn main() -> Result<()> {
             }
         }
         Commands::Session(SessionCommands::List { quiet }) => {
-            let resp: ApiResponse<ListResponse> = client.get("/list").await?;
+            let resp: ApiResponse<ListResponse> = client.get("/vms/list").await?;
             let resp = resp.into_result()?;
             if *quiet {
                 for s in &resp.sessions {
@@ -1447,7 +1447,7 @@ async fn main() -> Result<()> {
             if *all {
                 // Confirmation prompt
                 use std::io::Write;
-                let list_resp: ApiResponse<ListResponse> = client.get("/list").await?;
+                let list_resp: ApiResponse<ListResponse> = client.get("/vms/list").await?;
                 let resp = list_resp.into_result()?;
                 let persistent_count = resp.sessions.iter().filter(|s| s.persistent).count();
                 let ephemeral_count = resp.sessions.iter().filter(|s| !s.persistent).count();
@@ -1476,7 +1476,8 @@ async fn main() -> Result<()> {
         }
         Commands::Session(SessionCommands::Info { session, json }) => {
             client::validate_id(session)?;
-            let resp: ApiResponse<SessionInfo> = client.get(&format!("/info/{}", session)).await?;
+            let resp: ApiResponse<SessionInfo> =
+                client.get(&format!("/vms/{}/info", session)).await?;
             let info = resp.into_result()?;
             if *json {
                 println!("{}", serde_json::to_string_pretty(&info)?);
@@ -1612,7 +1613,7 @@ async fn main() -> Result<()> {
         Commands::Session(SessionCommands::Restart { name }) => {
             client::validate_id(name)?;
             let info_resp: ApiResponse<SessionInfo> =
-                client.get(&format!("/info/{}", name)).await?;
+                client.get(&format!("/vms/{}/info", name)).await?;
             let info = info_resp.into_result()?;
             if !info.persistent {
                 anyhow::bail!("Cannot restart ephemeral session \"{}\". Only persistent sessions support restart.", name);
@@ -1620,7 +1621,7 @@ async fn main() -> Result<()> {
 
             // Stop, then resume
             let stop_resp: ApiResponse<serde_json::Value> = client
-                .post(&format!("/stop/{}", name), &serde_json::json!({}))
+                .post(&format!("/vms/{}/stop", name), &serde_json::json!({}))
                 .await?;
             stop_resp
                 .into_result()
@@ -1790,7 +1791,7 @@ async fn main() -> Result<()> {
                 env: None,
                 from: None,
             };
-            let resp: ApiResponse<ProvisionResponse> = client.post("/provision", req).await?;
+            let resp: ApiResponse<ProvisionResponse> = client.post("/vms/create", req).await?;
             let provisioned = resp.into_result()?;
             let vm_id = provisioned.id;
 

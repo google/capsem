@@ -35,7 +35,7 @@ class TestServiceLogs:
     def test_service_logs_present(self, client):
         """/service-logs returns the tail of the service's own log file as plain text."""
         # Trigger some recent activity so the log has content.
-        client.get("/list")
+        client.get("/vms/list")
         text = client.get_text("/service-logs")
         assert isinstance(text, str) and text, "service-logs returned empty"
         assert len(text) > 10, f"service-logs implausibly short: {text!r}"

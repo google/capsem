@@ -65,14 +65,14 @@ sequenceDiagram
 
 | Tool | Description | Service endpoint |
 |------|-------------|-----------------|
-| `capsem_create` | Create a new VM (name, RAM, CPUs, env, image) | `POST /provision` |
-| `capsem_list` | List all VMs with status and config | `GET /list` |
-| `capsem_info` | VM details (ID, PID, status, persistent) | `GET /info/{id}` |
+| `capsem_create` | Create a new VM (name, RAM, CPUs, env, image) | `POST /vms/create` |
+| `capsem_list` | List all VMs with status and config | `GET /vms/list` |
+| `capsem_info` | VM details (ID, PID, status, persistent) | `GET /vms/{id}/info` |
 | `capsem_exec` | Run shell command inside VM (timeout param) | `POST /exec/{id}` |
 | `capsem_run` | One-shot: provision + exec + destroy | `POST /run` |
 | `capsem_read_file` | Read file from guest filesystem | `GET /read_file/{id}` |
 | `capsem_write_file` | Write file to guest filesystem | `POST /write_file/{id}` |
-| `capsem_stop` | Stop VM (persistent: preserve, ephemeral: destroy) | `POST /stop/{id}` |
+| `capsem_stop` | Stop VM (persistent: preserve, ephemeral: destroy) | `POST /vms/{id}/stop` |
 | `capsem_suspend` | Suspend VM (save RAM/CPU state) | `POST /vms/{id}/pause` |
 | `capsem_resume` | Resume stopped persistent VM | `POST /vms/{id}/resume` |
 | `capsem_persist` | Convert ephemeral VM to persistent | `POST /vms/{id}/save` |

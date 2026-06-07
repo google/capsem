@@ -110,7 +110,7 @@ def test_brokered_claude_and_gemini_refs_are_guest_visible_without_raw_secrets(m
         svc.start()
         vm = _vm_name("brokered-ai")
         svc.client().post(
-            "/provision",
+            "/vms/create",
             {
                 "name": vm,
                 "ram_mb": DEFAULT_RAM_MB,

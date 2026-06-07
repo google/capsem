@@ -19,13 +19,13 @@ pytestmark = pytest.mark.gateway
 class TestConcurrentRequests:
 
     def test_parallel_list_requests(self, gateway_env, gw_client):
-        """10 concurrent GET /list requests all succeed."""
+        """10 concurrent GET /vms/list requests all succeed."""
         results = []
         errors = []
 
         def do_list():
             try:
-                resp = gw_client.get("/list", timeout=10)
+                resp = gw_client.get("/vms/list", timeout=10)
                 results.append(resp)
             except Exception as e:
                 errors.append(str(e))
@@ -60,11 +60,11 @@ class TestConcurrentRequests:
                 errors.append(f"{name}: {e}")
 
         threads = [
-            threading.Thread(target=do_request, args=("list", "GET", "/list")),
+            threading.Thread(target=do_request, args=("list", "GET", "/vms/list")),
             threading.Thread(target=do_request, args=("status", "GET", "/status")),
-            threading.Thread(target=do_request, args=("info", "GET", "/info/vm-001")),
+            threading.Thread(target=do_request, args=("info", "GET", "/vms/vm-001/info")),
             threading.Thread(target=do_request, args=("images", "GET", "/images")),
-            threading.Thread(target=do_request, args=("provision", "POST", "/provision", {"ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})),
+            threading.Thread(target=do_request, args=("provision", "POST", "/vms/create", {"ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})),
         ]
         for t in threads:
             t.start()

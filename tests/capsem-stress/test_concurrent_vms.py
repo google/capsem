@@ -19,7 +19,7 @@ def test_create_five_vms():
     try:
         for i in range(5):
             name = f"stress-{i}-{uuid.uuid4().hex[:6]}"
-            resp = client.post("/provision", {"name": name, "ram_mb": 1024, "cpus": 1})
+            resp = client.post("/vms/create", {"name": name, "ram_mb": 1024, "cpus": 1})
             assert resp is not None, f"VM {i} provision failed"
             vms.append(name)
 
@@ -33,7 +33,7 @@ def test_create_five_vms():
             assert f"vm-{i}" in resp.get("stdout", "")
 
         # All in list
-        list_resp = client.get("/list")
+        list_resp = client.get("/vms/list")
         ids = [s["id"] for s in list_resp["sandboxes"]]
         for name in vms:
             assert name in ids
@@ -56,12 +56,12 @@ def test_rapid_create_delete():
     try:
         for i in range(10):
             name = f"rapid-{i}-{uuid.uuid4().hex[:6]}"
-            resp = client.post("/provision", {"name": name, "ram_mb": 512, "cpus": 1})
+            resp = client.post("/vms/create", {"name": name, "ram_mb": 512, "cpus": 1})
             assert resp is not None, f"Cycle {i} provision failed"
             client.delete(f"/vms/{name}/delete")
 
         # After all cycles, list should be clean (or only have pre-existing VMs)
-        list_resp = client.get("/list")
+        list_resp = client.get("/vms/list")
         ids = [s["id"] for s in list_resp["sandboxes"]]
         rapid_ids = [i for i in ids if i.startswith("rapid-")]
         assert len(rapid_ids) == 0, f"Leaked VMs: {rapid_ids}"

@@ -17,10 +17,10 @@ def test_process_killed_after_delete(cleanup_env):
     client = cleanup_env.client()
     name = f"kill-{uuid.uuid4().hex[:8]}"
 
-    client.post("/provision", {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
+    client.post("/vms/create", {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
     wait_exec_ready(client, name, timeout=EXEC_READY_TIMEOUT)
 
-    info = client.get(f"/info/{name}")
+    info = client.get(f"/vms/{name}/info")
     pid = info.get("pid") if info else None
 
     client.delete(f"/vms/{name}/delete")

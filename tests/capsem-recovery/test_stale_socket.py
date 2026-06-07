@@ -23,7 +23,7 @@ def test_stale_socket_replaced():
 
     try:
         client = svc.client()
-        resp = client.get("/list")
+        resp = client.get("/vms/list")
         assert resp is not None, "Service should respond after replacing stale socket"
         assert "sandboxes" in resp
     finally:

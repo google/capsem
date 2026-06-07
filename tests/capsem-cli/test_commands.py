@@ -33,7 +33,7 @@ def _provision_vm(uds_path, name, persistent=False):
     body = {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS}
     if persistent:
         body["persistent"] = True
-    return client.post("/provision", body)
+    return client.post("/vms/create", body)
 
 
 class TestRun:
@@ -172,7 +172,7 @@ class TestPurge:
         # VM should still exist
         from helpers.uds_client import UdsHttpClient
         client = UdsHttpClient(uds_path)
-        listing = client.get("/list")
+        listing = client.get("/vms/list")
         ids = [s["id"] for s in listing["sandboxes"]]
         assert name in ids, f"Persistent VM {name} was destroyed despite user saying 'n'"
         # Cleanup
@@ -189,7 +189,7 @@ class TestPurge:
         # VM should be gone
         from helpers.uds_client import UdsHttpClient
         client = UdsHttpClient(uds_path)
-        listing = client.get("/list")
+        listing = client.get("/vms/list")
         ids = [s["id"] for s in listing["sandboxes"]]
         assert name not in ids, f"Persistent VM {name} survived purge --all with 'y'"
 
@@ -251,7 +251,7 @@ class TestEnv:
         # Use the service API directly to provision with env
         from helpers.uds_client import UdsHttpClient
         client = UdsHttpClient(uds_path)
-        resp = client.post("/provision", {
+        resp = client.post("/vms/create", {
             "name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS,
             "persistent": True, "env": {"CAPSEM_TEST_VAR": "hello_from_host"}
         })

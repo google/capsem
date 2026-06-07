@@ -146,12 +146,12 @@ describe('api', () => {
       await api.init();
     });
 
-    it('provisionVm sends POST /provision', async () => {
+    it('provisionVm sends POST /vms/create', async () => {
       mockFetch.mockReturnValueOnce(jsonResponse({ id: 'vm-1' }));
       const result = await api.provisionVm({ ram_mb: 2048, cpus: 2, persistent: false });
       expect(result.id).toBe('vm-1');
       const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
-      expect(call[0]).toContain('/provision');
+      expect(call[0]).toContain('/vms/create');
       expect(call[1].method).toBe('POST');
     });
 
@@ -161,11 +161,11 @@ describe('api', () => {
       expect(result.id).toBe('vm-2');
     });
 
-    it('stopVm sends POST /stop/{id}', async () => {
+    it('stopVm sends POST /vms/{id}/stop', async () => {
       mockFetch.mockReturnValueOnce(jsonResponse(null));
       await api.stopVm('vm-1');
       const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
-      expect(call[0]).toContain('/stop/vm-1');
+      expect(call[0]).toContain('/vms/vm-1/stop');
     });
 
     it('deleteVm sends DELETE /vms/{id}/delete', async () => {
@@ -493,7 +493,7 @@ describe('api', () => {
       expect(state.elapsed_ms).toBe(0);
     });
 
-    it('getVmState with id sends GET /info/{id}', async () => {
+    it('getVmState with id sends GET /vms/{id}/info', async () => {
       mockFetch
         .mockReturnValueOnce(jsonResponse({ ok: true, version: '1.0.0', service_socket: '/tmp/s' }))
         .mockReturnValueOnce(jsonResponse({ token: 'tok' }));
@@ -505,6 +505,8 @@ describe('api', () => {
         history: [{ from: 'booting', to: 'running', trigger: 'boot_complete', duration_ms: 3100, timestamp: '2026-01-01' }],
       }));
       const state = await api.getVmState('vm-1');
+      const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
+      expect(call[0]).toContain('/vms/vm-1/info');
       expect(state.state).toBe('running');
       expect(state.elapsed_ms).toBe(3100);
       expect(state.history).toHaveLength(1);

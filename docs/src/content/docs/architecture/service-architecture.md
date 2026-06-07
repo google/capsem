@@ -152,12 +152,12 @@ The service exposes a REST API over UDS. The gateway proxies this transparently.
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| POST | `/provision` | Create a new VM (`persistent: true` for named VMs) |
-| GET | `/list` | List all VMs (running + stopped persistent) |
-| GET | `/info/{id}` | VM details (config, status, persistent) |
+| POST | `/vms/create` | Create a new VM (`persistent: true` for named VMs) |
+| GET | `/vms/list` | List all VMs (running + stopped persistent) |
+| GET | `/vms/{id}/info` | VM details (config, status, persistent) |
 | POST | `/exec/{id}` | Execute command, return stdout/stderr/exit_code |
 | POST | `/run` | One-shot: provision + exec + destroy |
-| POST | `/stop/{id}` | Stop VM (persistent: preserve; ephemeral: destroy) |
+| POST | `/vms/{id}/stop` | Stop VM (persistent: preserve; ephemeral: destroy) |
 | POST | `/vms/{id}/resume` | Resume a stopped persistent VM |
 | POST | `/vms/{id}/save` | Convert ephemeral to persistent |
 | POST | `/purge` | Kill all temp VMs (`all: true` includes persistent) |

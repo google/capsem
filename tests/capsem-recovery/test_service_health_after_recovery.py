@@ -20,7 +20,7 @@ def test_service_healthy_after_orphan_cleanup():
     try:
         # Create a VM, then kill the service
         name1 = f"victim-{uuid.uuid4().hex[:8]}"
-        client.post("/provision", {"name": name1, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
+        client.post("/vms/create", {"name": name1, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
         wait_exec_ready(client, name1, timeout=EXEC_READY_TIMEOUT)
 
         # Kill service (simulates crash)
@@ -44,7 +44,7 @@ def test_service_healthy_after_orphan_cleanup():
 
             # Create a NEW VM -- service should be fully functional
             name2 = f"fresh-{uuid.uuid4().hex[:8]}"
-            resp = client2.post("/provision", {"name": name2, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
+            resp = client2.post("/vms/create", {"name": name2, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
             assert resp is not None, "Should create VM after recovery"
 
             assert wait_exec_ready(client2, name2, timeout=EXEC_READY_TIMEOUT), \

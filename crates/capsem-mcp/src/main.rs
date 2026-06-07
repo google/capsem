@@ -152,7 +152,7 @@ fn query_string<S: AsRef<str>>(params: &[(&str, Option<S>)]) -> String {
     }
 }
 
-/// Body for POST /provision.
+/// Body for POST /vms/create.
 fn build_create_body(params: &CreateParams) -> Value {
     let persistent = params.name.is_some();
     let mut body = json!({
@@ -581,7 +581,7 @@ impl CapsemHandler {
     async fn list(&self) -> Result<String, String> {
         let resp = self
             .client
-            .request::<Value, Value>("GET", "/list", None)
+            .request::<Value, Value>("GET", "/vms/list", None)
             .await;
         format_service_response(resp)
     }
@@ -735,7 +735,7 @@ impl CapsemHandler {
         let body = build_create_body(&params);
         let resp = self
             .client
-            .request::<Value, Value>("POST", "/provision", Some(body))
+            .request::<Value, Value>("POST", "/vms/create", Some(body))
             .await;
         if let Err(ref e) = resp {
             error!(error = %e, "provision request failed");
@@ -750,7 +750,7 @@ impl CapsemHandler {
     async fn info(&self, Parameters(params): Parameters<IdParams>) -> Result<String, String> {
         let resp = self
             .client
-            .request::<Value, Value>("GET", &format!("/info/{}", params.id), None)
+            .request::<Value, Value>("GET", &format!("/vms/{}/info", params.id), None)
             .await;
         format_service_response(resp)
     }
@@ -843,7 +843,7 @@ impl CapsemHandler {
     async fn stop(&self, Parameters(params): Parameters<IdParams>) -> Result<String, String> {
         let resp = self
             .client
-            .request::<Value, Value>("POST", &format!("/stop/{}", params.id), Some(json!({})))
+            .request::<Value, Value>("POST", &format!("/vms/{}/stop", params.id), Some(json!({})))
             .await;
         format_service_response(resp)
     }
@@ -944,7 +944,7 @@ impl CapsemHandler {
         let mcp_version = env!("CARGO_PKG_VERSION");
         let service_status = match self
             .client
-            .request::<Value, Value>("GET", "/list", None)
+            .request::<Value, Value>("GET", "/vms/list", None)
             .await
         {
             Ok(_) => "connected".to_string(),

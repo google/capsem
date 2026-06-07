@@ -16,7 +16,7 @@ def test_workspace_writable(config_svc):
     name = f"ws-{uuid.uuid4().hex[:8]}"
 
     try:
-        client.post("/provision", {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
+        client.post("/vms/create", {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
         assert wait_exec_ready(client, name, timeout=EXEC_READY_TIMEOUT)
 
         resp = client.post(f"/exec/{name}", {

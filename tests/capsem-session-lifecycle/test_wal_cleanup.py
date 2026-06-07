@@ -19,7 +19,7 @@ def test_wal_absent_after_clean_shutdown():
     name = f"wal-{uuid.uuid4().hex[:8]}"
 
     try:
-        client.post("/provision", {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
+        client.post("/vms/create", {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
         assert wait_exec_ready(client, name, timeout=EXEC_READY_TIMEOUT)
 
         # Generate some activity to create WAL entries

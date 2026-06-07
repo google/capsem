@@ -39,7 +39,7 @@ class TestGatewayE2E:
         """Full VM lifecycle through gateway TCP endpoint."""
         name = vm_name("gw-e2e")
         # Provision
-        resp = e2e_client.post("/provision", {
+        resp = e2e_client.post("/vms/create", {
             "name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS,
         })
         assert resp is not None, "provision failed"
@@ -51,7 +51,7 @@ class TestGatewayE2E:
         )
 
         # List -- VM should appear
-        listing = e2e_client.get("/list")
+        listing = e2e_client.get("/vms/list")
         assert listing is not None
         ids = [s["id"] for s in listing.get("sandboxes", [])]
         assert vm_id in ids, f"VM {vm_id} not in list: {ids}"
@@ -65,18 +65,18 @@ class TestGatewayE2E:
         assert exec_resp.get("exit_code") == 0
 
         # Stop + Delete
-        e2e_client.post(f"/stop/{vm_id}", {})
+        e2e_client.post(f"/vms/{vm_id}/stop", {})
         e2e_client.delete(f"/vms/{vm_id}/delete")
 
         # Verify removed
-        listing = e2e_client.get("/list")
+        listing = e2e_client.get("/vms/list")
         ids = [s["id"] for s in listing.get("sandboxes", [])]
         assert vm_id not in ids
 
     def test_status_with_running_vm(self, e2e_client):
         """GET /status shows running VMs with resource summary."""
         name = vm_name("gw-st")
-        resp = e2e_client.post("/provision", {
+        resp = e2e_client.post("/vms/create", {
             "name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS,
         })
         vm_id = resp.get("id", name)
@@ -95,7 +95,7 @@ class TestGatewayE2E:
 
     def test_404_for_nonexistent_vm(self, e2e_client):
         """Error for nonexistent VM is proxied correctly."""
-        resp = e2e_client.get("/info/ghost-vm-does-not-exist")
+        resp = e2e_client.get("/vms/ghost-vm-does-not-exist/info")
         assert resp is None or "error" in str(resp).lower() or "not found" in str(resp).lower()
 
     def test_immediate_exec_after_provision(self, e2e_client):
@@ -106,7 +106,7 @@ class TestGatewayE2E:
         The server must handle readiness internally through the proxy chain.
         """
         name = vm_name("gw-race")
-        resp = e2e_client.post("/provision", {
+        resp = e2e_client.post("/vms/create", {
             "name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS,
         })
         assert resp is not None, "provision failed"
@@ -148,7 +148,7 @@ class TestGatewayFileIO:
     def test_write_and_read_file_through_gateway(self, e2e_client):
         """Write a file to guest, then read it back through gateway."""
         name = vm_name("gw-file")
-        resp = e2e_client.post("/provision", {
+        resp = e2e_client.post("/vms/create", {
             "name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS,
         })
         vm_id = resp.get("id", name)
@@ -174,7 +174,7 @@ class TestGatewayFileIO:
     def test_write_binary_content(self, e2e_client):
         """Write a file with special characters."""
         name = vm_name("gw-bin")
-        resp = e2e_client.post("/provision", {
+        resp = e2e_client.post("/vms/create", {
             "name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS,
         })
         vm_id = resp.get("id", name)
@@ -203,7 +203,7 @@ class TestGatewayPersistence:
     def test_persist_and_resume_through_gateway(self, e2e_client):
         """Create ephemeral VM, persist it, stop, resume through gateway."""
         name = vm_name("gw-persist")
-        resp = e2e_client.post("/provision", {
+        resp = e2e_client.post("/vms/create", {
             "name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS,
             "persistent": True,
         })
@@ -219,7 +219,7 @@ class TestGatewayPersistence:
             })
 
             # Stop
-            e2e_client.post(f"/stop/{vm_id}", {})
+            e2e_client.post(f"/vms/{vm_id}/stop", {})
             import time
             time.sleep(2)
 
@@ -243,7 +243,7 @@ class TestGatewayPersistence:
     def test_purge_through_gateway(self, e2e_client):
         """POST /purge kills ephemeral VMs through gateway."""
         name = vm_name("gw-purge")
-        resp = e2e_client.post("/provision", {
+        resp = e2e_client.post("/vms/create", {
             "name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS,
         })
         assert resp is not None
@@ -253,7 +253,7 @@ class TestGatewayPersistence:
         assert purge_resp is not None
 
         # VM should be gone
-        listing = e2e_client.get("/list")
+        listing = e2e_client.get("/vms/list")
         ids = [s["id"] for s in listing.get("sandboxes", [])]
         assert name not in ids
 
@@ -264,7 +264,7 @@ class TestGatewayLogs:
     def test_logs_for_running_vm(self, e2e_client):
         """GET /logs/{id} returns boot logs for a running VM."""
         name = vm_name("gw-logs")
-        resp = e2e_client.post("/provision", {
+        resp = e2e_client.post("/vms/create", {
             "name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS,
         })
         vm_id = resp.get("id", name)
@@ -284,7 +284,7 @@ class TestGatewayEnvVars:
     def test_env_vars_passed_to_guest(self, e2e_client):
         """Environment variables are passed through gateway to the guest."""
         name = vm_name("gw-env")
-        resp = e2e_client.post("/provision", {
+        resp = e2e_client.post("/vms/create", {
             "name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS,
             "env": {"GW_TEST_VAR": "hello-from-gateway"},
         })

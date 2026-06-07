@@ -13,7 +13,7 @@ pytestmark = pytest.mark.integration
 def _provision_persistent(client, prefix="fork"):
     """Provision a persistent (named) VM and return its name."""
     name = vm_name(prefix)
-    resp = client.post("/provision", {
+    resp = client.post("/vms/create", {
         "name": name,
         "ram_mb": DEFAULT_RAM_MB,
         "cpus": DEFAULT_CPUS,

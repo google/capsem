@@ -18,16 +18,16 @@ class TestProxyEndpointCoverage:
     """Verify all mock service endpoints are reachable through the gateway."""
 
     def test_get_info_existing_vm(self, gw_client):
-        """GET /info/{id} returns VM details for known VM."""
-        resp = gw_client.get("/info/vm-001")
+        """GET /vms/{id}/info returns VM details for known VM."""
+        resp = gw_client.get("/vms/vm-001/info")
         assert resp is not None
         assert resp.get("id") == "vm-001"
         assert resp.get("name") == "dev"
         assert resp.get("status") == "Running"
 
     def test_get_info_unknown_vm(self, gw_client):
-        """GET /info/{id} returns 404 for unknown VM."""
-        resp = gw_client.get("/info/ghost-vm-999")
+        """GET /vms/{id}/info returns 404 for unknown VM."""
+        resp = gw_client.get("/vms/ghost-vm-999/info")
         assert resp is not None
         assert "error" in resp
 
@@ -39,8 +39,8 @@ class TestProxyEndpointCoverage:
         assert resp.get("exit_code") == 0
 
     def test_post_stop_vm(self, gw_client):
-        """POST /stop/{id} returns success."""
-        resp = gw_client.post("/stop/vm-001", {})
+        """POST /vms/{id}/stop returns success."""
+        resp = gw_client.post("/vms/vm-001/stop", {})
         assert resp is not None
 
     def test_post_write_file(self, gw_client):
@@ -110,14 +110,14 @@ class TestProxyEdgeCases:
     def test_double_slash_in_path(self, gw_client):
         """Double slashes in path are handled gracefully."""
         # axum normalizes // to /, so this should work or 404
-        resp = gw_client.get("//list")
+        resp = gw_client.get("//vms/list")
         # Should not crash the gateway
         assert resp is not None or True  # 404 is acceptable
 
     def test_very_long_query_string(self, gw_client):
         """Long query strings are forwarded without truncation."""
         long_query = "x=" + "a" * 4000
-        resp = gw_client.get(f"/info/vm-001?{long_query}")
+        resp = gw_client.get(f"/vms/vm-001/info?{long_query}")
         # Should succeed (query is forwarded, mock ignores it)
         assert resp is not None
 
@@ -168,7 +168,7 @@ class TestProxyEdgeCases:
             ["curl", "-s", "-D", "-", "-o", "/dev/null",
              "--max-time", "5", "-X", "HEAD",
              "-H", f"Authorization: Bearer {gateway_env.token}",
-             f"http://127.0.0.1:{gateway_env.port}/list"],
+             f"http://127.0.0.1:{gateway_env.port}/vms/list"],
             capture_output=True, text=True, timeout=10,
         )
         # HEAD should return headers but no body
@@ -182,7 +182,7 @@ class TestProxyEdgeCases:
              "-H", "Origin: http://localhost:3000",
              "-H", "Access-Control-Request-Method: POST",
              "-H", "Access-Control-Request-Headers: authorization,content-type",
-             f"http://127.0.0.1:{gateway_env.port}/provision"],
+             f"http://127.0.0.1:{gateway_env.port}/vms/create"],
             capture_output=True, text=True, timeout=10,
         )
         headers = result.stdout.lower()

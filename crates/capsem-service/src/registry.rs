@@ -46,7 +46,7 @@ pub struct PersistentVmEntry {
     pub last_error: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub checkpoint_path: Option<String>,
-    /// User-provided env vars from /provision -- replayed on every resume so the
+    /// User-provided env vars from /vms/create -- replayed on every resume so the
     /// guest sees the same environment after stop+resume cycles.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub env: Option<HashMap<String, String>>,

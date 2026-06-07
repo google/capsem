@@ -110,7 +110,7 @@ uv run pytest tests/capsem-serial/test_lifecycle_benchmark.py -xvs
 
 | Operation | What it times |
 |-----------|--------------|
-| provision | HTTP POST `/provision` to service (VM creation + process spawn) |
+| provision | HTTP POST `/vms/create` to service (VM creation + process spawn) |
 | exec_ready | First `echo ready` exec succeeds (VM boot + vsock handshake) |
 | exec | Simple `echo ok` on a running VM |
 | delete | HTTP DELETE `/vms/{name}/delete` (VM teardown + cleanup) |
@@ -139,7 +139,7 @@ uv run pytest tests/capsem-serial/test_lifecycle_benchmark.py::test_fork_benchma
 |--------|-----------------|------|
 | fork | `POST /vms/{id}/fork` — APFS clonefile of rootfs overlay + workspace | < 500ms |
 | image_size | Actual disk usage of forked image (blocks, not logical size) | < 12MB |
-| boot_provision | `POST /provision` with `image` param — clone image into new session | < 1200ms |
+| boot_provision | `POST /vms/create` with `image` param — clone image into new session | < 1200ms |
 | boot_ready | First exec succeeds on the image-booted VM | < 1200ms |
 | pkg_survived | Packages installed via apt survive fork (rootfs overlay) | must pass |
 | ws_survived | Files written to /root/ survive fork (VirtioFS workspace) | must pass |

@@ -27,7 +27,7 @@ def test_stale_instance_sockets():
 
     try:
         client = svc.client()
-        resp = client.get("/list")
+        resp = client.get("/vms/list")
         assert resp is not None, "Service should start despite stale instance sockets"
     finally:
         svc.stop()

@@ -19,7 +19,7 @@ def test_missing_instances_dir_recreated():
 
     try:
         client = svc.client()
-        resp = client.get("/list")
+        resp = client.get("/vms/list")
         assert resp is not None, "Service should respond"
         assert "sandboxes" in resp
     finally:

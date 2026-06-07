@@ -31,7 +31,7 @@ def test_mitm_policy_telemetry(service_env, client):
     vm_name = f"mitm-telemetry-{uuid.uuid4().hex[:8]}"
     
     # Provision VM
-    client.post("/provision", {"name": vm_name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
+    client.post("/vms/create", {"name": vm_name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
     
     try:
         assert wait_exec_ready(client, vm_name, timeout=EXEC_READY_TIMEOUT)

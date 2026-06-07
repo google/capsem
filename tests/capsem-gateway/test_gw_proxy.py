@@ -17,15 +17,15 @@ pytestmark = pytest.mark.gateway
 class TestProxyForwarding:
 
     def test_get_list_through_gateway(self, gw_client):
-        """GET /list returns mock VM list."""
-        resp = gw_client.get("/list")
+        """GET /vms/list returns mock VM list."""
+        resp = gw_client.get("/vms/list")
         assert resp is not None
         assert "sandboxes" in resp
         assert len(resp["sandboxes"]) == 2
 
     def test_post_provision_with_body(self, gw_client):
-        """POST /provision with JSON body returns an id."""
-        resp = gw_client.post("/provision", {"ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
+        """POST /vms/create with JSON body returns an id."""
+        resp = gw_client.post("/vms/create", {"ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
         assert resp is not None
         assert "id" in resp
 
@@ -44,13 +44,13 @@ class TestProxyForwarding:
     def test_preserves_query_string(self, gw_client):
         """Query parameters are preserved through proxy."""
         # Use /info with query -- mock doesn't use query but it must not crash
-        resp = gw_client.get("/info/vm-001?detail=true")
+        resp = gw_client.get("/vms/vm-001/info?detail=true")
         assert resp is not None
         assert resp.get("id") == "vm-001"
 
     def test_preserves_upstream_404(self, gw_client):
         """404 from upstream service is proxied as-is."""
-        resp = gw_client.get("/info/ghost-vm-nonexistent")
+        resp = gw_client.get("/vms/ghost-vm-nonexistent/info")
         assert resp is not None
         assert "error" in str(resp).lower() or "not found" in str(resp).lower()
 
@@ -63,7 +63,7 @@ class TestProxySecurity:
         gw.start()
         try:
             client = TcpHttpClient(gw.base_url, gw.token)
-            status = client.get_raw("/list")
+            status = client.get_raw("/vms/list")
             assert status == 502
         finally:
             gw.stop()
@@ -72,7 +72,7 @@ class TestProxySecurity:
         """Path traversal attempt doesn't crash or escape."""
         # axum normalizes /../ in paths, so this should resolve to /etc/passwd
         # or be rejected -- either way it must not leak host filesystem contents
-        resp = gw_client.get("/info/../../../etc/passwd")
+        resp = gw_client.get("/vms/../../../etc/passwd/info")
         # The mock will return a 404 (no such VM). The important thing is
         # it did NOT return actual /etc/passwd contents from the host.
         if resp is not None:

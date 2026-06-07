@@ -18,7 +18,7 @@ def test_rapid_exec_sequence():
     name = f"rapid-exec-{uuid.uuid4().hex[:8]}"
 
     try:
-        client.post("/provision", {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
+        client.post("/vms/create", {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
         assert wait_exec_ready(client, name, timeout=EXEC_READY_TIMEOUT)
 
         results = []
@@ -47,7 +47,7 @@ def test_rapid_file_io():
     name = f"rapid-io-{uuid.uuid4().hex[:8]}"
 
     try:
-        client.post("/provision", {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
+        client.post("/vms/create", {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
         assert wait_exec_ready(client, name, timeout=EXEC_READY_TIMEOUT)
 
         # Write 10 files

@@ -23,7 +23,7 @@ class TestGuestShutdownEphemeral:
 
     def test_guest_shutdown_stops_ephemeral(self, client):
         """Typing 'shutdown' inside an ephemeral VM should stop it."""
-        resp = client.post("/provision", {"ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
+        resp = client.post("/vms/create", {"ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
         vm_id = resp["id"]
         assert wait_exec_ready(client, vm_id, timeout=EXEC_READY_TIMEOUT), \
             f"VM {vm_id} never became exec-ready"
@@ -39,7 +39,7 @@ class TestGuestShutdownEphemeral:
         gone = False
         for _ in range(20):
             time.sleep(1)
-            listing = client.get("/list")
+            listing = client.get("/vms/list")
             ids = [s["id"] for s in listing["sandboxes"]]
             if vm_id not in ids:
                 gone = True
@@ -52,7 +52,7 @@ class TestGuestShutdownPersistent:
     def test_guest_shutdown_preserves_persistent_and_resume(self, client):
         """Guest shutdown on a persistent VM preserves state; resume restores it."""
         name = vm_name("gshut")
-        client.post("/provision", {
+        client.post("/vms/create", {
             "name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS, "persistent": True,
         })
         assert wait_exec_ready(client, name, timeout=EXEC_READY_TIMEOUT), \
@@ -74,7 +74,7 @@ class TestGuestShutdownPersistent:
         stopped = False
         for _ in range(20):
             time.sleep(1)
-            listing = client.get("/list")
+            listing = client.get("/vms/list")
             vm = next((s for s in listing["sandboxes"] if s["id"] == name), None)
             if vm and vm["status"] == "Stopped":
                 stopped = True
@@ -82,7 +82,7 @@ class TestGuestShutdownPersistent:
             if vm is None:
                 # Might have been removed from running list but still in registry
                 try:
-                    info = client.get(f"/info/{name}")
+                    info = client.get(f"/vms/{name}/info")
                     if info and info.get("status") == "Stopped":
                         stopped = True
                         break
@@ -111,7 +111,7 @@ class TestVmIdentity:
     def test_capsem_vm_id_env_var(self, client):
         """CAPSEM_VM_ID must be set inside the VM."""
         name = vm_name("vmid")
-        client.post("/provision", {
+        client.post("/vms/create", {
             "name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS, "persistent": True,
         })
         try:
@@ -126,7 +126,7 @@ class TestVmIdentity:
     def test_capsem_vm_name_env_var(self, client):
         """CAPSEM_VM_NAME must be set to the VM name for persistent VMs."""
         name = vm_name("vmname")
-        client.post("/provision", {
+        client.post("/vms/create", {
             "name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS, "persistent": True,
         })
         try:
@@ -141,7 +141,7 @@ class TestVmIdentity:
     def test_hostname_reflects_vm_name(self, client):
         """Hostname inside the VM must match the VM name."""
         name = vm_name("hname")
-        client.post("/provision", {
+        client.post("/vms/create", {
             "name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS, "persistent": True,
         })
         try:
@@ -155,7 +155,7 @@ class TestVmIdentity:
 
     def test_ephemeral_vm_has_id_as_hostname(self, client):
         """Ephemeral VMs should get CAPSEM_VM_ID as hostname."""
-        resp = client.post("/provision", {"ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
+        resp = client.post("/vms/create", {"ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
         vm_id = resp["id"]
         try:
             assert wait_exec_ready(client, vm_id, timeout=EXEC_READY_TIMEOUT)
@@ -175,7 +175,7 @@ class TestStopResumeE2E:
     def test_file_survives_stop_resume(self, client):
         """E2E: create -> write file -> stop -> resume -> read file -> delete."""
         name = vm_name("e2efile")
-        client.post("/provision", {
+        client.post("/vms/create", {
             "name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS, "persistent": True,
         })
         assert wait_exec_ready(client, name, timeout=EXEC_READY_TIMEOUT)
@@ -187,7 +187,7 @@ class TestStopResumeE2E:
         })
 
         # Stop
-        client.post(f"/stop/{name}", {})
+        client.post(f"/vms/{name}/stop", {})
 
         # Resume
         resume_resp = client.post(f"/vms/{name}/resume", {})
@@ -207,7 +207,7 @@ class TestStopResumeE2E:
         name = vm_name("e2eenv")
         env_key = "CAPSEM_E2E_TEST"
         env_val = f"lifecycle-{uuid.uuid4().hex[:8]}"
-        client.post("/provision", {
+        client.post("/vms/create", {
             "name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS, "persistent": True,
             "env": {env_key: env_val},
         })
@@ -219,7 +219,7 @@ class TestStopResumeE2E:
             f"{env_key} not set before stop: {resp['stdout']}"
 
         # Stop
-        client.post(f"/stop/{name}", {})
+        client.post(f"/vms/{name}/stop", {})
 
         # Resume
         resume_resp = client.post(f"/vms/{name}/resume", {})
@@ -240,7 +240,7 @@ class TestSuspendResume:
     def test_suspend_resume_round_trip(self, client):
         """Suspend a persistent VM, resume it, verify file survives."""
         name = vm_name("susp")
-        client.post("/provision", {
+        client.post("/vms/create", {
             "name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS, "persistent": True,
         })
         assert wait_exec_ready(client, name, timeout=EXEC_READY_TIMEOUT), \
@@ -259,7 +259,7 @@ class TestSuspendResume:
             f"Suspend failed: {suspend_resp}"
 
         # Verify VM shows as Suspended
-        listing = client.get("/list")
+        listing = client.get("/vms/list")
         vm = next((s for s in listing["sandboxes"] if s["id"] == name), None)
         assert vm is not None, f"Suspended VM {name} not in list"
         assert vm["status"] == "Suspended", f"Expected Suspended, got {vm['status']}"
@@ -280,7 +280,7 @@ class TestSuspendResume:
 
     def test_suspend_ephemeral_rejected(self, client):
         """Suspending an ephemeral VM must fail."""
-        resp = client.post("/provision", {"ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
+        resp = client.post("/vms/create", {"ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
         vm_id = resp["id"]
         try:
             assert wait_exec_ready(client, vm_id, timeout=EXEC_READY_TIMEOUT)

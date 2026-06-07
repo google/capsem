@@ -51,7 +51,7 @@ def test_capsem_bench_baseline():
     name = f"bench-{uuid.uuid4().hex[:8]}"
 
     try:
-        client.post("/provision", {
+        client.post("/vms/create", {
             "name": name,
             "ram_mb": DEFAULT_RAM_MB,
             "cpus": DEFAULT_CPUS,

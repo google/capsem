@@ -22,7 +22,7 @@ def test_boot_under_30_seconds():
 
     try:
         start = time.time()
-        client.post("/provision", {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
+        client.post("/vms/create", {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
 
         ready = wait_exec_ready(client, name, timeout=EXEC_READY_TIMEOUT)
         elapsed = time.time() - start
@@ -49,7 +49,7 @@ def test_exec_latency_under_1_5_seconds():
 
     try:
         start = time.time()
-        client.post("/provision", {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
+        client.post("/vms/create", {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
 
         ready = wait_exec_ready(client, name, timeout=EXEC_READY_TIMEOUT)
         elapsed = time.time() - start
@@ -79,7 +79,7 @@ def test_avg_exec_latency_3_runs():
         for i in range(3):
             name = f"avg-{uuid.uuid4().hex[:8]}"
             start = time.time()
-            client.post("/provision", {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
+            client.post("/vms/create", {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
             ready = wait_exec_ready(client, name, timeout=EXEC_READY_TIMEOUT)
             elapsed = time.time() - start
             assert ready, f"VM {i+1} never became exec-ready after {elapsed:.1f}s"
@@ -107,7 +107,7 @@ def test_avg_exec_latency_3_concurrent_vms():
     try:
         for i, name in enumerate(names):
             start = time.time()
-            client.post("/provision", {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
+            client.post("/vms/create", {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
             ready = wait_exec_ready(client, name, timeout=EXEC_READY_TIMEOUT)
             elapsed = time.time() - start
             assert ready, f"VM {i+1} never became exec-ready after {elapsed:.1f}s"

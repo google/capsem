@@ -231,7 +231,7 @@ def test_mitm_local_benchmark_artifact():
     name = f"mitm-local-{uuid.uuid4().hex[:8]}"
 
     try:
-        client.post("/provision", {
+        client.post("/vms/create", {
             "name": name,
             "ram_mb": DEFAULT_RAM_MB,
             "cpus": DEFAULT_CPUS,

@@ -13,7 +13,7 @@ def test_virtiofs_path_traversal(client):
     vm_name = f"traversal-{uuid.uuid4().hex[:8]}"
     
     # Provision VM
-    resp = client.post("/provision", {"name": vm_name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
+    resp = client.post("/vms/create", {"name": vm_name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
     assert resp is not None
     
     try:

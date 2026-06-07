@@ -217,15 +217,15 @@ async fn main() -> Result<()> {
 fn service_proxy_routes() -> Router<Arc<AppState>> {
     Router::new()
         .route("/version", get(proxy::handle_proxy))
-        .route("/provision", post(proxy::handle_proxy))
-        .route("/list", get(proxy::handle_proxy))
-        .route("/info/{id}", get(proxy::handle_proxy))
+        .route("/vms/create", post(proxy::handle_proxy))
+        .route("/vms/list", get(proxy::handle_proxy))
+        .route("/vms/{id}/info", get(proxy::handle_proxy))
         .route("/logs/{id}", get(proxy::handle_proxy))
         .route("/inspect/{id}", post(proxy::handle_proxy))
         .route("/exec/{id}", post(proxy::handle_proxy))
         .route("/write_file/{id}", post(proxy::handle_proxy))
         .route("/read_file/{id}", post(proxy::handle_proxy))
-        .route("/stop/{id}", post(proxy::handle_proxy))
+        .route("/vms/{id}/stop", post(proxy::handle_proxy))
         .route("/vms/{id}/pause", post(proxy::handle_proxy))
         .route("/vms/{id}/delete", delete(proxy::handle_proxy))
         .route("/vms/{id}/resume", post(proxy::handle_proxy))
@@ -452,6 +452,10 @@ mod tests {
             ("GET", "/vms/test-vm/detection/status"),
             ("GET", "/vms/test-vm/enforcement/latest"),
             ("GET", "/vms/test-vm/enforcement/status"),
+            ("POST", "/vms/create"),
+            ("GET", "/vms/list"),
+            ("GET", "/vms/test-vm/info"),
+            ("POST", "/vms/test-vm/stop"),
             ("POST", "/vms/test-vm/pause"),
             ("DELETE", "/vms/test-vm/delete"),
             ("POST", "/vms/test-vm/resume"),
@@ -511,6 +515,10 @@ mod tests {
     #[tokio::test]
     async fn gateway_does_not_forward_retired_vm_lifecycle_routes() {
         for (method, uri) in [
+            ("POST", "/provision"),
+            ("GET", "/list"),
+            ("GET", "/info/test-vm"),
+            ("POST", "/stop/test-vm"),
             ("POST", "/suspend/test-vm"),
             ("DELETE", "/delete/test-vm"),
             ("POST", "/resume/test-vm"),

@@ -505,7 +505,7 @@ fn path_construction_with_empty_id() {
 #[test]
 fn path_construction_with_slashes() {
     let id = "vm/../../secret";
-    let path = format!("/info/{}", id);
+    let path = format!("/vms/{}/info", id);
     assert!(
         path.contains("../"),
         "Path traversal attempt preserved in URL"

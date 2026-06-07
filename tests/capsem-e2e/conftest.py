@@ -42,7 +42,7 @@ def _vm_name(prefix="e2e"):
 class RealService:
     """Starts capsem-service the way just run-service does.
 
-    Readiness check: socket file exists AND curl to /list succeeds.
+    Readiness check: socket file exists AND curl to /vms/list succeeds.
     This is intentionally the same logic as the justfile run-service
     recipe. If they diverge, tests pass but the product breaks.
     """
@@ -92,7 +92,7 @@ class RealService:
                 try:
                     result = subprocess.run(
                         ["curl", "-s", "--unix-socket", str(self.uds_path),
-                         "--max-time", "2", "http://localhost/list"],
+                         "--max-time", "2", "http://localhost/vms/list"],
                         capture_output=True, text=True, timeout=5,
                     )
                     if result.returncode == 0:

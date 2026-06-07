@@ -68,12 +68,12 @@ Tray app  -> capsem-gateway (TCP)-> HTTP/UDS -> capsem-service
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| POST | `/provision` | Create a new sandbox VM (set `persistent: true` for named VMs) |
-| GET | `/list` | List all sandboxes (running + stopped persistent) |
-| GET | `/info/{id}` | Sandbox details (config, status, persistent) |
+| POST | `/vms/create` | Create a new sandbox VM (set `persistent: true` for named VMs) |
+| GET | `/vms/list` | List all sandboxes (running + stopped persistent) |
+| GET | `/vms/{id}/info` | Sandbox details (config, status, persistent) |
 | POST | `/exec/{id}` | Execute command, return stdout/stderr/exit_code |
 | POST | `/run` | One-shot: provision temp VM, exec command, destroy, return output |
-| POST | `/stop/{id}` | Stop VM (persistent: preserve state; ephemeral: destroy) |
+| POST | `/vms/{id}/stop` | Stop VM (persistent: preserve state; ephemeral: destroy) |
 | POST | `/vms/{id}/resume` | Resume a stopped persistent VM |
 | POST | `/vms/{id}/save` | Convert running ephemeral VM to persistent |
 | POST | `/purge` | Kill all temp VMs (set `all: true` to include persistent) |

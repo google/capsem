@@ -79,7 +79,7 @@ def _run_lifecycle(client):
     name = f"bench-{uuid.uuid4().hex[:8]}"
 
     t0 = time.monotonic()
-    client.post("/provision", {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
+    client.post("/vms/create", {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
     provision_ms = (time.monotonic() - t0) * 1000
 
     t0 = time.monotonic()
@@ -116,7 +116,7 @@ def _run_fork_benchmark(client):
 
     try:
         # Provision source VM and wait for exec
-        client.post("/provision", {"name": src, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
+        client.post("/vms/create", {"name": src, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
         assert wait_exec_ready(client, src, timeout=EXEC_READY_TIMEOUT), f"{src} not ready"
 
         # Install a package (rootfs overlay change)
@@ -142,7 +142,7 @@ def _run_fork_benchmark(client):
 
         # Boot from fork -- time provision + exec-ready
         t0 = time.monotonic()
-        client.post("/provision", {
+        client.post("/vms/create", {
             "name": dst, "from": img,
             "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS,
         })

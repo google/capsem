@@ -254,7 +254,7 @@ function emptyStatus(): StatusResponse {
 
 export async function provisionVm(opts: ProvisionRequest): Promise<ProvisionResponse> {
   console.log('[api] provisionVm(%o) connected=%s', opts, _connected);
-  const resp = await _post('/provision', opts);
+  const resp = await _post('/vms/create', opts);
   const result = await resp.json();
   console.log('[api] provisionVm result:', result);
   return result;
@@ -266,7 +266,7 @@ export async function runVm(opts: ProvisionRequest): Promise<ProvisionResponse> 
 }
 
 export async function stopVm(id: string): Promise<void> {
-  await _post(`/stop/${encodeURIComponent(id)}`);
+  await _post(`/vms/${encodeURIComponent(id)}/stop`);
 }
 
 export async function suspendVm(id: string): Promise<void> {
@@ -515,10 +515,10 @@ export async function vmStatus(): Promise<string> {
 export async function getVmState(id?: string): Promise<VmStateResponse> {
   if (!_connected) return { state: 'not created', elapsed_ms: 0, history: [] };
   try {
-    const path = id ? `/info/${encodeURIComponent(id)}` : '/status';
+    const path = id ? `/vms/${encodeURIComponent(id)}/info` : '/status';
     const resp = await _get(path);
     const data = await resp.json();
-    // /info/{id} returns full sandbox info; extract state + history.
+    // /vms/{id}/info returns full sandbox info; extract state + history.
     if (id) {
       return {
         state: data.status ?? 'not created',

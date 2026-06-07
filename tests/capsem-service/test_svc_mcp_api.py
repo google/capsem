@@ -136,7 +136,7 @@ class TestMcpCall:
         -> aggregator), even if the downstream MCP call itself fails.
         """
         name = vm_name("mcpcall")
-        client.post("/provision", {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
+        client.post("/vms/create", {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
         try:
             assert wait_exec_ready(client, name, timeout=EXEC_READY_TIMEOUT), (
                 f"{name} never exec-ready"

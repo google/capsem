@@ -32,7 +32,7 @@ def fresh_vm(client):
 
     def _create(prefix="svc", ram_mb=DEFAULT_RAM_MB, cpus=DEFAULT_CPUS):
         name = vm_name(prefix)
-        resp = client.post("/provision", {"name": name, "ram_mb": ram_mb, "cpus": cpus})
+        resp = client.post("/vms/create", {"name": name, "ram_mb": ram_mb, "cpus": cpus})
         created.append(name)
         return name, resp
 
@@ -50,7 +50,7 @@ def ready_vm(service_env):
     """A single exec-ready VM that stays alive for the module. Yields (client, name)."""
     client = service_env.client()
     name = vm_name(service_env.__class__.__name__[:8])
-    client.post("/provision", {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
+    client.post("/vms/create", {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
     assert wait_exec_ready(client, name, timeout=EXEC_READY_TIMEOUT), f"VM {name} never exec-ready"
     yield client, name
     try:

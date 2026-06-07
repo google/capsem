@@ -29,7 +29,7 @@ def security_vm():
     client = svc.client()
 
     name = f"sec-{uuid.uuid4().hex[:8]}"
-    client.post("/provision", {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
+    client.post("/vms/create", {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
     assert wait_exec_ready(client, name), f"VM {name} never exec-ready"
 
     yield client, name

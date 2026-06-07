@@ -16,7 +16,7 @@ def test_env_var_injected(config_svc):
     name = f"env-{uuid.uuid4().hex[:8]}"
 
     try:
-        client.post("/provision", {
+        client.post("/vms/create", {
             "name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS,
             "env": {"TEST_VAR": "hello_from_host"},
         })
@@ -39,7 +39,7 @@ def test_guest_has_python3(config_svc):
     name = f"py3-{uuid.uuid4().hex[:8]}"
 
     try:
-        client.post("/provision", {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
+        client.post("/vms/create", {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
         assert wait_exec_ready(client, name, timeout=EXEC_READY_TIMEOUT)
 
         resp = client.post(f"/exec/{name}", {"command": "python3 --version"})
@@ -60,7 +60,7 @@ def test_guest_arch_matches_host(config_svc):
     name = f"arch-{uuid.uuid4().hex[:8]}"
 
     try:
-        client.post("/provision", {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
+        client.post("/vms/create", {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
         assert wait_exec_ready(client, name, timeout=EXEC_READY_TIMEOUT)
 
         resp = client.post(f"/exec/{name}", {"command": "uname -m"})

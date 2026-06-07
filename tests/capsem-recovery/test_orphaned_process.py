@@ -19,7 +19,7 @@ def test_orphaned_vm_cleanup_on_restart():
     name = f"orphan-{uuid.uuid4().hex[:8]}"
 
     try:
-        client.post("/provision", {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
+        client.post("/vms/create", {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
         wait_exec_ready(client, name, timeout=EXEC_READY_TIMEOUT)
 
         # Kill the service process (simulates crash)
@@ -36,7 +36,7 @@ def test_orphaned_vm_cleanup_on_restart():
             client2 = svc2.client()
 
             # List should work -- may or may not show the orphaned VM
-            resp = client2.get("/list")
+            resp = client2.get("/vms/list")
             assert resp is not None
 
             # Try to clean up -- should not hang or crash
