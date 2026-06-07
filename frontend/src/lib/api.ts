@@ -114,6 +114,32 @@ export interface ProfileInfoResponse {
   profile: ProfileSummary;
 }
 
+export type SecurityRuleAction = 'allow' | 'ask' | 'block' | 'preprocess' | 'rewrite' | 'postprocess';
+export type SecurityRuleDetectionLevel = 'informational' | 'low' | 'medium' | 'high' | 'critical';
+
+export interface EnforcementRuleInfo {
+  rule_id: string;
+  source: string;
+  provider: string;
+  namespace: string;
+  rule_key: string;
+  default_rule: boolean;
+  name: string;
+  action: SecurityRuleAction;
+  match: string;
+  detection_level?: SecurityRuleDetectionLevel;
+  priority: number;
+  corp_locked: boolean;
+  reason?: string;
+  plugin?: string;
+  plugin_config?: Record<string, unknown>;
+}
+
+export interface EnforcementRuleListResponse {
+  profile_id: string;
+  rules: EnforcementRuleInfo[];
+}
+
 // -- Initialization --
 
 export async function init(): Promise<InitResult> {
@@ -645,6 +671,13 @@ export async function listProfiles(): Promise<ProfilesListResponse> {
 
 export async function getProfileInfo(profileId: string): Promise<ProfileInfoResponse> {
   const resp = await _get(`/profiles/${encodeURIComponent(profileId)}/info`);
+  return await resp.json();
+}
+
+// -- Enforcement rules --
+
+export async function listEnforcementRules(profileId: string): Promise<EnforcementRuleListResponse> {
+  const resp = await _get(`/profiles/${encodeURIComponent(profileId)}/enforcement/rules/list`);
   return await resp.json();
 }
 

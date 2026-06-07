@@ -383,6 +383,43 @@ describe('api', () => {
     });
   });
 
+  // ---- Enforcement rules ----
+
+  describe('enforcement rules', () => {
+    beforeEach(async () => {
+      mockFetch
+        .mockReturnValueOnce(jsonResponse({ ok: true, version: '1.0.0', service_socket: '/tmp/s' }))
+        .mockReturnValueOnce(jsonResponse({ token: 'tok' }));
+      await api.init();
+    });
+
+    it('listEnforcementRules sends GET /profiles/{profile_id}/enforcement/rules/list', async () => {
+      const response = {
+        profile_id: 'default',
+        rules: [
+          {
+            rule_id: 'profiles.rules.default_http_requests',
+            source: 'builtin_default',
+            provider: 'profiles',
+            namespace: 'profiles',
+            rule_key: 'default_http_requests',
+            default_rule: true,
+            name: 'default_http_requests',
+            action: 'ask',
+            match: 'http.request.exists()',
+            priority: 0,
+            corp_locked: false,
+          },
+        ],
+      };
+      mockFetch.mockReturnValueOnce(jsonResponse(response));
+      const result = await api.listEnforcementRules('default');
+      expect(result).toEqual(response);
+      const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
+      expect(call[0]).toContain('/profiles/default/enforcement/rules/list');
+    });
+  });
+
   // ---- Plugins ----
 
   describe('plugins', () => {

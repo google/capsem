@@ -8,9 +8,9 @@ use axum::{
 use capsem_core::poll::{poll_until, PollOpts};
 use capsem_core::{
     net::policy_config::{
-        DetectionLevel, ProviderRuleProfile, SecurityPluginConfig, SecurityPluginMode,
-        SecurityRule, SecurityRuleGroup, SecurityRuleProfile, SecurityRuleSet, SecurityRuleSource,
-        SettingsFile,
+        CompiledSecurityRule, DetectionLevel, ProviderRuleProfile, SecurityPluginConfig,
+        SecurityPluginMode, SecurityRule, SecurityRuleGroup, SecurityRuleProfile, SecurityRuleSet,
+        SecurityRuleSource, SettingsFile,
     },
     security_engine::{
         FileSecurityEvent, RuntimeSecurityEventType, SecurityActionRegistry, SecurityEmitError,
@@ -4276,6 +4276,113 @@ async fn handle_enforcement_evaluate(
     }))
 }
 
+fn enforcement_rule_source(source: SecurityRuleSource) -> api::EnforcementRuleSource {
+    match source {
+        SecurityRuleSource::BuiltinDefault => api::EnforcementRuleSource::BuiltinDefault,
+        SecurityRuleSource::User => api::EnforcementRuleSource::Profile,
+        SecurityRuleSource::Corp => api::EnforcementRuleSource::Corp,
+    }
+}
+
+fn enforcement_rule_info(
+    source: SecurityRuleSource,
+    rule: CompiledSecurityRule,
+) -> api::EnforcementRuleInfo {
+    api::EnforcementRuleInfo {
+        rule_id: rule.rule_id,
+        source: enforcement_rule_source(source),
+        provider: rule.provider,
+        namespace: rule.namespace,
+        rule_key: rule.rule_key,
+        default_rule: rule.default_rule,
+        name: rule.name,
+        action: rule.action,
+        condition: rule.condition,
+        detection_level: rule.detection_level,
+        priority: rule.priority,
+        corp_locked: rule.corp_locked,
+        reason: rule.reason,
+        plugin: rule.plugin,
+        plugin_config: rule
+            .plugin_config
+            .into_iter()
+            .map(|(key, value)| {
+                (
+                    key,
+                    serde_json::to_value(value).unwrap_or(serde_json::Value::Null),
+                )
+            })
+            .collect(),
+    }
+}
+
+fn append_compiled_rules(
+    output: &mut Vec<api::EnforcementRuleInfo>,
+    source: SecurityRuleSource,
+    profile: SecurityRuleProfile,
+) -> Result<(), AppError> {
+    let mut rules = profile.compile(source).map_err(|error| {
+        AppError(
+            StatusCode::BAD_REQUEST,
+            format!("invalid enforcement rules: {error}"),
+        )
+    })?;
+    output.extend(
+        rules
+            .drain(..)
+            .map(|rule| enforcement_rule_info(source, rule)),
+    );
+    Ok(())
+}
+
+fn list_enforcement_rules_for_profile(
+    user: &SettingsFile,
+    corp: &SettingsFile,
+) -> Result<Vec<api::EnforcementRuleInfo>, AppError> {
+    let mut rules = Vec::new();
+    append_compiled_rules(
+        &mut rules,
+        SecurityRuleSource::BuiltinDefault,
+        ProviderRuleProfile::builtin_security_defaults(),
+    )?;
+    append_compiled_rules(
+        &mut rules,
+        SecurityRuleSource::User,
+        SecurityRuleProfile {
+            profiles: user.profiles.clone(),
+            ai: user.ai.clone(),
+            ..SecurityRuleProfile::default()
+        },
+    )?;
+    append_compiled_rules(
+        &mut rules,
+        SecurityRuleSource::Corp,
+        SecurityRuleProfile {
+            corp: corp.corp.clone(),
+            profiles: corp.profiles.clone(),
+            ai: corp.ai.clone(),
+            ..SecurityRuleProfile::default()
+        },
+    )?;
+    rules.sort_by(|left, right| {
+        left.priority
+            .cmp(&right.priority)
+            .then_with(|| left.rule_id.cmp(&right.rule_id))
+    });
+    Ok(rules)
+}
+
+async fn handle_enforcement_rules_list(
+    Path(profile_id): Path<String>,
+) -> Result<Json<api::EnforcementRuleListResponse>, AppError> {
+    let profile_id = validate_profile_route_id(profile_id)?;
+    let (user, corp) = capsem_core::net::policy_config::load_settings_files();
+    Ok(Json(api::EnforcementRuleListResponse {
+        profile_id,
+        rules: list_enforcement_rules_for_profile(&user, &corp)?,
+    }))
+}
+
 async fn handle_enforcement_rule_upsert(
     Path((profile_id, rule_id)): Path<(String, String)>,
     Json(rule): Json<SecurityRule>,
@@ -5781,6 +5888,10 @@ async fn main() -> Result<()> {
         .route(
             "/profiles/{profile_id}/enforcement/reload",
             post(handle_enforcement_reload),
+        )
+        .route(
+            "/profiles/{profile_id}/enforcement/rules/list",
+            get(handle_enforcement_rules_list),
         )
         .route(
             "/profiles/{profile_id}/plugins/list",

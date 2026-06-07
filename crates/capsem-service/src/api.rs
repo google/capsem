@@ -1,3 +1,4 @@
+use capsem_core::net::policy_config::{DetectionLevel, SecurityRuleAction};
 use capsem_core::session::{
     GlobalStats, McpToolSummary, ProviderSummary, SessionRecord, ToolSummary,
 };
@@ -213,6 +214,44 @@ pub struct ProfilesListResponse {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct ProfileInfoResponse {
     pub profile: ProfileSummary,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum EnforcementRuleSource {
+    BuiltinDefault,
+    Profile,
+    Corp,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct EnforcementRuleInfo {
+    pub rule_id: String,
+    pub source: EnforcementRuleSource,
+    pub provider: String,
+    pub namespace: String,
+    pub rule_key: String,
+    pub default_rule: bool,
+    pub name: String,
+    pub action: SecurityRuleAction,
+    #[serde(rename = "match")]
+    pub condition: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detection_level: Option<DetectionLevel>,
+    pub priority: i32,
+    pub corp_locked: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plugin: Option<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub plugin_config: BTreeMap<String, serde_json::Value>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct EnforcementRuleListResponse {
+    pub profile_id: String,
+    pub rules: Vec<EnforcementRuleInfo>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]

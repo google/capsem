@@ -267,6 +267,66 @@ async fn handle_profile_info_rejects_unknown_profiles() {
 }
 
 #[tokio::test]
+async fn handle_enforcement_rules_list_returns_compiled_profile_rules() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+
+    let dir = tempfile::tempdir().unwrap();
+    let (_env_guard, user_path, _) = install_empty_settings_env(&dir);
+    let mut settings = capsem_core::net::policy_config::SettingsFile::default();
+    settings.profiles.rules.insert(
+        "skill_loaded".to_string(),
+        capsem_core::net::policy_config::SecurityRule {
+            name: "skill_loaded".to_string(),
+            action: capsem_core::net::policy_config::SecurityRuleAction::Allow,
+            condition: r#"file.read.path.contains("skills/")"#.to_string(),
+            detection_level: Some(capsem_core::net::policy_config::DetectionLevel::Informational),
+            priority: None,
+            corp_locked: false,
+            reason: Some("record skill file reads".to_string()),
+            plugin: None,
+            plugin_config: BTreeMap::new(),
+        },
+    );
+    capsem_core::net::policy_config::write_settings_file(&user_path, &settings).unwrap();
+
+    let Json(response) = handle_enforcement_rules_list(Path("default".to_string()))
+        .await
+        .expect("rules list should compile effective profile");
+
+    assert_eq!(response.profile_id, "default");
+    assert!(
+        response.rules.iter().any(
+            |rule| rule.rule_id == "profiles.rules.default_http_requests"
+                && rule.source == api::EnforcementRuleSource::BuiltinDefault
+                && rule.default_rule
+        ),
+        "list must expose built-in default rules as first-class rows"
+    );
+    let custom = response
+        .rules
+        .iter()
+        .find(|rule| rule.rule_id == "profiles.rules.skill_loaded")
+        .expect("custom profile rule should be listed");
+    assert_eq!(custom.source, api::EnforcementRuleSource::Profile);
+    assert!(!custom.default_rule);
+    assert_eq!(custom.priority, 10);
+    assert_eq!(
+        custom.detection_level,
+        Some(capsem_core::net::policy_config::DetectionLevel::Informational)
+    );
+}
+
+#[tokio::test]
+async fn handle_enforcement_rules_list_rejects_unknown_profiles() {
+    let err = handle_enforcement_rules_list(Path("strict".to_string()))
+        .await
+        .unwrap_err();
+
+    assert_eq!(err.0, StatusCode::NOT_FOUND);
+    assert!(err.1.contains("profile not found: strict"));
+}
+
+#[tokio::test]
 async fn profile_plugin_endpoint_matrix_dynamically_controls_enforcement_evaluation() {
     let state = make_test_state();
 
