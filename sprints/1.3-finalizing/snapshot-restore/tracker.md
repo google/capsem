@@ -10,6 +10,9 @@
   plugin contract, rule format, detection format, or plugin/rule/detection
   corp/profile file locations. If blocked, stop and ask; no schema migration
   escape hatch.
+- [ ] Confirm corp default rules omit `priority` and therefore resolve to the
+  corp source default (`-10`). `priority = "default"` remains profile/built-in
+  fallback only.
 - [ ] Confirm old policy-v2/domain/MCP decision rails stay burned.
 - [ ] Confirm old `capsem setup` and provider onboarding wizard stay burned.
 - [ ] Commit S0.

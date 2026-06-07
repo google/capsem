@@ -362,6 +362,14 @@ Corp owns constraints and reporting endpoints. It can reference rule files and
 Sigma files. Corp priorities may be negative; profile/user rules do not get
 negative priorities.
 
+Corp defaults use the corp source default priority by omitting `priority`. In
+the current rule engine that resolves to `-10`: the least-specific corp rule
+priority, still ahead of profile/user rules. Do not use `priority = "default"`
+for corp rules; that string means the profile/built-in fallback priority. Do
+not use `-1` without an explicit priority-contract change; the current contract
+reserves corp priorities as `-1000..=-10` and profile/user priorities as
+`10..=1000`.
+
 ```toml
 # /etc/capsem/corp.toml
 
@@ -377,7 +385,6 @@ remote_enforcement = "https://security.example.invalid/capsem/enforcement"
 [corp.defaults.default_http_block_unknown]
 name = "corp_default_http_block_unknown"
 action = "block"
-priority = -10
 corp_locked = true
 reason = "Corp baseline block for disallowed HTTP destinations."
 match = 'has(http.host)'
