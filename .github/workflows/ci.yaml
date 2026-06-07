@@ -1,0 +1,282 @@
+name: CI
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Linux: compile + test KVM hypervisor backend (cfg(target_os = "linux"))
+  # ---------------------------------------------------------------------------
+  test-linux:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools
+
+      - uses: Swatinem/rust-cache@v2
+
+      # Try to enable KVM for integration tests. GitHub-hosted runners don't
+      # always expose nested virt -- when /dev/kvm is absent the udev trigger
+      # fails with "Failed to open the device 'kvm': Invalid argument". We
+      # let that pass and fall through to a compile-only/no-KVM run; the
+      # release pipeline owns real-KVM coverage. See sprints/done/ci-green.
+      - name: Enable KVM (best-effort)
+        continue-on-error: true
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Install tools
+        run: |
+          cargo install cargo-nextest --locked
+          cargo install cargo-llvm-cov --locked
+
+      # Library + service crate tests with coverage (capsem-core includes KVM backend on Linux).
+      # capsem-app (Tauri shell) and capsem-tray (macOS muda menu-bar) are macOS-only; every
+      # other host crate is portable and runs here so it gets Linux-specific regression coverage.
+      - name: Unit tests (KVM backend) with coverage
+        run: |
+          cargo llvm-cov nextest --no-cfg-coverage --profile ci --codecov --output-path codecov-linux.json --fail-under-lines 70 -p capsem-core -p capsem-agent -p capsem-logger -p capsem-proto -p capsem-guard -p capsem-gateway -p capsem-service -p capsem -p capsem-mcp -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-process
+          cargo llvm-cov report --no-cfg-coverage --summary-only -p capsem-core -p capsem-agent -p capsem-logger -p capsem-proto -p capsem-guard -p capsem-gateway -p capsem-service -p capsem -p capsem-mcp -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-process 2>&1 | tee coverage-summary-linux.txt
+
+      - name: Upload Linux coverage
+        if: ${{ !cancelled() }}
+        uses: codecov/codecov-action@v5
+        with:
+          files: codecov-linux.json
+          flags: linux-unit
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false
+
+      # Note KVM exercise status. Hosted ARM runners may lack /dev/kvm; the
+      # compile-only path still catches Linux build/lint regressions, and
+      # real-KVM coverage runs in the release pipeline. Surfacing as a
+      # warning (not an error) keeps CI honest about what was actually
+      # exercised without false-failing on a runner-fleet limitation.
+      - name: Note KVM exercise status
+        run: |
+          if [ -e /dev/kvm ]; then
+            echo "KVM is available at /dev/kvm -- KVM-backed tests exercised."
+          else
+            echo "::warning::/dev/kvm not available on this runner -- compile + non-KVM tests only. Real-KVM coverage runs in release pipeline."
+          fi
+
+      - name: Test summary
+        if: always()
+        run: |
+          KVM_STATUS="available"
+          [ -e /dev/kvm ] || KVM_STATUS="not available"
+          COV=$(grep 'TOTAL' coverage-summary-linux.txt 2>/dev/null | awk '{print $(NF)}' || echo "?")
+
+          cat >> "$GITHUB_STEP_SUMMARY" << EOF
+          ## Linux Test Results
+
+          | Metric | Result |
+          |--------|--------|
+          | Runner | ubuntu-24.04-arm (aarch64) |
+          | /dev/kvm | $KVM_STATUS |
+          | Line coverage | $COV |
+          | KVM backend | compiled (real-KVM tests run only when /dev/kvm is present) |
+          EOF
+
+      # T5: preserve test artifacts on failure (Linux job).
+      - name: Upload test artifacts on failure (Linux)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-artifacts-linux-${{ github.run_attempt }}
+          path: |
+            test-artifacts/
+            frontend/test-artifacts/
+          retention-days: 7
+          if-no-files-found: ignore
+
+  # ---------------------------------------------------------------------------
+  # macOS: full test suite (Apple VZ backend, frontend, Python, coverage)
+  # ---------------------------------------------------------------------------
+  test:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-unknown-linux-musl,x86_64-unknown-linux-musl
+          components: llvm-tools
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: pnpm/action-setup@v5
+        with:
+          version: 10
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - run: cd frontend && pnpm install --frozen-lockfile
+
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync
+
+      - name: Dependency audit
+        run: |
+          cargo install cargo-audit --locked
+          cargo audit
+          cd frontend && pnpm audit
+
+      - name: Install tools
+        run: |
+          cargo install cargo-llvm-cov --locked
+          cargo install cargo-nextest --locked
+
+      # Unit tests: all crates with coverage + JUnit XML for test analytics.
+      # capsem-app (Tauri bin) is macOS-only; capsem-mcp-aggregator and
+      # capsem-mcp-builtin are thin binaries that pull capsem-core logic.
+      - name: Unit tests with coverage
+        run: |
+          cargo llvm-cov nextest --no-cfg-coverage --profile ci --codecov --output-path codecov-unit.json --fail-under-lines 70 -p capsem-core -p capsem-agent -p capsem-logger -p capsem-proto -p capsem-guard -p capsem-gateway -p capsem-service -p capsem -p capsem-mcp -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-tray -p capsem-app -p capsem-process
+          cargo llvm-cov report --no-cfg-coverage --summary-only -p capsem-core -p capsem-agent -p capsem-logger -p capsem-proto -p capsem-guard -p capsem-gateway -p capsem-service -p capsem -p capsem-mcp -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-tray -p capsem-app -p capsem-process 2>&1 | tee coverage-summary.txt
+
+      # Integration tests (tests/ directory, cross-crate)
+      - name: Integration tests with coverage
+        run: |
+          cargo llvm-cov nextest --no-cfg-coverage --profile ci --codecov --output-path codecov-integration.json -p capsem-core --test '*' || true
+
+      # Frontend tests with coverage + JUnit output
+      - name: Frontend type-check, test, and build
+        run: |
+          cd frontend
+          pnpm run check
+          npx vitest run --coverage --reporter=default --reporter=junit --outputFile=../frontend-junit.xml
+          pnpm run build
+
+      # Python schema tests with coverage
+      - name: Python schema tests with coverage
+        run: uv run python -m pytest tests/ --cov=src/capsem --cov-report=xml:codecov-python.xml --cov-fail-under=90 --junitxml=python-junit.xml
+
+      # Python integration tests that need no VM
+      - name: Python integration tests (non-VM suites)
+        run: |
+          uv run python -m pytest tests/capsem-bootstrap/ tests/capsem-codesign/ tests/capsem-rootfs-artifacts/ -v --tb=short
+
+      # Verify all integration test suites import cleanly (catches broken imports/syntax)
+      - name: Verify all integration test imports
+        run: |
+          uv run python -m pytest tests/capsem-*/ --collect-only -q
+
+      # Schema drift check
+      - name: Schema drift check
+        run: |
+          uv run python scripts/generate_schema.py
+          git diff --exit-code config/settings-schema.json
+
+      # Upload coverage with flags
+      - name: Upload Rust unit test coverage
+        if: ${{ !cancelled() }}
+        uses: codecov/codecov-action@v5
+        with:
+          files: codecov-unit.json
+          flags: unit
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: true
+
+      - name: Upload Rust integration test coverage
+        if: ${{ !cancelled() }}
+        uses: codecov/codecov-action@v5
+        with:
+          files: codecov-integration.json
+          flags: integration
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false
+
+      - name: Upload frontend coverage
+        if: ${{ !cancelled() }}
+        uses: codecov/codecov-action@v5
+        with:
+          files: coverage/frontend/coverage-final.json
+          flags: unit
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false
+
+      - name: Upload Python coverage
+        if: ${{ !cancelled() }}
+        uses: codecov/codecov-action@v5
+        with:
+          files: codecov-python.xml
+          flags: unit
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false
+
+      # Upload test results for test analytics
+      - name: Upload test results to Codecov
+        if: ${{ !cancelled() }}
+        uses: codecov/test-results-action@v1
+        with:
+          files: target/nextest/ci/junit.xml,frontend-junit.xml,python-junit.xml
+          token: ${{ secrets.CODECOV_TOKEN }}
+
+      # T5: preserve every test artifact (service.log / process.log /
+      # session.db etc.) on failure so PR reviewers can debug without
+      # rerunning. preserve_tmp_dir_on_failure() in tests/helpers/service.py
+      # populates `test-artifacts/` only on red runs; if-no-files-found
+      # is "ignore" so green runs don't bloat the workflow.
+      - name: Upload test artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-artifacts-${{ runner.os }}-${{ github.run_attempt }}
+          path: |
+            test-artifacts/
+            frontend/test-artifacts/
+          retention-days: 7
+          if-no-files-found: ignore
+
+      # Check-only (no link) -- actual cross-compile runs on Linux in release workflow
+      - name: Cross-compile check (guest binaries)
+        run: |
+          cargo check --release --target aarch64-unknown-linux-musl -p capsem-agent
+          cargo check --release --target x86_64-unknown-linux-musl -p capsem-agent
+
+      - name: Test summary
+        if: always()
+        run: |
+          COV=$(grep 'TOTAL' coverage-summary.txt 2>/dev/null | awk '{print $(NF)}' || echo "?")
+
+          cat >> "$GITHUB_STEP_SUMMARY" << EOF
+          ## Test Results
+
+          | Metric | Result |
+          |--------|--------|
+          | Line coverage | $COV |
+          | Test results | See Codecov test analytics |
+          | Cross-compile | aarch64-unknown-linux-musl |
+          | Audit | cargo audit + pnpm audit |
+
+          > Coverage covers library crates + gateway (capsem-core, agent, logger, proto, gateway).
+          > Full workspace coverage runs in the release pipeline.
+          EOF
+
+  # ---------------------------------------------------------------------------
+  # Install e2e: Docker-based install layout + systemd tests (Linux)
+  # ---------------------------------------------------------------------------
+  test-install:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: extractions/setup-just@v3
+
+      - name: Build host builder Docker image
+        run: just build-host-image
+
+      - name: Run install e2e tests
+        run: just test-install

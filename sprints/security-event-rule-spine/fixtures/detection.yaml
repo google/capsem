@@ -1,0 +1,21 @@
+title: OpenAI Traffic To Unexpected Endpoint
+id: 11111111-1111-4111-8111-111111111111
+status: experimental
+description: Detect OpenAI model traffic routed outside approved hosts.
+author: capsem
+date: 2026/06/05
+logsource:
+  product: capsem
+  service: security_event
+detection:
+  selection_model:
+    model.provider: openai
+  filter_approved_endpoint:
+    http.host: api.openai.com
+  condition: selection_model and not filter_approved_endpoint
+falsepositives:
+  - Approved proxy or gateway that has not yet been modeled as a Capsem provider.
+level: high
+capsem:
+  action: block
+  reason: OpenAI traffic must use the approved endpoint.

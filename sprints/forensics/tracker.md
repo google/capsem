@@ -1,0 +1,198 @@
+# Sprint: Forensic Capabilities
+
+## Phase 0 -- API Restructure
+- [ ] 0a: Namespace routes under /vm, /service, /image
+  - [ ] Rename routes in capsem-service/src/main.rs
+  - [ ] Rename InspectRequest -> QueryRequest in api.rs
+  - [ ] Add last_accessed_at to InstanceInfo / PersistentRegistry entries
+  - [ ] Update last_accessed_at on info/query/search/exec/logs access
+  - [ ] "Latest VM" resolution: sort by last_accessed_at DESC, not insertion order
+  - [ ] Add handle_service_info endpoint
+  - [ ] Add handle_service_query endpoint (SQL against main.db)
+  - [ ] Add handle_service_logs endpoint
+  - [ ] Fix handle_query persistent registry fallback
+  - [ ] Add SQLite authorizer callback to DbReader (DENY non-read actions)
+  - [ ] Add pagination params (limit, offset, after_id) to QueryRequest
+  - [ ] Update all URL paths in capsem CLI
+  - [ ] Update all URL paths in capsem-mcp
+  - [ ] Update unit tests (tool registration, API roundtrips)
+  - [ ] CHANGELOG entry
+
+## Phase 1 -- Process Logs to SQLite
+- [ ] 1a: process_events table + WriteOp
+  - [ ] Add ProcessEvent to events.rs
+  - [ ] Add process_events table + indexes to schema.rs
+  - [ ] Add WriteOp::ProcessEvent + insert_process_event to writer.rs
+  - [ ] Re-export from lib.rs
+  - [ ] Unit tests for insert + read
+  - [ ] CHANGELOG entry
+- [ ] 1b: DbTracingLayer
+  - [ ] Create tracing_layer.rs with DbTracingLayer
+  - [ ] Configurable min_level filter (default: INFO+ to DB, TRACE/DEBUG to text only)
+  - [ ] Retention policy: max_process_events (50k default), periodic pruning
+  - [ ] Wire into capsem-process layered subscriber
+  - [ ] Keep stderr fmt layer as fallback for all levels
+  - [ ] Unit tests for layer (level filtering, retention pruning)
+  - [ ] CHANGELOG entry
+
+## Phase 2 -- FTS5 Search
+- [ ] 2a: Upgrade rusqlite to bundled-full
+  - [ ] Change workspace Cargo.toml: bundled -> bundled-full
+  - [ ] Verify build succeeds
+  - [ ] CHANGELOG entry
+- [ ] 2b: FTS5 virtual tables + triggers
+  - [ ] Add fts_net_events, fts_model_calls, fts_tool_calls, fts_mcp_calls, fts_fs_events, fts_process_events
+  - [ ] Add AFTER INSERT triggers for each
+  - [ ] Migration: handle existing DBs without FTS tables
+  - [ ] Unit tests for FTS5 MATCH queries
+  - [ ] CHANGELOG entry
+- [ ] 2c: Search endpoints
+  - [ ] Add /vm/{id}/search handler
+  - [ ] Add /vm/search handler (cross-VM, cap 100 VMs, truncated flag)
+  - [ ] Add /service/search handler
+  - [ ] Add SearchRequest (term, id, limit, offset, sort) / SearchResponse types
+  - [ ] FTS5 bm25() ranking, normalized across tables
+  - [ ] _source and _score columns in results for cross-table interleaving
+  - [ ] Sort by relevance (default) or timestamp
+  - [ ] Unit tests for search handlers
+  - [ ] CHANGELOG entry
+
+## Phase 3 -- Forensic CLI
+- [ ] 3a: Generic columnar table formatter + pagination
+  - [ ] Add comfy-table to workspace + capsem crate
+  - [ ] Implement format_table() for columnar JSON
+  - [ ] Smart formatting: bytes, tokens, cost, duration_ms
+  - [ ] TTY detection for color disable
+  - [ ] Add QueryRequest type (sql, limit, offset, after_id) + POST helper
+  - [ ] Add "resolve latest VM" helper
+  - [ ] Pagination support: --limit, --offset, --after flags on CLI commands
+  - [ ] has_more indicator in output ("... N more results")
+  - [ ] Unit tests for formatter + pagination
+  - [ ] CHANGELOG entry
+- [ ] 3b: capsem info + capsem service info
+  - [ ] Add Info command with optional id
+  - [ ] Add Service subcommand group with Info
+  - [ ] Canned SQL queries for VM session summary
+  - [ ] Canned SQL queries for service/main.db summary
+  - [ ] --json output
+  - [ ] CLI parsing tests
+  - [ ] CHANGELOG entry
+- [ ] 3c: capsem query + capsem service query
+  - [ ] Add Query command
+  - [ ] Add Service Query subcommand
+  - [ ] Wire to /vm/{id}/query and /service/query
+  - [ ] --json output
+  - [ ] CLI parsing tests
+  - [ ] CHANGELOG entry
+- [ ] 3d: capsem search + capsem service search
+  - [ ] Add Search command with --id scope
+  - [ ] Add Service Search subcommand
+  - [ ] Wire to /vm/search, /vm/{id}/search, /service/search
+  - [ ] --json output
+  - [ ] CLI parsing tests
+  - [ ] CHANGELOG entry
+- [ ] 3e: capsem logs (event timeline)
+  - [ ] Define standard timeline projection (timestamp, event_type, summary, status, duration_ms, metadata JSON)
+  - [ ] Add Logs command with timeline UNION ALL query using standard projection
+  - [ ] --type filter (net, ai, tool, file, mcp, process)
+  - [ ] --grep filter
+  - [ ] --tail filter
+  - [ ] --json output
+  - [ ] CLI parsing tests
+  - [ ] CHANGELOG entry
+- [ ] 3f: capsem syslog + capsem service logs
+  - [ ] Add Syslog command (serial.log + process.log text)
+  - [ ] Add Service Logs subcommand (service.log text)
+  - [ ] --type, --grep, --tail, --json
+  - [ ] CLI parsing tests
+  - [ ] CHANGELOG entry
+
+## Phase 4 -- MCP + Integration + Tests
+- [ ] 4a: VM-scoped MCP tools
+  - [ ] Add capsem_query tool
+  - [ ] Add capsem_search tool
+  - [ ] Rename capsem_inspect_schema -> capsem_schema
+  - [ ] Update all existing tool URL paths to /vm/{id}/...
+  - [ ] Tool registration test
+  - [ ] CHANGELOG entry
+- [ ] 4b: Service-scoped MCP tools
+  - [ ] Add capsem_service_info tool
+  - [ ] Add capsem_service_query tool
+  - [ ] Add capsem_service_search tool
+  - [ ] Update capsem_service_logs to use /service/logs endpoint
+  - [ ] Update capsem_create, capsem_list, etc. to /service/... paths
+  - [ ] Update image tools to /image/... paths
+  - [ ] Tool registration test
+  - [ ] CHANGELOG entry
+- [ ] 4c: Just recipe updates
+  - [ ] inspect-session -> capsem info
+  - [ ] query-session -> capsem query
+  - [ ] list-sessions -> capsem service info
+  - [ ] last-logs -> capsem logs
+  - [ ] Deprecation comments on Python scripts
+  - [ ] CHANGELOG entry
+- [ ] 4d: E2E forensic tests
+  - [ ] test_info_default, test_info_json, test_info_empty_session
+  - [ ] test_service_info
+  - [ ] test_query_select, test_query_json
+  - [ ] test_service_query
+  - [ ] test_search_basic, test_search_scoped, test_search_phrase, test_search_boolean
+  - [ ] test_service_search
+  - [ ] test_logs_timeline, test_logs_type_filter, test_logs_tail, test_logs_grep, test_logs_json
+  - [ ] test_logs_process_events
+  - [ ] test_syslog_serial, test_syslog_process
+  - [ ] test_service_logs
+  - [ ] test_mcp_query, test_mcp_search, test_mcp_service_info, test_mcp_service_query
+- [ ] 4e: Adversarial tests
+  - [ ] test_query_sql_injection_drop
+  - [ ] test_query_sql_injection_insert
+  - [ ] test_query_sql_injection_attach
+  - [ ] test_query_sql_injection_pragma
+  - [ ] test_query_sql_injection_union_write
+  - [ ] test_query_empty
+  - [ ] test_query_timeout (recursive CTE)
+  - [ ] test_search_empty_term
+  - [ ] test_search_fts5_injection
+  - [ ] test_search_special_chars
+  - [ ] test_query_nonexistent_vm
+  - [ ] test_query_nonexistent_table
+  - [ ] test_search_no_fts_tables
+  - [ ] test_info_stopped_persistent
+  - [ ] test_query_max_rows
+  - [ ] test_service_query_write_attempt
+  - [ ] test_concurrent_queries
+  - [ ] test_query_load_extension (authorizer blocks load_extension)
+  - [ ] test_pagination_offset
+  - [ ] test_pagination_cursor (after_id)
+  - [ ] test_pagination_has_more_flag
+  - [ ] test_search_sort_by_relevance
+  - [ ] test_search_sort_by_timestamp
+- [ ] 4f: Performance stress tests
+  - [ ] Generate heavy session.db fixture (100k net_events, 50k tool_calls, 10k model_calls)
+  - [ ] test_query_perf_large_select (full table scan < 2s)
+  - [ ] test_query_perf_indexed_lookup (domain filter < 100ms)
+  - [ ] test_search_perf_fts5_match (FTS5 MATCH on 100k rows < 500ms)
+  - [ ] test_logs_perf_timeline_union (UNION ALL across all tables < 1s)
+  - [ ] test_pagination_perf_deep_offset (offset 50k vs cursor-based, cursor < 100ms)
+  - [ ] test_search_perf_cross_vm (search across 10 VMs < 3s)
+  - [ ] Document tuning findings (index effectiveness, FTS5 tokenizer choice)
+
+## Phase 5 -- Documentation
+- [ ] 5a: New skill: dev-forensics
+- [ ] 5b: Update skill: site-architecture
+- [ ] 5c: Update skill: dev-mcp
+- [ ] 5d: User guide pages (site/)
+  - [ ] guides/forensics.mdx
+  - [ ] reference/cli-forensics.mdx
+  - [ ] reference/api.mdx
+- [ ] 5e: Update skill: dev-testing
+
+## Testing Gate
+- [ ] `cargo build -p capsem -p capsem-service -p capsem-mcp -p capsem-logger`
+- [ ] `cargo test`
+- [ ] `just test`
+- [ ] E2E forensic tests pass
+- [ ] Adversarial tests pass
+- [ ] Manual verification: capsem info, query, search, logs, syslog, service *
+
+## Notes

@@ -1,0 +1,47 @@
+[package]
+name = "capsem"
+version.workspace = true
+edition = "2021"
+rust-version.workspace = true
+license.workspace = true
+description.workspace = true
+homepage.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "capsem"
+path = "src/main.rs"
+
+[dependencies]
+capsem-core = { path = "../capsem-core" }
+capsem-proto = { path = "../capsem-proto" }
+anyhow.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+clap.workspace = true
+tokio-unix-ipc.workspace = true
+reqwest.workspace = true
+hyper.workspace = true
+hyper-util.workspace = true
+http-body-util.workspace = true
+bytes.workspace = true
+nix = { version = "0.29", features = ["term", "process", "signal", "fs", "user"] }
+inquire = "0.7"
+blake3 = "1"
+self-replace = "1"
+semver = "1"
+clap_complete = "4"
+tar = "0.4"
+flate2 = "1"
+regex = { workspace = true }
+urlencoding = "2"
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true

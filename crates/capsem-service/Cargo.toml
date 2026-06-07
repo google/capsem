@@ -1,0 +1,41 @@
+[package]
+name = "capsem-service"
+version.workspace = true
+edition = "2021"
+rust-version.workspace = true
+license.workspace = true
+description.workspace = true
+homepage.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+capsem-core = { path = "../capsem-core" }
+capsem-guard = { path = "../capsem-guard" }
+capsem-logger = { path = "../capsem-logger" }
+capsem-proto = { path = "../capsem-proto" }
+anyhow.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+clap.workspace = true
+tokio-unix-ipc.workspace = true
+tokio-stream.workspace = true
+futures.workspace = true
+nix = { version = "0.29", features = ["process", "signal", "term", "fs"] }
+axum = { version = "0.8", features = ["macros"] }
+tower-http = { version = "0.6", features = ["trace"] }
+rand = "0.8"
+base64.workspace = true
+magika = "1.0.1"
+ort = { version = "=2.0.0-rc.11", features = ["download-binaries", "ndarray"] }
+tokio-util = { version = "0.7", features = ["io"] }
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+tempfile = "3"
+filetime = "0.2"

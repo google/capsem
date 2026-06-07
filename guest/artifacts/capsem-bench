@@ -1,0 +1,2 @@
+#!/bin/sh
+PYTHONPATH=/usr/local/lib${PYTHONPATH:+:$PYTHONPATH} exec python3 -m capsem_bench "$@"

@@ -1,0 +1,114 @@
+#!/bin/bash
+# capsem-doctor -- VM self-diagnostic suite
+# Runs all pytest-based diagnostics and reports pass/fail.
+# Usage: capsem-doctor [pytest-args...]
+#   capsem-doctor              # run all tests
+#   capsem-doctor -k sandbox   # run only sandbox tests
+#   capsem-doctor -x           # stop on first failure
+#   capsem-doctor --bundle [PATH]   # tar the diagnostic surface to PATH
+#                                   # (default /shared/doctor-bundle.tar)
+
+set -o pipefail
+# Do NOT override PATH here -- capsem-doctor must run with the same PATH
+# that the interactive shell sees, otherwise it masks PATH bugs.
+
+TESTS_DIR="/usr/local/lib/capsem-tests"
+
+# T4: --bundle [PATH] flag. Strip it from "$@" before invoking pytest so
+# pytest doesn't see an unknown option. Default path is on the virtiofs
+# share so the host can pick it up at $session_dir/<share>/doctor-bundle.tar.
+BUNDLE_PATH=""
+DO_BUNDLE=0
+NEW_ARGS=()
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --bundle)
+            DO_BUNDLE=1
+            shift
+            # Optional positional path argument.
+            if [ $# -gt 0 ] && [ "${1#-}" = "$1" ]; then
+                BUNDLE_PATH="$1"
+                shift
+            fi
+            ;;
+        *)
+            NEW_ARGS+=("$1")
+            shift
+            ;;
+    esac
+done
+set -- "${NEW_ARGS[@]+"${NEW_ARGS[@]}"}"
+
+if [ "$DO_BUNDLE" = "1" ]; then
+    if [ -z "$BUNDLE_PATH" ]; then
+        # Default: prefer /shared (virtiofs in production VMs); fall back to /tmp.
+        if [ -d /shared ]; then
+            BUNDLE_PATH="/shared/doctor-bundle.tar"
+        else
+            BUNDLE_PATH="/tmp/doctor-bundle.tar"
+        fi
+    fi
+    STAGE_DIR=$(mktemp -d /tmp/capsem-doctor-bundle.XXXXXX)
+    PYTEST_OUT="$STAGE_DIR/pytest-output.txt"
+    JUNIT_XML="$STAGE_DIR/pytest-junit.xml"
+fi
+
+echo "=== Capsem VM Diagnostics ==="
+echo ""
+
+if [ "$DO_BUNDLE" = "1" ]; then
+    # Tee output so the user sees pytest progress AND the bundle has
+    # the full transcript.
+    python3 -m pytest "$TESTS_DIR" -v --tb=long --no-header --junitxml="$JUNIT_XML" "$@" 2>&1 \
+        | tee "$PYTEST_OUT"
+    EXIT_CODE=${PIPESTATUS[0]}
+else
+    python3 -m pytest "$TESTS_DIR" -v --tb=long --no-header "$@"
+    EXIT_CODE=$?
+fi
+
+echo ""
+if [ $EXIT_CODE -eq 0 ]; then
+    echo "RESULT: PASS -- all diagnostics passed"
+else
+    echo "RESULT: FAIL -- diagnostics failed (exit $EXIT_CODE)"
+fi
+
+# Build the bundle AFTER pytest exits so the failure data is captured.
+if [ "$DO_BUNDLE" = "1" ]; then
+    echo ""
+    echo "=== Building diagnostic bundle ==="
+
+    # Snapshot in-VM state. Each step is best-effort -- we don't fail
+    # the bundle if one step fails.
+    cp /tmp/capsem-init.log "$STAGE_DIR/init.log" 2>/dev/null || true
+    dmesg > "$STAGE_DIR/dmesg.log" 2>/dev/null || true
+    cat /proc/mounts > "$STAGE_DIR/proc-mounts.txt" 2>/dev/null || true
+    cat /proc/cmdline > "$STAGE_DIR/proc-cmdline.txt" 2>/dev/null || true
+
+    # /var/log can be small so we ship the whole thing as a sub-tar.
+    if [ -d /var/log ]; then
+        tar -cf "$STAGE_DIR/var-log.tar" -C /var log 2>/dev/null || true
+    fi
+
+    # session.db location varies (rootfs on ephemeral, persistent path
+    # on persistent VMs). Try the common spots; skip silently if absent.
+    for candidate in /run/capsem/session.db /var/lib/capsem/session.db; do
+        if [ -f "$candidate" ]; then
+            cp "$candidate" "$STAGE_DIR/session.db" 2>/dev/null || true
+            break
+        fi
+    done
+
+    # Pack everything in $STAGE_DIR into the final tar.
+    if tar -cf "$BUNDLE_PATH" -C "$STAGE_DIR" . 2>/dev/null; then
+        SIZE=$(stat -c '%s' "$BUNDLE_PATH" 2>/dev/null || stat -f '%z' "$BUNDLE_PATH" 2>/dev/null || echo "?")
+        echo "BUNDLE: wrote $BUNDLE_PATH ($SIZE bytes)"
+    else
+        echo "BUNDLE: FAILED to write $BUNDLE_PATH"
+    fi
+
+    rm -rf "$STAGE_DIR"
+fi
+
+exit $EXIT_CODE

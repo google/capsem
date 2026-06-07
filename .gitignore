@@ -1,0 +1,86 @@
+#capsem log
+*.log
+# Preserved service logs / session dirs from failing integration tests.
+test-artifacts/
+# Python virtualenv lib (but NOT frontend/src/lib/)
+/lib/
+dist/
+.env
+.venv
+archive/
+.credentials.json
+.virtual_documents
+*code-workspace
+.vscode
+.claude/projects/
+.claude/settings.local.json
+.claude/worktrees/
+.pytest_cache
+/config.toml
+keys.json
+workdir/
+node_modules/
+*.pyc
+__pycache__/
+.ipynb_checkpoints
+backup/
+venv/
+tmp/
+env/
+.DS_Store
+.env
+*.swp
+*.h5
+*.egg-info
+dist/*
+*.pickle
+*.bak
+.s.yml
+.DS_Store
+*_Store
+private/
+
+# Dev setup sentinel (written by just doctor)
+.dev-setup
+
+# Coverage output
+coverage/
+.coverage
+codecov-*.json
+codecov-*.xml
+*-junit.xml
+
+# Rust
+target/
+Cargo.lock
+
+# Git worktrees
+worktrees/
+
+# VM assets (built by capsem-builder)
+assets/*
+
+# Built packages (.pkg, .deb)
+packages/
+
+# Tauri
+crates/capsem-app/gen/
+
+# Frontend
+.astro/
+frontend/.astro/
+frontend/dist/
+frontend/node_modules/
+# Generator output -- no runtime code imports it; kept out of the tree to avoid
+# churn on every `just _generate-settings` run. See commit 97ab1b5.
+frontend/src/lib/mock-settings.generated.ts
+
+# Site
+site/dist/
+site/node_modules/
+site/.astro/
+.pnpm-store/
+
+# Leak report log from integration tests
+tests/leak-report*.log
+tests/leak-attribution*.jsonl

@@ -1,0 +1,206 @@
+---
+name: release-process
+description: Capsem release process, CI pipeline, Apple code signing, notarization, documentation site, and post-release verification. Use when preparing a release, debugging CI failures, working with Apple certificates, updating the documentation site, or cutting a new version. Covers the full release lifecycle from pre-release checklist through post-release verification.
+---
+
+# Release Process
+
+## Pre-release checklist
+
+```bash
+just doctor                    # Check tools
+scripts/preflight.sh           # Validate Apple certs for CI
+just test                      # ALL tests: unit + integration + cross-compile + bench
+```
+
+## Cutting a release
+
+### Automated (preferred)
+
+```bash
+just cut-release
+```
+
+Runs `test` (all tests including integration, cross-compile, benchmarks), then bumps patch version, stamps changelog, commits, tags, pushes, waits for CI.
+
+### Manual
+
+1. Bump version in both `Cargo.toml` (workspace) and `crates/capsem-app/tauri.conf.json`
+2. Move `[Unreleased]` changelog items into `[X.Y.Z] - YYYY-MM-DD`
+3. Create/update release page at `docs/src/content/docs/releases/<major>-<minor>.md`
+4. `scripts/preflight.sh` then `just test`
+5. Commit, tag `vX.Y.Z`, push both
+
+Never reuse or move a tag. Always increment the version number.
+
+## CI pipeline (release.yaml)
+
+Triggered by `vX.Y.Z` tag push. Parallelized pipeline (~18 min wall clock):
+
+```
+preflight (30s) ──> build-assets (arm64 + x86_64, 10 min) ──> build-app-macos (15 min) ──┐
+                └──> test (8 min) ─────────────────────────────────────────────────────────├──> create-release
+                └──────────────────> build-app-linux (arm64 + x86_64, 10 min) ────────────┘
+```
+
+| Job | Runner | Needs | Purpose |
+|-----|--------|-------|---------|
+| `preflight` | macos-14 | -- | Fail-fast: Apple cert, Tauri key, notarization |
+| `build-assets` | ubuntu arm64 + x86_64 | preflight | Kernel + rootfs via Docker |
+| `test` | macos-14 | preflight | Unit tests + coverage, frontend, audit |
+| `build-app-macos` | macos-14 | preflight, build-assets | Tauri `.app` build, companion binaries, `scripts/build-pkg.sh`, notarize + staple `.pkg` |
+| `build-app-linux` | ubuntu arm64 + x86_64 | preflight, build-assets | Tauri build, deb (+ AppImage on x86_64) |
+| `create-release` | ubuntu-latest | test, build-app-macos, build-app-linux | Merge latest.json, sign manifest, GitHub release |
+
+Test runs in parallel with builds. A test failure blocks `create-release` but doesn't delay compilation.
+
+### CI invariants (hard-won lessons)
+
+- **Per-arch VM assets use arch-prefixed names on GitHub.** CI uploads with `gh release upload "$f#${arch}-${base}"`, renaming `vmlinuz` to `arm64-vmlinuz`, etc. The v2 manifest keeps bare filenames in per-arch `arches` maps.
+- **Use justfile recipes in CI.** `build-assets` must call `just build-kernel` and `just build-rootfs`, not reimplement the builder commands. Drift between the justfile and CI caused v0.14.2-v0.14.4 to ship without vmlinuz/initrd.img.
+- **Build both kernel and rootfs.** The builder defaults to `--template rootfs` only. The kernel template must be built explicitly.
+- **`assets/current` must be a real directory, not a symlink.** `generate_checksums()` creates a symlink, but GitHub Actions strips symlinks from artifacts. After calling `generate_checksums`, replace the symlink with `rm -rf assets/current && cp -r assets/arm64 assets/current`.
+- **`Cargo.lock` is gitignored.** CI resolves a fresh lockfile each build. This means dependency versions can drift between builds. Acceptable for now but a reproducibility risk.
+- **Verify assets before Tauri build.** The `Verify assets layout` step lists assets/arm64/ and assets/current/ to catch missing files early. Tauri's build.rs resolves `../../assets/current/vmlinuz` relative to `crates/capsem-app/`.
+- **Three files hold the binary version.** `Cargo.toml` (workspace), `crates/capsem-app/tauri.conf.json`, `pyproject.toml`. `just _stamp-version` handles all three automatically. `just cut-release` and `just install` both call it.
+- **No AppImage on any platform.** linuxdeploy cannot run on GitHub CI runners -- Ubuntu 24.04 lacks FUSE2, and neither `libfuse2` nor `APPIMAGE_EXTRACT_AND_RUN=1` fixes it reliably. All Linux platforms ship `.deb` only. CI matrix passes `bundles: deb` for both arm64 and x86_64. `just cross-compile` matches this. This cost 14 consecutive failed releases (v0.12.1 through v0.14.14) to discover.
+- **Tauri signing keys on all platforms.** `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` must be passed to every `cargo tauri build` step (macOS and Linux). Missing keys cause "public key found but no private key" failure. The macOS job had them from the start; the Linux job was missing them until v0.14.11.
+- **Collect all updater artifacts.** Linux artifact collection must include `.tar.gz`, `.tar.gz.sig`, `.AppImage.tar.gz`, `.AppImage.tar.gz.sig` -- not just `.deb` and `.AppImage`. Tauri's updater needs the `.sig` files.
+- **`just cross-compile` is not a perfect CI replica.** It runs in a docker container on macOS, which has FUSE (via Colima's Linux VM). CI runners may not have FUSE, so AppImage bundling that works locally can fail in CI. The recipe catches compile errors and most packaging issues, but environment differences (FUSE, linuxdeploy availability) can still slip through. Always verify the first CI run of a new Linux packaging change.
+- **Platform-gate all macOS-only APIs.** Every use of `libc::clonefile`, `AppleVzHypervisor`, `core_foundation_sys`, etc. must be wrapped in `#[cfg(target_os = "macos")]` -- struct, impl, AND tests. The Linux app build compiles the full workspace. `cargo test --test platform_gating` catches ungated symbols at unit test time. This burned v0.14.7 through v0.14.9.
+- **Pin Xcode version on macOS runners.** Always `sudo xcode-select -s /Applications/Xcode_16.2.app` (or latest) before any Apple toolchain use. GitHub periodically updates runner images and the default Xcode can break (Abort trap in xcodebuild). The preflight may pass on one runner instance while build-app-macos gets a different one. v0.14.12 failed because Xcode 15.4's xcodebuild crashed with `Abort trap: 6` when Tauri tried to locate notarytool -- despite zero workflow changes from v0.14.11 which passed 9 hours earlier.
+- **`latest.json` is optional in `gh release create`.** Tauri only generates updater `latest.json` for bundle types that produce `.tar.gz` + `.sig` artifacts (AppImage, not deb). With deb-only builds, no `latest.json` exists. The create-release step must handle this gracefully.
+- **AppImage was dropped after 14 failed releases.** linuxdeploy (a FUSE2 AppImage) cannot run on Ubuntu 24.04 CI runners (FUSE3 only). Tested: `libfuse2` install, `APPIMAGE_EXTRACT_AND_RUN=1` env var, both together -- none worked reliably. If AppImage support is needed in the future, the approach would be to pre-extract linuxdeploy (`--appimage-extract`) and run the extracted binary directly, bypassing FUSE entirely.
+
+## Full-test gates
+
+| Gate | What |
+|------|------|
+| Unit tests | `cargo llvm-cov` with coverage |
+| Cross-compile | capsem-agent for aarch64 + x86_64 musl |
+| Frontend | `pnpm run check && pnpm run build` |
+| capsem-doctor | Boot VM, run full diagnostic suite |
+| Integration | Boot VM, exercise all 6 telemetry pipelines |
+| Benchmark | Boot VM, run capsem-bench |
+
+## Apple code signing
+
+### p12 encryption (critical gotcha)
+
+macOS Keychain only accepts legacy PKCS12 (3DES/SHA1). OpenSSL 3.x creates PBES2/AES-256-CBC by default, which Keychain rejects with "wrong password."
+
+Check: `openssl pkcs12 -in cert.p12 -info -nokeys -nocerts -passin pass:PWD 2>&1 | head -5`
+- `PBES2` = broken on macOS
+- `pbeWithSHA1And3-KeyTripleDES-CBC` = works
+
+Fix: `scripts/fix_p12_legacy.sh` then `gh secret set APPLE_CERTIFICATE < private/apple-certificate/capsem-b64.txt`
+
+### Notarization
+
+Shipping artifact on macOS is a **`.pkg`** (productbuild), not a `.dmg`. Flow:
+
+1. `cargo tauri build --bundles app --skip-stapling` -- builds `.app` only (Tauri skips stapling the inner app; we staple the outer `.pkg`).
+2. `scripts/build-pkg.sh` -- productbuilds `Capsem-$VERSION.pkg` with the `.app` + companion binaries + `manifest.json`. Heavy VM assets are downloaded on first use by the postinstall.
+3. `xcrun notarytool submit ... --wait --timeout 30m` -- synchronous.
+4. `xcrun stapler staple` + `xcrun stapler validate`.
+
+Verify credentials locally (before touching a tag):
+```bash
+xcrun notarytool history --key private/apple-certificate/capsem.p8 --key-id KEY_ID --issuer ISSUER_ID
+```
+
+**403 "A required agreement is missing or has expired"** -- Apple periodically refreshes the Developer Program License Agreement, Paid Apps Agreement, etc. Only the **Account Holder** (not Admin/Developer) can accept. Check banners at both:
+- https://developer.apple.com/account (Program License Agreement)
+- https://appstoreconnect.apple.com → Agreements, Tax, and Banking (Free/Paid Apps)
+
+Propagation can lag 1-5 min after accepting. `notarytool history` must return a list (possibly empty) before you tag -- the CI preflight step runs the same check and fails fast on 403.
+
+## CI secrets
+
+| Secret | Purpose |
+|--------|---------|
+| `APPLE_CERTIFICATE` | Base64 `.p12` (legacy 3DES) |
+| `APPLE_CERTIFICATE_PASSWORD` | Password for p12 |
+| `APPLE_SIGNING_IDENTITY` | `Developer ID Application: Elie Bursztein (L8EGK4X86T)` |
+| `APPLE_API_ISSUER` | App Store Connect issuer UUID |
+| `APPLE_API_KEY` | App Store Connect key ID |
+| `APPLE_API_KEY_PATH` | Contents of `.p8` private key |
+| `TAURI_SIGNING_PRIVATE_KEY` | Tauri updater minisign key |
+| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | Password for Tauri key |
+| `CODECOV_TOKEN` | Codecov upload token |
+
+Local backups: `private/apple-certificate/` and `private/tauri/` (gitignored).
+
+## Post-release verification
+
+```bash
+gh release view vX.Y.Z
+gh release download vX.Y.Z --pattern manifest.json -D /tmp/verify
+gh release download vX.Y.Z --pattern '*.pkg' -D /tmp/verify
+pkgutil --check-signature /tmp/verify/Capsem-*.pkg
+spctl -a -vv -t install /tmp/verify/Capsem-*.pkg      # Gatekeeper accepts notarized+stapled
+xcrun stapler validate /tmp/verify/Capsem-*.pkg       # Staple ticket present
+```
+
+## Documentation site
+
+The product website uses Astro Starlight. Docs live in `docs/src/content/docs/`.
+
+### Writing style
+Tight and to the point. One topic per page. Tables over prose for configs and test cases. No filler.
+
+### Structure
+- `docs/src/content/docs/<category>/<topic>.md`
+- Categories: `security/`, `testing/`, `releases/`, `architecture/`
+- Frontmatter: `title` and `description` required. `sidebar: { order: N }` for ordering.
+
+### Release pages
+- Path: `docs/src/content/docs/releases/<major>-<minor>.md` (hyphens, not dots)
+- Each page consolidates all patch releases for that minor
+- Higher `sidebar.order` = newer = listed first
+
+### Dev workflow
+```bash
+cd site && pnpm run dev     # localhost:4321
+cd site && pnpm run build   # Production build
+```
+
+### Keep docs in sync
+When features change (settings, CLI flags, MCP tools, security invariants, benchmarks), update the corresponding doc page. When cutting a new minor, create a new release page.
+
+### Update benchmarks before release
+
+Run the host-side benchmarks to generate versioned data files and update the results page:
+
+```bash
+# Generate benchmarks/fork/data_{version}.json and benchmarks/lifecycle/data_{version}.json
+uv run pytest tests/capsem-serial/test_lifecycle_benchmark.py -xvs
+
+# Update docs/src/content/docs/benchmarks/results.md with new numbers
+# (manual -- copy from the benchmark summary tables)
+```
+
+Benchmark data files in `benchmarks/` are committed to git for historical tracking. The `test_fork_benchmark` gates ensure fork stays under 500ms and images under 12MB -- these must pass before release.
+
+## Changelog
+
+Keep a Changelog format in `CHANGELOG.md`. Every user-visible change gets an entry under `## [Unreleased]` using: Added, Changed, Deprecated, Removed, Fixed, Security.
+
+## Versioning
+
+Binary and asset versions are **orthogonal**:
+
+- **Binary**: `1.0.{unix_timestamp}` -- auto-stamped by `just _stamp-version` on every `just install` and `just cut-release`
+- **Assets**: `YYYY.MMDD.patch` -- auto-derived by `gen_manifest.py` from the build date
+
+Three files hold the binary version (kept in sync by `_stamp-version`): `Cargo.toml` (workspace), `crates/capsem-app/tauri.conf.json`, `pyproject.toml`.
+
+The v2 manifest links them via `min_binary` (oldest binary for these assets) and `min_assets` (oldest assets for this binary). See `/asset-pipeline` for manifest format.
+
+## Commits
+
+1. Include `CHANGELOG.md` update in the same commit
+2. Stage files explicitly (no `git add -A`)
+3. Conventional messages: `feat:`, `fix:`, `chore:`, `docs:`
+4. Author: Elie Bursztein <github@elie.net>
+5. No `Co-Authored-By` trailers

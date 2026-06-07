@@ -1,0 +1,1087 @@
+"""Dockerfile generation and build execution from GuestImageConfig.
+
+Renders Dockerfiles via Jinja2 templates and executes Docker/Podman builds
+to produce VM boot assets. Supports multi-architecture output (arm64, x86_64).
+"""
+
+from __future__ import annotations
+
+import datetime
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import urllib.request
+from pathlib import Path
+from typing import Any
+
+from jinja2 import Environment, FileSystemLoader
+
+from capsem.builder.doctor import check_container_runtime
+from capsem.builder.models import GuestImageConfig, PackageManager
+
+TEMPLATES_DIR = Path(__file__).parent / "templates"
+FALLBACK_KERNEL_VERSION = "7.0.11"
+DEFAULT_EROFS_UTILS_IMAGE = "debian:bookworm-slim"
+ZSTD_EROFS_UTILS_IMAGE = "debian:trixie-slim"
+BOOT_ASSETS = ("vmlinuz", "initrd.img")
+ROOTFS_ASSET_PREFERENCE = ("rootfs.erofs", "rootfs.squashfs")
+
+# Guest binaries COPY'd into the rootfs (cross-compiled Rust binaries).
+GUEST_BINARIES = [
+    "capsem-pty-agent",
+    "capsem-net-proxy",
+    "capsem-dns-proxy",
+    "capsem-mcp-server",
+    "capsem-sysutil",
+]
+
+# --- Single source of truth for rootfs artifacts from guest/artifacts/ ---
+# Scripts and tools that must be copied into the rootfs build context and
+# appear in the rendered Dockerfile.  doctor.py and validate.py import these
+# constants so there is exactly ONE list to maintain.
+
+# Individual files -> /usr/local/bin/ (chmod 755)
+ROOTFS_SCRIPTS = ["capsem-doctor", "capsem-bench", "snapshots"]
+
+# Directories copied into context (special destinations in Dockerfile)
+ROOTFS_SCRIPT_DIRS = ["capsem_bench", "diagnostics"]
+
+# Shell config / text files (not executable scripts)
+ROOTFS_SUPPORT_FILES = ["capsem-bashrc", "banner.txt", "tips.txt"]
+
+
+def enforce_guest_binary_perms(paths: list[Path]) -> None:
+    """Apply chmod 555 to guest binaries on the host.
+
+    The container-native build chmods inside the container, but Docker-for-Mac
+    bind-mount semantics sometimes let an exec/write bit survive on the host.
+    Re-applying on the host guarantees the guest-binary read-only invariant
+    (CLAUDE.md) regardless of container runtime quirks.
+    """
+    for p in paths:
+        if not p.exists():
+            raise FileNotFoundError(p)
+        os.chmod(p, 0o555)
+
+def _rootfs_context(config: GuestImageConfig, arch_name: str) -> dict[str, Any]:
+    """Build Jinja context for Dockerfile.rootfs.j2."""
+    arch = config.build.architectures[arch_name]
+
+    apt_packages: list[str] = []
+    if "apt" in config.package_sets:
+        apt_packages = list(config.package_sets["apt"].packages)
+
+    python_packages: list[str] = []
+    python_install_cmd = "uv pip install --system --break-system-packages"
+    if "python" in config.package_sets:
+        python_packages = list(config.package_sets["python"].packages)
+        python_install_cmd = config.package_sets["python"].install_cmd
+
+    npm_packages: list[str] = []
+    npm_prefix = "/opt/ai-clis"
+    curl_installs: list[str] = []
+    for provider in config.ai_providers.values():
+        if provider.enabled and provider.install:
+            if provider.install.manager == PackageManager.NPM:
+                npm_packages.extend(provider.install.packages)
+                if provider.install.prefix:
+                    npm_prefix = provider.install.prefix
+            elif provider.install.manager == PackageManager.CURL:
+                curl_installs.extend(provider.install.packages)
+
+    return {
+        "arch": arch,
+        "arch_name": arch_name,
+        "apt_packages": apt_packages,
+        "python_packages": python_packages,
+        "python_install_cmd": python_install_cmd,
+        "npm_packages": npm_packages,
+        "npm_prefix": npm_prefix,
+        "curl_installs": curl_installs,
+        "guest_binaries": GUEST_BINARIES,
+    }
+
+
+def _kernel_context(
+    config: GuestImageConfig, arch_name: str, kernel_version: str
+) -> dict[str, Any]:
+    """Build Jinja context for Dockerfile.kernel.j2."""
+    arch = config.build.architectures[arch_name]
+    return {
+        "arch": arch,
+        "arch_name": arch_name,
+        "kernel_version": kernel_version,
+    }
+
+
+def generate_build_context(
+    template_name: str,
+    config: GuestImageConfig,
+    arch_name: str,
+    **kwargs: Any,
+) -> dict[str, Any]:
+    """Generate the Jinja template context dict for a given template.
+
+    Args:
+        template_name: Template filename (e.g., "Dockerfile.rootfs.j2").
+        config: Guest image configuration.
+        arch_name: Architecture name (e.g., "arm64", "x86_64").
+        **kwargs: Extra context (e.g., kernel_version for kernel template).
+
+    Returns:
+        Context dict ready for Jinja rendering.
+
+    Raises:
+        ValueError: If template_name is not recognized.
+        KeyError: If arch_name is not in config.build.architectures.
+    """
+    if template_name == "Dockerfile.rootfs.j2":
+        ctx = _rootfs_context(config, arch_name)
+    elif template_name == "Dockerfile.kernel.j2":
+        kernel_version = kwargs.get("kernel_version", FALLBACK_KERNEL_VERSION)
+        ctx = _kernel_context(config, arch_name, kernel_version)
+    else:
+        raise ValueError(f"Unknown template: {template_name}")
+
+    ctx.update(kwargs)
+    return ctx
+
+
+def render_dockerfile(
+    template_name: str,
+    config: GuestImageConfig,
+    arch_name: str,
+    **kwargs: Any,
+) -> str:
+    """Render a Dockerfile from a Jinja2 template with config context.
+
+    Args:
+        template_name: Template filename (e.g., "Dockerfile.rootfs.j2").
+        config: Guest image configuration.
+        arch_name: Architecture name (e.g., "arm64", "x86_64").
+        **kwargs: Extra context (e.g., kernel_version for kernel template).
+
+    Returns:
+        Rendered Dockerfile as a string.
+
+    Raises:
+        ValueError: If template_name is not recognized.
+        KeyError: If arch_name is not in config.build.architectures.
+    """
+    context = generate_build_context(template_name, config, arch_name, **kwargs)
+    env = Environment(
+        loader=FileSystemLoader(str(TEMPLATES_DIR)),
+        keep_trailing_newline=True,
+        trim_blocks=True,
+        lstrip_blocks=True,
+    )
+    template = env.get_template(template_name)
+    return template.render(**context)
+
+
+# ---------------------------------------------------------------------------
+# Build execution helpers
+# ---------------------------------------------------------------------------
+
+
+def run_cmd(
+    cmd: list[str],
+    *,
+    cwd: str | Path | None = None,
+    capture: bool = False,
+    echo: bool = True,
+) -> subprocess.CompletedProcess[str]:
+    """Run a subprocess command. Single mock seam for tests."""
+    if echo:
+        print(f"  -> {' '.join(str(c) for c in cmd)}")
+    kwargs: dict[str, Any] = {"check": True, "text": True}
+    if cwd:
+        kwargs["cwd"] = str(cwd)
+    if capture:
+        kwargs["capture_output"] = True
+    return subprocess.run(cmd, **kwargs)
+
+
+def detect_runtime() -> str:
+    """Validate docker is available, raising with fix guidance if missing."""
+    result = check_container_runtime()
+    if not result.passed:
+        raise RuntimeError(f"{result.name}: {result.detail}\n  fix: {result.fix}")
+    return "docker"
+
+
+def is_ci() -> bool:
+    """Return True when running in GitHub Actions."""
+    return bool(os.environ.get("GITHUB_ACTIONS"))
+
+
+# Maximum acceptable clock skew (seconds) between host and container VM.
+MAX_CLOCK_SKEW_SECONDS = 30
+
+
+def sync_container_clock() -> None:
+    """Sync container VM clock with host to prevent apt date validation errors.
+
+    On macOS, Colima runs containers inside a Linux VM whose clock can drift
+    after host sleep/wake. When the VM clock falls behind, Debian apt-get
+    rejects release files as "not valid yet" (exit 100).
+
+    This sets the VM clock to the current host UTC time before builds.
+    Silently does nothing on native Linux (no VM layer) or on errors.
+    """
+    if sys.platform != "darwin":
+        return
+
+    now = datetime.datetime.now(datetime.timezone.utc).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+
+    try:
+        run_cmd(
+            ["docker", "run", "--rm", "--privileged",
+             "alpine", "date", "-s", now],
+            capture=True, echo=False,
+        )
+    except Exception:
+        pass  # Best effort -- apt-get options are the fallback
+
+
+def resolve_kernel_version(branch: str = "auto") -> str:
+    """Fetch the latest kernel version from kernel.org.
+
+    `branch` controls selection:
+      - "auto" (default): newest non-EOL longterm (LTS) branch, latest patch.
+        Always-fresh; no human bumps required.
+      - "X.Y" (e.g. "7.0" or "6.18"): pin to that stable/LTS branch,
+        latest patch. Use for reproducibility / security freeze.
+
+    Falls back to `FALLBACK_KERNEL_VERSION` on any network/parse error.
+    """
+    try:
+        req = urllib.request.Request(
+            "https://www.kernel.org/releases.json",
+            headers={"User-Agent": "capsem-build/1.0"},
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode())
+    except Exception as e:
+        print(f"  Warning: failed to fetch kernel.org releases: {e}")
+        print(f"  Falling back to hardcoded {FALLBACK_KERNEL_VERSION}")
+        return FALLBACK_KERNEL_VERSION
+
+    # Collect (major, minor, patch) for every non-EOL stable/LTS release with
+    # a strict X.Y.Z version string. Mainline rc releases are deliberately
+    # excluded from reproducible guest builds.
+    stable_or_lts: list[tuple[int, int, int, str]] = []
+    for release in data.get("releases", []):
+        version = release.get("version", "")
+        moniker = release.get("moniker")
+        if moniker not in {"stable", "longterm"} or release.get("iseol"):
+            continue
+        if not re.fullmatch(r"\d+\.\d+\.\d+", version):
+            continue
+        a, b, c = (int(x) for x in version.split("."))
+        stable_or_lts.append((a, b, c, moniker))
+
+    if not stable_or_lts:
+        print("  Warning: no stable/LTS releases found in kernel.org feed")
+        print(f"  Falling back to hardcoded {FALLBACK_KERNEL_VERSION}")
+        return FALLBACK_KERNEL_VERSION
+
+    if branch == "auto":
+        # Highest LTS branch (by major, minor), then highest patch on it.
+        lts = [(a, b, c) for (a, b, c, moniker) in stable_or_lts if moniker == "longterm"]
+        if not lts:
+            print("  Warning: no longterm releases found in kernel.org feed")
+            print(f"  Falling back to hardcoded {FALLBACK_KERNEL_VERSION}")
+            return FALLBACK_KERNEL_VERSION
+        lts.sort()
+        a, b, _ = lts[-1]
+        patches = sorted(c for (x, y, c) in lts if (x, y) == (a, b))
+        version = f"{a}.{b}.{patches[-1]}"
+        print(f"  Auto-selected newest LTS: {version}")
+        return version
+
+    # Explicit pin: keep only the requested major.minor branch.
+    try:
+        want_a, want_b = (int(x) for x in branch.split("."))
+    except ValueError:
+        print(f"  Warning: invalid kernel_branch {branch!r} (want 'auto' or 'X.Y')")
+        print(f"  Falling back to hardcoded {FALLBACK_KERNEL_VERSION}")
+        return FALLBACK_KERNEL_VERSION
+    patches = sorted(c for (a, b, c, _) in stable_or_lts if (a, b) == (want_a, want_b))
+    if not patches:
+        print(f"  Warning: no non-EOL {branch}.x stable/LTS releases on kernel.org")
+        print(f"  Falling back to hardcoded {FALLBACK_KERNEL_VERSION}")
+        return FALLBACK_KERNEL_VERSION
+    return f"{want_a}.{want_b}.{patches[-1]}"
+
+
+def get_project_version(repo_root: Path) -> str:
+    """Read workspace version from root Cargo.toml."""
+    cargo_toml = repo_root / "Cargo.toml"
+    if not cargo_toml.is_file():
+        raise RuntimeError(f"Cargo.toml not found at {cargo_toml}")
+    for line in cargo_toml.read_text().splitlines():
+        stripped = line.strip()
+        if stripped.startswith("version") and "=" in stripped:
+            return stripped.split("=", 1)[1].strip().strip('"')
+    raise RuntimeError("Could not find version in Cargo.toml")
+
+
+# ---------------------------------------------------------------------------
+# Docker operations
+# ---------------------------------------------------------------------------
+
+
+def remove_image(runtime: str, tag: str) -> None:
+    """Remove a container image by tag. Silently ignores missing images."""
+    try:
+        run_cmd([runtime, "rmi", "-f", tag], capture=True)
+    except RuntimeError:
+        pass
+
+
+def docker_build(
+    runtime: str,
+    tag: str,
+    dockerfile_path: str | Path,
+    context_dir: str | Path,
+    platform: str,
+    build_args: dict[str, str] | None = None,
+    ci_cache: bool = False,
+) -> None:
+    """Build a container image."""
+    args_flags: list[str] = []
+    for k, v in (build_args or {}).items():
+        args_flags.extend(["--build-arg", f"{k}={v}"])
+
+    if ci_cache:
+        run_cmd([
+            "docker", "buildx", "build",
+            "--platform", platform,
+            "--cache-from", f"type=gha,scope={tag}",
+            "--cache-to", f"type=gha,mode=max,scope={tag}",
+            "--load",
+            *args_flags,
+            "-t", tag,
+            "-f", str(dockerfile_path),
+            str(context_dir),
+        ])
+    else:
+        run_cmd([
+            runtime, "build",
+            "--platform", platform,
+            *args_flags,
+            "-t", tag,
+            "-f", str(dockerfile_path),
+            str(context_dir),
+        ])
+
+
+def extract_kernel_assets(
+    runtime: str,
+    image_tag: str,
+    platform: str,
+    output_dir: Path,
+) -> tuple[Path, Path]:
+    """Extract vmlinuz and initrd.img from a kernel builder image."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    result = run_cmd(
+        [runtime, "create", "--platform", platform, image_tag, "/bin/true"],
+        capture=True,
+    )
+    cid = result.stdout.strip()
+    vmlinuz = output_dir / "vmlinuz"
+    initrd = output_dir / "initrd.img"
+    try:
+        run_cmd([runtime, "cp", f"{cid}:/vmlinuz", str(vmlinuz)])
+        run_cmd([runtime, "cp", f"{cid}:/initrd.img", str(initrd)])
+    finally:
+        run_cmd([runtime, "rm", cid])
+    return vmlinuz, initrd
+
+
+def export_container_fs(
+    runtime: str,
+    image_tag: str,
+    platform: str,
+    output_tar: Path,
+) -> None:
+    """Export container filesystem as a tar archive."""
+    result = run_cmd(
+        [runtime, "create", "--platform", platform, image_tag, "/bin/true"],
+        capture=True,
+    )
+    cid = result.stdout.strip()
+    try:
+        run_cmd([runtime, "export", cid, "-o", str(output_tar)])
+    finally:
+        run_cmd([runtime, "rm", cid])
+
+
+def create_squashfs(
+    runtime: str,
+    tar_path: Path,
+    output_path: Path,
+    compression: str,
+    compression_level: int,
+    block_size: str = "64K",
+) -> None:
+    """Create a squashfs image from a tar archive using a container."""
+    abs_dir = str(tar_path.parent.resolve())
+    tar_name = tar_path.name
+    out_name = output_path.name
+
+    # -Xcompression-level is only valid for zstd and xz
+    level_flag = ""
+    if compression in ("zstd", "xz"):
+        level_flag = f" -Xcompression-level {compression_level}"
+
+    run_cmd([
+        runtime, "run", "--rm",
+        "-v", f"{abs_dir}:/assets",
+        "debian:bookworm-slim", "bash", "-c",
+        f"apt-get -o Acquire::Check-Valid-Until=false -o Acquire::Check-Date=false update && apt-get install -y squashfs-tools zstd && "
+        f"mkdir /rootfs && tar xf /assets/{tar_name} -C /rootfs && "
+        f"mksquashfs /rootfs /assets/{out_name} -comp {compression}{level_flag} -b {block_size} -noappend",
+    ])
+
+
+def create_erofs(
+    runtime: str,
+    tar_path: Path,
+    output_path: Path,
+    compression: str,
+    cluster_size: str | None = None,
+    compression_level: str | None = None,
+) -> None:
+    """Create an EROFS image from a tar archive using a container."""
+    if compression not in {"lz4", "lz4hc", "zstd"}:
+        raise ValueError(f"unsupported EROFS compression: {compression}")
+    if compression == "zstd" and compression_level is None:
+        compression_level = "15"
+
+    if compression_level is not None:
+        level = int(compression_level)
+        if compression == "lz4":
+            raise ValueError("lz4 EROFS compression does not accept a level")
+        if compression == "lz4hc" and not 0 <= level <= 12:
+            raise ValueError("lz4hc EROFS compression level must be between 0 and 12")
+        if compression == "zstd" and not 0 <= level <= 22:
+            raise ValueError("zstd EROFS compression level must be between 0 and 22")
+
+    tar_abs = tar_path.resolve()
+    output_abs = output_path.resolve()
+    common_dir = Path(os.path.commonpath([tar_abs.parent, output_abs.parent]))
+    tar_rel = tar_abs.relative_to(common_dir).as_posix()
+    out_rel = output_abs.relative_to(common_dir).as_posix()
+    out_dir = Path(out_rel).parent.as_posix()
+    image = ZSTD_EROFS_UTILS_IMAGE if compression == "zstd" else DEFAULT_EROFS_UTILS_IMAGE
+    cluster_flag = f" -C{cluster_size}" if cluster_size else ""
+    level_flag = f",level={compression_level}" if compression_level else ""
+    mkdir_output = "" if out_dir == "." else f"mkdir -p /assets/{out_dir} && "
+
+    run_cmd([
+        runtime, "run", "--rm",
+        "-v", f"{common_dir}:/assets",
+        image, "bash", "-c",
+        f"DEBIAN_FRONTEND=noninteractive apt-get "
+        f"-o Acquire::Check-Valid-Until=false -o Acquire::Check-Date=false update && "
+        f"DEBIAN_FRONTEND=noninteractive apt-get install -y erofs-utils && "
+        f"mkdir /rootfs && {mkdir_output}tar xf /assets/{tar_rel} -C /rootfs && "
+        f"mkfs.erofs -z{compression}{level_flag}{cluster_flag} /assets/{out_rel} /rootfs",
+    ])
+
+
+def experimental_erofs_build_config(
+    env: dict[str, str] | os._Environ[str] | None = None,
+) -> tuple[bool, str, str | None, str | None]:
+    """Return optional EROFS build settings from environment variables."""
+    source = os.environ if env is None else env
+    enabled = source.get("CAPSEM_BUILD_EXPERIMENTAL_EROFS") == "1"
+    compression = source.get("CAPSEM_BUILD_EROFS_COMPRESSION", "lz4hc")
+    if compression not in {"lz4", "lz4hc", "zstd"}:
+        raise ValueError(
+            "CAPSEM_BUILD_EROFS_COMPRESSION must be one of: lz4, lz4hc, zstd"
+        )
+    cluster_size = source.get("CAPSEM_BUILD_EROFS_CLUSTER_SIZE")
+    compression_level = source.get("CAPSEM_BUILD_EROFS_COMPRESSION_LEVEL")
+    if compression == "zstd" and compression_level is None:
+        compression_level = "15"
+    if compression_level is not None:
+        level = int(compression_level)
+        if compression == "lz4":
+            raise ValueError("CAPSEM_BUILD_EROFS_COMPRESSION_LEVEL is not valid for lz4")
+        if compression == "lz4hc" and not 0 <= level <= 12:
+            raise ValueError("CAPSEM_BUILD_EROFS_COMPRESSION_LEVEL must be 0..12 for lz4hc")
+        if compression == "zstd" and not 0 <= level <= 22:
+            raise ValueError("CAPSEM_BUILD_EROFS_COMPRESSION_LEVEL must be 0..22 for zstd")
+    return enabled, compression, cluster_size, compression_level
+
+
+def container_compile_agent(
+    rust_target: str,
+    repo_root: Path,
+    output_dir: Path,
+) -> list[Path]:
+    """Compile guest agent binaries inside a Linux container.
+
+    Used on macOS to avoid local cross-linker toolchain issues. Builds natively
+    inside a container with per-arch volume caching to prevent cache clobbering
+    between arm64 and x86_64 builds.
+    """
+    runtime = detect_runtime()
+    platform = "linux/arm64" if "aarch64" in rust_target else "linux/amd64"
+    arch_suffix = "arm64" if "aarch64" in rust_target else "x86_64"
+    target_volume = f"capsem-agent-target-{arch_suffix}"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Build all shell commands from GUEST_BINARIES constant
+    cp_cmds = " && ".join(
+        f"cp target/{rust_target}/release/{b} /output/{b}"
+        for b in GUEST_BINARIES
+    )
+    rm_cmds = " ".join(f"/output/{b}" for b in GUEST_BINARIES)
+    chmod_cmds = " ".join(f"/output/{b}" for b in GUEST_BINARIES)
+    file_cmds = " && ".join(f"ls -l /output/{b}" for b in GUEST_BINARIES)
+
+    # Pre-pull the image so failures are clear, not buried in a long docker run
+    image = "rust:slim-bookworm"
+    try:
+        run_cmd([runtime, "image", "inspect", image], capture=True, echo=False)
+    except subprocess.CalledProcessError:
+        print(f"  Pulling {image} ({platform}) ...")
+        run_cmd([runtime, "pull", "--platform", platform, image])
+
+    print(f"  Container build ({platform}) ...")
+    # Source is mounted :ro to protect the host. We symlink everything into
+    # a writable /build dir so cargo can generate Cargo.lock without modifying
+    # the host. The target dir and registry are persistent named volumes.
+    rustup_volume = f"capsem-rustup-{arch_suffix}"
+    run_cmd([
+        runtime, "run", "--rm",
+        "--platform", platform,
+        "-v", f"{repo_root.resolve()}:/src:ro",
+        "-v", f"{output_dir.resolve()}:/output",
+        "-v", "capsem-cargo-registry:/usr/local/cargo/registry",
+        "-v", "capsem-cargo-git:/usr/local/cargo/git",
+        "-v", f"{rustup_volume}:/usr/local/rustup",
+        "-v", f"{target_volume}:/build/target",
+        "-w", "/build",
+        image, "bash", "-c",
+        f'for f in /src/*; do b=$(basename "$f"); [ "$b" != target ] && [ "$b" != Cargo.lock ] && [ "$b" != crates ] && ln -s "$f" /build/; done && '
+        f"cp -r /src/crates /build/crates && "
+        f"apt-get update -qq && apt-get install -y -qq musl-tools >/dev/null 2>&1 && "
+        f"rustup target add {rust_target} && "
+        f"cargo build --release --target {rust_target} -p capsem-agent && "
+        f"rm -f {rm_cmds} && "
+        f"{cp_cmds} && chmod 555 {chmod_cmds} && {file_cmds}",
+    ])
+
+    copied: list[Path] = []
+    for binary in GUEST_BINARIES:
+        dst = output_dir / binary
+        if not dst.exists():
+            raise RuntimeError(f"Expected binary not found after container build: {dst}")
+        if dst.stat().st_size == 0:
+            raise RuntimeError(f"Binary is empty: {dst}")
+        copied.append(dst)
+
+    enforce_guest_binary_perms(copied)
+    return copied
+
+
+def cross_compile_agent(
+    rust_target: str,
+    repo_root: Path,
+    output_dir: Path,
+) -> list[Path]:
+    """Cross-compile guest agent binaries for a given Rust target.
+
+    On macOS, this delegates to container_compile_agent to avoid complex
+    local cross-linker setup for x86_64.
+    """
+    # Use container build on macOS for cross-arch or if specifically requested.
+    # For now, let's follow the plan and ensure it uses container on macOS.
+    if sys.platform == "darwin":
+        print(f"  macOS detected: using container-native build for {rust_target}")
+        return container_compile_agent(rust_target, repo_root, output_dir)
+
+    # Native cross-compile (Linux/CI)
+    # Ensure target installed
+    try:
+        result = run_cmd(
+            ["rustup", "target", "list", "--installed"],
+            capture=True, echo=False,
+        )
+        if rust_target not in result.stdout.split():
+            print(f"  Installing missing rustup target: {rust_target}")
+            run_cmd(["rustup", "target", "add", rust_target])
+    except Exception:
+        run_cmd(["rustup", "target", "add", rust_target])
+
+    run_cmd([
+        "cargo", "build", "--release",
+        "--target", rust_target,
+        "-p", "capsem-agent",
+    ], cwd=repo_root)
+
+    release_dir = repo_root / "target" / rust_target / "release"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    copied: list[Path] = []
+    for binary in GUEST_BINARIES:
+        src = release_dir / binary
+        if not src.exists():
+            raise RuntimeError(f"Expected binary not found: {src}")
+        dst = output_dir / binary
+        shutil.copy2(str(src), str(dst))
+        if dst.stat().st_size == 0:
+            raise RuntimeError(f"Binary is empty: {dst}")
+        copied.append(dst)
+    enforce_guest_binary_perms(copied)
+    return copied
+
+
+def build_version_script(config: GuestImageConfig) -> str:
+    """Build a shell script that extracts tool versions from config.
+
+    Returns a bash script that prints grouped key=value lines to stdout.
+    The script is assembled from version_commands in build config, package
+    sets, and AI provider CLI configs.
+    """
+    lines: list[str] = []
+
+    # -- System: build-level tools (node, npm, uv, pip) + apt packages --
+    system_cmds: list[tuple[str, str]] = []
+    for key, cmd in config.build.version_commands.items():
+        system_cmds.append((key, cmd))
+    if "apt" in config.package_sets:
+        for key, cmd in config.package_sets["apt"].version_commands.items():
+            system_cmds.append((key, cmd))
+    if system_cmds:
+        lines.append('echo "# System";')
+        for key, cmd in system_cmds:
+            lines.append(f'echo "{key}=$({cmd} || echo \'N/A\')";')
+
+    # -- Python packages --
+    if "python" in config.package_sets:
+        py_cmds = config.package_sets["python"].version_commands
+        if py_cmds:
+            lines.append('echo "# Python";')
+            for key, cmd in py_cmds.items():
+                lines.append(f'echo "{key}=$({cmd} || echo \'N/A\')";')
+
+    # -- AI CLIs (listed separately) --
+    ai_cmds: list[tuple[str, str]] = []
+    for provider in config.ai_providers.values():
+        if provider.enabled and provider.cli and provider.cli.version_command:
+            ai_cmds.append((provider.cli.key, provider.cli.version_command))
+    if ai_cmds:
+        lines.append('echo "# AI CLIs";')
+        for key, cmd in ai_cmds:
+            lines.append(f'echo "{key}=$({cmd} || echo \'N/A\')";')
+
+    return "\n".join(lines)
+
+
+def _validate_tool_versions(
+    content: str, config: GuestImageConfig,
+) -> None:
+    """Check that enabled AI provider CLIs did not return N/A."""
+    versions: dict[str, str] = {}
+    for line in content.splitlines():
+        if line.startswith("#") or "=" not in line:
+            continue
+        key, _, val = line.partition("=")
+        versions[key.strip()] = val.strip()
+
+    failures: list[str] = []
+    for provider in config.ai_providers.values():
+        if provider.enabled and provider.cli and provider.cli.version_command:
+            key = provider.cli.key
+            val = versions.get(key, "")
+            if not val or val == "N/A":
+                failures.append(key)
+
+    if failures:
+        raise RuntimeError(
+            f"Enabled AI CLIs returned N/A or empty version: {', '.join(failures)}. "
+            "Check that the CLI installed correctly in the rootfs."
+        )
+
+
+def extract_tool_versions(
+    runtime: str,
+    image_tag: str,
+    platform: str,
+    output_dir: Path,
+    config: GuestImageConfig,
+    *,
+    validate: bool = True,
+) -> None:
+    """Extract tool versions from rootfs image using config-driven script."""
+    version_script = build_version_script(config)
+    if not version_script:
+        return
+    result = run_cmd(
+        [runtime, "run", "--rm", "--platform", platform,
+         image_tag, "bash", "-c", version_script],
+        capture=True,
+    )
+    versions_path = output_dir / "tool-versions.txt"
+    versions_path.write_text(result.stdout)
+    if validate:
+        _validate_tool_versions(result.stdout, config)
+
+
+def _blake3_hex(path: Path) -> str:
+    """Compute BLAKE3 hash of a file, returning the hex digest."""
+    import blake3
+    hasher = blake3.blake3()
+    with open(path, "rb") as f:
+        while chunk := f.read(1 << 20):
+            hasher.update(chunk)
+    return hasher.hexdigest()
+
+
+def _select_rootfs_asset(asset_dir: Path) -> str | None:
+    """Return the canonical rootfs asset name for a directory."""
+    for filename in ROOTFS_ASSET_PREFERENCE:
+        if (asset_dir / filename).is_file():
+            return filename
+    return None
+
+
+def generate_checksums(output_dir: Path, version: str) -> Path:
+    """Generate BLAKE3 checksums and manifest.json for all assets."""
+    # Collect all asset files across arch subdirs
+    arch_dirs = [d for d in output_dir.iterdir() if d.is_dir() and d.name != "current"]
+    all_files: list[str] = []
+    for arch_dir in sorted(arch_dirs):
+        arch_name = arch_dir.name
+        for filename in BOOT_ASSETS:
+            if (arch_dir / filename).is_file():
+                all_files.append(f"{arch_name}/{filename}")
+        if rootfs_name := _select_rootfs_asset(arch_dir):
+            all_files.append(f"{arch_name}/{rootfs_name}")
+
+    if not all_files:
+        # Flat layout fallback
+        for f in BOOT_ASSETS:
+            if (output_dir / f).is_file():
+                all_files.append(f)
+        if rootfs_name := _select_rootfs_asset(output_dir):
+            all_files.append(rootfs_name)
+
+    # Compute BLAKE3 hashes using Python blake3 library.
+    b3sums_lines = []
+    hashes: dict[str, str] = {}
+    for filepath in all_files:
+        full_path = output_dir / filepath
+        b3hash = _blake3_hex(full_path)
+        hashes[filepath] = b3hash
+        b3sums_lines.append(f"{b3hash}  {filepath}")
+    (output_dir / "B3SUMS").write_text("\n".join(b3sums_lines) + "\n")
+
+    # Build v2 manifest with separate assets/binaries sections
+    import datetime
+    today = datetime.date.today()
+    date_prefix = today.strftime("%Y.%m%d")
+    asset_version = f"{date_prefix}.1"
+
+    arch_assets: dict[str, dict[str, dict]] = {}
+    for filepath in all_files:
+        full_path = output_dir / filepath
+        b3hash = hashes[filepath]
+        size = full_path.stat().st_size
+
+        if "/" in filepath:
+            arch_name, filename = filepath.split("/", 1)
+        else:
+            arch_name = "unknown"
+            filename = filepath
+
+        arch_assets.setdefault(arch_name, {})[filename] = {
+            "hash": b3hash, "size": size,
+        }
+
+    manifest = {
+        "format": 2,
+        "assets": {
+            "current": asset_version,
+            "releases": {
+                asset_version: {
+                    "date": today.isoformat(),
+                    "deprecated": False,
+                    "min_binary": "1.0.0",
+                    "arches": arch_assets,
+                },
+            },
+        },
+        "binaries": {
+            "current": version,
+            "releases": {
+                version: {
+                    "date": today.isoformat(),
+                    "deprecated": False,
+                    "min_assets": asset_version,
+                },
+            },
+        },
+    }
+    manifest_path = output_dir / "manifest.json"
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+
+    # Create assets/current symlink pointing to the most recently built arch.
+    # Tauri bundle resources reference assets/current/ so they resolve on any platform.
+    current_link = output_dir / "current"
+    if arch_dirs:
+        target = sorted(arch_dirs)[-1].name
+        if current_link.is_symlink() or current_link.is_file():
+            current_link.unlink()
+        elif current_link.is_dir():
+            shutil.rmtree(current_link)
+        current_link.symlink_to(target)
+
+    return manifest_path
+
+
+# ---------------------------------------------------------------------------
+# Build context assembly
+# ---------------------------------------------------------------------------
+
+
+def prepare_build_context(
+    config: GuestImageConfig,
+    arch_name: str,
+    template_name: str,
+    context_dir: Path,
+    repo_root: Path,
+    **kwargs: Any,
+) -> Path:
+    """Write rendered Dockerfile and copy required files into a build context."""
+    # Render Dockerfile
+    dockerfile_content = render_dockerfile(template_name, config, arch_name, **kwargs)
+    dockerfile_path = context_dir / "Dockerfile"
+    dockerfile_path.write_text(dockerfile_content)
+
+    if "rootfs" in template_name:
+        # CA cert
+        shutil.copy2(
+            str(repo_root / "config" / "capsem-ca.crt"),
+            str(context_dir / "capsem-ca.crt"),
+        )
+        artifacts = repo_root / "guest" / "artifacts"
+        for name in ("capsem-bashrc", "banner.txt", "tips.txt"):
+            shutil.copy2(
+                str(artifacts / name),
+                str(context_dir / name),
+            )
+        # Diagnostics
+        diag_src = artifacts / "diagnostics"
+        diag_dst = context_dir / "diagnostics"
+        if diag_src.is_dir():
+            shutil.copytree(str(diag_src), str(diag_dst), dirs_exist_ok=True)
+        # Rootfs artifact scripts (doctor, bench, snapshots, etc.)
+        for name in ROOTFS_SCRIPTS:
+            src = artifacts / name
+            if src.is_file():
+                shutil.copy2(str(src), str(context_dir / name))
+        # Script directories
+        for name in ROOTFS_SCRIPT_DIRS:
+            src = artifacts / name
+            if src.is_dir():
+                shutil.copytree(str(src), str(context_dir / name), dirs_exist_ok=True)
+        # Agent binaries (if they exist in context already from cross_compile_agent)
+        # They may have been copied to context_dir by the pipeline before this call
+
+    elif "kernel" in template_name:
+        # Defconfig -- preserve directory structure for COPY {{ arch.defconfig }}
+        arch = config.build.architectures[arch_name]
+        defconfig_src = repo_root / "guest" / "config" / arch.defconfig
+        defconfig_dst = context_dir / arch.defconfig
+        defconfig_dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(str(defconfig_src), str(defconfig_dst))
+        # capsem-init
+        shutil.copy2(
+            str(repo_root / "guest" / "artifacts" / "capsem-init"),
+            str(context_dir / "capsem-init"),
+        )
+
+    return dockerfile_path
+
+
+# ---------------------------------------------------------------------------
+# Pipeline orchestrators
+# ---------------------------------------------------------------------------
+
+
+def build_image(
+    config: GuestImageConfig,
+    arch_name: str,
+    *,
+    template: str = "rootfs",
+    output_dir: Path | None = None,
+    kernel_version: str | None = None,
+    repo_root: Path | None = None,
+) -> None:
+    """Build a Docker image for the given architecture.
+
+    Full pipeline for one arch+template. Outputs to output_dir/{arch_name}/.
+    """
+    import tempfile
+
+    from capsem.builder.doctor import check_cross_target
+
+    if repo_root is None:
+        repo_root = Path.cwd()
+    if output_dir is None:
+        output_dir = repo_root / "assets"
+
+    arch = config.build.architectures[arch_name]
+    runtime = detect_runtime()
+    ci = is_ci()
+
+    # Sync container VM clock with host to prevent apt date errors
+    sync_container_clock()
+
+    # Doctor check: cross-compilation target (skip on macOS -- container handles it)
+    if template == "rootfs" and sys.platform != "darwin":
+        target_check = check_cross_target(arch.rust_target)
+        if not target_check.passed:
+            raise RuntimeError(
+                f"{target_check.name}: {target_check.detail}\n  fix: {target_check.fix}"
+            )
+
+    # Per-arch output directory
+    arch_output = output_dir / arch_name
+    arch_output.mkdir(parents=True, exist_ok=True)
+
+    template_name = f"Dockerfile.{template}.j2"
+    tag = f"capsem-{template}-{arch_name}"
+
+    # Use a temporary directory inside the project root's target/ folder.
+    # On macOS, system temp dirs (/var/folders) are often not mountable by Docker/Colima.
+    build_tmp = repo_root / "target" / "tmp"
+    build_tmp.mkdir(parents=True, exist_ok=True)
+    
+    with tempfile.TemporaryDirectory(prefix=f"capsem-build-{template}-", dir=build_tmp) as tmpdir:
+        context_dir = Path(tmpdir)
+
+        if template == "kernel":
+            # Resolve kernel version
+            if kernel_version is None:
+                kernel_version = resolve_kernel_version(arch.kernel_branch)
+            print(f"Kernel: {kernel_version}")
+
+            prepare_build_context(
+                config, arch_name, template_name, context_dir, repo_root,
+                kernel_version=kernel_version,
+            )
+            docker_build(
+                runtime, tag, context_dir / "Dockerfile", context_dir,
+                arch.docker_platform,
+                build_args={"KERNEL_VERSION": kernel_version},
+                ci_cache=ci,
+            )
+            vmlinuz, initrd = extract_kernel_assets(
+                runtime, tag, arch.docker_platform, arch_output,
+            )
+            remove_image(runtime, tag)
+            print(f"  vmlinuz:    {vmlinuz}")
+            print(f"  initrd.img: {initrd}")
+
+        elif template == "rootfs":
+            # Cross-compile agent binaries
+            print(f"Cross-compiling guest binaries for {arch.rust_target}...")
+            binaries = cross_compile_agent(arch.rust_target, repo_root, context_dir)
+            for b in binaries:
+                print(f"  {b.name}: {b.stat().st_size} bytes")
+
+            prepare_build_context(
+                config, arch_name, template_name, context_dir, repo_root,
+            )
+            docker_build(
+                runtime, tag, context_dir / "Dockerfile", context_dir,
+                arch.docker_platform, ci_cache=ci,
+            )
+
+            # Export and compress
+            tar_path = arch_output / "rootfs.tar"
+            print("Exporting rootfs filesystem...")
+            export_container_fs(runtime, tag, arch.docker_platform, tar_path)
+
+            print(f"Creating squashfs ({config.build.compression.value} compression)...")
+            squashfs_path = arch_output / "rootfs.squashfs"
+            create_squashfs(
+                runtime, tar_path, squashfs_path,
+                config.build.compression.value,
+                config.build.compression_level,
+            )
+
+            erofs_enabled, erofs_compression, erofs_cluster_size, erofs_level = (
+                experimental_erofs_build_config()
+            )
+            erofs_path = arch_output / "rootfs.erofs"
+            if erofs_enabled:
+                print(
+                    f"Creating EROFS ({erofs_compression} compression"
+                    f"{', level ' + erofs_level if erofs_level else ''}"
+                    f"{', cluster ' + erofs_cluster_size if erofs_cluster_size else ''})..."
+                )
+                create_erofs(
+                    runtime, tar_path, erofs_path,
+                    erofs_compression,
+                    erofs_cluster_size,
+                    erofs_level,
+                )
+            tar_path.unlink(missing_ok=True)
+
+            print("Extracting tool versions...")
+            extract_tool_versions(runtime, tag, arch.docker_platform, arch_output, config)
+            remove_image(runtime, tag)
+
+            print(f"  rootfs.squashfs: {squashfs_path}")
+            if erofs_enabled:
+                print(f"  rootfs.erofs:    {erofs_path}")
+
+
+def build_all_architectures(
+    config: GuestImageConfig,
+    *,
+    template: str = "rootfs",
+    output_dir: Path | None = None,
+    kernel_version: str | None = None,
+    repo_root: Path | None = None,
+) -> None:
+    """Build Docker images for all configured architectures."""
+    if repo_root is None:
+        repo_root = Path.cwd()
+    if output_dir is None:
+        output_dir = repo_root / "assets"
+
+    for arch_name in config.build.architectures:
+        print(f"\n=== Building {template} for {arch_name} ===")
+        build_image(
+            config, arch_name,
+            template=template,
+            output_dir=output_dir,
+            kernel_version=kernel_version,
+            repo_root=repo_root,
+        )
+
+    # Prune dangling images left by multi-stage builds
+    runtime = detect_runtime()
+    try:
+        run_cmd([runtime, "image", "prune", "-f"], capture=True)
+        print("Pruned dangling images.")
+    except RuntimeError:
+        pass
+
+    version = get_project_version(repo_root)
+    print(f"\nGenerating checksums (version {version})...")
+    generate_checksums(output_dir, version)

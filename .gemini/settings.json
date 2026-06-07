@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "capsem": {
+      "command": "/Users/elieb/git/capsem-next/target/debug/capsem-mcp",
+      "args": []
+    }
+  }
+}

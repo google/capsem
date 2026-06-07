@@ -1,0 +1,59 @@
+{
+  "version": "0.3.0",
+  "timestamp": 1778169898.8455136,
+  "hostname": "conc-bench",
+  "mitm_load": {
+    "version": "1.0",
+    "target": "https://thisdomaindoesnotexistforsur3.ai/",
+    "concurrency_levels": [
+      {
+        "concurrency": 1,
+        "duration_s": 10.0,
+        "total_requests": 10297,
+        "errors": 0,
+        "rps": 1029.7,
+        "p50_ms": 0.9288749999996071,
+        "p95_ms": 1.2955668000131493,
+        "p99_ms": 1.8306083199831868,
+        "p999_ms": 3.898729135976227,
+        "rss_peak_mb": 33.3125
+      },
+      {
+        "concurrency": 10,
+        "duration_s": 10.0,
+        "total_requests": 32482,
+        "errors": 0,
+        "rps": 3248.2,
+        "p50_ms": 2.7208125000584005,
+        "p95_ms": 5.558664899950827,
+        "p99_ms": 8.155838749979692,
+        "p999_ms": 19.901169673015197,
+        "rss_peak_mb": 46.9375
+      },
+      {
+        "concurrency": 50,
+        "duration_s": 10.0,
+        "total_requests": 33188,
+        "errors": 0,
+        "rps": 3318.8,
+        "p50_ms": 12.914936999948168,
+        "p95_ms": 29.15924164999524,
+        "p99_ms": 41.83107649994891,
+        "p999_ms": 123.2690441459872,
+        "rss_peak_mb": 87.9453125
+      },
+      {
+        "concurrency": 200,
+        "duration_s": 10.0,
+        "total_requests": 29309,
+        "errors": 0,
+        "rps": 2930.9,
+        "p50_ms": 49.36837499997182,
+        "p95_ms": 121.66125039998406,
+        "p99_ms": 174.91637199995654,
+        "p999_ms": 271.95493437193096,
+        "rss_peak_mb": 229.98828125
+      }
+    ]
+  }
+}

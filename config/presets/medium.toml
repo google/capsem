@@ -1,0 +1,12 @@
+name = "Medium Security"
+description = "Allows read-only web access (GET/HEAD) and all search engines. Blocks write requests. MCP tools run without confirmation."
+
+[settings]
+"security.web.allow_read" = true
+"security.web.allow_write" = false
+"security.services.search.google.allow" = true
+"security.services.search.bing.allow" = true
+"security.services.search.duckduckgo.allow" = true
+
+[mcp]
+default_tool_permission = "allow"

@@ -1,0 +1,45 @@
+{
+  "latest": "0.13.0",
+  "releases": {
+    "0.13.0": {
+      "arm64": {
+        "assets": [
+          {
+            "filename": "vmlinuz",
+            "hash": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "size": 7000000
+          },
+          {
+            "filename": "initrd.img",
+            "hash": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+            "size": 3000000
+          },
+          {
+            "filename": "rootfs.squashfs",
+            "hash": "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3",
+            "size": 400000000
+          }
+        ]
+      },
+      "x86_64": {
+        "assets": [
+          {
+            "filename": "vmlinuz",
+            "hash": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+            "size": 8000000
+          },
+          {
+            "filename": "initrd.img",
+            "hash": "e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5",
+            "size": 3500000
+          },
+          {
+            "filename": "rootfs.squashfs",
+            "hash": "f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6",
+            "size": 450000000
+          }
+        ]
+      }
+    }
+  }
+}

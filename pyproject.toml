@@ -1,0 +1,76 @@
+[project]
+name = "capsem"
+version = "1.0.1780763638"
+requires-python = ">=3.11"
+dependencies = [
+    "pydantic>=2.0",
+    "click>=8.0",
+    "jinja2>=3.0",
+    "blake3>=1.0.8",
+]
+
+[project.scripts]
+capsem-builder = "capsem.builder.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/capsem"]
+
+[[tool.uv.index]]
+url = "https://pypi.org/simple"
+default = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# Use importlib so duplicate test basenames across directories don't collide.
+# Legacy "prepend" mode sys.path-inserts each test file's dir, making e.g.
+# tests/capsem-mcp/test_lifecycle.py and tests/capsem-install/test_lifecycle.py
+# fight over the `test_lifecycle` module name.
+addopts = "--import-mode=importlib"
+# Promote every warning to an error by default. Without this, real bugs
+# have shipped green -- DeprecationWarning masking future breakage,
+# ResourceWarning masking fd/socket leaks, and
+# PytestUnhandledThreadExceptionWarning masking daemon-thread races
+# (tests/conftest.py now also captures those via threading.excepthook).
+# Add targeted "ignore::..." entries below only with a one-line rationale.
+filterwarnings = [
+    "error",
+]
+markers = [
+    "mcp: MCP black-box integration tests (require capsem-service + VM assets)",
+    "integration: Service/CLI integration tests (require capsem-service + VM)",
+    "session: Session.db telemetry tests (require capsem-service + VM + workload)",
+    "snapshot: Snapshot lifecycle tests (require capsem-service + VM)",
+    "isolation: Multi-VM isolation tests (require capsem-service + 2+ VMs)",
+    "security: Security invariant tests (require capsem-service + VM)",
+    "config: Config obedience tests (require capsem-service + VM)",
+    "bootstrap: Setup/install flow tests (no VM needed)",
+    "stress: Load and edge case tests (require capsem-service + VMs)",
+    "build_chain: Build chain E2E tests (cargo build -> codesign -> pack -> boot)",
+    "guest: Guest validation tests (network, services, filesystem, env)",
+    "cleanup: VM cleanup verification tests (process, socket, session dir)",
+    "codesign: Codesigning strict tests (FAIL not skip when unsigned)",
+    "serial: Serial console and boot timing tests",
+    "benchmark: Host-side benchmarks (parallel VMs, capsem-bench) -- slow, run with `-m benchmark`",
+    "session_lifecycle: Session.db lifecycle tests (exists, schema, events, shutdown)",
+    "config_runtime: Config runtime tests (CPU, RAM, blocked domains in guest)",
+    "recipe: Just recipe smoke tests (run-service, doctor, build)",
+    "recovery: Recovery and crash-resilience tests (stale state, orphans)",
+    "rootfs: Rootfs artifact validation tests (no VM needed)",
+    "session_exhaustive: Exhaustive per-table session.db data validation",
+    "e2e: End-to-end tests via real CLI binary (the actual user path)",
+    "gateway: Gateway TCP-to-UDS proxy tests (mock UDS or real service)",
+]
+
+[dependency-groups]
+dev = [
+    "psutil>=7.2.2",
+    "pysigma>=1.3.3",
+    "pytest>=8.0",
+    "pytest-cov>=6.0",
+    "pytest-xdist>=3.8.0",
+    "websockets>=16.0",
+]

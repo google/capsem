@@ -1,0 +1,7 @@
+{
+  "extends": "astro/tsconfigs/strict",
+  "compilerOptions": {
+    "verbatimModuleSyntax": true
+  },
+  "exclude": ["src/**/*.test.ts", "dist", "plugins"]
+}

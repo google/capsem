@@ -1,0 +1,413 @@
+//! Platform-agnostic vsock utilities: output coalescing and port constants.
+
+// Re-export protocol types and port constants from capsem-proto.
+pub use capsem_proto::{
+    decode_guest_msg, decode_host_msg, encode_guest_msg, encode_host_msg, max_frame_size,
+    GuestToHost, HostToGuest, MAX_FRAME_SIZE, VSOCK_PORT_CONTROL, VSOCK_PORT_EXEC,
+    VSOCK_PORT_LIFECYCLE, VSOCK_PORT_SNI_PROXY, VSOCK_PORT_TERMINAL,
+};
+
+// ---------------------------------------------------------------------------
+// Output coalescing buffer
+// ---------------------------------------------------------------------------
+
+/// Default coalescing time window (5ms = 200 fps).
+const COALESCE_WINDOW_MS: u64 = 5;
+/// Default coalescing size cap (10MB).
+const COALESCE_MAX_BYTES: usize = 10_485_760;
+
+/// Coalesces small chunks into larger batches to prevent IPC saturation.
+///
+/// Collects incoming data and flushes when either the time window expires
+/// or the size cap is reached. The actual async loop lives in the app layer;
+/// this struct holds the policy and buffer.
+pub struct CoalesceBuffer {
+    buf: Vec<u8>,
+    max_bytes: usize,
+    window_ms: u64,
+}
+
+impl CoalesceBuffer {
+    /// Create a new coalescing buffer with default settings (5ms / 10MB).
+    pub fn new() -> Self {
+        Self {
+            buf: Vec::with_capacity(COALESCE_MAX_BYTES),
+            max_bytes: COALESCE_MAX_BYTES,
+            window_ms: COALESCE_WINDOW_MS,
+        }
+    }
+
+    /// Create with custom thresholds (for testing).
+    pub fn with_limits(max_bytes: usize, window_ms: u64) -> Self {
+        Self {
+            buf: Vec::with_capacity(max_bytes),
+            max_bytes,
+            window_ms,
+        }
+    }
+
+    /// Push a chunk into the buffer. Returns `true` if the size cap has been
+    /// reached and the caller should flush immediately.
+    pub fn push(&mut self, data: &[u8]) -> bool {
+        self.buf.extend_from_slice(data);
+        self.buf.len() >= self.max_bytes
+    }
+
+    /// Take the coalesced data out, leaving the buffer empty with
+    /// pre-allocated capacity for the next batch.
+    pub fn take(&mut self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(self.max_bytes);
+        std::mem::swap(&mut self.buf, &mut out);
+        out
+    }
+
+    /// Current buffered byte count.
+    pub fn len(&self) -> usize {
+        self.buf.len()
+    }
+
+    /// Whether the buffer is empty.
+    pub fn is_empty(&self) -> bool {
+        self.buf.is_empty()
+    }
+
+    /// Whether the size cap has been reached.
+    pub fn is_full(&self) -> bool {
+        self.buf.len() >= self.max_bytes
+    }
+
+    /// The coalescing time window in milliseconds.
+    pub fn window_ms(&self) -> u64 {
+        self.window_ms
+    }
+
+    /// The size cap in bytes.
+    pub fn max_bytes(&self) -> usize {
+        self.max_bytes
+    }
+
+    /// Pass buffered data to a closure, then clear in place.
+    /// Zero-allocation: the buffer's capacity is preserved across flushes.
+    pub fn flush_to<F, R>(&mut self, f: F) -> R
+    where
+        F: FnOnce(&[u8]) -> R,
+    {
+        let r = f(&self.buf);
+        self.buf.clear();
+        r
+    }
+}
+
+impl Default for CoalesceBuffer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // -----------------------------------------------------------------------
+    // Constants
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn port_constants_are_distinct() {
+        assert_ne!(VSOCK_PORT_CONTROL, VSOCK_PORT_TERMINAL);
+    }
+
+    #[test]
+    #[allow(clippy::assertions_on_constants)]
+    fn port_constants_are_in_expected_range() {
+        assert!(VSOCK_PORT_CONTROL < 65536);
+        assert!(VSOCK_PORT_TERMINAL < 65536);
+    }
+
+    #[test]
+    fn max_frame_size_is_256kb() {
+        assert_eq!(max_frame_size(), 262_144);
+    }
+
+    // -----------------------------------------------------------------------
+    // CoalesceBuffer -- basic API
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn coalesce_new_is_empty() {
+        let buf = CoalesceBuffer::new();
+        assert!(buf.is_empty());
+        assert_eq!(buf.len(), 0);
+        assert!(!buf.is_full());
+    }
+
+    #[test]
+    fn coalesce_default_limits() {
+        let buf = CoalesceBuffer::new();
+        assert_eq!(buf.max_bytes(), 10_485_760);
+        assert_eq!(buf.window_ms(), 5);
+    }
+
+    #[test]
+    fn coalesce_custom_limits() {
+        let buf = CoalesceBuffer::with_limits(1024, 50);
+        assert_eq!(buf.max_bytes(), 1024);
+        assert_eq!(buf.window_ms(), 50);
+    }
+
+    #[test]
+    fn coalesce_default_trait() {
+        let buf = CoalesceBuffer::default();
+        assert_eq!(buf.max_bytes(), 10_485_760);
+    }
+
+    // -----------------------------------------------------------------------
+    // CoalesceBuffer -- push and take
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn coalesce_push_single_chunk() {
+        let mut buf = CoalesceBuffer::new();
+        let full = buf.push(b"hello");
+        assert!(!full);
+        assert_eq!(buf.len(), 5);
+        assert!(!buf.is_empty());
+    }
+
+    #[test]
+    fn coalesce_push_accumulates() {
+        let mut buf = CoalesceBuffer::new();
+        buf.push(b"aaa");
+        buf.push(b"bbb");
+        buf.push(b"ccc");
+        assert_eq!(buf.len(), 9);
+    }
+
+    #[test]
+    fn coalesce_take_returns_accumulated_data() {
+        let mut buf = CoalesceBuffer::new();
+        buf.push(b"hello ");
+        buf.push(b"world");
+        let data = buf.take();
+        assert_eq!(&data, b"hello world");
+    }
+
+    #[test]
+    fn coalesce_take_resets_buffer() {
+        let mut buf = CoalesceBuffer::new();
+        buf.push(b"data");
+        let _ = buf.take();
+        assert!(buf.is_empty());
+        assert_eq!(buf.len(), 0);
+    }
+
+    #[test]
+    fn coalesce_take_on_empty_returns_empty_vec() {
+        let mut buf = CoalesceBuffer::new();
+        let data = buf.take();
+        assert!(data.is_empty());
+    }
+
+    #[test]
+    fn coalesce_reusable_after_take() {
+        let mut buf = CoalesceBuffer::new();
+        buf.push(b"batch1");
+        let b1 = buf.take();
+        assert_eq!(&b1, b"batch1");
+
+        buf.push(b"batch2");
+        let b2 = buf.take();
+        assert_eq!(&b2, b"batch2");
+    }
+
+    // -----------------------------------------------------------------------
+    // CoalesceBuffer -- size cap / backpressure
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn coalesce_signals_full_at_cap() {
+        let mut buf = CoalesceBuffer::with_limits(10, 8);
+        let full = buf.push(b"0123456789"); // exactly 10 bytes
+        assert!(full);
+        assert!(buf.is_full());
+    }
+
+    #[test]
+    fn coalesce_signals_full_over_cap() {
+        let mut buf = CoalesceBuffer::with_limits(10, 8);
+        let full = buf.push(b"0123456789ABCDEF"); // 16 bytes > 10
+        assert!(full);
+        assert!(buf.is_full());
+        // All data is still captured, even over cap.
+        assert_eq!(buf.len(), 16);
+    }
+
+    #[test]
+    fn coalesce_not_full_below_cap() {
+        let mut buf = CoalesceBuffer::with_limits(10, 8);
+        let full = buf.push(b"012345678"); // 9 bytes < 10
+        assert!(!full);
+        assert!(!buf.is_full());
+    }
+
+    #[test]
+    fn coalesce_incremental_fill_to_cap() {
+        let mut buf = CoalesceBuffer::with_limits(10, 8);
+        assert!(!buf.push(b"aaa")); // 3
+        assert!(!buf.push(b"bbb")); // 6
+        assert!(!buf.push(b"ccc")); // 9
+        assert!(buf.push(b"d")); // 10 -- cap hit
+        assert!(buf.is_full());
+        let data = buf.take();
+        assert_eq!(&data, b"aaabbbcccd");
+    }
+
+    #[test]
+    fn coalesce_cap_resets_after_take() {
+        let mut buf = CoalesceBuffer::with_limits(10, 8);
+        buf.push(b"0123456789");
+        assert!(buf.is_full());
+        let _ = buf.take();
+        assert!(!buf.is_full());
+        assert!(buf.is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // CoalesceBuffer -- simulated high-throughput scenario
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn coalesce_many_small_chunks() {
+        let mut buf = CoalesceBuffer::with_limits(1024, 8);
+        let line = b"/usr/lib/some/path\n";
+        let mut total = 0;
+        let mut flush_count = 0;
+        for _ in 0..200 {
+            if buf.push(line) {
+                let batch = buf.take();
+                assert!(batch.len() >= 1024);
+                total += batch.len();
+                flush_count += 1;
+            }
+        }
+        // Drain remainder.
+        if !buf.is_empty() {
+            total += buf.take().len();
+            flush_count += 1;
+        }
+        assert_eq!(total, 200 * line.len());
+        assert!(
+            flush_count >= 3,
+            "expected at least 3 flushes, got {flush_count}"
+        );
+        assert!(
+            flush_count <= 10,
+            "expected at most 10 flushes, got {flush_count}"
+        );
+    }
+
+    #[test]
+    fn coalesce_single_large_chunk_triggers_immediate_flush() {
+        let mut buf = CoalesceBuffer::with_limits(100, 8);
+        let big = vec![0x41u8; 500];
+        let full = buf.push(&big);
+        assert!(full);
+        let data = buf.take();
+        assert_eq!(data.len(), 500);
+    }
+
+    #[test]
+    fn coalesce_preserves_byte_ordering() {
+        let mut buf = CoalesceBuffer::with_limits(1024, 8);
+        for i in 0u8..=255 {
+            buf.push(&[i]);
+        }
+        let data = buf.take();
+        assert_eq!(data.len(), 256);
+        for (i, &byte) in data.iter().enumerate() {
+            assert_eq!(byte, i as u8, "byte mismatch at index {i}");
+        }
+    }
+
+    #[test]
+    fn coalesce_zero_cap_always_full() {
+        let mut buf = CoalesceBuffer::with_limits(0, 8);
+        assert!(buf.is_full()); // empty but cap is 0
+        let full = buf.push(b"x");
+        assert!(full);
+    }
+
+    #[test]
+    fn coalesce_take_preserves_capacity() {
+        let mut buf = CoalesceBuffer::with_limits(1024, 8);
+        buf.push(b"data");
+        let _ = buf.take();
+        assert!(buf.buf.capacity() >= 1024);
+    }
+
+    #[test]
+    fn coalesce_no_realloc_across_flushes() {
+        let mut buf = CoalesceBuffer::with_limits(256, 8);
+        for _ in 0..100 {
+            buf.push(b"0123456789abcdef"); // 16 bytes
+            if buf.is_full() {
+                let _ = buf.take();
+                assert!(
+                    buf.buf.capacity() >= 256,
+                    "capacity dropped to {} after take",
+                    buf.buf.capacity()
+                );
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // CoalesceBuffer -- flush_to (zero-allocation)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn coalesce_flush_to_returns_data() {
+        let mut buf = CoalesceBuffer::new();
+        buf.push(b"hello ");
+        buf.push(b"world");
+        let data = buf.flush_to(|b| b.to_vec());
+        assert_eq!(&data, b"hello world");
+    }
+
+    #[test]
+    fn coalesce_flush_to_clears_buffer() {
+        let mut buf = CoalesceBuffer::new();
+        buf.push(b"data");
+        buf.flush_to(|_| {});
+        assert!(buf.is_empty());
+        assert_eq!(buf.len(), 0);
+    }
+
+    #[test]
+    fn coalesce_flush_to_preserves_capacity() {
+        let mut buf = CoalesceBuffer::with_limits(1024, 8);
+        buf.push(b"data");
+        buf.flush_to(|_| {});
+        assert!(
+            buf.buf.capacity() >= 1024,
+            "flush_to dropped capacity to {}",
+            buf.buf.capacity()
+        );
+    }
+
+    #[test]
+    fn coalesce_flush_to_no_realloc_across_flushes() {
+        let mut buf = CoalesceBuffer::with_limits(256, 8);
+        for _ in 0..100 {
+            buf.push(b"0123456789abcdef");
+            if buf.is_full() {
+                buf.flush_to(|_| {});
+                assert!(
+                    buf.buf.capacity() >= 256,
+                    "capacity dropped to {} after flush_to",
+                    buf.buf.capacity()
+                );
+            }
+        }
+    }
+}

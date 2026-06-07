@@ -1,0 +1,207 @@
+codecov:
+  require_ci_to_pass: true
+
+coverage:
+  precision: 1
+  round: down
+
+  status:
+    project:
+      default:
+        target: auto
+        threshold: 1%
+      unit:
+        target: 80%
+        flags:
+          - unit
+      integration:
+        target: auto
+        flags:
+          - integration
+      e2e:
+        target: auto
+        flags:
+          - e2e
+    patch:
+      default:
+        target: 80%
+
+comment:
+  layout: "diff, flags, components, files"
+  behavior: default
+  require_changes: false
+  require_base: yes
+  require_head: yes
+
+flags:
+  unit:
+    paths:
+      - crates/**
+      - frontend/src/**
+      - src/capsem/**
+    carryforward: true
+  integration:
+    paths:
+      - crates/**
+    carryforward: true
+  e2e:
+    paths:
+      - crates/**
+    carryforward: true
+  linux-unit:
+    paths:
+      - crates/**
+    carryforward: true
+
+# Components tag code paths by functional service.
+component_management:
+  default_rules:
+    statuses:
+      - type: project
+        target: auto
+        threshold: 2%
+      - type: patch
+        target: 80%
+
+  individual_components:
+    # MITM HTTPS proxy, TLS, cert authority, domain/HTTP policy,
+    # AI traffic parsing (SSE, providers, pricing). All of net/
+    # except policy_config.
+    - component_id: network
+      name: Network
+      paths:
+        - crates/capsem-core/src/net/mitm_proxy.rs
+        - crates/capsem-core/src/net/cert_authority.rs
+        - crates/capsem-core/src/net/domain_policy.rs
+        - crates/capsem-core/src/net/http_policy.rs
+        - crates/capsem-core/src/net/policy.rs
+        - crates/capsem-core/src/net/ai_traffic/**
+
+    # Policy engine, settings registry, host_config, corp
+    # lockdown/MDM. Small now, grows with corp features.
+    - component_id: security
+      name: Security
+      paths:
+        - crates/capsem-core/src/net/policy_config/**
+        - crates/capsem-core/src/host_config.rs
+
+    # MCP endpoint, builtin HTTP tools, file/snapshot tools,
+    # MCP policy, auto-snapshots, FS monitor. Also includes the
+    # aggregator and builtin MCP subprocess crates which are thin
+    # binaries over capsem-core::mcp.
+    - component_id: tooling
+      name: Tooling
+      paths:
+        - crates/capsem-core/src/mcp/**
+        - crates/capsem-mcp-aggregator/src/**
+        - crates/capsem-mcp-builtin/src/**
+        - crates/capsem-core/src/auto_snapshot.rs
+        - crates/capsem-core/src/fs_monitor.rs
+
+    # Logger DB, session index/maintenance, log layer.
+    # Future: OTEL, reporting, SSH session recording.
+    - component_id: monitoring
+      name: Monitoring
+      paths:
+        - crates/capsem-logger/src/**
+        - crates/capsem-core/src/session/**
+        - crates/capsem-core/src/log_layer.rs
+
+    # Machine lifecycle, VM config, vsock manager.
+    # Hypervisor abstraction layer + platform backends.
+    - component_id: virtualization
+      name: Virtualization
+      paths:
+        - crates/capsem-core/src/vm/**
+        - crates/capsem-core/src/hypervisor/**
+
+    # In-VM agent binaries: PTY agent, net-proxy, MCP server
+    # relay, wire protocol.
+    - component_id: runtime
+      name: Runtime
+      paths:
+        - crates/capsem-agent/src/**
+        - crates/capsem-proto/src/**
+
+    # App shell: CLI/GUI wiring, boot, vsock wiring, session
+    # management. Evolves into orchestrator + API + auth.
+    - component_id: daemon
+      name: Daemon
+      paths:
+        - crates/capsem-app/src/**
+
+    # Service daemon: HTTP-over-UDS API, instance lifecycle,
+    # per-VM process management.
+    - component_id: service
+      name: Service
+      paths:
+        - crates/capsem-service/src/**
+        - crates/capsem-process/src/**
+      statuses:
+        - type: project
+          target: 80%
+
+    # CLI client: start, stop, exec, shell, list, status, delete.
+    - component_id: cli
+      name: CLI
+      paths:
+        - crates/capsem/src/**
+      statuses:
+        - type: project
+          target: 80%
+
+    # MCP server: AI agent tool gateway over stdio JSON-RPC.
+    - component_id: mcp-server
+      name: MCP Server
+      paths:
+        - crates/capsem-mcp/src/**
+      statuses:
+        - type: project
+          target: 80%
+
+    # TCP-to-UDS gateway: auth, proxy, status cache, terminal WebSocket.
+    - component_id: gateway
+      name: Gateway
+      paths:
+        - crates/capsem-gateway/src/**
+      statuses:
+        - type: project
+          target: 80%
+
+    # System tray host: menu wiring, gateway client, icon rendering.
+    - component_id: systray
+      name: System Tray
+      paths:
+        - crates/capsem-tray/src/**
+
+    # Companion-lifecycle primitives: parent-watch, singleton flock.
+    # Small library but load-bearing -- ensures capsem-gateway and
+    # capsem-tray never outlive their parent service.
+    - component_id: guard
+      name: Guard
+      paths:
+        - crates/capsem-guard/src/**
+      statuses:
+        - type: project
+          target: 70%
+
+    # Frontend: Astro + Svelte components, views, stores.
+    # Populated when vitest coverage is added to pipeline.
+    - component_id: ui
+      name: UI
+      paths:
+        - frontend/src/**
+
+    # Builder: Pydantic schema, config models, image builder.
+    - component_id: builder
+      name: Builder
+      paths:
+        - src/capsem/**
+
+ignore:
+  - crates/*/tests/**
+  - crates/capsem-app/gen/**
+  - site/**
+  - docs/**
+  - guest/**
+  - scripts/**

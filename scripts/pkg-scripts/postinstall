@@ -1,0 +1,121 @@
+#!/bin/bash
+# postinstall -- Runs after macOS .pkg installation.
+#
+# The .pkg installs files to /usr/local/share/capsem/. This script copies
+# them to the user's ~/.capsem/ directory, codesigns for Virtualization.framework,
+# registers the LaunchAgent, and waits for service readiness.
+#
+# macOS Installer.app runs postinstall as root with $USER set to the
+# installing user. When called via `sudo installer -pkg`, $USER may be
+# root -- fall back to SUDO_USER, then the console owner.
+set -euo pipefail
+
+if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != "root" ]; then
+    USER="$SUDO_USER"
+fi
+if [ "$USER" = "root" ] || [ -z "${USER:-}" ]; then
+    USER=$(stat -f '%Su' /dev/console 2>/dev/null || echo "")
+    if [ -z "$USER" ] || [ "$USER" = "root" ]; then
+        echo "capsem: could not determine installing user, skipping per-user install" >&2
+        exit 0
+    fi
+fi
+
+PKG_SHARE="/usr/local/share/capsem"
+USER_HOME=$(eval echo "~$USER")
+CAPSEM_DIR="$USER_HOME/.capsem"
+
+# Create user-level directory layout. Remove stale asset symlinks from dev
+# installs so this package never writes through to an old worktree.
+mkdir -p "$CAPSEM_DIR/bin" "$CAPSEM_DIR/run"
+if [ -L "$CAPSEM_DIR/assets" ]; then
+    rm "$CAPSEM_DIR/assets"
+elif [ -e "$CAPSEM_DIR/assets" ] && [ ! -d "$CAPSEM_DIR/assets" ]; then
+    rm -f "$CAPSEM_DIR/assets"
+fi
+mkdir -p "$CAPSEM_DIR/assets"
+chown -R "$USER" "$CAPSEM_DIR"
+
+# Copy companion binaries from pkg payload
+for bin in capsem capsem-service capsem-process capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-gateway capsem-tray; do
+    src="$PKG_SHARE/bin/$bin"
+    if [ -f "$src" ]; then
+        cp "$src" "$CAPSEM_DIR/bin/$bin"
+        chmod 755 "$CAPSEM_DIR/bin/$bin"
+    fi
+done
+
+# Codesign all binaries with virtualization entitlements
+if [ -f "$PKG_SHARE/entitlements.plist" ]; then
+    for bin in "$CAPSEM_DIR/bin"/capsem*; do
+        codesign --sign - --entitlements "$PKG_SHARE/entitlements.plist" --force "$bin" 2>/dev/null || true
+    done
+fi
+
+# Copy assets (manifest + versioned dir)
+if [ -d "$PKG_SHARE/assets" ]; then
+    cp -R "$PKG_SHARE/assets/"* "$CAPSEM_DIR/assets/" 2>/dev/null || true
+fi
+
+# Fix ownership (we ran as root)
+chown -R "$USER" "$CAPSEM_DIR"
+
+# Add ~/.capsem/bin to PATH in shell profile
+CAPSEM_BIN="$CAPSEM_DIR/bin"
+for PROFILE in "$USER_HOME/.zshrc" "$USER_HOME/.bash_profile" "$USER_HOME/.bashrc"; do
+    if [ -f "$PROFILE" ]; then
+        if ! grep -qF '.capsem/bin' "$PROFILE"; then
+            echo 'export PATH="$HOME/.capsem/bin:$PATH"' >> "$PROFILE"
+            chown "$USER" "$PROFILE"
+        fi
+        break
+    fi
+done
+
+FISH_CONFIG="$USER_HOME/.config/fish/config.fish"
+mkdir -p "$(dirname "$FISH_CONFIG")"
+touch "$FISH_CONFIG"
+if ! grep -qF 'fish_add_path --path "$HOME/.capsem/bin"' "$FISH_CONFIG"; then
+    echo 'fish_add_path --path "$HOME/.capsem/bin"' >> "$FISH_CONFIG"
+fi
+chown -R "$USER" "$USER_HOME/.config/fish"
+
+# Register LaunchAgent as the installing user. Do not hide readiness: the GUI
+# should only launch after the service and gateway are ready. Asset readiness is
+# exposed through the service/UI rather than a setup side effect.
+if ! su "$USER" -c "$CAPSEM_DIR/bin/capsem install" 2>/dev/null; then
+    echo "capsem: service registration failed" >&2
+    exit 1
+fi
+
+READY=0
+STATUS_OUTPUT=""
+for _ in $(seq 1 30); do
+    STATUS_OUTPUT=$(su "$USER" -c "$CAPSEM_DIR/bin/capsem status" 2>/dev/null || true)
+    if echo "$STATUS_OUTPUT" | grep -q "Service:   ok" \
+        && echo "$STATUS_OUTPUT" | grep -q "Gateway:   ok"; then
+        READY=1
+        break
+    fi
+    sleep 1
+done
+
+# --- GUI detection and app launch ---
+# Open the desktop app only when the daemon and gateway are up. Assets may
+# still be downloading; the UI can show that state once it has a live service.
+if [ "$READY" -eq 1 ] && [ "$(uname)" = "Darwin" ] && [ -d "/Applications/Capsem.app" ]; then
+    su "$USER" -c "open /Applications/Capsem.app" 2>/dev/null || true
+elif [ "$READY" -eq 1 ] && [ "$(uname)" = "Linux" ]; then
+    if [ -n "${DISPLAY:-}" ] || [ -n "${WAYLAND_DISPLAY:-}" ]; then
+        if command -v capsem-app >/dev/null 2>&1; then
+            su "$USER" -c "capsem-app &" 2>/dev/null || true
+        fi
+    fi
+    # headless Linux: service is registered; UI launch is not available.
+elif [ "$READY" -ne 1 ]; then
+    echo "capsem: service is not ready after install" >&2
+    echo "$STATUS_OUTPUT" >&2
+    exit 1
+fi
+
+exit 0

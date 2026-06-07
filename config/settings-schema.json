@@ -1,0 +1,605 @@
+{
+  "$defs": {
+    "ActionKind": {
+      "description": "Action identifier for action-type settings.",
+      "enum": [
+        "check_update",
+        "preset_select",
+        "rerun_wizard"
+      ],
+      "title": "ActionKind",
+      "type": "string"
+    },
+    "GroupNode": {
+      "description": "A group node (kind=\"group\"). Container with children.",
+      "properties": {
+        "kind": {
+          "const": "group",
+          "default": "group",
+          "title": "Kind",
+          "type": "string"
+        },
+        "key": {
+          "title": "Key",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "enabled_by": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Enabled By"
+        },
+        "enabled": {
+          "default": true,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "collapsed": {
+          "title": "Collapsed",
+          "type": "boolean"
+        },
+        "children": {
+          "items": {
+            "discriminator": {
+              "mapping": {
+                "group": "#/$defs/GroupNode",
+                "setting": "#/$defs/SettingNode"
+              },
+              "propertyName": "kind"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/$defs/GroupNode"
+              },
+              {
+                "$ref": "#/$defs/SettingNode"
+              }
+            ]
+          },
+          "title": "Children",
+          "type": "array"
+        }
+      },
+      "required": [
+        "key",
+        "name",
+        "collapsed",
+        "children"
+      ],
+      "title": "GroupNode",
+      "type": "object"
+    },
+    "HistoryEntry": {
+      "description": "A single value change record for audit trail.",
+      "properties": {
+        "timestamp": {
+          "title": "Timestamp",
+          "type": "string"
+        },
+        "value": {
+          "title": "Value"
+        },
+        "source": {
+          "$ref": "#/$defs/PolicySource"
+        }
+      },
+      "required": [
+        "timestamp",
+        "value",
+        "source"
+      ],
+      "title": "HistoryEntry",
+      "type": "object"
+    },
+    "HttpMethodPermissions": {
+      "description": "Per-rule HTTP method permissions.",
+      "properties": {
+        "domains": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Domains",
+          "type": "array"
+        },
+        "path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Path"
+        },
+        "get": {
+          "default": false,
+          "title": "Get",
+          "type": "boolean"
+        },
+        "post": {
+          "default": false,
+          "title": "Post",
+          "type": "boolean"
+        },
+        "put": {
+          "default": false,
+          "title": "Put",
+          "type": "boolean"
+        },
+        "delete": {
+          "default": false,
+          "title": "Delete",
+          "type": "boolean"
+        },
+        "other": {
+          "default": false,
+          "title": "Other",
+          "type": "boolean"
+        }
+      },
+      "title": "HttpMethodPermissions",
+      "type": "object"
+    },
+    "McpToolOrigin": {
+      "description": "Where an MCP tool runs.",
+      "enum": [
+        "builtin",
+        "remote",
+        "in_vm"
+      ],
+      "title": "McpToolOrigin",
+      "type": "string"
+    },
+    "McpTransport": {
+      "description": "MCP server transport protocol.",
+      "enum": [
+        "stdio",
+        "sse"
+      ],
+      "title": "McpTransport",
+      "type": "string"
+    },
+    "PolicySource": {
+      "description": "Where a setting's effective value came from.",
+      "enum": [
+        "default",
+        "user",
+        "corp"
+      ],
+      "title": "PolicySource",
+      "type": "string"
+    },
+    "SettingMetadata": {
+      "description": "Structured metadata for a setting.\n\nContains fields for all setting types:\n- Common: domains, choices, min, max, rules, env_vars, mask, validator, etc.\n- Action-specific: action (ActionKind)\n- MCP tool-specific: origin (McpToolOrigin)\n- MCP server-specific (legacy): transport, command, url, args, env, headers",
+      "properties": {
+        "domains": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Domains",
+          "type": "array"
+        },
+        "choices": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Choices",
+          "type": "array"
+        },
+        "min": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Min"
+        },
+        "max": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max"
+        },
+        "rules": {
+          "additionalProperties": {
+            "$ref": "#/$defs/HttpMethodPermissions"
+          },
+          "title": "Rules",
+          "type": "object"
+        },
+        "env_vars": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Env Vars",
+          "type": "array"
+        },
+        "collapsed": {
+          "default": false,
+          "title": "Collapsed",
+          "type": "boolean"
+        },
+        "format": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Format"
+        },
+        "docs_url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Docs Url"
+        },
+        "prefix": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Prefix"
+        },
+        "filetype": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Filetype"
+        },
+        "widget": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Widget"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "side_effect": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SideEffect"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "hidden": {
+          "default": false,
+          "title": "Hidden",
+          "type": "boolean"
+        },
+        "builtin": {
+          "default": false,
+          "title": "Builtin",
+          "type": "boolean"
+        },
+        "mask": {
+          "default": false,
+          "title": "Mask",
+          "type": "boolean"
+        },
+        "validator": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Validator"
+        },
+        "action": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ActionKind"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "origin": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/McpToolOrigin"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "transport": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/McpTransport"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "command": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Command"
+        },
+        "url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Url"
+        },
+        "args": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Args",
+          "type": "array"
+        },
+        "env": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Env",
+          "type": "object"
+        },
+        "headers": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Headers",
+          "type": "object"
+        }
+      },
+      "title": "SettingMetadata",
+      "type": "object"
+    },
+    "SettingNode": {
+      "description": "A setting node (kind=\"setting\").\n\nCovers regular settings, actions, and MCP tools.\nConsumers check setting_type to know which fields are relevant.",
+      "properties": {
+        "kind": {
+          "const": "setting",
+          "default": "setting",
+          "title": "Kind",
+          "type": "string"
+        },
+        "key": {
+          "title": "Key",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "description": {
+          "title": "Description",
+          "type": "string"
+        },
+        "setting_type": {
+          "$ref": "#/$defs/SettingType"
+        },
+        "default_value": {
+          "default": null,
+          "title": "Default Value"
+        },
+        "effective_value": {
+          "default": null,
+          "title": "Effective Value"
+        },
+        "source": {
+          "$ref": "#/$defs/PolicySource",
+          "default": "default"
+        },
+        "modified": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Modified"
+        },
+        "corp_locked": {
+          "default": false,
+          "title": "Corp Locked",
+          "type": "boolean"
+        },
+        "enabled_by": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Enabled By"
+        },
+        "enabled": {
+          "default": true,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "collapsed": {
+          "default": false,
+          "title": "Collapsed",
+          "type": "boolean"
+        },
+        "metadata": {
+          "$ref": "#/$defs/SettingMetadata"
+        },
+        "history": {
+          "items": {
+            "$ref": "#/$defs/HistoryEntry"
+          },
+          "title": "History",
+          "type": "array"
+        }
+      },
+      "required": [
+        "key",
+        "name",
+        "description",
+        "setting_type"
+      ],
+      "title": "SettingNode",
+      "type": "object"
+    },
+    "SettingType": {
+      "description": "Data type of a setting (drives UI rendering).",
+      "enum": [
+        "text",
+        "number",
+        "url",
+        "email",
+        "apikey",
+        "bool",
+        "file",
+        "kv_map",
+        "string_list",
+        "int_list",
+        "float_list",
+        "action",
+        "mcp_tool"
+      ],
+      "title": "SettingType",
+      "type": "string"
+    },
+    "SideEffect": {
+      "description": "Frontend side effect triggered on value change.",
+      "enum": [
+        "toggle_theme"
+      ],
+      "title": "SideEffect",
+      "type": "string"
+    },
+    "Widget": {
+      "description": "Explicit UI widget override.",
+      "enum": [
+        "toggle",
+        "text_input",
+        "number_input",
+        "password_input",
+        "select",
+        "file_editor",
+        "domain_chips",
+        "string_chips",
+        "slider",
+        "kv_editor"
+      ],
+      "title": "Widget",
+      "type": "string"
+    }
+  },
+  "description": "Top-level settings document.",
+  "properties": {
+    "settings": {
+      "items": {
+        "discriminator": {
+          "mapping": {
+            "group": "#/$defs/GroupNode",
+            "setting": "#/$defs/SettingNode"
+          },
+          "propertyName": "kind"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/$defs/GroupNode"
+          },
+          {
+            "$ref": "#/$defs/SettingNode"
+          }
+        ]
+      },
+      "title": "Settings",
+      "type": "array"
+    }
+  },
+  "required": [
+    "settings"
+  ],
+  "title": "SettingsRoot",
+  "type": "object"
+}

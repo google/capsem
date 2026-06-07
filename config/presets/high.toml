@@ -1,0 +1,12 @@
+name = "High Security"
+description = "Blocks all web access by default. Only Google search is allowed. MCP tools require confirmation before running."
+
+[settings]
+"security.web.allow_read" = false
+"security.web.allow_write" = false
+"security.services.search.google.allow" = true
+"security.services.search.bing.allow" = false
+"security.services.search.duckduckgo.allow" = false
+
+[mcp]
+default_tool_permission = "warn"

@@ -1,0 +1,909 @@
+name: Release
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+  attestations: write
+  id-token: write
+
+jobs:
+  preflight:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Select Xcode 16.2
+        run: sudo xcode-select -s /Applications/Xcode_16.2.app
+
+      - name: Import Apple certificate (preflight)
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          echo "$APPLE_CERTIFICATE" | base64 --decode > cert.p12
+          KEYCHAIN="preflight-$$.keychain"
+          security create-keychain -p "" "$KEYCHAIN"
+          security import cert.p12 -k "$KEYCHAIN" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -k "" "$KEYCHAIN"
+          IDENTITY=$(security find-identity -v -p codesigning "$KEYCHAIN" | grep "Developer ID" || true)
+          if [ -z "$IDENTITY" ]; then
+            echo "::error::No Developer ID signing identity found. Check APPLE_CERTIFICATE secret."
+            echo "::error::If the p12 was created with OpenSSL 3.x, it uses PBES2/AES encryption."
+            echo "::error::macOS requires legacy 3DES. Re-export with: scripts/fix_p12_legacy.sh"
+            exit 1
+          fi
+          echo "codesigning identities:"
+          echo "$IDENTITY"
+          # Installer cert is not a codesigning identity; check with full list.
+          INSTALLER=$(security find-identity -v "$KEYCHAIN" | grep "Developer ID Installer" || true)
+          if [ -z "$INSTALLER" ]; then
+            echo "::error::No Developer ID Installer identity found. productsign (.pkg signing) will fail."
+            echo "::error::Export a combined p12 containing both Application and Installer certs."
+            exit 1
+          fi
+          echo "installer identity: $INSTALLER"
+          security delete-keychain "$KEYCHAIN"
+          rm cert.p12
+
+      - name: Verify Tauri signing key
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            echo "::error::TAURI_SIGNING_PRIVATE_KEY secret is not set"
+            exit 1
+          fi
+          echo "Tauri signing key is set"
+
+      - name: Verify notarization credentials
+        env:
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_CONTENT: ${{ secrets.APPLE_API_KEY_PATH }}
+        run: |
+          if [ -z "$APPLE_API_ISSUER" ] || [ -z "$APPLE_API_KEY" ] || [ -z "$APPLE_API_KEY_CONTENT" ]; then
+            echo "::error::Notarization secrets missing (APPLE_API_ISSUER, APPLE_API_KEY, or APPLE_API_KEY_PATH)"
+            exit 1
+          fi
+          mkdir -p "$RUNNER_TEMP/private_keys"
+          echo "$APPLE_API_KEY_CONTENT" > "$RUNNER_TEMP/private_keys/AuthKey_${APPLE_API_KEY}.p8"
+          xcrun notarytool history \
+            --key "$RUNNER_TEMP/private_keys/AuthKey_${APPLE_API_KEY}.p8" \
+            --key-id "$APPLE_API_KEY" \
+            --issuer "$APPLE_API_ISSUER" \
+            >/dev/null 2>&1 \
+            && echo "Notarization credentials verified (notarytool history succeeded)" \
+            || { echo "::error::notarytool history failed -- check APPLE_API_ISSUER, APPLE_API_KEY, and APPLE_API_KEY_PATH secrets"; exit 1; }
+          rm -rf "$RUNNER_TEMP/private_keys"
+
+  build-assets:
+    needs: preflight
+    strategy:
+      matrix:
+        include:
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            rust-target: aarch64-unknown-linux-musl
+          - arch: x86_64
+            runner: ubuntu-24.04
+            rust-target: x86_64-unknown-linux-musl
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: docker/setup-buildx-action@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync
+      - uses: extractions/setup-just@v3
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust-target }}
+
+      - name: Build VM assets (kernel + rootfs)
+        run: |
+          just build-kernel ${{ matrix.arch }}
+          just build-rootfs ${{ matrix.arch }}
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: vm-assets-${{ matrix.arch }}
+          path: assets/${{ matrix.arch }}/
+
+  test:
+    needs: preflight
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: test
+
+      - uses: pnpm/action-setup@v5
+        with:
+          version: 10
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - run: cd frontend && pnpm install --frozen-lockfile
+
+      - name: Dependency audit
+        run: |
+          cargo install cargo-audit --locked
+          cargo audit
+          # pnpm audit: block on high/critical only. Moderate findings in
+          # dev-only transitive deps (e.g. postcss via vite) keep appearing
+          # between releases and don't reflect runtime exposure for Capsem.
+          cd frontend && pnpm audit --audit-level=high
+
+      - name: Frontend type-check, test, and build
+        run: cd frontend && pnpm run check && pnpm run test && pnpm run build
+
+      - name: Install cargo-llvm-cov
+        run: cargo install cargo-llvm-cov --locked
+
+      - name: Warnings-as-errors (all crates)
+        run: cargo check --workspace
+
+      - name: Create stub assets for Tauri build.rs
+        run: |
+          mkdir -p assets/current
+          touch assets/current/vmlinuz assets/current/initrd.img
+          echo '{"releases":{}}' > assets/manifest.json
+
+      - name: Unit tests with coverage
+        run: |
+          cargo llvm-cov --workspace --no-cfg-coverage --codecov --output-path codecov.json 2>&1 | tee test-output.txt
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          files: codecov.json
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false
+
+      - name: Test summary
+        if: always()
+        run: |
+          # Parse "test result: ok. X passed; Y failed" lines from cargo output
+          TESTS=$(grep -o '[0-9]* passed' test-output.txt 2>/dev/null | awk '{s+=$1} END {print s+0}')
+          FAILED=$(grep -o '[0-9]* failed' test-output.txt 2>/dev/null | awk '{s+=$1} END {print s+0}')
+
+          cat >> "$GITHUB_STEP_SUMMARY" << EOF
+          ## Test Results
+
+          | Metric | Result |
+          |--------|--------|
+          | Rust tests passed | $TESTS |
+          | Rust tests failed | $FAILED |
+          | Frontend tests | vitest |
+          | Audit | cargo audit + pnpm audit |
+          EOF
+
+  test-install:
+    needs: preflight
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: extractions/setup-just@v3
+
+      - name: Install Linux host-build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libssl-dev \
+            libgtk-3-dev \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libxdo-dev \
+            pkg-config \
+            build-essential
+
+      - name: Build host builder Docker image
+        run: just build-host-image
+
+      - name: Run install e2e tests
+        run: just test-install
+
+  build-app-macos:
+    needs: [preflight, build-assets, test, test-install]
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Select Xcode 16.2
+        run: sudo xcode-select -s /Applications/Xcode_16.2.app
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: vm-assets-arm64
+          path: assets/arm64/
+
+      # Regenerate manifest for this arch (creates assets/current symlink).
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync
+      - name: Generate manifest
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          uv run python3 -c "
+          from pathlib import Path
+          from capsem.builder.docker import generate_checksums
+          generate_checksums(Path('assets'), '$VERSION')
+          "
+
+      # Replace symlink with real copy -- GitHub Actions strips symlinks
+      # and Tauri build.rs needs assets/current/ to exist as a real dir.
+      - name: Copy assets/current
+        run: |
+          rm -rf assets/current
+          cp -r assets/arm64 assets/current
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: build-app-macos
+
+      - uses: pnpm/action-setup@v5
+        with:
+          version: 10
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - run: cd frontend && pnpm install --frozen-lockfile
+
+      - name: Build frontend
+        run: cd frontend && pnpm build
+
+      - name: Install cargo tools
+        run: cargo install tauri-cli cargo-auditable cargo-sbom --locked
+
+      - name: Import Apple certificate
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          echo "$APPLE_CERTIFICATE" | base64 --decode > cert.p12
+          security create-keychain -p "" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "" build.keychain
+          security set-keychain-settings -t 3600 build.keychain
+          security import cert.p12 -k build.keychain -P "$APPLE_CERTIFICATE_PASSWORD" \
+              -T /usr/bin/codesign -T /usr/bin/productsign -T /usr/bin/productbuild
+          security set-key-partition-list -S apple-tool:,apple: -k "" build.keychain
+          security list-keychains -d user -s build.keychain $(security list-keychains -d user | tr -d '"')
+
+      - name: Write Apple API key file
+        env:
+          APPLE_API_KEY_CONTENT: ${{ secrets.APPLE_API_KEY_PATH }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/private_keys"
+          echo "$APPLE_API_KEY_CONTENT" > "$RUNNER_TEMP/private_keys/AuthKey_${{ secrets.APPLE_API_KEY }}.p8"
+
+      - name: Verify assets layout
+        run: |
+          echo "=== assets/ ==="
+          ls -la assets/
+          echo "=== assets/arm64/ ==="
+          ls -la assets/arm64/
+          echo "=== assets/current/ ==="
+          ls -la assets/current/
+          echo "=== assets/manifest.json ==="
+          cat assets/manifest.json | head -5
+
+      - name: Validate build context completeness
+        run: |
+          uv run python3 -c "
+          from capsem.builder.doctor import check_source_files
+          from pathlib import Path
+          result = check_source_files(Path('.'))
+          if not result.passed:
+              raise SystemExit(f'Source file check failed: {result.detail}')
+          print(f'OK: {result.detail}')
+          "
+
+      - name: Build and sign app
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_PATH: ${{ runner.temp }}/private_keys/AuthKey_${{ secrets.APPLE_API_KEY }}.p8
+        run: |
+          cd crates/capsem-app
+          cargo tauri build --bundles app --skip-stapling
+
+      - name: Build companion binaries
+        run: |
+          cargo build --release \
+            -p capsem \
+            -p capsem-service \
+            -p capsem-process \
+            -p capsem-mcp \
+            -p capsem-mcp-aggregator \
+            -p capsem-mcp-builtin \
+            -p capsem-gateway \
+            -p capsem-tray
+
+      - name: Codesign companion binaries
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          for bin in capsem capsem-service capsem-process capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-gateway capsem-tray; do
+            codesign --sign "$APPLE_SIGNING_IDENTITY" \
+              --options runtime \
+              --timestamp \
+              --entitlements entitlements.plist \
+              --force \
+              "target/release/$bin"
+          done
+
+      - name: Build .pkg installer
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          bash scripts/build-pkg.sh \
+            "target/release/bundle/macos/Capsem.app" \
+            "target/release" \
+            "assets" \
+            "$VERSION" \
+            "${{ secrets.APPLE_INSTALLER_SIGNING_IDENTITY }}"
+
+      - name: Notarize and staple .pkg
+        env:
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_PATH: ${{ runner.temp }}/private_keys/AuthKey_${{ secrets.APPLE_API_KEY }}.p8
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          xcrun notarytool submit "packages/Capsem-$VERSION.pkg" \
+            --key "$APPLE_API_KEY_PATH" \
+            --key-id "$APPLE_API_KEY" \
+            --issuer "$APPLE_API_ISSUER" \
+            --wait --timeout 30m
+          xcrun stapler staple "packages/Capsem-$VERSION.pkg"
+          xcrun stapler validate "packages/Capsem-$VERSION.pkg"
+
+      - name: Generate SBOM
+        run: cargo sbom --output-format spdx_json_2_3 > capsem-sbom.spdx.json
+
+      - name: Collect macOS artifacts
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          mkdir -p release-artifacts
+          if [ ! -f "packages/Capsem-$VERSION.pkg" ]; then
+            echo "::error::Capsem-$VERSION.pkg not produced by build-pkg.sh"
+            exit 1
+          fi
+          cp "packages/Capsem-$VERSION.pkg" release-artifacts/
+          cp capsem-sbom.spdx.json release-artifacts/
+          ls -lh release-artifacts/
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-macos
+          path: release-artifacts/
+
+  build-app-linux:
+    needs: [preflight, build-assets, test, test-install]
+    # Linux release is best-effort for now. See sprints/linux/tracker.md --
+    # macOS .pkg is the shipping artifact until Linux is verified end-to-end.
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            bundles: deb
+          - arch: x86_64
+            runner: ubuntu-24.04
+            bundles: deb
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v8
+        with:
+          name: vm-assets-${{ matrix.arch }}
+          path: assets/${{ matrix.arch }}/
+
+      # Regenerate manifest for this arch (creates assets/current symlink).
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync
+      - name: Generate manifest
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          uv run python3 -c "
+          from pathlib import Path
+          from capsem.builder.docker import generate_checksums
+          generate_checksums(Path('assets'), '$VERSION')
+          "
+
+      # Replace symlink with real copy -- GitHub Actions strips symlinks
+      # and Tauri build.rs needs assets/current/ to exist as a real dir.
+      - name: Copy assets/current
+        run: |
+          rm -rf assets/current
+          cp -r assets/${{ matrix.arch }} assets/current
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: build-app-linux-${{ matrix.arch }}
+
+      - name: Install Tauri system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libssl-dev \
+            libgtk-3-dev \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libxdo-dev \
+            xdg-utils \
+            xvfb
+
+      - uses: pnpm/action-setup@v5
+        with:
+          version: 10
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - run: cd frontend && pnpm install --frozen-lockfile
+
+      - name: Build frontend
+        run: cd frontend && pnpm build
+
+      - name: Install cargo tools
+        run: cargo install tauri-cli cargo-auditable --locked
+
+      - name: Verify assets layout
+        run: |
+          echo "=== assets/ ==="
+          ls -la assets/
+          echo "=== assets/${{ matrix.arch }}/ ==="
+          ls -la assets/${{ matrix.arch }}/
+          echo "=== assets/current/ ==="
+          ls -la assets/current/
+          echo "=== assets/manifest.json ==="
+          cat assets/manifest.json | head -5
+
+      - name: Validate rootfs contains all required artifacts
+        run: |
+          ROOTFS="assets/${{ matrix.arch }}/rootfs.erofs"
+          if [ ! -f "$ROOTFS" ]; then
+            echo "::error::rootfs.erofs not found at $ROOTFS"
+            exit 1
+          fi
+          MOUNT=$(mktemp -d)
+          sudo mount -t erofs -o loop,ro "$ROOTFS" "$MOUNT"
+          MISSING=""
+          for bin in capsem-pty-agent capsem-net-proxy capsem-mcp-server capsem-doctor capsem-bench snapshots; do
+            if [ ! -f "$MOUNT/usr/local/bin/$bin" ]; then
+              MISSING="$MISSING $bin"
+            fi
+          done
+          sudo umount "$MOUNT"
+          rmdir "$MOUNT"
+          if [ -n "$MISSING" ]; then
+            echo "::error::rootfs is missing required binaries:$MISSING"
+            exit 1
+          fi
+          echo "All required binaries present in rootfs"
+
+      - name: Build app
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          cd crates/capsem-app
+          cargo tauri build --bundles ${{ matrix.bundles }}
+
+      - name: Build companion binaries
+        run: |
+          cargo build --release -p capsem -p capsem-service -p capsem-process -p capsem-mcp -p capsem-gateway -p capsem-tray
+
+      - name: Repack .deb with companion binaries
+        run: |
+          DEB_FILE=$(ls target/release/bundle/deb/*.deb)
+          bash scripts/repack-deb.sh "$DEB_FILE" "target/release"
+
+      - name: Validate artifacts
+        run: |
+          echo "=== Validate deb ==="
+          dpkg-deb --info target/release/bundle/deb/*.deb
+          echo "=== Verify companion binaries in deb ==="
+          dpkg-deb --contents target/release/bundle/deb/*.deb | grep -E "capsem-service|capsem-gateway|capsem-tray"
+
+      - name: Boot test (x86_64)
+        if: matrix.arch == 'x86_64'
+        run: |
+          ls -l /dev/kvm || echo "KVM MISSING (pre-udev)"
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -l /dev/kvm
+          # Probe KVM capability: nested/restricted KVM may lack CPUID support
+          # which makes full VM boot impossible. Skip gracefully.
+          if python3 -c "
+          import fcntl, os, struct, array
+          kvm = os.open('/dev/kvm', os.O_RDWR)
+          vm = fcntl.ioctl(kvm, 0xAE01)  # KVM_CREATE_VM
+          buf = struct.pack('II', 256, 0) + b'\x00' * (256 * 40)
+          try:
+              fcntl.ioctl(vm, 0xC008AE05, buf, True)  # KVM_GET_SUPPORTED_CPUID
+              print('KVM supports CPUID -- boot test will run')
+          except OSError as e:
+              print(f'KVM lacks CPUID support ({e}) -- skipping boot test')
+              os._exit(1)
+          finally:
+              os.close(vm); os.close(kvm)
+          "; then
+            sudo dpkg -i target/release/bundle/deb/*.deb || sudo apt-get install -f -y
+            xvfb-run timeout 120 capsem run "capsem-doctor"
+          else
+            echo "::warning::Skipping x86_64 boot test -- KVM on this runner lacks full VM support"
+          fi
+
+      - name: Collect Linux artifacts
+        run: |
+          mkdir -p release-artifacts
+          cp target/release/bundle/deb/*.deb release-artifacts/
+          ls -lh release-artifacts/
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-linux-${{ matrix.arch }}
+          path: release-artifacts/
+
+  create-release:
+    needs: [test, test-install, build-app-macos, build-app-linux]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      # Download all platform artifacts. macOS is required; Linux is best-effort.
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-macos
+          path: release-artifacts/
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-linux-arm64
+          path: release-artifacts/
+        continue-on-error: true
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-linux-x86_64
+          path: release-artifacts/
+        continue-on-error: true
+
+      # Download per-arch VM assets for the release.
+      - uses: actions/download-artifact@v8
+        with:
+          name: vm-assets-arm64
+          path: release-artifacts/arm64/
+      - uses: actions/download-artifact@v8
+        with:
+          name: vm-assets-x86_64
+          path: release-artifacts/x86_64/
+
+      # Regenerate unified manifest.json from both arch dirs.
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync
+      - name: Generate unified manifest
+        run: |
+          # Set up a temp assets dir with both arch subdirs for checksums.
+          mkdir -p unified-assets/arm64 unified-assets/x86_64
+          cp release-artifacts/arm64/* unified-assets/arm64/
+          cp release-artifacts/x86_64/* unified-assets/x86_64/
+          VERSION="${GITHUB_REF_NAME#v}"
+          uv run python3 -c "
+          from pathlib import Path
+          from capsem.builder.docker import generate_checksums
+          generate_checksums(Path('unified-assets'), '$VERSION')
+          "
+          cp unified-assets/manifest.json release-artifacts/manifest.json
+
+      # Populate v2 manifest binaries.releases[VERSION] with pkg + deb entries
+      # and merge previous release's assets/binaries so clients can still
+      # resolve older versions.
+      - name: Populate and accumulate manifest
+        run: |
+          gh release download --pattern manifest.json -D /tmp/prev-manifest 2>/dev/null || true
+          VERSION="${GITHUB_REF_NAME#v}"
+          PREV_PATH=""
+          [ -f /tmp/prev-manifest/manifest.json ] && PREV_PATH=/tmp/prev-manifest/manifest.json
+          VERSION="$VERSION" PREV_PATH="$PREV_PATH" python3 <<'PY'
+          import hashlib, json, os
+          from pathlib import Path
+
+          version = os.environ['VERSION']
+          prev_path = os.environ.get('PREV_PATH') or None
+          artifacts = Path('release-artifacts')
+          manifest_path = artifacts / 'manifest.json'
+
+          with manifest_path.open() as f:
+              new = json.load(f)
+
+          assert new.get('format') == 2, f"generate_checksums must emit v2 manifest (got {new.get('format')!r})"
+          new.setdefault('binaries', {}).setdefault('releases', {})
+
+          def sha256(p: Path) -> str:
+              h = hashlib.sha256()
+              with p.open('rb') as fh:
+                  for chunk in iter(lambda: fh.read(1 << 20), b''):
+                      h.update(chunk)
+              return h.hexdigest()
+
+          binary_files = []
+          # .pkg is required -- .deb may be absent if Linux best-effort build failed.
+          for pattern in ('*.pkg', '*.deb'):
+              binary_files.extend(sorted(artifacts.glob(pattern)))
+          if not any(f.suffix == '.pkg' for f in binary_files):
+              raise SystemExit('No .pkg found in release-artifacts/ -- macOS build must have failed')
+
+          entry = {
+              'version': version,
+              'files': [
+                  {'name': f.name, 'size': f.stat().st_size, 'sha256': sha256(f)}
+                  for f in binary_files
+              ],
+          }
+          new['binaries']['releases'][version] = entry
+          print(f'Populated binaries.releases[{version}] with {len(entry["files"])} file(s):')
+          for fd in entry['files']:
+              print(f'  {fd["name"]}  {fd["size"]}  {fd["sha256"][:16]}...')
+
+          if prev_path:
+              with open(prev_path) as f:
+                  prev = json.load(f)
+              if prev.get('format') == 2:
+                  for ver, e in prev.get('assets', {}).get('releases', {}).items():
+                      new['assets']['releases'].setdefault(ver, e)
+                  for ver, e in prev.get('binaries', {}).get('releases', {}).items():
+                      new['binaries']['releases'].setdefault(ver, e)
+                  a = len(new['assets']['releases'])
+                  b = len(new['binaries']['releases'])
+                  print(f'Merged: {a} asset releases, {b} binary releases')
+              else:
+                  print('Previous manifest is v1, skipping merge')
+          else:
+              print('No previous manifest, fresh start')
+
+          with manifest_path.open('w') as f:
+              json.dump(new, f, indent=2)
+          PY
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Sign manifest
+        run: |
+          sudo apt-get update && sudo apt-get install -y minisign
+          echo "$MINISIGN_SECRET_KEY" > /tmp/manifest-sign.key
+          minisign -S -s /tmp/manifest-sign.key -m release-artifacts/manifest.json
+          rm /tmp/manifest-sign.key
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+
+      - name: Attest build provenance (pkg + deb + rootfs per arch)
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: |
+            release-artifacts/*.pkg
+            release-artifacts/*.deb
+            release-artifacts/arm64/rootfs.erofs
+            release-artifacts/x86_64/rootfs.erofs
+
+      - name: Attest SBOM
+        uses: actions/attest@v4
+        with:
+          subject-path: |
+            release-artifacts/*.pkg
+          predicate-type: https://spdx.dev/Document/v2.3
+          predicate-path: release-artifacts/capsem-sbom.spdx.json
+
+      - name: Build summary
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          PKG=$(ls -1 release-artifacts/*.pkg 2>/dev/null | head -1)
+          PKG_NAME=$(basename "$PKG" 2>/dev/null || echo "N/A")
+          PKG_SIZE=$(du -h "$PKG" 2>/dev/null | cut -f1 || echo "N/A")
+          ARM64_ROOTFS=$(du -h release-artifacts/arm64/rootfs.erofs 2>/dev/null | cut -f1 || echo "N/A")
+          X86_ROOTFS=$(du -h release-artifacts/x86_64/rootfs.erofs 2>/dev/null | cut -f1 || echo "N/A")
+          SBOM_PKGS=$(python3 -c "import json; d=json.load(open('release-artifacts/capsem-sbom.spdx.json')); print(len(d.get('packages',[])))" 2>/dev/null || echo "?")
+
+          # Build artifact table rows for all debs (may be absent if Linux best-effort failed)
+          LINUX_ROWS=""
+          for f in release-artifacts/*.deb; do
+            [ -f "$f" ] || continue
+            NAME=$(basename "$f")
+            SIZE=$(du -h "$f" | cut -f1)
+            LINUX_ROWS="${LINUX_ROWS}| ${NAME} | ${SIZE} |
+          "
+          done
+          [ -z "$LINUX_ROWS" ] && LINUX_ROWS="| (no .deb produced -- Linux best-effort) | -- |
+          "
+
+          cat >> "$GITHUB_STEP_SUMMARY" << EOF
+          ## Release $VERSION
+
+          ### Artifacts
+
+          | File | Size |
+          |------|------|
+          | $PKG_NAME | $PKG_SIZE |
+          ${LINUX_ROWS}| rootfs.erofs (arm64) | $ARM64_ROOTFS |
+          | rootfs.erofs (x86_64) | $X86_ROOTFS |
+          | manifest.json | signed (minisign) |
+          | capsem-sbom.spdx.json | $SBOM_PKGS packages |
+
+          ### Security
+
+          - Apple codesigned (Developer ID), notarized + stapled (.pkg)
+          - SLSA build provenance attested (pkg + deb + rootfs)
+          - SBOM attested (SPDX 2.3, pkg)
+          - Manifest signed (minisign)
+          EOF
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Build release notes with tool versions
+          NOTES="See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md) for details."
+          NOTES="${NOTES}
+
+          ### VM Environment
+
+          "
+          if [ -f release-artifacts/arm64/tool-versions.txt ]; then
+            NOTES="${NOTES}| Tool | Version |
+          |------|---------|
+          "
+            while IFS='=' read -r tool version; do
+              [ -n "$tool" ] && NOTES="${NOTES}| ${tool} | ${version} |
+          "
+            done < release-artifacts/arm64/tool-versions.txt
+          fi
+
+          # Create release with the .pkg + manifest, then upload optional .deb
+          # files if Linux build succeeded (best-effort until sprints/linux lands).
+          gh release create ${{ github.ref_name }} \
+            release-artifacts/*.pkg \
+            release-artifacts/manifest.json release-artifacts/manifest.json.minisig \
+            release-artifacts/capsem-sbom.spdx.json \
+            --title "Capsem ${{ github.ref_name }}" \
+            --notes "$NOTES"
+
+          for deb in release-artifacts/*.deb; do
+            [ -f "$deb" ] && gh release upload ${{ github.ref_name }} "$deb"
+          done
+
+          # Upload per-arch VM assets with arch prefix (both have vmlinuz, initrd.img, etc.)
+          # gh release upload uses the filename as the asset name, so we must
+          # rename files to ${arch}-${base} before uploading to avoid collisions.
+          for arch in arm64 x86_64; do
+            for f in release-artifacts/$arch/*; do
+              [ -f "$f" ] || continue
+              base=$(basename "$f")
+              mv "$f" "release-artifacts/$arch/${arch}-${base}"
+              gh release upload ${{ github.ref_name }} "release-artifacts/$arch/${arch}-${base}"
+            done
+          done
+
+  # ---------------------------------------------------------------------------
+  # Post-release: verify every asset URL the binary will request actually
+  # resolves on the live GitHub Release, AND that the just-released .deb's
+  # `capsem update --assets` succeeds end-to-end against real GitHub. This
+  # is the layer that was missing when v1.0.1777065213 shipped a downloader
+  # pointing at /v<asset_version>/... (404). If this job had existed it would
+  # have failed on that release.
+  # ---------------------------------------------------------------------------
+  verify-release-downloads:
+    needs: [create-release]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Wait for release assets to be queryable
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          for i in $(seq 1 30); do
+            if gh release view "${{ github.ref_name }}" --json assets --jq '.assets | length' >/dev/null 2>&1; then
+              break
+            fi
+            sleep 2
+          done
+
+      - name: Verify every URL in the published manifest is reachable
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/verify
+          gh release download "${{ github.ref_name }}" --pattern manifest.json -D /tmp/verify
+          # The URL contract: <base>/v<binary_version>/<arch>-<logical_name>
+          # where binary_version is the release tag (without leading 'v').
+          # This MUST match crates/capsem-core/src/asset_manager.rs::asset_download_url.
+          BASE="https://github.com/google/capsem/releases/download"
+          TAG="${{ github.ref_name }}"
+          fail=0
+          # Iterate every (arch, logical_name) the current asset release declares.
+          while IFS=$'\t' read -r arch name; do
+            url="$BASE/$TAG/$arch-$name"
+            code=$(curl -sIL -o /dev/null -w "%{http_code}" "$url")
+            if [ "$code" != "200" ]; then
+              echo "::error::$url -> HTTP $code"
+              fail=1
+            else
+              echo "ok  $url"
+            fi
+          done < <(python3 -c "
+          import json
+          m = json.load(open('/tmp/verify/manifest.json'))
+          cur = m['assets']['current']
+          for arch, files in m['assets']['releases'][cur]['arches'].items():
+              for name in files:
+                  print(f'{arch}\t{name}')
+          ")
+          [ "$fail" = 0 ] || { echo '::error::one or more asset URLs are unreachable'; exit 1; }
+
+      - name: Verify capsem update --assets succeeds against real GitHub
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # Pull the just-released .deb for this runner's arch.
+          arch=$(uname -m)
+          [ "$arch" = "aarch64" ] && deb_arch=arm64 || deb_arch=amd64
+          mkdir -p /tmp/deb
+          if ! gh release download "${{ github.ref_name }}" \
+               --pattern "Capsem_*_${deb_arch}.deb" -D /tmp/deb; then
+            echo "::warning::no .deb for ${deb_arch} on this release -- skipping binary e2e"
+            exit 0
+          fi
+          deb=$(ls /tmp/deb/Capsem_*_${deb_arch}.deb | head -1)
+          # Extract the bundled capsem binary; we don't need to dpkg -i for this.
+          mkdir -p /tmp/extract && cd /tmp/extract
+          ar x "$deb"
+          for d in data.tar.zst data.tar.xz data.tar.gz; do
+            [ -f "$d" ] && tar xf "$d" && break
+          done
+          # Tauri .deb installs the umbrella binary as capsem-app; the CLI is
+          # bundled separately under /usr/share/capsem/bin or similar. Find it.
+          CAPSEM_BIN=$(find . -type f -name capsem -perm -u+x | head -1)
+          if [ -z "$CAPSEM_BIN" ]; then
+            echo "::warning::no 'capsem' CLI inside .deb -- skipping binary e2e"
+            exit 0
+          fi
+          echo "Using $CAPSEM_BIN ($("$CAPSEM_BIN" --version 2>&1 | head -1))"
+
+          # Stand up a clean CAPSEM_HOME with only the published manifest.
+          export CAPSEM_HOME=/tmp/capsem-home
+          mkdir -p "$CAPSEM_HOME/assets"
+          cp /tmp/verify/manifest.json "$CAPSEM_HOME/assets/manifest.json"
+          # No CAPSEM_RELEASE_URL override -- the binary must hit real GitHub.
+          "$CAPSEM_BIN" update --assets
+          # Sanity: at least the host arch's three canonical files must now exist.
+          host_arch=$( [ "$arch" = "aarch64" ] && echo arm64 || echo x86_64 )
+          for f in vmlinuz initrd.img rootfs.erofs; do
+            count=$(find "$CAPSEM_HOME/assets/$host_arch" -name "${f%.*}-*" 2>/dev/null | wc -l)
+            [ "$count" -ge 1 ] || { echo "::error::no downloaded file for $f"; exit 1; }
+          done
+          echo "End-to-end download verified against live GitHub Release."

@@ -1,0 +1,13 @@
+[image]
+name = "capsem-default"
+version = "0.13.0"
+description = "Default Capsem sandbox image with AI coding CLIs"
+
+[[image.changelog]]
+version = "0.13.0"
+date = "2026-03-26"
+changes = [
+    "Multi-arch build support (arm64 + x86_64)",
+    "Config-driven Dockerfile generation",
+    "Build doctor with prerequisite checking",
+]

@@ -1,0 +1,41 @@
+[package]
+name = "capsem-agent"
+version.workspace = true
+edition = "2021"
+rust-version.workspace = true
+license.workspace = true
+description.workspace = true
+homepage.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "capsem-pty-agent"
+path = "src/main.rs"
+
+[[bin]]
+name = "capsem-net-proxy"
+path = "src/net_proxy.rs"
+
+[[bin]]
+name = "capsem-dns-proxy"
+path = "src/dns_proxy.rs"
+
+[[bin]]
+name = "capsem-mcp-server"
+path = "src/mcp_server.rs"
+
+[[bin]]
+name = "capsem-sysutil"
+path = "src/bin/capsem_sysutil.rs"
+
+[dependencies]
+nix = { version = "0.29", features = ["fs", "ioctl", "poll", "term", "signal", "process"] }
+rmp-serde = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+capsem-proto = { path = "../capsem-proto" }
+tokio = { workspace = true, features = ["full"] }
+
+[lints]
+workspace = true

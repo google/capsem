@@ -1,0 +1,111 @@
+[package]
+name = "capsem-core"
+version.workspace = true
+edition = "2021"
+rust-version.workspace = true
+license.workspace = true
+description.workspace = true
+homepage.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tokio-unix-ipc.workspace = true
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+tracing-appender = { workspace = true }
+serde = { workspace = true }
+serde_yaml = { workspace = true }
+rmp-serde = { workspace = true }
+capsem-proto = { path = "../capsem-proto" }
+capsem-logger = { path = "../capsem-logger" }
+libc = "0.2"
+blake3 = "1"
+toml = { workspace = true }
+rusqlite = { workspace = true }
+humantime = { workspace = true }
+rcgen = { workspace = true }
+time = { workspace = true }
+rustls = { workspace = true }
+rustls-pemfile = { workspace = true }
+tokio-rustls = { workspace = true }
+webpki-roots = { workspace = true }
+hyper = { workspace = true }
+hyper-util = { workspace = true }
+http-body-util = { workspace = true }
+http = { workspace = true }
+pin-project-lite = "0.2"
+reqwest = { workspace = true }
+futures = { workspace = true }
+tokio-stream = { workspace = true }
+async-compression = { workspace = true }
+tokio-util = { workspace = true }
+bytes = "1"
+serde_json = { workspace = true }
+uuid = { version = "1", features = ["v4"] }
+flate2 = "1"
+minisign-verify = "0.2"
+regex = { workspace = true }
+scraper = "0.25"
+
+rmcp = { version = "1.2", features = ["client", "transport-streamable-http-client-reqwest", "transport-child-process", "reqwest"] }
+hickory-proto = { workspace = true }
+# Bounded LRU primitive used by `net::dns::cache` for the TTL-honoring
+# answer cache (T3.f). Pure-Rust, no_std-compatible, single small dep.
+lru = "0.18"
+ego-tree = "0.10"
+notify = "7"
+walkdir = "2"
+# Metrics facade. No recorder registered in this sprint -- emission is a
+# single relaxed atomic add against a no-op recorder. T5 wires the
+# exporter (likely OTel via opentelemetry-otlp).
+metrics = "0.24"
+
+# Linux-only: KVM hypervisor backend
+[target.'cfg(target_os = "linux")'.dependencies]
+vm-fdt = "0.3"
+
+# macOS-only: Apple Virtualization.framework bindings
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = { workspace = true }
+objc2-virtualization = { workspace = true }
+objc2-foundation = { workspace = true }
+block2 = { workspace = true }
+dispatch2 = { workspace = true }
+core-foundation-sys = "0.8"
+security-framework = "3.7"
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+tempfile = "3"
+dotenvy = "0.15"
+criterion = { version = "0.5", features = ["html_reports"] }
+metrics-util = "0.19"
+# Property-based tests for the DNS wire codec (T3.f). Cheap dev-dep,
+# scoped to test runs only.
+proptest = "1"
+
+[[bench]]
+name = "mitm_pipeline"
+harness = false
+
+[[bench]]
+name = "parser_sse"
+harness = false
+
+[[bench]]
+name = "parser_jsonrpc"
+harness = false
+
+[[bench]]
+name = "interp_anthropic"
+harness = false
+
+[[bench]]
+name = "security_actions"
+harness = false

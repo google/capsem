@@ -1,0 +1,43 @@
+# cargo-audit ignore list.
+#
+# Each entry must name a RUSTSEC ID, the crate involved, and WHY we can't
+# fix it ourselves. The rule: only ignore advisories where the fix lives
+# in an upstream dep we don't control (Tauri / webkit / GTK / unic-*).
+# Anything that lands in our own code must be fixed, not ignored.
+
+[advisories]
+ignore = [
+  # --- rand unsoundness (RUSTSEC-2026-0097) ------------------------------
+  # Affects rand 0.7.3, 0.8.5, 0.9.2. Reached via:
+  #   - tauri-utils/kuchikiki (0.7.3)         -- Tauri
+  #   - tauri / reqwest / quinn-proto (0.9.2) -- Tauri + reqwest
+  #   - tokio-unix-ipc / tungstenite (0.8.5)  -- upstream; service not
+  #     using custom loggers so we don't hit the unsound path
+  # Unsound only with a custom logger calling rand::rng(); we don't.
+  "RUSTSEC-2026-0097",
+
+  # --- glib VariantStrIter unsoundness (RUSTSEC-2024-0429) ---------------
+  # Via webkit2gtk -> wry -> Tauri on Linux. Upstream has not cut a glib
+  # 0.19+ release that Tauri's wry pins, and we don't use VariantStrIter.
+  "RUSTSEC-2024-0429",
+
+  # --- Unmaintained unic-* crates (via urlpattern -> tauri-utils) --------
+  # RUSTSEC-2025-0081 unic-char-property
+  # RUSTSEC-2025-0075 unic-char-range
+  # RUSTSEC-2025-0080 unic-common
+  # RUSTSEC-2025-0100 unic-ucd-ident
+  # RUSTSEC-2025-0098 unic-ucd-version
+  # urlpattern 0.3 depends on the whole unic tree; Tauri 2.10 pins it.
+  # Unmaintained != vulnerable; tracked so we drop this when Tauri updates.
+  "RUSTSEC-2025-0081",
+  "RUSTSEC-2025-0075",
+  "RUSTSEC-2025-0080",
+  "RUSTSEC-2025-0100",
+  "RUSTSEC-2025-0098",
+
+  # --- rustls-pemfile 2.x unmaintained (RUSTSEC-2025-0134) ---------------
+  # Used by capsem-core for cert loading. Author archived the crate; the
+  # API is stable and we only call from_pem on trusted input. Swap target
+  # is rustls-pki-types readers; tracked but not blocking.
+  "RUSTSEC-2025-0134",
+]
