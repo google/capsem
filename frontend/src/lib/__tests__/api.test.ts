@@ -499,7 +499,7 @@ describe('api', () => {
       expect(state.elapsed_ms).toBe(0);
     });
 
-    it('getVmState with id sends GET /vms/{id}/info', async () => {
+    it('getVmState with id sends GET /vms/{id}/status', async () => {
       mockFetch
         .mockReturnValueOnce(jsonResponse({ ok: true, version: '1.0.0', service_socket: '/tmp/s' }))
         .mockReturnValueOnce(jsonResponse({ token: 'tok' }));
@@ -512,7 +512,7 @@ describe('api', () => {
       }));
       const state = await api.getVmState('vm-1');
       const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
-      expect(call[0]).toContain('/vms/vm-1/info');
+      expect(call[0]).toContain('/vms/vm-1/status');
       expect(state.state).toBe('running');
       expect(state.elapsed_ms).toBe(3100);
       expect(state.history).toHaveLength(1);

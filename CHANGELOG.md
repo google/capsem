@@ -47,6 +47,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   timeline, and file read/write/list/content routes now live under
   `/vms`/`/vms/{vm_id}`; the retired top-level routes fail closed in the
   service/gateway route contract.
+- Added `GET /vms/{vm_id}/status` as the runtime-state endpoint for one VM so
+  UI state reads no longer need to treat `/vms/{vm_id}/info` as a status API.
 
 ### Added (security event rule spine)
 - Replaced callback-shaped Policy V2 authoring with one native rule contract

@@ -154,7 +154,8 @@ The service exposes a REST API over UDS. The gateway proxies this transparently.
 |--------|------|---------|
 | POST | `/vms/create` | Create a new VM (`persistent: true` for named VMs) |
 | GET | `/vms/list` | List all VMs (running + stopped persistent) |
-| GET | `/vms/{id}/info` | VM details (config, status, persistent) |
+| GET | `/vms/{id}/info` | VM details (config, identity, persistent metadata) |
+| GET | `/vms/{id}/status` | Runtime state for one VM |
 | POST | `/vms/{id}/exec` | Execute command, return stdout/stderr/exit_code |
 | POST | `/run` | One-shot: provision + exec + destroy |
 | POST | `/vms/{id}/stop` | Stop VM (persistent: preserve; ephemeral: destroy) |

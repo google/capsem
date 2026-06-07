@@ -151,6 +151,22 @@ impl SandboxInfo {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
+pub struct VmStatusResponse {
+    pub id: String,
+    pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pid: Option<u32>,
+    #[serde(default)]
+    pub persistent: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub uptime_secs: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_error: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
 pub struct PersistRequest {
     pub name: String,
 }

@@ -31,6 +31,16 @@ class TestProxyEndpointCoverage:
         assert resp is not None
         assert "error" in resp
 
+    def test_get_status_existing_vm(self, gw_client):
+        """GET /vms/{id}/status returns runtime state without info fields."""
+        resp = gw_client.get("/vms/vm-001/status")
+        assert resp is not None
+        assert resp.get("id") == "vm-001"
+        assert resp.get("status") == "Running"
+        assert resp.get("pid") == 100
+        assert "ram_mb" not in resp
+        assert "description" not in resp
+
     def test_post_exec_command(self, gw_client):
         """POST /vms/{id}/exec returns stdout, stderr, exit_code."""
         resp = gw_client.post("/vms/vm-001/exec", {"command": "whoami"})

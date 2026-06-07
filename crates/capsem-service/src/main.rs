@@ -2223,6 +2223,53 @@ async fn handle_info(
     ))
 }
 
+async fn handle_vm_status(
+    State(state): State<Arc<ServiceState>>,
+    Path(id): Path<String>,
+) -> Result<Json<api::VmStatusResponse>, AppError> {
+    {
+        let instances = state.instances.lock().unwrap();
+        if let Some(i) = instances.get(&id) {
+            return Ok(Json(api::VmStatusResponse {
+                id: i.id.clone(),
+                status: "Running".into(),
+                pid: Some(i.pid),
+                persistent: i.persistent,
+                uptime_secs: Some(i.start_time.elapsed().as_secs()),
+                created_at: None,
+                last_error: None,
+            }));
+        }
+    }
+
+    {
+        let registry = state.persistent_registry.lock().unwrap();
+        if let Some(entry) = registry.get(&id) {
+            let status = if entry.defunct {
+                "Defunct"
+            } else if entry.suspended {
+                "Suspended"
+            } else {
+                "Stopped"
+            };
+            return Ok(Json(api::VmStatusResponse {
+                id: entry.name.clone(),
+                status: status.into(),
+                pid: None,
+                persistent: true,
+                uptime_secs: None,
+                created_at: Some(entry.created_at.clone()),
+                last_error: entry.last_error.clone(),
+            }));
+        }
+    }
+
+    Err(AppError(
+        StatusCode::NOT_FOUND,
+        format!("sandbox not found: {id}"),
+    ))
+}
+
 /// GET /stats -- return full main.db aggregation in one response.
 async fn handle_stats(
     State(state): State<Arc<ServiceState>>,
@@ -5520,6 +5567,7 @@ async fn main() -> Result<()> {
         .route("/vms/create", post(handle_provision))
         .route("/vms/list", get(handle_list))
         .route("/vms/{id}/info", get(handle_info))
+        .route("/vms/{id}/status", get(handle_vm_status))
         .route("/vms/{id}/logs", get(handle_logs))
         .route("/vms/{id}/inspect", post(handle_inspect))
         .route("/vms/{id}/exec", post(handle_exec))

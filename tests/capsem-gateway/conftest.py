@@ -111,6 +111,18 @@ class MockServiceHandler(BaseHTTPRequestHandler):
                 self._send_json(MOCK_VMS[vm_id])
             else:
                 self._send_error(404, f"sandbox {vm_id} not found")
+        elif path_only.startswith("/vms/") and path_only.endswith("/status"):
+            vm_id = path_only.split("/vms/", 1)[1].rsplit("/status", 1)[0]
+            if vm_id in MOCK_VMS:
+                vm = MOCK_VMS[vm_id]
+                self._send_json({
+                    "id": vm["id"],
+                    "status": vm["status"],
+                    "pid": vm["pid"],
+                    "persistent": vm["persistent"],
+                })
+            else:
+                self._send_error(404, f"sandbox {vm_id} not found")
         elif path_only.startswith("/vms/") and path_only.endswith("/logs"):
             self._send_json({"logs": "mock boot log\n", "serial_logs": None, "process_logs": None})
         elif path_only.startswith("/vms/") and path_only.endswith("/files/list"):

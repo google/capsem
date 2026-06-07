@@ -87,6 +87,17 @@ export interface SandboxInfo {
   model_call_count?: number;
 }
 
+// GET /vms/{id}/status
+export interface VmStatusResponse {
+  id: string;
+  status: string;
+  pid?: number;
+  persistent: boolean;
+  uptime_secs?: number;
+  created_at?: string;
+  last_error?: string;
+}
+
 // POST /vms/create, POST /run
 export interface ProvisionRequest {
   name?: string;

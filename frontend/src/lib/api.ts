@@ -515,10 +515,10 @@ export async function vmStatus(): Promise<string> {
 export async function getVmState(id?: string): Promise<VmStateResponse> {
   if (!_connected) return { state: 'not created', elapsed_ms: 0, history: [] };
   try {
-    const path = id ? `/vms/${encodeURIComponent(id)}/info` : '/status';
+    const path = id ? `/vms/${encodeURIComponent(id)}/status` : '/status';
     const resp = await _get(path);
     const data = await resp.json();
-    // /vms/{id}/info returns full sandbox info; extract state + history.
+    // /vms/{id}/status returns runtime state; extract optional transition history.
     if (id) {
       return {
         state: data.status ?? 'not created',
