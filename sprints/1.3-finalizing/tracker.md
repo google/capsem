@@ -340,6 +340,9 @@ commit.
   `config/profiles/code.toml` with per-arch EROFS/LZ4HC assets, and service
   profile route validation/list/info/assets/skills/plugin checks use catalog
   lookup for `code` instead of a hard-coded `default` stub.
+- [x] Make profile asset status profile-aware: status reports the selected
+  profile's current-arch asset metadata and present/missing state instead of a
+  service-global asset guess.
 - [ ] Ensure profile asset selection is profile-backed:
   `vm.profile_id -> profile assets -> asset manifest/cache -> resolved boot paths`.
 - [ ] Restore per-arch profile asset declarations with URL/hash/signature/size

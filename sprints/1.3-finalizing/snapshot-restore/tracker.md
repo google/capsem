@@ -432,6 +432,9 @@ the guarantee or explicitly burn it.
 - [x] Replace service profile route validation/list/info/assets/skills/plugin
   profile checks with catalog-backed `code` profile lookup instead of a
   hard-coded `default` profile stub.
+- [x] Make `/profiles/{profile_id}/assets/status` report the selected
+  profile's current-arch kernel/initrd/rootfs contract, expected hashes, and
+  present/missing state from the asset cache.
 - [ ] Restore profile catalog/loader and remove all `default`-only profile code
   paths.
 - [ ] Represent default/built-in profiles as real catalog/profile entries using

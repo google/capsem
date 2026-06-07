@@ -3173,6 +3173,75 @@ fn asset_status_value(state: &ServiceState) -> serde_json::Value {
     }
 }
 
+fn profile_asset_status_value(
+    state: &ServiceState,
+    profile: &ProfileConfigFile,
+) -> serde_json::Value {
+    let reconcile = state
+        .asset_reconcile
+        .lock()
+        .map(|s| s.clone())
+        .unwrap_or_default();
+    let current_arch = capsem_core::net::policy_config::current_profile_arch();
+    let Some(arch_assets) = profile.assets.current_arch_assets() else {
+        let mut value = json!({
+            "profile_id": profile.id,
+            "revision": profile.revision,
+            "ready": false,
+            "downloading": reconcile.in_progress,
+            "current_arch": current_arch,
+            "error": format!("profile {} has no assets for architecture {current_arch}", profile.id),
+            "assets": [],
+        });
+        append_asset_reconcile_status(&mut value, &reconcile);
+        return value;
+    };
+
+    let base = if state.assets_dir.join(current_arch).is_dir() {
+        state.assets_dir.join(current_arch)
+    } else {
+        state.assets_dir.clone()
+    };
+    let assets = [
+        ("kernel", &arch_assets.kernel),
+        ("initrd", &arch_assets.initrd),
+        ("rootfs", &arch_assets.rootfs),
+    ]
+    .into_iter()
+    .map(|(kind, asset)| {
+        let path = base.join(&asset.name);
+        json!({
+            "kind": kind,
+            "name": asset.name,
+            "path": path.display().to_string(),
+            "status": if path.exists() { "present" } else { "missing" },
+            "hash": asset.hash,
+            "signature": asset.signature,
+            "size": asset.size,
+            "content_type": asset.content_type,
+            "url": asset.url,
+            "filesystem": asset.filesystem,
+            "compression": asset.compression,
+            "compression_level": asset.compression_level,
+        })
+    })
+    .collect::<Vec<_>>();
+    let all_ready = assets.iter().all(|asset| asset["status"] == "present");
+    let mut value = json!({
+        "profile_id": profile.id,
+        "revision": profile.revision,
+        "ready": all_ready,
+        "downloading": reconcile.in_progress,
+        "current_arch": current_arch,
+        "filesystem": profile.assets.filesystem,
+        "compression": profile.assets.compression,
+        "compression_level": profile.assets.compression_level,
+        "assets": assets,
+    });
+    append_asset_reconcile_status(&mut value, &reconcile);
+    value
+}
+
 fn append_asset_reconcile_status(value: &mut serde_json::Value, reconcile: &AssetReconcileState) {
     let Some(obj) = value.as_object_mut() else {
         return;
@@ -3383,8 +3452,8 @@ async fn handle_profile_assets_status(
     Path(profile_id): Path<String>,
     State(state): State<Arc<ServiceState>>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let _profile_id = validate_profile_route_id(profile_id)?;
-    Ok(Json(asset_status_value(&state)))
+    let profile = profile_manifest_for_route(profile_id)?;
+    Ok(Json(profile_asset_status_value(&state, &profile)))
 }
 
 /// POST /profiles/{profile_id}/assets/ensure -- download missing/corrupt
@@ -3394,9 +3463,9 @@ async fn handle_profile_assets_ensure(
     Path(profile_id): Path<String>,
     State(state): State<Arc<ServiceState>>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let _profile_id = validate_profile_route_id(profile_id)?;
+    let profile = profile_manifest_for_route(profile_id)?;
     let ensure_result = ensure_assets_for_state(Arc::clone(&state)).await;
-    let mut status = asset_status_value(&state);
+    let mut status = profile_asset_status_value(&state, &profile);
     if let Some(obj) = status.as_object_mut() {
         match ensure_result {
             Ok(downloaded) => {

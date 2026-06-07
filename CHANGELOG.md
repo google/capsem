@@ -70,6 +70,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   profile asset declarations. `config/profiles/code.toml` now parses as the
   checked-in contract for EROFS/LZ4HC kernel, initrd, and rootfs assets with
   URL/hash/signature/size/content-type metadata.
+- Made `/profiles/{profile_id}/assets/status` report the selected profile's
+  current-architecture asset contract instead of a service-global asset guess,
+  including profile id, revision, expected hashes, signatures, sizes,
+  filesystem/compression metadata, and present/missing state.
 - Added profile management route gates:
   `POST /profiles/create`, `PATCH /profiles/{profile_id}/edit`,
   `DELETE /profiles/{profile_id}/delete`, `POST /profiles/{profile_id}/clone`,
