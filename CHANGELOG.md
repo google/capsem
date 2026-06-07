@@ -78,12 +78,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   over canonical `SecurityEvent`: `[corp.rules.*]`, `[profiles.rules.*]`, and
   provider convenience `[ai.<provider>.rules.*]` all compile into the same
   `SecurityRuleSet`.
-- Added typed rule actions `allow`, `ask`, `block`, `preprocess`, and
-  `postprocess`, plus optional `detection_level` metadata for
+- Added typed rule actions `allow`, `ask`, `block`, `preprocess`, `rewrite`,
+  and `postprocess`, plus optional `detection_level` metadata for
   `informational`, `low`, `medium`, `high`, and `critical` detections.
-- Added source-aware priority discipline: built-in defaults use priority `0`,
-  user/plugin rules default to `10`, corp-locked rules default negative, and
-  non-corp rules cannot use negative priorities.
+- Added source-aware priority discipline: built-in defaults use the named
+  `default` priority sentinel after the numeric user range, user/plugin rules
+  default to `10`, corp-locked rules default negative, and non-corp rules
+  cannot use negative priorities.
 - Added shared external rule files: both user and corp settings can reference
   native enforcement TOML with `[rule_files].enforcement` and Sigma YAML with
   `[rule_files].sigma`; both compile into the same runtime rules. Corp settings
@@ -160,6 +161,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   legacy domain bridge. HTTP request, model request/response, framed MCP
   request/response, MCP built-in HTTP tools, and DNS query blocking now enforce
   through the canonical `SecurityEvent` + CEL rule path before dispatch.
+- Added contract tests proving built-in default rules match HTTP, DNS, MCP,
+  model, file, process, credential, and snapshot security events as ordinary
+  late-priority CEL rules; specific rules run first, and editing a default rule
+  changes evaluation without any hidden network fallback.
 - Removed retired web decision settings (`security.web.allow_read`,
   `security.web.allow_write`, `security.web.custom_allow`, and
   `security.web.custom_block`) from defaults, presets, builder schemas,

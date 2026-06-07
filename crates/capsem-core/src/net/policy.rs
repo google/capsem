@@ -153,6 +153,12 @@ impl NetworkPolicy {
     }
 }
 
+impl Default for NetworkPolicy {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -18,7 +18,7 @@ Capsem sandboxes AI agents inside Linux VMs. The security model treats the guest
 **What Capsem defends against:**
 - Guest code escaping the VM boundary
 - Guest exhausting host CPU, memory, disk, or file descriptors
-- Guest accessing network services outside the allow list
+- Guest accessing network services blocked by profile or corporate rules
 - Unaudited data exfiltration via HTTPS
 
 **What Capsem does not defend against:**
@@ -54,7 +54,7 @@ Capsem sandboxes AI agents inside Linux VMs. The security model treats the guest
 
 **Guest/host boundary (virtio):** All communication uses virtio devices (console, vsock, VirtioFS). The guest cannot directly access host memory or syscalls. The hypervisor validates all virtio descriptor chains.
 
-**Network boundary (DNS + MITM proxies):** Guest DNS and HTTPS traffic are redirected to guest proxy binaries and forwarded over vsock to host policy handlers. HTTPS is terminated at the host, inspected against domain and HTTP policy, and forwarded to real upstream only after policy allows it. Per-session telemetry records every request and DNS query.
+**Network boundary (DNS + MITM proxies):** Guest DNS and HTTPS traffic are redirected to guest proxy binaries and forwarded over vsock to host handlers. HTTPS is terminated at the host, normalized into `SecurityEvent` fields, evaluated by the shared rule rail, and forwarded to real upstream only after enforcement allows it. Per-session telemetry records every request and DNS query.
 
 **Filesystem boundary (VirtioFS):** The host VirtioFS server validates all path components, canonicalizes symlinks, and rejects any path that resolves outside the shared workspace. Resource limits prevent guest-driven host exhaustion.
 

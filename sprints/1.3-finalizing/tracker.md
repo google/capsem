@@ -190,9 +190,9 @@ commit.
 
 ## T2: Security Rail Burn-Down
 
-- [ ] Remove MCP decision provider behavior.
+- [x] Remove MCP decision provider behavior.
 - [x] Remove or neutralize `McpPolicy` allow/ask/block evaluation.
-- [ ] Move MCP server/tool/resource/prompt decisions to profile rules.
+- [x] Move MCP server/tool/resource/prompt decisions to profile rules.
 - [x] Remove NetworkPolicy allow/block decision behavior from security path.
 - [x] Keep network mechanics in network engine: parsing, capture, routing,
   DNS/proxy mechanics, ports, caching, decompression, provider metadata.
@@ -205,21 +205,34 @@ commit.
   schema/model/validation, generated defaults, frontend settings fixtures, and
   checked-in integration fixtures. `security.web` now carries network mechanics
   only (`http_upstream_ports`).
-- [ ] Ensure HTTP/DNS/domain decisions evaluate through `SecurityRuleSet`.
-- [ ] Ensure model/file/process/credential/snapshot decisions evaluate through
+- [x] Ensure HTTP/DNS/domain decisions evaluate through `SecurityRuleSet`.
+- [x] Ensure model/file/process/credential/snapshot decisions evaluate through
   `SecurityRuleSet`.
-- [ ] Add tests proving defaults execute after specific corp/profile/user rules.
-- [ ] Add tests proving default catch-alls cover non-matching events.
-- [ ] Add tests proving mutating defaults changes evaluation behavior.
+- [x] Add tests proving defaults execute after specific corp/profile/user rules.
+- [x] Add tests proving default catch-alls cover non-matching events.
+- [x] Add tests proving mutating defaults changes evaluation behavior.
 - [x] Add tests proving MCP and network old policy engines cannot issue final
   security decisions.
 - [x] Burn `McpPolicy`/`ToolDecision`, remove preset MCP permissions, reject
   retired MCP policy config keys, and convert MCP blocking fixture to
   `[profiles.rules.*]`.
-- [ ] Add adversarial tests proving MCP/network mechanics cannot bypass CEL
+- [x] Add adversarial tests proving MCP/network mechanics cannot bypass CEL
   enforcement, including malformed MCP tool ids, unknown DNS/HTTP domains, and
   conflicting default/specific rules.
-- [ ] Commit T2 with tests.
+- [x] Commit T2 with tests.
+
+### T2 Notes
+
+- Removed T2 drift from active docs: no user-facing docs now teach
+  `allow_read`, `allow_write`, `custom_allow`, `custom_block`, Policy V2,
+  MCP decision providers, or domain-policy engines as security authorities.
+- `cargo test -p capsem-core security_rule_profile::tests` passed with 27
+  rule-profile tests, including default coverage for HTTP, DNS, MCP, model,
+  file, process, credential, and snapshot events.
+- `cargo clippy -p capsem-core --all-targets -- -D warnings` passed after the
+  `NetworkPolicy: Default` and test assertion clippy fixes.
+- `rg -n 'allow_read|allow_write|custom_allow|custom_block|Policy V2|policy_v2|McpPolicy|ToolDecision|DecisionProvider|PolicyHook|is_fully_blocked|default_allow|Domain policy|domain policy|default-deny|default deny|allow list|block list|/enforcements/|/detections/|/plugins/global' docs/src/content/docs -S`
+  returned no matches after the docs burn pass.
 
 ## T3: Profile/Settings/Corp UI/API Split
 

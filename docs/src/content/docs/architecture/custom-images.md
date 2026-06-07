@@ -127,35 +127,28 @@ builtin = true
 enabled = true
 ```
 
-### Security Policy
+### Network Mechanics And Security Rules
 
-`config/security/web.toml` controls network access inside the VM.
+`config/security/web.toml` only carries network mechanics such as upstream HTTP
+ports. Allow, ask, block, preprocess, and postprocess behavior belongs to the
+profile/corp security rule files and evaluates through the single
+`SecurityRuleSet` rail.
 
 ```toml
 [web]
-allow_read = false      # GET/HEAD for unknown domains
-allow_write = false     # POST/PUT for unknown domains
-custom_allow = []       # additional allowed domain patterns
-custom_block = []       # blocked patterns (override allow)
+http_upstream_ports = [80, 11434]
+```
 
-[web.search.google]
-name = "Google"
-enabled = true
-domains = ["www.google.com", "google.com"]
-allow_get = true
+```toml
+[profiles.rules.allow_internal_registry]
+name = "allow_internal_registry"
+action = "allow"
+match = 'http.host.matches("(^|.*\\.)registry\\.internal\\.corp$")'
 
-[web.registry.npm]
-name = "npm"
-enabled = true
-domains = ["registry.npmjs.org", "*.npmjs.org"]
-allow_get = true
-
-[web.repository.github]
-name = "GitHub"
-enabled = true
-domains = ["github.com", "*.github.com", "*.githubusercontent.com"]
-allow_get = true
-allow_post = true
+[profiles.rules.block_external_search]
+name = "block_external_search"
+action = "block"
+match = 'http.host.matches("(^|.*\\.)(google\\.com|bing\\.com|duckduckgo\\.com)$")'
 ```
 
 ### Build Configuration
@@ -289,7 +282,7 @@ The runtime boots only when the asset hashes match. `min_binary`/`min_assets` ga
 1. `capsem-builder init corp-image/` -- scaffold from defaults
 2. Remove unwanted providers: delete `config/ai/openai.toml`
 3. Add internal providers: `capsem-builder add ai-provider internal-llm`
-4. Edit security policy: lock down domains in `config/security/web.toml`
+4. Edit security rules: lock down domains in the profile/corp rule file
 5. Add corporate packages: edit `config/packages/python.toml`
 6. Validate: `capsem-builder validate corp-image/`
 7. Build: `capsem-builder build corp-image/`
@@ -305,24 +298,18 @@ rm corp-image/config/ai/google.toml
 rm corp-image/config/ai/openai.toml
 ```
 
-Edit `corp-image/config/security/web.toml`:
+Edit the image/profile security rule file:
 
 ```toml
-[web]
-allow_read = false
-allow_write = false
-custom_allow = ["*.internal.corp.com"]
-custom_block = []
+[profiles.rules.allow_internal_registry]
+name = "allow_internal_registry"
+action = "allow"
+match = 'http.host.matches("(^|.*\\.)internal\\.corp\\.com$")'
 
-[web.search.google]
-name = "Google"
-enabled = false
-
-[web.registry.npm]
-name = "Internal npm"
-enabled = true
-domains = ["npm.internal.corp.com"]
-allow_get = true
+[profiles.rules.block_external_search]
+name = "block_external_search"
+action = "block"
+match = 'http.host.matches("(^|.*\\.)(google\\.com|bing\\.com|duckduckgo\\.com)$")'
 ```
 
 ## Install Methods

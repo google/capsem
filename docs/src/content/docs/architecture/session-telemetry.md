@@ -142,7 +142,7 @@ Every HTTP request through the MITM proxy, whether allowed or denied.
 | `bytes_sent` | INTEGER | Request body size |
 | `bytes_received` | INTEGER | Response body size |
 | `duration_ms` | INTEGER | End-to-end latency |
-| `matched_rule` | TEXT | Legacy/domain policy helper; security rule truth is in `security_rule_events` |
+| `matched_rule` | TEXT | Compatibility helper; security rule truth is in `security_rule_events` |
 | `request_headers` | TEXT | Request headers (when body logging enabled) |
 | `response_headers` | TEXT | Response headers |
 | `request_body_preview` | TEXT | First 4 KB of request body |
@@ -257,7 +257,7 @@ DNS queries handled by the host DNS proxy.
 | `qclass` | INTEGER | DNS class |
 | `rcode` | INTEGER | DNS response code |
 | `decision` | TEXT | `allowed`, `denied`, `redirected`, or `error` |
-| `matched_rule` | TEXT | Legacy/domain policy helper; security rule truth is in `security_rule_events` |
+| `matched_rule` | TEXT | Compatibility helper; security rule truth is in `security_rule_events` |
 | `source_proto` | TEXT | DNS transport source |
 | `process_name` | TEXT | Guest process, when known |
 | `upstream_resolver_ms` | INTEGER | Upstream resolver latency |

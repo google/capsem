@@ -1335,7 +1335,7 @@ fn brokered_provider_discovery_is_atomic_with_corp_locked_credential_setting() {
         "credential setting must not be written after corp lock failure"
     );
     assert!(
-        loaded.ai.get("openai").is_none(),
+        !loaded.ai.contains_key("openai"),
         "provider discovery must be atomic with the credential setting write"
     );
 }

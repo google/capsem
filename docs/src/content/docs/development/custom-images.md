@@ -93,12 +93,19 @@ packages = ["your-provider-cli"]
 
 ### Change network policy
 
-Edit `guest/config/security/web.toml` to allow or block domains:
+Keep `guest/config/security/web.toml` for network mechanics such as upstream
+ports. Add allow/block behavior as profile or corp security rules:
 
 ```toml
-[web]
-custom_allow = ["*.your-corp.com"]
-custom_block = ["*.banned-domain.com"]
+[profiles.rules.allow_corp_http]
+name = "allow_corp_http"
+action = "allow"
+match = 'http.host.matches("(^|.*\\.)your-corp\\.com$")'
+
+[profiles.rules.block_banned_domain]
+name = "block_banned_domain"
+action = "block"
+match = 'http.host.matches("(^|.*\\.)banned-domain\\.com$")'
 ```
 
 ### Customize login tips

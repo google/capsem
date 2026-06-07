@@ -19,8 +19,8 @@ graph LR
     end
 
     subgraph "Host"
-        HDNS["DNS Proxy<br/>policy + upstream resolver"]
-        MITM["MITM Proxy<br/>TLS termination + policy"]
+        HDNS["DNS Proxy<br/>security rule evaluation + upstream resolver"]
+        MITM["MITM Proxy<br/>TLS termination + security rule evaluation"]
         UP["Upstream server"]
     end
 
@@ -59,7 +59,7 @@ The host MITM proxy receives each connection on vsock:5002 and runs a full inspe
 ```mermaid
 graph TD
     A["vsock:5002 connection"] --> B["TLS ClientHello<br/>extract SNI domain"]
-    B --> C{"Domain policy<br/>check"}
+    B --> C{"Security rules<br/>CEL over DNS/HTTP event"}
     C -->|Denied| D["Return 403<br/>log to session.db"]
     C -->|Allowed| E["Complete TLS handshake<br/>mint leaf cert for domain"]
     E --> F["Parse HTTP request<br/>method + path + headers"]
@@ -82,63 +82,43 @@ The proxy mints per-domain TLS certificates signed by a static Capsem CA (ECDSA 
 | curl/wget | `SSL_CERT_FILE` env var |
 | pip/requests | `REQUESTS_CA_BUNDLE` env var |
 
-## Domain policy
+## HTTP And DNS Rule Evaluation
 
-The domain policy engine uses block-before-allow semantics with a default-deny fallback.
+Domains are not governed by a separate allow/block engine. DNS and HTTP parsing
+produce `SecurityEvent` fields (`dns.*` and `http.*`), then the same CEL rule
+rail decides allow, ask, block, preprocess, postprocess, and detection.
 
 ### Evaluation order
 
 ```mermaid
 graph TD
-    A["Domain received"] --> B{"In block list?"}
-    B -->|Yes| C["DENY<br/>'domain in block-list'"]
-    B -->|No| D{"In allow list?"}
-    D -->|Yes| E["ALLOW<br/>'domain in allow-list'"]
-    D -->|No| F["DENY<br/>'domain not in allow-list'"]
+    A["DNS or HTTP event parsed"] --> B["Build SecurityEvent"]
+    B --> C["Preprocess plugin rules"]
+    C --> D["Evaluate SecurityRuleSet by priority"]
+    D --> E{"Final decision"}
+    E -->|Block| F["Deny boundary<br/>log rule rows"]
+    E -->|Ask| G["Wait for approval<br/>log ask state"]
+    E -->|Allow| H["Materialize request<br/>log telemetry"]
 ```
-
-Block list is checked first. If a domain appears in both lists, block wins.
-
-### Pattern matching
-
-| Pattern | Example | Matches | Does not match |
-|---------|---------|---------|----------------|
-| Exact | `github.com` | `github.com` | `api.github.com` |
-| Wildcard | `*.github.com` | `api.github.com`, `raw.github.com` | `github.com` (base domain) |
-
-Matching is case-insensitive. Wildcard patterns require at least one subdomain label before the suffix.
-
-### Default allow list
-
-| Domain | Purpose |
-|--------|---------|
-| `github.com`, `*.github.com` | Git hosting, API |
-| `*.githubusercontent.com` | GitHub raw content |
-| `registry.npmjs.org`, `*.npmjs.org` | npm packages |
-| `pypi.org`, `files.pythonhosted.org` | Python packages |
-| `crates.io`, `static.crates.io` | Rust packages |
-| `deb.debian.org`, `security.debian.org` | Debian packages |
-| `*.googleapis.com` | Google APIs |
-| `en.wikipedia.org`, `*.wikipedia.org` | Reference |
-
-### Default block list
-
-| Domain | Reason |
-|--------|--------|
-| `api.anthropic.com` | AI provider -- forced through audit gateway |
-| `api.openai.com` | AI provider -- forced through audit gateway |
 
 ### User configuration
 
-Users can customize policy in `~/.capsem/user.toml`:
+Users customize policy with profile rules in `~/.capsem/user.toml`:
 
 ```toml
-[network]
-custom_allow = ["internal.corp.com", "*.example.org"]
-custom_block = ["malware.bad.com"]
+[profiles.rules.allow_internal_http]
+name = "allow_internal_http"
+action = "allow"
+match = 'http.host.matches("(^|.*\\.)internal\\.corp$")'
+
+[profiles.rules.block_malware_dns]
+name = "block_malware_dns"
+action = "block"
+match = 'dns.qname.matches("(^|.*\\.)malware\\.bad$")'
 ```
 
-Corporate policy in `/etc/capsem/corp.toml` overrides user settings entirely per field.
+Corporate policy in `/etc/capsem/corp.toml` supplies locked negative-priority
+rules and can reference shared enforcement TOML or Sigma YAML rule files.
 
 ## HTTP and DNS Security Rules
 
@@ -171,13 +151,13 @@ Every proxied request is logged to the per-VM `session.db`:
 | `method` | HTTP method |
 | `path` | Request path |
 | `status_code` | Upstream response status |
-| `decision` | `allowed`, `denied`, or `error` |
+| `decision` | Final security decision recorded by the ledger |
 | `bytes_sent` | Request body size |
 | `bytes_received` | Response body size |
 | `duration_ms` | End-to-end latency |
 | `request_body_preview` | First 4 KB of request body |
 | `response_body_preview` | First 4 KB of response body |
-| `matched_rule` | Which domain, HTTP, or policy rule matched |
+| `matched_rule` | The security rule id that matched |
 
 For AI provider traffic (Anthropic, OpenAI, Google), the proxy also parses SSE streams to extract model calls, token usage, tool calls, and estimated cost. See [Session Telemetry](/architecture/session-telemetry/) for the full schema.
 
@@ -188,8 +168,7 @@ DNS queries are logged separately in `dns_events` with `qname`, `qtype`,
 
 | Scenario | Outcome | Why |
 |----------|---------|-----|
-| HTTPS to unlisted domain (`example.com`) | 403 Forbidden | Default deny; domain not in allow list |
-| HTTPS to blocked domain (`api.openai.com`) | 403 Forbidden | Explicit block list |
+| HTTPS to blocked domain (`api.openai.com`) | 403 Forbidden | Matching `block` rule |
 | HTTP port 80 (`http://google.com`) | Connection refused | Only port 443 is redirected |
 | Non-standard port (`https://google.com:8443`) | Connection refused | Only port 443 is redirected |
 | Direct IP (`https://1.1.1.1`) | Connection refused | No real NIC; dummy0 has no real route |

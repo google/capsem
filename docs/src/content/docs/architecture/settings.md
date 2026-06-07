@@ -285,7 +285,9 @@ sequenceDiagram
 Key behaviors:
 
 - **API keys are always injected** (even if the provider toggle is off) so the user can enable a provider at runtime without rebooting.
-- **Provider toggles control network access**, not file injection. The domain policy blocks/allows traffic.
+- **Provider/profile rules control network access**, not file injection. HTTP
+  and DNS traffic is blocked or allowed by `SecurityRuleSet` over
+  `SecurityEvent` fields.
 - **File permissions** default to `0o600` (owner-only) for sensitive content like API keys and SSH keys.
 - **MCP servers** are injected into each AI agent's config file format (Claude JSON, Gemini JSON, Codex TOML).
 

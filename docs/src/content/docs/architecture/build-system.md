@@ -73,7 +73,7 @@ All config lives under `guest/config/`. Each file maps to a Pydantic model.
 | `packages/apt.toml` | `PackageSetConfig` | Apt package set | `manager`, `install_cmd`, `packages`, `network` |
 | `packages/python.toml` | `PackageSetConfig` | Python package set | `manager`, `install_cmd`, `packages` |
 | `mcp/*.toml` | `McpServerConfig` | MCP server definitions | `transport`, `command`, `url`, `args`, `env` |
-| `security/web.toml` | `WebSecurityConfig` | Domain allow/block policy | `allow_read`, `allow_write`, `custom_allow`, `search`, `registry`, `repository` |
+| `security/web.toml` | `WebSecurityConfig` | Network mechanics | `http_upstream_ports` |
 | `vm/resources.toml` | `VmResourcesConfig` | CPU, RAM, disk limits | `cpu_count`, `ram_gb`, `scratch_disk_size_gb` |
 | `vm/environment.toml` | `VmEnvironmentConfig` | Shell, PATH, TLS | `shell.term`, `shell.home`, `shell.path`, `tls.ca_bundle` |
 | `kernel/defconfig.*` | (raw) | Kernel configs per arch | Linux kernel defconfig files |
@@ -150,13 +150,13 @@ packages = ["https://claude.ai/install.sh"]
 | W002 | Development packages (`-dev`, `-devel`) in package lists |
 | W003 | Potential secrets detected in file content, headers, or env |
 | W004 | Package set with no network config |
-| W005 | Overlapping allow and block domain lists |
+| W005 | Conflicting allow/block security rules |
 | W006 | Placeholder file content (TODO, FIXME) |
-| W007 | Overly broad wildcard domains (`*`, `*.com`) |
+| W007 | Overly broad security rule match expressions |
 | W008 | Duplicate env_vars across AI providers |
 | W009 | Shell metacharacters in install_cmd |
 | W010 | PATH missing essential directories (`/usr/bin`, `/bin`) |
-| W011 | Wide-open network policy (both reads and writes, no block list) |
+| W011 | Wide-open network/security rule posture |
 | W012 | Unknown Rust target (not a known musl target) |
 
 Diagnostic output format:

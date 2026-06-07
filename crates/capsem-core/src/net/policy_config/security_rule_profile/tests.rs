@@ -1,5 +1,9 @@
 use super::*;
-use crate::security_engine::{ModelSecurityEvent, RuntimeSecurityEventType, SecurityEvent};
+use crate::security_engine::{
+    CredentialSecurityEvent, DnsSecurityEvent, FileSecurityEvent, HttpSecurityEvent,
+    McpSecurityEvent, ModelSecurityEvent, ProcessSecurityEvent, RuntimeSecurityEventType,
+    SecurityEvent, SnapshotSecurityEvent,
+};
 
 const RULE_FIXTURE: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -477,6 +481,198 @@ fn built_in_defaults_cover_each_runtime_boundary_last() {
         assert_eq!(rule.reason.as_deref(), Some(reason));
         assert!(rule.detection_level.is_none());
     }
+}
+
+#[test]
+fn built_in_defaults_match_each_first_party_security_event_family() {
+    let profile = SecurityRuleProfile::parse_toml(DEFAULT_PROVIDER_RULES).expect("defaults parse");
+    let compiled = SecurityRuleSet::compile_profile(&profile, SecurityRuleSource::BuiltinDefault)
+        .expect("defaults compile");
+
+    let cases = [
+        (
+            "profiles.rules.default_http_requests",
+            SecurityEvent::new(RuntimeSecurityEventType::HttpRequest).with_http(
+                HttpSecurityEvent {
+                    host: Some("example.com".to_string()),
+                    ..Default::default()
+                },
+            ),
+        ),
+        (
+            "profiles.rules.default_dns_queries",
+            SecurityEvent::new(RuntimeSecurityEventType::DnsQuery).with_dns(DnsSecurityEvent {
+                qname: Some("example.com".to_string()),
+                qtype: Some("A".to_string()),
+            }),
+        ),
+        (
+            "profiles.rules.default_mcp_activity",
+            SecurityEvent::new(RuntimeSecurityEventType::McpEvent).with_mcp(McpSecurityEvent {
+                method: Some("resources/read".to_string()),
+                server_name: Some("filesystem".to_string()),
+                ..Default::default()
+            }),
+        ),
+        (
+            "profiles.rules.default_model_calls",
+            SecurityEvent::new(RuntimeSecurityEventType::ModelCall).with_model(
+                ModelSecurityEvent {
+                    provider: Some("openai".to_string()),
+                    name: Some("gpt-5".to_string()),
+                    ..Default::default()
+                },
+            ),
+        ),
+        (
+            "profiles.rules.default_file_activity",
+            SecurityEvent::new(RuntimeSecurityEventType::FileEvent).with_file(FileSecurityEvent {
+                read_path: Some("/workspace/skills/build.md".to_string()),
+                read_name: Some("build.md".to_string()),
+                read_ext: Some("md".to_string()),
+                read_mime_type: Some("text/markdown".to_string()),
+                ..Default::default()
+            }),
+        ),
+        (
+            "profiles.rules.default_process_activity",
+            SecurityEvent::new(RuntimeSecurityEventType::ProcessExec).with_process(
+                ProcessSecurityEvent {
+                    exec_path: Some("/usr/bin/python3".to_string()),
+                    command: Some("python3 script.py".to_string()),
+                    ..Default::default()
+                },
+            ),
+        ),
+        (
+            "profiles.rules.default_credentials",
+            SecurityEvent::new(RuntimeSecurityEventType::CredentialSubstitution).with_credential(
+                CredentialSecurityEvent {
+                    provider: Some("openai".to_string()),
+                    reference: Some("credential:blake3:abc123".to_string()),
+                },
+            ),
+        ),
+        (
+            "profiles.rules.default_snapshots",
+            SecurityEvent::new(RuntimeSecurityEventType::SnapshotEvent).with_snapshot(
+                SnapshotSecurityEvent {
+                    action: Some("save".to_string()),
+                },
+            ),
+        ),
+    ];
+
+    for (expected_rule_id, event) in cases {
+        let evaluation = compiled
+            .evaluate(&event)
+            .unwrap_or_else(|error| panic!("{expected_rule_id} evaluation failed: {error}"));
+        let matched = evaluation
+            .enforcement_rules()
+            .into_iter()
+            .find(|rule| rule.rule_id == expected_rule_id)
+            .unwrap_or_else(|| panic!("{expected_rule_id} did not match {event:?}"));
+        assert_eq!(matched.action, SecurityRuleAction::Allow);
+        assert_eq!(matched.priority, DEFAULT_RULE_PRIORITY);
+        assert!(matched.default_rule);
+    }
+}
+
+#[test]
+fn specific_rules_win_before_default_catchalls_on_same_event() {
+    let profile = SecurityRuleProfile::parse_toml(
+        r#"
+[profiles.rules.block_evil_http]
+name = "block_evil_http"
+action = "block"
+priority = 10
+match = 'http.host == "evil.example"'
+
+[profiles.defaults.default_http_requests]
+name = "default_http_requests"
+action = "allow"
+priority = "default"
+reason = "Default allow for HTTP requests."
+match = 'has(http.host)'
+"#,
+    )
+    .expect("profile parses");
+    let compiled = SecurityRuleSet::compile_profile(&profile, SecurityRuleSource::User)
+        .expect("profile compiles");
+    let event =
+        SecurityEvent::new(RuntimeSecurityEventType::HttpRequest).with_http(HttpSecurityEvent {
+            host: Some("evil.example".to_string()),
+            ..Default::default()
+        });
+
+    let evaluation = compiled.evaluate(&event).expect("rules evaluate");
+
+    assert_eq!(
+        evaluation
+            .enforcement_rules()
+            .iter()
+            .map(|rule| (rule.rule_id.as_str(), rule.action, rule.priority))
+            .collect::<Vec<_>>(),
+        vec![
+            (
+                "profiles.rules.block_evil_http",
+                SecurityRuleAction::Block,
+                USER_PRIORITY_MIN,
+            ),
+            (
+                "profiles.rules.default_http_requests",
+                SecurityRuleAction::Allow,
+                DEFAULT_RULE_PRIORITY,
+            ),
+        ],
+        "default rules must remain ordinary late CEL rules, not a bypass"
+    );
+}
+
+#[test]
+fn mutating_default_rules_changes_security_evaluation() {
+    let profile = SecurityRuleProfile::parse_toml(
+        r#"
+[profiles.defaults.default_http_requests]
+name = "default_http_requests"
+action = "allow"
+priority = "default"
+reason = "Default allow for approved HTTP requests only."
+match = 'http.host == "approved.example"'
+"#,
+    )
+    .expect("profile parses");
+    let compiled = SecurityRuleSet::compile_profile(&profile, SecurityRuleSource::User)
+        .expect("profile compiles");
+    let approved =
+        SecurityEvent::new(RuntimeSecurityEventType::HttpRequest).with_http(HttpSecurityEvent {
+            host: Some("approved.example".to_string()),
+            ..Default::default()
+        });
+    let unknown =
+        SecurityEvent::new(RuntimeSecurityEventType::HttpRequest).with_http(HttpSecurityEvent {
+            host: Some("unknown.example".to_string()),
+            ..Default::default()
+        });
+
+    assert_eq!(
+        compiled
+            .evaluate(&approved)
+            .expect("approved evaluates")
+            .enforcement_rules()
+            .iter()
+            .map(|rule| rule.rule_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["profiles.rules.default_http_requests"]
+    );
+    assert!(
+        compiled
+            .evaluate(&unknown)
+            .expect("unknown evaluates")
+            .enforcement_rules()
+            .is_empty(),
+        "a default rule is editable profile policy, not hidden network fallback"
+    );
 }
 
 #[test]

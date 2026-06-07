@@ -6,10 +6,9 @@ sidebar:
 ---
 
 The MITM proxy is Capsem's HTTPS inspection layer. It terminates TLS from the
-guest, applies the domain allow/block policy, normalizes protocol details into
-`SecurityEvent`, evaluates the shared security rule rail, forwards allowed
-requests to the real upstream, and logs telemetry plus matched rule rows to the
-session database.
+guest, normalizes protocol details into `SecurityEvent`, evaluates the shared
+security rule rail, forwards allowed requests to the real upstream, and logs
+telemetry plus matched rule rows to the session database.
 
 ## Connection pipeline
 
@@ -20,12 +19,10 @@ graph TD
     A["Guest connection<br/>vsock:5002"] --> B["Read metadata prefix<br/>(optional process name)"]
     B --> C["TLS handshake<br/>MitmCertResolver captures SNI"]
     C --> D["Read HTTP request<br/>method, path, headers, body"]
-    D --> E{"Domain policy"}
-    E -->|Denied| F["403 Forbidden<br/>+ log telemetry"]
-    E -->|Allowed| G["Build SecurityEvent<br/>http + optional model roots"]
-    G --> H{"Security rules<br/>CEL over SecurityEvent"}
-    H -->|Block or unresolved ask| F
-    H -->|Allow| I["Postprocess plugins<br/>credential broker, scanners"]
+    D --> E["Build SecurityEvent<br/>http + optional model roots"]
+    E --> F{"Security rules<br/>CEL over SecurityEvent"}
+    F -->|Block or unresolved ask| G["403 Forbidden<br/>+ log telemetry"]
+    F -->|Allow| I["Postprocess plugins<br/>credential broker, scanners"]
     I --> J["Upstream TLS connection<br/>(cached per-connection)"]
     J --> K["Forward request"]
     K --> L["Stream response to guest<br/>(inline SSE parsing for AI traffic)"]
@@ -39,7 +36,7 @@ The proxy uses hyper for HTTP parsing and tokio-rustls for TLS. Each vsock conne
 ```mermaid
 graph LR
     CA["CertAuthority<br/>(static CA keypair)"]
-    POL["NetworkPolicy<br/>(hot-swappable via RwLock)"]
+    POL["Network mechanics<br/>(hot-swappable via RwLock)"]
     DB["DbWriter<br/>(async telemetry)"]
     TLS["Upstream TLS config<br/>(webpki roots)"]
     PRICE["PricingTable<br/>(embedded JSON)"]
@@ -56,7 +53,7 @@ graph LR
 | Field | Type | Purpose |
 |-------|------|---------|
 | `ca` | `Arc<CertAuthority>` | Static Capsem CA for leaf cert minting |
-| `policy` | `Arc<RwLock<Arc<NetworkPolicy>>>` | Hot-swappable domain policy; settings changes take effect on next request |
+| `policy` | `Arc<RwLock<Arc<NetworkPolicy>>>` | Hot-swappable network mechanics such as body capture and upstream port handling |
 | `db` | `Arc<DbWriter>` | Async telemetry writer to session.db |
 | `upstream_tls` | `Arc<rustls::ClientConfig>` | Shared TLS config with webpki root CAs |
 | `pricing` | `PricingTable` | Embedded model pricing for cost estimation |
@@ -108,30 +105,29 @@ The cache uses double-checked locking: read lock for hits, write lock only on mi
 
 The MITM proxy CA private key is committed to the repository. This is intentional -- the CA is only trusted inside Capsem's own air-gapped VMs and has zero trust outside them. A public key provides transparency: anyone can verify there is no hidden interception. Per-installation key generation would reduce auditability.
 
-## Domain policy engine
+## Network Mechanics And Security Rules
 
-See [Network Isolation](/security/network-isolation/) for the full domain policy reference. Key properties:
+See [Network Isolation](/security/network-isolation/) for the full security rule
+reference. Key properties:
 
 | Property | Behavior |
 |----------|----------|
-| Evaluation order | Block list -> Allow list -> Default deny |
-| Pattern types | Exact (`github.com`) and wildcard (`*.github.com`) |
-| Case sensitivity | Case-insensitive |
-| Conflict resolution | Block always beats allow |
+| Network mechanics | Port routing, body capture, decompression, provider metadata, and cache behavior |
+| Security authority | `SecurityRuleSet` over normalized `SecurityEvent` fields |
+| Default behavior | Profile defaults compile into normal late-priority rules |
+| Conflict resolution | Earlier/lower priority enforcement wins; `block` is absolute once effective |
 
-The domain policy is hot-swappable via `RwLock`. Each HTTP request snapshots
-the `Arc<NetworkPolicy>`, so disabling a provider blocks the next request even
-on an existing keep-alive connection. Detection and enforcement rules are a
-separate `SecurityRuleSet` over `SecurityEvent`; they are evaluated after
-protocol parsing and before upstream materialization.
+Network mechanics are hot-swappable via `RwLock`. Each HTTP request snapshots
+the `Arc<NetworkPolicy>` for mechanical settings, then evaluates the shared
+`SecurityRuleSet` after protocol parsing and before upstream materialization.
 
 ## HTTP Security Rules
 
-For domains that pass the domain check, the MITM proxy creates a normalized
-`SecurityEvent` and evaluates the shared rule rail. HTTP rules use first-party
-fields such as `http.host`, `http.method`, `http.path`, `http.status`, and
-`http.body`. They can also match other roots attached to the same event, such
-as `model.provider`, without creating a second callback-specific rule.
+The MITM proxy creates a normalized `SecurityEvent` and evaluates the shared
+rule rail. HTTP rules use first-party fields such as `http.host`,
+`http.method`, `http.path`, `http.status`, and `http.body`. They can also match
+other roots attached to the same event, such as `model.provider`, without
+creating a second callback-specific rule.
 
 Example:
 

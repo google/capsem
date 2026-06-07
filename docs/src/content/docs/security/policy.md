@@ -92,7 +92,7 @@ telemetry name. Both are intentionally required and validated.
 | Field | Required | Default | Description |
 |---|---:|---|---|
 | `name` | yes | none | Stable lowercase rule name, max 64 chars. Use `a-z`, `0-9`, `_`, or `-`. |
-| `action` | yes | none | One of `allow`, `ask`, `block`, `preprocess`, or `postprocess`. |
+| `action` | yes | none | One of `allow`, `ask`, `block`, `preprocess`, `rewrite`, or `postprocess`. |
 | `match` | yes | none | CEL expression over first-party `SecurityEvent` roots. |
 | `detection_level` | no | none | Sigma-style severity: `informational`, `low`, `medium`, `high`, or `critical`. `info` is accepted as shorthand and canonicalizes to `informational`. |
 | `priority` | no | source default | Lower values sort first. Explicit values must be from `-1000` to `1000`. |
@@ -109,6 +109,7 @@ telemetry name. Both are intentionally required and validated.
 | `ask` | Pause materialization until an approval or denial is recorded. |
 | `block` | Deny the event boundary and log the matched rule. |
 | `preprocess` | Run a plugin before enforcement evaluation. Requires `plugin`. |
+| `rewrite` | Run a mutation plugin before final materialization. Requires `plugin`. Aliases `redact`, `mutate`, and `neutralize` canonicalize to `rewrite`. |
 | `postprocess` | Run a plugin after the first evaluation and before final materialization. Requires `plugin`. |
 
 Detection is not an action. A rule reports a detection by setting
@@ -121,18 +122,18 @@ Unknown gateway paths are not forwarded.
 
 | Endpoint | Method | Contract |
 |---|---|---|
-| `/enforcements/evaluate` | `POST` | Test a supplied `SecurityEvent` fixture and rule TOML through the same `SecurityEventEngine` used at runtime. The response uses `SerializableSecurityEvent`, with every first-party root present and absent roots encoded as `null`. |
-| `/enforcements/rules/{rule_id}` | `POST` | Add or replace one user profile rule. The rule body is the native rule object; Capsem compiles it with `SecurityRuleProfile` before writing `user.toml`. |
-| `/enforcements/rules/{rule_id}` | `DELETE` | Remove one user profile rule from `user.toml`. Corporate rules are not mutable through this endpoint. |
-| `/enforcements/reload` | `POST` | Broadcast config reload to running VMs. |
-| `/enforcements/{id}/latest` | `GET` | Return stored `security_rule_events` rows for one VM. |
-| `/enforcements/{id}/info` | `GET` | Return counters regenerated from stored security rule rows for one VM. |
-| `/detections/{id}/latest` | `GET` | Alias over the same stored rule ledger rows, scoped for detection consumers. |
-| `/detections/{id}/info` | `GET` | Alias over the same stored rule counters, scoped for detection consumers. |
-| `/plugins` | `GET` | Return global built-in plugin policy and defaults. |
-| `/plugins/global/{plugin_id}` | `GET`/`POST` | Inspect or update global plugin mode and detection level. |
-| `/plugins/{id}` | `GET` | Return per-VM effective plugin policy after default and global overrides. |
-| `/plugins/{id}/{plugin_id}` | `GET`/`POST` | Inspect or update one VM-specific plugin override. |
+| `/profiles/{profile_id}/enforcement/evaluate` | `POST` | Test a supplied `SecurityEvent` fixture and rule TOML through the same `SecurityEventEngine` used at runtime. The response uses `SerializableSecurityEvent`, with every first-party root present and absent roots encoded as `null`. |
+| `/profiles/{profile_id}/enforcement/rules/list` | `GET` | Return compiled profile rule truth, including source, default-rule, priority, action, detection level, plugin, and lock metadata. |
+| `/profiles/{profile_id}/enforcement/rules/{rule_id}/edit` | `PUT` | Add or replace one user profile rule. The rule body is the native rule object; Capsem compiles it with `SecurityRuleProfile` before writing `user.toml`. |
+| `/profiles/{profile_id}/enforcement/rules/{rule_id}/delete` | `DELETE` | Remove one user profile rule from `user.toml`. Corporate rules are not mutable through this endpoint. |
+| `/profiles/{profile_id}/enforcement/reload` | `POST` | Reload that profile's enforcement rules. |
+| `/profiles/{profile_id}/plugins/list` | `GET` | Return profile-owned plugin policy and defaults. |
+| `/profiles/{profile_id}/plugins/{plugin_id}/info` | `GET` | Inspect one profile plugin mode and detection level. |
+| `/profiles/{profile_id}/plugins/{plugin_id}/edit` | `PATCH` | Update one profile plugin mode and detection level. |
+| `/vms/{vm_id}/enforcement/latest` | `GET` | Return stored `security_rule_events` rows for one VM. |
+| `/vms/{vm_id}/enforcement/status` | `GET` | Return counters regenerated from stored security rule rows for one VM. |
+| `/vms/{vm_id}/detection/latest` | `GET` | Return stored detection-bearing security rule rows for one VM. |
+| `/vms/{vm_id}/detection/status` | `GET` | Return detection counters regenerated from stored security rule rows for one VM. |
 
 Rule add/update is profile-user scoped by design. Corporate policy arrives from
 corp config, referenced enforcement TOML, or referenced Sigma YAML, then compiles
@@ -143,12 +144,11 @@ through the same rule rail.
 | Source | Implicit priority | Explicit priority rule |
 |---|---:|---|
 | Corporate rules | `-10` | Must be `<= -10`; range floor is `-1000`. |
-| Built-in defaults | `0` | Must be exactly `0`. |
+| Built-in defaults | `default` (`1001`) | Must use the named sentinel `default`. |
 | User/profile rules | `10` | Must be `>= 10`; range ceiling is `1000`. |
 
 Rules sort by `priority`, then by full rule id. Corporate rules therefore run
-before defaults, and user rules run after defaults unless an admin explicitly
-chooses a later value.
+before user/profile rules, and default catch-alls run last.
 
 ## CEL Shape
 

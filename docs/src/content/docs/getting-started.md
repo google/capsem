@@ -121,18 +121,20 @@ The keys are securely forwarded into the VM at boot time. They never touch the g
 
 ## Network policy
 
-By default, the VM is air-gapped -- all network traffic routes through the host's MITM proxy. Only explicitly allowed domains can be reached. Add custom domains in `~/.capsem/user.toml`:
+By default, the VM is air-gapped -- network traffic routes through Capsem's host
+network engine, where HTTP and DNS become first-party security events. Add
+allow/block behavior with profile rules in `~/.capsem/user.toml`:
 
 ```toml
-[security.web]
-custom_allow = [
-  "api.anthropic.com",
-  "generativelanguage.googleapis.com",
-  "api.openai.com",
-  "pypi.org",
-  "files.pythonhosted.org",
-  "registry.npmjs.org",
-]
+[profiles.rules.allow_python_registry]
+name = "allow_python_registry"
+action = "allow"
+match = 'http.host.matches("^(pypi\\.org|files\\.pythonhosted\\.org)$")'
+
+[profiles.rules.block_unapproved_ai_dns]
+name = "block_unapproved_ai_dns"
+action = "block"
+match = 'dns.qname.matches("(^|.*\\.)(openai\\.com|anthropic\\.com|googleapis\\.com)$")'
 ```
 
 Every HTTPS request is logged to a per-session SQLite database with full method, path, headers, and body preview. The Capsem GUI shows this in real time in the Network tab.
