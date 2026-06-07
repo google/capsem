@@ -103,8 +103,7 @@ fn make_test_state() -> Arc<ServiceState> {
         asset_reconcile_inflight: AtomicBool::new(false),
         asset_status_path,
         magika: test_magika(),
-        plugin_policy_global: Mutex::new(BTreeMap::new()),
-        plugin_policy_by_vm: Mutex::new(HashMap::new()),
+        plugin_policy_by_profile: Mutex::new(HashMap::new()),
         save_restore_lock: tokio::sync::Mutex::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
     })
@@ -128,8 +127,7 @@ fn make_asset_state(assets_dir: PathBuf) -> Arc<ServiceState> {
         asset_reconcile_inflight: AtomicBool::new(false),
         asset_status_path,
         magika: test_magika(),
-        plugin_policy_global: Mutex::new(BTreeMap::new()),
-        plugin_policy_by_vm: Mutex::new(HashMap::new()),
+        plugin_policy_by_profile: Mutex::new(HashMap::new()),
         save_restore_lock: tokio::sync::Mutex::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
     })
@@ -224,12 +222,13 @@ async fn security_latest_returns_full_session_db_rule_ledger_rows() {
 }
 
 #[tokio::test]
-async fn plugin_endpoint_matrix_dynamically_controls_enforcement_evaluation() {
+async fn profile_plugin_endpoint_matrix_dynamically_controls_enforcement_evaluation() {
     let state = make_test_state();
 
-    let Json(list) = handle_plugins(State(Arc::clone(&state)))
+    let Json(list) = handle_profile_plugins(State(Arc::clone(&state)), Path("default".to_string()))
         .await
         .expect("list plugins");
+    assert_eq!(list.scope.profile_id, "default");
     assert!(
         list.plugins
             .iter()
@@ -237,13 +236,14 @@ async fn plugin_endpoint_matrix_dynamically_controls_enforcement_evaluation() {
         "built-in plugin list must include dummy_pre_eicar"
     );
 
-    let Json(info) = handle_plugin_info(
+    let Json(info) = handle_profile_plugin_info(
         State(Arc::clone(&state)),
-        Path("dummy_pre_eicar".to_string()),
+        Path(("default".to_string(), "dummy_pre_eicar".to_string())),
     )
     .await
     .expect("plugin info");
     assert_eq!(info.id, "dummy_pre_eicar");
+    assert_eq!(info.scope.profile_id, "default");
     assert_eq!(
         info.config.mode,
         capsem_core::net::policy_config::SecurityPluginMode::Rewrite
@@ -266,9 +266,9 @@ async fn plugin_endpoint_matrix_dynamically_controls_enforcement_evaluation() {
         "wire DTO must expose every first-party root, even when null"
     );
 
-    let Json(disabled) = handle_plugin_update(
+    let Json(disabled) = handle_profile_plugin_update(
         State(Arc::clone(&state)),
-        Path("dummy_pre_eicar".to_string()),
+        Path(("default".to_string(), "dummy_pre_eicar".to_string())),
         Json(PluginUpdate {
             mode: Some(capsem_core::net::policy_config::SecurityPluginMode::Disable),
             detection_level: None,
@@ -293,31 +293,31 @@ async fn plugin_endpoint_matrix_dynamically_controls_enforcement_evaluation() {
         "rule detection remains, disabled plugin detection disappears"
     );
 
-    let Json(vm_override) = handle_plugin_update_for_vm(
+    let Json(profile_override) = handle_profile_plugin_update(
         State(Arc::clone(&state)),
-        Path(("vm-1".to_string(), "dummy_pre_eicar".to_string())),
+        Path(("strict".to_string(), "dummy_pre_eicar".to_string())),
         Json(PluginUpdate {
             mode: Some(capsem_core::net::policy_config::SecurityPluginMode::Block),
             detection_level: Some(capsem_core::net::policy_config::DetectionLevel::Medium),
         }),
     )
     .await
-    .expect("per-vm plugin override");
-    assert_eq!(vm_override.scope.vm_id.as_deref(), Some("vm-1"));
+    .expect("per-profile plugin override");
+    assert_eq!(profile_override.scope.profile_id, "strict");
     assert_eq!(
-        vm_override.config.mode,
+        profile_override.config.mode,
         capsem_core::net::policy_config::SecurityPluginMode::Block
     );
 
-    let mut vm_request = request.clone();
-    vm_request.vm_id = Some("vm-1".to_string());
-    let Json(vm_evaluated) =
-        handle_enforcement_evaluate(State(Arc::clone(&state)), Json(vm_request))
+    let mut strict_request = request.clone();
+    strict_request.profile_id = "strict".to_string();
+    let Json(strict_evaluated) =
+        handle_enforcement_evaluate(State(Arc::clone(&state)), Json(strict_request))
             .await
-            .expect("per-vm plugin override evaluates");
-    let vm_evaluated_event = serde_json::to_value(&vm_evaluated.event).unwrap();
-    assert_eq!(vm_evaluated_event["decision"]["effective"], "block");
-    assert!(vm_evaluated_event["detections"]
+            .expect("per-profile plugin override evaluates");
+    let strict_evaluated_event = serde_json::to_value(&strict_evaluated.event).unwrap();
+    assert_eq!(strict_evaluated_event["decision"]["effective"], "block");
+    assert!(strict_evaluated_event["detections"]
         .as_array()
         .unwrap()
         .iter()
@@ -326,9 +326,9 @@ async fn plugin_endpoint_matrix_dynamically_controls_enforcement_evaluation() {
             && detection["detection_level"] == "medium"
             && detection["plugin_mode"] == "block"));
 
-    let Json(reenabled) = handle_plugin_update(
+    let Json(reenabled) = handle_profile_plugin_update(
         State(Arc::clone(&state)),
-        Path("dummy_pre_eicar".to_string()),
+        Path(("default".to_string(), "dummy_pre_eicar".to_string())),
         Json(PluginUpdate {
             mode: Some(capsem_core::net::policy_config::SecurityPluginMode::Block),
             detection_level: Some(capsem_core::net::policy_config::DetectionLevel::Critical),
@@ -371,7 +371,7 @@ async fn enforcement_rule_endpoints_add_delete_reload_and_reject_invalid_rules_a
         action: capsem_core::net::policy_config::SecurityRuleAction::Block,
         condition: r#"file.import.content.contains("EICAR")"#.to_string(),
         detection_level: Some(capsem_core::net::policy_config::DetectionLevel::High),
-        priority: Some(10),
+        priority: Some(capsem_core::net::policy_config::SecurityRulePriority::Explicit(10)),
         corp_locked: false,
         reason: Some("debug EICAR fixture must block".to_string()),
         plugin: None,
@@ -398,7 +398,8 @@ async fn enforcement_rule_endpoints_add_delete_reload_and_reject_invalid_rules_a
     assert_eq!(reload["reloaded"], serde_json::json!(0));
 
     let mut bad_priority = rule.clone();
-    bad_priority.priority = Some(-100);
+    bad_priority.priority =
+        Some(capsem_core::net::policy_config::SecurityRulePriority::Explicit(-100));
     let err = handle_enforcement_rule_upsert(
         Path("bad_negative_priority".to_string()),
         Json(bad_priority),
@@ -803,8 +804,7 @@ fn make_state_in(run_dir: PathBuf) -> Arc<ServiceState> {
         asset_reconcile_inflight: AtomicBool::new(false),
         asset_status_path,
         magika: test_magika(),
-        plugin_policy_global: Mutex::new(BTreeMap::new()),
-        plugin_policy_by_vm: Mutex::new(HashMap::new()),
+        plugin_policy_by_profile: Mutex::new(HashMap::new()),
         save_restore_lock: tokio::sync::Mutex::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
     })
@@ -1205,8 +1205,7 @@ fn make_test_state_with_tempdir() -> (Arc<ServiceState>, tempfile::TempDir) {
         asset_reconcile_inflight: AtomicBool::new(false),
         asset_status_path,
         magika: test_magika(),
-        plugin_policy_global: Mutex::new(BTreeMap::new()),
-        plugin_policy_by_vm: Mutex::new(HashMap::new()),
+        plugin_policy_by_profile: Mutex::new(HashMap::new()),
         save_restore_lock: tokio::sync::Mutex::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
     });
@@ -1885,8 +1884,7 @@ fn make_test_state_with_tempdir_at(
         asset_reconcile_inflight: AtomicBool::new(false),
         asset_status_path,
         magika: test_magika(),
-        plugin_policy_global: Mutex::new(BTreeMap::new()),
-        plugin_policy_by_vm: Mutex::new(HashMap::new()),
+        plugin_policy_by_profile: Mutex::new(HashMap::new()),
         save_restore_lock: tokio::sync::Mutex::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
     });

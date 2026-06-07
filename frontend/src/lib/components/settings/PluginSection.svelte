@@ -23,6 +23,7 @@
     { value: 'high', label: 'High' },
     { value: 'critical', label: 'Critical' },
   ];
+  const PROFILE_ID = 'default';
 
   let response = $state<PluginListResponse | null>(null);
   let loading = $state(true);
@@ -37,7 +38,7 @@
     loading = true;
     error = null;
     try {
-      response = await listPlugins();
+      response = await listPlugins(PROFILE_ID);
     } catch (err) {
       error = String(err instanceof Error ? err.message : err);
     } finally {
@@ -57,7 +58,7 @@
     saving = { ...saving, [plugin.id]: true };
     error = null;
     try {
-      replacePlugin(await updatePlugin(plugin.id, { mode }));
+      replacePlugin(await updatePlugin(response?.scope.profile_id ?? PROFILE_ID, plugin.id, { mode }));
     } catch (err) {
       error = String(err instanceof Error ? err.message : err);
     } finally {
@@ -69,7 +70,7 @@
     saving = { ...saving, [plugin.id]: true };
     error = null;
     try {
-      replacePlugin(await updatePlugin(plugin.id, { detection_level }));
+      replacePlugin(await updatePlugin(response?.scope.profile_id ?? PROFILE_ID, plugin.id, { detection_level }));
     } catch (err) {
       error = String(err instanceof Error ? err.message : err);
     } finally {

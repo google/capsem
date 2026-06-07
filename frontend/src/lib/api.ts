@@ -79,8 +79,8 @@ export interface PluginConfig {
 }
 
 export interface PluginScope {
-  kind: 'global' | 'vm';
-  vm_id?: string;
+  kind: 'profile';
+  profile_id: string;
 }
 
 export interface PluginInfo {
@@ -171,6 +171,22 @@ async function _get(path: string): Promise<Response> {
 async function _post(path: string, body?: unknown): Promise<Response> {
   const resp = await fetch(`${_baseUrl}${path}`, {
     method: 'POST',
+    headers: {
+      Authorization: `Bearer ${_token}`,
+      ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
+    },
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw new ApiError(resp.status, text);
+  }
+  return resp;
+}
+
+async function _patch(path: string, body?: unknown): Promise<Response> {
+  const resp = await fetch(`${_baseUrl}${path}`, {
+    method: 'PATCH',
     headers: {
       Authorization: `Bearer ${_token}`,
       ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
@@ -623,21 +639,20 @@ export async function lintConfig(): Promise<ConfigIssue[]> {
 
 // -- Plugins --
 
-export async function listPlugins(vmId?: string): Promise<PluginListResponse> {
-  const path = vmId ? `/plugins/${encodeURIComponent(vmId)}` : '/plugins';
-  const resp = await _get(path);
+export async function listPlugins(profileId: string): Promise<PluginListResponse> {
+  const resp = await _get(`/profiles/${encodeURIComponent(profileId)}/plugins/list`);
   return await resp.json();
 }
 
 export async function updatePlugin(
+  profileId: string,
   pluginId: string,
   update: Partial<PluginConfig>,
-  vmId?: string,
 ): Promise<PluginInfo> {
-  const path = vmId
-    ? `/plugins/${encodeURIComponent(vmId)}/${encodeURIComponent(pluginId)}`
-    : `/plugins/global/${encodeURIComponent(pluginId)}`;
-  const resp = await _post(path, update);
+  const resp = await _patch(
+    `/profiles/${encodeURIComponent(profileId)}/plugins/${encodeURIComponent(pluginId)}/edit`,
+    update,
+  );
   return await resp.json();
 }
 

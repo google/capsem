@@ -2,7 +2,7 @@ use anyhow::{anyhow, Context, Result};
 use axum::{
     extract::{Path, Query, State},
     response::IntoResponse,
-    routing::{delete, get, post},
+    routing::{delete, get, patch, post},
     Json, Router,
 };
 use capsem_core::poll::{poll_until, PollOpts};
@@ -106,10 +106,9 @@ struct ServiceState {
     asset_status_path: PathBuf,
     /// Magika file-type detection session (thread-safe, shared)
     magika: Mutex<magika::Session>,
-    /// Global plugin policy overrides. Per-VM overrides live in
-    /// `plugin_policy_by_vm`; effective policy is defaults < global < VM.
-    plugin_policy_global: Mutex<BTreeMap<String, SecurityPluginConfig>>,
-    plugin_policy_by_vm: Mutex<HashMap<String, BTreeMap<String, SecurityPluginConfig>>>,
+    /// Profile-owned plugin policy overrides. Effective policy is built-in
+    /// plugin defaults plus overrides for the profile executing the VM.
+    plugin_policy_by_profile: Mutex<HashMap<String, BTreeMap<String, SecurityPluginConfig>>>,
     /// Serializes Apple VZ save_state and restore_state calls across all VMs
     /// managed by this service. Apple's Virtualization.framework does not
     /// tolerate concurrent save/restore on sibling VMs: when two VZ instances
@@ -172,15 +171,13 @@ struct InstanceInfo {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 enum PluginScopeKind {
-    Global,
-    Vm,
+    Profile,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 struct PluginScope {
     kind: PluginScopeKind,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    vm_id: Option<String>,
+    profile_id: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -209,8 +206,7 @@ struct PluginUpdate {
 
 #[derive(Debug, Clone, Deserialize)]
 struct EnforcementEvaluateRequest {
-    #[serde(default)]
-    vm_id: Option<String>,
+    profile_id: String,
     rules_toml: String,
     event: EnforcementEventInput,
 }
@@ -219,7 +215,7 @@ impl EnforcementEvaluateRequest {
     #[cfg(test)]
     fn eicar_fixture() -> Self {
         Self {
-            vm_id: None,
+            profile_id: "default".to_string(),
             rules_toml: r#"
 [profiles.rules.eicar]
 name = "eicar_rewrite_scan"
@@ -3771,43 +3767,36 @@ fn plugin_catalog() -> BTreeMap<String, (&'static str, SecurityPluginConfig)> {
     ])
 }
 
-fn global_plugin_scope() -> PluginScope {
-    PluginScope {
-        kind: PluginScopeKind::Global,
-        vm_id: None,
-    }
-}
-
-fn vm_plugin_scope(vm_id: String) -> Result<PluginScope, AppError> {
-    if vm_id.is_empty() || vm_id == "global" {
+fn profile_plugin_scope(profile_id: String) -> Result<PluginScope, AppError> {
+    if profile_id.is_empty() {
         Err(AppError(
             StatusCode::BAD_REQUEST,
-            "VM plugin scope id must not be empty or 'global'".to_string(),
+            "profile plugin scope id must not be empty".to_string(),
         ))
     } else {
         Ok(PluginScope {
-            kind: PluginScopeKind::Vm,
-            vm_id: Some(vm_id),
+            kind: PluginScopeKind::Profile,
+            profile_id,
         })
     }
 }
 
 fn effective_plugin_policy(
     state: &ServiceState,
-    vm_id: Option<&str>,
+    profile_id: &str,
 ) -> BTreeMap<String, SecurityPluginConfig> {
     let mut policy: BTreeMap<_, _> = plugin_catalog()
         .into_iter()
         .map(|(id, (_, config))| (id, config))
         .collect();
-    for (id, config) in state.plugin_policy_global.lock().unwrap().iter() {
-        policy.insert(id.clone(), *config);
-    }
-    if let Some(vm_id) = vm_id {
-        if let Some(overrides) = state.plugin_policy_by_vm.lock().unwrap().get(vm_id) {
-            for (id, config) in overrides {
-                policy.insert(id.clone(), *config);
-            }
+    if let Some(overrides) = state
+        .plugin_policy_by_profile
+        .lock()
+        .unwrap()
+        .get(profile_id)
+    {
+        for (id, config) in overrides {
+            policy.insert(id.clone(), *config);
         }
     }
     policy
@@ -3825,21 +3814,14 @@ fn plugin_info_for(
             format!("unknown plugin: {plugin_id}"),
         ));
     };
-    let effective = effective_plugin_policy(state, scope.vm_id.as_deref());
+    let effective = effective_plugin_policy(state, &scope.profile_id);
     let config = effective.get(plugin_id).copied().unwrap_or(default_config);
-    let overridden = match scope.vm_id.as_deref() {
-        Some(vm_id) => state
-            .plugin_policy_by_vm
-            .lock()
-            .unwrap()
-            .get(vm_id)
-            .is_some_and(|policy| policy.contains_key(plugin_id)),
-        None => state
-            .plugin_policy_global
-            .lock()
-            .unwrap()
-            .contains_key(plugin_id),
-    };
+    let overridden = state
+        .plugin_policy_by_profile
+        .lock()
+        .unwrap()
+        .get(&scope.profile_id)
+        .is_some_and(|policy| policy.contains_key(plugin_id));
     Ok(PluginInfo {
         id: plugin_id.to_string(),
         config,
@@ -3850,17 +3832,11 @@ fn plugin_info_for(
     })
 }
 
-async fn handle_plugins(
+async fn handle_profile_plugins(
     State(state): State<Arc<ServiceState>>,
+    Path(profile_id): Path<String>,
 ) -> Result<Json<PluginListResponse>, AppError> {
-    list_plugins_for_scope(&state, global_plugin_scope())
-}
-
-async fn handle_plugins_for_vm(
-    State(state): State<Arc<ServiceState>>,
-    Path(vm_id): Path<String>,
-) -> Result<Json<PluginListResponse>, AppError> {
-    list_plugins_for_scope(&state, vm_plugin_scope(vm_id)?)
+    list_plugins_for_scope(&state, profile_plugin_scope(profile_id)?)
 }
 
 fn list_plugins_for_scope(
@@ -3874,42 +3850,23 @@ fn list_plugins_for_scope(
     Ok(Json(PluginListResponse { scope, plugins }))
 }
 
-async fn handle_plugin_info(
+async fn handle_profile_plugin_info(
     State(state): State<Arc<ServiceState>>,
-    Path(plugin_id): Path<String>,
+    Path((profile_id, plugin_id)): Path<(String, String)>,
 ) -> Result<Json<PluginInfo>, AppError> {
     Ok(Json(plugin_info_for(
         &state,
         &plugin_id,
-        global_plugin_scope(),
+        profile_plugin_scope(profile_id)?,
     )?))
 }
 
-async fn handle_plugin_info_for_vm(
+async fn handle_profile_plugin_update(
     State(state): State<Arc<ServiceState>>,
-    Path((vm_id, plugin_id)): Path<(String, String)>,
-) -> Result<Json<PluginInfo>, AppError> {
-    Ok(Json(plugin_info_for(
-        &state,
-        &plugin_id,
-        vm_plugin_scope(vm_id)?,
-    )?))
-}
-
-async fn handle_plugin_update(
-    State(state): State<Arc<ServiceState>>,
-    Path(plugin_id): Path<String>,
+    Path((profile_id, plugin_id)): Path<(String, String)>,
     Json(update): Json<PluginUpdate>,
 ) -> Result<Json<PluginInfo>, AppError> {
-    update_plugin_for_scope(&state, plugin_id, global_plugin_scope(), update)
-}
-
-async fn handle_plugin_update_for_vm(
-    State(state): State<Arc<ServiceState>>,
-    Path((vm_id, plugin_id)): Path<(String, String)>,
-    Json(update): Json<PluginUpdate>,
-) -> Result<Json<PluginInfo>, AppError> {
-    update_plugin_for_scope(&state, plugin_id, vm_plugin_scope(vm_id)?, update)
+    update_plugin_for_scope(&state, plugin_id, profile_plugin_scope(profile_id)?, update)
 }
 
 fn update_plugin_for_scope(
@@ -3924,7 +3881,7 @@ fn update_plugin_for_scope(
             format!("unknown plugin: {plugin_id}"),
         ));
     }
-    let mut config = effective_plugin_policy(&state, scope.vm_id.as_deref())
+    let mut config = effective_plugin_policy(state, &scope.profile_id)
         .get(&plugin_id)
         .copied()
         .unwrap_or_else(|| default_plugin_config(SecurityPluginMode::Allow));
@@ -3934,24 +3891,13 @@ fn update_plugin_for_scope(
     if let Some(detection_level) = update.detection_level {
         config.detection_level = detection_level;
     }
-    match scope.vm_id.as_deref() {
-        Some(vm_id) => {
-            state
-                .plugin_policy_by_vm
-                .lock()
-                .unwrap()
-                .entry(vm_id.to_string())
-                .or_default()
-                .insert(plugin_id.clone(), config);
-        }
-        None => {
-            state
-                .plugin_policy_global
-                .lock()
-                .unwrap()
-                .insert(plugin_id.clone(), config);
-        }
-    }
+    state
+        .plugin_policy_by_profile
+        .lock()
+        .unwrap()
+        .entry(scope.profile_id.clone())
+        .or_default()
+        .insert(plugin_id.clone(), config);
     Ok(Json(plugin_info_for(&state, &plugin_id, scope)?))
 }
 
@@ -3983,7 +3929,7 @@ async fn handle_enforcement_evaluate(
         })?;
     let rule_set = SecurityRuleSet::new(rules);
     let event = request.event.into_security_event()?;
-    let policy = effective_plugin_policy(&state, request.vm_id.as_deref());
+    let policy = effective_plugin_policy(&state, &request.profile_id);
     let engine = SecurityEventEngine::new(
         SecurityActionRegistry::with_builtin_actions().with_plugin_policy(policy),
         Arc::new(ServiceEvaluateEmitter),
@@ -5390,8 +5336,7 @@ async fn main() -> Result<()> {
         asset_reconcile_inflight: AtomicBool::new(false),
         asset_status_path,
         magika: Mutex::new(magika_session),
-        plugin_policy_global: Mutex::new(BTreeMap::new()),
-        plugin_policy_by_vm: Mutex::new(HashMap::new()),
+        plugin_policy_by_profile: Mutex::new(HashMap::new()),
         save_restore_lock: tokio::sync::Mutex::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
     });
@@ -5485,15 +5430,17 @@ async fn main() -> Result<()> {
             post(handle_enforcement_rule_upsert).delete(handle_enforcement_rule_delete),
         )
         .route("/enforcements/reload", post(handle_enforcement_reload))
-        .route("/plugins", get(handle_plugins))
         .route(
-            "/plugins/global/{plugin_id}",
-            get(handle_plugin_info).post(handle_plugin_update),
+            "/profiles/{profile_id}/plugins/list",
+            get(handle_profile_plugins),
         )
-        .route("/plugins/{id}", get(handle_plugins_for_vm))
         .route(
-            "/plugins/{id}/{plugin_id}",
-            get(handle_plugin_info_for_vm).post(handle_plugin_update_for_vm),
+            "/profiles/{profile_id}/plugins/{plugin_id}/info",
+            get(handle_profile_plugin_info),
+        )
+        .route(
+            "/profiles/{profile_id}/plugins/{plugin_id}/edit",
+            patch(handle_profile_plugin_update),
         )
         .route("/reload-config", post(handle_reload_config))
         .route("/fork/{id}", post(handle_fork))

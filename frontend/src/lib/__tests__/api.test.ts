@@ -344,6 +344,58 @@ describe('api', () => {
     });
   });
 
+  // ---- Plugins ----
+
+  describe('plugins', () => {
+    beforeEach(async () => {
+      mockFetch
+        .mockReturnValueOnce(jsonResponse({ ok: true, version: '1.0.0', service_socket: '/tmp/s' }))
+        .mockReturnValueOnce(jsonResponse({ token: 'tok' }));
+      await api.init();
+    });
+
+    it('listPlugins sends GET /profiles/{profile_id}/plugins/list', async () => {
+      const plugins = {
+        scope: { kind: 'profile', profile_id: 'default' },
+        plugins: [],
+      };
+      mockFetch.mockReturnValueOnce(jsonResponse(plugins));
+      const result = await api.listPlugins('default');
+      expect(result).toEqual(plugins);
+      const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
+      expect(call[0]).toContain('/profiles/default/plugins/list');
+    });
+
+    it('updatePlugin sends PATCH /profiles/{profile_id}/plugins/{plugin_id}/edit', async () => {
+      const plugin = {
+        id: 'dummy_pre_eicar',
+        config: { mode: 'block', detection_level: 'high' },
+        default_config: { mode: 'rewrite', detection_level: 'informational' },
+        overridden: true,
+        scope: { kind: 'profile', profile_id: 'strict' },
+        description: 'debug plugin',
+      };
+      mockFetch.mockReturnValueOnce(jsonResponse(plugin));
+      const result = await api.updatePlugin('strict', 'dummy_pre_eicar', {
+        mode: 'block',
+        detection_level: 'high',
+      });
+      expect(result).toEqual(plugin);
+      const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
+      expect(call[0]).toContain('/profiles/strict/plugins/dummy_pre_eicar/edit');
+      expect(call[1].method).toBe('PATCH');
+      expect(JSON.parse(call[1].body)).toEqual({
+        mode: 'block',
+        detection_level: 'high',
+      });
+    });
+
+    it('does not expose retired global plugin authoring helpers', () => {
+      expect(api.listPlugins.length).toBe(1);
+      expect(api.updatePlugin.length).toBe(3);
+    });
+  });
+
   // ---- MCP runtime ----
 
   describe('MCP runtime', () => {

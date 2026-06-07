@@ -12,7 +12,7 @@ use anyhow::{Context, Result};
 use axum::extract::connect_info::ConnectInfo;
 use axum::extract::State;
 use axum::response::IntoResponse;
-use axum::routing::{delete, get, post};
+use axum::routing::{delete, get, patch, post};
 use axum::{Json, Router};
 use clap::Parser;
 use tower_http::cors::{AllowOrigin, CorsLayer};
@@ -250,15 +250,17 @@ fn service_proxy_routes() -> Router<Arc<AppState>> {
             post(proxy::handle_proxy).delete(proxy::handle_proxy),
         )
         .route("/enforcements/reload", post(proxy::handle_proxy))
-        .route("/plugins", get(proxy::handle_proxy))
         .route(
-            "/plugins/global/{plugin_id}",
-            get(proxy::handle_proxy).post(proxy::handle_proxy),
+            "/profiles/{profile_id}/plugins/list",
+            get(proxy::handle_proxy),
         )
-        .route("/plugins/{id}", get(proxy::handle_proxy))
         .route(
-            "/plugins/{id}/{plugin_id}",
-            get(proxy::handle_proxy).post(proxy::handle_proxy),
+            "/profiles/{profile_id}/plugins/{plugin_id}/info",
+            get(proxy::handle_proxy),
+        )
+        .route(
+            "/profiles/{profile_id}/plugins/{plugin_id}/edit",
+            patch(proxy::handle_proxy),
         )
         .route("/reload-config", post(proxy::handle_proxy))
         .route("/fork/{id}", post(proxy::handle_proxy))
@@ -431,12 +433,9 @@ mod tests {
             ("POST", "/enforcements/rules/eicar_block"),
             ("DELETE", "/enforcements/rules/eicar_block"),
             ("POST", "/enforcements/reload"),
-            ("GET", "/plugins"),
-            ("GET", "/plugins/test-vm"),
-            ("GET", "/plugins/test-vm/dummy_pre_eicar"),
-            ("POST", "/plugins/test-vm/dummy_pre_eicar"),
-            ("GET", "/plugins/global/dummy_pre_eicar"),
-            ("POST", "/plugins/global/dummy_pre_eicar"),
+            ("GET", "/profiles/default/plugins/list"),
+            ("GET", "/profiles/default/plugins/dummy_pre_eicar/info"),
+            ("PATCH", "/profiles/default/plugins/dummy_pre_eicar/edit"),
         ] {
             let app = service_proxy_app("/tmp/capsem-gateway-missing-service.sock");
             let resp = app
@@ -454,6 +453,31 @@ mod tests {
                 http::StatusCode::BAD_GATEWAY,
                 "{method} {uri}"
             );
+        }
+    }
+
+    #[tokio::test]
+    async fn gateway_does_not_forward_retired_plugin_authoring_routes() {
+        for (method, uri) in [
+            ("GET", "/plugins"),
+            ("GET", "/plugins/test-vm"),
+            ("GET", "/plugins/test-vm/dummy_pre_eicar"),
+            ("POST", "/plugins/test-vm/dummy_pre_eicar"),
+            ("GET", "/plugins/global/dummy_pre_eicar"),
+            ("POST", "/plugins/global/dummy_pre_eicar"),
+        ] {
+            let app = service_proxy_app("/tmp/capsem-gateway-must-not-connect.sock");
+            let resp = app
+                .oneshot(
+                    http::Request::builder()
+                        .method(method)
+                        .uri(uri)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), http::StatusCode::NOT_FOUND, "{method} {uri}");
         }
     }
 

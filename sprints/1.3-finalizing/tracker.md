@@ -96,6 +96,14 @@ commit.
   `/enforcements/list`, `/plugins/global/*`, `/mcp/policy`, `/mcp/tools`.
 - [x] Burn `/mcp/policy` from service, gateway, CLI, frontend API/store, and
   settings UI. Runtime MCP servers/tools remain as mechanics only.
+- [x] Replace plugin authoring routes with profile-scoped
+  `/profiles/{profile_id}/plugins/list`,
+  `/profiles/{profile_id}/plugins/{plugin_id}/info`, and
+  `PATCH /profiles/{profile_id}/plugins/{plugin_id}/edit` in service,
+  gateway, and frontend API.
+- [x] Add adversarial gateway tests proving retired `/plugins`,
+  `/plugins/{vm_id}`, and `/plugins/global/{plugin_id}` routes are not
+  forwarded.
 - [ ] Add adversarial tests for wrong profile ids, wrong VM ids, malformed
   rule ids, invalid enum values, and attempts to mutate immutable VM profile id.
 - [ ] Commit T1 with tests.
@@ -155,7 +163,7 @@ commit.
 ## T4: MCP, Plugins, Credentials, Skills UI
 
 - [ ] Replace global MCP tools/policy UI with profile -> server -> tools/resources/prompts.
-- [ ] Plugin UI reads profile plugin metadata and edits enable/disable, mode,
+- [x] Plugin UI reads profile plugin metadata and edits enable/disable, mode,
   and detection logging level through profile endpoints.
 - [ ] Credential UI lists brokered credential refs and BLAKE3 hashes only.
 - [ ] Credential status UI shows broker counters from endpoint/OTel-derived
@@ -395,11 +403,11 @@ invariant sweep before release verification.
 ## Coverage Ledger
 
 - Unit/contract: `cargo test -p capsem-core net::policy_config::security_rule_profile --lib`; `cargo test -p capsem-core net::policy_config::provider_profile --lib`; `cargo test -p capsem-core net::policy_config --lib`; `cargo test -p capsem-core mcp:: --lib`; `cargo test -p capsem-core net::policy --lib`; `cargo test -p capsem-core net::dns::cache --lib`; `cargo test -p capsem-core net::dns --lib`; `uv run python -m pytest tests/test_models.py tests/test_config.py tests/test_validate.py tests/test_cli.py -q`.
-- Functional API: `cargo check -p capsem-service -p capsem-gateway -p capsem`; `uv run python -m pytest tests/capsem-service/test_svc_mcp_api.py -q`.
-- Adversarial: `/mcp/policy` removed from service route table and gateway forwarding, with `tests/capsem-service/test_svc_mcp_api.py::TestMcpPolicy::test_policy_endpoint_is_burned` and `cargo test -p capsem-gateway gateway_`; retired `mcp.global_policy`, `mcp.default_tool_permission`, and `mcp.tool_permissions` rejected by `load_settings_file_rejects_retired_mcp_policy_keys`; `rg -n "NetworkPolicy::evaluate|\\.evaluate\\(\\\"|is_fully_blocked|PolicyDecision|read allowed by default|write denied by default|fully blocked|blocked domain stays NXDOMAIN" crates/capsem-core/src/net crates/capsem-core/src/net/policy_config/tests.rs -g '*.rs'` returned no matches after burning network allow/block APIs; `rg -n "PolicyRule|NetworkPolicy::evaluate|PolicyDecision|is_fully_blocked|default_allow_read|default_allow_write|network\\.rules|allow_read|allow_write" crates/capsem-core/src crates/capsem-core/tests crates/capsem-service/src crates/capsem-gateway/src -g '*.rs'` has no active domain-decision type/field hits outside retired setting ids/tests; `web_default_toggles_not_exposed_as_guest_authority` proves stale web toggles do not produce guest env authority; `batch_update_rejects_retired_web_decision_setting_ids`, `migrate_setting_ids_does_not_resurrect_retired_web_decision_keys`, `retired_web_decision_settings_are_not_resolved`, and Python `TestRetiredWebDecisionConfig::test_allow_block_fields_fail_closed` prove retired web decision settings fail closed or remain inert stale input.
+- Functional API: `cargo check -p capsem-service -p capsem-gateway -p capsem`; `uv run python -m pytest tests/capsem-service/test_svc_mcp_api.py -q`; `cargo test -p capsem-service --bin capsem-service profile_plugin_endpoint_matrix_dynamically_controls_enforcement_evaluation`.
+- Adversarial: `/mcp/policy` removed from service route table and gateway forwarding, with `tests/capsem-service/test_svc_mcp_api.py::TestMcpPolicy::test_policy_endpoint_is_burned` and `cargo test -p capsem-gateway gateway_`; retired `/plugins`, `/plugins/{vm_id}`, and `/plugins/global/{plugin_id}` are not forwarded by gateway; retired `mcp.global_policy`, `mcp.default_tool_permission`, and `mcp.tool_permissions` rejected by `load_settings_file_rejects_retired_mcp_policy_keys`; `rg -n "NetworkPolicy::evaluate|\\.evaluate\\(\\\"|is_fully_blocked|PolicyDecision|read allowed by default|write denied by default|fully blocked|blocked domain stays NXDOMAIN" crates/capsem-core/src/net crates/capsem-core/src/net/policy_config/tests.rs -g '*.rs'` returned no matches after burning network allow/block APIs; `rg -n "PolicyRule|NetworkPolicy::evaluate|PolicyDecision|is_fully_blocked|default_allow_read|default_allow_write|network\\.rules|allow_read|allow_write" crates/capsem-core/src crates/capsem-core/tests crates/capsem-service/src crates/capsem-gateway/src -g '*.rs'` has no active domain-decision type/field hits outside retired setting ids/tests; `web_default_toggles_not_exposed_as_guest_authority` proves stale web toggles do not produce guest env authority; `batch_update_rejects_retired_web_decision_setting_ids`, `migrate_setting_ids_does_not_resurrect_retired_web_decision_keys`, `retired_web_decision_settings_are_not_resolved`, and Python `TestRetiredWebDecisionConfig::test_allow_block_fields_fail_closed` prove retired web decision settings fail closed or remain inert stale input.
 - E2E/VM: pending.
 - Telemetry/session DB: pending.
-- Frontend: `pnpm --dir frontend test src/lib/__tests__/api.test.ts src/lib/__tests__/mcp-store.test.ts`; `pnpm --dir frontend test src/lib/__tests__/settings-store.test.ts src/lib/models/__tests__/settings-model.test.ts`; `pnpm --dir frontend check`.
+- Frontend: `pnpm --dir frontend test src/lib/__tests__/api.test.ts src/lib/__tests__/mcp-store.test.ts`; `pnpm --dir frontend test src/lib/__tests__/settings-store.test.ts src/lib/models/__tests__/settings-model.test.ts`; `pnpm --dir frontend check`; `api.test.ts` proves plugin API calls profile-scoped plugin routes and uses `PATCH`.
 - Performance/benchmarks: pending.
 - Install/package: pending.
-- Docs/changelog: `CHANGELOG.md` updated for the MCP policy API/UI/CLI burn and retired web decision settings burn.
+- Docs/changelog: `CHANGELOG.md` updated for the MCP policy API/UI/CLI burn, retired web decision settings burn, and profile-scoped plugin API.

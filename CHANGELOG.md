@@ -77,10 +77,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `SecurityEvent.detections`, rules with `detection_level` append the same
   reporting vector, and `rewrite` is the canonical mutation mode with
   `redact`, `mutate`, and `neutralize` accepted as aliases.
-- Added the plugin/detection/enforcement endpoint taxonomy: `/plugins` reports
-  and updates plugin config globally, `/plugins/{id}` reports per-VM effective
-  plugin config, `/enforcements/evaluate` sends a test event through the real
-  engine, and `/detections/{id}/latest|info` plus
+- Added the plugin/detection/enforcement endpoint taxonomy:
+  `/profiles/{profile_id}/plugins/list`,
+  `/profiles/{profile_id}/plugins/{plugin_id}/info`, and
+  `/profiles/{profile_id}/plugins/{plugin_id}/edit` report and update
+  profile-owned plugin config, `/enforcements/evaluate` sends a test event
+  through the real engine, and `/detections/{id}/latest|info` plus
   `/enforcements/{id}/latest|info` remain table-backed ledger views.
 - Added enforcement rule-management endpoints:
   `POST|DELETE /enforcements/rules/{rule_id}` validate user profile rules
