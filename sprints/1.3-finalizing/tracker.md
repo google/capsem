@@ -26,6 +26,8 @@ commit.
 - [x] Burn UI reflection contract into `plan.md` and `skills/dev-capsem/SKILL.md`.
 - [x] Burn one-UI-editor-one-contract rule into docs.
 - [x] Audit model breaks and capture them in `model-breakage-audit.md`.
+- [x] Audit profile/platform lost work and capture it in
+  `profile-platform-lost-work-audit.md`.
 
 ## Current Partial Work To Reconcile
 
@@ -320,7 +322,26 @@ commit.
 - [x] Normalize VM lifecycle API and frontend calls around `/vms/{vm_id}/...`.
 - [ ] Ensure VM assigned profile id is immutable.
 - [ ] Implement/verify `pause`, `resume`, `save`, `fork`, and operation status.
-- [ ] Ensure profile asset selection is profile-backed.
+- [ ] Restore profile catalog/loader and remove the current `default`-only
+  route validator.
+- [ ] Ensure profile asset selection is profile-backed:
+  `vm.profile_id -> profile assets -> asset manifest/cache -> resolved boot paths`.
+- [ ] Restore per-arch profile asset declarations with URL/hash/signature/size
+  metadata.
+- [ ] Restore profile-aware asset reconciliation/status/ensure.
+- [ ] Restore persistent VM profile/base-asset pins and fail-closed resume/fork/save.
+- [ ] Restore VM/profile DTOs for profile id, revision, status, pin, and base assets.
+- [ ] Restore launchable-profile filtering for UI/TUI/gateway.
+- [ ] Reconcile release/CI profile asset generation so package profiles point at
+  release EROFS/lz4hc assets.
+- [ ] Restore `capsem-admin` as the typed profile/settings/asset/manifest/security
+  pack command surface used by `just`, CI, package payloads, and release gates.
+- [ ] Restore `scripts/build-assets.sh --profile <profile>` or an equivalent
+  `just build-assets profile=...` path that delegates profile-derived
+  kernel/rootfs builds through `capsem-admin`, not raw shell state.
+- [ ] Restore package/bootstrap proof that `capsem-admin` is installed and
+  runnable from native packages.
+- [ ] Restore admin manifest crypto/generate/download-check gates before release.
 - [ ] Ensure service asset cache status remains service-runtime only.
 - [ ] Re-check install flow no longer depends on dead `capsem setup` assumptions.
 - [ ] Verify package UI waits for service readiness and reports install/service
@@ -328,8 +349,9 @@ commit.
 - [ ] Verify assets status surfaces missing `vmlinuz`, `initrd.img`, and rootfs
   accurately.
 - [ ] Add adversarial lifecycle/install tests for start-before-assets,
-  service-down UI, immutable profile mutation, save/fork failure status, and
-  missing initrd/rootfs reporting.
+  service-down UI, immutable profile mutation, fake profile ids, two profiles
+  with different assets, missing/corrupt profile assets, missing profile pins,
+  save/fork failure status, and missing initrd/rootfs reporting.
 - [ ] Commit T5 with tests.
 
 ## T6: Documentation, Changelog, Skills
@@ -403,6 +425,10 @@ invariant sweep before release verification.
 - [ ] A VM executes exactly one immutable profile id.
 - [ ] VM profile id cannot be edited.
 - [ ] Profile owns assets.
+- [ ] Profile owns asset release/logical selection before the asset manifest
+  resolves hashes/paths.
+- [ ] Persistent VMs store profile and base-asset pins.
+- [ ] Resume/fork/save fail closed when profile or base-asset pins are missing.
 - [ ] Profile owns VM config/defaults.
 - [ ] Profile owns rules/enforcement defaults.
 - [ ] Profile owns detection rules.
