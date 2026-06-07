@@ -459,16 +459,40 @@ Current status:
 
 ## Immediate Repair Order
 
+Mandatory restore/port list:
+
+1. A must come back: signed profile catalog/loader/revision trust.
+2. B must come back: profile-owned asset declarations, profile-aware asset
+   supervisor, downloads, hash verification, and boot path resolution.
+3. C must come back: VM profile/base-asset pins and fail-closed resume/fork/save.
+4. D must come back: profile-aware VM creation, gateway, TUI, and UI. The TUI
+   is not optional because `capsem shell`/terminal operation depends on it.
+5. E must come back: `capsem-admin`, profile-derived asset builds, manifest
+   crypto/generate/check, packaging proof, and release/CI integration.
+6. F must come back conceptually: security pack/detection/backtest/corpus and
+   benchmark gates must be rebuilt on the new single `SecurityRuleSet`/CEL rail,
+   not restored as old policy runtime.
+7. Linux/KVM/EROFS benchmark proof must come back or be explicitly handed to
+   the Linux team with a blocking checklist. EROFS/LZ4HC and multi-arch asset
+   proof are part of the profile/admin release contract.
+8. Debug/status diagnostics are useful but survivable for 1.3 unless needed to
+   prove install/support behavior. Do not let them outrank A-E.
+
+Execution order:
+
 1. Rebuild profile catalog/loader and route validation.
 2. Rebuild profile asset declarations and profile-aware asset supervisor.
-3. Rebuild VM profile/base-asset pins and fail-closed resume/fork/save.
-4. Restore service/gateway/client DTOs for profile identity/status/pins.
-5. Restore launchable profile filtering in UI/TUI/gateway.
-6. Reconcile CI/package profile asset generation so release profiles point at
-   release EROFS/lz4hc assets.
-7. Restore `capsem-admin` as the typed asset/profile/security-pack command
-   surface used by `just`, CI, packages, and release verification.
-8. Audit admin/security-pack equivalents after the new profile rail is real.
+3. Rebuild `capsem-admin` enough to drive profile-derived asset builds and
+   manifest verification.
+4. Rebuild VM profile/base-asset pins and fail-closed resume/fork/save.
+5. Restore service/gateway/client DTOs for profile identity/status/pins.
+6. Restore TUI/profile launchability and terminal shell behavior.
+7. Restore launchable profile filtering in UI/gateway/TUI.
+8. Reconcile CI/package profile asset generation so release profiles point at
+   release EROFS/LZ4HC assets.
+9. Restore Linux/KVM/EROFS benchmark evidence and release benchmark docs.
+10. Restore security corpus/pack/benchmark gates on the new rule engine.
+11. Reassess debug/status diagnostics after the core release rail is true.
 
 ## Do Not Restore
 

@@ -331,6 +331,8 @@ commit.
 - [ ] Restore profile-aware asset reconciliation/status/ensure.
 - [ ] Restore persistent VM profile/base-asset pins and fail-closed resume/fork/save.
 - [ ] Restore VM/profile DTOs for profile id, revision, status, pin, and base assets.
+- [ ] Restore TUI crate and terminal shell behavior; `capsem shell` must work
+  through the TUI again.
 - [ ] Restore launchable-profile filtering for UI/TUI/gateway.
 - [ ] Reconcile release/CI profile asset generation so package profiles point at
   release EROFS/lz4hc assets.
@@ -344,8 +346,15 @@ commit.
 - [ ] Restore admin manifest crypto/generate/download-check gates before release.
 - [ ] Classify every `82e7a58c^1..82e7a58c` deleted cluster as intentional
   burn, conceptual port, or exact restore before closing T5.
-- [ ] Review TUI, debug/status diagnostics, security pack corpus/benchmarks,
-  and KVM/checkpoint proof for accidental snapshot loss.
+- [ ] Restore or Linux-team handoff the KVM/checkpoint, EROFS/LZ4HC, multi-arch,
+  and benchmark proof trail. Do not close 1.3 with missing Linux evidence unless
+  it is an explicit release blocker owned by Linux.
+- [ ] Restore advanced benchmark harness/artifacts/docs for EROFS/LZ4HC and
+  current security-event/CEL performance.
+- [ ] Restore security pack/detection/backtest/corpus gates on the new
+  `SecurityRuleSet`/CEL rail.
+- [ ] Review debug/status diagnostics for survivable loss; restore only if
+  needed for install/support proof.
 - [ ] Ensure service asset cache status remains service-runtime only.
 - [ ] Re-check install flow no longer depends on dead `capsem setup` assumptions.
 - [ ] Verify package UI waits for service readiness and reports install/service

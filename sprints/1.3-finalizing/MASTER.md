@@ -12,7 +12,7 @@ contract reset.
 | T2 Security rail burn-down | In Progress | Network web decision settings and MCP policy objects burned; remaining work is route/authoring/profile completion plus full invariant sweep. |
 | T3 Profile/settings/corp UI/API split | Not Started | Settings UI-only, profile behavior profile-backed, one editor writes one contract. |
 | T4 MCP/plugins/credentials/skills UI | In Progress | Plugin UI/API use profile routes; MCP tools now load under profile/server routes. MCP resources/prompts, credentials, and skills remain. |
-| T5 VM lifecycle/assets/install | Blocked | Public lifecycle routes use `/vms/{id}/pause|delete|resume|save|fork`, but profile platform drift is now a release blocker: profile catalog/assets/pins/launchability were flattened, and the `capsem-admin` profile-derived asset/manifest/security-pack command spine was omitted by the cleanup snapshot. See `profile-platform-lost-work-audit.md`. |
+| T5 VM lifecycle/assets/install | Blocked | Snapshot loss must be repaired: profile catalog/assets/pins, `capsem-admin`, profile-derived EROFS/LZ4HC asset builds, TUI/terminal shell, Linux/KVM proof, and security corpus/benchmark gates all need restore/port decisions before 1.3 can close. See `profile-platform-lost-work-audit.md`. |
 | T6 Docs/changelog/skills | Not Started | Full docs pass, changelog, skills, benchmark docs. |
 | T6.5 Invariant review | Not Started | Full pre-verification review of every master contract invariant. |
 | T7 Release verification | Not Started | Focused tests, full smoke, full test cycle, full install cycle, UI sanity, benchmark check. |
