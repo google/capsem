@@ -34,20 +34,6 @@
     expandedGroups = next;
   }
 
-  // --- Per-tool permission ---
-  function normalizeToolPermission(value: string): string {
-    return value === 'warn' ? 'ask' : value;
-  }
-
-  function toolPermission(toolName: string): string {
-    return normalizeToolPermission(mcpStore.policy.tool_permissions[toolName] ?? defaultPermission);
-  }
-
-  async function handleToolPermission(toolName: string, e: Event) {
-    const value = (e.target as HTMLSelectElement).value;
-    await mcpStore.setToolPermission(toolName, value);
-  }
-
   // --- Add server form ---
   let showAddForm = $state(false);
   let newName = $state('');
@@ -125,19 +111,6 @@
     }
   }
 
-  async function handlePolicyChange(e: Event) {
-    const value = (e.target as HTMLSelectElement).value;
-    await api.setMcpDefaultPermission(value);
-    await api.reloadConfig();
-    await settingsStore.load();
-    await mcpStore.load();
-  }
-
-  // Policy from settings tree
-  let defaultPermission = $derived.by(() => {
-    const leaf = settingsStore.findLeaf('mcp.policy.default_tool_permission');
-    return (leaf?.effective_value as string) ?? 'allow';
-  });
 </script>
 
 {#snippet toolList(tools: McpToolInfo[])}
@@ -163,17 +136,6 @@
             <p class="text-xs text-muted-foreground-1 mt-1">{tool.description}</p>
           {/if}
         </div>
-        <div class="shrink-0 mt-0.5">
-          <select
-            class="py-1 px-2 text-xs rounded-lg border border-line-2 bg-layer text-foreground focus:outline-hidden focus:border-primary"
-            value={toolPermission(tool.namespaced_name)}
-            onchange={(e) => handleToolPermission(tool.namespaced_name, e)}
-          >
-            <option value="allow">Allow</option>
-            <option value="ask">Ask</option>
-            <option value="block">Block</option>
-          </select>
-        </div>
       </div>
     {/each}
   </div>
@@ -195,28 +157,6 @@
     >
       <ArrowClockwise size={18} class={mcpStore.loading ? 'animate-spin' : ''} />
     </button>
-  </div>
-
-  <!-- Policy -->
-  <div>
-    <h3 class="text-xs font-semibold text-foreground uppercase tracking-wider mb-2">Policy</h3>
-    <div class="bg-card border border-card-line rounded-xl divide-y divide-card-divider">
-      <div class="flex items-center justify-between p-4">
-        <div>
-          <p class="text-sm font-medium text-foreground">Default tool permission</p>
-          <p class="text-xs text-muted-foreground-1 mt-0.5">Legacy fallback when no named policy rule matches</p>
-        </div>
-        <select
-          class="py-2 px-3 text-sm rounded-lg border border-line-2 bg-layer text-foreground focus:outline-hidden focus:border-primary w-32"
-          value={defaultPermission}
-          onchange={handlePolicyChange}
-        >
-          <option value="allow">Allow</option>
-          <option value="warn">Warn</option>
-          <option value="block">Block</option>
-        </select>
-      </div>
-    </div>
   </div>
 
   <!-- Built-in Servers -->

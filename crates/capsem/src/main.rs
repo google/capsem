@@ -76,7 +76,6 @@ const GROUPED_HELP: &str = "\
 \x1b[36;1;4mMCP:\x1b[0m
   \x1b[32;1mmcp servers\x1b[0m  List configured MCP servers with connection status
   \x1b[32;1mmcp tools\x1b[0m    List discovered MCP tools across all servers
-  \x1b[32;1mmcp policy\x1b[0m   Show the merged MCP policy
   \x1b[32;1mmcp refresh\x1b[0m  Re-discover tools from all MCP servers
   \x1b[32;1mmcp call\x1b[0m     Call an MCP tool
 
@@ -151,8 +150,6 @@ enum McpCommands {
         #[arg(long)]
         server: Option<String>,
     },
-    /// Show the merged MCP policy
-    Policy,
     /// Re-discover tools from all MCP servers
     Refresh,
     /// Call an MCP tool by namespaced name
@@ -1693,11 +1690,6 @@ async fn main() -> Result<()> {
                     );
                 }
             }
-        }
-        Commands::Mcp(McpCommands::Policy) => {
-            let resp: ApiResponse<serde_json::Value> = client.get("/mcp/policy").await?;
-            let policy = resp.into_result()?;
-            println!("{}", serde_json::to_string_pretty(&policy)?);
         }
         Commands::Mcp(McpCommands::Refresh) => {
             let resp: ApiResponse<serde_json::Value> = client

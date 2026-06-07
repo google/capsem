@@ -310,15 +310,6 @@ pub struct McpToolInfoResponse {
     pub pin_changed: bool,
 }
 
-/// Response for GET /mcp/policy.
-#[derive(Serialize, Deserialize, Debug)]
-pub struct McpPolicyInfoResponse {
-    pub global_policy: Option<String>,
-    pub default_tool_permission: String,
-    pub blocked_servers: Vec<String>,
-    pub tool_permissions: HashMap<String, String>,
-}
-
 #[derive(Serialize, Deserialize, Debug)]
 pub struct InspectRequest {
     pub sql: String,

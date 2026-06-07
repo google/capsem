@@ -1,4 +1,4 @@
-"""MCP API endpoints: /mcp/servers, /mcp/tools, /mcp/policy,
+"""MCP API endpoints: /mcp/servers, /mcp/tools,
 /mcp/tools/refresh, /mcp/tools/{name}/approve, /mcp/tools/{name}/call.
 
 These endpoints read from CAPSEM_HOME (user.toml, corp.toml,
@@ -61,22 +61,10 @@ class TestMcpTools:
 
 class TestMcpPolicy:
 
-    def test_policy_returns_merged_shape(self, client):
-        """/mcp/policy returns McpPolicyInfoResponse shape with defaults."""
+    def test_policy_endpoint_is_burned(self, client):
+        """/mcp/policy must not expose a second MCP decision engine."""
         resp = client.get("/mcp/policy")
-        assert resp is not None
-        expected = {
-            "global_policy", "default_tool_permission",
-            "blocked_servers", "tool_permissions",
-        }
-        missing = expected - resp.keys()
-        assert not missing, f"missing policy keys: {missing}"
-        # Handler defaults default_tool_permission to "allow" when unset.
-        assert resp["default_tool_permission"] == "allow", (
-            f"unexpected default_tool_permission: {resp['default_tool_permission']}"
-        )
-        assert isinstance(resp["blocked_servers"], list)
-        assert isinstance(resp["tool_permissions"], dict)
+        assert resp is None or "not found" in str(resp).lower() or "error" in resp
 
 
 class TestMcpToolsRefresh:

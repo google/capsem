@@ -35,7 +35,7 @@ commit.
 - [x] Review uncommitted frontend Policy section changes.
 - [x] Decide whether to keep, reshape, or remove `sprints/security-default-rule-rail/`.
 - [x] Reconcile every partial code change against `api-contract.md`.
-- [ ] Commit reconciled default-rule rail slice; leave no orphan scratch code.
+- [x] Commit reconciled default-rule rail slice; leave no orphan scratch code.
 
 ## T0: Schema And Ownership Contract
 
@@ -94,6 +94,8 @@ commit.
 - [ ] Burn old global authoring routes; do not leave compatibility aliases.
 - [ ] Add adversarial regression tests proving old global authoring routes fail:
   `/enforcements/list`, `/plugins/global/*`, `/mcp/policy`, `/mcp/tools`.
+- [x] Burn `/mcp/policy` from service, gateway, CLI, frontend API/store, and
+  settings UI. Runtime MCP servers/tools remain as mechanics only.
 - [ ] Add adversarial tests for wrong profile ids, wrong VM ids, malformed
   rule ids, invalid enum values, and attempts to mutate immutable VM profile id.
 - [ ] Commit T1 with tests.
@@ -374,17 +376,18 @@ invariant sweep before release verification.
 - [x] Profile UI clarification: `8bf798c3 docs: clarify profile UI contract`.
 - [x] Settings/profile wording correction: `1e39e5b1 docs: fix settings and profile ownership wording`.
 - [x] Mixed editor contract: `9be1503f docs: forbid mixed UI contract editors`.
+- [x] Default-rule implementation checkpoint: `e283c711 feat: make security defaults explicit rules`.
 - [ ] Commit every functional implementation slice with focused tests.
 - [ ] Changelog entries land with the behavior-changing commits they describe.
 
 ## Coverage Ledger
 
 - Unit/contract: `cargo test -p capsem-core net::policy_config::security_rule_profile --lib`; `cargo test -p capsem-core net::policy_config::provider_profile --lib`.
-- Functional API: pending.
-- Adversarial: pending.
+- Functional API: `cargo check -p capsem-service -p capsem-gateway -p capsem`; `uv run python -m pytest tests/capsem-service/test_svc_mcp_api.py -q`.
+- Adversarial: `/mcp/policy` removed from service route table and gateway forwarding, with `tests/capsem-service/test_svc_mcp_api.py::TestMcpPolicy::test_policy_endpoint_is_burned` and `cargo test -p capsem-gateway gateway_`.
 - E2E/VM: pending.
 - Telemetry/session DB: pending.
-- Frontend: pending.
+- Frontend: `pnpm --dir frontend test src/lib/__tests__/api.test.ts src/lib/__tests__/mcp-store.test.ts`; `pnpm --dir frontend check`.
 - Performance/benchmarks: pending.
 - Install/package: pending.
-- Docs/changelog: pending.
+- Docs/changelog: `CHANGELOG.md` updated for the MCP policy API/UI/CLI burn.

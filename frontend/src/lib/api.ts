@@ -23,7 +23,6 @@ import type {
   DownloadProgress,
   McpServerInfo,
   McpToolInfo,
-  McpPolicyInfo,
   VmStateResponse,
   FileListResponse,
   FileContentResult,
@@ -644,40 +643,6 @@ export async function updatePlugin(
 
 // -- MCP config (mutations via settings API) --
 
-/** Get MCP policy from settings. */
-export async function getMcpPolicy(): Promise<McpPolicyInfo> {
-  const resp = await _get('/settings');
-  const settings: SettingsResponse = await resp.json();
-  // Extract MCP policy from settings tree. The backend includes it in the response.
-  return _extractMcpPolicy(settings);
-}
-
-function _extractMcpPolicy(settings: SettingsResponse): McpPolicyInfo {
-  // Walk tree looking for mcp policy values; use defaults if not found.
-  const policy: McpPolicyInfo = {
-    global_policy: null,
-    default_tool_permission: 'allow',
-    blocked_servers: [],
-    tool_permissions: {},
-  };
-  function walk(nodes: typeof settings.tree) {
-    for (const node of nodes) {
-      if (node.kind === 'leaf') {
-        if (node.id === 'mcp.policy.global') {
-          policy.global_policy = node.effective_value as string | null;
-        } else if (node.id === 'mcp.policy.default_tool_permission') {
-          policy.default_tool_permission = node.effective_value as string;
-        }
-      }
-      if (node.kind === 'group' && 'children' in node) {
-        walk(node.children);
-      }
-    }
-  }
-  walk(settings.tree);
-  return policy;
-}
-
 /** Enable/disable an MCP server via settings. */
 export async function setMcpServerEnabled(name: string, enabled: boolean): Promise<void> {
   await saveSettings({ [`mcp.servers.${name}.enabled`]: enabled });
@@ -706,25 +671,6 @@ export async function addMcpServer(
 /** Remove an MCP server via settings. */
 export async function removeMcpServer(name: string): Promise<void> {
   await saveSettings({ [`mcp.servers.${name}`]: null });
-}
-
-/** Set the MCP global policy via settings. */
-export async function setMcpGlobalPolicy(policy: string): Promise<void> {
-  await saveSettings({ 'mcp.policy.global': policy });
-}
-
-/** Set the MCP default tool permission via settings. */
-export async function setMcpDefaultPermission(permission: string): Promise<void> {
-  await saveSettings({ 'mcp.policy.default_tool_permission': permission });
-}
-
-/** Set a per-tool MCP permission via settings. */
-export async function setMcpToolPermission(tool: string, permission: string): Promise<void> {
-  const decision = permission === 'warn' ? 'ask' : permission;
-  if (decision !== 'allow' && decision !== 'ask' && decision !== 'block') {
-    throw new Error(`Unsupported MCP policy decision: ${permission}`);
-  }
-  await saveSettings({ [`mcp.tool_permissions.${tool}`]: decision });
 }
 
 // -- MCP runtime --

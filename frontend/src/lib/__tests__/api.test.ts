@@ -336,48 +336,11 @@ describe('api', () => {
       expect(body['mcp.servers.old-srv']).toBeNull();
     });
 
-    it('setMcpGlobalPolicy sets mcp.policy.global', async () => {
-      mockFetch.mockReturnValueOnce(jsonResponse({ tree: [], issues: [], presets: [] }));
-      await api.setMcpGlobalPolicy('deny');
-      const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
-      const body = JSON.parse(call[1].body);
-      expect(body['mcp.policy.global']).toBe('deny');
-    });
-
-    it('setMcpDefaultPermission sets mcp.policy.default_tool_permission', async () => {
-      mockFetch.mockReturnValueOnce(jsonResponse({ tree: [], issues: [], presets: [] }));
-      await api.setMcpDefaultPermission('warn');
-      const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
-      const body = JSON.parse(call[1].body);
-      expect(body['mcp.policy.default_tool_permission']).toBe('warn');
-    });
-
-    it('setMcpToolPermission sets per-tool key', async () => {
-      mockFetch.mockReturnValueOnce(jsonResponse({ tree: [], issues: [], presets: [] }));
-      await api.setMcpToolPermission('bash', 'block');
-      const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
-      const body = JSON.parse(call[1].body);
-      expect(body['mcp.tool_permissions.bash']).toBe('block');
-    });
-
-    it('getMcpPolicy does not infer per-tool permissions from retired policy payloads', async () => {
-      mockFetch.mockReturnValueOnce(jsonResponse({
-        tree: [],
-        issues: [],
-        presets: [],
-        policy: {
-          mcp: {
-            tool_bash: {
-              on: 'mcp.request',
-              if: 'method == "tools/call" && tool.name == "bash"',
-              decision: 'ask',
-              priority: 500,
-            },
-          },
-        },
-      }));
-      const policy = await api.getMcpPolicy();
-      expect(policy.tool_permissions).toEqual({});
+    it('does not expose retired MCP policy mutators', () => {
+      expect('getMcpPolicy' in api).toBe(false);
+      expect('setMcpGlobalPolicy' in api).toBe(false);
+      expect('setMcpDefaultPermission' in api).toBe(false);
+      expect('setMcpToolPermission' in api).toBe(false);
     });
   });
 

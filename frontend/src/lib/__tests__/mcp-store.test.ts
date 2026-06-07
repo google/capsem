@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { McpServerInfo, McpToolInfo, McpPolicyInfo } from '../types';
+import type { McpServerInfo, McpToolInfo } from '../types';
 
 const mockServers: McpServerInfo[] = [
   {
@@ -31,23 +31,12 @@ const mockTools: McpToolInfo[] = [
   { namespaced_name: 'external__search', original_name: 'search', description: 'Search', server_name: 'external', annotations: null, pin_hash: 'def', approved: false, pin_changed: true },
 ];
 
-const mockPolicy: McpPolicyInfo = {
-  global_policy: 'allow',
-  default_tool_permission: 'allow',
-  blocked_servers: [],
-  tool_permissions: {},
-};
-
 vi.mock('../api', () => ({
   getMcpServers: vi.fn(async () => mockServers),
   getMcpTools: vi.fn(async () => mockTools),
-  getMcpPolicy: vi.fn(async () => mockPolicy),
   setMcpServerEnabled: vi.fn(async () => {}),
   addMcpServer: vi.fn(async () => {}),
   removeMcpServer: vi.fn(async () => {}),
-  setMcpGlobalPolicy: vi.fn(async () => {}),
-  setMcpDefaultPermission: vi.fn(async () => {}),
-  setMcpToolPermission: vi.fn(async () => {}),
   approveMcpTool: vi.fn(async () => {}),
   refreshMcpTools: vi.fn(async () => {}),
 }));
@@ -61,7 +50,7 @@ describe('mcpStore', () => {
     mcpStore = mod.mcpStore;
   });
 
-  it('loads servers, tools, and policy', async () => {
+  it('loads servers and tools only', async () => {
     await mcpStore.load();
 
     expect(mcpStore.servers).toHaveLength(2);
@@ -69,7 +58,7 @@ describe('mcpStore', () => {
 
     expect(mcpStore.tools).toHaveLength(2);
 
-    expect(mcpStore.policy.global_policy).toBe('allow');
+    expect('policy' in mcpStore).toBe(false);
 
     expect(mcpStore.loading).toBe(false);
 
@@ -110,25 +99,10 @@ describe('mcpStore', () => {
     expect(removeMcpServer).toHaveBeenCalledWith('external');
   });
 
-  it('setGlobalPolicy calls API and reloads', async () => {
-    await mcpStore.load();
-    await mcpStore.setGlobalPolicy('deny');
-    const { setMcpGlobalPolicy } = await import('../api');
-    expect(setMcpGlobalPolicy).toHaveBeenCalledWith('deny');
-  });
-
-  it('setDefaultPermission calls API and reloads', async () => {
-    await mcpStore.load();
-    await mcpStore.setDefaultPermission('warn');
-    const { setMcpDefaultPermission } = await import('../api');
-    expect(setMcpDefaultPermission).toHaveBeenCalledWith('warn');
-  });
-
-  it('setToolPermission calls API and reloads', async () => {
-    await mcpStore.load();
-    await mcpStore.setToolPermission('bash', 'block');
-    const { setMcpToolPermission } = await import('../api');
-    expect(setMcpToolPermission).toHaveBeenCalledWith('bash', 'block');
+  it('does not expose retired policy mutation methods', () => {
+    expect('setGlobalPolicy' in mcpStore).toBe(false);
+    expect('setDefaultPermission' in mcpStore).toBe(false);
+    expect('setToolPermission' in mcpStore).toBe(false);
   });
 
   it('approveTool calls API and reloads', async () => {

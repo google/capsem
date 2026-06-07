@@ -9,7 +9,7 @@ import type {
   SettingsResponse,
   ToolConfigSourceRecord,
 } from './types/settings';
-import type { McpServerInfo, McpToolInfo, McpPolicyInfo } from './types';
+import type { McpServerInfo, McpToolInfo } from './types';
 
 // Helper: creates a mock setting with sensible defaults for empty fields.
 function ms(overrides: Partial<ResolvedSetting> & { id: string; category: string; name: string; setting_type: ResolvedSetting['setting_type'] }): ResolvedSetting {
@@ -302,13 +302,6 @@ export const MOCK_MCP_TOOLS: McpToolInfo[] = [
     pin_hash: null, approved: true, pin_changed: false,
   },
 ];
-
-export const MOCK_MCP_POLICY: McpPolicyInfo = {
-  global_policy: 'allow',
-  default_tool_permission: 'allow',
-  blocked_servers: [],
-  tool_permissions: {},
-};
 
 // ---------------------------------------------------------------------------
 // Mock presets

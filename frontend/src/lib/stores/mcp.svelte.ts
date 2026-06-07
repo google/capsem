@@ -2,27 +2,17 @@
 import {
   getMcpServers,
   getMcpTools,
-  getMcpPolicy,
   setMcpServerEnabled,
   addMcpServer,
   removeMcpServer,
-  setMcpGlobalPolicy,
-  setMcpDefaultPermission,
-  setMcpToolPermission,
   approveMcpTool,
   refreshMcpTools,
 } from '../api';
-import type { McpServerInfo, McpToolInfo, McpPolicyInfo } from '../types';
+import type { McpServerInfo, McpToolInfo } from '../types';
 
 class McpStore {
   servers = $state<McpServerInfo[]>([]);
   tools = $state<McpToolInfo[]>([]);
-  policy = $state<McpPolicyInfo>({
-    global_policy: null,
-    default_tool_permission: 'allow',
-    blocked_servers: [],
-    tool_permissions: {},
-  });
   loading = $state(false);
   error = $state<string | null>(null);
 
@@ -49,14 +39,12 @@ class McpStore {
     this.loading = true;
     this.error = null;
     try {
-      const [servers, tools, policy] = await Promise.all([
+      const [servers, tools] = await Promise.all([
         getMcpServers(),
         getMcpTools(),
-        getMcpPolicy(),
       ]);
       this.servers = servers;
       this.tools = tools;
-      this.policy = policy;
     } catch (e) {
       console.error('Failed to load MCP data:', e);
       this.error = String(e);
@@ -77,21 +65,6 @@ class McpStore {
 
   async removeServer(name: string) {
     await removeMcpServer(name);
-    await this.load();
-  }
-
-  async setGlobalPolicy(policy: string) {
-    await setMcpGlobalPolicy(policy);
-    await this.load();
-  }
-
-  async setDefaultPermission(permission: string) {
-    await setMcpDefaultPermission(permission);
-    await this.load();
-  }
-
-  async setToolPermission(tool: string, permission: string) {
-    await setMcpToolPermission(tool, permission);
     await this.load();
   }
 

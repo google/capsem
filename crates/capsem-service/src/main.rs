@@ -3388,33 +3388,6 @@ async fn handle_mcp_tools() -> Json<serde_json::Value> {
     Json(serde_json::to_value(resp).unwrap_or_default())
 }
 
-/// GET /mcp/policy -- return the merged MCP policy.
-async fn handle_mcp_policy() -> Json<serde_json::Value> {
-    use capsem_core::mcp::policy::McpUserConfig;
-
-    let (user_sf, corp_sf) = capsem_core::net::policy_config::load_settings_files();
-    let user_mcp = user_sf.mcp.unwrap_or_default();
-    let corp_mcp = corp_sf.mcp.unwrap_or(McpUserConfig::default());
-
-    let resp = api::McpPolicyInfoResponse {
-        global_policy: user_mcp.global_policy.clone(),
-        default_tool_permission: user_mcp
-            .default_tool_permission
-            .map(|d| format!("{d:?}").to_lowercase())
-            .unwrap_or_else(|| "allow".into()),
-        blocked_servers: {
-            let policy = user_mcp.to_policy(&corp_mcp);
-            policy.blocked_servers
-        },
-        tool_permissions: user_mcp
-            .tool_permissions
-            .iter()
-            .map(|(k, v)| (k.clone(), format!("{v:?}").to_lowercase()))
-            .collect(),
-    };
-    Json(serde_json::to_value(resp).unwrap_or_default())
-}
-
 /// POST /mcp/tools/refresh -- reload MCP servers from config.
 async fn handle_mcp_refresh(
     State(state): State<Arc<ServiceState>>,
@@ -4111,6 +4084,7 @@ fn validate_single_user_profile_rule(
     let profile = SecurityRuleProfile {
         profiles: SecurityRuleGroup {
             rules: BTreeMap::from([(rule_id.to_string(), rule.clone())]),
+            defaults: BTreeMap::new(),
         },
         ..SecurityRuleProfile::default()
     };
@@ -5536,7 +5510,6 @@ async fn main() -> Result<()> {
         .route("/corp-config", post(handle_corp_config))
         .route("/mcp/servers", get(handle_mcp_servers))
         .route("/mcp/tools", get(handle_mcp_tools))
-        .route("/mcp/policy", get(handle_mcp_policy))
         .route("/mcp/tools/refresh", post(handle_mcp_refresh))
         .route("/mcp/tools/{name}/approve", post(handle_mcp_approve))
         .route("/mcp/tools/{name}/call", post(handle_mcp_call))

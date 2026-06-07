@@ -238,14 +238,6 @@ export interface McpToolInfo {
 /** Per-tool permission decision. */
 export type ToolPermission = 'allow' | 'ask' | 'block';
 
-/** Info about the MCP policy. */
-export interface McpPolicyInfo {
-  global_policy: string | null;
-  default_tool_permission: string;
-  blocked_servers: string[];
-  tool_permissions: Record<string, string>;
-}
-
 /** Settings sub-section identifier (dynamic, derived from TOML tree). */
 export type SettingsSection = string;
 

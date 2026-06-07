@@ -275,7 +275,6 @@ fn service_proxy_routes() -> Router<Arc<AppState>> {
         .route("/corp-config", post(proxy::handle_proxy))
         .route("/mcp/servers", get(proxy::handle_proxy))
         .route("/mcp/tools", get(proxy::handle_proxy))
-        .route("/mcp/policy", get(proxy::handle_proxy))
         .route("/mcp/tools/refresh", post(proxy::handle_proxy))
         .route("/mcp/tools/{name}/approve", post(proxy::handle_proxy))
         .route("/mcp/tools/{name}/call", post(proxy::handle_proxy))
@@ -456,6 +455,21 @@ mod tests {
                 "{method} {uri}"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn gateway_does_not_forward_retired_mcp_policy_route() {
+        let app = service_proxy_app("/tmp/capsem-gateway-must-not-connect.sock");
+        let resp = app
+            .oneshot(
+                http::Request::builder()
+                    .uri("/mcp/policy")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), http::StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]
