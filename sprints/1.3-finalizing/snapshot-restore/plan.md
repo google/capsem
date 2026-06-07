@@ -1,5 +1,26 @@
 # Snapshot Restore Plan
 
+## Execution Rules
+
+This is a restore sprint, not a merge sprint.
+
+For each commit in `tracker.md`:
+
+1. Inspect the diff and the tests it introduced.
+2. Decide whether the capability is an exact restore, conceptual port,
+   intentional burn, or Linux handoff.
+3. Record that decision beside the checkbox before checking it.
+4. Restore the smallest coherent capability slice.
+5. Run focused tests before committing the slice.
+
+When old code conflicts with the current design, the current design wins, but
+the old behavioral guarantee must not disappear. Example: old policy pack
+commands should not bring back old policy-v2 runtime, but their corpus/backtest
+discipline must come back on `SecurityRuleSet`.
+
+No fallback, no compatibility shape, no second decision engine. The restored
+system should be simpler after the port, not a layer cake.
+
 ## S0: Inventory And Classification
 
 Goal: make the blast radius auditable before restoring code.

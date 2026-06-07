@@ -14,6 +14,18 @@
 
 Each checkbox means we inspected the commit and recorded one of:
 `exact_restore`, `conceptual_port`, `intentional_burn`, or `linux_handoff`.
+Write the decision inline after the checkbox before marking it complete, for
+example:
+
+```text
+- [x] `048d7cf5 ...` decision: conceptual_port. Notes: restore
+  profile-selected asset requirements, but wire them into current profile
+  routes and asset manager.
+```
+
+Do not check a commit just because a later commit appears to supersede it. If it
+introduced a test, contract, command, or benchmark, inspect it and either port
+the guarantee or explicitly burn it.
 
 ### S1 Profile/Admin/Asset Pipeline Commits
 
