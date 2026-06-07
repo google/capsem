@@ -152,6 +152,12 @@ configuration model.
   - labels for UI-only controls,
   - button text/icons,
   - empty/loading/error shell states.
+- The UI reflects backend field cardinality in its controls:
+  - booleans use toggles/checkboxes,
+  - enums use select boxes, segmented controls, or equivalent enum controls,
+  - numbers use numeric inputs/sliders/steppers with backend constraints,
+  - lists use list editors,
+  - free text uses text inputs/areas.
 - UI grouping must come from backend fields when the group has config meaning
   (`rule.group`, `rule.source`, plugin scope, MCP server id, profile id). The UI
   can choose layout, but it cannot create semantic categories that do not exist

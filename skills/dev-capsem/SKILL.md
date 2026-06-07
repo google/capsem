@@ -143,6 +143,10 @@ UI reflection discipline:
   `group`, and validation messages are the copy/meaning source of truth.
 - The UI may add presentation-only structure: grouping, sorting, filtering,
   tabs, buttons, icons, empty/loading/error shell states.
+- UI controls reflect backend field cardinality: booleans use toggles or
+  checkboxes; enums use select boxes, segmented controls, or equivalent enum
+  controls; numbers use numeric inputs/sliders/steppers with backend
+  constraints; lists use list editors; free text uses text inputs/areas.
 - UI settings are UI/app preferences only. Do not put VM behavior, security
   rules, MCP config, plugin config, credentials, or assets in frontend settings
   stores.
