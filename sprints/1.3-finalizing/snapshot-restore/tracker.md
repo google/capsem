@@ -273,7 +273,15 @@ the guarantee or explicitly burn it.
 ## S1: Profile/Admin Command Spine
 
 - [ ] Restore base profile files as profile-owned release inputs.
-- [ ] Restore profile/settings schemas and fixtures.
+- [ ] Restore profile/settings schemas and fixtures updated to the modern 1.3
+  profile contract.
+- [ ] Restore per-architecture profile asset declarations and update/catalog
+  metadata in profile syntax.
+- [ ] Ensure profile syntax carries modern default rules, enforcement rules,
+  detection levels, AI/provider convenience declarations, MCP, skills,
+  credential broker config, and plugin config.
+- [ ] Validate profile parsing compiles into the new `SecurityRuleSet`/CEL rail;
+  no second policy syntax or compatibility rail.
 - [ ] Restore `capsem-admin` CLI package and entry point.
 - [ ] Restore profile/settings `init|schema|validate|doctor` commands.
 - [ ] Restore image `plan|verify|workspace|build` commands.
@@ -306,7 +314,16 @@ the guarantee or explicitly burn it.
 - [ ] Restore workspace/package references for TUI.
 - [ ] Restore `capsem shell` TUI launch path.
 - [ ] Ensure TUI reads backend profile/session/asset contracts directly.
-- [ ] Add tests for terminal shell launch and profile readiness display.
+- [ ] Restore multi-VM/session navigation and keyboard shortcuts.
+- [ ] Restore TUI VM manipulation flows: create, start, pause, resume, stop,
+  save, fork, delete, and recovery where supported.
+- [ ] Restore terminal attach/reconnect behavior.
+- [ ] Restore profile selection/readiness/status display.
+- [ ] Add regression coverage that status/readiness hotpaths do not query the
+  session DB on every frame.
+- [ ] Add tests for terminal shell launch, profile readiness display,
+  multi-VM/session navigation, lifecycle actions, shortcuts, and corrupt/stopped
+  session recovery.
 - [ ] Commit S3.
 
 ## S4: Linux/KVM/EROFS/LZ4HC And Benchmarks
@@ -314,7 +331,10 @@ the guarantee or explicitly burn it.
 - [ ] Inventory Linux-team scoped commits/files.
 - [ ] Restore/port Linux-team KVM/filesystem changes in scoped files.
 - [ ] Preserve modern `iptables-nft` path; do not restore legacy path.
-- [ ] Restore/verify EROFS/LZ4HC as accepted 1.3 asset format.
+- [ ] Restore/verify EROFS/LZ4HC as accepted 1.3 runtime asset format on every
+  supported architecture.
+- [ ] Ensure profile/admin asset generation emits EROFS/LZ4HC for every
+  supported architecture.
 - [ ] Restore/verify multi-arch asset proof.
 - [ ] Restore advanced benchmark harness/artifacts for EROFS/LZ4HC.
 - [ ] Record zstd comparison evidence and decision.

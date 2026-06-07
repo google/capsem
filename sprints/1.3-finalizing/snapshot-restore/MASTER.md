@@ -93,7 +93,11 @@ It does not own security decisions.
 These are not optional:
 
 - `capsem-admin` as the typed admin command surface.
-- Profile and service-settings schemas/fixtures.
+- Profile and service-settings schemas/fixtures, updated to the modern 1.3
+  profile contract.
+- Profile syntax must carry per-architecture assets, profile identity/metadata,
+  update/catalog information, default rules, the modern rules system, AI
+  provider/rule declarations, MCP, skills, credentials, and plugin config.
 - Profile-derived image plan/verify/workspace/build commands.
 - Manifest check/download-check/generate/sign/verify commands.
 - `just`/CI/release using the typed admin rail instead of shell-only ad hoc
@@ -101,8 +105,14 @@ These are not optional:
 - Profile catalog/loader/revision trust.
 - Profile-aware asset supervisor/reconcile/status/ensure.
 - Persistent VM profile/base-asset pins and fail-closed resume/fork/save.
-- TUI-backed `capsem shell`.
+- TUI-backed `capsem shell`, functionally equivalent to the lost multi-VM TUI:
+  keyboard shortcuts, multi-VM/session manipulation, profile selection,
+  readiness/status display, lifecycle actions, terminal attach/reconnect,
+  fork/save/resume/pause/stop where supported, and no DB-hotpath status polling
+  regressions.
 - Linux-team scoped KVM/filesystem/EROFS/LZ4HC work and benchmark evidence.
+- Capsem must run from EROFS/LZ4HC assets on every supported architecture, not
+  merely keep benchmark artifacts.
 - Detection/enforcement corpus, Sigma facade, backtests, and benchmarks ported
   to the new security rule rail.
 

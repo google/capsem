@@ -41,7 +41,16 @@ corp/user personalization, and release packaging.
 Required capabilities:
 
 - Profile base files exist and are first-class release inputs.
-- Profile/settings schemas and fixtures exist.
+- Profile/settings schemas and fixtures exist and match the modern 1.3
+  contract, not the old profile-v2 surface verbatim.
+- Profile syntax supports per-architecture asset declarations and update/catalog
+  metadata.
+- Profile syntax carries the modern security rule system, including default
+  rules, detection levels, AI/provider convenience declarations, MCP, skills,
+  credential broker config, and plugin config.
+- Profile parsing/validation merges old profile/admin guarantees with the new
+  security-event/CEL engine. There must not be a second policy syntax or hidden
+  compatibility rail.
 - `capsem-admin` exposes typed profile/settings validation.
 - `capsem-admin` exposes image plan/verify/workspace/build commands.
 - `capsem-admin` exposes manifest check/download-check/generate/sign/verify.
@@ -84,7 +93,15 @@ Required capabilities:
 - `capsem shell` launches the TUI-backed shell path.
 - TUI reads profile/session/asset readiness from backend contracts.
 - TUI does not invent profile names/descriptions/icons.
-- Tests prove terminal shell, profile selection/readiness, and session status.
+- TUI is functionally equivalent to the lost multi-VM control surface:
+  keyboard shortcuts, multi-VM/session navigation, create/start/pause/resume/
+  stop/save/fork/delete flows where supported, terminal attach/reconnect,
+  profile selection, readiness/status display, and recovery from corrupt or
+  stopped sessions.
+- TUI status paths must preserve the previous hotpath fixes: status/readiness
+  refresh must not touch the session DB on every frame.
+- Tests prove terminal shell, profile selection/readiness, session status,
+  lifecycle actions, shortcut behavior, and DB-hotpath regressions.
 
 ## S4: Linux/KVM/EROFS/LZ4HC And Benchmarks
 
@@ -94,6 +111,9 @@ Required capabilities:
 
 - KVM/filesystem/EROFS/LZ4HC changes from Linux-team commits are restored or
   ported in scoped files.
+- Capsem boots from EROFS/LZ4HC assets on every supported architecture.
+- Profile/admin asset generation emits EROFS/LZ4HC as the accepted 1.3 runtime
+  format for every supported architecture.
 - Modern `iptables-nft` path stays; legacy iptables paths do not return.
 - Multi-arch asset proof remains.
 - EROFS/LZ4HC benchmark harness and artifacts are restored.
