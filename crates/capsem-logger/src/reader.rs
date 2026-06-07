@@ -1,17 +1,14 @@
 use std::collections::BTreeMap;
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
-use std::time::SystemTime;
+use std::time::{Duration, Instant, SystemTime};
 
-use rusqlite::{params, Connection, OpenFlags, Row};
+use rusqlite::{params, Connection, OpenFlags, OptionalExtension, Row};
 use serde::Serialize;
 use serde_json::Value;
 
 use crate::events::{
     AuditEvent, Decision, ExecEvent, FileAction, FileEvent, McpCall, ModelCall, NetEvent,
-    SecurityAskEvent, SecurityAskStatus, SecurityDetectionLevel, SecurityRuleAction,
-    SecurityRuleEvent, ToolCallEntry, ToolResponseEntry,
+    TelemetryIdentity, ToolCallEntry, ToolResponseEntry,
 };
 use crate::schema;
 
@@ -190,51 +187,18 @@ pub struct HistoryCounts {
     pub audit_count: u64,
 }
 
-/// Rule-match counts grouped by canonical action.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct SecurityRuleActionCount {
-    pub rule_action: String,
-    pub count: u64,
-}
-
-/// Rule-match counts grouped by canonical event type.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct SecurityRuleEventTypeCount {
-    pub event_type: String,
-    pub count: u64,
-}
-
-/// Rule-match counts grouped by immutable rule labels stored in session.db.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct SecurityRuleStatsByRule {
-    pub rule_id: String,
-    pub rule_action: String,
-    pub detection_level: String,
-    pub count: u64,
-    pub latest_event_id: String,
-    pub latest_timestamp_unix_ms: i64,
-}
-
-/// Aggregate security rule statistics regenerated only from session.db.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct SecurityRuleStats {
-    pub total: u64,
-    pub by_action: Vec<SecurityRuleActionCount>,
-    pub by_event_type: Vec<SecurityRuleEventTypeCount>,
-    pub by_rule: Vec<SecurityRuleStatsByRule>,
-}
-
 /// Shared SQL column list for model_calls SELECT queries.
-const MODEL_CALL_COLUMNS_BASE: &str = "id, timestamp, provider, model, process_name, pid,
+const MODEL_CALL_COLUMNS: &str = "id, timestamp, provider, model, process_name, pid,
      method, path, stream,
      system_prompt_preview, messages_count, tools_count,
      request_bytes, request_body_preview,
      message_id, status_code, text_content, thinking_content,
      stop_reason, input_tokens, output_tokens,
-     duration_ms, response_bytes, estimated_cost_usd, trace_id";
+     duration_ms, response_bytes, estimated_cost_usd, trace_id,
+     usage_details";
 
 /// Shared SQL column list for mcp_calls SELECT queries.
-const MCP_CALL_COLUMNS_BASE: &str = "timestamp, server_name, method, tool_name, request_id,
+const MCP_CALL_COLUMNS: &str = "timestamp, server_name, method, tool_name, request_id,
      request_preview, response_preview, decision,
      duration_ms, error_message, process_name,
      bytes_sent, bytes_received,
@@ -250,7 +214,6 @@ fn read_model_call_row(row: &Row<'_>) -> rusqlite::Result<(i64, ModelCall)> {
     Ok((
         id,
         ModelCall {
-            event_id: row.get(27)?,
             timestamp,
             provider: row.get(2)?,
             model: row.get(3)?,
@@ -272,14 +235,14 @@ fn read_model_call_row(row: &Row<'_>) -> rusqlite::Result<(i64, ModelCall)> {
             input_tokens: row.get::<_, Option<i64>>(19)?.map(|t| t as u64),
             output_tokens: row.get::<_, Option<i64>>(20)?.map(|t| t as u64),
             usage_details: row
-                .get::<_, Option<String>>(26)?
+                .get::<_, Option<String>>(25)?
                 .and_then(|s| serde_json::from_str(&s).ok())
                 .unwrap_or_default(),
             duration_ms: row.get::<_, i64>(21)? as u64,
             response_bytes: row.get::<_, i64>(22)? as u64,
             estimated_cost_usd: row.get::<_, f64>(23).unwrap_or(0.0),
             trace_id: row.get(24)?,
-            credential_ref: row.get(25)?,
+            ai_evidence: None,
             tool_calls: Vec::new(),
             tool_responses: Vec::new(),
         },
@@ -337,45 +300,6 @@ impl DbReader {
         Ok(Self { conn })
     }
 
-    fn has_column(&self, table: &str, column: &str) -> bool {
-        let Ok(mut stmt) = self.conn.prepare(&format!("PRAGMA table_info({table})")) else {
-            return false;
-        };
-        let Ok(rows) = stmt.query_map([], |row| row.get::<_, String>(1)) else {
-            return false;
-        };
-        for name in rows.filter_map(Result::ok) {
-            if name == column {
-                return true;
-            }
-        }
-        false
-    }
-
-    fn optional_column_expr(&self, table: &str, column: &str) -> String {
-        if self.has_column(table, column) {
-            column.to_string()
-        } else {
-            format!("NULL AS {column}")
-        }
-    }
-
-    fn model_call_columns(&self) -> String {
-        format!(
-            "{MODEL_CALL_COLUMNS_BASE}, {}, usage_details, {}",
-            self.optional_column_expr("model_calls", "credential_ref"),
-            self.optional_column_expr("model_calls", "event_id")
-        )
-    }
-
-    fn mcp_call_columns(&self) -> String {
-        format!(
-            "{MCP_CALL_COLUMNS_BASE}, {}, {}",
-            self.optional_column_expr("mcp_calls", "credential_ref"),
-            self.optional_column_expr("mcp_calls", "event_id")
-        )
-    }
-
     /// Execute an arbitrary read-only SQL query and return JSON.
     ///
     /// Returns `{"columns":[...],"rows":[[...], ...]}`.
@@ -389,39 +313,7 @@ impl DbReader {
         validate_select_only(sql)?;
 
         const MAX_ROWS: usize = 10_000;
-        const TIMEOUT_MS: u64 = 5_000;
-        const POLL_MS: u64 = 100;
-
-        // Set up interrupt timer.
-        let interrupt_handle = self.conn.get_interrupt_handle();
-        let done = Arc::new(AtomicBool::new(false));
-        let done_clone = Arc::clone(&done);
-        let timer = std::thread::spawn(move || {
-            let polls = TIMEOUT_MS / POLL_MS;
-            for _ in 0..polls {
-                std::thread::sleep(std::time::Duration::from_millis(POLL_MS));
-                if done_clone.load(Ordering::Relaxed) {
-                    return;
-                }
-            }
-            if !done_clone.load(Ordering::Relaxed) {
-                interrupt_handle.interrupt();
-            }
-        });
-
-        let result = self.query_raw_inner(sql, MAX_ROWS);
-
-        // Signal timer to stop and wait for it.
-        done.store(true, Ordering::Relaxed);
-        let _ = timer.join();
-
-        result.map_err(|e| {
-            if e.contains("interrupted") {
-                "query timed out after 5 seconds".to_string()
-            } else {
-                e
-            }
-        })
+        self.with_query_timeout(|| self.query_raw_inner(sql, MAX_ROWS))
     }
 
     /// Execute an arbitrary read-only SQL query with bind parameters and return JSON.
@@ -434,29 +326,23 @@ impl DbReader {
         validate_select_only(sql)?;
 
         const MAX_ROWS: usize = 10_000;
+        self.with_query_timeout(|| self.query_raw_params_inner(sql, params, MAX_ROWS))
+    }
+
+    fn with_query_timeout<F>(&self, query: F) -> Result<String, String>
+    where
+        F: FnOnce() -> Result<String, String>,
+    {
         const TIMEOUT_MS: u64 = 5_000;
-        const POLL_MS: u64 = 100;
+        const PROGRESS_OPS: i32 = 10_000;
 
-        let interrupt_handle = self.conn.get_interrupt_handle();
-        let done = Arc::new(AtomicBool::new(false));
-        let done_clone = Arc::clone(&done);
-        let timer = std::thread::spawn(move || {
-            let polls = TIMEOUT_MS / POLL_MS;
-            for _ in 0..polls {
-                std::thread::sleep(std::time::Duration::from_millis(POLL_MS));
-                if done_clone.load(Ordering::Relaxed) {
-                    return;
-                }
-            }
-            if !done_clone.load(Ordering::Relaxed) {
-                interrupt_handle.interrupt();
-            }
-        });
+        let deadline = Instant::now() + Duration::from_millis(TIMEOUT_MS);
+        self.conn
+            .progress_handler(PROGRESS_OPS, Some(move || Instant::now() >= deadline));
 
-        let result = self.query_raw_params_inner(sql, params, MAX_ROWS);
+        let result = query();
 
-        done.store(true, Ordering::Relaxed);
-        let _ = timer.join();
+        self.conn.progress_handler(0, None::<fn() -> bool>);
 
         result.map_err(|e| {
             if e.contains("interrupted") {
@@ -465,6 +351,27 @@ impl DbReader {
                 e
             }
         })
+    }
+
+    /// Read the session's durable VM/profile/user identity, if recorded.
+    pub fn session_identity(&self) -> rusqlite::Result<Option<TelemetryIdentity>> {
+        self.conn
+            .query_row(
+                "SELECT updated_at, vm_id, profile_id, user_id
+                 FROM session_identity WHERE id = 1",
+                [],
+                |row| {
+                    let ts_str: String = row.get(0)?;
+                    Ok(TelemetryIdentity {
+                        timestamp: humantime::parse_rfc3339(&ts_str)
+                            .unwrap_or(SystemTime::UNIX_EPOCH),
+                        vm_id: row.get(1)?,
+                        profile_id: row.get(2)?,
+                        user_id: row.get(3)?,
+                    })
+                },
+            )
+            .optional()
     }
 
     fn query_raw_inner(&self, sql: &str, max_rows: usize) -> Result<String, String> {
@@ -555,21 +462,18 @@ impl DbReader {
 
     /// Query the most recent N network events, ordered newest first.
     pub fn recent_net_events(&self, limit: usize) -> rusqlite::Result<Vec<NetEvent>> {
-        let credential_ref_col = self.optional_column_expr("net_events", "credential_ref");
-        let event_id_col = self.optional_column_expr("net_events", "event_id");
-        let sql = format!(
+        let mut stmt = self.conn.prepare(
             "SELECT timestamp, domain, port, decision, process_name, pid,
                     method, path, query, status_code,
                     bytes_sent, bytes_received, duration_ms, matched_rule,
                     request_headers, response_headers,
                     request_body_preview, response_body_preview, conn_type,
                     policy_mode, policy_action, policy_rule, policy_reason,
-                    trace_id, {credential_ref_col}, {event_id_col}
+                    trace_id
              FROM net_events
              ORDER BY id DESC
-             LIMIT ?1"
-        );
-        let mut stmt = self.conn.prepare(&sql)?;
+             LIMIT ?1",
+        )?;
 
         let rows = stmt.query_map(params![limit as i64], |row| {
             let ts_str: String = row.get(0)?;
@@ -577,7 +481,6 @@ impl DbReader {
             let decision_str: String = row.get(3)?;
 
             Ok(NetEvent {
-                event_id: row.get(25)?,
                 timestamp,
                 domain: row.get(1)?,
                 port: row.get::<_, i64>(2)? as u16,
@@ -602,7 +505,6 @@ impl DbReader {
                 policy_rule: row.get(21)?,
                 policy_reason: row.get(22)?,
                 trace_id: row.get(23)?,
-                credential_ref: row.get(24)?,
             })
         })?;
 
@@ -612,141 +514,10 @@ impl DbReader {
     /// Query the most recent N model calls, ordered newest first.
     /// Does NOT load nested tool_calls/tool_responses (use tool_calls_for).
     pub fn recent_model_calls(&self, limit: usize) -> rusqlite::Result<Vec<(i64, ModelCall)>> {
-        let sql = format!(
-            "SELECT {} FROM model_calls ORDER BY id DESC LIMIT ?1",
-            self.model_call_columns()
-        );
+        let sql = format!("SELECT {MODEL_CALL_COLUMNS} FROM model_calls ORDER BY id DESC LIMIT ?1");
         let mut stmt = self.conn.prepare(&sql)?;
         let rows = stmt.query_map(params![limit as i64], read_model_call_row)?;
         rows.collect()
-    }
-
-    /// Query recent stored security rule matches, newest first.
-    ///
-    /// This returns the full forensic row, including the rule snapshot and
-    /// normalized event payload as stored at match time. Runtime endpoints may
-    /// expose a smaller projection, but must not consult live rules for truth.
-    pub fn recent_security_rule_events(
-        &self,
-        limit: usize,
-    ) -> rusqlite::Result<Vec<SecurityRuleEvent>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT timestamp_unix_ms, event_id, event_type, rule_id,
-                    rule_action, detection_level, rule_json, event_json, trace_id
-             FROM security_rule_events
-             ORDER BY timestamp_unix_ms DESC, id DESC
-             LIMIT ?1",
-        )?;
-        let rows = stmt.query_map(params![limit as i64], read_security_rule_event_row)?;
-        rows.collect()
-    }
-
-    /// Query recent ask lifecycle records, newest first.
-    pub fn recent_security_ask_events(
-        &self,
-        limit: usize,
-    ) -> rusqlite::Result<Vec<SecurityAskEvent>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT timestamp_unix_ms, ask_id, event_id, event_type, rule_id,
-                    rule_name, status, rule_json, event_json, resolver, reason, trace_id
-             FROM security_ask_events
-             ORDER BY timestamp_unix_ms DESC, id DESC
-             LIMIT ?1",
-        )?;
-        let rows = stmt.query_map(params![limit as i64], read_security_ask_event_row)?;
-        rows.collect()
-    }
-
-    /// Return the latest lifecycle row for an ask id.
-    pub fn latest_security_ask_event(
-        &self,
-        ask_id: &str,
-    ) -> rusqlite::Result<Option<SecurityAskEvent>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT timestamp_unix_ms, ask_id, event_id, event_type, rule_id,
-                    rule_name, status, rule_json, event_json, resolver, reason, trace_id
-             FROM security_ask_events
-             WHERE ask_id = ?1
-             ORDER BY timestamp_unix_ms DESC, id DESC
-             LIMIT 1",
-        )?;
-        let mut rows = stmt.query_map(params![ask_id], read_security_ask_event_row)?;
-        rows.next().transpose()
-    }
-
-    /// Aggregate security rule information from the session DB only.
-    pub fn security_rule_stats(&self) -> rusqlite::Result<SecurityRuleStats> {
-        let total =
-            self.conn
-                .query_row("SELECT COUNT(*) FROM security_rule_events", [], |row| {
-                    row.get::<_, i64>(0).map(|value| value as u64)
-                })?;
-
-        let mut action_stmt = self.conn.prepare(
-            "SELECT rule_action, COUNT(*) FROM security_rule_events
-             GROUP BY rule_action ORDER BY rule_action",
-        )?;
-        let by_action = action_stmt
-            .query_map([], |row| {
-                Ok(SecurityRuleActionCount {
-                    rule_action: row.get(0)?,
-                    count: row.get::<_, i64>(1)? as u64,
-                })
-            })?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-
-        let mut event_type_stmt = self.conn.prepare(
-            "SELECT event_type, COUNT(*) FROM security_rule_events
-             GROUP BY event_type ORDER BY event_type",
-        )?;
-        let by_event_type = event_type_stmt
-            .query_map([], |row| {
-                Ok(SecurityRuleEventTypeCount {
-                    event_type: row.get(0)?,
-                    count: row.get::<_, i64>(1)? as u64,
-                })
-            })?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-
-        let mut rule_stmt = self.conn.prepare(
-            "SELECT
-                sre.rule_id,
-                sre.rule_action,
-                sre.detection_level,
-                COUNT(*) AS count,
-                (
-                    SELECT latest.event_id
-                    FROM security_rule_events latest
-                    WHERE latest.rule_id = sre.rule_id
-                      AND latest.rule_action = sre.rule_action
-                      AND latest.detection_level = sre.detection_level
-                    ORDER BY latest.timestamp_unix_ms DESC, latest.id DESC
-                    LIMIT 1
-                ) AS latest_event_id,
-                MAX(sre.timestamp_unix_ms) AS latest_timestamp_unix_ms
-             FROM security_rule_events sre
-             GROUP BY sre.rule_id, sre.rule_action, sre.detection_level
-             ORDER BY latest_timestamp_unix_ms DESC",
-        )?;
-        let by_rule = rule_stmt
-            .query_map([], |row| {
-                Ok(SecurityRuleStatsByRule {
-                    rule_id: row.get(0)?,
-                    rule_action: row.get(1)?,
-                    detection_level: row.get(2)?,
-                    count: row.get::<_, i64>(3)? as u64,
-                    latest_event_id: row.get(4)?,
-                    latest_timestamp_unix_ms: row.get(5)?,
-                })
-            })?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-
-        Ok(SecurityRuleStats {
-            total,
-            by_action,
-            by_event_type,
-            by_rule,
-        })
     }
 
     /// Count net events by decision: returns (total, allowed, denied).
@@ -995,31 +766,27 @@ impl DbReader {
     /// Search net events by domain, path, method, or matched_rule substring.
     pub fn search_net_events(&self, query: &str, limit: usize) -> rusqlite::Result<Vec<NetEvent>> {
         let pattern = format!("%{query}%");
-        let credential_ref_col = self.optional_column_expr("net_events", "credential_ref");
-        let event_id_col = self.optional_column_expr("net_events", "event_id");
-        let sql = format!(
+        let mut stmt = self.conn.prepare(
             "SELECT timestamp, domain, port, decision, process_name, pid,
                     method, path, query, status_code,
                     bytes_sent, bytes_received, duration_ms, matched_rule,
                     request_headers, response_headers,
                     request_body_preview, response_body_preview, conn_type,
                     policy_mode, policy_action, policy_rule, policy_reason,
-                    trace_id, {credential_ref_col}, {event_id_col}
+                    trace_id
              FROM net_events
              WHERE domain LIKE ?1
                 OR path LIKE ?1
                 OR method LIKE ?1
                 OR matched_rule LIKE ?1
              ORDER BY id DESC
-             LIMIT ?2"
-        );
-        let mut stmt = self.conn.prepare(&sql)?;
+             LIMIT ?2",
+        )?;
         let rows = stmt.query_map(params![pattern, limit as i64], |row| {
             let ts_str: String = row.get(0)?;
             let timestamp = humantime::parse_rfc3339(&ts_str).unwrap_or(SystemTime::UNIX_EPOCH);
             let decision_str: String = row.get(3)?;
             Ok(NetEvent {
-                event_id: row.get(25)?,
                 timestamp,
                 domain: row.get(1)?,
                 port: row.get::<_, i64>(2)? as u16,
@@ -1044,7 +811,6 @@ impl DbReader {
                 policy_rule: row.get(21)?,
                 policy_reason: row.get(22)?,
                 trace_id: row.get(23)?,
-                credential_ref: row.get(24)?,
             })
         })?;
         rows.collect()
@@ -1058,14 +824,13 @@ impl DbReader {
     ) -> rusqlite::Result<Vec<(i64, ModelCall)>> {
         let pattern = format!("%{query}%");
         let sql = format!(
-            "SELECT {}
+            "SELECT {MODEL_CALL_COLUMNS}
              FROM model_calls
              WHERE provider LIKE ?1
                 OR model LIKE ?1
                 OR stop_reason LIKE ?1
              ORDER BY id DESC
-             LIMIT ?2",
-            self.model_call_columns()
+             LIMIT ?2"
         );
         let mut stmt = self.conn.prepare(&sql)?;
         let rows = stmt.query_map(params![pattern, limit as i64], |row| {
@@ -1258,8 +1023,7 @@ impl DbReader {
     /// Load full detail for a single trace: all calls with tool data.
     pub fn trace_detail(&self, trace_id: &str) -> rusqlite::Result<TraceDetail> {
         let sql = format!(
-            "SELECT {} FROM model_calls WHERE trace_id = ?1 ORDER BY id ASC",
-            self.model_call_columns()
+            "SELECT {MODEL_CALL_COLUMNS} FROM model_calls WHERE trace_id = ?1 ORDER BY id ASC"
         );
         let mut stmt = self.conn.prepare(&sql)?;
         let rows: Vec<(i64, ModelCall)> = stmt
@@ -1341,16 +1105,12 @@ impl DbReader {
 
     /// Query the most recent N file events, ordered newest first.
     pub fn recent_file_events(&self, limit: usize) -> rusqlite::Result<Vec<FileEvent>> {
-        let trace_id_col = self.optional_column_expr("fs_events", "trace_id");
-        let credential_ref_col = self.optional_column_expr("fs_events", "credential_ref");
-        let event_id_col = self.optional_column_expr("fs_events", "event_id");
-        let sql = format!(
-            "SELECT timestamp, action, path, size, {trace_id_col}, {credential_ref_col}, {event_id_col}
+        let mut stmt = self.conn.prepare(
+            "SELECT timestamp, action, path, size
              FROM fs_events
              ORDER BY id DESC
-             LIMIT ?1"
-        );
-        let mut stmt = self.conn.prepare(&sql)?;
+             LIMIT ?1",
+        )?;
         let rows = stmt.query_map(params![limit as i64], read_file_event_row)?;
         rows.collect()
     }
@@ -1362,17 +1122,13 @@ impl DbReader {
         limit: usize,
     ) -> rusqlite::Result<Vec<FileEvent>> {
         let pattern = format!("%{query}%");
-        let trace_id_col = self.optional_column_expr("fs_events", "trace_id");
-        let credential_ref_col = self.optional_column_expr("fs_events", "credential_ref");
-        let event_id_col = self.optional_column_expr("fs_events", "event_id");
-        let sql = format!(
-            "SELECT timestamp, action, path, size, {trace_id_col}, {credential_ref_col}, {event_id_col}
+        let mut stmt = self.conn.prepare(
+            "SELECT timestamp, action, path, size
              FROM fs_events
              WHERE path LIKE ?1
              ORDER BY id DESC
-             LIMIT ?2"
-        );
-        let mut stmt = self.conn.prepare(&sql)?;
+             LIMIT ?2",
+        )?;
         let rows = stmt.query_map(params![pattern, limit as i64], read_file_event_row)?;
         rows.collect()
     }
@@ -1405,11 +1161,10 @@ impl DbReader {
     /// Query the most recent N MCP calls, ordered newest first.
     pub fn recent_mcp_calls(&self, limit: usize) -> rusqlite::Result<Vec<McpCall>> {
         let sql = format!(
-            "SELECT {}
+            "SELECT {MCP_CALL_COLUMNS}
              FROM mcp_calls
              ORDER BY id DESC
-             LIMIT ?1",
-            self.mcp_call_columns()
+             LIMIT ?1"
         );
         let mut stmt = self.conn.prepare(&sql)?;
         let rows = stmt.query_map(params![limit as i64], read_mcp_call_row)?;
@@ -1420,14 +1175,13 @@ impl DbReader {
     pub fn search_mcp_calls(&self, query: &str, limit: usize) -> rusqlite::Result<Vec<McpCall>> {
         let pattern = format!("%{query}%");
         let sql = format!(
-            "SELECT {}
+            "SELECT {MCP_CALL_COLUMNS}
              FROM mcp_calls
              WHERE server_name LIKE ?1
                 OR method LIKE ?1
                 OR tool_name LIKE ?1
              ORDER BY id DESC
-             LIMIT ?2",
-            self.mcp_call_columns()
+             LIMIT ?2"
         );
         let mut stmt = self.conn.prepare(&sql)?;
         let rows = stmt.query_map(params![pattern, limit as i64], read_mcp_call_row)?;
@@ -1598,19 +1352,14 @@ impl DbReader {
 
     /// Recent exec events (for Layer 1 queries).
     pub fn recent_exec_events(&self, limit: usize) -> rusqlite::Result<Vec<ExecEvent>> {
-        let credential_ref_col = self.optional_column_expr("exec_events", "credential_ref");
-        let event_id_col = self.optional_column_expr("exec_events", "event_id");
-        let sql = format!(
-            "SELECT timestamp, exec_id, command, source, mcp_call_id, trace_id, process_name,
-                    {credential_ref_col}, {event_id_col}
-             FROM exec_events ORDER BY timestamp DESC LIMIT ?1"
-        );
-        let mut stmt = self.conn.prepare(&sql)?;
+        let mut stmt = self.conn.prepare(
+            "SELECT timestamp, exec_id, command, source, mcp_call_id, trace_id, process_name
+             FROM exec_events ORDER BY timestamp DESC LIMIT ?1",
+        )?;
         let rows = stmt.query_map(params![limit as i64], |row| {
             let ts_str: String = row.get(0)?;
             let timestamp = humantime::parse_rfc3339(&ts_str).unwrap_or(SystemTime::UNIX_EPOCH);
             Ok(ExecEvent {
-                event_id: row.get(8)?,
                 timestamp,
                 exec_id: row.get::<_, i64>(1)? as u64,
                 command: row.get(2)?,
@@ -1618,7 +1367,6 @@ impl DbReader {
                 mcp_call_id: row.get::<_, Option<i64>>(4)?.map(|v| v as u64),
                 trace_id: row.get(5)?,
                 process_name: row.get(6)?,
-                credential_ref: row.get(7)?,
             })
         })?;
         rows.collect()
@@ -1626,21 +1374,15 @@ impl DbReader {
 
     /// Recent audit events (for Layer 3 queries).
     pub fn recent_audit_events(&self, limit: usize) -> rusqlite::Result<Vec<AuditEvent>> {
-        let trace_id_col = self.optional_column_expr("audit_events", "trace_id");
-        let credential_ref_col = self.optional_column_expr("audit_events", "credential_ref");
-        let event_id_col = self.optional_column_expr("audit_events", "event_id");
-        let sql = format!(
+        let mut stmt = self.conn.prepare(
             "SELECT timestamp, pid, ppid, uid, exe, comm, argv, cwd,
-                    tty, session_id, audit_id, exec_event_id, parent_exe,
-                    {trace_id_col}, {credential_ref_col}, {event_id_col}
-             FROM audit_events ORDER BY timestamp DESC LIMIT ?1"
-        );
-        let mut stmt = self.conn.prepare(&sql)?;
+                    tty, session_id, audit_id, exec_event_id, parent_exe
+             FROM audit_events ORDER BY timestamp DESC LIMIT ?1",
+        )?;
         let rows = stmt.query_map(params![limit as i64], |row| {
             let ts_str: String = row.get(0)?;
             let timestamp = humantime::parse_rfc3339(&ts_str).unwrap_or(SystemTime::UNIX_EPOCH);
             Ok(AuditEvent {
-                event_id: row.get(15)?,
                 timestamp,
                 pid: row.get::<_, i64>(1)? as u32,
                 ppid: row.get::<_, i64>(2)? as u32,
@@ -1654,64 +1396,11 @@ impl DbReader {
                 audit_id: row.get(10)?,
                 exec_event_id: row.get(11)?,
                 parent_exe: row.get(12)?,
-                trace_id: row.get(13)?,
-                credential_ref: row.get(14)?,
+                trace_id: None,
             })
         })?;
         rows.collect()
     }
-}
-
-fn read_security_rule_event_row(row: &Row<'_>) -> rusqlite::Result<SecurityRuleEvent> {
-    let rule_action: String = row.get(4)?;
-    let detection_level: String = row.get(5)?;
-    Ok(SecurityRuleEvent {
-        timestamp_unix_ms: row.get(0)?,
-        event_id: row.get(1)?,
-        event_type: row.get(2)?,
-        rule_id: row.get(3)?,
-        rule_action: SecurityRuleAction::parse_str(&rule_action).ok_or_else(|| {
-            rusqlite::Error::FromSqlConversionFailure(
-                4,
-                rusqlite::types::Type::Text,
-                format!("unknown rule_action {rule_action}").into(),
-            )
-        })?,
-        detection_level: SecurityDetectionLevel::parse_str(&detection_level).ok_or_else(|| {
-            rusqlite::Error::FromSqlConversionFailure(
-                5,
-                rusqlite::types::Type::Text,
-                format!("unknown detection_level {detection_level}").into(),
-            )
-        })?,
-        rule_json: row.get(6)?,
-        event_json: row.get(7)?,
-        trace_id: row.get(8)?,
-    })
-}
-
-fn read_security_ask_event_row(row: &Row<'_>) -> rusqlite::Result<SecurityAskEvent> {
-    let status: String = row.get(6)?;
-    Ok(SecurityAskEvent {
-        timestamp_unix_ms: row.get(0)?,
-        ask_id: row.get(1)?,
-        event_id: row.get(2)?,
-        event_type: row.get(3)?,
-        rule_id: row.get(4)?,
-        rule_name: row.get(5)?,
-        status: SecurityAskStatus::parse_str(&status).ok_or_else(|| {
-            rusqlite::Error::FromSqlConversionFailure(
-                6,
-                rusqlite::types::Type::Text,
-                format!("unknown ask status {status}").into(),
-            )
-        })?,
-        rule_json: row.get(7)?,
-        event_json: row.get(8)?,
-        resolver: row.get(9)?,
-        reason: row.get(10)?,
-        trace_id: row.get(11)?,
-    })
 }
 
 /// Parse an fs_events row into FileEvent. Column order must match the SELECT in queries above.
@@ -1720,13 +1409,11 @@ fn read_file_event_row(row: &Row<'_>) -> rusqlite::Result<FileEvent> {
     let timestamp = humantime::parse_rfc3339(&ts_str).unwrap_or(SystemTime::UNIX_EPOCH);
     let action_str: String = row.get(1)?;
     Ok(FileEvent {
-        event_id: row.get::<_, Option<String>>(6).ok().flatten(),
         timestamp,
         action: FileAction::parse_str(&action_str),
         path: row.get(2)?,
         size: row.get::<_, Option<i64>>(3)?.map(|s| s as u64),
         trace_id: row.get::<_, Option<String>>(4).ok().flatten(),
-        credential_ref: row.get::<_, Option<String>>(5).ok().flatten(),
     })
 }
 
@@ -1735,7 +1422,6 @@ fn read_mcp_call_row(row: &Row<'_>) -> rusqlite::Result<McpCall> {
     let ts_str: String = row.get(0)?;
     let timestamp = humantime::parse_rfc3339(&ts_str).unwrap_or(SystemTime::UNIX_EPOCH);
     Ok(McpCall {
-        event_id: row.get(19)?,
         timestamp,
         server_name: row.get(1)?,
         method: row.get(2)?,
@@ -1754,7 +1440,6 @@ fn read_mcp_call_row(row: &Row<'_>) -> rusqlite::Result<McpCall> {
         policy_rule: row.get(15)?,
         policy_reason: row.get(16)?,
         trace_id: row.get(17)?,
-        credential_ref: row.get(18)?,
     })
 }
 
@@ -1834,6 +1519,19 @@ mod tests {
         assert_eq!(parsed["rows"].as_array().unwrap().len(), 2);
         assert_eq!(parsed["rows"][0][0], "example.com");
         assert_eq!(parsed["rows"][1][0], "evil.com");
+    }
+
+    #[test]
+    fn query_raw_fast_path_does_not_wait_for_interrupt_timer() {
+        let reader = setup_reader_with_data();
+        let started = std::time::Instant::now();
+        for _ in 0..3 {
+            reader.query_raw("SELECT 1 AS one").unwrap();
+        }
+        assert!(
+            started.elapsed() < std::time::Duration::from_millis(80),
+            "fast SELECTs should not pay the old 100ms interrupt timer floor"
+        );
     }
 
     #[test]
@@ -2025,70 +1723,6 @@ mod tests {
         assert_eq!(evs.len(), 2);
         assert_eq!(evs[0].domain, "broken.com");
         assert_eq!(evs[1].domain, "evil.com");
-    }
-
-    #[test]
-    fn recent_security_rule_events_orders_newest_first_and_keeps_payloads() {
-        let r = DbReader::open_in_memory().unwrap();
-        r.conn
-            .execute_batch(
-                "INSERT INTO security_rule_events (
-                    timestamp_unix_ms, event_id, event_type, rule_id,
-                    rule_action, detection_level, rule_json, event_json
-                 ) VALUES
-                    (1789000000000, '111111111111', 'http.request', 'allow_github',
-                     'allow', 'none', '{\"name\":\"allow_github\"}', '{\"http\":{\"host\":\"api.github.com\"}}'),
-                    (1789000000001, '222222222222', 'model.request', 'block_openai',
-                     'block', 'critical', '{\"name\":\"block_openai\"}', '{\"model\":{\"provider\":\"openai\"}}')",
-            )
-            .unwrap();
-
-        let latest = r.recent_security_rule_events(2).unwrap();
-        assert_eq!(latest.len(), 2);
-        assert_eq!(latest[0].event_id, "222222222222");
-        assert_eq!(latest[0].rule_id, "block_openai");
-        assert_eq!(latest[0].rule_action, SecurityRuleAction::Block);
-        assert_eq!(latest[0].detection_level, SecurityDetectionLevel::Critical);
-        assert!(latest[0].rule_json.contains("block_openai"));
-        assert!(latest[0].event_json.contains("openai"));
-    }
-
-    #[test]
-    fn security_rule_stats_are_db_only() {
-        let r = DbReader::open_in_memory().unwrap();
-        r.conn
-            .execute_batch(
-                "INSERT INTO security_rule_events (
-                    timestamp_unix_ms, event_id, event_type, rule_id,
-                    rule_action, detection_level, rule_json, event_json
-                 ) VALUES
-                    (1789000000000, '111111111111', 'model.request', 'block_openai',
-                     'block', 'critical', '{}', '{}'),
-                    (1789000000001, '222222222222', 'model.request', 'block_openai',
-                     'block', 'critical', '{}', '{}'),
-                    (1789000000002, '333333333333', 'http.request', 'allow_github',
-                     'allow', 'none', '{}', '{}')",
-            )
-            .unwrap();
-
-        let stats = r.security_rule_stats().unwrap();
-        assert_eq!(stats.total, 3);
-        assert!(stats
-            .by_action
-            .iter()
-            .any(|entry| entry.rule_action == "block" && entry.count == 2));
-        assert!(stats
-            .by_event_type
-            .iter()
-            .any(|entry| entry.event_type == "model.request" && entry.count == 2));
-        let block = stats
-            .by_rule
-            .iter()
-            .find(|entry| entry.rule_id == "block_openai")
-            .unwrap();
-        assert_eq!(block.count, 2);
-        assert_eq!(block.latest_event_id, "222222222222");
-        assert_eq!(block.latest_timestamp_unix_ms, 1_789_000_000_001);
     }
 
     #[test]

@@ -8,10 +8,10 @@ import pytest
 
 from pathlib import Path
 
+from capsem.builder.docker import GUEST_BINARIES
+
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 ASSETS_DIR = PROJECT_ROOT / "assets"
-
-GUEST_BINARIES = ["capsem-pty-agent", "capsem-net-proxy", "capsem-mcp-server"]
 
 pytestmark = pytest.mark.security
 
@@ -29,8 +29,7 @@ def test_agent_binaries_555():
 
     for name in GUEST_BINARIES:
         binary = agent_dir / name
-        if not binary.exists():
-            continue
+        assert binary.exists(), f"{name} missing from {agent_dir}"
         mode = oct(binary.stat().st_mode & 0o777)
         assert mode == "0o555", f"{name} should be 555, got {mode}"
 
@@ -58,8 +57,7 @@ def test_initrd_binaries_555():
         for name in GUEST_BINARIES:
             # Binaries might be at root or in usr/bin
             candidates = list(Path(tmp).rglob(name))
-            if not candidates:
-                continue
+            assert candidates, f"{name} missing from initrd"
             binary = candidates[0]
             mode = oct(binary.stat().st_mode & 0o777)
             assert mode == "0o555", f"{name} in initrd should be 555, got {mode}"

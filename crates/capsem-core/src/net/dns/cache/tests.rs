@@ -5,8 +5,6 @@ use std::net::Ipv4Addr;
 use hickory_proto::op::{Message, MessageType, OpCode, Query, ResponseCode};
 use hickory_proto::rr::{rdata, Name, RData, Record, RecordType};
 
-use crate::net::policy::{DnsRedirect, DomainMatcher, NetworkPolicy, PolicyRule};
-
 /// Build a synthetic A-record answer for `qname` with `ttl` seconds
 /// on the answer record. Used to seed cache entries with known TTLs.
 fn build_answer(qname: &str, ttl: u32, ip: [u8; 4]) -> Vec<u8> {
@@ -23,90 +21,40 @@ fn build_answer(qname: &str, ttl: u32, ip: [u8; 4]) -> Vec<u8> {
     msg.to_vec().unwrap()
 }
 
-fn allow_all() -> NetworkPolicy {
-    NetworkPolicy::new(vec![], true, true)
-}
-
 #[test]
 fn miss_on_empty_cache() {
     let cache = DnsAnswerCache::new(16, 300);
-    let policy = allow_all();
-    assert!(cache.get("example.com", 1, 1, 0, &policy).is_none());
+    assert!(cache.get("example.com", 1, 1, 0).is_none());
     assert_eq!(cache.len(), 0);
 }
 
 #[test]
 fn hit_after_insert_within_ttl() {
     let cache = DnsAnswerCache::new(16, 300);
-    let policy = allow_all();
     let bytes = build_answer("example.com.", 60, [1, 2, 3, 4]);
     cache.insert("example.com", 1, 1, &bytes);
     // Pass query_id = 0x1234 -- matches build_answer's hard-coded
     // id so the qid patch is a no-op and we can compare bit-for-bit.
-    let got = cache.get("example.com", 1, 1, 0x1234, &policy);
+    let got = cache.get("example.com", 1, 1, 0x1234);
     assert_eq!(got.as_deref(), Some(bytes.as_slice()));
 }
 
 #[test]
 fn miss_when_qtype_differs() {
     let cache = DnsAnswerCache::new(16, 300);
-    let policy = allow_all();
     let bytes = build_answer("example.com.", 60, [1, 2, 3, 4]);
     cache.insert("example.com", 1, 1, &bytes);
     // Same qname, different qtype (AAAA) -- must miss.
-    assert!(cache.get("example.com", 28, 1, 0, &policy).is_none());
+    assert!(cache.get("example.com", 28, 1, 0).is_none());
 }
 
 #[test]
 fn miss_when_qclass_differs() {
     let cache = DnsAnswerCache::new(16, 300);
-    let policy = allow_all();
     let bytes = build_answer("example.com.", 60, [1, 2, 3, 4]);
     cache.insert("example.com", 1, 1, &bytes);
     // CHAOS qclass on the same name+qtype -- must miss.
-    assert!(cache.get("example.com", 1, 3, 0, &policy).is_none());
-}
-
-#[test]
-fn invalidated_when_policy_now_blocks() {
-    let cache = DnsAnswerCache::new(16, 300);
-    let bytes = build_answer("anthropic.com.", 60, [10, 0, 0, 1]);
-    cache.insert("anthropic.com", 1, 1, &bytes);
-
-    // Hit under allow-all policy.
-    assert!(cache.get("anthropic.com", 1, 1, 0, &allow_all()).is_some());
-
-    // Now construct a policy that blocks it.
-    let mut blocked = NetworkPolicy::new(vec![], true, true);
-    blocked.rules.push(PolicyRule {
-        matcher: DomainMatcher::parse("anthropic.com"),
-        allow_read: false,
-        allow_write: false,
-    });
-    // Lookup with the new policy MUST miss + drop the entry.
-    assert!(cache.get("anthropic.com", 1, 1, 0, &blocked).is_none());
-    // Subsequent lookup also misses (entry was popped).
-    assert!(cache.get("anthropic.com", 1, 1, 0, &blocked).is_none());
-}
-
-#[test]
-fn invalidated_when_policy_now_redirects() {
-    let cache = DnsAnswerCache::new(16, 300);
-    let bytes = build_answer("anthropic.com.", 60, [10, 0, 0, 1]);
-    cache.insert("anthropic.com", 1, 1, &bytes);
-
-    let mut redirect_policy = NetworkPolicy::new(vec![], true, true);
-    redirect_policy.dns_redirects.push(DnsRedirect::new(
-        "anthropic.com",
-        Some(1),
-        vec![std::net::IpAddr::V4(Ipv4Addr::LOCALHOST)],
-        60,
-    ));
-    // Cache hit must not bypass an admin's later redirect rule --
-    // the next lookup must miss + invalidate.
-    assert!(cache
-        .get("anthropic.com", 1, 1, 0, &redirect_policy)
-        .is_none());
+    assert!(cache.get("example.com", 1, 3, 0).is_none());
 }
 
 #[test]
@@ -117,16 +65,13 @@ fn cache_hit_patches_query_id_into_response() {
     // resolver correlation. Cache::get must rewrite bytes 0-1
     // to the current query's id on every hit.
     let cache = DnsAnswerCache::new(16, 300);
-    let policy = allow_all();
     // build_answer hard-codes id=0x1234.
     let bytes = build_answer("example.com.", 60, [1, 2, 3, 4]);
     cache.insert("example.com", 1, 1, &bytes);
 
     // Hit with a different query id -- response bytes 0-1 must
     // reflect THAT id, not 0x1234.
-    let got = cache
-        .get("example.com", 1, 1, 0xCAFE, &policy)
-        .expect("cache hit");
+    let got = cache.get("example.com", 1, 1, 0xCAFE).expect("cache hit");
     assert_eq!(got[0], 0xCA, "bytes[0] not patched: {:#04x}", got[0]);
     assert_eq!(got[1], 0xFE, "bytes[1] not patched: {:#04x}", got[1]);
     // Sanity: rest of the response is untouched (next 2 bytes are
@@ -134,9 +79,7 @@ fn cache_hit_patches_query_id_into_response() {
     assert_eq!(&got[2..], &bytes[2..]);
 
     // Different id again, same key -- another patch.
-    let got2 = cache
-        .get("example.com", 1, 1, 0xBABE, &policy)
-        .expect("cache hit 2");
+    let got2 = cache.get("example.com", 1, 1, 0xBABE).expect("cache hit 2");
     assert_eq!(got2[0], 0xBA);
     assert_eq!(got2[1], 0xBE);
 }
@@ -146,10 +89,9 @@ fn cache_hit_with_zero_query_id_zeroes_bytes() {
     // Defensive: query id = 0 must overwrite the cached bytes too,
     // not skip the patch.
     let cache = DnsAnswerCache::new(16, 300);
-    let policy = allow_all();
     let bytes = build_answer("example.com.", 60, [1, 2, 3, 4]);
     cache.insert("example.com", 1, 1, &bytes);
-    let got = cache.get("example.com", 1, 1, 0, &policy).unwrap();
+    let got = cache.get("example.com", 1, 1, 0).unwrap();
     assert_eq!(got[0], 0);
     assert_eq!(got[1], 0);
 }
@@ -157,49 +99,45 @@ fn cache_hit_with_zero_query_id_zeroes_bytes() {
 #[test]
 fn evicts_when_capacity_exceeded() {
     let cache = DnsAnswerCache::new(2, 300);
-    let policy = allow_all();
     cache.insert("a.com", 1, 1, &build_answer("a.com.", 60, [1, 1, 1, 1]));
     cache.insert("b.com", 1, 1, &build_answer("b.com.", 60, [2, 2, 2, 2]));
     assert_eq!(cache.len(), 2);
     cache.insert("c.com", 1, 1, &build_answer("c.com.", 60, [3, 3, 3, 3]));
     assert_eq!(cache.len(), 2); // a.com evicted (LRU)
-    assert!(cache.get("a.com", 1, 1, 0, &policy).is_none());
-    assert!(cache.get("b.com", 1, 1, 0, &policy).is_some());
-    assert!(cache.get("c.com", 1, 1, 0, &policy).is_some());
+    assert!(cache.get("a.com", 1, 1, 0).is_none());
+    assert!(cache.get("b.com", 1, 1, 0).is_some());
+    assert!(cache.get("c.com", 1, 1, 0).is_some());
 }
 
 #[test]
 fn capacity_one_still_works() {
     let cache = DnsAnswerCache::new(1, 300);
-    let policy = allow_all();
     cache.insert("a.com", 1, 1, &build_answer("a.com.", 60, [1, 2, 3, 4]));
     cache.insert("b.com", 1, 1, &build_answer("b.com.", 60, [5, 6, 7, 8]));
     assert_eq!(cache.len(), 1);
-    assert!(cache.get("a.com", 1, 1, 0, &policy).is_none());
-    assert!(cache.get("b.com", 1, 1, 0, &policy).is_some());
+    assert!(cache.get("a.com", 1, 1, 0).is_none());
+    assert!(cache.get("b.com", 1, 1, 0).is_some());
 }
 
 #[test]
 fn capacity_zero_clamped_to_one() {
     // We don't crash on zero -- silent bump to 1.
     let cache = DnsAnswerCache::new(0, 300);
-    let policy = allow_all();
     cache.insert("a.com", 1, 1, &build_answer("a.com.", 60, [1, 2, 3, 4]));
-    assert!(cache.get("a.com", 1, 1, 0, &policy).is_some());
+    assert!(cache.get("a.com", 1, 1, 0).is_some());
 }
 
 #[test]
 fn lru_order_updates_on_access() {
     let cache = DnsAnswerCache::new(2, 300);
-    let policy = allow_all();
     cache.insert("a.com", 1, 1, &build_answer("a.com.", 60, [1, 1, 1, 1]));
     cache.insert("b.com", 1, 1, &build_answer("b.com.", 60, [2, 2, 2, 2]));
     // Access a -> a becomes most-recently-used; b is now LRU.
-    let _ = cache.get("a.com", 1, 1, 0, &policy);
+    let _ = cache.get("a.com", 1, 1, 0);
     cache.insert("c.com", 1, 1, &build_answer("c.com.", 60, [3, 3, 3, 3]));
     // b should be evicted, not a.
-    assert!(cache.get("a.com", 1, 1, 0, &policy).is_some());
-    assert!(cache.get("b.com", 1, 1, 0, &policy).is_none());
+    assert!(cache.get("a.com", 1, 1, 0).is_some());
+    assert!(cache.get("b.com", 1, 1, 0).is_none());
 }
 
 #[test]
@@ -283,7 +221,6 @@ fn clear_drops_every_entry() {
 fn default_capacity_and_max_ttl_match_constants() {
     let cache = DnsAnswerCache::default();
     // Insert N+1 entries to verify capacity is what we claimed.
-    let policy = allow_all();
     for i in 0..(DEFAULT_CAPACITY + 1) {
         let name = format!("h{i}.example.com");
         cache.insert(
@@ -295,5 +232,5 @@ fn default_capacity_and_max_ttl_match_constants() {
     }
     assert_eq!(cache.len(), DEFAULT_CAPACITY);
     // First one should now be evicted.
-    assert!(cache.get("h0.example.com", 1, 1, 0, &policy).is_none());
+    assert!(cache.get("h0.example.com", 1, 1, 0).is_none());
 }

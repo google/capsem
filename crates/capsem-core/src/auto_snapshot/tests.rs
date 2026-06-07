@@ -224,6 +224,36 @@ fn workspace_hash_is_deterministic() {
     assert_eq!(h1.len(), 64); // blake3 hex
 }
 
+#[cfg(target_os = "linux")]
+#[test]
+fn sparse_copy_fallback_preserves_holes() {
+    use std::io::{Seek, SeekFrom, Write};
+    use std::os::unix::fs::MetadataExt;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let src = tmp.path().join("rootfs.img");
+    let dst = tmp.path().join("rootfs-copy.img");
+
+    let mut file = std::fs::File::create(&src).unwrap();
+    file.write_all(b"head").unwrap();
+    file.seek(SeekFrom::Start(128 * 1024 * 1024)).unwrap();
+    file.write_all(b"tail").unwrap();
+    file.set_len(256 * 1024 * 1024).unwrap();
+    drop(file);
+
+    copy_sparse_file(&src, &dst).unwrap();
+
+    let src_meta = std::fs::metadata(&src).unwrap();
+    let dst_meta = std::fs::metadata(&dst).unwrap();
+    assert_eq!(dst_meta.len(), src_meta.len());
+    assert!(
+        dst_meta.blocks() <= src_meta.blocks() + 16,
+        "sparse fallback expanded allocation: src_blocks={}, dst_blocks={}",
+        src_meta.blocks(),
+        dst_meta.blocks()
+    );
+}
+
 #[test]
 fn workspace_hash_changes_on_modification() {
     let tmp = tempfile::tempdir().unwrap();
@@ -584,7 +614,6 @@ fn reflink_try_reflink_returns_false_on_unsupported_fs() {
     let result = ReflinkSnapshot::try_reflink(&src_path, &dst_path).unwrap();
     // On tmpfs/ext4, FICLONE is not supported so this should be false.
     // On btrfs/xfs, it would be true. Either way, no error.
-    assert!(result == true || result == false);
     // If reflink failed, dst was cleaned up and caller does byte copy.
     if !result {
         assert!(!dst_path.exists());
@@ -835,4 +864,40 @@ fn clone_sandbox_state_with_session_db() {
         std::fs::read(dst.join("session.db")).unwrap(),
         b"db-contents"
     );
+}
+
+#[test]
+fn clone_sandbox_state_preserves_vm_effective_profile_attachments() {
+    let src_tmp = tempfile::tempdir().unwrap();
+    let src = src_tmp.path();
+    std::fs::create_dir_all(src.join("system")).unwrap();
+    std::fs::write(
+        src.join(crate::settings_profiles::VM_EFFECTIVE_SETTINGS_FILENAME),
+        b"profile_id = \"everyday-work\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        src.join(crate::settings_profiles::VM_EFFECTIVE_TRACE_FILENAME),
+        br#"{"selected_profile_id":"everyday-work","events":[]}"#,
+    )
+    .unwrap();
+
+    let dst_tmp = tempfile::tempdir().unwrap();
+    let dst = dst_tmp.path().join("clone");
+    std::fs::create_dir_all(&dst).unwrap();
+
+    clone_sandbox_state(src, &dst).unwrap();
+
+    assert_eq!(
+        std::fs::read(dst.join(crate::settings_profiles::VM_EFFECTIVE_SETTINGS_FILENAME)).unwrap(),
+        b"profile_id = \"everyday-work\"\n"
+    );
+    assert_eq!(
+        std::fs::read(dst.join(crate::settings_profiles::VM_EFFECTIVE_TRACE_FILENAME)).unwrap(),
+        br#"{"selected_profile_id":"everyday-work","events":[]}"#
+    );
+    assert!(!dst
+        .join("guest")
+        .join(crate::settings_profiles::VM_EFFECTIVE_SETTINGS_FILENAME)
+        .exists());
 }

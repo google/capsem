@@ -1,0 +1,6 @@
+{
+  "version": 1,
+  "profile_catalog": {
+    "manifest_url": "https://profiles.example.com/capsem/manifest.json"
+  }
+}

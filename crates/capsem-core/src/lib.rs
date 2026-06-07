@@ -1,6 +1,5 @@
 pub mod asset_manager;
 pub mod auto_snapshot;
-pub mod credential_broker;
 pub mod fs_monitor;
 pub mod host_config;
 pub mod host_state;
@@ -14,8 +13,12 @@ pub mod manifest_compat;
 pub mod mcp;
 pub mod net;
 pub mod paths;
-pub mod security_engine;
+pub mod profile_manifest;
+pub mod profile_payload_schema;
+pub mod security_packs;
 pub mod session;
+pub mod settings_profiles;
+pub mod setup_state;
 pub mod telemetry;
 pub mod uds;
 pub mod vm;
@@ -30,8 +33,7 @@ pub use host_state::{
     validate_guest_msg, validate_host_msg, HostState, HostStateMachine, StateMachine, Transition,
 };
 pub use vm::boot::{
-    boot_vm, create_net_state, create_net_state_with_policy, read_control_msg, send_boot_config,
-    write_control_msg, BootOptions,
+    boot_vm, create_net_state, read_control_msg, send_boot_config, write_control_msg, BootOptions,
 };
 pub use vm::config::{VirtioFsShare, VmConfig};
 pub use vm::registry::{SandboxInstance, SandboxNetworkState};

@@ -2,10 +2,12 @@
 # deb-postinst.sh -- Post-install script for the Capsem .deb package.
 #
 # Runs as root after dpkg installs the package. Creates the per-user
-# ~/.capsem layout and registers the systemd user unit.
+# ~/.capsem layout, registers the systemd user unit, and runs setup.
 #
-# The .deb installs companion binaries to /usr/bin/. This script
-# symlinks them into ~/.capsem/bin/ for the user who installed.
+# The .deb installs companion binaries to /usr/bin/, Profile V2 base profiles
+# to /usr/share/capsem/profiles/base/, and signed manifest files to
+# /usr/share/capsem/assets/. This script symlinks binaries into ~/.capsem/bin/
+# and seeds the user's profile/asset state.
 set -euo pipefail
 
 # Determine the real user (not root from sudo)
@@ -19,39 +21,69 @@ else
 fi
 
 if [ -z "$TARGET_USER" ]; then
-    echo "capsem: could not determine installing user, skipping per-user install"
-    exit 0
+    echo "capsem: could not determine installing user; cannot complete per-user setup" >&2
+    exit 1
 fi
 
 USER_HOME=$(eval echo "~$TARGET_USER")
 CAPSEM_DIR="$USER_HOME/.capsem"
+PKG_SHARE="/usr/share/capsem"
+
+seed_assets() {
+    for asset in manifest.json manifest.json.minisig; do
+        if [ -f "$PKG_SHARE/assets/$asset" ]; then
+            install -m 0644 "$PKG_SHARE/assets/$asset" "$CAPSEM_DIR/assets/$asset"
+        fi
+    done
+    if [ -f "$PKG_SHARE/assets/manifest-sign.dev.pub" ]; then
+        install -m 0644 "$PKG_SHARE/assets/manifest-sign.dev.pub" \
+            "$CAPSEM_DIR/assets/manifest-sign.dev.pub"
+    fi
+    if [ -f "$PKG_SHARE/assets/manifest-sign.dev.pub" ] \
+        && [ ! -f "$CAPSEM_DIR/assets/manifest-sign.dev.pub" ]; then
+        echo "capsem: manifest-sign.dev.pub failed to install" >&2
+        exit 1
+    fi
+}
+
+seed_base_profiles() {
+    if [ ! -d "$PKG_SHARE/profiles/base" ]; then
+        echo "capsem: required base profiles missing: $PKG_SHARE/profiles/base" >&2
+        exit 1
+    fi
+    mkdir -p "$CAPSEM_DIR/profiles/base"
+    find "$CAPSEM_DIR/profiles/base" -maxdepth 1 -type f -name '*.profile.toml' -delete
+    install -m 0644 "$PKG_SHARE/profiles/base/"*.profile.toml "$CAPSEM_DIR/profiles/base/"
+}
 
 # Create user-level directory layout
-mkdir -p "$CAPSEM_DIR/bin" "$CAPSEM_DIR/assets" "$CAPSEM_DIR/run"
-
-# Copy package-provided assets, if present. Local dev packages include the
-# current-arch payload; release packages may provide only a manifest and let
-# the service reconcile assets independently.
-if [ -d "/usr/share/capsem/assets" ]; then
-    cp -R /usr/share/capsem/assets/. "$CAPSEM_DIR/assets/" 2>/dev/null || true
-fi
+mkdir -p "$CAPSEM_DIR/bin" "$CAPSEM_DIR/assets" "$CAPSEM_DIR/profiles/base" "$CAPSEM_DIR/run"
 
 # Symlink system binaries into user dir
-for bin in capsem capsem-service capsem-process capsem-mcp capsem-gateway capsem-tray; do
+for bin in capsem capsem-service capsem-process capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-gateway capsem-tray capsem-tui capsem-admin; do
     if [ -f "/usr/bin/$bin" ]; then
         ln -sf "/usr/bin/$bin" "$CAPSEM_DIR/bin/$bin"
     fi
 done
 
+seed_assets
+seed_base_profiles
+
 # Fix ownership
 chown -R "$TARGET_USER:$(id -gn "$TARGET_USER")" "$CAPSEM_DIR"
 
-# Register systemd user unit as the target user.
+# Register systemd user unit and run setup (as the target user). These are
+# release-critical: if either fails, dpkg must report failure instead of
+# leaving a package that looks installed but cannot boot.
 # XDG_RUNTIME_DIR is required for systemctl --user; su drops it.
 TARGET_UID=$(id -u "$TARGET_USER")
 XDG_DIR="/run/user/$TARGET_UID"
 if command -v systemctl >/dev/null 2>&1; then
-    su "$TARGET_USER" -c "XDG_RUNTIME_DIR=$XDG_DIR $CAPSEM_DIR/bin/capsem install" 2>/dev/null || true
+    su "$TARGET_USER" -c "XDG_RUNTIME_DIR=$XDG_DIR $CAPSEM_DIR/bin/capsem install"
 fi
+seed_assets
+seed_base_profiles
+chown -R "$TARGET_USER:$(id -gn "$TARGET_USER")" "$CAPSEM_DIR/assets" "$CAPSEM_DIR/profiles"
+su "$TARGET_USER" -c "XDG_RUNTIME_DIR=$XDG_DIR $CAPSEM_DIR/bin/capsem setup --non-interactive --accept-detected"
 
 exit 0

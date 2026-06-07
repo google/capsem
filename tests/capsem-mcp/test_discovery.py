@@ -12,7 +12,7 @@ EXPECTED_TOOLS = {
     "capsem_purge", "capsem_run", "capsem_vm_logs",
     "capsem_service_logs", "capsem_version",
     "capsem_fork",
-    "capsem_mcp_servers", "capsem_mcp_tools", "capsem_mcp_call",
+    "capsem_mcp_connectors", "capsem_mcp_add", "capsem_mcp_delete",
 }
 
 
@@ -67,5 +67,4 @@ def test_fork_schema_fields(mcp_session):
     assert "id" in props, "Missing 'id' in fork schema"
     assert "name" in props, "Missing 'name' in fork schema"
     assert "description" in props, "Missing 'description' in fork schema"
-
 

@@ -8,6 +8,8 @@ already planned to create -- leaving stale names untouched and, through
 subsequent builds, re-pointing them to unrelated inodes.
 """
 
+import errno
+import importlib.util
 import json
 import subprocess
 
@@ -26,6 +28,15 @@ def _run(assets_dir: Path) -> subprocess.CompletedProcess:
         ["python3", str(SCRIPT), str(assets_dir)],
         capture_output=True, text=True, check=True,
     )
+
+
+def _load_script_module():
+    spec = importlib.util.spec_from_file_location("create_hash_assets", SCRIPT)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def _arch_hashed_files(arch_dir: Path) -> set[str]:
@@ -123,3 +134,27 @@ def test_preserves_non_hash_tagged_files(tmp_path):
     assert (arch_dir / "README").exists()
     assert (arch_dir / "config.toml").exists()
     assert (arch_dir / "initrd.img").exists()
+
+
+def test_hardlink_permission_error_falls_back_to_copy(tmp_path, monkeypatch):
+    """Clean Linux CI can reject hardlinks for Docker-produced root-owned assets."""
+    arch_dir = tmp_path / "arm64"
+    arch_dir.mkdir()
+    (arch_dir / "initrd.img").write_bytes(b"docker-built-content")
+    initrd_hash = "fedcba9876543210" + "0" * 48
+    _write_manifest(tmp_path, initrd_hash)
+
+    module = _load_script_module()
+
+    def deny_hardlink(src, dst):
+        raise PermissionError(errno.EPERM, "Operation not permitted", src)
+
+    monkeypatch.setattr(module.os, "link", deny_hardlink)
+    monkeypatch.setattr(module.sys, "argv", [str(SCRIPT), str(tmp_path)])
+
+    module.main()
+
+    expected = arch_dir / f"initrd-{initrd_hash[:16]}.img"
+    assert expected.exists()
+    assert expected.read_bytes() == b"docker-built-content"
+    assert expected.stat().st_ino != (arch_dir / "initrd.img").stat().st_ino

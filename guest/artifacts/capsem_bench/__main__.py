@@ -7,10 +7,7 @@ import time
 
 from .helpers import console
 
-VALID_MODES = (
-    "disk", "rootfs", "startup", "http", "throughput", "snapshot",
-    "mitm-local", "mitm-load", "mcp-load", "dns-load", "all",
-)
+VALID_MODES = ("disk", "rootfs", "storage", "startup", "http", "throughput", "snapshot", "mitm-load", "mcp-load", "dns-load", "all")
 
 
 def main():
@@ -18,29 +15,28 @@ def main():
     mode = args[0] if args else "all"
 
     if mode in ("-h", "--help"):
-        console.print(
-            "Usage: capsem-bench "
-            "[disk|rootfs|startup|http|throughput|snapshot|mitm-local|all] "
-            "[OPTIONS]"
-        )
+        console.print("Usage: capsem-bench [disk|rootfs|storage|startup|http|throughput|snapshot|all] [OPTIONS]")
         console.print()
         console.print("Commands:")
         console.print("  disk                Scratch disk I/O benchmarks")
         console.print("  rootfs              Rootfs read I/O benchmarks")
+        console.print("  storage             Rootfs/workspace/tmpfs/overlay storage split")
         console.print("  startup             CLI cold-start latency")
         console.print("  http [URL] [N] [C]  HTTP benchmarks (ab-style)")
         console.print("  throughput          100 MB download through MITM proxy")
         console.print("  snapshot            Snapshot ops (create/list/revert/delete via MCP)")
-        console.print("  mitm-local URL [N] [C]  Local debug-upstream MITM benchmark")
         console.print("  mitm-load           MITM proxy load test at 1/10/50/200 concurrency")
         console.print("  mcp-load            MCP path load test (echo tool) at 1/10/50/200 concurrency")
         console.print("  dns-load            DNS proxy load test at 1/10/50/200 concurrency")
-        console.print("  all                 Run all benchmarks (default)")
+        console.print("  all                 Run standard benchmarks, including storage split diagnostics")
         console.print()
         console.print("Environment:")
-        console.print("  CAPSEM_BENCH_DIR      Test directory (default: /root)")
-        console.print("  CAPSEM_BENCH_SIZE_MB  Write test size in MB (default: 256)")
-        console.print("  CAPSEM_BENCH_MITM_LOCAL_BASE_URL  Base URL for mitm-local")
+        console.print("  CAPSEM_BENCH_DIR                Test directory (default: /root)")
+        console.print("  CAPSEM_BENCH_SIZE_MB            Write test size in MB (default: 256)")
+        console.print("  CAPSEM_STORAGE_BENCH_PATHS      Storage paths for split diagnostics")
+        console.print("  CAPSEM_STORAGE_BENCH_SIZE_MB    Storage split write size in MB")
+        console.print("  CAPSEM_STORAGE_IO_PROFILE_SIZE_MB    Storage IOPS profile size")
+        console.print("  CAPSEM_STORAGE_IO_PROFILE_RANDOM_OPS Storage random I/O operations")
         sys.exit(0)
 
     if mode not in VALID_MODES:
@@ -62,6 +58,10 @@ def main():
         from .rootfs import rootfs_bench
         output["rootfs"] = rootfs_bench()
 
+    if mode in ("storage", "all"):
+        from .storage import storage_bench
+        output["storage"] = storage_bench()
+
     if mode in ("startup", "all"):
         from .startup import startup_bench
         output["startup"] = startup_bench()
@@ -80,17 +80,6 @@ def main():
     if mode in ("snapshot", "all"):
         from .snapshot import snapshot_bench
         output["snapshot"] = snapshot_bench()
-
-    # mitm-local requires a host-side debug upstream URL, so it is explicit
-    # and never runs as part of `all`.
-    if mode == "mitm-local":
-        from .mitm_local import mitm_local_bench
-        url = args[1] if len(args) > 1 else None
-        n = int(args[2]) if len(args) > 2 else None
-        c = int(args[3]) if len(args) > 3 else None
-        output["mitm_local"] = mitm_local_bench(
-            base_url=url, total_requests=n, concurrency=c
-        )
 
     # mitm-load runs only when explicitly requested -- it's a long-running
     # proxy stress test (default 10s per concurrency level x 4 levels = ~40s

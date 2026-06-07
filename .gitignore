@@ -57,11 +57,16 @@ Cargo.lock
 # Git worktrees
 worktrees/
 
-# VM assets (built by capsem-builder)
-assets/*
+# VM assets (built by capsem-builder or linked to the local asset cache)
+/assets
+.capsem-assets/
+# Accidental literal-home artifacts from misresolved profile paths
+/~/
 
 # Built packages (.pkg, .deb)
 packages/
+!guest/config/packages/
+!guest/config/packages/*.toml
 
 # Tauri
 crates/capsem-app/gen/
@@ -71,9 +76,8 @@ crates/capsem-app/gen/
 frontend/.astro/
 frontend/dist/
 frontend/node_modules/
-# Generator output -- no runtime code imports it; kept out of the tree to avoid
-# churn on every `just _generate-settings` run. See commit 97ab1b5.
-frontend/src/lib/mock-settings.generated.ts
+# Generator output imported by the frontend mock/settings runtime. Keep tracked
+# and regenerate with `just _generate-settings` when config/defaults.json changes.
 
 # Site
 site/dist/

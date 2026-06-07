@@ -12,7 +12,7 @@
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {
-    use capsem_core::net::parsers::dns_parser::{build_nxdomain, parse_query};
+    use capsem_network_engine::dns_parser::{build_nxdomain, parse_query};
 
     if let Ok(parsed) = parse_query(data) {
         // build_nxdomain decodes the same input and re-encodes it as

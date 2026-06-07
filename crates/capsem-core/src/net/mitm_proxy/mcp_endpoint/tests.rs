@@ -8,7 +8,6 @@ use crate::mcp::aggregator::{
 };
 use crate::mcp::policy::McpPolicy;
 use crate::mcp::types::{JsonRpcRequest, McpPromptDef, McpResourceDef, McpToolDef};
-use crate::net::policy_config::{PolicyConfig, SecurityRuleSet};
 
 use super::*;
 
@@ -57,10 +56,7 @@ where
         Arc::new(McpEndpointState::new(
             aggregator,
             Arc::new(RwLock::new(Arc::new(McpPolicy::new()))),
-            Arc::new(RwLock::new(Arc::new(PolicyConfig::default()))),
-            Arc::new(std::sync::RwLock::new(Arc::new(SecurityRuleSet::new(
-                Vec::new(),
-            )))),
+            Arc::new(super::super::RuntimeSecurityEngineSlot::new(None)),
             Arc::new(tokio::sync::Semaphore::new(
                 crate::mcp::default_inflight_cap(),
             )),

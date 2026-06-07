@@ -39,10 +39,10 @@ class TestToolResponsesData:
             )
 
     def test_tool_response_has_matching_call(self, exhaust_db):
-        """Every tool_response has a matching tool_calls.id."""
+        """Every tool_response has a matching tool_calls.call_id."""
         orphans = exhaust_db.execute("""
             SELECT tr.call_id FROM tool_responses tr
-            LEFT JOIN tool_calls tc ON tr.call_id = tc.id
+            LEFT JOIN tool_calls tc ON tr.call_id = tc.call_id
             WHERE tc.id IS NULL
         """).fetchall()
         assert len(orphans) == 0, f"Orphaned tool responses: {[r['call_id'] for r in orphans]}"

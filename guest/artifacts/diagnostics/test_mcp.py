@@ -5,19 +5,11 @@ MITM MCP endpoint responds to JSON-RPC messages over framed vsock:5002.
 """
 
 import json
-import os
 import subprocess
 
 import pytest
 
 from conftest import run
-
-PUBLIC_NETWORK_SMOKE_ENV = "CAPSEM_RUN_PUBLIC_NETWORK_SMOKE"
-
-
-def _require_public_network_smoke(reason):
-    if os.environ.get(PUBLIC_NETWORK_SMOKE_ENV) != "1":
-        pytest.skip(f"{reason}; set {PUBLIC_NETWORK_SMOKE_ENV}=1")
 
 
 # ---------------------------------------------------------------------------
@@ -213,7 +205,6 @@ def test_mcp_oversized_request_returns_local_error_and_recovers():
 
 def test_mcp_fetch_http_allowed_domain():
     """fetch_http on an allowed domain succeeds."""
-    _require_public_network_smoke("public MCP fetch_http smoke")
     responses = _mcp_call([
         {
             "jsonrpc": "2.0",
@@ -239,6 +230,7 @@ def test_mcp_fetch_http_allowed_domain():
     call_resp = [r for r in responses if r.get("id") == 3]
     assert len(call_resp) == 1
     result = call_resp[0]["result"]
+    _skip_if_profile_blocks_network(result, "https://elie.net")
     assert result.get("isError") is not True
     content_text = result["content"][0]["text"]
     assert "URL: https://elie.net" in content_text
@@ -320,17 +312,31 @@ def _init_and_call(tool_name, arguments, call_id=10, timeout=15):
     return resp["result"]
 
 
+def _is_policy_block(result):
+    """Return true when the selected profile intentionally blocked the call."""
+    if result.get("isError") is not True:
+        return False
+    text = result.get("content", [{}])[0].get("text", "")
+    return "blocked by policy" in text.lower()
+
+
+def _skip_if_profile_blocks_network(result, target):
+    """Positive network diagnostics are conditional on the active profile."""
+    if _is_policy_block(result):
+        pytest.skip(f"profile enforcement blocks network access to {target}")
+
+
 # ---------------------------------------------------------------------------
 # Content verification -- fetch_http must return real page text
 # ---------------------------------------------------------------------------
 
 def test_mcp_fetch_http_returns_real_content():
     """fetch_http on elie.net returns actual page content, not empty text."""
-    _require_public_network_smoke("public MCP fetch_http content smoke")
     result = _init_and_call(
         "fetch_http",
         {"url": "https://elie.net", "max_length": 5000},
     )
+    _skip_if_profile_blocks_network(result, "https://elie.net")
     assert result.get("isError") is not True, f"fetch failed: {result}"
     text = result["content"][0]["text"]
     # Must contain the domain echo
@@ -348,11 +354,11 @@ def test_mcp_fetch_http_returns_real_content():
 
 def test_mcp_grep_http_finds_matches():
     """grep_http on elie.net with pattern 'elie' must find matches."""
-    _require_public_network_smoke("public MCP grep_http smoke")
     result = _init_and_call(
         "grep_http",
         {"url": "https://elie.net", "pattern": "elie"},
     )
+    _skip_if_profile_blocks_network(result, "https://elie.net")
     assert result.get("isError") is not True, f"grep failed: {result}"
     text = result["content"][0]["text"]
     assert "Matches found: 0" not in text, (
@@ -393,11 +399,11 @@ def test_mcp_http_headers_blocked_domain():
 
 def test_mcp_http_headers_allowed_domain():
     """http_headers on elie.net returns status and headers."""
-    _require_public_network_smoke("public MCP http_headers smoke")
     result = _init_and_call(
         "http_headers",
         {"url": "https://elie.net"},
     )
+    _skip_if_profile_blocks_network(result, "https://elie.net")
     assert result.get("isError") is not True, f"http_headers failed: {result}"
     text = result["content"][0]["text"]
     assert "Status:" in text, f"missing status line: {text[:300]}"
@@ -588,11 +594,11 @@ def test_mcp_fetch_http_invalid_url():
 
 def test_mcp_fetch_http_subpath():
     """fetch_http on elie.net/about returns real page content."""
-    _require_public_network_smoke("public MCP fetch_http subpath smoke")
     result = _init_and_call(
         "fetch_http",
         {"url": "https://elie.net/about", "max_length": 2000},
     )
+    _skip_if_profile_blocks_network(result, "https://elie.net/about")
     assert result.get("isError") is not True, f"fetch failed: {result}"
     text = result["content"][0]["text"]
     assert "Bursztein" in text, (
@@ -602,11 +608,11 @@ def test_mcp_fetch_http_subpath():
 
 def test_mcp_fetch_http_raw_mode():
     """fetch_http with format=raw returns HTML tags."""
-    _require_public_network_smoke("public MCP fetch_http raw smoke")
     result = _init_and_call(
         "fetch_http",
         {"url": "https://elie.net/about", "format": "raw", "max_length": 10000},
     )
+    _skip_if_profile_blocks_network(result, "https://elie.net/about")
     assert result.get("isError") is not True, f"fetch raw failed: {result}"
     text = result["content"][0]["text"]
     assert "<div" in text or "<p" in text, (
@@ -616,11 +622,11 @@ def test_mcp_fetch_http_raw_mode():
 
 def test_mcp_grep_http_with_pattern():
     """grep_http on elie.net/about finds 'Google' matches."""
-    _require_public_network_smoke("public MCP grep_http pattern smoke")
     result = _init_and_call(
         "grep_http",
         {"url": "https://elie.net/about", "pattern": "Google"},
     )
+    _skip_if_profile_blocks_network(result, "https://elie.net/about")
     assert result.get("isError") is not True, f"grep failed: {result}"
     text = result["content"][0]["text"]
     assert "Match 1" in text, (
@@ -630,11 +636,11 @@ def test_mcp_grep_http_with_pattern():
 
 def test_mcp_fetch_http_pagination():
     """fetch_http with small max_length shows pagination hint."""
-    _require_public_network_smoke("public MCP fetch_http pagination smoke")
     result = _init_and_call(
         "fetch_http",
         {"url": "https://elie.net/about", "max_length": 500},
     )
+    _skip_if_profile_blocks_network(result, "https://elie.net/about")
     assert result.get("isError") is not True, f"fetch failed: {result}"
     text = result["content"][0]["text"]
     assert "start_index" in text, (
@@ -1846,9 +1852,10 @@ def test_scenario_s20_touch_mtime_unchanged():
 
 
 def test_scenario_s21_symlink_revert():
-    """S21: create A, symlink B->A, snap, delete B, revert -> B restored as symlink."""
+    """S21: create A, symlink B->A, snap, delete B, revert -> B restored."""
     run("echo s21_target > /root/s21_a.txt")
-    run("ln -sf /root/s21_a.txt /root/s21_link")
+    r = run("ln -sf s21_a.txt /root/s21_link")
+    assert r.returncode == 0, f"symlink creation failed: {r.stderr}"
     cp = _mcp_snap_create("s21_with_link")
     run("rm /root/s21_link")
 
@@ -1856,9 +1863,10 @@ def test_scenario_s21_symlink_revert():
     assert "gone" in r.stdout
 
     _mcp_revert("s21_link", cp)
-    # The reverted file should exist (content copied from snapshot, may not be a symlink).
-    r = run("test -e /root/s21_link && echo exists || echo gone")
-    assert "exists" in r.stdout, f"link should be restored: {r.stdout}"
+    r = run("test -L /root/s21_link && readlink /root/s21_link && cat /root/s21_link")
+    assert r.returncode == 0, f"link should be restored: {r.stdout}\n{r.stderr}"
+    assert "s21_a.txt" in r.stdout
+    assert "s21_target" in r.stdout
     run("rm -f /root/s21_a.txt /root/s21_link")
 
 

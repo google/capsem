@@ -2,6 +2,7 @@ use super::super::hooks::{ChunkCtx, ChunkHook, ConnMeta, HookState};
 use super::*;
 use flate2::write::GzEncoder;
 use flate2::Compression;
+use flate2::GzBuilder;
 use std::io::Write;
 
 fn ctx_for<'a>(state: &'a mut HookState, conn: &'a ConnMeta) -> ChunkCtx<'a> {
@@ -108,6 +109,75 @@ fn multi_chunk_gzip_streaming_decompress() {
     }
 
     assert_eq!(decompressed, plaintext);
+}
+
+#[test]
+fn gzip_with_optional_name_and_comment_decompresses_across_chunks() {
+    let plaintext = b"named gzip member with comment should still decode";
+    let mut enc = GzBuilder::new()
+        .filename("payload.json")
+        .comment("fixture")
+        .write(Vec::new(), Compression::default());
+    enc.write_all(plaintext).unwrap();
+    let compressed = enc.finish().unwrap();
+    let first_split = 7;
+    let second_split = 23;
+    let mut a = Bytes::from(compressed[..first_split].to_vec());
+    let mut b = Bytes::from(compressed[first_split..second_split].to_vec());
+    let mut c = Bytes::from(compressed[second_split..].to_vec());
+
+    let hook = DecompressionHook::new();
+    let mut state = HookState::default();
+    mark_gzip(&mut state);
+    let conn = any_conn();
+
+    let mut decompressed = Vec::new();
+    {
+        let mut ctx = ctx_for(&mut state, &conn);
+        hook.on_response_chunk(&mut a, &mut ctx);
+    }
+    decompressed.extend_from_slice(&a);
+    {
+        let mut ctx = ctx_for(&mut state, &conn);
+        hook.on_response_chunk(&mut b, &mut ctx);
+    }
+    decompressed.extend_from_slice(&b);
+    {
+        let mut ctx = ctx_for(&mut state, &conn);
+        hook.on_response_chunk(&mut c, &mut ctx);
+    }
+    decompressed.extend_from_slice(&c);
+
+    assert_eq!(decompressed, plaintext);
+}
+
+#[test]
+fn gzip_reserved_header_flags_are_passed_through() {
+    let malformed = vec![
+        0x1f,
+        0x8b,
+        0x08,
+        0b1110_0000,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+        0x03,
+    ];
+
+    let hook = DecompressionHook::new();
+    let mut state = HookState::default();
+    mark_gzip(&mut state);
+    let conn = any_conn();
+    let mut chunk = Bytes::from(malformed.clone());
+
+    {
+        let mut ctx = ctx_for(&mut state, &conn);
+        hook.on_response_chunk(&mut chunk, &mut ctx);
+    }
+
+    assert_eq!(chunk.as_ref(), malformed.as_slice());
 }
 
 /// Non-gzip body passes through untouched.

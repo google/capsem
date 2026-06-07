@@ -11,12 +11,39 @@ use std::path::PathBuf;
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct SavedVmBaseAssets {
+    pub asset_version: String,
+    pub arch: String,
+    pub kernel_hash: String,
+    pub initrd_hash: String,
+    pub rootfs_hash: String,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub guest_abi: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct SavedVmProfilePin {
+    pub profile_id: String,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub profile_revision: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub profile_payload_hash: Option<String>,
+    pub package_contract_hash: String,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub base_assets: Option<SavedVmBaseAssets>,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct PersistentVmEntry {
     pub name: String,
     pub ram_mb: u64,
     pub cpus: u32,
     pub base_version: String,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub base_assets: Option<SavedVmBaseAssets>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub profile_pin: Option<SavedVmProfilePin>,
     pub created_at: String,
     pub session_dir: PathBuf,
     #[serde(
@@ -127,6 +154,8 @@ mod tests {
             ram_mb: 2048,
             cpus: 2,
             base_version: "0.1.0".into(),
+            base_assets: None,
+            profile_pin: None,
             created_at: "12345".into(),
             session_dir,
             forked_from: None,
@@ -159,6 +188,92 @@ mod tests {
         let registry2 = PersistentRegistry::load(path);
         assert!(registry2.contains("mydev"));
         assert_eq!(registry2.get("mydev").unwrap().cpus, 4);
+    }
+
+    #[test]
+    fn persistent_registry_roundtrip_preserves_base_asset_identity() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("test_registry.json");
+
+        let mut registry = PersistentRegistry::load(path.clone());
+        let mut entry = make_entry("saved-vm", dir.path().join("saved-vm"));
+        entry.base_assets = Some(SavedVmBaseAssets {
+            asset_version: "2026.0513.1".into(),
+            arch: "arm64".into(),
+            kernel_hash: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into(),
+            initrd_hash: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".into(),
+            rootfs_hash: "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc".into(),
+            guest_abi: Some("capsem-guest-v2".into()),
+        });
+
+        registry.register(entry).unwrap();
+
+        let registry2 = PersistentRegistry::load(path);
+        let base_assets = registry2
+            .get("saved-vm")
+            .unwrap()
+            .base_assets
+            .as_ref()
+            .expect("base assets should roundtrip");
+        assert_eq!(base_assets.asset_version, "2026.0513.1");
+        assert_eq!(base_assets.arch, "arm64");
+        assert_eq!(
+            base_assets.rootfs_hash,
+            "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        );
+        assert_eq!(base_assets.guest_abi.as_deref(), Some("capsem-guest-v2"));
+    }
+
+    #[test]
+    fn persistent_registry_roundtrip_preserves_profile_pin() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("test_registry.json");
+
+        let mut registry = PersistentRegistry::load(path.clone());
+        let mut entry = make_entry("saved-vm", dir.path().join("saved-vm"));
+        let base_assets = SavedVmBaseAssets {
+            asset_version: "everyday-work@2026.0518.1".into(),
+            arch: "arm64".into(),
+            kernel_hash: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into(),
+            initrd_hash: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".into(),
+            rootfs_hash: "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc".into(),
+            guest_abi: Some("capsem-guest-v2".into()),
+        };
+        entry.base_assets = Some(base_assets.clone());
+        entry.profile_pin = Some(SavedVmProfilePin {
+            profile_id: "everyday-work".into(),
+            profile_revision: Some("2026.0518.1".into()),
+            profile_payload_hash: Some(
+                "blake3:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee".into(),
+            ),
+            package_contract_hash:
+                "blake3:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd".into(),
+            base_assets: Some(base_assets),
+        });
+
+        registry.register(entry).unwrap();
+
+        let registry2 = PersistentRegistry::load(path);
+        let pin = registry2
+            .get("saved-vm")
+            .unwrap()
+            .profile_pin
+            .as_ref()
+            .expect("profile pin should roundtrip");
+        assert_eq!(pin.profile_id, "everyday-work");
+        assert_eq!(pin.profile_revision.as_deref(), Some("2026.0518.1"));
+        assert_eq!(
+            pin.profile_payload_hash.as_deref(),
+            Some("blake3:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee")
+        );
+        assert_eq!(
+            pin.package_contract_hash,
+            "blake3:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        );
+        assert_eq!(
+            pin.base_assets.as_ref().unwrap().rootfs_hash,
+            "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        );
     }
 
     #[test]

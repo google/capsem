@@ -1,5 +1,6 @@
 pub mod boot;
 pub mod config;
+pub mod guest_config;
 pub mod registry;
 pub mod terminal;
 pub mod vsock;

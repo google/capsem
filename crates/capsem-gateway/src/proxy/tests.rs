@@ -2,7 +2,6 @@
 
 use super::*;
 use axum::body::Body;
-use axum::routing::any;
 use axum::Router;
 use bytes::Bytes;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -18,26 +17,7 @@ fn proxy_app(uds_path: &str) -> Router {
         auth_failures: crate::auth::AuthFailureTracker::new(),
         events_tx: tokio::sync::broadcast::channel(16).0,
     });
-    Router::new()
-        .route("/big", any(handle_proxy))
-        .route("/bad", any(handle_proxy))
-        .route("/bin", any(handle_proxy))
-        .route("/count", any(handle_proxy))
-        .route("/created", any(handle_proxy))
-        .route("/custom", any(handle_proxy))
-        .route("/delete/{id}", any(handle_proxy))
-        .route("/echo", any(handle_proxy))
-        .route("/empty", any(handle_proxy))
-        .route("/err", any(handle_proxy))
-        .route("/headers", any(handle_proxy))
-        .route("/health", any(handle_proxy))
-        .route("/item", any(handle_proxy))
-        .route("/list", any(handle_proxy))
-        .route("/ok", any(handle_proxy))
-        .route("/provision", any(handle_proxy))
-        .route("/search", any(handle_proxy))
-        .route("/unavail", any(handle_proxy))
-        .with_state(state)
+    Router::new().fallback(handle_proxy).with_state(state)
 }
 
 /// Start a mock UDS server with the given router, return (sock_path, join_handle, tempdir).

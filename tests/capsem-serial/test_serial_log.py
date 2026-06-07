@@ -20,8 +20,10 @@ class TestSerialLog:
         client, name = serial_env
         resp = client.get(f"/logs/{name}")
         logs = resp.get("logs", "") if resp else ""
-        # Kernel boot should mention Linux, console, or capsem
-        assert any(kw in logs for kw in ["Linux", "console", "capsem", "init"]), (
+        normalized = logs.lower()
+        # Early KVM logs can start after the "Linux version" line; ACPI/PCI
+        # diagnostics and the guest banner still prove serial boot capture.
+        assert any(kw in normalized for kw in ["linux", "console", "init", "acpi", "pci", "welcome to"]), (
             f"Expected kernel boot output in logs, got first 200 chars: {logs[:200]}"
         )
 

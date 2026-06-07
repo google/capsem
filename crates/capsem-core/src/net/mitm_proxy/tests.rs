@@ -1,13 +1,16 @@
 use super::fd_stream::{set_nonblocking, AsyncFdStream, ReplayReader};
-use super::util::{format_headers, format_headers_for_domain, is_llm_api_path};
+use super::util::{format_headers, is_llm_api_path};
 use super::*;
+use std::collections::BTreeMap;
 use std::os::unix::io::IntoRawFd;
 use std::os::unix::net::UnixStream;
 
 use http_body_util::BodyExt;
 
 use crate::net::cert_authority::CertAuthority;
-use crate::net::policy::NetworkPolicy;
+use capsem_security_engine::{
+    CelEnforcementEvaluator, CelEnforcementRule, SecurityDecisionAction, SecurityEngine,
+};
 
 const CA_KEY: &str = include_str!("../../../../../config/capsem-ca.key");
 const CA_CERT: &str = include_str!("../../../../../config/capsem-ca.crt");
@@ -20,206 +23,147 @@ const DB_FLUSH_MS: u64 = 100;
 /// path instead of reaching a real server.
 const TEST_DOMAIN: &str = "thisdomaindoesnotexistforsur3.ai";
 
-struct CredentialBrokerEnvGuard {
-    old_user: Option<String>,
-    old_home: Option<String>,
-    old_store: Option<String>,
+fn make_config_dev() -> Arc<MitmProxyConfig> {
+    make_config_dev_with_security_engine(None)
 }
 
-impl CredentialBrokerEnvGuard {
-    fn install(
-        user_config: &std::path::Path,
-        home: &std::path::Path,
-        test_store: &std::path::Path,
-    ) -> Self {
-        let old_user = std::env::var("CAPSEM_USER_CONFIG").ok();
-        let old_home = std::env::var("HOME").ok();
-        let old_store = std::env::var(crate::credential_broker::TEST_STORE_ENV).ok();
-        std::env::set_var("CAPSEM_USER_CONFIG", user_config);
-        std::env::set_var("HOME", home);
-        std::env::set_var(crate::credential_broker::TEST_STORE_ENV, test_store);
-        Self {
-            old_user,
-            old_home,
-            old_store,
-        }
-    }
-}
-
-impl Drop for CredentialBrokerEnvGuard {
-    fn drop(&mut self) {
-        match &self.old_user {
-            Some(v) => std::env::set_var("CAPSEM_USER_CONFIG", v),
-            None => std::env::remove_var("CAPSEM_USER_CONFIG"),
-        }
-        match &self.old_home {
-            Some(v) => std::env::set_var("HOME", v),
-            None => std::env::remove_var("HOME"),
-        }
-        match &self.old_store {
-            Some(v) => std::env::set_var(crate::credential_broker::TEST_STORE_ENV, v),
-            None => std::env::remove_var(crate::credential_broker::TEST_STORE_ENV),
-        }
-    }
-}
-
-fn broker_test_credential(
-    provider: crate::credential_broker::CredentialProvider,
-    raw_value: &str,
-) -> String {
-    let obs = crate::credential_broker::CredentialObservation {
-        provider,
-        raw_value: raw_value.to_string(),
-        source: "test".to_string(),
-        event_type: Some("http.request".to_string()),
-        confidence: 1.0,
-        trace_id: None,
-        context_json: None,
-    };
-    crate::credential_broker::broker_to_user_settings(&obs)
-        .unwrap()
-        .credential_ref
-}
-
-fn make_config_with_policy(policy: NetworkPolicy) -> Arc<MitmProxyConfig> {
-    make_config_with_policy_v2(
-        policy,
-        Arc::new(tokio::sync::RwLock::new(Arc::new(
-            crate::net::policy_config::PolicyConfig::default(),
-        ))),
-    )
-}
-
-fn make_config_with_policy_v2(
-    policy: NetworkPolicy,
-    policy_v2: Arc<tokio::sync::RwLock<Arc<crate::net::policy_config::PolicyConfig>>>,
+fn make_config_dev_with_security_engine(
+    security_engine: Option<Arc<dyn RuntimeSecurityEngine>>,
 ) -> Arc<MitmProxyConfig> {
     let ca = Arc::new(CertAuthority::load(CA_KEY, CA_CERT).unwrap());
     let dir = tempfile::tempdir().unwrap();
     let db = Arc::new(DbWriter::open(&dir.path().join("test.db"), 256).unwrap());
     // Leak the tempdir so it lives for the test
     std::mem::forget(dir);
-    let policy_arc = Arc::new(std::sync::RwLock::new(Arc::new(policy)));
     let telemetry = Arc::new(super::telemetry_hook::TelemetryDeps {
         db: Arc::clone(&db),
         pricing: Arc::new(crate::net::ai_traffic::pricing::PricingTable::load()),
         trace_state: Arc::new(std::sync::Mutex::new(
             crate::net::ai_traffic::TraceState::new(),
         )),
-        security_rules: Arc::new(std::sync::RwLock::new(Arc::new(
-            crate::net::policy_config::SecurityRuleSet::new(Vec::new()),
-        ))),
     });
-    let pipeline = super::make_production_pipeline_with_policy_v2(
-        Arc::clone(&policy_arc),
-        Arc::clone(&policy_v2),
-        Arc::clone(&telemetry),
-    );
+    let pipeline = super::make_production_pipeline(Arc::clone(&telemetry));
     Arc::new(MitmProxyConfig {
         ca,
-        policy: policy_arc,
-        policy_v2,
-        model_endpoints: Arc::new(std::sync::RwLock::new(Arc::new(
-            crate::net::policy_config::ProviderRuleProfile::builtin_defaults()
-                .endpoint_registry()
-                .expect("builtin provider endpoint registry"),
-        ))),
         db,
         upstream_tls: make_upstream_tls_config(),
         telemetry,
         pipeline,
         mcp_endpoint: None,
+        security_engine: Arc::new(RuntimeSecurityEngineSlot::new(security_engine)),
     })
 }
 
-fn make_config_dev() -> Arc<MitmProxyConfig> {
-    make_config_with_policy(NetworkPolicy::default_dev())
-}
-
-fn make_config_deny_all() -> Arc<MitmProxyConfig> {
-    make_config_with_policy(NetworkPolicy::new(vec![], false, false))
-}
-
 #[test]
-fn model_provider_routing_uses_live_endpoint_registry() {
-    let config = make_config_dev();
-    assert_eq!(
-        super::ai_provider_for_domain(&config, "api.openai.com"),
-        Some(ProviderKind::OpenAi)
-    );
-    assert_eq!(
-        super::ai_provider_for_target(&config, "api.openai.com", 443),
-        Some(ProviderKind::OpenAi)
-    );
-    assert_eq!(
-        super::ai_provider_for_target(&config, "api.openai.com", 80),
-        None
-    );
-    assert_eq!(
-        super::ai_provider_for_target(&config, "local.ollama", 11434),
-        Some(ProviderKind::Ollama)
-    );
-    assert_eq!(
-        super::ai_provider_for_target(&config, "local.ollama", 80),
-        None
-    );
-    assert_eq!(
-        super::ai_provider_for_domain(&config, "llm.internal.example"),
-        None
-    );
+fn runtime_security_engine_slot_swaps_rules_without_rebuilding_config() {
+    let slot = RuntimeSecurityEngineSlot::new(Some(block_host_engine("initial.test")));
 
-    let custom = crate::net::policy_config::ProviderRuleProfile::parse_toml(
-        r#"
-[ai.private_gateway]
-name = "Private Gateway"
-protocol = "openai-compatible"
-url = "https://llm.internal.example/v1"
+    let blocked = slot
+        .evaluate(test_http_security_event("initial.test", "/"))
+        .expect("initial runtime engine should evaluate");
+    assert!(matches!(
+        blocked.action,
+        capsem_security_engine::SecurityAction::Block(_)
+    ));
 
-[ai.private_gateway.rules.http_api]
-name = "private_gateway_http_seen"
-action = "allow"
-match = 'http.host == "llm.internal.example"'
-"#,
-    )
-    .expect("profile parses")
-    .endpoint_registry()
-    .expect("endpoint registry builds");
+    let allowed = slot
+        .evaluate(test_http_security_event("updated.test", "/"))
+        .expect("non-matching host should be allowed");
+    assert!(matches!(
+        allowed.action,
+        capsem_security_engine::SecurityAction::Continue
+    ));
 
-    *config.model_endpoints.write().unwrap() = Arc::new(custom);
+    slot.set(Some(block_host_engine("updated.test")));
 
-    assert_eq!(
-        super::ai_provider_for_domain(&config, "llm.internal.example"),
-        Some(ProviderKind::OpenAi)
-    );
-    assert_eq!(
-        super::ai_provider_for_target(&config, "llm.internal.example", 443),
-        Some(ProviderKind::OpenAi)
-    );
-    assert_eq!(
-        super::ai_provider_for_domain(&config, "api.openai.com"),
-        None,
-        "cloud domains only classify when the live registry contains them"
-    );
+    let previously_blocked = slot
+        .evaluate(test_http_security_event("initial.test", "/"))
+        .expect("swapped runtime engine should evaluate");
+    assert!(matches!(
+        previously_blocked.action,
+        capsem_security_engine::SecurityAction::Continue
+    ));
+
+    let newly_blocked = slot
+        .evaluate(test_http_security_event("updated.test", "/"))
+        .expect("updated runtime engine should evaluate");
+    assert!(matches!(
+        newly_blocked.action,
+        capsem_security_engine::SecurityAction::Block(_)
+    ));
+
+    slot.set(None);
+    assert!(!slot.has_engine());
 }
 
-fn allow_test_domain_policy() -> NetworkPolicy {
-    use crate::net::policy::{DomainMatcher, PolicyRule};
-    NetworkPolicy::new(
-        vec![PolicyRule {
-            matcher: DomainMatcher::parse(TEST_DOMAIN),
-            allow_read: true,
-            allow_write: true,
-        }],
-        false,
-        false,
-    )
+fn block_host_engine(host: &str) -> Arc<dyn RuntimeSecurityEngine> {
+    let mut engine = SecurityEngine::default();
+    engine.set_enforcement(Box::new(
+        CelEnforcementEvaluator::compile(vec![CelEnforcementRule {
+            id: format!("block-{host}"),
+            pack_id: Some("test".into()),
+            condition: format!("http.request.host == '{host}'"),
+            decision: SecurityDecisionAction::Block,
+            reason: Some(format!("block {host}")),
+            mutations: Vec::new(),
+        }])
+        .expect("test CEL rule should compile"),
+    ));
+    Arc::new(std::sync::Mutex::new(engine))
 }
 
-fn policy_v2_from_toml(
-    toml_text: &str,
-) -> Arc<tokio::sync::RwLock<Arc<crate::net::policy_config::PolicyConfig>>> {
-    let settings: crate::net::policy_config::SettingsFile = toml::from_str(toml_text).unwrap();
-    Arc::new(tokio::sync::RwLock::new(Arc::new(settings.policy)))
+fn test_http_security_event(host: &str, path: &str) -> capsem_security_engine::SecurityEvent {
+    capsem_security_engine::SecurityEvent::http(
+        capsem_security_engine::SecurityEventCommon {
+            event_id: format!("test-http-{host}-{path}"),
+            parent_event_id: None,
+            stream_id: None,
+            activity_id: None,
+            sequence_no: None,
+            source_engine: capsem_security_engine::SourceEngine::Network,
+            attribution_scope: capsem_security_engine::AiAttributionScope::Vm,
+            origin_kind: capsem_security_engine::AiOriginKind::GuestNetwork,
+            accounting_owner: None,
+            enforceability: capsem_security_engine::Enforceability::InlineBlockable,
+            trace_id: Some("trace-test".into()),
+            span_id: None,
+            timestamp_unix_ms: 1,
+            vm_id: None,
+            session_id: None,
+            profile_id: None,
+            profile_revision: None,
+            profile_pack_ids: Vec::new(),
+            enforcement_packs: Vec::new(),
+            detection_packs: Vec::new(),
+            user_id: None,
+            process_id: None,
+            parent_process_id: None,
+            exec_id: None,
+            turn_id: None,
+            message_id: None,
+            tool_call_id: None,
+            mcp_call_id: None,
+            event_type: "http.request".into(),
+            redaction_state: capsem_security_engine::RedactionState::Raw,
+        },
+        capsem_security_engine::HttpSecuritySubject {
+            method: "GET".into(),
+            scheme: Some("https".into()),
+            host: host.into(),
+            port: Some(443),
+            path: Some(path.into()),
+            query: None,
+            url: Some(format!("https://{host}{path}")),
+            path_class: "external".into(),
+            request_bytes: 0,
+            request_headers: BTreeMap::new(),
+            request_body: None,
+            response_status: None,
+            response_headers: BTreeMap::new(),
+            response_bytes: None,
+            response_body: None,
+        },
+    )
 }
 
 fn make_client_hello(hostname: &str) -> Vec<u8> {
@@ -265,351 +209,6 @@ fn make_client_hello(hostname: &str) -> Vec<u8> {
     record
 }
 
-// ---------------------------------------------------------------
-// Metadata fragmentation tests
-// ---------------------------------------------------------------
-
-#[tokio::test]
-async fn fragmented_metadata_is_reassembled() {
-    let config = make_config_dev();
-    let (s1, s2) = UnixStream::pair().unwrap();
-
-    let proxy_fd = s2.into_raw_fd();
-    let proxy_config = Arc::clone(&config);
-    let proxy_task = tokio::spawn(async move {
-        handle_connection(proxy_fd, proxy_config).await;
-    });
-
-    // Write metadata in two fragments: first the prefix, then the rest + newline + client hello.
-    s1.set_nonblocking(false).unwrap();
-    let mut writer = s1;
-    // Fragment 1: metadata prefix without the newline
-    std::io::Write::write_all(&mut writer, b"\0CAPSEM_META:my_proc").unwrap();
-    // Small delay so the proxy reads the first fragment before the rest arrives.
-    std::thread::sleep(std::time::Duration::from_millis(50));
-    // Fragment 2: rest of metadata with newline, then the TLS ClientHello
-    let mut frag2 = b"ess_name\n".to_vec();
-    frag2.extend_from_slice(&make_client_hello(TEST_DOMAIN));
-    std::io::Write::write_all(&mut writer, &frag2).unwrap();
-    drop(writer);
-
-    // The proxy should have reassembled metadata and completed TLS handshake.
-    // It will fail after handshake (no real TLS client), but the key check
-    // is that it didn't error during metadata parsing.
-    let _ = proxy_task.await;
-
-    tokio::time::sleep(std::time::Duration::from_millis(DB_FLUSH_MS)).await;
-
-    let reader = config.db.reader().unwrap();
-    let events = reader.recent_net_events(10).unwrap();
-    // Should have an event (error from failed TLS with raw bytes, not metadata error).
-    // The important thing is we didn't get "metadata exceeded 4KB" or "EOF during metadata".
-    if !events.is_empty() {
-        let rule = events[0].matched_rule.as_deref().unwrap_or("");
-        assert!(
-            !rule.contains("metadata"),
-            "Fragmented metadata should be reassembled, got: {rule}"
-        );
-    }
-}
-
-#[tokio::test]
-async fn oversized_metadata_rejected() {
-    let config = make_config_dev();
-    let (s1, s2) = UnixStream::pair().unwrap();
-
-    let proxy_fd = s2.into_raw_fd();
-    let proxy_config = Arc::clone(&config);
-    let proxy_task = tokio::spawn(async move {
-        handle_connection(proxy_fd, proxy_config).await;
-    });
-
-    // Write >4KB metadata without a newline terminator.
-    let mut oversized = b"\0CAPSEM_META:".to_vec();
-    oversized.extend_from_slice(&vec![b'A'; 5000]);
-    let mut writer = s1;
-    std::io::Write::write_all(&mut writer, &oversized).unwrap();
-    drop(writer);
-
-    let _ = proxy_task.await;
-
-    tokio::time::sleep(std::time::Duration::from_millis(DB_FLUSH_MS)).await;
-
-    let reader = config.db.reader().unwrap();
-    let events = reader.recent_net_events(10).unwrap();
-    assert!(
-        !events.is_empty(),
-        "oversized metadata should produce error event"
-    );
-    assert_eq!(events[0].decision, Decision::Error);
-    let rule = events[0].matched_rule.as_deref().unwrap_or("");
-    assert!(
-        rule.contains("4KB"),
-        "Should mention 4KB limit, got: {rule}"
-    );
-}
-
-// ---------------------------------------------------------------
-// Existing connection-level tests (unchanged behavior)
-// ---------------------------------------------------------------
-
-#[tokio::test]
-async fn no_sni_records_error() {
-    let config = make_config_dev();
-    let (mut s1, s2) = UnixStream::pair().unwrap();
-
-    std::io::Write::write_all(&mut s1, b"not a client hello").unwrap();
-    drop(s1);
-
-    handle_connection(s2.into_raw_fd(), config.clone()).await;
-
-    // Give writer thread time to flush.
-    tokio::time::sleep(std::time::Duration::from_millis(DB_FLUSH_MS)).await;
-
-    let reader = config.db.reader().unwrap();
-    let events = reader.recent_net_events(10).unwrap();
-    assert_eq!(events.len(), 1);
-    assert_eq!(events[0].domain, "<unknown>");
-    // Without valid TLS, it's an error (handshake failure)
-    assert!(matches!(
-        events[0].decision,
-        Decision::Error | Decision::Denied
-    ));
-}
-
-#[tokio::test]
-async fn empty_connection_records_error() {
-    let config = make_config_dev();
-    let (_s1, s2) = UnixStream::pair().unwrap();
-    drop(_s1);
-
-    handle_connection(s2.into_raw_fd(), config.clone()).await;
-
-    tokio::time::sleep(std::time::Duration::from_millis(DB_FLUSH_MS)).await;
-
-    let reader = config.db.reader().unwrap();
-    let events = reader.recent_net_events(10).unwrap();
-    assert_eq!(events.len(), 1);
-    assert_eq!(events[0].decision, Decision::Error);
-}
-
-#[test]
-fn replay_reader_drains_buffer_then_inner() {
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap();
-    rt.block_on(async {
-        let buffer = b"hello".to_vec();
-        let inner_data: &[u8] = b" world";
-        let mut reader = ReplayReader::new(buffer, inner_data);
-
-        let mut output = Vec::new();
-        tokio::io::AsyncReadExt::read_to_end(&mut reader, &mut output)
-            .await
-            .unwrap();
-        assert_eq!(&output, b"hello world");
-    });
-}
-
-// ---------------------------------------------------------------
-// AsyncFdStream tests
-// ---------------------------------------------------------------
-
-fn wrap_fd_like_handle_inner(raw_fd: RawFd) -> AsyncFdStream {
-    let file = ManuallyDrop::new(unsafe { std::fs::File::from_raw_fd(raw_fd) });
-    let cloned = file.try_clone().expect("try_clone (dup) failed");
-    set_nonblocking(raw_fd).expect("set_nonblocking failed");
-    let async_fd = tokio::io::unix::AsyncFd::new(cloned).expect("AsyncFd::new failed");
-    AsyncFdStream(async_fd)
-}
-
-#[tokio::test]
-async fn async_fd_stream_basic_read_write() {
-    let (s1, s2) = UnixStream::pair().unwrap();
-    let fd1 = s1.into_raw_fd();
-    let fd2 = s2.into_raw_fd();
-    let mut stream1 = wrap_fd_like_handle_inner(fd1);
-    let mut stream2 = wrap_fd_like_handle_inner(fd2);
-
-    tokio::io::AsyncWriteExt::write_all(&mut stream1, b"hello vsock")
-        .await
-        .unwrap();
-    let mut buf = vec![0u8; 64];
-    let n = tokio::io::AsyncReadExt::read(&mut stream2, &mut buf)
-        .await
-        .unwrap();
-    assert_eq!(&buf[..n], b"hello vsock");
-
-    unsafe {
-        libc::close(fd1);
-        libc::close(fd2);
-    }
-}
-
-#[tokio::test]
-async fn async_fd_stream_large_transfer() {
-    let (s1, s2) = UnixStream::pair().unwrap();
-    let fd1 = s1.into_raw_fd();
-    let fd2 = s2.into_raw_fd();
-    let mut stream1 = wrap_fd_like_handle_inner(fd1);
-    let mut stream2 = wrap_fd_like_handle_inner(fd2);
-
-    let data: Vec<u8> = (0..131072).map(|i| (i % 251) as u8).collect();
-    let send_data = data.clone();
-    let writer = tokio::spawn(async move {
-        tokio::io::AsyncWriteExt::write_all(&mut stream1, &send_data)
-            .await
-            .unwrap();
-        drop(stream1);
-        unsafe {
-            libc::close(fd1);
-        }
-    });
-    let mut received = Vec::new();
-    tokio::io::AsyncReadExt::read_to_end(&mut stream2, &mut received)
-        .await
-        .unwrap();
-    writer.await.unwrap();
-
-    assert_eq!(received.len(), data.len());
-    assert_eq!(received, data);
-
-    unsafe {
-        libc::close(fd2);
-    }
-}
-
-#[tokio::test]
-async fn async_fd_stream_eof_on_close() {
-    let (s1, s2) = UnixStream::pair().unwrap();
-    let fd1 = s1.into_raw_fd();
-    let fd2 = s2.into_raw_fd();
-    let mut stream2 = wrap_fd_like_handle_inner(fd2);
-
-    {
-        let mut stream1 = wrap_fd_like_handle_inner(fd1);
-        tokio::io::AsyncWriteExt::write_all(&mut stream1, b"before eof")
-            .await
-            .unwrap();
-    }
-    unsafe {
-        libc::close(fd1);
-    }
-
-    let mut buf = Vec::new();
-    tokio::io::AsyncReadExt::read_to_end(&mut stream2, &mut buf)
-        .await
-        .unwrap();
-    assert_eq!(&buf, b"before eof");
-
-    unsafe {
-        libc::close(fd2);
-    }
-}
-
-#[tokio::test]
-async fn async_fd_stream_bidirectional() {
-    let (s1, s2) = UnixStream::pair().unwrap();
-    let fd1 = s1.into_raw_fd();
-    let fd2 = s2.into_raw_fd();
-    let mut stream1 = wrap_fd_like_handle_inner(fd1);
-    let mut stream2 = wrap_fd_like_handle_inner(fd2);
-
-    tokio::io::AsyncWriteExt::write_all(&mut stream1, b"ping")
-        .await
-        .unwrap();
-    let mut buf = vec![0u8; 32];
-    let n = tokio::io::AsyncReadExt::read(&mut stream2, &mut buf)
-        .await
-        .unwrap();
-    assert_eq!(&buf[..n], b"ping");
-
-    tokio::io::AsyncWriteExt::write_all(&mut stream2, b"pong")
-        .await
-        .unwrap();
-    let n = tokio::io::AsyncReadExt::read(&mut stream1, &mut buf)
-        .await
-        .unwrap();
-    assert_eq!(&buf[..n], b"pong");
-
-    unsafe {
-        libc::close(fd1);
-        libc::close(fd2);
-    }
-}
-
-#[tokio::test]
-async fn async_fd_stream_replay_then_live() {
-    let (s1, s2) = UnixStream::pair().unwrap();
-    let fd2 = s2.into_raw_fd();
-    let mut stream2 = wrap_fd_like_handle_inner(fd2);
-
-    let mut writer = s1;
-    std::io::Write::write_all(&mut writer, b"INITIAL").unwrap();
-    std::io::Write::write_all(&mut writer, b"REMAINING").unwrap();
-    drop(writer);
-
-    let mut initial = vec![0u8; 7];
-    tokio::io::AsyncReadExt::read_exact(&mut stream2, &mut initial)
-        .await
-        .unwrap();
-    assert_eq!(&initial, b"INITIAL");
-
-    let mut replay = ReplayReader::new(initial, stream2);
-    let mut all = Vec::new();
-    tokio::io::AsyncReadExt::read_to_end(&mut replay, &mut all)
-        .await
-        .unwrap();
-    assert_eq!(&all, b"INITIALREMAINING");
-
-    unsafe {
-        libc::close(fd2);
-    }
-}
-
-/// Full TLS handshake through handle_connection using a real rustls client.
-#[tokio::test]
-async fn tls_handshake_completes_without_global_provider() {
-    let config = make_config_dev();
-    let (s1, s2) = UnixStream::pair().unwrap();
-
-    let proxy_fd = s2.into_raw_fd();
-    let proxy_config = Arc::clone(&config);
-    let proxy_task = tokio::spawn(async move {
-        handle_connection(proxy_fd, proxy_config).await;
-    });
-
-    let mut root_store = rustls::RootCertStore::empty();
-    let ca_certs: Vec<_> = rustls_pemfile::certs(&mut CA_CERT.as_bytes())
-        .collect::<Result<_, _>>()
-        .unwrap();
-    for cert in ca_certs {
-        root_store.add(cert).unwrap();
-    }
-    let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
-    let client_config = rustls::ClientConfig::builder_with_provider(provider)
-        .with_safe_default_protocol_versions()
-        .unwrap()
-        .with_root_certificates(root_store)
-        .with_no_client_auth();
-    let connector = tokio_rustls::TlsConnector::from(Arc::new(client_config));
-
-    s1.set_nonblocking(true).unwrap();
-    let stream = tokio::net::UnixStream::from_std(s1).unwrap();
-    let domain = rustls::pki_types::ServerName::try_from(TEST_DOMAIN).unwrap();
-    let tls_result = connector.connect(domain, stream).await;
-
-    assert!(
-        tls_result.is_ok(),
-        "TLS handshake failed: {:?}",
-        tls_result.err()
-    );
-
-    drop(tls_result);
-    let _ = proxy_task.await;
-}
-
 #[test]
 fn split_path_query_with_query() {
     let uri: hyper::Uri = format!("https://{TEST_DOMAIN}/api/v1?foo=bar&baz=1")
@@ -652,43 +251,46 @@ fn format_headers_keeps_allowlisted_verbatim() {
 #[test]
 fn format_headers_hashes_sensitive_headers() {
     let mut headers = hyper::HeaderMap::new();
+    headers.insert("x-api-key", "sk-ant-1234567890abcdef".parse().unwrap());
     headers.insert("authorization", "Bearer tok_secret".parse().unwrap());
     headers.insert("cookie", "session=abc123".parse().unwrap());
 
     let formatted = format_headers(&headers);
 
     // Header names are preserved.
+    assert!(formatted.contains("x-api-key: hash:"));
     assert!(formatted.contains("authorization: hash:"));
     assert!(formatted.contains("cookie: hash:"));
 
     // Raw credential values must NOT appear.
+    assert!(!formatted.contains("sk-ant-1234567890abcdef"));
     assert!(!formatted.contains("Bearer tok_secret"));
     assert!(!formatted.contains("session=abc123"));
 }
 
 #[test]
-fn format_headers_broker_reference_is_deterministic() {
+fn format_headers_hash_is_deterministic() {
     let mut h1 = hyper::HeaderMap::new();
     h1.insert("x-api-key", "AIzaSyBxxxxxxx".parse().unwrap());
     let mut h2 = hyper::HeaderMap::new();
     h2.insert("x-api-key", "AIzaSyBxxxxxxx".parse().unwrap());
 
     assert_eq!(format_headers(&h1), format_headers(&h2));
-    assert!(format_headers(&h1).contains("x-api-key: credential:blake3:"));
 }
 
 #[test]
-fn format_headers_different_credentials_different_references() {
+fn format_headers_different_keys_different_hashes() {
     let mut h1 = hyper::HeaderMap::new();
-    h1.insert("x-api-key", "sk-key-AAAA".parse().unwrap());
+    h1.insert("x-api-key", "key-AAAA".parse().unwrap());
     let mut h2 = hyper::HeaderMap::new();
-    h2.insert("x-api-key", "sk-key-BBBB".parse().unwrap());
+    h2.insert("x-api-key", "key-BBBB".parse().unwrap());
 
+    // Extract the hash portion from each.
     let f1 = format_headers(&h1);
     let f2 = format_headers(&h2);
-    let ref1 = f1.strip_prefix("x-api-key: credential:blake3:").unwrap();
-    let ref2 = f2.strip_prefix("x-api-key: credential:blake3:").unwrap();
-    assert_ne!(ref1, ref2);
+    let hash1 = f1.strip_prefix("x-api-key: hash:").unwrap();
+    let hash2 = f2.strip_prefix("x-api-key: hash:").unwrap();
+    assert_ne!(hash1, hash2);
 }
 
 #[test]
@@ -704,190 +306,9 @@ fn format_headers_mixed_allowed_and_sensitive() {
     assert!(formatted.contains("content-type: text/html"));
     assert!(formatted.contains("accept: text/html"));
 
-    // Recognized credential: broker reference, raw value absent.
-    assert!(formatted.contains("x-api-key: credential:blake3:"));
+    // Sensitive: hashed, raw value absent.
+    assert!(formatted.contains("x-api-key: hash:"));
     assert!(!formatted.contains("sk-secret"));
-}
-
-#[test]
-fn format_headers_for_domain_collects_github_credential_observation() {
-    let mut headers = hyper::HeaderMap::new();
-    headers.insert("authorization", "Bearer github_pat_secret".parse().unwrap());
-
-    let formatted = format_headers_for_domain("api.github.com", &headers);
-
-    assert!(formatted
-        .formatted
-        .contains("authorization: credential:blake3:"));
-    assert!(!formatted.formatted.contains("github_pat_secret"));
-    assert_eq!(formatted.observations.len(), 1);
-    assert_eq!(
-        formatted.credential_ref.as_deref(),
-        Some(formatted.observations[0].credential_ref().as_str())
-    );
-}
-
-#[test]
-fn format_headers_preserves_existing_broker_reference() {
-    let reference = capsem_logger::credential_reference("anthropic", "sk-ant-placeholder");
-    let mut headers = hyper::HeaderMap::new();
-    headers.insert("x-api-key", reference.parse().unwrap());
-
-    let formatted = format_headers_for_domain("api.anthropic.com", &headers);
-
-    assert!(formatted
-        .formatted
-        .contains(&format!("x-api-key: {reference}")));
-    assert_eq!(
-        formatted.credential_ref.as_deref(),
-        Some(reference.as_str())
-    );
-    assert!(formatted.observations.is_empty());
-}
-
-#[test]
-fn brokered_header_reference_substitutes_only_for_upstream() {
-    let _lock = crate::credential_broker::TEST_ENV_LOCK.blocking_lock();
-    let dir = tempfile::tempdir().unwrap();
-    let _guard = CredentialBrokerEnvGuard::install(
-        &dir.path().join("user.toml"),
-        dir.path(),
-        &dir.path().join("credential-store.json"),
-    );
-    let reference = broker_test_credential(
-        crate::credential_broker::CredentialProvider::Anthropic,
-        "sk-ant-upstream-only",
-    );
-    let mut headers = hyper::HeaderMap::new();
-    headers.insert("x-api-key", reference.parse().unwrap());
-
-    let telemetry = format_headers_for_domain("api.anthropic.com", &headers);
-    let substituted = crate::credential_broker::substitute_brokered_upstream_credentials(
-        "api.anthropic.com",
-        Some(crate::net::ai_traffic::provider::ProviderKind::Anthropic),
-        &mut headers,
-        None,
-    )
-    .unwrap();
-
-    assert_eq!(
-        substituted.credential_ref.as_deref(),
-        Some(reference.as_str())
-    );
-    assert_eq!(headers["x-api-key"], "sk-ant-upstream-only");
-    assert!(telemetry.formatted.contains(&reference));
-    assert!(!telemetry.formatted.contains("sk-ant-upstream-only"));
-}
-
-#[test]
-fn brokered_google_query_reference_substitutes_only_for_upstream() {
-    let _lock = crate::credential_broker::TEST_ENV_LOCK.blocking_lock();
-    let dir = tempfile::tempdir().unwrap();
-    let _guard = CredentialBrokerEnvGuard::install(
-        &dir.path().join("user.toml"),
-        dir.path(),
-        &dir.path().join("credential-store.json"),
-    );
-    let reference = broker_test_credential(
-        crate::credential_broker::CredentialProvider::Google,
-        "AIza-upstream-only",
-    );
-    let mut headers = hyper::HeaderMap::new();
-
-    let substituted = crate::credential_broker::substitute_brokered_upstream_credentials(
-        "generativelanguage.googleapis.com",
-        Some(crate::net::ai_traffic::provider::ProviderKind::Google),
-        &mut headers,
-        Some(&format!("alt=sse&key={reference}")),
-    )
-    .unwrap();
-
-    assert_eq!(
-        substituted.credential_ref.as_deref(),
-        Some(reference.as_str())
-    );
-    assert_eq!(
-        substituted.query.as_deref(),
-        Some("alt=sse&key=AIza-upstream-only")
-    );
-}
-
-#[tokio::test(flavor = "current_thread")]
-async fn policy_v2_builtin_broker_action_materializes_upstream_and_logs_reference_only() {
-    let _lock = crate::credential_broker::TEST_ENV_LOCK.lock().await;
-    let dir = tempfile::tempdir().unwrap();
-    let _guard = CredentialBrokerEnvGuard::install(
-        &dir.path().join("user.toml"),
-        dir.path(),
-        &dir.path().join("credential-store.json"),
-    );
-    let raw = "sk-ant-real-upstream-from-action";
-    let reference =
-        broker_test_credential(crate::credential_broker::CredentialProvider::Anthropic, raw);
-    let (port, upstream_task) = spawn_http_fixture_response(
-        200,
-        "OK",
-        vec![("content-type", "application/json")],
-        r#"{"ok":true}"#,
-    )
-    .await;
-    let config = make_config_with_policy_v2(
-        allow_local_http_policy(port),
-        Arc::new(tokio::sync::RwLock::new(Arc::new(
-            crate::net::policy_config::PolicyConfig::with_builtin_security_rules(),
-        ))),
-    );
-    let (mut sender, proxy_task, _conn_task) = open_direct_plain_http_request_conn(
-        &config,
-        "127.0.0.1",
-        port,
-        Some(ProviderKind::Anthropic),
-    )
-    .await;
-
-    let req = hyper::Request::builder()
-        .method("POST")
-        .uri("/v1/messages")
-        .header("host", "api.anthropic.com")
-        .header("x-api-key", reference.as_str())
-        .body(
-            Full::new(Bytes::from_static(br#"{"model":"claude-test"}"#))
-                .map_err(|never| -> anyhow::Error { match never {} })
-                .boxed(),
-        )
-        .unwrap();
-    let resp = sender.send_request(req).await.unwrap();
-    assert_eq!(resp.status().as_u16(), 200);
-    let _ = resp.into_body().collect().await;
-    drop(sender);
-    let _ = proxy_task.await;
-
-    let upstream_request = upstream_task.await.unwrap();
-    assert!(
-        upstream_request.contains(&format!("x-api-key: {raw}")),
-        "upstream request must receive the raw credential only after action materialization: {upstream_request}"
-    );
-    assert!(
-        !upstream_request.contains(&reference),
-        "broker reference must not be sent upstream after substitute action"
-    );
-
-    tokio::time::sleep(std::time::Duration::from_millis(DB_FLUSH_MS)).await;
-    let events = config.db.reader().unwrap().recent_net_events(10).unwrap();
-    assert_eq!(events.len(), 1);
-    let event = &events[0];
-    assert_eq!(event.decision, Decision::Allowed);
-    assert_eq!(event.status_code, Some(200));
-    assert_eq!(event.credential_ref.as_deref(), Some(reference.as_str()));
-    let logged_headers = event.request_headers.as_deref().unwrap_or_default();
-    assert!(
-        logged_headers.contains(&reference),
-        "session DB request headers must retain the broker reference: {logged_headers}"
-    );
-    assert!(
-        !logged_headers.contains(raw),
-        "session DB request headers must never contain the raw credential: {logged_headers}"
-    );
 }
 
 #[test]
@@ -975,8 +396,8 @@ fn make_mitm_client_config() -> Arc<rustls::ClientConfig> {
 }
 
 #[tokio::test]
-async fn denied_request_emits_event() {
-    let config = make_config_deny_all();
+async fn websocket_upgrade_rejected_with_400() {
+    let config = make_config_dev();
     let (s1, s2) = UnixStream::pair().unwrap();
 
     let proxy_fd = s2.into_raw_fd();
@@ -1000,8 +421,10 @@ async fn denied_request_emits_event() {
 
     let req = hyper::Request::builder()
         .method("GET")
-        .uri("/secret")
+        .uri("/ws")
         .header("host", TEST_DOMAIN)
+        .header("upgrade", "websocket")
+        .header("connection", "upgrade")
         .body(
             Full::new(Bytes::new())
                 .map_err(|never| -> anyhow::Error { match never {} })
@@ -1009,8 +432,11 @@ async fn denied_request_emits_event() {
         )
         .unwrap();
     let resp = sender.send_request(req).await.unwrap();
-    assert_eq!(resp.status().as_u16(), 403);
-    // Consume the body to trigger telemetry emission.
+    assert_eq!(
+        resp.status().as_u16(),
+        400,
+        "WebSocket upgrades should return 400"
+    );
     let _ = resp.into_body().collect().await;
 
     drop(sender);
@@ -1022,209 +448,18 @@ async fn denied_request_emits_event() {
     let events = reader.recent_net_events(10).unwrap();
     assert_eq!(events.len(), 1);
     assert_eq!(events[0].decision, Decision::Denied);
-    assert_eq!(events[0].status_code, Some(403));
-    assert_eq!(events[0].method, Some("GET".to_string()));
-    assert_eq!(events[0].path, Some("/secret".to_string()));
-}
-
-/// Multiple denied requests on the same keep-alive connection produce
-/// one event per request (the core bug this fix addresses).
-#[tokio::test]
-async fn multiple_denied_requests_emit_separate_events() {
-    let config = make_config_deny_all();
-    let (s1, s2) = UnixStream::pair().unwrap();
-
-    let proxy_fd = s2.into_raw_fd();
-    let proxy_config = Arc::clone(&config);
-    let proxy_task = tokio::spawn(async move {
-        handle_connection(proxy_fd, proxy_config).await;
-    });
-
-    let client_config = make_mitm_client_config();
-    let connector = tokio_rustls::TlsConnector::from(client_config);
-    s1.set_nonblocking(true).unwrap();
-    let stream = tokio::net::UnixStream::from_std(s1).unwrap();
-    let sni = rustls::pki_types::ServerName::try_from(TEST_DOMAIN.to_owned()).unwrap();
-    let tls_stream = connector.connect(sni, stream).await.unwrap();
-
-    let io = TokioIo::new(tls_stream);
-    let (mut sender, conn) = hyper::client::conn::http1::handshake(io).await.unwrap();
-    tokio::spawn(async move {
-        let _ = conn.await;
-    });
-
-    // Send 3 requests on the same keep-alive connection.
-    for path in ["/a", "/b", "/c"] {
-        let req = hyper::Request::builder()
-            .method("GET")
-            .uri(path)
-            .header("host", TEST_DOMAIN)
-            .body(
-                Full::new(Bytes::new())
-                    .map_err(|never| -> anyhow::Error { match never {} })
-                    .boxed(),
-            )
-            .unwrap();
-        let resp = sender.send_request(req).await.unwrap();
-        assert_eq!(resp.status().as_u16(), 403);
-        let _ = resp.into_body().collect().await;
-    }
-
-    drop(sender);
-    let _ = proxy_task.await;
-
-    tokio::time::sleep(std::time::Duration::from_millis(DB_FLUSH_MS)).await;
-
-    let reader = config.db.reader().unwrap();
-    let mut events = reader.recent_net_events(10).unwrap();
-    assert_eq!(events.len(), 3, "3 requests should produce 3 events, not 1");
-    events.reverse(); // chronological order
-    assert_eq!(events[0].path, Some("/a".to_string()));
-    assert_eq!(events[1].path, Some("/b".to_string()));
-    assert_eq!(events[2].path, Some("/c".to_string()));
-}
-
-#[tokio::test]
-async fn websocket_upgrade_tunnels_through_local_upstream() {
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
-
-    let upstream = tokio::net::TcpListener::bind(("127.0.0.1", 0))
-        .await
-        .unwrap();
-    let port = upstream.local_addr().unwrap().port();
-    let upstream_task = tokio::spawn(async move {
-        let (mut stream, _) = upstream.accept().await.unwrap();
-        let mut headers = Vec::new();
-        loop {
-            let mut byte = [0u8; 1];
-            stream.read_exact(&mut byte).await.unwrap();
-            headers.push(byte[0]);
-            if headers.ends_with(b"\r\n\r\n") {
-                break;
-            }
-        }
-        let request = String::from_utf8(headers).unwrap();
-        assert!(request.starts_with("GET /ws HTTP/1.1"));
-        assert!(request.to_ascii_lowercase().contains("upgrade: websocket"));
-
-        stream
-            .write_all(
-                b"HTTP/1.1 101 Switching Protocols\r\n\
-                  connection: upgrade\r\n\
-                  upgrade: websocket\r\n\
-                  \r\n",
-            )
-            .await
-            .unwrap();
-
-        let mut ping = [0u8; 14];
-        stream.read_exact(&mut ping).await.unwrap();
-        assert_eq!(&ping, b"capsem-ws-ping");
-        stream.write_all(b"capsem-ws-pong").await.unwrap();
-    });
-
-    let config = make_config_with_policy(allow_local_http_policy(port));
-    let (s1, s2) = UnixStream::pair().unwrap();
-    s1.set_nonblocking(true).unwrap();
-    s2.set_nonblocking(true).unwrap();
-    let mut client_stream = tokio::net::UnixStream::from_std(s1).unwrap();
-    let server_stream = tokio::net::UnixStream::from_std(s2).unwrap();
-
-    let upstream_tls = Arc::clone(&config.upstream_tls);
-    let config_arc = Arc::clone(&config);
-    let cached_upstream: Arc<
-        tokio::sync::Mutex<Option<hyper::client::conn::http1::SendRequest<ProxyBoxBody>>>,
-    > = Arc::new(tokio::sync::Mutex::new(None));
-    let proxy_task = tokio::spawn(async move {
-        let io = TokioIo::new(server_stream);
-        let svc = hyper::service::service_fn(move |req| {
-            let upstream_tls = Arc::clone(&upstream_tls);
-            let config_arc = Arc::clone(&config_arc);
-            let cached_upstream = Arc::clone(&cached_upstream);
-            async move {
-                handle_request(
-                    req,
-                    "127.0.0.1",
-                    Protocol::Http,
-                    port,
-                    &upstream_tls,
-                    &config_arc,
-                    &None,
-                    None,
-                    &cached_upstream,
-                )
-                .await
-            }
-        });
-        let _ = hyper::server::conn::http1::Builder::new()
-            .serve_connection(io, svc)
-            .with_upgrades()
-            .await;
-    });
-
-    client_stream
-        .write_all(
-            format!(
-                "GET /ws HTTP/1.1\r\n\
-                 host: 127.0.0.1:{port}\r\n\
-                 upgrade: websocket\r\n\
-                 connection: upgrade\r\n\
-                 \r\n"
-            )
-            .as_bytes(),
-        )
-        .await
-        .unwrap();
-
-    let mut response = Vec::new();
-    loop {
-        let mut byte = [0u8; 1];
-        client_stream.read_exact(&mut byte).await.unwrap();
-        response.push(byte[0]);
-        if response.ends_with(b"\r\n\r\n") {
-            break;
-        }
-    }
-    let response = String::from_utf8(response).unwrap();
-    assert!(response.starts_with("HTTP/1.1 101"));
-
-    client_stream.write_all(b"capsem-ws-ping").await.unwrap();
-    let mut pong = [0u8; 14];
-    client_stream.read_exact(&mut pong).await.unwrap();
-    assert_eq!(&pong, b"capsem-ws-pong");
-    drop(client_stream);
-
-    upstream_task.await.unwrap();
-    tokio::time::timeout(std::time::Duration::from_secs(2), proxy_task)
-        .await
-        .unwrap()
-        .unwrap();
-
-    tokio::time::sleep(std::time::Duration::from_millis(DB_FLUSH_MS)).await;
-
-    let reader = config.db.reader().unwrap();
-    let events = reader.recent_net_events(10).unwrap();
-    assert_eq!(events.len(), 1);
-    assert_eq!(events[0].decision, Decision::Allowed);
-    assert_eq!(events[0].status_code, Some(101));
-    assert_eq!(events[0].path, Some("/ws".to_string()));
+    assert_eq!(events[0].status_code, Some(400));
+    assert_eq!(
+        events[0].matched_rule,
+        Some("websocket-not-supported".to_string())
+    );
 }
 
 /// Upstream DNS failure returns 502 instead of killing the connection.
 #[tokio::test]
 async fn upstream_error_returns_502() {
     // Allow nonexistent.invalid but it will fail at TCP connect.
-    use crate::net::policy::{DomainMatcher, PolicyRule};
-    let policy = NetworkPolicy::new(
-        vec![PolicyRule {
-            matcher: DomainMatcher::parse("nonexistent.invalid"),
-            allow_read: true,
-            allow_write: true,
-        }],
-        false,
-        false,
-    );
-    let config = make_config_with_policy(policy);
+    let config = make_config_dev();
     let (s1, s2) = UnixStream::pair().unwrap();
 
     let proxy_fd = s2.into_raw_fd();
@@ -1275,6 +510,238 @@ async fn upstream_error_returns_502() {
     assert_eq!(events[0].decision, Decision::Error);
     assert_eq!(events[0].status_code, Some(502));
     assert_eq!(events[0].domain, "nonexistent.invalid");
+}
+
+#[tokio::test]
+async fn runtime_security_engine_blocks_plain_http_before_upstream_dispatch() {
+    let mut engine = SecurityEngine::default();
+    engine.set_enforcement(Box::new(
+        CelEnforcementEvaluator::compile(vec![CelEnforcementRule {
+            id: "block-openai-inline".into(),
+            pack_id: Some("corp-enforcement".into()),
+            condition: "http.request.host == 'api.openai.com' \
+                && http.request.path.startsWith('/v1/chat')"
+                .into(),
+            decision: SecurityDecisionAction::Block,
+            reason: Some("inline OpenAI block".into()),
+            mutations: Vec::new(),
+        }])
+        .unwrap(),
+    ));
+    let config =
+        make_config_dev_with_security_engine(Some(Arc::new(std::sync::Mutex::new(engine))));
+    let (port, upstream_task) = spawn_http_no_touch_fixture().await;
+    let (mut sender, proxy_task, conn_task) = open_direct_plain_http_request_conn(
+        &config,
+        "api.openai.com",
+        port,
+        Some(ProviderKind::OpenAi),
+    )
+    .await;
+
+    let (status, body) =
+        send_openai_chat_completion(&mut sender, "api.openai.com", "gpt-test", "needle").await;
+
+    assert_eq!(status, 403);
+    assert!(body.contains("inline OpenAI block"));
+    upstream_task.await.unwrap();
+    drop(sender);
+    let _ = conn_task.await;
+    let _ = proxy_task.await;
+
+    tokio::time::sleep(std::time::Duration::from_millis(DB_FLUSH_MS)).await;
+
+    let reader = config.db.reader().unwrap();
+    let events = reader.recent_net_events(10).unwrap();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].decision, Decision::Denied);
+    assert_eq!(
+        events[0].policy_rule.as_deref(),
+        Some("block-openai-inline")
+    );
+
+    let security = reader
+        .query_raw(
+            "SELECT se.final_action, steps.rule_id, steps.message \
+             FROM security_events se \
+             LEFT JOIN security_event_steps steps ON steps.event_id = se.event_id",
+        )
+        .unwrap();
+    assert!(security.contains("block"));
+    assert!(security.contains("block-openai-inline"));
+}
+
+#[tokio::test]
+async fn runtime_security_engine_blocks_request_body_before_upstream_dispatch() {
+    let mut engine = SecurityEngine::default();
+    engine.set_enforcement(Box::new(
+        CelEnforcementEvaluator::compile(vec![CelEnforcementRule {
+            id: "block-body-secret-inline".into(),
+            pack_id: Some("corp-enforcement".into()),
+            condition: "http.request.host == 'api.openai.com' \
+                && http.request.body.text.contains('needle')"
+                .into(),
+            decision: SecurityDecisionAction::Block,
+            reason: Some("body secret egress".into()),
+            mutations: Vec::new(),
+        }])
+        .unwrap(),
+    ));
+    let config =
+        make_config_dev_with_security_engine(Some(Arc::new(std::sync::Mutex::new(engine))));
+    let (port, upstream_task) = spawn_http_no_touch_fixture().await;
+    let (mut sender, proxy_task, conn_task) = open_direct_plain_http_request_conn(
+        &config,
+        "api.openai.com",
+        port,
+        Some(ProviderKind::OpenAi),
+    )
+    .await;
+
+    let (status, body) =
+        send_openai_chat_completion(&mut sender, "api.openai.com", "gpt-test", "needle").await;
+
+    assert_eq!(status, 403);
+    assert!(body.contains("body secret egress"));
+    upstream_task.await.unwrap();
+    drop(sender);
+    let _ = conn_task.await;
+    let _ = proxy_task.await;
+
+    tokio::time::sleep(std::time::Duration::from_millis(DB_FLUSH_MS)).await;
+
+    let reader = config.db.reader().unwrap();
+    let events = reader.recent_net_events(10).unwrap();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].decision, Decision::Denied);
+    assert_eq!(
+        events[0].policy_rule.as_deref(),
+        Some("block-body-secret-inline")
+    );
+    assert!(events[0]
+        .request_body_preview
+        .as_deref()
+        .is_some_and(|preview| preview.contains("needle")));
+}
+
+#[tokio::test]
+async fn runtime_security_engine_blocks_response_body_before_guest_delivery() {
+    let mut engine = SecurityEngine::default();
+    engine.set_enforcement(Box::new(
+        CelEnforcementEvaluator::compile(vec![CelEnforcementRule {
+            id: "block-response-secret-inline".into(),
+            pack_id: Some("corp-enforcement".into()),
+            condition: "http.response.body.text.contains('needle-from-upstream')".into(),
+            decision: SecurityDecisionAction::Block,
+            reason: Some("response secret ingress".into()),
+            mutations: Vec::new(),
+        }])
+        .unwrap(),
+    ));
+    let config =
+        make_config_dev_with_security_engine(Some(Arc::new(std::sync::Mutex::new(engine))));
+    let (port, upstream_task) = spawn_http_fixture_response(
+        200,
+        "OK",
+        vec![("content-type", "text/plain")],
+        "safe prefix needle-from-upstream unsafe suffix",
+    )
+    .await;
+    let (mut sender, proxy_task, conn_task) =
+        open_direct_plain_http_request_conn(&config, "127.0.0.1", port, None).await;
+
+    let (status, body) =
+        send_openai_json_request(&mut sender, "127.0.0.1", "/inspect", Bytes::new()).await;
+
+    assert_eq!(status, 403);
+    assert!(body.contains("response secret ingress"));
+    let upstream_request = upstream_task.await.unwrap();
+    assert!(
+        upstream_request.starts_with("POST /inspect"),
+        "response policy must run after upstream request dispatch"
+    );
+    drop(sender);
+    let _ = conn_task.await;
+    let _ = proxy_task.await;
+
+    tokio::time::sleep(std::time::Duration::from_millis(DB_FLUSH_MS)).await;
+
+    let reader = config.db.reader().unwrap();
+    let events = reader.recent_net_events(10).unwrap();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].decision, Decision::Denied);
+    assert_eq!(
+        events[0].policy_rule.as_deref(),
+        Some("block-response-secret-inline")
+    );
+    assert!(
+        events[0]
+            .response_body_preview
+            .as_deref()
+            .is_some_and(|preview| !preview.contains("needle-from-upstream")),
+        "blocked response body must not be journaled back through the guest response preview"
+    );
+
+    let security = reader
+        .query_raw(
+            "SELECT se.event_type, se.final_action, steps.rule_id \
+             FROM security_events se \
+             LEFT JOIN security_event_steps steps ON steps.event_id = se.event_id",
+        )
+        .unwrap();
+    assert!(security.contains("http.response"));
+    assert!(security.contains("http.request"));
+    assert!(security.contains("block-response-secret-inline"));
+}
+
+#[tokio::test]
+async fn runtime_security_engine_matches_decoded_gzip_response_body() {
+    let mut engine = SecurityEngine::default();
+    engine.set_enforcement(Box::new(
+        CelEnforcementEvaluator::compile(vec![CelEnforcementRule {
+            id: "block-gzip-response-secret-inline".into(),
+            pack_id: Some("corp-enforcement".into()),
+            condition: "http.response.body.text.contains('compressed-needle')".into(),
+            decision: SecurityDecisionAction::Block,
+            reason: Some("compressed response secret ingress".into()),
+            mutations: Vec::new(),
+        }])
+        .unwrap(),
+    ));
+    let config =
+        make_config_dev_with_security_engine(Some(Arc::new(std::sync::Mutex::new(engine))));
+    let gzipped = gzip_bytes(b"safe prefix compressed-needle unsafe suffix");
+    let (port, upstream_task) = spawn_http_fixture_response_bytes(
+        200,
+        "OK",
+        vec![("content-type", "text/plain"), ("content-encoding", "gzip")],
+        gzipped,
+    )
+    .await;
+    let (mut sender, proxy_task, conn_task) =
+        open_direct_plain_http_request_conn(&config, "127.0.0.1", port, None).await;
+
+    let (status, body) =
+        send_openai_json_request(&mut sender, "127.0.0.1", "/inspect", Bytes::new()).await;
+
+    assert_eq!(status, 403);
+    assert!(body.contains("compressed response secret ingress"));
+    let upstream_request = upstream_task.await.unwrap();
+    assert!(upstream_request.starts_with("POST /inspect"));
+    drop(sender);
+    let _ = conn_task.await;
+    let _ = proxy_task.await;
+
+    tokio::time::sleep(std::time::Duration::from_millis(DB_FLUSH_MS)).await;
+
+    let reader = config.db.reader().unwrap();
+    let events = reader.recent_net_events(10).unwrap();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].decision, Decision::Denied);
+    assert_eq!(
+        events[0].policy_rule.as_deref(),
+        Some("block-gzip-response-secret-inline")
+    );
 }
 
 // emit_model_call / trace-chain unit tests now live in
@@ -1365,25 +832,6 @@ fn llm_api_path_google_negative() {
         ProviderKind::Google,
         "/v1beta/cachedContents"
     ));
-}
-
-#[test]
-fn llm_api_path_ollama_positive() {
-    assert!(is_llm_api_path(ProviderKind::Ollama, "/api/chat"));
-    assert!(is_llm_api_path(ProviderKind::Ollama, "/api/generate"));
-    assert!(is_llm_api_path(ProviderKind::Ollama, "/api/embeddings"));
-    assert!(is_llm_api_path(ProviderKind::Ollama, "/api/embed"));
-    assert!(is_llm_api_path(
-        ProviderKind::Ollama,
-        "/v1/chat/completions"
-    ));
-}
-
-#[test]
-fn llm_api_path_ollama_negative() {
-    assert!(!is_llm_api_path(ProviderKind::Ollama, "/api/tags"));
-    assert!(!is_llm_api_path(ProviderKind::Ollama, "/api/version"));
-    assert!(!is_llm_api_path(ProviderKind::Ollama, "/v1/models"));
 }
 
 #[test]
@@ -1504,7 +952,6 @@ async fn open_direct_plain_http_request_conn(
         });
         let _ = hyper::server::conn::http1::Builder::new()
             .serve_connection(io, svc)
-            .with_upgrades()
             .await;
     });
 
@@ -1512,22 +959,6 @@ async fn open_direct_plain_http_request_conn(
     let (sender, conn) = hyper::client::conn::http1::handshake(io).await.unwrap();
     let conn_task = tokio::spawn(conn);
     (sender, proxy_task, conn_task)
-}
-
-fn allow_local_http_policy(port: u16) -> NetworkPolicy {
-    use crate::net::policy::{DomainMatcher, PolicyRule};
-
-    let mut policy = NetworkPolicy::new(
-        vec![PolicyRule {
-            matcher: DomainMatcher::parse("127.0.0.1"),
-            allow_read: true,
-            allow_write: true,
-        }],
-        false,
-        false,
-    );
-    policy.http_upstream_ports.push(port);
-    policy
 }
 
 async fn spawn_http_fixture_response(
@@ -1544,6 +975,15 @@ async fn spawn_http_fixture_response_owned(
     reason: &'static str,
     headers: Vec<(&'static str, &'static str)>,
     body: String,
+) -> (u16, tokio::task::JoinHandle<String>) {
+    spawn_http_fixture_response_bytes(status, reason, headers, body.into_bytes()).await
+}
+
+async fn spawn_http_fixture_response_bytes(
+    status: u16,
+    reason: &'static str,
+    headers: Vec<(&'static str, &'static str)>,
+    body: Vec<u8>,
 ) -> (u16, tokio::task::JoinHandle<String>) {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -1563,14 +1003,40 @@ async fn spawn_http_fixture_response_owned(
             response.push_str("\r\n");
         }
         response.push_str(&format!(
-            "content-length: {}\r\nconnection: close\r\n\r\n{}",
-            body.len(),
-            body
+            "content-length: {}\r\nconnection: close\r\n\r\n",
+            body.len()
         ));
         stream.write_all(response.as_bytes()).await.unwrap();
+        stream.write_all(&body).await.unwrap();
         request
     });
     (port, task)
+}
+
+fn gzip_bytes(body: &[u8]) -> Vec<u8> {
+    use flate2::write::GzEncoder;
+    use flate2::Compression;
+    use std::io::Write;
+
+    let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+    encoder.write_all(body).unwrap();
+    encoder.finish().unwrap()
+}
+
+#[test]
+fn response_uses_gzip_content_encoding_accepts_token_lists_case_insensitively() {
+    let mut headers = http::HeaderMap::new();
+    headers.insert(
+        http::header::CONTENT_ENCODING,
+        http::HeaderValue::from_static("br, GZip"),
+    );
+    assert!(response_uses_gzip_content_encoding(&headers));
+
+    headers.insert(
+        http::header::CONTENT_ENCODING,
+        http::HeaderValue::from_static("identity"),
+    );
+    assert!(!response_uses_gzip_content_encoding(&headers));
 }
 
 async fn spawn_http_no_touch_fixture() -> (u16, tokio::task::JoinHandle<()>) {
@@ -1652,33 +1118,6 @@ async fn send_openai_json_request(
     (status, String::from_utf8_lossy(&bytes).into_owned())
 }
 
-async fn send_ollama_chat_request(
-    sender: &mut hyper::client::conn::http1::SendRequest<
-        http_body_util::combinators::BoxBody<Bytes, anyhow::Error>,
-    >,
-    host: &str,
-    model: &str,
-) -> (u16, String) {
-    let body = format!(
-        r#"{{"model":"{model}","stream":false,"messages":[{{"role":"system","content":"stay local"}},{{"role":"user","content":"hello"}}]}}"#
-    );
-    let req = hyper::Request::builder()
-        .method("POST")
-        .uri("/api/chat")
-        .header("host", host)
-        .header("content-type", "application/json")
-        .body(
-            Full::new(Bytes::from(body))
-                .map_err(|never| -> anyhow::Error { match never {} })
-                .boxed(),
-        )
-        .unwrap();
-    let resp = sender.send_request(req).await.unwrap();
-    let status = resp.status().as_u16();
-    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
-    (status, String::from_utf8_lossy(&bytes).into_owned())
-}
-
 fn openai_sse_text_response(model: &str, content: &str) -> String {
     format!(
         "data: {{\"id\":\"chatcmpl-policy\",\"model\":\"{model}\",\"choices\":[{{\"index\":0,\"delta\":{{\"content\":\"{content}\"}},\"finish_reason\":null}}]}}\n\n\
@@ -1702,1387 +1141,32 @@ data: [DONE]\n\n"
     )
 }
 
-#[tokio::test]
-async fn ollama_settings_endpoint_routes_and_emits_model_call_security_event() {
-    let (port, upstream_task) = spawn_http_fixture_response(
-        200,
-        "OK",
-        vec![("content-type", "application/json")],
-        r#"{"model":"llama3.2","message":{"role":"assistant","content":"local ok"},"done":true,"prompt_eval_count":7,"eval_count":11}"#,
-    )
-    .await;
-    let config = make_config_with_policy(allow_local_http_policy(port));
-    let endpoint_profile = crate::net::policy_config::ProviderRuleProfile::parse_toml(&format!(
-        r#"
-[ai.ollama]
-name = "Ollama"
-protocol = "ollama"
-url = "http://127.0.0.1:{port}"
-aliases = ["127.0.0.1"]
-listen_ports = [{port}]
+mod connection_behavior;
 
-[ai.ollama.rules.http_native_api]
-name = "ollama_native_http_observed"
-action = "allow"
-match = 'http.path.matches("^/api/(chat|generate)")'
-"#
-    ))
-    .expect("ollama endpoint profile parses")
-    .endpoint_registry()
-    .expect("ollama endpoint registry builds");
-    *config.model_endpoints.write().unwrap() = Arc::new(endpoint_profile);
-    let rules = crate::net::policy_config::compile_provider_rules_to_security_rule_set(
-        &crate::net::policy_config::ProviderRuleProfile::default(),
-        &crate::net::policy_config::ProviderRuleProfile::default(),
-    )
-    .expect("provider-owned default security rules compile");
-    *config.telemetry.security_rules.write().unwrap() = Arc::new(rules);
-
-    let (mut sender, proxy_task, _conn_task) = open_plain_http_proxy_conn(&config).await;
-    let host = format!("127.0.0.1:{port}");
-    let (status, response_body) = send_ollama_chat_request(&mut sender, &host, "llama3.2").await;
-    assert_eq!(status, 200);
-    assert!(response_body.contains("local ok"));
-    drop(sender);
-    let _ = proxy_task.await;
-    let upstream_request = upstream_task.await.unwrap();
-    assert!(
-        upstream_request.starts_with("POST /api/chat "),
-        "Ollama request should dispatch to the native API path"
+#[test]
+fn upstream_connect_target_honors_debug_test_override() {
+    let previous = std::env::var_os("CAPSEM_TEST_UPSTREAM_OVERRIDES");
+    std::env::set_var(
+        "CAPSEM_TEST_UPSTREAM_OVERRIDES",
+        "api.openai.com:80=http://127.0.0.1:4567,other.example:443=127.0.0.1:9443",
     );
-
-    let reader = config.db.reader().unwrap();
-    let mut model_seen = false;
-    let mut http_host_rule_seen = false;
-    let mut http_path_rule_seen = false;
-    let mut model_rule_seen = false;
-    for _ in 0..50 {
-        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-        let model_calls = reader.recent_model_calls(10).unwrap();
-        if let Some((_, call)) = model_calls
-            .iter()
-            .find(|(_, call)| call.provider == "ollama")
-        {
-            assert_eq!(call.model.as_deref(), Some("llama3.2"));
-            assert_eq!(call.messages_count, 2);
-            assert_eq!(call.input_tokens, Some(7));
-            assert_eq!(call.output_tokens, Some(11));
-            assert_eq!(call.method, "POST");
-            assert_eq!(call.path, "/api/chat");
-            assert!(
-                call.request_body_preview
-                    .as_deref()
-                    .unwrap_or_default()
-                    .contains("\"model\":\"llama3.2\""),
-                "model.call must retain the native Ollama request preview"
-            );
-            assert!(
-                call.event_id
-                    .as_deref()
-                    .is_some_and(|event_id| event_id.len() == 12),
-                "model.call rows must carry the canonical security event id"
-            );
-            model_seen = true;
+    assert_eq!(
+        upstream_connect_target("api.openai.com", 80),
+        UpstreamConnectTarget {
+            address: "127.0.0.1:4567".to_string(),
+            plaintext_tls: true,
         }
-
-        let rule_events = reader.recent_security_rule_events(10).unwrap();
-        if let Some(event) = rule_events
-            .iter()
-            .find(|event| event.rule_id == "profiles.rules.ai_ollama_http_local_host")
-        {
-            assert_eq!(event.event_type, "http.request");
-            assert_eq!(event.detection_level.as_str(), "informational");
-            assert_eq!(event.rule_action.as_str(), "allow");
-            assert!(event.event_json.contains(r#""host":"127.0.0.1""#));
-            assert!(event.rule_json.contains("ollama_local_http_observed"));
-            http_host_rule_seen = true;
+    );
+    assert_eq!(
+        upstream_connect_target("api.openai.com", 443),
+        UpstreamConnectTarget {
+            address: "api.openai.com:443".to_string(),
+            plaintext_tls: false,
         }
-        if let Some(event) = rule_events
-            .iter()
-            .find(|event| event.rule_id == "profiles.rules.ai_ollama_http_native_api")
-        {
-            assert_eq!(event.event_type, "http.request");
-            assert_eq!(event.detection_level.as_str(), "informational");
-            assert_eq!(event.rule_action.as_str(), "allow");
-            assert!(event.event_json.contains(r#""path":"/api/chat""#));
-            assert!(event.rule_json.contains("ollama_native_http_observed"));
-            http_path_rule_seen = true;
-        }
-        if let Some(event) = rule_events
-            .iter()
-            .find(|event| event.rule_id == "profiles.rules.ai_ollama_model_api")
-        {
-            assert_eq!(event.event_type, "model.call");
-            assert_eq!(event.detection_level.as_str(), "informational");
-            assert_eq!(event.rule_action.as_str(), "allow");
-            assert!(event.event_json.contains(r#""provider":"ollama""#));
-            assert!(event.event_json.contains(r#""name":"llama3.2""#));
-            assert!(event.rule_json.contains("ollama_model_api_observed"));
-            model_rule_seen = true;
-        }
-
-        if model_seen && http_host_rule_seen && http_path_rule_seen && model_rule_seen {
-            break;
-        }
+    );
+    if let Some(value) = previous {
+        std::env::set_var("CAPSEM_TEST_UPSTREAM_OVERRIDES", value);
+    } else {
+        std::env::remove_var("CAPSEM_TEST_UPSTREAM_OVERRIDES");
     }
-
-    assert!(
-        model_seen,
-        "expected endpoint-registry-routed Ollama request to emit model.call"
-    );
-    assert!(
-        http_host_rule_seen,
-        "expected provider-owned Ollama host rule to feed the security rule ledger"
-    );
-    assert!(
-        http_path_rule_seen,
-        "expected provider-owned Ollama native API rule to feed the security rule ledger"
-    );
-    assert!(
-        model_rule_seen,
-        "expected provider-owned Ollama model rule to feed the security rule ledger"
-    );
-}
-
-#[tokio::test]
-async fn policy_v2_model_request_allow_dispatches_and_records_policy_fields() {
-    let (port, upstream_task) = spawn_http_fixture_response(
-        200,
-        "OK",
-        vec![("content-type", "application/json")],
-        r#"{"id":"chatcmpl-test","choices":[]}"#,
-    )
-    .await;
-    let config = make_config_with_policy_v2(
-        allow_local_http_policy(port),
-        policy_v2_from_toml(
-            r#"
-[policy.model.allow_gpt4o]
-on = "model.request"
-if = 'provider == "openai" && model == "gpt-4o" && messages_count == "2" && tools_count == "1"'
-decision = "allow"
-priority = 10
-reason = "Allow the local model fixture"
-"#,
-        ),
-    );
-    let (mut sender, proxy_task, _conn_task) =
-        open_direct_plain_http_request_conn(&config, "127.0.0.1", port, Some(ProviderKind::OpenAi))
-            .await;
-
-    let (status, response_body) =
-        send_openai_chat_completion(&mut sender, "api.openai.com", "gpt-4o", "allow-secret").await;
-    assert_eq!(status, 200);
-    assert!(response_body.contains("chatcmpl-test"));
-    drop(sender);
-    let _ = proxy_task.await;
-    let upstream_request = upstream_task.await.unwrap();
-    assert!(
-        upstream_request.contains("allow-secret"),
-        "allow must preserve the original request body for upstream dispatch"
-    );
-
-    tokio::time::sleep(std::time::Duration::from_millis(DB_FLUSH_MS)).await;
-    let events = config.db.reader().unwrap().recent_net_events(10).unwrap();
-    assert_eq!(events.len(), 1);
-    let event = &events[0];
-    assert_eq!(event.decision, Decision::Allowed);
-    assert_eq!(event.status_code, Some(200));
-    assert!(event.bytes_sent > 0);
-    assert_eq!(event.policy_mode.as_deref(), Some("enforce"));
-    assert_eq!(event.policy_action.as_deref(), Some("allow"));
-    assert_eq!(
-        event.policy_rule.as_deref(),
-        Some("policy.model.allow_gpt4o")
-    );
-    assert_eq!(
-        event.policy_reason.as_deref(),
-        Some("Allow the local model fixture")
-    );
-    let model_calls = config.db.reader().unwrap().recent_model_calls(10).unwrap();
-    assert_eq!(model_calls.len(), 1);
-    let call = &model_calls[0].1;
-    assert_eq!(call.provider, "openai");
-    assert_eq!(call.model.as_deref(), Some("gpt-4o"));
-    assert_eq!(call.messages_count, 2);
-    assert_eq!(call.tools_count, 1);
-    assert!(call.request_bytes > 0);
-    assert!(
-        call.request_body_preview
-            .as_deref()
-            .unwrap_or_default()
-            .contains("allow-secret"),
-        "allowed model request telemetry should retain the captured request preview"
-    );
-}
-
-#[tokio::test]
-async fn policy_v2_model_request_block_stops_before_upstream_and_records_policy_fields() {
-    let (port, upstream_task) = spawn_http_no_touch_fixture().await;
-    let config = make_config_with_policy_v2(
-        allow_local_http_policy(port),
-        policy_v2_from_toml(
-            r#"
-[policy.model.block_gpt4o]
-on = "model.request"
-if = 'provider == "openai" && model == "gpt-4o" && request.body.contains("block-secret")'
-decision = "block"
-priority = 10
-reason = "Do not send this model request"
-"#,
-        ),
-    );
-    let (mut sender, proxy_task, _conn_task) =
-        open_direct_plain_http_request_conn(&config, "127.0.0.1", port, Some(ProviderKind::OpenAi))
-            .await;
-
-    let (status, response_body) =
-        send_openai_chat_completion(&mut sender, "api.openai.com", "gpt-4o", "block-secret").await;
-    assert_eq!(status, 403);
-    assert!(response_body.contains("policy.model.block_gpt4o"));
-    drop(sender);
-    let _ = proxy_task.await;
-    upstream_task.await.unwrap();
-
-    tokio::time::sleep(std::time::Duration::from_millis(DB_FLUSH_MS)).await;
-    let events = config.db.reader().unwrap().recent_net_events(10).unwrap();
-    assert_eq!(events.len(), 1);
-    let event = &events[0];
-    assert_eq!(event.decision, Decision::Denied);
-    assert_eq!(event.status_code, Some(403));
-    assert!(event.bytes_sent > 0);
-    assert_eq!(event.policy_mode.as_deref(), Some("enforce"));
-    assert_eq!(event.policy_action.as_deref(), Some("block"));
-    assert_eq!(
-        event.policy_rule.as_deref(),
-        Some("policy.model.block_gpt4o")
-    );
-    assert_eq!(
-        event.policy_reason.as_deref(),
-        Some("Do not send this model request")
-    );
-    assert!(
-        !event
-            .request_body_preview
-            .as_deref()
-            .unwrap_or_default()
-            .contains("block-secret"),
-        "denied model request telemetry must not retain the blocked body"
-    );
-    let model_calls = config.db.reader().unwrap().recent_model_calls(10).unwrap();
-    assert_eq!(model_calls.len(), 1);
-    let call = &model_calls[0].1;
-    assert_eq!(call.provider, "openai");
-    assert_eq!(call.model, None);
-    assert!(call.request_bytes > 0);
-    assert!(
-        !call
-            .request_body_preview
-            .as_deref()
-            .unwrap_or_default()
-            .contains("block-secret"),
-        "denied model call telemetry must not retain the blocked body"
-    );
-}
-
-#[tokio::test]
-async fn policy_v2_model_request_block_matches_truncated_json_before_upstream_dispatch() {
-    let (port, upstream_task) = spawn_http_no_touch_fixture().await;
-    let config = make_config_with_policy_v2(
-        allow_local_http_policy(port),
-        policy_v2_from_toml(
-            r#"
-[policy.model.block_truncated_json]
-on = "model.request"
-if = 'provider == "openai" && model == "gpt-4o-mini" && request.body.contains("truncated-secret")'
-decision = "block"
-priority = 10
-reason = "Block even when the JSON body is truncated"
-"#,
-        ),
-    );
-    let (mut sender, proxy_task, _conn_task) =
-        open_direct_plain_http_request_conn(&config, "127.0.0.1", port, Some(ProviderKind::OpenAi))
-            .await;
-
-    let (status, response_body) = send_openai_json_request(
-        &mut sender,
-        "api.openai.com",
-        "/v1/chat/completions",
-        Bytes::from_static(
-            br#"{"model":"gpt-4o-mini","messages":[{"role":"user","content":"truncated-secret"}"#,
-        ),
-    )
-    .await;
-    assert_eq!(status, 403);
-    assert!(response_body.contains("policy.model.block_truncated_json"));
-    drop(sender);
-    let _ = proxy_task.await;
-    upstream_task.await.unwrap();
-
-    tokio::time::sleep(std::time::Duration::from_millis(DB_FLUSH_MS)).await;
-    let events = config.db.reader().unwrap().recent_net_events(10).unwrap();
-    assert_eq!(events.len(), 1);
-    let event = &events[0];
-    assert_eq!(event.decision, Decision::Denied);
-    assert_eq!(event.policy_action.as_deref(), Some("block"));
-    assert_eq!(
-        event.policy_rule.as_deref(),
-        Some("policy.model.block_truncated_json")
-    );
-    assert!(
-        !event
-            .request_body_preview
-            .as_deref()
-            .unwrap_or_default()
-            .contains("truncated-secret"),
-        "truncated denied body must not leak to net_events"
-    );
-}
-
-#[tokio::test]
-async fn policy_v2_model_request_invalid_condition_fails_closed_without_upstream_dispatch() {
-    use std::collections::HashMap;
-
-    let (port, upstream_task) = spawn_http_no_touch_fixture().await;
-    let mut model = HashMap::new();
-    model.insert(
-        "bad_regex".to_string(),
-        crate::net::policy_config::PolicyRuleConfig {
-            on: crate::net::policy_config::PolicyCallback::ModelRequest,
-            condition: "request.body.matches(\"[\")".to_string(),
-            decision: crate::net::policy_config::PolicyDecisionKind::Allow,
-            priority: 10,
-            reason: None,
-            actions: Vec::new(),
-            rewrite_target: None,
-            rewrite_value: None,
-            strip_request_headers: Vec::new(),
-            strip_response_headers: Vec::new(),
-        },
-    );
-    let policy_v2 = Arc::new(tokio::sync::RwLock::new(Arc::new(
-        crate::net::policy_config::PolicyConfig {
-            model,
-            ..crate::net::policy_config::PolicyConfig::default()
-        },
-    )));
-    let config = make_config_with_policy_v2(allow_local_http_policy(port), policy_v2);
-    let (mut sender, proxy_task, _conn_task) =
-        open_direct_plain_http_request_conn(&config, "127.0.0.1", port, Some(ProviderKind::OpenAi))
-            .await;
-
-    let (status, response_body) =
-        send_openai_chat_completion(&mut sender, "api.openai.com", "gpt-4o", "bad-rule-secret")
-            .await;
-    assert_eq!(status, 403);
-    assert!(response_body.contains("policy.model.invalid_condition"));
-    drop(sender);
-    let _ = proxy_task.await;
-    upstream_task.await.unwrap();
-
-    tokio::time::sleep(std::time::Duration::from_millis(DB_FLUSH_MS)).await;
-    let events = config.db.reader().unwrap().recent_net_events(10).unwrap();
-    assert_eq!(events.len(), 1);
-    let event = &events[0];
-    assert_eq!(event.decision, Decision::Denied);
-    assert_eq!(event.policy_action.as_deref(), Some("block"));
-    assert_eq!(
-        event.policy_rule.as_deref(),
-        Some("policy.model.invalid_condition")
-    );
-    assert!(
-        !event
-            .request_body_preview
-            .as_deref()
-            .unwrap_or_default()
-            .contains("bad-rule-secret"),
-        "invalid runtime policy conditions must fail closed without request-body telemetry leakage"
-    );
-}
-
-#[tokio::test]
-async fn policy_v2_model_request_rules_do_not_run_on_non_llm_provider_paths() {
-    let (port, upstream_task) = spawn_http_fixture_response(
-        200,
-        "OK",
-        vec![("content-type", "application/json")],
-        r#"{"object":"list","data":[]}"#,
-    )
-    .await;
-    let config = make_config_with_policy_v2(
-        allow_local_http_policy(port),
-        policy_v2_from_toml(
-            r#"
-[policy.model.block_gpt4o]
-on = "model.request"
-if = 'provider == "openai" && model == "gpt-4o" && request.body.contains("non-llm-secret")'
-decision = "block"
-priority = 10
-"#,
-        ),
-    );
-    let (mut sender, proxy_task, _conn_task) =
-        open_direct_plain_http_request_conn(&config, "127.0.0.1", port, Some(ProviderKind::OpenAi))
-            .await;
-
-    let body = Bytes::from_static(
-        br#"{"model":"gpt-4o","messages":[{"role":"user","content":"non-llm-secret"}]}"#,
-    );
-    let (status, response_body) =
-        send_openai_json_request(&mut sender, "api.openai.com", "/v1/models", body).await;
-    assert_eq!(status, 200);
-    assert!(response_body.contains(r#""object":"list""#));
-    drop(sender);
-    let _ = proxy_task.await;
-    let upstream_request = upstream_task.await.unwrap();
-    assert!(
-        upstream_request.contains("non-llm-secret"),
-        "non-LLM provider paths should not run model.request rules"
-    );
-
-    tokio::time::sleep(std::time::Duration::from_millis(DB_FLUSH_MS)).await;
-    let events = config.db.reader().unwrap().recent_net_events(10).unwrap();
-    assert_eq!(events.len(), 1);
-    let event = &events[0];
-    assert_eq!(event.decision, Decision::Allowed);
-    assert_eq!(event.policy_action, None);
-    assert!(config
-        .db
-        .reader()
-        .unwrap()
-        .recent_model_calls(10)
-        .unwrap()
-        .is_empty());
-}
-
-#[tokio::test]
-async fn policy_v2_model_request_ask_fails_closed_without_upstream_dispatch() {
-    let (port, upstream_task) = spawn_http_no_touch_fixture().await;
-    let config = make_config_with_policy_v2(
-        allow_local_http_policy(port),
-        policy_v2_from_toml(
-            r#"
-[policy.model.ask_gpt4o]
-on = "model.request"
-if = 'provider == "openai" && model == "gpt-4o"'
-decision = "ask"
-priority = 10
-reason = "Ask before sending this model request"
-"#,
-        ),
-    );
-    let (mut sender, proxy_task, _conn_task) =
-        open_direct_plain_http_request_conn(&config, "127.0.0.1", port, Some(ProviderKind::OpenAi))
-            .await;
-
-    let (status, response_body) =
-        send_openai_chat_completion(&mut sender, "api.openai.com", "gpt-4o", "ask-secret").await;
-    assert_eq!(status, 403);
-    assert!(response_body.contains("policy.model.ask_gpt4o"));
-    drop(sender);
-    let _ = proxy_task.await;
-    upstream_task.await.unwrap();
-
-    tokio::time::sleep(std::time::Duration::from_millis(DB_FLUSH_MS)).await;
-    let events = config.db.reader().unwrap().recent_net_events(10).unwrap();
-    assert_eq!(events.len(), 1);
-    let event = &events[0];
-    assert_eq!(event.decision, Decision::Denied);
-    assert!(event.bytes_sent > 0);
-    assert_eq!(event.policy_action.as_deref(), Some("ask"));
-    assert_eq!(event.policy_rule.as_deref(), Some("policy.model.ask_gpt4o"));
-    assert!(
-        !event
-            .request_body_preview
-            .as_deref()
-            .unwrap_or_default()
-            .contains("ask-secret"),
-        "ask fail-closed telemetry must not retain the blocked body"
-    );
-}
-
-#[tokio::test]
-async fn policy_v2_model_request_rewrite_fails_closed_without_leaking_body() {
-    let (port, upstream_task) = spawn_http_no_touch_fixture().await;
-    let config = make_config_with_policy_v2(
-        allow_local_http_policy(port),
-        policy_v2_from_toml(
-            r#"
-[policy.model.rewrite_secret]
-on = "model.request"
-if = 'provider == "openai" && model == "gpt-4o" && request.body.contains("rewrite-secret")'
-decision = "rewrite"
-priority = 10
-reason = "Rewrite secret-bearing model request"
-rewrite_target = 'request.body =~ "rewrite-secret-(?P<suffix>[a-z]+)"'
-rewrite_value = "[redacted-${suffix}]"
-"#,
-        ),
-    );
-    let (mut sender, proxy_task, _conn_task) =
-        open_direct_plain_http_request_conn(&config, "127.0.0.1", port, Some(ProviderKind::OpenAi))
-            .await;
-
-    let (status, response_body) = send_openai_chat_completion(
-        &mut sender,
-        "api.openai.com",
-        "gpt-4o",
-        "rewrite-secret-token",
-    )
-    .await;
-    assert_eq!(status, 403);
-    assert!(response_body.contains("policy.model.rewrite_secret"));
-    drop(sender);
-    let _ = proxy_task.await;
-    upstream_task.await.unwrap();
-
-    tokio::time::sleep(std::time::Duration::from_millis(DB_FLUSH_MS)).await;
-    let events = config.db.reader().unwrap().recent_net_events(10).unwrap();
-    assert_eq!(events.len(), 1);
-    let event = &events[0];
-    assert_eq!(event.decision, Decision::Denied);
-    assert!(event.bytes_sent > 0);
-    assert_eq!(event.policy_action.as_deref(), Some("rewrite"));
-    assert_eq!(
-        event.policy_rule.as_deref(),
-        Some("policy.model.rewrite_secret")
-    );
-    assert!(
-        !event
-            .request_body_preview
-            .as_deref()
-            .unwrap_or_default()
-            .contains("rewrite-secret-token"),
-        "unsupported model request rewrite must fail closed without telemetry leakage"
-    );
-}
-
-#[tokio::test]
-async fn policy_v2_model_response_block_stops_before_guest_and_records_policy_fields() {
-    let (port, upstream_task) = spawn_http_fixture_response_owned(
-        200,
-        "OK",
-        vec![("content-type", "text/event-stream")],
-        openai_sse_text_response("gpt-4o", "hello response-secret"),
-    )
-    .await;
-    let config = make_config_with_policy_v2(
-        allow_local_http_policy(port),
-        policy_v2_from_toml(
-            r#"
-[policy.model.block_secret_response]
-on = "model.response"
-if = 'provider == "openai" && model == "gpt-4o" && response.text.contains("response-secret")'
-decision = "block"
-priority = 10
-reason = "Do not deliver secret model text"
-"#,
-        ),
-    );
-    let (mut sender, proxy_task, _conn_task) =
-        open_direct_plain_http_request_conn(&config, "127.0.0.1", port, Some(ProviderKind::OpenAi))
-            .await;
-
-    let (status, response_body) =
-        send_openai_chat_completion(&mut sender, "api.openai.com", "gpt-4o", "safe").await;
-    assert_eq!(status, 403);
-    assert!(response_body.contains("policy.model.block_secret_response"));
-    assert!(
-        !response_body.contains("response-secret"),
-        "blocked model response must not reach the guest"
-    );
-    drop(sender);
-    let _ = proxy_task.await;
-    let upstream_request = upstream_task.await.unwrap();
-    assert!(
-        upstream_request.contains("gpt-4o"),
-        "response policy should run after upstream dispatch"
-    );
-
-    tokio::time::sleep(std::time::Duration::from_millis(DB_FLUSH_MS)).await;
-    let events = config.db.reader().unwrap().recent_net_events(10).unwrap();
-    assert_eq!(events.len(), 1);
-    let event = &events[0];
-    assert_eq!(event.decision, Decision::Denied);
-    assert_eq!(event.status_code, Some(403));
-    assert_eq!(event.policy_action.as_deref(), Some("block"));
-    assert_eq!(
-        event.policy_rule.as_deref(),
-        Some("policy.model.block_secret_response")
-    );
-    assert!(
-        !event
-            .response_body_preview
-            .as_deref()
-            .unwrap_or_default()
-            .contains("response-secret"),
-        "blocked model response telemetry must not retain the upstream response"
-    );
-    let model_calls = config.db.reader().unwrap().recent_model_calls(10).unwrap();
-    assert_eq!(model_calls.len(), 1);
-    let call = &model_calls[0].1;
-    assert_eq!(call.provider, "openai");
-    assert_eq!(call.model.as_deref(), Some("gpt-4o"));
-    assert!(
-        call.text_content
-            .as_deref()
-            .is_none_or(|text| !text.contains("response-secret")),
-        "blocked model response must not populate secret text_content"
-    );
-}
-
-#[tokio::test]
-async fn policy_v2_model_response_rewrite_redacts_guest_and_session_db() {
-    let (port, upstream_task) = spawn_http_fixture_response_owned(
-        200,
-        "OK",
-        vec![("content-type", "text/event-stream")],
-        openai_sse_text_response("gpt-4o", "hello response-secret"),
-    )
-    .await;
-    let config = make_config_with_policy_v2(
-        allow_local_http_policy(port),
-        policy_v2_from_toml(
-            r#"
-[policy.model.rewrite_secret_response]
-on = "model.response"
-if = 'provider == "openai" && response.text.contains("response-secret")'
-decision = "rewrite"
-priority = 10
-reason = "Redact model response text"
-rewrite_target = 'response.text =~ "response-secret"'
-rewrite_value = "[redacted-response]"
-"#,
-        ),
-    );
-    let (mut sender, proxy_task, _conn_task) =
-        open_direct_plain_http_request_conn(&config, "127.0.0.1", port, Some(ProviderKind::OpenAi))
-            .await;
-
-    let (status, response_body) =
-        send_openai_chat_completion(&mut sender, "api.openai.com", "gpt-4o", "safe").await;
-    assert_eq!(status, 200);
-    assert!(response_body.contains("[redacted-response]"));
-    assert!(
-        !response_body.contains("response-secret"),
-        "rewritten model response must not leak to the guest"
-    );
-    drop(sender);
-    let _ = proxy_task.await;
-    let _ = upstream_task.await.unwrap();
-
-    tokio::time::sleep(std::time::Duration::from_millis(DB_FLUSH_MS)).await;
-    let events = config.db.reader().unwrap().recent_net_events(10).unwrap();
-    assert_eq!(events.len(), 1);
-    let event = &events[0];
-    assert_eq!(event.decision, Decision::Allowed);
-    assert_eq!(event.status_code, Some(200));
-    assert_eq!(event.policy_action.as_deref(), Some("rewrite"));
-    assert_eq!(
-        event.policy_rule.as_deref(),
-        Some("policy.model.rewrite_secret_response")
-    );
-    let preview = event.response_body_preview.as_deref().unwrap_or_default();
-    assert!(preview.contains("[redacted-response]"));
-    assert!(
-        !preview.contains("response-secret"),
-        "rewritten response preview must not retain the original secret"
-    );
-    let model_calls = config.db.reader().unwrap().recent_model_calls(10).unwrap();
-    assert_eq!(model_calls.len(), 1);
-    let call = &model_calls[0].1;
-    assert_eq!(
-        call.text_content.as_deref(),
-        Some("hello [redacted-response]")
-    );
-}
-
-#[tokio::test]
-async fn policy_v2_model_tool_call_block_stops_before_guest_and_redacts_telemetry() {
-    let (port, upstream_task) = spawn_http_fixture_response_owned(
-        200,
-        "OK",
-        vec![("content-type", "text/event-stream")],
-        openai_sse_tool_call_response(
-            "gpt-4o",
-            "call_secret",
-            "leak_secret",
-            r#"{"secret":"tool-call-secret"}"#,
-        ),
-    )
-    .await;
-    let config = make_config_with_policy_v2(
-        allow_local_http_policy(port),
-        policy_v2_from_toml(
-            r#"
-[policy.model.block_secret_tool_call]
-on = "model.tool_call"
-if = 'provider == "openai" && tool.name == "leak_secret" && tool.arguments.secret.contains("tool-call-secret")'
-decision = "block"
-priority = 10
-reason = "Do not deliver unsafe model tool calls"
-"#,
-        ),
-    );
-    let (mut sender, proxy_task, _conn_task) =
-        open_direct_plain_http_request_conn(&config, "127.0.0.1", port, Some(ProviderKind::OpenAi))
-            .await;
-
-    let (status, response_body) =
-        send_openai_chat_completion(&mut sender, "api.openai.com", "gpt-4o", "safe").await;
-    assert_eq!(status, 403);
-    assert!(response_body.contains("policy.model.block_secret_tool_call"));
-    assert!(
-        !response_body.contains("tool-call-secret"),
-        "blocked provider-emitted tool call must not reach the guest"
-    );
-    drop(sender);
-    let _ = proxy_task.await;
-    let _ = upstream_task.await.unwrap();
-
-    tokio::time::sleep(std::time::Duration::from_millis(DB_FLUSH_MS)).await;
-    let events = config.db.reader().unwrap().recent_net_events(10).unwrap();
-    assert_eq!(events.len(), 1);
-    let event = &events[0];
-    assert_eq!(event.decision, Decision::Denied);
-    assert_eq!(event.policy_action.as_deref(), Some("block"));
-    assert_eq!(
-        event.policy_rule.as_deref(),
-        Some("policy.model.block_secret_tool_call")
-    );
-    assert!(
-        !event
-            .response_body_preview
-            .as_deref()
-            .unwrap_or_default()
-            .contains("tool-call-secret"),
-        "blocked tool-call telemetry must not retain upstream arguments"
-    );
-}
-
-#[tokio::test]
-async fn policy_v2_model_tool_call_ask_fails_closed_without_guest_delivery() {
-    let (port, upstream_task) = spawn_http_fixture_response_owned(
-        200,
-        "OK",
-        vec![("content-type", "text/event-stream")],
-        openai_sse_tool_call_response(
-            "gpt-4o",
-            "call_secret",
-            "leak_secret",
-            r#"{"secret":"tool-call-secret"}"#,
-        ),
-    )
-    .await;
-    let config = make_config_with_policy_v2(
-        allow_local_http_policy(port),
-        policy_v2_from_toml(
-            r#"
-[policy.model.ask_secret_tool_call]
-on = "model.tool_call"
-if = 'provider == "openai" && tool.arguments.secret.contains("tool-call-secret")'
-decision = "ask"
-priority = 10
-reason = "Ask before delivering model tool calls"
-"#,
-        ),
-    );
-    let (mut sender, proxy_task, _conn_task) =
-        open_direct_plain_http_request_conn(&config, "127.0.0.1", port, Some(ProviderKind::OpenAi))
-            .await;
-
-    let (status, response_body) =
-        send_openai_chat_completion(&mut sender, "api.openai.com", "gpt-4o", "safe").await;
-    assert_eq!(status, 403);
-    assert!(response_body.contains("policy.model.ask_secret_tool_call"));
-    assert!(
-        !response_body.contains("tool-call-secret"),
-        "ask fail-closed model tool call must not reach the guest"
-    );
-    drop(sender);
-    let _ = proxy_task.await;
-    let _ = upstream_task.await.unwrap();
-
-    tokio::time::sleep(std::time::Duration::from_millis(DB_FLUSH_MS)).await;
-    let events = config.db.reader().unwrap().recent_net_events(10).unwrap();
-    assert_eq!(events.len(), 1);
-    let event = &events[0];
-    assert_eq!(event.decision, Decision::Denied);
-    assert_eq!(event.policy_action.as_deref(), Some("ask"));
-    assert_eq!(
-        event.policy_rule.as_deref(),
-        Some("policy.model.ask_secret_tool_call")
-    );
-    assert!(
-        !event
-            .response_body_preview
-            .as_deref()
-            .unwrap_or_default()
-            .contains("tool-call-secret"),
-        "ask fail-closed telemetry must not retain upstream tool-call arguments"
-    );
-}
-
-#[tokio::test]
-async fn policy_v2_model_tool_call_rewrite_redacts_guest_and_model_call_rows() {
-    let (port, upstream_task) = spawn_http_fixture_response_owned(
-        200,
-        "OK",
-        vec![("content-type", "text/event-stream")],
-        openai_sse_tool_call_response(
-            "gpt-4o",
-            "call_secret",
-            "leak_secret",
-            r#"{"secret":"tool-call-secret"}"#,
-        ),
-    )
-    .await;
-    let config = make_config_with_policy_v2(
-        allow_local_http_policy(port),
-        policy_v2_from_toml(
-            r#"
-[policy.model.rewrite_secret_tool_call]
-on = "model.tool_call"
-if = 'provider == "openai" && tool.name == "leak_secret" && tool.arguments.secret.contains("tool-call-secret")'
-decision = "rewrite"
-priority = 10
-reason = "Redact provider-emitted model tool arguments"
-rewrite_target = 'tool.arguments =~ "tool-call-secret"'
-rewrite_value = "[redacted-tool-call]"
-"#,
-        ),
-    );
-    let (mut sender, proxy_task, _conn_task) =
-        open_direct_plain_http_request_conn(&config, "127.0.0.1", port, Some(ProviderKind::OpenAi))
-            .await;
-
-    let (status, response_body) =
-        send_openai_chat_completion(&mut sender, "api.openai.com", "gpt-4o", "safe").await;
-    assert_eq!(status, 200);
-    assert!(response_body.contains("[redacted-tool-call]"));
-    assert!(
-        !response_body.contains("tool-call-secret"),
-        "rewritten provider-emitted tool call must not leak to the guest"
-    );
-    drop(sender);
-    let _ = proxy_task.await;
-    let _ = upstream_task.await.unwrap();
-
-    tokio::time::sleep(std::time::Duration::from_millis(DB_FLUSH_MS)).await;
-    let events = config.db.reader().unwrap().recent_net_events(10).unwrap();
-    assert_eq!(events.len(), 1);
-    let event = &events[0];
-    assert_eq!(event.decision, Decision::Allowed);
-    assert_eq!(event.policy_action.as_deref(), Some("rewrite"));
-    assert_eq!(
-        event.policy_rule.as_deref(),
-        Some("policy.model.rewrite_secret_tool_call")
-    );
-    let preview = event.response_body_preview.as_deref().unwrap_or_default();
-    assert!(preview.contains("[redacted-tool-call]"));
-    assert!(
-        !preview.contains("tool-call-secret"),
-        "rewritten tool-call response preview must not retain the original secret"
-    );
-
-    let reader = config.db.reader().unwrap();
-    let model_calls = reader.recent_model_calls(10).unwrap();
-    assert_eq!(model_calls.len(), 1);
-    let tool_calls = reader.tool_calls_for(model_calls[0].0).unwrap();
-    assert_eq!(tool_calls.len(), 1);
-    let tool_call = &tool_calls[0];
-    assert_eq!(tool_call.call_id, "call_secret");
-    assert_eq!(tool_call.tool_name, "leak_secret");
-    assert!(tool_call
-        .arguments
-        .as_deref()
-        .unwrap_or_default()
-        .contains("[redacted-tool-call]"));
-    assert!(
-        !tool_call
-            .arguments
-            .as_deref()
-            .unwrap_or_default()
-            .contains("tool-call-secret"),
-        "model_calls.tool_calls must store the redacted tool-call arguments"
-    );
-}
-
-#[tokio::test]
-async fn policy_v2_http_response_rewrite_strips_headers_before_guest_and_telemetry() {
-    let (port, upstream_task) = spawn_http_fixture_response(
-        302,
-        "Found",
-        vec![
-            ("location", "https://github.com/openai/capsem?ref=secret"),
-            ("set-cookie", "session=secret"),
-            ("x-secret-token", "secret"),
-        ],
-        "redirecting",
-    )
-    .await;
-    let host = format!("127.0.0.1:{port}");
-    let config = make_config_with_policy_v2(
-        allow_local_http_policy(port),
-        policy_v2_from_toml(
-            r#"
-[policy.http.rewrite_response_location]
-on = "http.response"
-if = 'request.host == "127.0.0.1" && request.path == "/openai/capsem" && response.status == "302"'
-decision = "rewrite"
-priority = 10
-reason = "Mirror redirect and strip response credentials"
-rewrite_target = 'response.headers.location =~ "^https://github\.com/openai/(?P<repo>[^/?#]+)(?P<rest>.*)$"'
-rewrite_value = "https://github.com/openclaw/${repo}${rest}"
-strip_response_headers = ["Set-Cookie", "X-Secret-Token"]
-"#,
-        ),
-    );
-    let (mut sender, proxy_task, _conn_task) = open_plain_http_proxy_conn(&config).await;
-
-    let req = hyper::Request::builder()
-        .method("GET")
-        .uri("/openai/capsem")
-        .header("host", host.as_str())
-        .body(
-            Full::new(Bytes::new())
-                .map_err(|never| -> anyhow::Error { match never {} })
-                .boxed(),
-        )
-        .unwrap();
-    let resp = sender.send_request(req).await.unwrap();
-    let status = resp.status().as_u16();
-    let location = resp
-        .headers()
-        .get("location")
-        .and_then(|value| value.to_str().ok())
-        .map(ToOwned::to_owned);
-    let has_cookie = resp.headers().contains_key("set-cookie");
-    let has_secret_header = resp.headers().contains_key("x-secret-token");
-    let _ = resp.into_body().collect().await.unwrap();
-    drop(sender);
-    let _ = proxy_task.await;
-    let upstream_request = upstream_task.await.unwrap();
-
-    assert_eq!(status, 302);
-    assert_eq!(
-        location.as_deref(),
-        Some("https://github.com/openclaw/capsem?ref=secret")
-    );
-    assert!(!has_cookie, "guest response must not include Set-Cookie");
-    assert!(
-        !has_secret_header,
-        "guest response must not include stripped secret headers"
-    );
-    assert!(
-        upstream_request.starts_with("GET /openai/capsem "),
-        "proxy should still dispatch the original request upstream"
-    );
-
-    tokio::time::sleep(std::time::Duration::from_millis(DB_FLUSH_MS)).await;
-    let events = config.db.reader().unwrap().recent_net_events(10).unwrap();
-    assert_eq!(events.len(), 1);
-    let event = &events[0];
-    assert_eq!(event.decision, Decision::Allowed);
-    assert_eq!(event.status_code, Some(302));
-    assert_eq!(event.policy_action.as_deref(), Some("rewrite"));
-    assert_eq!(
-        event.policy_rule.as_deref(),
-        Some("policy.http.rewrite_response_location")
-    );
-    let response_headers = event.response_headers.as_deref().unwrap_or_default();
-    let rewritten_digest = blake3::hash(b"https://github.com/openclaw/capsem?ref=secret")
-        .to_hex()
-        .to_string();
-    let original_digest = blake3::hash(b"https://github.com/openai/capsem?ref=secret")
-        .to_hex()
-        .to_string();
-    let rewritten_location_marker = format!("location: hash:{}", &rewritten_digest[..12]);
-    let original_location_marker = format!("location: hash:{}", &original_digest[..12]);
-    assert!(
-        response_headers.contains(&rewritten_location_marker),
-        "response telemetry should contain the rewritten Location hash, got: {response_headers:?}"
-    );
-    assert!(
-        !response_headers.contains("set-cookie")
-            && !response_headers.contains("x-secret-token")
-            && !response_headers.contains("session=secret")
-            && !response_headers.contains(&original_location_marker),
-        "response telemetry must reflect the stripped/re-written response head"
-    );
-}
-
-#[tokio::test]
-async fn policy_v2_http_response_bogus_rewrite_fails_closed_without_leaking_upstream_response() {
-    let (port, upstream_task) = spawn_http_fixture_response(
-        200,
-        "OK",
-        vec![("x-secret-token", "secret-header")],
-        "super-secret-body",
-    )
-    .await;
-    let host = format!("127.0.0.1:{port}");
-    let config = make_config_with_policy_v2(
-        allow_local_http_policy(port),
-        policy_v2_from_toml(
-            r#"
-[policy.http.rewrite_response_body]
-on = "http.response"
-if = 'request.host == "127.0.0.1" && response.status == "200"'
-decision = "rewrite"
-priority = 10
-reason = "Body rewrite is not supported on response heads"
-rewrite_target = 'response.body =~ "super-secret-body"'
-rewrite_value = "[redacted]"
-"#,
-        ),
-    );
-    let (mut sender, proxy_task, _conn_task) = open_plain_http_proxy_conn(&config).await;
-
-    let req = hyper::Request::builder()
-        .method("GET")
-        .uri("/secret")
-        .header("host", host.as_str())
-        .body(
-            Full::new(Bytes::new())
-                .map_err(|never| -> anyhow::Error { match never {} })
-                .boxed(),
-        )
-        .unwrap();
-    let resp = sender.send_request(req).await.unwrap();
-    let status = resp.status().as_u16();
-    let headers = format_headers(resp.headers());
-    let body = resp.into_body().collect().await.unwrap().to_bytes();
-    let body = String::from_utf8_lossy(&body).into_owned();
-    drop(sender);
-    let _ = proxy_task.await;
-    let _ = upstream_task.await.unwrap();
-
-    assert_eq!(status, 403);
-    assert!(
-        !headers.contains("x-secret-token") && !headers.contains("secret-header"),
-        "guest response headers must not leak the upstream response on fail-closed rewrite"
-    );
-    assert!(
-        !body.contains("super-secret-body"),
-        "guest response body must not leak upstream content on fail-closed rewrite"
-    );
-
-    tokio::time::sleep(std::time::Duration::from_millis(DB_FLUSH_MS)).await;
-    let events = config.db.reader().unwrap().recent_net_events(10).unwrap();
-    assert_eq!(events.len(), 1);
-    let event = &events[0];
-    assert_eq!(event.decision, Decision::Denied);
-    assert_eq!(event.status_code, Some(403));
-    assert_eq!(event.policy_action.as_deref(), Some("rewrite"));
-    assert_eq!(
-        event.policy_rule.as_deref(),
-        Some("policy.http.rewrite_response_body")
-    );
-    assert!(
-        !event
-            .response_headers
-            .as_deref()
-            .unwrap_or_default()
-            .contains("secret-header"),
-        "fail-closed telemetry must not preserve upstream response headers"
-    );
-    assert!(
-        !event
-            .response_body_preview
-            .as_deref()
-            .unwrap_or_default()
-            .contains("super-secret-body"),
-        "fail-closed telemetry must not preserve upstream response body"
-    );
-}
-
-#[tokio::test]
-async fn policy_v2_http_block_stops_before_upstream_and_records_policy_fields() {
-    let config = make_config_with_policy_v2(
-        allow_test_domain_policy(),
-        policy_v2_from_toml(&format!(
-            r#"
-[policy.http.block_openai_path]
-on = "http.request"
-if = 'request.host == "{TEST_DOMAIN}" && request.path.matches("^/openai(/|$)")'
-decision = "block"
-priority = 10
-reason = "Do not fetch this path"
-"#
-        )),
-    );
-    let (mut sender, proxy_task, _conn_task) = open_proxy_conn(&config, TEST_DOMAIN).await;
-
-    let status = send_get(&mut sender, TEST_DOMAIN, "/openai/capsem").await;
-    assert_eq!(status, 403, "Policy V2 block should not reach upstream");
-    drop(sender);
-    let _ = proxy_task.await;
-
-    tokio::time::sleep(std::time::Duration::from_millis(DB_FLUSH_MS)).await;
-    let events = config.db.reader().unwrap().recent_net_events(10).unwrap();
-    assert_eq!(events.len(), 1);
-    let event = &events[0];
-    assert_eq!(event.decision, Decision::Denied);
-    assert_eq!(event.status_code, Some(403));
-    assert_eq!(event.policy_mode.as_deref(), Some("enforce"));
-    assert_eq!(event.policy_action.as_deref(), Some("block"));
-    assert_eq!(
-        event.policy_rule.as_deref(),
-        Some("policy.http.block_openai_path")
-    );
-    assert_eq!(
-        event.policy_reason.as_deref(),
-        Some("Do not fetch this path")
-    );
-}
-
-#[tokio::test]
-async fn policy_v2_http_ask_fails_closed_without_upstream_dispatch() {
-    let config = make_config_with_policy_v2(
-        allow_test_domain_policy(),
-        policy_v2_from_toml(&format!(
-            r#"
-[policy.http.ask_openai_path]
-on = "http.request"
-if = 'request.host == "{TEST_DOMAIN}" && request.path.matches("^/openai(/|$)")'
-decision = "ask"
-priority = 10
-reason = "Ask before fetching this path"
-"#
-        )),
-    );
-    let (mut sender, proxy_task, _conn_task) = open_proxy_conn(&config, TEST_DOMAIN).await;
-
-    let status = send_get(&mut sender, TEST_DOMAIN, "/openai/capsem").await;
-    assert_eq!(status, 403, "Policy V2 ask should fail closed for now");
-    drop(sender);
-    let _ = proxy_task.await;
-
-    tokio::time::sleep(std::time::Duration::from_millis(DB_FLUSH_MS)).await;
-    let events = config.db.reader().unwrap().recent_net_events(10).unwrap();
-    assert_eq!(events.len(), 1);
-    let event = &events[0];
-    assert_eq!(event.decision, Decision::Denied);
-    assert_eq!(event.status_code, Some(403));
-    assert_eq!(event.policy_action.as_deref(), Some("ask"));
-    assert_eq!(
-        event.policy_rule.as_deref(),
-        Some("policy.http.ask_openai_path")
-    );
-}
-
-#[tokio::test]
-async fn policy_v2_http_rewrite_strips_request_headers_before_telemetry_and_upstream() {
-    let config = make_config_with_policy_v2(
-        allow_test_domain_policy(),
-        policy_v2_from_toml(&format!(
-            r#"
-[policy.http.rewrite_openai_path]
-on = "http.request"
-if = 'request.host == "{TEST_DOMAIN}" && request.path.matches("^/openai/") && has(request.headers.authorization)'
-decision = "rewrite"
-priority = 10
-reason = "Mirror path and strip credentials"
-rewrite_target = 'request.url =~ "^https://{TEST_DOMAIN}/openai/(?P<repo>[^/?#]+)(?P<rest>.*)$"'
-rewrite_value = "https://{TEST_DOMAIN}/openclaw/${{repo}}${{rest}}"
-strip_request_headers = ["Authorization"]
-"#
-        )),
-    );
-    let (mut sender, proxy_task, _conn_task) = open_proxy_conn(&config, TEST_DOMAIN).await;
-
-    let req = hyper::Request::builder()
-        .method("GET")
-        .uri("/openai/capsem?token=secret")
-        .header("host", TEST_DOMAIN)
-        .header("authorization", "Bearer secret")
-        .body(
-            Full::new(Bytes::new())
-                .map_err(|never| -> anyhow::Error { match never {} })
-                .boxed(),
-        )
-        .unwrap();
-    let resp = sender.send_request(req).await.unwrap();
-    assert_eq!(
-        resp.status().as_u16(),
-        502,
-        "rewrite should dispatch the rewritten request; the test domain then fails upstream"
-    );
-    let _ = resp.into_body().collect().await;
-    drop(sender);
-    let _ = proxy_task.await;
-
-    tokio::time::sleep(std::time::Duration::from_millis(DB_FLUSH_MS)).await;
-    let events = config.db.reader().unwrap().recent_net_events(10).unwrap();
-    assert_eq!(events.len(), 1);
-    let event = &events[0];
-    assert_eq!(event.decision, Decision::Error);
-    assert_eq!(event.path.as_deref(), Some("/openclaw/capsem"));
-    assert_eq!(event.query.as_deref(), Some("token=secret"));
-    assert_eq!(event.policy_action.as_deref(), Some("rewrite"));
-    assert_eq!(
-        event.policy_rule.as_deref(),
-        Some("policy.http.rewrite_openai_path")
-    );
-    assert!(
-        !event
-            .request_headers
-            .as_deref()
-            .unwrap_or_default()
-            .contains("authorization"),
-        "stripped credential header must not appear in request telemetry"
-    );
-}
-
-/// Disabling a provider mid-connection blocks subsequent requests on the
-/// same keep-alive connection. This is the core regression test for the
-/// per-request policy reload fix.
-#[tokio::test]
-async fn policy_hot_reload_blocks_on_same_connection() {
-    use crate::net::policy::{DomainMatcher, PolicyRule};
-
-    // Start with a policy that allows TEST_DOMAIN (read+write).
-    let allow_policy = NetworkPolicy::new(
-        vec![PolicyRule {
-            matcher: DomainMatcher::parse(TEST_DOMAIN),
-            allow_read: true,
-            allow_write: true,
-        }],
-        false,
-        false,
-    );
-    let config = make_config_with_policy(allow_policy);
-    let (mut sender, proxy_task, _conn_task) = open_proxy_conn(&config, TEST_DOMAIN).await;
-
-    // First request: allowed. Returns 502 because there's no real upstream,
-    // but 502 proves the policy allowed the request past the policy check
-    // (denied would be 403).
-    let status1 = send_get(&mut sender, TEST_DOMAIN, "/before-disable").await;
-    assert_eq!(
-        status1, 502,
-        "allowed request should reach upstream (502 = no upstream, not 403)"
-    );
-
-    // Hot-reload: swap to deny-all policy (simulates user disabling provider).
-    let deny_policy = Arc::new(NetworkPolicy::new(vec![], false, false));
-    *config.policy.write().unwrap() = deny_policy;
-
-    // Second request on the SAME keep-alive connection: must be denied.
-    let status2 = send_get(&mut sender, TEST_DOMAIN, "/after-disable").await;
-    assert_eq!(
-        status2, 403,
-        "request after policy swap must be denied on same connection"
-    );
-
-    drop(sender);
-    let _ = proxy_task.await;
-
-    // Verify telemetry recorded both events with correct decisions.
-    tokio::time::sleep(std::time::Duration::from_millis(DB_FLUSH_MS)).await;
-    let reader = config.db.reader().unwrap();
-    let mut events = reader.recent_net_events(10).unwrap();
-    assert_eq!(
-        events.len(),
-        2,
-        "should have 2 events (one allowed, one denied)"
-    );
-    events.reverse(); // chronological
-                      // First event: allowed (502 upstream error, but decision is Error not Denied).
-    assert!(
-        events[0].decision != Decision::Denied,
-        "first request should not be denied, got {:?}",
-        events[0].decision
-    );
-    assert_eq!(events[0].path, Some("/before-disable".to_string()));
-    // Second event: denied (403).
-    assert_eq!(events[1].decision, Decision::Denied);
-    assert_eq!(events[1].path, Some("/after-disable".to_string()));
-    assert_eq!(events[1].status_code, Some(403));
-}
-
-/// Re-enabling a provider mid-connection allows subsequent requests on
-/// the same keep-alive connection (reverse direction of the above test).
-#[tokio::test]
-async fn policy_hot_reload_allows_on_same_connection() {
-    use crate::net::policy::{DomainMatcher, PolicyRule};
-
-    // Start with deny-all.
-    let config = make_config_deny_all();
-    let (mut sender, proxy_task, _conn_task) = open_proxy_conn(&config, TEST_DOMAIN).await;
-
-    // First request: denied.
-    let status1 = send_get(&mut sender, TEST_DOMAIN, "/while-denied").await;
-    assert_eq!(status1, 403);
-
-    // Hot-reload: swap to allow policy.
-    let allow_policy = Arc::new(NetworkPolicy::new(
-        vec![PolicyRule {
-            matcher: DomainMatcher::parse(TEST_DOMAIN),
-            allow_read: true,
-            allow_write: true,
-        }],
-        false,
-        false,
-    ));
-    *config.policy.write().unwrap() = allow_policy;
-
-    // Second request: allowed (502 = no upstream, proves policy let it through).
-    let status2 = send_get(&mut sender, TEST_DOMAIN, "/after-enable").await;
-    assert_eq!(
-        status2, 502,
-        "request after re-enable should be allowed (502 = no upstream)"
-    );
-
-    drop(sender);
-    let _ = proxy_task.await;
-}
-
-/// Multiple policy swaps on the same connection: deny -> allow -> deny.
-/// Verifies each request sees the current policy, not any cached version.
-#[tokio::test]
-async fn policy_hot_reload_multiple_swaps() {
-    use crate::net::policy::{DomainMatcher, PolicyRule};
-
-    let config = make_config_deny_all();
-    let (mut sender, proxy_task, _conn_task) = open_proxy_conn(&config, TEST_DOMAIN).await;
-
-    // Request 1: denied.
-    assert_eq!(send_get(&mut sender, TEST_DOMAIN, "/r1").await, 403);
-
-    // Swap to allow.
-    let allow = Arc::new(NetworkPolicy::new(
-        vec![PolicyRule {
-            matcher: DomainMatcher::parse(TEST_DOMAIN),
-            allow_read: true,
-            allow_write: true,
-        }],
-        false,
-        false,
-    ));
-    *config.policy.write().unwrap() = allow;
-
-    // Request 2: allowed (502).
-    assert_eq!(send_get(&mut sender, TEST_DOMAIN, "/r2").await, 502);
-
-    // Swap back to deny.
-    let deny = Arc::new(NetworkPolicy::new(vec![], false, false));
-    *config.policy.write().unwrap() = deny;
-
-    // Request 3: denied again.
-    assert_eq!(send_get(&mut sender, TEST_DOMAIN, "/r3").await, 403);
-
-    drop(sender);
-    let _ = proxy_task.await;
-
-    // Verify all 3 events recorded.
-    tokio::time::sleep(std::time::Duration::from_millis(DB_FLUSH_MS)).await;
-    let reader = config.db.reader().unwrap();
-    let events = reader.recent_net_events(10).unwrap();
-    assert_eq!(
-        events.len(),
-        3,
-        "all 3 requests should produce telemetry events"
-    );
 }

@@ -42,13 +42,13 @@ git clone https://github.com/google/capsem.git && cd capsem
 | 1 (hard prereqs) | `bash`, `git`, `curl` | system package manager (you install) | Without curl we can't fetch any installer |
 | 1 | `rustup` (stable, minimal profile) | `sh.rustup.rs` official installer | Source of `cargo` |
 | 1 | `just` | `just.systems` installer → `~/.local/bin` | Recipe runner — used by every other build step |
-| 2 | `uv` | `astral.sh/uv` installer → `~/.local/bin` | Python deps for `capsem-builder` |
-| 2 | Python deps | `uv sync` | Locked via `uv.lock` |
-| 2 (macOS) | `flock`, `pnpm` | `brew` | flock = multi-agent recipe lock; pnpm = frontend deps |
+| 2 | `uv` | `astral.sh/uv` installer → `~/.local/bin` | Python deps for `capsem-builder` and `capsem-admin` |
+| 2 | Python deps and admin CLI | `uv sync`, then `uv run capsem-admin --version` | Locked via `uv.lock`; proves the editable developer `capsem-admin` entrypoint is installed |
+| 2 (macOS) | `flock`, `minisign`, `pnpm` | `brew` | flock = multi-agent recipe lock; minisign = local asset manifest signatures; pnpm = frontend deps |
 | 2 (macOS) | `colima`, `docker`, `docker-buildx` | `brew` + symlink into `~/.docker/cli-plugins` | Container runtime for `just build-assets` |
 | 2 (macOS) | Colima VM | `colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8` | Runs Docker; Rosetta enables x86_64 cross-builds |
 | 2 | Frontend deps | `pnpm install --frozen-lockfile` (in `frontend/`) | Tauri UI dependencies |
-| 3 | Doctor `--fix` | `scripts/doctor-common.sh --fix` | Installs Rust targets, `cargo-llvm-cov`, `cargo-audit`, `b3sum`, `cargo-tauri` (= `tauri-cli` crate), `cargo-sbom`, builds VM assets, packs initrd |
+| 3 | Doctor `--fix` | `scripts/doctor-common.sh --fix` | Installs Rust targets, `cargo-llvm-cov`, `cargo-audit`, `b3sum`, `cargo-tauri` (= `tauri-cli` crate), `minisign`, builds VM assets, packs initrd |
 
 Pressing **Enter** at any prompt accepts the install (Y is the default). Type `n` to skip — bootstrap continues and surfaces the missing tool in the doctor report at the end.
 
@@ -58,7 +58,11 @@ Pressing **Enter** at any prompt accepts the install (Y is the default). Type `n
 just build-assets
 ```
 
-Builds the Linux kernel and rootfs via Docker (~10 min on first run). The kernel version is **not** pinned — `kernel_branch = "auto"` in `guest/config/build.toml` makes the resolver fetch the newest non-EOL longterm (LTS) branch from `kernel.org/releases.json` and pull its latest patch (e.g. `6.18.26`). To freeze a specific branch (CI reproducibility, security freeze), set `kernel_branch = "6.6"` (or any `X.Y`) in the same file. Assets are gitignored and must be built locally. See [Life of a Build > Container runtime](./stack#container-runtime) if you need to retune Colima resources.
+Builds the Linux kernel and rootfs via Docker (~10 min on first run). Image
+inputs are derived from Profile V2 payloads; repo-local `guest/config/build.toml`
+is only the developer input used for built-in profile generation. Assets are
+gitignored and must be built locally. See [Life of a Build > Container
+runtime](./stack#container-runtime) if you need to retune Colima resources.
 
 ## Verify
 
@@ -94,16 +98,29 @@ On macOS, the compiled binary must be codesigned with Apple's `com.apple.securit
 |-------|-------------------|-----------------|
 | Xcode CLTools | `xcode-select -p` returns a path | `xcode-select --install` |
 | `codesign` binary | The tool exists in PATH | Install Xcode CLTools (see above) |
-| `entitlements.plist` | The file exists and is readable | `just doctor-fix` (auto-restores from git) |
-| `.cargo/config.toml` | Cargo runner configured | `just doctor-fix` (auto-restores from git) |
-| `run_signed.sh` | Script exists and is executable | `just doctor-fix` (auto-restores from git) |
+| `entitlements.plist` | The file exists and is readable | `just doctor fix` (auto-restores from git) |
+| `.cargo/config.toml` | Cargo runner configured | `just doctor fix` (auto-restores from git) |
+| `run_signed.sh` | Script exists and is executable | `just doctor fix` (auto-restores from git) |
 | Test sign | Compiles a tiny binary + signs it with entitlements | See [troubleshooting](#codesign-fails) below |
 
 No Apple Developer ID certificate is needed for local development -- ad-hoc signing (`--sign -`) is sufficient.
 
 ## Customizing the VM image
 
-To add packages, AI providers, or change security policy, edit the TOML configs in `guest/config/` and rebuild. See [Customizing VM Images](./custom-images) for the workflow.
+To add packages, MCP servers, AI providers, VM assets, enforcement packs, or
+detection packs, edit a Profile V2 payload and use `uv run capsem-admin` to
+validate and derive the build artifacts. The old hand-edited `guest/config`
+workflow is only a transitional generation input for built-in profiles, not
+the release authority.
+
+```bash
+uv run capsem-admin profile validate config/profiles/base/coding.profile.toml --json
+uv run capsem-admin image build config/profiles/base/coding.profile.toml --dry-run --json
+uv run capsem-admin detection compile corp-detections.yml --out detection.ir.json --json
+```
+
+See [Admin CLI](/usage/admin-cli/) and [Development Custom Images](./custom-images)
+for the workflow.
 
 ## API keys (optional)
 
@@ -123,7 +140,7 @@ api_key = "AIza..."
 
 ### `just doctor` fails
 
-Run `just doctor-fix` to auto-fix all fixable issues. Fixes run in dependency order (Rust targets, cargo tools, config files, build assets, guest binaries). Non-fixable issues (system tools like node, docker) show platform-specific install hints.
+Run `just doctor fix` to auto-fix all fixable issues. Fixes run in dependency order (Rust targets, cargo tools, `minisign`, config files, build assets, guest binaries). Non-fixable issues (system tools like node, docker) show platform-specific install hints.
 
 ### Codesign fails
 

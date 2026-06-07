@@ -1,11 +1,76 @@
 use serde::{Deserialize, Serialize};
 
-/// Explicit host/guest file boundary action.
+use crate::metrics::VmMetricsSnapshot;
+
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Eq)]
+pub struct RuntimeSecurityRulesSnapshot {
+    #[serde(default)]
+    pub enforcement: Vec<RuntimeEnforcementRuleSnapshot>,
+    #[serde(default)]
+    pub detection: Vec<RuntimeDetectionRuleSnapshot>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeRuleMatchSnapshot {
+    pub rule_id: String,
+    pub match_count: u64,
+    #[serde(default)]
+    pub last_matched_event: Option<String>,
+    #[serde(default)]
+    pub last_matched_unix_ms: Option<u64>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeEnforcementRuleSnapshot {
+    pub id: String,
+    #[serde(default)]
+    pub pack_id: Option<String>,
+    pub condition: String,
+    pub decision: RuntimeSecurityDecisionAction,
+    #[serde(default)]
+    pub reason: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeDetectionRuleSnapshot {
+    pub id: String,
+    pub pack_id: String,
+    #[serde(default)]
+    pub sigma_id: Option<String>,
+    pub title: String,
+    pub condition: String,
+    pub severity: RuntimeDetectionSeverity,
+    pub confidence: RuntimeDetectionConfidence,
+    #[serde(default)]
+    pub tags: Vec<String>,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub enum FileBoundaryAction {
-    Import,
-    Export,
+pub enum RuntimeSecurityDecisionAction {
+    Allow,
+    Ask,
+    Block,
+    Rewrite,
+    Throttle,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum RuntimeDetectionSeverity {
+    Info,
+    Low,
+    Medium,
+    High,
+    Critical,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum RuntimeDetectionConfidence {
+    Low,
+    Medium,
+    High,
 }
 
 /// Messages sent from capsem-service to capsem-process over the per-VM Unix Domain Socket.
@@ -29,18 +94,15 @@ pub enum ServiceToProcess {
     },
     /// Read a file from the guest.
     ReadFile { id: u64, path: String },
-    /// Record an explicit file import/export boundary through the process-owned
-    /// security-event ledger.
-    LogFileBoundary {
-        id: u64,
-        action: FileBoundaryAction,
-        path: String,
-        data: Vec<u8>,
-        size: u64,
-        mime_type: Option<String>,
+    /// Request the process to reload its configuration from disk plus the
+    /// service-owned runtime rule snapshot.
+    ReloadConfig {
+        runtime_rules: Option<RuntimeSecurityRulesSnapshot>,
     },
-    /// Request the process to reload its configuration from disk.
-    ReloadConfig,
+    /// Drain process-local runtime rule match deltas into the service registry.
+    DrainRuntimeRuleMatches { id: u64 },
+    /// Request the process's bounded live metrics snapshot.
+    GetMetricsSnapshot { id: u64 },
     /// Start streaming terminal output to this IPC connection.
     StartTerminalStream,
     /// Stop streaming terminal output. Sent by `capsem shell` on exit so
@@ -56,26 +118,6 @@ pub enum ServiceToProcess {
     Suspend { checkpoint_path: String },
     /// Resume VM from checkpoint (warm restore).
     Resume,
-    /// Query MCP aggregator for server list with connection status.
-    McpListServers { id: u64 },
-    /// Query MCP aggregator for discovered tool catalog.
-    McpListTools { id: u64 },
-    /// Tell MCP aggregator to reconnect all servers with fresh config.
-    McpRefreshTools { id: u64 },
-    /// Call an MCP tool via the aggregator subprocess.
-    ///
-    /// `arguments_json` is the JSON-serialized argument object. We send it as
-    /// a `String`, not a `serde_json::Value`, because the IPC transport
-    /// (`tokio-unix-ipc` -> bincode) is not self-describing and bincode
-    /// refuses `serde_json::Value::deserialize` (which calls
-    /// `deserialize_any`). Without this, every `capsem_mcp_call` silently
-    /// dropped the message in capsem-process and the service hit its 60s
-    /// receive timeout.
-    McpCallTool {
-        id: u64,
-        namespaced_name: String,
-        arguments_json: String,
-    },
 }
 
 /// Messages sent from capsem-process back to capsem-service over the per-VM UDS.
@@ -83,6 +125,21 @@ pub enum ServiceToProcess {
 pub enum ProcessToService {
     /// Response to Ping.
     Pong,
+    /// Response to ReloadConfig.
+    ReloadConfigResult {
+        success: bool,
+        error: Option<String>,
+    },
+    /// Response to DrainRuntimeRuleMatches.
+    RuntimeRuleMatches {
+        id: u64,
+        matches: Vec<RuntimeRuleMatchSnapshot>,
+    },
+    /// Response to GetMetricsSnapshot.
+    MetricsSnapshot {
+        id: u64,
+        snapshot: Box<VmMetricsSnapshot>,
+    },
     /// Output bytes from the guest PTY.
     TerminalOutput { data: Vec<u8> },
     /// State change notification (e.g. Booting -> Running).
@@ -110,61 +167,12 @@ pub enum ProcessToService {
         data: Option<Vec<u8>>,
         error: Option<String>,
     },
-    /// Result of an explicit file import/export boundary ledger write.
-    LogFileBoundaryResult {
-        id: u64,
-        success: bool,
-        error: Option<String>,
-    },
-    /// Guest requested shutdown (forwarded from capsem-sysutil via vsock:5004).
+    /// Deprecated compatibility frame. Guest-initiated shutdown is disabled.
     ShutdownRequested { id: String },
     /// Guest requested suspend (forwarded from capsem-sysutil via vsock:5004).
     SuspendRequested { id: String },
     /// Guest quiescence complete: filesystem frozen, safe to snapshot.
     SnapshotReady { id: String },
-    /// Response to McpListServers.
-    McpServersResult {
-        id: u64,
-        servers: Vec<McpServerStatus>,
-    },
-    /// Response to McpListTools.
-    McpToolsResult { id: u64, tools: Vec<McpToolStatus> },
-    /// Response to McpRefreshTools.
-    McpRefreshResult {
-        id: u64,
-        success: bool,
-        error: Option<String>,
-    },
-    /// Response to McpCallTool. `result_json` is a JSON-serialized
-    /// `serde_json::Value`, wrapped for the same bincode reason as
-    /// `McpCallTool::arguments_json`.
-    McpCallToolResult {
-        id: u64,
-        result_json: Option<String>,
-        error: Option<String>,
-    },
-}
-
-/// Status of an MCP server as reported through IPC.
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct McpServerStatus {
-    pub name: String,
-    pub url: String,
-    pub enabled: bool,
-    pub source: String,
-    pub is_stdio: bool,
-    pub connected: bool,
-    pub tool_count: usize,
-}
-
-/// Status of an MCP tool as reported through IPC.
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct McpToolStatus {
-    pub namespaced_name: String,
-    pub original_name: String,
-    pub description: Option<String>,
-    pub server_name: String,
-    pub annotations: Option<serde_json::Value>,
 }
 
 #[cfg(test)]

@@ -56,6 +56,39 @@ colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8
 docker info | grep -E 'Total Memory|CPUs'
 ```
 
+### Colima recovery discipline
+
+If Docker-dependent recipes fail on macOS, do not report Docker/Colima as
+unavailable until you have checked for the common half-running Colima state.
+The signature is:
+
+- `colima list` says the profile is `Running`
+- `docker version` / `docker info` cannot connect to
+  `~/.colima/default/docker.sock`
+- `colima ssh -- docker ps` fails with `kex_exchange_identification`,
+  `Connection reset by peer`, or `colima status` reports
+  `error retrieving current runtime: empty value`
+
+First recovery attempt:
+
+```bash
+colima stop
+colima start
+docker version
+```
+
+If the profile needs its expected resources restored, start with the explicit
+Capsem defaults instead:
+
+```bash
+colima stop
+colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8
+docker version
+```
+
+Only after that restart fails should you treat Colima as a real environment
+blocker. Record the exact failed command and the Docker/Colima output.
+
 ### Linux
 
 Docker runs natively on Linux -- no Colima or memory tuning needed.
@@ -182,9 +215,9 @@ Virtualization.framework calls crash. The justfile handles this automatically vi
 the entitlements, and verifies the operation succeeds. Run `just doctor` after initial setup to
 confirm signing works.
 
-**Linux developers**: codesign is not available and not needed on Linux. VM features (`just run`,
-`just dev`, `just bench`) require macOS. You can use `just test`, `just build-assets`, and
-`just audit` on Linux.
+**Linux developers**: codesign is not available and not needed on Linux. VM features use the
+KVM backend when `/dev/kvm` and `/dev/vhost-vsock` are available. Use `just benchmark`
+for the same artifact-recording performance suite as macOS.
 
 ## Troubleshooting
 
@@ -288,4 +321,7 @@ Registry order (each depends on the ones above it):
 - **Non-fixable checks use `fail()` with an install hint.** System tools (node, docker, etc.) can't be auto-installed safely.
 - **Platform-specific checks live in `doctor-macos.sh` / `doctor-linux.sh`.** Each defines `check_platform()` and `tool_hint()`.
 - **Test, don't just check.** The codesigning section compiles and signs a test binary. `docker buildx version` tests functionality, not just file existence.
+- **Recover Colima before declaring Docker dead.** On macOS, a stale Colima VM
+  can leave the Docker socket present but unusable. Use the Colima recovery
+  discipline above before filing or reporting a Docker/Colima blocker.
 - **Bootstrap calls doctor.** `bootstrap.sh` checks bare minimums (bash, git, curl, rustup, just), installs Python/frontend deps, then runs `doctor-common.sh --fix`.

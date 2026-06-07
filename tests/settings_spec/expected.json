@@ -1,5 +1,5 @@
 {
-  "total_settings": 22,
+  "total_settings": 23,
   "by_type": {
     "bool": 3,
     "number": 1,
@@ -11,7 +11,7 @@
     "string_list": 1,
     "int_list": 1,
     "float_list": 1,
-    "action": 2,
+    "action": 3,
     "mcp_tool": 1,
     "kv_map": 2
   },
@@ -58,6 +58,12 @@
       "name": "Provider settings.json",
       "setting_type": "file",
       "enabled_by": "test_ai.provider.allow"
+    },
+    {
+      "key": "test_ai.provider.rerun",
+      "name": "Rerun wizard",
+      "setting_type": "action",
+      "enabled_by": null
     },
     {
       "key": "test_security.masked_field",

@@ -1,0 +1,473 @@
+{
+  "$defs": {
+    "AppSettings": {
+      "additionalProperties": false,
+      "properties": {
+        "auto_launch": {
+          "default": true,
+          "title": "Auto Launch",
+          "type": "boolean"
+        },
+        "appearance": {
+          "$ref": "#/$defs/AppearanceSettings"
+        },
+        "google_config_path": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Google Config Path"
+        }
+      },
+      "title": "AppSettings",
+      "type": "object"
+    },
+    "AppearanceSettings": {
+      "additionalProperties": false,
+      "properties": {
+        "theme": {
+          "$ref": "#/$defs/Theme",
+          "default": "system"
+        },
+        "accent": {
+          "default": "blue",
+          "minLength": 1,
+          "title": "Accent",
+          "type": "string"
+        }
+      },
+      "title": "AppearanceSettings",
+      "type": "object"
+    },
+    "AssetLocationSettings": {
+      "additionalProperties": false,
+      "properties": {
+        "assets_dir": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Assets Dir"
+        },
+        "image_roots": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Image Roots",
+          "type": "array"
+        },
+        "download_base_url": {
+          "anyOf": [
+            {
+              "format": "uri",
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Download Base Url"
+        }
+      },
+      "title": "AssetLocationSettings",
+      "type": "object"
+    },
+    "CorpDirective": {
+      "additionalProperties": false,
+      "properties": {
+        "operation": {
+          "$ref": "#/$defs/CorpDirectiveOperation"
+        },
+        "path": {
+          "minLength": 1,
+          "title": "Path",
+          "type": "string"
+        },
+        "value": {
+          "anyOf": [
+            {},
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Value"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason"
+        }
+      },
+      "required": [
+        "operation",
+        "path"
+      ],
+      "title": "CorpDirective",
+      "type": "object"
+    },
+    "CorpDirectiveOperation": {
+      "enum": [
+        "add",
+        "remove",
+        "replace",
+        "lock",
+        "forbid"
+      ],
+      "title": "CorpDirectiveOperation",
+      "type": "string"
+    },
+    "CredentialBackend": {
+      "enum": [
+        "toml",
+        "keychain"
+      ],
+      "title": "CredentialBackend",
+      "type": "string"
+    },
+    "CredentialSettings": {
+      "additionalProperties": false,
+      "properties": {
+        "backend": {
+          "$ref": "#/$defs/CredentialBackend",
+          "default": "toml"
+        },
+        "items": {
+          "patternProperties": {
+            "^[a-z0-9][a-z0-9_.-]*$": {
+              "$ref": "#/$defs/TomlCredential"
+            }
+          },
+          "title": "Items",
+          "type": "object"
+        }
+      },
+      "title": "CredentialSettings",
+      "type": "object"
+    },
+    "ProfileCatalogSettings": {
+      "additionalProperties": false,
+      "properties": {
+        "manifest_url": {
+          "anyOf": [
+            {
+              "format": "uri",
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Manifest Url"
+        },
+        "profile_payload_pubkey": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Profile Payload Pubkey"
+        },
+        "check_interval_secs": {
+          "default": 21600,
+          "minimum": 60,
+          "title": "Check Interval Secs",
+          "type": "integer"
+        }
+      },
+      "title": "ProfileCatalogSettings",
+      "type": "object"
+    },
+    "ProfileRootSettings": {
+      "additionalProperties": false,
+      "properties": {
+        "base_dirs": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Base Dirs",
+          "type": "array"
+        },
+        "corp_dirs": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Corp Dirs",
+          "type": "array"
+        },
+        "user_dirs": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "User Dirs",
+          "type": "array"
+        },
+        "default_profile": {
+          "default": "everyday-work",
+          "pattern": "^[a-z0-9][a-z0-9-]*$",
+          "title": "Default Profile",
+          "type": "string"
+        },
+        "allow_user_profiles": {
+          "default": true,
+          "title": "Allow User Profiles",
+          "type": "boolean"
+        },
+        "allow_user_fork": {
+          "default": true,
+          "title": "Allow User Fork",
+          "type": "boolean"
+        },
+        "allow_user_delete": {
+          "default": true,
+          "title": "Allow User Delete",
+          "type": "boolean"
+        }
+      },
+      "title": "ProfileRootSettings",
+      "type": "object"
+    },
+    "RemotePolicyFailureMode": {
+      "enum": [
+        "fail-open",
+        "fail-closed"
+      ],
+      "title": "RemotePolicyFailureMode",
+      "type": "string"
+    },
+    "RemotePolicySettings": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "default": false,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "endpoint": {
+          "anyOf": [
+            {
+              "format": "uri",
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Endpoint"
+        },
+        "auth_token": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Auth Token"
+        },
+        "timeout_ms": {
+          "default": 1500,
+          "maximum": 60000,
+          "minimum": 100,
+          "title": "Timeout Ms",
+          "type": "integer"
+        },
+        "failure_mode": {
+          "$ref": "#/$defs/RemotePolicyFailureMode",
+          "default": "fail-closed"
+        }
+      },
+      "title": "RemotePolicySettings",
+      "type": "object"
+    },
+    "TelemetryFailureMode": {
+      "enum": [
+        "drop",
+        "disable",
+        "backpressure"
+      ],
+      "title": "TelemetryFailureMode",
+      "type": "string"
+    },
+    "TelemetrySettings": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "default": false,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "endpoint": {
+          "anyOf": [
+            {
+              "format": "uri",
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Endpoint"
+        },
+        "headers": {
+          "additionalProperties": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "propertyNames": {
+            "minLength": 1
+          },
+          "title": "Headers",
+          "type": "object"
+        },
+        "batch_max_events": {
+          "default": 128,
+          "maximum": 65535,
+          "minimum": 1,
+          "title": "Batch Max Events",
+          "type": "integer"
+        },
+        "flush_interval_ms": {
+          "default": 5000,
+          "minimum": 1,
+          "title": "Flush Interval Ms",
+          "type": "integer"
+        },
+        "redact_secrets": {
+          "default": true,
+          "title": "Redact Secrets",
+          "type": "boolean"
+        },
+        "retry_attempts": {
+          "default": 3,
+          "maximum": 255,
+          "minimum": 0,
+          "title": "Retry Attempts",
+          "type": "integer"
+        },
+        "failure_mode": {
+          "$ref": "#/$defs/TelemetryFailureMode",
+          "default": "drop"
+        }
+      },
+      "title": "TelemetrySettings",
+      "type": "object"
+    },
+    "Theme": {
+      "enum": [
+        "system",
+        "light",
+        "dark"
+      ],
+      "title": "Theme",
+      "type": "string"
+    },
+    "TomlCredential": {
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "value": {
+          "minLength": 1,
+          "title": "Value",
+          "type": "string"
+        }
+      },
+      "required": [
+        "value"
+      ],
+      "title": "TomlCredential",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "const": 1,
+      "default": 1,
+      "title": "Version",
+      "type": "integer"
+    },
+    "app": {
+      "$ref": "#/$defs/AppSettings"
+    },
+    "profiles": {
+      "$ref": "#/$defs/ProfileRootSettings"
+    },
+    "assets": {
+      "$ref": "#/$defs/AssetLocationSettings"
+    },
+    "credentials": {
+      "$ref": "#/$defs/CredentialSettings"
+    },
+    "telemetry": {
+      "$ref": "#/$defs/TelemetrySettings"
+    },
+    "remote_policy": {
+      "$ref": "#/$defs/RemotePolicySettings"
+    },
+    "profile_catalog": {
+      "$ref": "#/$defs/ProfileCatalogSettings"
+    },
+    "corp_directives": {
+      "items": {
+        "$ref": "#/$defs/CorpDirective"
+      },
+      "title": "Corp Directives",
+      "type": "array"
+    }
+  },
+  "title": "ServiceSettingsV2",
+  "type": "object"
+}

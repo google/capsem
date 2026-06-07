@@ -21,8 +21,9 @@ allow_get = true
 allow_post = true
 
 [anthropic.install]
-manager = "curl"
-packages = ["https://claude.ai/install.sh"]
+manager = "npm"
+prefix = "/opt/ai-clis"
+packages = ["@anthropic-ai/claude-code"]
 
 [anthropic.files.settings_json]
 path = "/root/.claude/settings.json"

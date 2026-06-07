@@ -17,17 +17,6 @@ name = "App"
 description = "Application settings"
 collapsed = false
 
-[settings.app.auto_update]
-name = "Auto-check for updates"
-description = "Check for new Capsem versions on launch"
-type = "bool"
-default = true
-
-[settings.app.check_update]
-name = "Check for updates"
-description = "Manually check if a new version is available"
-action = "check_update"
-
 # -- AI Providers ------------------------------------------------------------
 
 [settings.ai]
@@ -811,7 +800,7 @@ max = 8
 name = "Max concurrent VMs"
 description = "Maximum number of sandbox VMs that can be running simultaneously."
 type = "number"
-default = 10
+default = 8
 
 [settings.vm.resources.max_concurrent_vms.meta]
 min = 1
@@ -821,7 +810,7 @@ max = 20
 name = "RAM"
 description = "Amount of RAM allocated to the VM in GB."
 type = "number"
-default = 4
+default = 8
 
 [settings.vm.resources.ram_gb.meta]
 min = 1
@@ -921,7 +910,7 @@ max = 32
 
 # -- MCP Servers -------------------------------------------------------------
 # Declarative MCP server definitions. Auto-injected into AI agent configs at boot.
-# Enterprises can add servers via corp.toml [mcp] section.
+# Historical v1 defaults file; Profile V2 MCP connector policy lives in profiles.
 
 [mcp.local]
 name = "Local"

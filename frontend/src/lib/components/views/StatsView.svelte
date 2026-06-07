@@ -109,8 +109,8 @@
     try {
       const [aiResult, toolResult, netResult, fileResult] = await Promise.allSettled([
         api.inspectQuery(vmId, 'SELECT provider, model, SUM(input_tokens) as input_tokens, SUM(output_tokens) as output_tokens, SUM(estimated_cost_usd) as estimated_cost_usd, COUNT(*) as call_count FROM model_calls GROUP BY provider, model'),
-        api.inspectQuery(vmId, 'SELECT tc.tool_name as tool, tc.origin as server, tc.arguments as args, tc.call_id, mc.timestamp, tr.content_preview as result, tr.is_error FROM tool_calls tc JOIN model_calls mc ON tc.model_call_id = mc.id LEFT JOIN tool_responses tr ON tc.call_id = tr.call_id ORDER BY mc.timestamp DESC'),
-        api.inspectQuery(vmId, 'SELECT method, domain, path, domain || path as url, status_code as status, decision, duration_ms as durationMs, bytes_sent as bytesSent, bytes_received as bytesReceived, timestamp, request_headers, response_headers, request_body_preview, response_body_preview, matched_rule FROM net_events ORDER BY timestamp DESC'),
+        api.inspectQuery(vmId, 'SELECT tc.tool_name as tool, tc.origin as server, tc.arguments as args, tc.call_id, mc.timestamp, tr.content_preview as result, tr.is_error, COALESCE(mcp.duration_ms, mc.duration_ms, 0) as duration_ms, mcp.id as mcp_call_id, mcp.decision, mcp.policy_mode, mcp.policy_action, mcp.policy_rule, mcp.policy_reason, COALESCE(tc.trace_id, mcp.trace_id, mc.trace_id) as trace_id FROM tool_calls tc JOIN model_calls mc ON tc.model_call_id = mc.id LEFT JOIN tool_responses tr ON tc.call_id = tr.call_id LEFT JOIN mcp_calls mcp ON tc.mcp_call_id = mcp.id ORDER BY mc.timestamp DESC'),
+        api.inspectQuery(vmId, 'SELECT method, domain, path, domain || path as url, status_code as status, decision, duration_ms as durationMs, bytes_sent as bytesSent, bytes_received as bytesReceived, timestamp, request_headers, response_headers, request_body_preview, response_body_preview, matched_rule, policy_mode, policy_action, policy_rule, policy_reason, trace_id FROM net_events ORDER BY timestamp DESC'),
         api.inspectQuery(vmId, 'SELECT path, action as operation, size as sizeBytes, timestamp FROM fs_events ORDER BY timestamp DESC'),
       ]);
       if (aiResult.status === 'fulfilled' && aiResult.value.rows.length > 0) {
@@ -128,8 +128,15 @@
         toolCalls = toObjects(toolResult.value).map((r: any, i: number) => ({
           id: `tc-${i}`, tool: String(r.tool ?? ''), server: String(r.server ?? ''),
           args: String(r.args ?? ''), result: String(r.result ?? ''),
-          durationMs: 0, timestamp: String(r.timestamp ?? ''),
+          durationMs: Number(r.duration_ms ?? 0), timestamp: String(r.timestamp ?? ''),
           isError: Number(r.is_error ?? 0),
+          decision: r.decision as string | null,
+          mcpCallId: r.mcp_call_id != null ? Number(r.mcp_call_id) : null,
+          traceId: r.trace_id as string | null,
+          policyMode: r.policy_mode as string | null,
+          policyAction: r.policy_action as string | null,
+          policyRule: r.policy_rule as string | null,
+          policyReason: r.policy_reason as string | null,
         }));
       }
       if (netResult.status === 'fulfilled' && netResult.value.rows.length > 0) {
@@ -144,6 +151,11 @@
           requestBodyPreview: r.request_body_preview as string | null,
           responseBodyPreview: r.response_body_preview as string | null,
           matchedRule: r.matched_rule as string | null,
+          policyMode: r.policy_mode as string | null,
+          policyAction: r.policy_action as string | null,
+          policyRule: r.policy_rule as string | null,
+          policyReason: r.policy_reason as string | null,
+          traceId: r.trace_id as string | null,
         }));
       }
       if (fileResult.status === 'fulfilled' && fileResult.value.rows.length > 0) {
@@ -333,7 +345,7 @@
           <tbody>
             {#each toolCalls as call}
               <tr class="border-b border-card-divider last:border-0 hover:bg-muted-hover cursor-pointer"
-                  onclick={() => detail = { type: 'tool', data: { tool_name: call.tool, origin: call.server, arguments: call.args, content_preview: call.result, is_error: call.isError, timestamp: call.timestamp } }}>
+                  onclick={() => detail = { type: 'tool', data: { tool_name: call.tool, origin: call.server, arguments: call.args, content_preview: call.result, is_error: call.isError, timestamp: call.timestamp, decision: call.decision, mcp_call_id: call.mcpCallId, trace_id: call.traceId, policy_mode: call.policyMode, policy_action: call.policyAction, policy_rule: call.policyRule, policy_reason: call.policyReason } }}>
                 <td class="px-4 py-2 font-mono text-xs text-foreground">{call.tool}</td>
                 <td class="px-4 py-2 text-muted-foreground-1">{call.server}</td>
                 <td class="px-4 py-2 font-mono text-xs text-muted-foreground-1 max-w-48 truncate">{truncate(call.args, 40)}</td>
@@ -382,7 +394,7 @@
           <tbody>
             {#each networkEvents as event}
               <tr class="border-b border-card-divider last:border-0 hover:bg-muted-hover cursor-pointer"
-                  onclick={() => detail = { type: 'net_event', data: { method: event.method, domain: event.domain, path: event.path, decision: event.decision, status_code: event.status, duration_ms: event.durationMs, matched_rule: event.matchedRule, request_headers: event.requestHeaders, request_body_preview: event.requestBodyPreview, response_headers: event.responseHeaders, response_body_preview: event.responseBodyPreview, timestamp: event.timestamp } }}>
+                  onclick={() => detail = { type: 'net_event', data: { method: event.method, domain: event.domain, path: event.path, decision: event.decision, status_code: event.status, duration_ms: event.durationMs, matched_rule: event.matchedRule, policy_mode: event.policyMode, policy_action: event.policyAction, policy_rule: event.policyRule, policy_reason: event.policyReason, trace_id: event.traceId, request_headers: event.requestHeaders, request_body_preview: event.requestBodyPreview, response_headers: event.responseHeaders, response_body_preview: event.responseBodyPreview, timestamp: event.timestamp } }}>
                 <td class="px-4 py-2 font-mono text-xs font-semibold text-foreground">{event.method}</td>
                 <td class="px-4 py-2 font-mono text-xs text-muted-foreground-1 max-w-64 truncate">{event.url}</td>
                 <td class="px-4 py-2 text-center">
@@ -549,6 +561,29 @@
                 <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] bg-muted text-muted-foreground-1 ml-1">{d.origin}</span>
               {/if}
             </div>
+            <div class="space-y-1">
+              {#if d.decision}
+                <div><span class="text-muted-foreground">Decision:</span> <span class="font-mono text-foreground">{d.decision}</span></div>
+              {/if}
+              {#if d.mcp_call_id}
+                <div><span class="text-muted-foreground">MCP Call:</span> <span class="font-mono text-foreground">{d.mcp_call_id}</span></div>
+              {/if}
+              {#if d.trace_id}
+                <div><span class="text-muted-foreground">Trace:</span> <span class="font-mono text-foreground">{d.trace_id}</span></div>
+              {/if}
+              {#if d.policy_rule}
+                <div><span class="text-muted-foreground">Policy:</span> <span class="font-mono text-foreground break-all">{d.policy_rule}</span></div>
+              {/if}
+              {#if d.policy_action}
+                <div><span class="text-muted-foreground">Action:</span> <span class="font-mono text-foreground">{d.policy_action}</span></div>
+              {/if}
+              {#if d.policy_mode}
+                <div><span class="text-muted-foreground">Mode:</span> <span class="font-mono text-foreground">{d.policy_mode}</span></div>
+              {/if}
+              {#if d.policy_reason}
+                <div><span class="text-muted-foreground">Reason:</span> <span class="text-foreground">{d.policy_reason}</span></div>
+              {/if}
+            </div>
           </div>
           <div>
             <div class="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1">Arguments</div>
@@ -587,6 +622,21 @@
             {/if}
             {#if d.matched_rule}
               <div><span class="text-muted-foreground">Rule:</span> <span class="font-mono text-foreground">{d.matched_rule}</span></div>
+            {/if}
+            {#if d.policy_rule}
+              <div><span class="text-muted-foreground">Policy:</span> <span class="font-mono text-foreground break-all">{d.policy_rule}</span></div>
+            {/if}
+            {#if d.policy_action}
+              <div><span class="text-muted-foreground">Action:</span> <span class="font-mono text-foreground">{d.policy_action}</span></div>
+            {/if}
+            {#if d.policy_mode}
+              <div><span class="text-muted-foreground">Mode:</span> <span class="font-mono text-foreground">{d.policy_mode}</span></div>
+            {/if}
+            {#if d.policy_reason}
+              <div><span class="text-muted-foreground">Reason:</span> <span class="text-foreground">{d.policy_reason}</span></div>
+            {/if}
+            {#if d.trace_id}
+              <div><span class="text-muted-foreground">Trace:</span> <span class="font-mono text-foreground">{d.trace_id}</span></div>
             {/if}
           </div>
           {#if d.request_headers}

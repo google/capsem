@@ -13,7 +13,7 @@ use serde_json::Value;
 
 use capsem_logger::{DbWriter, Decision, NetEvent, WriteOp};
 
-use crate::net::domain_policy::{Action, DomainPolicy};
+use capsem_network_engine::domain_policy::{Action, DomainPolicy};
 
 use super::types::{JsonRpcResponse, McpToolDef, ToolAnnotations};
 
@@ -221,37 +221,32 @@ async fn emit_net_event(
     bytes_received: u64,
     duration_ms: u64,
 ) {
-    crate::security_engine::emit_security_write(
-        db,
-        WriteOp::NetEvent(NetEvent {
-            event_id: None,
-            timestamp: SystemTime::now(),
-            domain: domain.to_string(),
-            port: 443,
-            decision,
-            process_name: Some(BUILTIN_PROCESS_NAME.to_string()),
-            pid: None,
-            method: Some(method.to_string()),
-            path: Some(path.to_string()),
-            query: None,
-            status_code,
-            bytes_sent,
-            bytes_received,
-            duration_ms,
-            matched_rule: None,
-            request_headers: None,
-            response_headers: None,
-            request_body_preview: None,
-            response_body_preview: None,
-            conn_type: Some(BUILTIN_PROCESS_NAME.to_string()),
-            policy_mode: None,
-            policy_action: None,
-            policy_rule: None,
-            policy_reason: None,
-            trace_id: crate::telemetry::ambient_capsem_trace_id(),
-            credential_ref: None,
-        }),
-    )
+    db.write(WriteOp::NetEvent(NetEvent {
+        timestamp: SystemTime::now(),
+        domain: domain.to_string(),
+        port: 443,
+        decision,
+        process_name: Some(BUILTIN_PROCESS_NAME.to_string()),
+        pid: None,
+        method: Some(method.to_string()),
+        path: Some(path.to_string()),
+        query: None,
+        status_code,
+        bytes_sent,
+        bytes_received,
+        duration_ms,
+        matched_rule: None,
+        request_headers: None,
+        response_headers: None,
+        request_body_preview: None,
+        response_body_preview: None,
+        conn_type: Some(BUILTIN_PROCESS_NAME.to_string()),
+        policy_mode: None,
+        policy_action: None,
+        policy_rule: None,
+        policy_reason: None,
+        trace_id: crate::telemetry::ambient_capsem_trace_id(),
+    }))
     .await;
 }
 

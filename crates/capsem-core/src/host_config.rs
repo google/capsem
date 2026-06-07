@@ -8,7 +8,7 @@
 //! Also provides async API key validation against provider endpoints.
 
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
@@ -40,7 +40,7 @@ pub struct DetectedConfigSummary {
     pub github_token_present: bool,
     pub claude_oauth_present: bool,
     pub google_adc_present: bool,
-    /// Setting IDs that were written during detection.
+    /// Profile V2 credential IDs that were written during detection.
     pub settings_written: Vec<String>,
 }
 
@@ -68,48 +68,55 @@ pub struct KeyValidation {
     pub message: String,
 }
 
-/// Mapping from HostConfig fields to setting IDs.
-/// Text settings use SettingValue::Text, file settings use SettingValue::File.
-const DETECT_SETTING_MAP: &[(&str, &str)] = &[
-    // (field_name, setting_id)
-    ("anthropic_api_key", "ai.anthropic.api_key"),
-    ("openai_api_key", "ai.openai.api_key"),
-    ("google_api_key", "ai.google.api_key"),
-    ("github_token", "repository.providers.github.token"),
-    ("git_name", "repository.git.identity.author_name"),
-    ("git_email", "repository.git.identity.author_email"),
-    ("ssh_public_key", "vm.environment.ssh.public_key"),
+/// Mapping from HostConfig fields to Profile V2 service credential IDs.
+const DETECT_CREDENTIAL_MAP: &[(&str, &str, &str)] = &[
+    // (field_name, credential_id, description)
+    (
+        "anthropic_api_key",
+        "anthropic-api-key",
+        "Anthropic API key",
+    ),
+    ("openai_api_key", "openai-api-key", "OpenAI API key"),
+    ("google_api_key", "google-api-key", "Google AI API key"),
+    ("github_token", "github-token", "GitHub token"),
+    ("git_name", "git-author-name", "Git author name"),
+    ("git_email", "git-author-email", "Git author email"),
+    ("ssh_public_key", "ssh-public-key", "SSH public key"),
 ];
 
-/// File-type settings that need SettingValue::File instead of Text.
-const DETECT_FILE_MAP: &[(&str, &str, &str)] = &[
-    // (field_name, setting_id, file_path)
+/// File-shaped credentials copied into Profile V2 service credentials.
+const DETECT_FILE_CREDENTIAL_MAP: &[(&str, &str, &str)] = &[
+    // (field_name, credential_id, description)
     (
         "claude_oauth_credentials",
-        "ai.anthropic.claude.credentials_json",
-        "/root/.claude/.credentials.json",
+        "claude-oauth-credentials-json",
+        "Claude OAuth credentials JSON",
     ),
-    (
-        "google_adc",
-        "ai.google.gemini.google_adc_json",
-        "/root/.config/gcloud/application_default_credentials.json",
-    ),
+    ("google_adc", "google-adc-json", "Google ADC JSON"),
 ];
 
-/// Detect host config and write found values to user settings.
+/// Detect host config and write found values to Profile V2 service settings.
 ///
-/// Only writes to settings that are currently empty (does not overwrite
-/// user-configured values). Returns a summary with presence booleans
-/// and the list of setting IDs that were written.
+/// Only writes credentials that are currently absent (does not overwrite
+/// user-configured values). Returns a summary with presence booleans and the
+/// list of credential IDs that were written.
 pub fn detect_and_write_to_settings() -> DetectedConfigSummary {
-    use crate::net::policy_config::{self, SettingValue};
+    use crate::settings_profiles::{
+        load_service_settings_or_default, write_service_settings, ServiceSettings, TomlCredential,
+    };
 
     let config = detect();
     let mut summary = DetectedConfigSummary::from(&config);
 
-    // Load current user settings to check which are already populated
-    let (user_settings, _corp) = policy_config::load_settings_files();
-    let mut changes: HashMap<String, SettingValue> = HashMap::new();
+    let settings_path = crate::paths::capsem_home().join("service.toml");
+    let mut settings =
+        load_service_settings_or_default(&settings_path).unwrap_or_else(|_| ServiceSettings {
+            credentials: crate::settings_profiles::CredentialSettings {
+                items: BTreeMap::new(),
+                ..Default::default()
+            },
+            ..Default::default()
+        });
 
     // Helper: get the detected value for a field name
     let field_value = |field: &str| -> Option<&str> {
@@ -125,29 +132,21 @@ pub fn detect_and_write_to_settings() -> DetectedConfigSummary {
         }
     };
 
-    // Text settings
-    for &(field, setting_id) in DETECT_SETTING_MAP {
+    for &(field, credential_id, description) in DETECT_CREDENTIAL_MAP {
         if let Some(value) = field_value(field) {
-            // Only write if the setting is currently empty
-            let existing = user_settings.settings.get(setting_id);
-            let is_empty = match existing {
-                None => true,
-                Some(entry) => match &entry.value {
-                    SettingValue::Text(t) => t.is_empty(),
-                    _ => false,
-                },
-            };
-            if is_empty {
-                changes.insert(
-                    setting_id.to_string(),
-                    SettingValue::Text(value.to_string()),
+            if !settings.credentials.items.contains_key(credential_id) {
+                settings.credentials.items.insert(
+                    credential_id.to_string(),
+                    TomlCredential {
+                        description: Some(description.to_string()),
+                        value: value.to_string(),
+                    },
                 );
-                summary.settings_written.push(setting_id.to_string());
+                summary.settings_written.push(credential_id.to_string());
             }
         }
     }
 
-    // File settings (credentials, ADC)
     let file_field_value = |field: &str| -> Option<&str> {
         match field {
             "claude_oauth_credentials" => config.claude_oauth_credentials.as_deref(),
@@ -156,33 +155,24 @@ pub fn detect_and_write_to_settings() -> DetectedConfigSummary {
         }
     };
 
-    for &(field, setting_id, file_path) in DETECT_FILE_MAP {
+    for &(field, credential_id, description) in DETECT_FILE_CREDENTIAL_MAP {
         if let Some(content) = file_field_value(field) {
-            let existing = user_settings.settings.get(setting_id);
-            let is_empty = match existing {
-                None => true,
-                Some(entry) => match &entry.value {
-                    SettingValue::File { content: c, .. } => c.is_empty(),
-                    _ => false,
-                },
-            };
-            if is_empty {
-                changes.insert(
-                    setting_id.to_string(),
-                    SettingValue::File {
-                        path: file_path.to_string(),
-                        content: content.to_string(),
+            if !settings.credentials.items.contains_key(credential_id) {
+                settings.credentials.items.insert(
+                    credential_id.to_string(),
+                    TomlCredential {
+                        description: Some(description.to_string()),
+                        value: content.to_string(),
                     },
                 );
-                summary.settings_written.push(setting_id.to_string());
+                summary.settings_written.push(credential_id.to_string());
             }
         }
     }
 
-    // Write all changes in one batch
-    if !changes.is_empty() {
-        if let Err(e) = policy_config::batch_update_settings(&changes) {
-            tracing::warn!(error = %e, "failed to write detected config to settings");
+    if !summary.settings_written.is_empty() {
+        if let Err(e) = write_service_settings(&settings_path, &settings) {
+            tracing::warn!(error = %e, "failed to write detected config to Profile V2 service settings");
         }
     }
 

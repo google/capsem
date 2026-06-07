@@ -1,6 +1,7 @@
 [build]
 compression = "zstd"
 compression_level = 15
+squashfs_block_size = "128K"
 
 [build.version_commands]
 node = "node --version 2>&1 | tr -d v"
@@ -12,7 +13,7 @@ pip = "pip3 --version 2>&1 | awk '{print $2}'"
 base_image = "debian:bookworm-slim"
 docker_platform = "linux/arm64"
 rust_target = "aarch64-unknown-linux-musl"
-kernel_branch = "7.0"
+kernel_branch = "6.6"
 kernel_image = "arch/arm64/boot/Image"
 defconfig = "kernel/defconfig.arm64"
 node_major = 24
@@ -21,7 +22,7 @@ node_major = 24
 base_image = "debian:bookworm-slim"
 docker_platform = "linux/amd64"
 rust_target = "x86_64-unknown-linux-musl"
-kernel_branch = "7.0"
+kernel_branch = "6.6"
 kernel_image = "arch/x86_64/boot/bzImage"
 defconfig = "kernel/defconfig.x86_64"
 node_major = 24

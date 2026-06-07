@@ -33,9 +33,55 @@ impl StatusCache {
 #[derive(Serialize, Clone)]
 pub struct AssetHealth {
     pub ready: bool,
+    pub state: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile_revision: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile_payload_hash: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub profile_assets: Vec<ProfileAssetProvenance>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub arch: Option<String>,
     pub missing: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub progress: Option<AssetProgress>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    pub retry_count: u32,
+    pub retryable: bool,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub saved_vm_dependencies: Vec<SavedVmAssetDependency>,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct SavedVmAssetDependency {
+    pub vm: String,
+    pub asset_version: String,
+    pub arch: String,
+    pub missing: Vec<String>,
+    pub recovery_hint: String,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct AssetProgress {
+    pub logical_name: String,
+    pub bytes_done: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bytes_total: Option<u64>,
+    pub done: bool,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct ProfileAssetProvenance {
+    pub logical_name: String,
+    pub hash: String,
+    pub source_url: String,
+    pub size: u64,
+    pub content_type: String,
 }
 
 #[derive(Serialize, Clone)]
@@ -55,6 +101,12 @@ pub struct VmSummary {
     pub name: Option<String>,
     pub status: String,
     pub persistent: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile_revision: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile_status: Option<String>,
     // Telemetry (present for running VMs, absent for stopped)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub uptime_secs: Option<u64>,
@@ -167,10 +219,36 @@ pub async fn handle_status(State(state): State<Arc<AppState>>) -> Response {
 #[derive(Deserialize)]
 struct ServiceAssetHealth {
     ready: bool,
+    #[serde(default = "default_asset_state")]
+    state: String,
+    #[serde(default)]
+    profile_id: Option<String>,
+    #[serde(default)]
+    profile_revision: Option<String>,
+    #[serde(default)]
+    profile_payload_hash: Option<String>,
+    #[serde(default)]
+    profile_assets: Vec<ProfileAssetProvenance>,
     #[serde(default)]
     version: Option<String>,
     #[serde(default)]
+    arch: Option<String>,
+    #[serde(default)]
     missing: Vec<String>,
+    #[serde(default)]
+    progress: Option<AssetProgress>,
+    #[serde(default)]
+    error: Option<String>,
+    #[serde(default)]
+    retry_count: u32,
+    #[serde(default)]
+    retryable: bool,
+    #[serde(default)]
+    saved_vm_dependencies: Vec<SavedVmAssetDependency>,
+}
+
+fn default_asset_state() -> String {
+    "unknown".to_string()
 }
 
 #[derive(Deserialize)]
@@ -190,6 +268,12 @@ struct SessionInfo {
     status: String,
     #[serde(default)]
     persistent: bool,
+    #[serde(default)]
+    profile_id: Option<String>,
+    #[serde(default)]
+    profile_revision: Option<String>,
+    #[serde(default)]
+    profile_status: Option<String>,
     #[serde(default)]
     ram_mb: Option<u64>,
     #[serde(default)]
@@ -266,6 +350,9 @@ async fn fetch_status(state: &AppState) -> StatusResponse {
             name: sess.name.clone(),
             status: sess.status.clone(),
             persistent: sess.persistent,
+            profile_id: sess.profile_id.clone(),
+            profile_revision: sess.profile_revision.clone(),
+            profile_status: sess.profile_status.clone(),
             uptime_secs: sess.uptime_secs,
             total_input_tokens: sess.total_input_tokens,
             total_output_tokens: sess.total_output_tokens,
@@ -282,8 +369,19 @@ async fn fetch_status(state: &AppState) -> StatusResponse {
 
     let assets = list.asset_health.map(|h| AssetHealth {
         ready: h.ready,
+        state: h.state,
+        profile_id: h.profile_id,
+        profile_revision: h.profile_revision,
+        profile_payload_hash: h.profile_payload_hash,
+        profile_assets: h.profile_assets,
         version: h.version,
+        arch: h.arch,
         missing: h.missing,
+        progress: h.progress,
+        error: h.error,
+        retry_count: h.retry_count,
+        retryable: h.retryable,
+        saved_vm_dependencies: h.saved_vm_dependencies,
     });
 
     StatusResponse {

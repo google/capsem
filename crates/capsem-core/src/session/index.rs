@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OpenFlags};
 
 use super::types::*;
 
@@ -88,6 +88,19 @@ impl SessionIndex {
         let conn = Connection::open(path)?;
         conn.pragma_update(None, "journal_mode", "WAL")?;
         Self::ensure_schema(&conn)?;
+        Ok(Self { conn })
+    }
+
+    /// Open an existing session index for read-only hot paths.
+    ///
+    /// This intentionally skips schema creation/migration. Callers that own
+    /// writes should use `open`; read endpoints should not pay migration cost
+    /// on every request.
+    pub fn open_readonly(path: &Path) -> rusqlite::Result<Self> {
+        let conn = Connection::open_with_flags(
+            path,
+            OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )?;
         Ok(Self { conn })
     }
 

@@ -1,5 +1,5 @@
-// Settings types -- mirrors Rust serde serialization in capsem-core/src/net/policy_config/types.rs.
-// Do not modify field names or shapes without matching the backend.
+// Settings types shared by Profile V2 settings API responses and generated
+// frontend fixtures. Keep field names and shapes aligned with the backend.
 
 /** The data type of a setting (serde rename_all = "snake_case"). */
 export type SettingType =
@@ -55,47 +55,6 @@ export interface PolicyConfig {
   dns?: Record<string, PolicyRuleConfig>;
   model?: Record<string, PolicyRuleConfig>;
   hook?: Record<string, PolicyRuleConfig>;
-}
-
-export interface ProviderDiscovery {
-  observed_at: string;
-  source: string;
-  event_type?: string | null;
-  confidence: number;
-  credential_ref?: string | null;
-  trace_id?: string | null;
-}
-
-export interface ProviderStatus {
-  id: string;
-  name: string;
-  protocol?: string | null;
-  url?: string | null;
-  aliases: string[];
-  listen_ports: number[];
-  allowed_remote_targets: string[];
-  discovery?: ProviderDiscovery | null;
-  credential_setting_id?: string | null;
-  brokered_credential_ref?: string | null;
-  corp_blocked: boolean;
-}
-
-export type ToolConfigFormat = 'toml' | 'json' | 'yaml' | 'env' | 'text';
-export type ToolConfigOverlay =
-  | 'mcp_injection'
-  | 'broker_placeholders'
-  | 'telemetry_disablement'
-  | 'endpoint_selection';
-
-export interface ToolConfigSourceRecord {
-  tool_id: string;
-  guest_path: string;
-  format: ToolConfigFormat;
-  observed_hash?: string | null;
-  observed_version?: string | null;
-  inferred_endpoint_ref?: string | null;
-  credential_refs: string[];
-  allowed_overlays: ToolConfigOverlay[];
 }
 
 export type SettingsChangeValue = SettingValue | PolicyRuleConfig | null;
@@ -219,12 +178,28 @@ export type SettingsNode = SettingsGroup | SettingsLeaf | SettingsAction | McpSe
 
 /** Unified response from load_settings / save_settings. */
 export interface SettingsResponse {
-  tree: SettingsNode[];
-  issues: ConfigIssue[];
-  presets: SecurityPreset[];
+  tree?: SettingsNode[];
+  issues?: ConfigIssue[];
+  presets?: SecurityPreset[];
+  profile_presets?: ProfilePreset[];
+  effective_rules?: PolicyConfig;
   policy?: PolicyConfig;
-  providers?: ProviderStatus[];
-  tool_config_sources?: Record<string, ToolConfigSourceRecord>;
+  mode?: 'settings_profiles_v2' | string;
+  settings_profiles?: {
+    selected_profile_id?: string;
+    service?: {
+      credential_ids?: string[];
+    };
+    [key: string]: unknown;
+  };
+}
+
+/** Profile V2 preset entry returned by /settings. */
+export interface ProfilePreset {
+  id: string;
+  name: string;
+  description: string;
+  settings: Record<string, SettingValue>;
 }
 
 /** A security preset definition. */

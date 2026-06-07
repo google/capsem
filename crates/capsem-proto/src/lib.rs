@@ -12,9 +12,12 @@
 
 pub mod handshake;
 pub mod ipc;
+pub mod metrics;
+pub mod policy_context;
 pub mod poll;
 
 pub use handshake::{HandshakeError, Hello};
+pub use policy_context::*;
 
 use std::path::Path;
 
@@ -39,7 +42,9 @@ pub const MAX_BOOT_FILES: usize = 64;
 /// `1` since the Hello handshake (W3) added Frame<T> wrapping to every
 /// bincode channel and a typed Hello frame to the vsock control port.
 /// Pre-W3 binaries fail decode within 1 second.
-pub const PROTOCOL_VERSION: u16 = 1;
+///
+/// `2` adds the S07/S12 live metrics snapshot IPC contract.
+pub const PROTOCOL_VERSION: u16 = 2;
 
 /// FNV-1a 64 hash of the protocol enum source bytes (lib.rs + ipc.rs +
 /// handshake.rs). Computed by `build.rs`. Detects "I added a variant in
@@ -99,7 +104,7 @@ pub const VSOCK_PORT_CONTROL: u32 = 5000;
 pub const VSOCK_PORT_TERMINAL: u32 = 5001;
 /// vsock port for SNI proxy (HTTPS/HTTP traffic from guest).
 pub const VSOCK_PORT_SNI_PROXY: u32 = 5002;
-/// vsock port for guest lifecycle commands (shutdown/suspend from capsem-sysutil).
+/// vsock port for guest lifecycle commands (currently suspend from capsem-sysutil).
 pub const VSOCK_PORT_LIFECYCLE: u32 = 5004;
 /// vsock port for exec output (direct child process stdout from guest).
 pub const VSOCK_PORT_EXEC: u32 = 5005;
@@ -508,7 +513,7 @@ pub enum GuestToHost {
     /// Error encountered during a file operation or exec.
     Error { id: u64, message: String },
     // -- Lifecycle --
-    /// Guest requests shutdown.
+    /// Deprecated: guest shutdown is disabled; hosts should ignore this.
     ShutdownRequest,
     /// Guest requests suspend.
     SuspendRequest,

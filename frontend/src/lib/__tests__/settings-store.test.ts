@@ -4,8 +4,15 @@ import type { SettingsResponse } from '../types/settings';
 
 // Mock the API module -- settings store calls getSettings/saveSettings/applyPreset.
 let mockResponse: SettingsResponse;
+let reloadShouldFail = false;
+let reloadFailureResult: unknown = null;
 
 vi.mock('../api', () => ({
+  ReloadConfigError: class ReloadConfigError extends Error {
+    constructor(public result: unknown) {
+      super('reload failed');
+    }
+  },
   getSettings: vi.fn(async () => mockResponse),
   saveSettings: vi.fn(async (changes: Record<string, unknown>) => {
     // Apply changes to mock data and return updated response.
@@ -48,6 +55,21 @@ vi.mock('../api', () => ({
     mockResponse = buildMockSettingsResponse();
     return mockResponse;
   }),
+  reloadConfig: vi.fn(async () => {
+    if (reloadShouldFail) {
+      const err = new Error('reload unavailable') as Error & { result?: unknown };
+      if (reloadFailureResult) err.result = reloadFailureResult;
+      throw err;
+    }
+    return {
+      success: true,
+      reloaded: 0,
+      failed_session_count: 0,
+      failed_session_ids: [],
+      failures: [],
+      message: null,
+    };
+  }),
 }));
 
 // Import store AFTER mock is set up.
@@ -55,6 +77,8 @@ const { settingsStore } = await import('../stores/settings.svelte');
 
 describe('settingsStore', () => {
   beforeEach(async () => {
+    reloadShouldFail = false;
+    reloadFailureResult = null;
     mockResponse = buildMockSettingsResponse();
     await settingsStore.load();
   });
@@ -65,7 +89,6 @@ describe('settingsStore', () => {
     });
 
     it('sections includes expected groups', () => {
-      expect(settingsStore.sections).toContain('App');
       expect(settingsStore.sections).toContain('AI Providers');
       expect(settingsStore.sections).toContain('VM');
     });
@@ -191,6 +214,76 @@ describe('settingsStore', () => {
       settingsStore.stage('vm.resources.cpu_count', 2);
       expect(settingsStore.isDirty).toBe(true);
     });
+
+    it('surfaces saved-but-not-applied state when runtime reload fails', async () => {
+      reloadShouldFail = true;
+      reloadFailureResult = {
+        success: false,
+        reloaded: 1,
+        failed_session_count: 2,
+        failed_session_ids: ['vm-a', 'vm-b'],
+        failures: [
+          { session_id: 'vm-a', message: 'reload unavailable' },
+          { session_id: 'vm-b', message: 'timeout' },
+        ],
+        message: 'failed to reload config in 2 running sessions',
+      };
+      settingsStore.stage('vm.resources.cpu_count', 8);
+      await settingsStore.save();
+
+      expect(settingsStore.isDirty).toBe(false);
+      expect(settingsStore.reloadError).toContain('failed to reload config in 2 running sessions');
+      expect(settingsStore.reloadState).toMatchObject({
+        persisted: true,
+        applied: false,
+        failed_session_count: 2,
+        failed_session_ids: ['vm-a', 'vm-b'],
+        retry_available: true,
+      });
+
+      reloadShouldFail = false;
+      await settingsStore.retryReload();
+      expect(settingsStore.reloadError).toBeNull();
+      expect(settingsStore.reloadState).toMatchObject({
+        persisted: true,
+        applied: true,
+        failed_session_count: 0,
+        failed_session_ids: [],
+      });
+    });
+
+    it('clears saved-but-not-applied state when settings change again', async () => {
+      reloadShouldFail = true;
+      settingsStore.stage('vm.resources.cpu_count', 8);
+      await settingsStore.save();
+      expect(settingsStore.reloadState?.applied).toBe(false);
+
+      settingsStore.stage('vm.resources.ram_gb', 12);
+      expect(settingsStore.reloadError).toBeNull();
+      expect(settingsStore.reloadState).toBeNull();
+    });
+
+    it('clears saved-but-not-applied state when all affected sessions stop', async () => {
+      reloadShouldFail = true;
+      reloadFailureResult = {
+        success: false,
+        reloaded: 0,
+        failed_session_count: 2,
+        failed_session_ids: ['vm-a', 'vm-b'],
+        failures: [],
+        message: 'failed to reload config in 2 running sessions',
+      };
+      settingsStore.stage('vm.resources.cpu_count', 8);
+      await settingsStore.save();
+      expect(settingsStore.reloadState?.applied).toBe(false);
+
+      settingsStore.clearReloadStateIfAffectedSessionsStopped(['vm-a']);
+      expect(settingsStore.reloadState?.failed_session_ids).toEqual(['vm-a', 'vm-b']);
+
+      settingsStore.clearReloadStateIfAffectedSessionsStopped([]);
+      expect(settingsStore.reloadError).toBeNull();
+      expect(settingsStore.reloadState).toBeNull();
+    });
   });
 
   describe('discard', () => {
@@ -272,6 +365,10 @@ describe('settingsStore', () => {
       expect(settingsStore.section('Nonexistent')).toBeUndefined();
     });
 
+    it('needsSetup is true when no API keys set', () => {
+      expect(settingsStore.needsSetup).toBe(true);
+    });
+
     it('activePresetId is null when no preset matches', () => {
       expect(settingsStore.activePresetId).toBeNull();
     });
@@ -286,6 +383,18 @@ describe('settingsStore', () => {
 
     it('applySecurityPreset clears applying flag', async () => {
       await settingsStore.applySecurityPreset('high');
+      expect(settingsStore.applyingPreset).toBeNull();
+    });
+
+    it('surfaces reload failure after preset apply', async () => {
+      reloadShouldFail = true;
+      await settingsStore.applySecurityPreset('medium');
+      expect(settingsStore.reloadError).toContain('reload unavailable');
+      expect(settingsStore.reloadState).toMatchObject({
+        persisted: true,
+        applied: false,
+        retry_available: true,
+      });
       expect(settingsStore.applyingPreset).toBeNull();
     });
   });

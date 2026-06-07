@@ -1,332 +1,8 @@
 use std::collections::BTreeMap;
 use std::time::SystemTime;
 
+use capsem_security_engine::ModelInteractionEvidence;
 use serde::{Deserialize, Serialize};
-
-pub const CREDENTIAL_REF_PREFIX: &str = "credential:blake3:";
-const CREDENTIAL_REF_DOMAIN: &[u8] = b"capsem.credential.v1";
-
-/// Build the canonical brokered credential reference used downstream by
-/// security events, logs, CEL, and session.db.
-pub fn credential_reference(provider: &str, raw_credential: &str) -> String {
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(CREDENTIAL_REF_DOMAIN);
-    hasher.update(&[0]);
-    hasher.update(provider.as_bytes());
-    hasher.update(&[0]);
-    hasher.update(raw_credential.as_bytes());
-    format!("{CREDENTIAL_REF_PREFIX}{}", hasher.finalize().to_hex())
-}
-
-pub fn is_credential_reference(value: &str) -> bool {
-    value
-        .strip_prefix(CREDENTIAL_REF_PREFIX)
-        .is_some_and(|hex| hex.len() == 64 && hex.chars().all(|c| c.is_ascii_hexdigit()))
-}
-
-/// Canonical action vocabulary for security rule matches.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum SecurityRuleAction {
-    Allow,
-    Ask,
-    Block,
-    Preprocess,
-    Rewrite,
-    Postprocess,
-}
-
-impl SecurityRuleAction {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            SecurityRuleAction::Allow => "allow",
-            SecurityRuleAction::Ask => "ask",
-            SecurityRuleAction::Block => "block",
-            SecurityRuleAction::Preprocess => "preprocess",
-            SecurityRuleAction::Rewrite => "rewrite",
-            SecurityRuleAction::Postprocess => "postprocess",
-        }
-    }
-
-    pub fn parse_str(value: &str) -> Option<Self> {
-        match value {
-            "allow" => Some(SecurityRuleAction::Allow),
-            "ask" => Some(SecurityRuleAction::Ask),
-            "block" => Some(SecurityRuleAction::Block),
-            "preprocess" => Some(SecurityRuleAction::Preprocess),
-            "rewrite" => Some(SecurityRuleAction::Rewrite),
-            "postprocess" => Some(SecurityRuleAction::Postprocess),
-            _ => None,
-        }
-    }
-}
-
-/// Sigma-aligned detection level metadata attached to a rule match.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum SecurityDetectionLevel {
-    None,
-    Informational,
-    Low,
-    Medium,
-    High,
-    Critical,
-}
-
-impl SecurityDetectionLevel {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            SecurityDetectionLevel::None => "none",
-            SecurityDetectionLevel::Informational => "informational",
-            SecurityDetectionLevel::Low => "low",
-            SecurityDetectionLevel::Medium => "medium",
-            SecurityDetectionLevel::High => "high",
-            SecurityDetectionLevel::Critical => "critical",
-        }
-    }
-
-    pub fn parse_str(value: &str) -> Option<Self> {
-        match value {
-            "none" => Some(SecurityDetectionLevel::None),
-            "informational" => Some(SecurityDetectionLevel::Informational),
-            "low" => Some(SecurityDetectionLevel::Low),
-            "medium" => Some(SecurityDetectionLevel::Medium),
-            "high" => Some(SecurityDetectionLevel::High),
-            "critical" => Some(SecurityDetectionLevel::Critical),
-            _ => None,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum SecurityDecision {
-    Allow,
-    Ask,
-    Block,
-}
-
-impl SecurityDecision {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            SecurityDecision::Allow => "allow",
-            SecurityDecision::Ask => "ask",
-            SecurityDecision::Block => "block",
-        }
-    }
-
-    pub fn parse_str(value: &str) -> Option<Self> {
-        match value {
-            "allow" => Some(SecurityDecision::Allow),
-            "ask" => Some(SecurityDecision::Ask),
-            "block" => Some(SecurityDecision::Block),
-            _ => None,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SecurityDecisionStage {
-    Preprocess,
-    Rule,
-    Rewrite,
-    Postprocess,
-    AskResolution,
-}
-
-impl SecurityDecisionStage {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            SecurityDecisionStage::Preprocess => "preprocess",
-            SecurityDecisionStage::Rule => "rule",
-            SecurityDecisionStage::Rewrite => "rewrite",
-            SecurityDecisionStage::Postprocess => "postprocess",
-            SecurityDecisionStage::AskResolution => "ask_resolution",
-        }
-    }
-}
-
-/// Append-only decision transition row. This is the durable truth for what a
-/// stage wanted and what the effective decision became.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SecurityDecisionEvent {
-    pub timestamp_unix_ms: i64,
-    pub event_id: String,
-    pub event_type: String,
-    pub stage: SecurityDecisionStage,
-    pub actor: String,
-    #[serde(default)]
-    pub rule_id: Option<String>,
-    #[serde(default)]
-    pub plugin_id: Option<String>,
-    pub previous_decision: SecurityDecision,
-    pub requested_decision: SecurityDecision,
-    pub effective_decision: SecurityDecision,
-    #[serde(default)]
-    pub reason: Option<String>,
-    pub event_json: String,
-    #[serde(default)]
-    pub trace_id: Option<String>,
-}
-
-/// A stored security rule match. This is the source for runtime `latest`
-/// projections; every field here is intentionally DB-backed.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SecurityRuleEvent {
-    pub timestamp_unix_ms: i64,
-    pub event_id: String,
-    pub event_type: String,
-    pub rule_id: String,
-    pub rule_action: SecurityRuleAction,
-    pub detection_level: SecurityDetectionLevel,
-    /// Canonical serialized rule snapshot at match time. This must be enough
-    /// for later forensic review even if the active ruleset has changed.
-    pub rule_json: String,
-    /// Canonical serialized normalized SecurityEvent payload that the rule
-    /// matched. Raw secrets must already be brokered before this row.
-    pub event_json: String,
-    #[serde(default)]
-    pub trace_id: Option<String>,
-}
-
-/// Append-only ask lifecycle status for an ask enforcement decision.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum SecurityAskStatus {
-    Pending,
-    Approved,
-    Denied,
-}
-
-impl SecurityAskStatus {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            SecurityAskStatus::Pending => "pending",
-            SecurityAskStatus::Approved => "approved",
-            SecurityAskStatus::Denied => "denied",
-        }
-    }
-
-    pub fn parse_str(value: &str) -> Option<Self> {
-        match value {
-            "pending" => Some(SecurityAskStatus::Pending),
-            "approved" => Some(SecurityAskStatus::Approved),
-            "denied" => Some(SecurityAskStatus::Denied),
-            _ => None,
-        }
-    }
-}
-
-/// A DB-backed ask lifecycle row. Pending and resolution records are appended
-/// rather than updated so forensic replay does not depend on live state.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SecurityAskEvent {
-    pub timestamp_unix_ms: i64,
-    pub ask_id: String,
-    pub event_id: String,
-    pub event_type: String,
-    pub rule_id: String,
-    pub rule_name: String,
-    pub status: SecurityAskStatus,
-    pub rule_json: String,
-    pub event_json: String,
-    #[serde(default)]
-    pub resolver: Option<String>,
-    #[serde(default)]
-    pub reason: Option<String>,
-    #[serde(default)]
-    pub trace_id: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SecurityAskPending {
-    pub timestamp_unix_ms: i64,
-    pub ask_id: String,
-    pub event_id: String,
-    pub event_type: String,
-    pub rule_id: String,
-    pub rule_name: String,
-    pub rule_json: String,
-    pub event_json: String,
-}
-
-impl SecurityAskEvent {
-    pub fn pending(pending: SecurityAskPending) -> Self {
-        Self {
-            timestamp_unix_ms: pending.timestamp_unix_ms,
-            ask_id: pending.ask_id,
-            event_id: pending.event_id,
-            event_type: pending.event_type,
-            rule_id: pending.rule_id,
-            rule_name: pending.rule_name,
-            status: SecurityAskStatus::Pending,
-            rule_json: pending.rule_json,
-            event_json: pending.event_json,
-            resolver: None,
-            reason: None,
-            trace_id: None,
-        }
-    }
-
-    pub fn with_status(mut self, status: SecurityAskStatus) -> Self {
-        self.status = status;
-        self
-    }
-
-    pub fn with_resolver(mut self, resolver: impl Into<String>) -> Self {
-        self.resolver = Some(resolver.into());
-        self
-    }
-
-    pub fn with_reason(mut self, reason: impl Into<String>) -> Self {
-        self.reason = Some(reason.into());
-        self
-    }
-
-    pub fn with_trace_id(mut self, trace_id: impl Into<String>) -> Self {
-        self.trace_id = Some(trace_id.into());
-        self
-    }
-}
-
-impl SecurityRuleEvent {
-    pub fn new(
-        timestamp_unix_ms: i64,
-        event_id: impl Into<String>,
-        event_type: impl Into<String>,
-        rule_id: impl Into<String>,
-        rule_json: impl Into<String>,
-        event_json: impl Into<String>,
-    ) -> Self {
-        Self {
-            timestamp_unix_ms,
-            event_id: event_id.into(),
-            event_type: event_type.into(),
-            rule_id: rule_id.into(),
-            rule_action: SecurityRuleAction::Allow,
-            detection_level: SecurityDetectionLevel::None,
-            rule_json: rule_json.into(),
-            event_json: event_json.into(),
-            trace_id: None,
-        }
-    }
-
-    pub fn with_rule_action(mut self, rule_action: SecurityRuleAction) -> Self {
-        self.rule_action = rule_action;
-        self
-    }
-
-    pub fn with_detection_level(mut self, detection_level: SecurityDetectionLevel) -> Self {
-        self.detection_level = detection_level;
-        self
-    }
-
-    pub fn with_trace_id(mut self, trace_id: impl Into<String>) -> Self {
-        self.trace_id = Some(trace_id.into());
-        self
-    }
-}
 
 /// The outcome of a domain policy evaluation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -384,7 +60,7 @@ fn deserialize_timestamp<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Syste
     Ok(SystemTime::UNIX_EPOCH + std::time::Duration::from_secs_f64(secs))
 }
 
-/// The canonical file action vocabulary for filesystem and explicit boundary events.
+/// The type of filesystem action observed via inotify.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum FileAction {
@@ -392,9 +68,6 @@ pub enum FileAction {
     Modified,
     Deleted,
     Restored,
-    Read,
-    Imported,
-    Exported,
 }
 
 impl FileAction {
@@ -404,9 +77,6 @@ impl FileAction {
             FileAction::Modified => "modified",
             FileAction::Deleted => "deleted",
             FileAction::Restored => "restored",
-            FileAction::Read => "read",
-            FileAction::Imported => "import",
-            FileAction::Exported => "export",
         }
     }
 
@@ -416,9 +86,6 @@ impl FileAction {
             "modified" => FileAction::Modified,
             "deleted" => FileAction::Deleted,
             "restored" => FileAction::Restored,
-            "read" => FileAction::Read,
-            "import" => FileAction::Imported,
-            "export" => FileAction::Exported,
             other => {
                 tracing::warn!(
                     value = other,
@@ -433,8 +100,6 @@ impl FileAction {
 /// A single filesystem event from the in-VM inotify watcher.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileEvent {
-    #[serde(default)]
-    pub event_id: Option<String>,
     #[serde(
         serialize_with = "serialize_timestamp",
         deserialize_with = "deserialize_timestamp"
@@ -447,8 +112,6 @@ pub struct FileEvent {
     /// (lower 16 hex of the W3C trace_id). None when no trace context.
     #[serde(default)]
     pub trace_id: Option<String>,
-    #[serde(default)]
-    pub credential_ref: Option<String>,
 }
 
 /// A snapshot event (auto or manual) recorded for the stats UI.
@@ -456,8 +119,6 @@ pub struct FileEvent {
 /// lets the frontend compute per-snapshot file changes without directory walks.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SnapshotEvent {
-    #[serde(default)]
-    pub event_id: Option<String>,
     #[serde(
         serialize_with = "serialize_timestamp",
         deserialize_with = "deserialize_timestamp"
@@ -473,11 +134,26 @@ pub struct SnapshotEvent {
     pub trace_id: Option<String>,
 }
 
+/// Stable identity for the VM/session that owns this telemetry database.
+///
+/// This is stored once per `session.db` rather than duplicated onto every
+/// event row. Events remain hot-path cheap, while exports and detail paths can
+/// still prove which VM, profile, and local user produced the telemetry.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TelemetryIdentity {
+    #[serde(
+        serialize_with = "serialize_timestamp",
+        deserialize_with = "deserialize_timestamp"
+    )]
+    pub timestamp: SystemTime,
+    pub vm_id: String,
+    pub profile_id: String,
+    pub user_id: String,
+}
+
 /// A single network connection event.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NetEvent {
-    #[serde(default)]
-    pub event_id: Option<String>,
     #[serde(
         serialize_with = "serialize_timestamp",
         deserialize_with = "deserialize_timestamp"
@@ -511,8 +187,6 @@ pub struct NetEvent {
     pub policy_reason: Option<String>,
     #[serde(default)]
     pub trace_id: Option<String>,
-    #[serde(default)]
-    pub credential_ref: Option<String>,
 }
 
 /// A tool call emitted by the model in a response.
@@ -546,8 +220,6 @@ pub struct ToolResponseEntry {
 /// A single MCP tool call event (one row per tools/call or tools/list request).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct McpCall {
-    #[serde(default)]
-    pub event_id: Option<String>,
     #[serde(
         serialize_with = "serialize_timestamp",
         deserialize_with = "deserialize_timestamp"
@@ -576,16 +248,12 @@ pub struct McpCall {
     pub policy_reason: Option<String>,
     #[serde(default)]
     pub trace_id: Option<String>,
-    #[serde(default)]
-    pub credential_ref: Option<String>,
 }
 
 /// A denormalized AI model API call (one row per request+response cycle),
 /// with nested tool data inserted into separate tables.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelCall {
-    #[serde(default)]
-    pub event_id: Option<String>,
     #[serde(
         serialize_with = "serialize_timestamp",
         deserialize_with = "deserialize_timestamp"
@@ -619,8 +287,9 @@ pub struct ModelCall {
     pub estimated_cost_usd: f64,
     // Trace grouping
     pub trace_id: Option<String>,
+    // Canonical S08 AI evidence for this request/response cycle.
     #[serde(default)]
-    pub credential_ref: Option<String>,
+    pub ai_evidence: Option<ModelInteractionEvidence>,
     // Nested tool data (inserted into separate tables)
     pub tool_calls: Vec<ToolCallEntry>,
     pub tool_responses: Vec<ToolResponseEntry>,
@@ -629,8 +298,6 @@ pub struct ModelCall {
 /// A structured exec command event (Layer 1: host-side recording of API-path commands).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExecEvent {
-    #[serde(default)]
-    pub event_id: Option<String>,
     #[serde(
         serialize_with = "serialize_timestamp",
         deserialize_with = "deserialize_timestamp"
@@ -643,8 +310,6 @@ pub struct ExecEvent {
     pub mcp_call_id: Option<u64>,
     pub trace_id: Option<String>,
     pub process_name: Option<String>,
-    #[serde(default)]
-    pub credential_ref: Option<String>,
 }
 
 /// Completion data for a structured exec command (sent when GuestToHost::ExecDone arrives).
@@ -670,8 +335,6 @@ pub struct ExecEventComplete {
 /// row.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DnsEvent {
-    #[serde(default)]
-    pub event_id: Option<String>,
     #[serde(
         serialize_with = "serialize_timestamp",
         deserialize_with = "deserialize_timestamp"
@@ -712,24 +375,20 @@ pub struct DnsEvent {
     #[serde(default)]
     pub policy_mode: Option<String>,
     /// Typed policy action (`allow`, `ask`, `block`, `rewrite`) when
-    /// Policy V2 matched.
+    /// Policy matched.
     #[serde(default)]
     pub policy_action: Option<String>,
-    /// Fully qualified policy rule id, e.g. `policy.dns.block_openai`.
+    /// Fully qualified enforcement rule id, e.g. `policy.dns.block_openai`.
     #[serde(default)]
     pub policy_rule: Option<String>,
     /// Human-readable policy reason or fail-closed detail.
     #[serde(default)]
     pub policy_reason: Option<String>,
-    #[serde(default)]
-    pub credential_ref: Option<String>,
 }
 
 /// A kernel audit event (Layer 3: execve syscalls captured by auditd).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuditEvent {
-    #[serde(default)]
-    pub event_id: Option<String>,
     #[serde(
         serialize_with = "serialize_timestamp",
         deserialize_with = "deserialize_timestamp"
@@ -749,34 +408,6 @@ pub struct AuditEvent {
     pub parent_exe: Option<String>,
     #[serde(default)]
     pub trace_id: Option<String>,
-    #[serde(default)]
-    pub credential_ref: Option<String>,
-}
-
-/// A redacted audit record emitted by the brokered substitution pre-plugin.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SubstitutionEvent {
-    #[serde(default)]
-    pub event_id: Option<String>,
-    #[serde(
-        serialize_with = "serialize_timestamp",
-        deserialize_with = "deserialize_timestamp"
-    )]
-    pub timestamp: SystemTime,
-    pub material_class: String,
-    pub source: String,
-    pub event_type: Option<String>,
-    pub algorithm: String,
-    pub substitution_ref: String,
-    pub outcome: String,
-    #[serde(default)]
-    pub provider: Option<String>,
-    #[serde(default)]
-    pub confidence: Option<f64>,
-    #[serde(default)]
-    pub trace_id: Option<String>,
-    #[serde(default)]
-    pub context_json: Option<String>,
 }
 
 #[cfg(test)]
@@ -805,7 +436,6 @@ mod tests {
     #[test]
     fn decision_json_roundtrip() {
         let event = NetEvent {
-            event_id: None,
             timestamp: SystemTime::UNIX_EPOCH + Duration::from_secs(1700000000),
             domain: "elie.net".to_string(),
             port: 443,
@@ -830,7 +460,6 @@ mod tests {
             policy_rule: None,
             policy_reason: None,
             trace_id: None,
-            credential_ref: None,
         };
         let json = serde_json::to_string(&event).unwrap();
         let decoded: NetEvent = serde_json::from_str(&json).unwrap();
@@ -850,10 +479,6 @@ mod tests {
             FileAction::Created,
             FileAction::Modified,
             FileAction::Deleted,
-            FileAction::Restored,
-            FileAction::Read,
-            FileAction::Imported,
-            FileAction::Exported,
         ] {
             assert_eq!(FileAction::parse_str(action.as_str()), action);
         }
@@ -876,19 +501,5 @@ mod tests {
         assert_eq!(Decision::parse_str("allowed"), Decision::Allowed);
         assert_eq!(Decision::parse_str("denied"), Decision::Denied);
         assert_eq!(Decision::parse_str("error"), Decision::Error);
-    }
-
-    #[test]
-    fn credential_reference_is_domain_separated_and_stable() {
-        let raw = "sk-test-credential";
-        let openai = credential_reference("openai", raw);
-        let openai_again = credential_reference("openai", raw);
-        let github = credential_reference("github", raw);
-
-        assert_eq!(openai, openai_again);
-        assert_ne!(openai, github);
-        assert!(is_credential_reference(&openai));
-        assert!(!is_credential_reference(raw));
-        assert!(openai.starts_with(CREDENTIAL_REF_PREFIX));
     }
 }

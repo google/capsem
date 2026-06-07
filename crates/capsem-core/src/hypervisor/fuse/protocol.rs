@@ -14,7 +14,7 @@ pub const FUSE_LOOKUP: u32 = 1;
 pub const FUSE_FORGET: u32 = 2;
 pub const FUSE_GETATTR: u32 = 3;
 pub const FUSE_SETATTR: u32 = 4;
-pub const FUSE_READLINK: u32 = 22;
+pub const FUSE_READLINK: u32 = 5;
 pub const FUSE_SYMLINK: u32 = 6;
 pub const FUSE_MKNOD: u32 = 8;
 pub const FUSE_MKDIR: u32 = 9;
@@ -40,7 +40,9 @@ pub const FUSE_RENAME2: u32 = 45;
 pub const FUSE_LSEEK: u32 = 46;
 
 // INIT flags
+pub const FUSE_ASYNC_READ: u32 = 1 << 0;
 pub const FUSE_BIG_WRITES: u32 = 1 << 5;
+pub const FUSE_MAX_PAGES: u32 = 1 << 22;
 
 // SETATTR valid bits
 pub const FATTR_MODE: u32 = 1 << 0;

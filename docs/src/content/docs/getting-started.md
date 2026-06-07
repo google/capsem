@@ -28,8 +28,8 @@ The script auto-detects your OS and architecture, downloads the Capsem binaries,
 ### Manual download
 
 1. Go to the [latest release](https://github.com/google/capsem/releases/latest) on GitHub.
-2. Download the `.dmg` (macOS) or `.deb` (Linux) file for your architecture.
-3. macOS: open the DMG and drag **Capsem.app** to `/Applications`.
+2. Download the `.pkg` (macOS) or `.deb` (Linux) file for your architecture.
+3. macOS: open the package and follow the installer.
 4. Linux: `sudo apt install ./capsem_*.deb`
 
 ### Building from source
@@ -57,18 +57,20 @@ After setup, the Capsem service runs in the background (like Docker). It starts 
 
 ## First session
 
-Boot a sandboxed VM and get a shell:
+Open the Capsem TUI:
 
 ```sh
 capsem shell
 ```
 
-This creates a temporary Linux session with an air-gapped network. You get a terminal inside the sandbox with Python 3, Node.js, git, and 30+ packages pre-installed. The session is destroyed when you exit.
+The TUI lets you start the service if it is offline, create or resume sessions,
+and switch between VM terminals. New Linux sessions run with an air-gapped
+network and include Python 3, Node.js, git, and 30+ packages pre-installed.
 
 For a persistent session that survives suspend/resume cycles:
 
 ```sh
-capsem create -n mybox
+capsem create mybox
 capsem shell mybox
 ```
 

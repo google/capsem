@@ -170,6 +170,13 @@ impl Singleton {
     /// * `Err(_)` -- a real IO error (permissions, missing parent dir we could
     ///   not create, etc.). The caller should fail loudly.
     pub fn try_acquire(lock_path: &Path) -> Result<Option<Self>, GuardError> {
+        Self::try_acquire_inner(lock_path, true)
+    }
+
+    fn try_acquire_inner(
+        lock_path: &Path,
+        break_stale_pid_lock: bool,
+    ) -> Result<Option<Self>, GuardError> {
         if let Some(parent) = lock_path.parent() {
             if !parent.as_os_str().is_empty() {
                 std::fs::create_dir_all(parent).map_err(|e| GuardError::Io {
@@ -244,6 +251,11 @@ impl Singleton {
                 .expect("held-locks mutex poisoned")
                 .remove(&canonical);
             if errno == libc::EWOULDBLOCK {
+                if break_stale_pid_lock && lockfile_stamped_pid_is_dead(lock_path) {
+                    drop(file);
+                    let _ = std::fs::remove_file(lock_path);
+                    return Self::try_acquire_inner(lock_path, false);
+                }
                 return Ok(None);
             }
             return Err(GuardError::Io {
@@ -271,6 +283,16 @@ impl Singleton {
     pub fn path(&self) -> &Path {
         &self.path
     }
+}
+
+fn lockfile_stamped_pid_is_dead(lock_path: &Path) -> bool {
+    let Ok(raw) = std::fs::read_to_string(lock_path) else {
+        return false;
+    };
+    let Ok(pid) = raw.trim().parse::<u32>() else {
+        return false;
+    };
+    !is_alive(pid)
 }
 
 /// Convenience: install both guards in one call. Returns `None` if either

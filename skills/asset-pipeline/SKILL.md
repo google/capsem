@@ -23,6 +23,13 @@ The manifest tracks both with compatibility ranges (`min_binary`, `min_assets`).
 | `just shell` | Daily driver: repack initrd, build, sign, boot (~10s) |
 | `just shell "capsem-doctor"` | Verify VM boots correctly after changes |
 
+On macOS, `just build-assets`, `just _pack-initrd`, and any Docker-backed
+asset recipe depend on Colima. If Docker cannot connect but Colima appears to
+be running, follow `/dev-setup`'s Colima recovery discipline before treating
+the asset build as blocked: check `colima list`, `docker version`, and
+`colima ssh -- docker ps`; then try `colima stop && colima start` once and
+rerun the failing recipe.
+
 ## File Locations
 
 | What | Where |

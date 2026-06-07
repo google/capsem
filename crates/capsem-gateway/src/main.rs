@@ -12,7 +12,7 @@ use anyhow::{Context, Result};
 use axum::extract::connect_info::ConnectInfo;
 use axum::extract::State;
 use axum::response::IntoResponse;
-use axum::routing::{delete, get, post};
+use axum::routing::get;
 use axum::{Json, Router};
 use clap::Parser;
 use tower_http::cors::{AllowOrigin, CorsLayer};
@@ -25,6 +25,7 @@ use crate::status::StatusCache;
 #[derive(Parser, Debug)]
 #[command(
     name = "capsem-gateway",
+    version,
     about = "TCP-to-UDS gateway for capsem-service"
 )]
 struct Args {
@@ -67,7 +68,11 @@ pub struct AppState {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let run_dir = capsem_core::paths::capsem_run_dir();
+    let args = Args::parse();
+    let run_dir = args
+        .run_dir
+        .clone()
+        .unwrap_or_else(capsem_core::paths::capsem_run_dir);
     let _ = std::fs::create_dir_all(&run_dir);
     let _telemetry_guard = capsem_core::telemetry::init(capsem_core::telemetry::TelemetryConfig {
         service: "capsem-gateway",
@@ -91,16 +96,6 @@ async fn main() -> Result<()> {
             "gateway panic"
         );
     }));
-
-    let args = Args::parse();
-
-    // Resolve run_dir in priority: --run-dir, then the shared capsem_run_dir
-    // helper (CAPSEM_RUN_DIR > <capsem_home>/run). Must match capsem-service
-    // so parent and child read/write the same gateway.{token,port,pid} files.
-    let run_dir = args
-        .run_dir
-        .clone()
-        .unwrap_or_else(capsem_core::paths::capsem_run_dir);
 
     // Companion guards: refuse to run without a live parent service, and
     // refuse if another gateway already holds the singleton lock for this
@@ -170,7 +165,7 @@ async fn main() -> Result<()> {
         .route("/status", get(status::handle_status))
         .route("/terminal/{id}", get(terminal::handle_terminal_ws))
         .route("/events", get(handle_events_ws))
-        .merge(service_proxy_routes())
+        .fallback(proxy::handle_proxy)
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             auth::auth_middleware,
@@ -212,82 +207,6 @@ async fn main() -> Result<()> {
     auth_state.cleanup();
 
     Ok(())
-}
-
-fn service_proxy_routes() -> Router<Arc<AppState>> {
-    Router::new()
-        .route("/version", get(proxy::handle_proxy))
-        .route("/provision", post(proxy::handle_proxy))
-        .route("/list", get(proxy::handle_proxy))
-        .route("/info/{id}", get(proxy::handle_proxy))
-        .route("/logs/{id}", get(proxy::handle_proxy))
-        .route("/inspect/{id}", post(proxy::handle_proxy))
-        .route("/exec/{id}", post(proxy::handle_proxy))
-        .route("/write_file/{id}", post(proxy::handle_proxy))
-        .route("/read_file/{id}", post(proxy::handle_proxy))
-        .route("/stop/{id}", post(proxy::handle_proxy))
-        .route("/suspend/{id}", post(proxy::handle_proxy))
-        .route("/delete/{id}", delete(proxy::handle_proxy))
-        .route("/resume/{name}", post(proxy::handle_proxy))
-        .route("/persist/{id}", post(proxy::handle_proxy))
-        .route("/purge", post(proxy::handle_proxy))
-        .route("/run", post(proxy::handle_proxy))
-        .route("/stats", get(proxy::handle_proxy))
-        .route("/service-logs", get(proxy::handle_proxy))
-        .route("/triage", get(proxy::handle_proxy))
-        .route("/panics", get(proxy::handle_proxy))
-        .route("/host-logs/{name}", get(proxy::handle_proxy))
-        .route("/timeline/{id}", get(proxy::handle_proxy))
-        .route("/security/{id}/latest", get(proxy::handle_proxy))
-        .route("/security/{id}/info", get(proxy::handle_proxy))
-        .route("/detections/{id}/latest", get(proxy::handle_proxy))
-        .route("/detections/{id}/info", get(proxy::handle_proxy))
-        .route("/enforcements/{id}/latest", get(proxy::handle_proxy))
-        .route("/enforcements/{id}/info", get(proxy::handle_proxy))
-        .route("/enforcements/evaluate", post(proxy::handle_proxy))
-        .route(
-            "/enforcements/rules/{rule_id}",
-            post(proxy::handle_proxy).delete(proxy::handle_proxy),
-        )
-        .route("/enforcements/reload", post(proxy::handle_proxy))
-        .route("/plugins", get(proxy::handle_proxy))
-        .route(
-            "/plugins/global/{plugin_id}",
-            get(proxy::handle_proxy).post(proxy::handle_proxy),
-        )
-        .route("/plugins/{id}", get(proxy::handle_proxy))
-        .route(
-            "/plugins/{id}/{plugin_id}",
-            get(proxy::handle_proxy).post(proxy::handle_proxy),
-        )
-        .route("/reload-config", post(proxy::handle_proxy))
-        .route("/fork/{id}", post(proxy::handle_proxy))
-        .route(
-            "/settings",
-            get(proxy::handle_proxy).post(proxy::handle_proxy),
-        )
-        .route("/settings/presets", get(proxy::handle_proxy))
-        .route("/settings/presets/{id}", post(proxy::handle_proxy))
-        .route("/settings/lint", post(proxy::handle_proxy))
-        .route("/settings/validate-key", post(proxy::handle_proxy))
-        .route("/assets/status", get(proxy::handle_proxy))
-        .route("/assets/ensure", post(proxy::handle_proxy))
-        .route("/corp-config", post(proxy::handle_proxy))
-        .route("/mcp/servers", get(proxy::handle_proxy))
-        .route("/mcp/tools", get(proxy::handle_proxy))
-        .route("/mcp/policy", get(proxy::handle_proxy))
-        .route("/mcp/tools/refresh", post(proxy::handle_proxy))
-        .route("/mcp/tools/{name}/approve", post(proxy::handle_proxy))
-        .route("/mcp/tools/{name}/call", post(proxy::handle_proxy))
-        .route("/history/{id}", get(proxy::handle_proxy))
-        .route("/history/{id}/processes", get(proxy::handle_proxy))
-        .route("/history/{id}/counts", get(proxy::handle_proxy))
-        .route("/history/{id}/transcript", get(proxy::handle_proxy))
-        .route("/files/{id}", get(proxy::handle_proxy))
-        .route(
-            "/files/{id}/content",
-            get(proxy::handle_proxy).post(proxy::handle_proxy),
-        )
 }
 
 async fn handle_health(State(state): State<Arc<AppState>>) -> impl IntoResponse {
@@ -392,70 +311,6 @@ mod tests {
             .route("/", axum::routing::get(handle_health))
             .with_state(state.clone());
         (app, state)
-    }
-
-    fn service_proxy_app(uds_path: &str) -> axum::Router {
-        let state = Arc::new(AppState {
-            token: "test".into(),
-            uds_path: uds_path.into(),
-            status_cache: StatusCache::new(),
-            auth_failures: AuthFailureTracker::new(),
-            events_tx: tokio::sync::broadcast::channel(16).0,
-        });
-        service_proxy_routes().with_state(state)
-    }
-
-    #[tokio::test]
-    async fn gateway_unknown_paths_are_not_forwarded_to_service() {
-        let app = service_proxy_app("/tmp/capsem-gateway-must-not-connect.sock");
-        let resp = app
-            .oneshot(
-                http::Request::builder()
-                    .uri("/not-a-capsem-api")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(resp.status(), http::StatusCode::NOT_FOUND);
-    }
-
-    #[tokio::test]
-    async fn gateway_security_routes_are_explicitly_forwarded() {
-        for (method, uri) in [
-            ("GET", "/security/test-vm/latest"),
-            ("GET", "/detections/test-vm/latest"),
-            ("GET", "/detections/test-vm/info"),
-            ("GET", "/enforcements/test-vm/latest"),
-            ("GET", "/enforcements/test-vm/info"),
-            ("POST", "/enforcements/evaluate"),
-            ("POST", "/enforcements/rules/eicar_block"),
-            ("DELETE", "/enforcements/rules/eicar_block"),
-            ("POST", "/enforcements/reload"),
-            ("GET", "/plugins"),
-            ("GET", "/plugins/test-vm"),
-            ("GET", "/plugins/test-vm/dummy_pre_eicar"),
-            ("POST", "/plugins/test-vm/dummy_pre_eicar"),
-            ("GET", "/plugins/global/dummy_pre_eicar"),
-            ("POST", "/plugins/global/dummy_pre_eicar"),
-        ] {
-            let app = service_proxy_app("/tmp/capsem-gateway-missing-service.sock");
-            let resp = app
-                .oneshot(
-                    http::Request::builder()
-                        .method(method)
-                        .uri(uri)
-                        .body(Body::empty())
-                        .unwrap(),
-                )
-                .await
-                .unwrap();
-            assert_eq!(
-                resp.status(),
-                http::StatusCode::BAD_GATEWAY,
-                "{method} {uri}"
-            );
-        }
     }
 
     #[tokio::test]

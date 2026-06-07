@@ -1,0 +1,68 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+DOCS_ROOT = PROJECT_ROOT / "docs" / "src" / "content" / "docs"
+
+
+def _doc(path: str) -> str:
+    return (DOCS_ROOT / path).read_text(encoding="utf-8")
+
+
+def test_admin_cli_docs_cover_corp_and_developer_install_paths() -> None:
+    doc = _doc("usage/admin-cli.md")
+
+    assert "python -m pip install capsem" in doc
+    assert "uv sync" in doc
+    assert "uv run capsem-admin --version" in doc
+    assert "capsem-admin doctor --profile" in doc
+    assert "capsem-admin detection compile" in doc
+    assert "capsem-admin enforcement validate" in doc
+    assert "guest/config" in doc
+
+
+def test_detection_docs_require_pysigma_and_detection_ir() -> None:
+    doc = _doc("security/detection.md")
+
+    assert "pySigma" in doc
+    assert "capsem.detection.ir.v1" in doc
+    assert "capsem-admin detection backtest" in doc
+    assert "Rejected constructs fail closed" in doc
+    assert "avoiding a second, ad hoc Sigma" in doc
+    assert "implementation inside Capsem" in doc
+    assert "http.request.host" in doc
+    assert "subject.request.host" not in doc
+
+
+def test_enforcement_docs_keep_policy_and_detection_separate() -> None:
+    doc = _doc("security/enforcement.md")
+
+    assert "Do not use Sigma as a blocking policy language" in doc
+    assert "capsem-admin enforcement validate" in doc
+    assert "capsem-admin enforcement compile" in doc
+    assert "capsem-admin enforcement backtest" in doc
+    assert "`allow`, `block`, `ask`, or `rewrite`" in doc
+
+
+def test_rule_corpus_docs_pin_cross_language_update_workflow() -> None:
+    doc = _doc("security/rule-corpus.md")
+
+    assert "data/policy-context/canonical-policy-contexts.jsonl" in doc
+    assert "data/enforcement/backtest-expected/" in doc
+    assert "data/detection/backtest-expected/" in doc
+    assert "data/detection/hunt-expected/" in doc
+    assert "capsem-admin enforcement compile" in doc
+    assert "capsem-admin detection compile" in doc
+    assert "cargo test -p capsem-core --test security_packs" in doc
+    assert "cargo test -p capsem-security-engine" in doc
+
+
+def test_corp_custom_image_docs_use_profile_admin_flow() -> None:
+    doc = _doc("architecture/custom-images.md")
+
+    assert "capsem-admin profile init" in doc
+    assert "capsem-admin image build" in doc
+    assert "capsem-admin detection compile" in doc
+    assert "capsem-builder init" not in doc

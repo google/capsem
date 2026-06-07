@@ -26,6 +26,8 @@ if [[ ! -d "$SRC/$ARCH" ]]; then
     exit 1
 fi
 
+mkdir -p "$DST/$ARCH"
+
 # Dev-key signing for the locally built manifest. Release binaries refuse
 # to boot when manifest.json has no sibling manifest.json.minisig (see
 # crates/capsem-core/src/asset_manager.rs::load_verified_manifest_for_assets).
@@ -39,10 +41,9 @@ sign_manifest_with_dev_key() {
     local manifest="$1"
     local dst_dir="$2"
     if ! command -v minisign >/dev/null 2>&1; then
-        echo "WARNING: minisign not installed; locally built manifest will be"
-        echo "         unsigned and release binaries will refuse to boot it."
-        echo "         Fix: brew install minisign (macOS) or apt install minisign (Linux)."
-        return 0
+        echo "ERROR: minisign not installed; cannot sign local asset manifest." >&2
+        echo "       Fix: brew install minisign (macOS) or apt install minisign (Linux)." >&2
+        return 1
     fi
     local key_dir="$HOME/.capsem/dev-keys"
     local priv="$key_dir/manifest-sign.dev.key"
@@ -62,11 +63,11 @@ sign_manifest_with_dev_key() {
     cp -f "$pub" "$dst_dir/manifest-sign.dev.pub"
 }
 
-# Short-circuit when ~/.capsem/assets is a symlink back to this repo's assets/.
-# Remove a stale symlink to another worktree before copying; otherwise mkdir/cp
-# silently populate the wrong tree and the installed service reports missing
-# hash-named assets.
-if [[ -e "$DST" && "$SRC" -ef "$DST" ]]; then
+# Short-circuit when ~/.capsem/assets is a symlink back to the repo's
+# assets/ (the dev-loop convenience set up by `just install` for the
+# hot-iteration flow). cp would otherwise exit 1 on every "identical
+# (not copied)" pair and kill the recipe under `set -e`.
+if [[ "$SRC" -ef "$DST" ]]; then
     echo "Skipped sync: $DST resolves to $SRC (symlinked dev layout)"
     # Still sign the (shared) manifest in-place -- the release binary
     # reads it from $DST, which here points at $SRC, so signing either
@@ -75,13 +76,6 @@ if [[ -e "$DST" && "$SRC" -ef "$DST" ]]; then
     exit 0
 fi
 
-if [[ -L "$DST" ]]; then
-    echo "Removing stale asset symlink: $DST -> $(readlink "$DST")"
-    rm "$DST"
-fi
-
-mkdir -p "$DST/$ARCH"
-
 cp "$SRC/manifest.json" "$DST/manifest.json.tmp"
 mv "$DST/manifest.json.tmp" "$DST/manifest.json"
 
@@ -89,6 +83,7 @@ mv "$DST/manifest.json.tmp" "$DST/manifest.json"
 # pairs happen when individual files are hardlinked (APFS clonefile from a
 # prior `just install` run) or when the src/dst arch dir is symlinked.
 for src_file in "$SRC/$ARCH"/*; do
+    [[ -e "$src_file" ]] || continue
     [[ -f "$src_file" ]] || continue
     dst_file="$DST/$ARCH/$(basename "$src_file")"
     if [[ "$src_file" -ef "$dst_file" ]]; then
@@ -110,25 +105,10 @@ done
 
 # Surface any hash drift between the manifest and the file on disk.
 if command -v b3sum >/dev/null 2>&1; then
-    ROOTFS=$(python3 -c "import json,sys;m=json.load(open('$SRC/manifest.json'));v=m['assets']['current'];a=m['assets']['releases'][v]['arches']['$ARCH'];print('rootfs.erofs' if 'rootfs.erofs' in a else 'rootfs.squashfs')" 2>/dev/null || true)
-    EXPECTED=$(python3 -c "import json,sys;m=json.load(open('$SRC/manifest.json'));v=m['assets']['current'];a=m['assets']['releases'][v]['arches']['$ARCH'];r='$ROOTFS';print(a[r]['hash'])" 2>/dev/null || true)
-    HASHED=""
-    if [[ -n "$ROOTFS" && -n "$EXPECTED" ]]; then
-        prefix="${EXPECTED:0:16}"
-        stem="${ROOTFS%.*}"
-        ext="${ROOTFS#*.}"
-        HASHED="$stem-$prefix.$ext"
-    fi
-    CHECK_PATH="$DST/$ARCH/$HASHED"
-    if [[ ! -f "$CHECK_PATH" ]]; then
-        CHECK_PATH="$DST/$ARCH/$ROOTFS"
-    fi
-    ACTUAL=""
-    if [[ -f "$CHECK_PATH" ]]; then
-        ACTUAL=$(b3sum --no-names "$CHECK_PATH" 2>/dev/null | awk '{print $1}')
-    fi
+    EXPECTED=$(python3 -c "import json,sys;m=json.load(open('$SRC/manifest.json'));v=m['assets']['current'];print(m['assets']['releases'][v]['arches']['$ARCH']['rootfs.squashfs']['hash'])" 2>/dev/null || true)
+    ACTUAL=$(b3sum --no-names "$DST/$ARCH/rootfs.squashfs" 2>/dev/null | awk '{print $1}')
     if [[ -n "$EXPECTED" && -n "$ACTUAL" && "$EXPECTED" != "$ACTUAL" ]]; then
-        echo "WARNING: $ROOTFS hash does not match manifest"
+        echo "WARNING: rootfs.squashfs hash does not match manifest"
         echo "  expected: $EXPECTED"
         echo "  actual:   $ACTUAL"
     fi

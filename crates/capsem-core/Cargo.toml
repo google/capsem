@@ -11,6 +11,7 @@ authors.workspace = true
 
 [dependencies]
 anyhow = { workspace = true }
+async-trait = "0.1.89"
 thiserror = { workspace = true }
 tokio = { workspace = true }
 tokio-unix-ipc.workspace = true
@@ -18,10 +19,13 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 tracing-appender = { workspace = true }
 serde = { workspace = true }
-serde_yaml = { workspace = true }
 rmp-serde = { workspace = true }
 capsem-proto = { path = "../capsem-proto" }
+capsem-file-engine = { path = "../capsem-file-engine" }
 capsem-logger = { path = "../capsem-logger" }
+capsem-network-engine = { path = "../capsem-network-engine" }
+capsem-process-engine = { path = "../capsem-process-engine" }
+capsem-security-engine = { path = "../capsem-security-engine" }
 libc = "0.2"
 blake3 = "1"
 toml = { workspace = true }
@@ -50,6 +54,7 @@ flate2 = "1"
 minisign-verify = "0.2"
 regex = { workspace = true }
 scraper = "0.25"
+jsonschema = { version = "0.46.5", default-features = false }
 
 rmcp = { version = "1.2", features = ["client", "transport-streamable-http-client-reqwest", "transport-child-process", "reqwest"] }
 hickory-proto = { workspace = true }
@@ -66,6 +71,7 @@ metrics = "0.24"
 
 # Linux-only: KVM hypervisor backend
 [target.'cfg(target_os = "linux")'.dependencies]
+io-uring = "0.7"
 vm-fdt = "0.3"
 
 # macOS-only: Apple Virtualization.framework bindings
@@ -76,7 +82,6 @@ objc2-foundation = { workspace = true }
 block2 = { workspace = true }
 dispatch2 = { workspace = true }
 core-foundation-sys = "0.8"
-security-framework = "3.7"
 
 [lints]
 workspace = true
@@ -107,5 +112,5 @@ name = "interp_anthropic"
 harness = false
 
 [[bench]]
-name = "security_actions"
+name = "security_packs"
 harness = false
