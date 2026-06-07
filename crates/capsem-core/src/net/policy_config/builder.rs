@@ -464,7 +464,10 @@ fn merge_plugin_policy(
     user: &SettingsFile,
     corp: &SettingsFile,
 ) -> BTreeMap<String, SecurityPluginConfig> {
-    let mut plugins = user.plugins.clone();
+    let mut plugins = ProviderRuleProfile::builtin_security_defaults().plugins;
+    for (plugin_id, mode) in &user.plugins {
+        plugins.insert(plugin_id.clone(), *mode);
+    }
     for (plugin_id, mode) in &corp.plugins {
         plugins.insert(plugin_id.clone(), *mode);
     }

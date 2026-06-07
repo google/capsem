@@ -143,7 +143,7 @@ fn compiles_fixture_with_source_priority_defaults() {
             .find(|rule| rule.rule_key == "http_api")
             .unwrap()
             .priority,
-        0
+        DEFAULT_RULE_PRIORITY
     );
     let provider_convenience = builtin
         .iter()
@@ -303,7 +303,7 @@ match = 'has(model.request.body)'
     assert_eq!(compiled.len(), 1);
     assert_eq!(compiled[0].rule_id, "profiles.rules.model_pii");
     assert_eq!(compiled[0].provider, "profiles");
-    assert_eq!(compiled[0].priority, 0);
+    assert_eq!(compiled[0].priority, DEFAULT_RULE_PRIORITY);
 
     let event =
         SecurityEvent::new(RuntimeSecurityEventType::ModelCall).with_model(ModelSecurityEvent {
@@ -359,7 +359,7 @@ fn compiled_rule_set_evaluates_once_over_security_event() {
             .collect::<Vec<_>>(),
         vec![
             (SecurityRuleAction::Block, -10),
-            (SecurityRuleAction::Allow, 0),
+            (SecurityRuleAction::Allow, DEFAULT_RULE_PRIORITY),
         ]
     );
 }
@@ -423,6 +423,94 @@ fn built_in_provider_defaults_use_security_rule_contract() {
             && rule.plugin.as_deref() == Some("credential_broker")
             && rule.action == SecurityRuleAction::Postprocess
     }));
+}
+
+#[test]
+fn built_in_defaults_cover_each_runtime_boundary_last() {
+    let profile = SecurityRuleProfile::parse_toml(DEFAULT_PROVIDER_RULES).expect("defaults parse");
+    let compiled = SecurityRuleSet::compile_profile(&profile, SecurityRuleSource::BuiltinDefault)
+        .expect("defaults compile");
+
+    let expected = [
+        (
+            "profiles.rules.default_http_requests",
+            "Default allow for HTTP requests.",
+        ),
+        (
+            "profiles.rules.default_dns_queries",
+            "Default allow for DNS queries.",
+        ),
+        (
+            "profiles.rules.default_mcp_activity",
+            "Default allow for MCP server activity and tool calls.",
+        ),
+        (
+            "profiles.rules.default_model_calls",
+            "Default allow for model calls.",
+        ),
+        (
+            "profiles.rules.default_file_activity",
+            "Default allow for file reads, writes, creates, deletes, imports, and exports.",
+        ),
+        (
+            "profiles.rules.default_process_activity",
+            "Default allow for process execution and audit activity.",
+        ),
+        (
+            "profiles.rules.default_credentials",
+            "Default allow for brokered credential references.",
+        ),
+        (
+            "profiles.rules.default_snapshots",
+            "Default allow for snapshot actions.",
+        ),
+    ];
+
+    for (rule_id, reason) in expected {
+        let rule = compiled
+            .rules()
+            .iter()
+            .find(|rule| rule.rule_id == rule_id)
+            .unwrap_or_else(|| panic!("missing {rule_id}"));
+        assert_eq!(rule.action, SecurityRuleAction::Allow);
+        assert_eq!(rule.priority, DEFAULT_RULE_PRIORITY);
+        assert_eq!(rule.reason.as_deref(), Some(reason));
+        assert!(rule.detection_level.is_none());
+    }
+}
+
+#[test]
+fn named_default_priority_is_last_after_user_priority_range() {
+    let profile = SecurityRuleProfile::parse_toml(
+        r#"
+[profiles.rules.catch_all]
+name = "catch_all"
+action = "allow"
+priority = "default"
+match = 'has(http.host)'
+"#,
+    )
+    .expect("named default priority parses");
+    let compiled = profile
+        .compile(SecurityRuleSource::User)
+        .expect("user catch-all compiles");
+    assert_eq!(compiled[0].priority, DEFAULT_RULE_PRIORITY);
+    assert!(compiled[0].priority > USER_PRIORITY_MAX);
+
+    let numeric = SecurityRuleProfile::parse_toml(
+        r#"
+[profiles.rules.bad_numeric]
+name = "bad_numeric"
+action = "allow"
+priority = 1001
+match = 'has(http.host)'
+"#,
+    )
+    .expect("numeric priority parses before source validation");
+    let err = numeric
+        .compile(SecurityRuleSource::User)
+        .expect_err("numeric max+1 is reserved for named default");
+    assert!(err.contains("between -1000 and 1000"), "{err}");
 }
 
 #[test]
@@ -600,7 +688,7 @@ match = 'http.host == "api.openai.com"'
     let default_error = profile
         .compile(SecurityRuleSource::BuiltinDefault)
         .expect_err("default source cannot use user priority");
-    assert!(default_error.contains("must be 0"), "{default_error}");
+    assert!(default_error.contains("must be default"), "{default_error}");
 
     let corp_profile = SecurityRuleProfile::parse_toml(
         r#"
@@ -811,6 +899,48 @@ mode = "disable"
         "disabled plugins do not emit detection marks"
     );
     assert_eq!(SecurityPluginMode::Rewrite.as_str(), "rewrite");
+}
+
+#[test]
+fn real_plugins_must_be_referenced_by_a_rule_but_dummy_plugins_may_float() {
+    let missing_rule = SecurityRuleProfile::parse_toml(
+        r#"
+[plugins.credential_broker]
+mode = "rewrite"
+"#,
+    )
+    .expect_err("real plugin without a rule is unreachable");
+    assert!(
+        missing_rule.contains("plugin 'credential_broker' must be referenced"),
+        "{missing_rule}"
+    );
+
+    let referenced = SecurityRuleProfile::parse_toml(
+        r#"
+[plugins.credential_broker]
+mode = "rewrite"
+
+[profiles.rules.broker]
+name = "broker"
+action = "postprocess"
+plugin = "credential_broker"
+match = 'has(http.host)'
+"#,
+    )
+    .expect("real plugin with a matching rule is valid");
+    assert_eq!(
+        referenced.plugins["credential_broker"].mode,
+        SecurityPluginMode::Rewrite
+    );
+
+    let dummy = SecurityRuleProfile::parse_toml(
+        r#"
+[plugins.dummy_pre]
+mode = "block"
+"#,
+    )
+    .expect("dummy plugins can be enabled without a rule for endpoint tests");
+    assert_eq!(dummy.plugins["dummy_pre"].mode, SecurityPluginMode::Block);
 }
 
 #[test]

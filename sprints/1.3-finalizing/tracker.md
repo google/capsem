@@ -29,13 +29,13 @@ commit.
 
 ## Current Partial Work To Reconcile
 
-- [ ] Review uncommitted compiler/default-rule changes.
-- [ ] Review uncommitted service/gateway `/enforcements/list` changes and
+- [x] Review uncommitted compiler/default-rule changes.
+- [x] Review uncommitted service/gateway `/enforcements/list` changes and
   remove in favor of profile-addressed routes.
-- [ ] Review uncommitted frontend Policy section changes.
-- [ ] Decide whether to keep, reshape, or remove `sprints/security-default-rule-rail/`.
-- [ ] Reconcile every partial code change against `api-contract.md`.
-- [ ] Commit or remove each partial slice; leave no orphan scratch code.
+- [x] Review uncommitted frontend Policy section changes.
+- [x] Decide whether to keep, reshape, or remove `sprints/security-default-rule-rail/`.
+- [x] Reconcile every partial code change against `api-contract.md`.
+- [ ] Commit reconciled default-rule rail slice; leave no orphan scratch code.
 
 ## T0: Schema And Ownership Contract
 
@@ -379,7 +379,7 @@ invariant sweep before release verification.
 
 ## Coverage Ledger
 
-- Unit/contract: pending.
+- Unit/contract: `cargo test -p capsem-core net::policy_config::security_rule_profile --lib`; `cargo test -p capsem-core net::policy_config::provider_profile --lib`.
 - Functional API: pending.
 - Adversarial: pending.
 - E2E/VM: pending.

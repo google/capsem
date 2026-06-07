@@ -5,6 +5,12 @@ use serde::{Deserialize, Serialize};
 use super::condition::{evaluate_condition_with, validate_condition_with, CompiledCondition};
 use super::types::PolicySubject;
 
+pub const CORP_PRIORITY_MIN: i32 = -1000;
+pub const CORP_PRIORITY_MAX: i32 = -10;
+pub const USER_PRIORITY_MIN: i32 = 10;
+pub const USER_PRIORITY_MAX: i32 = 1000;
+pub const DEFAULT_RULE_PRIORITY: i32 = USER_PRIORITY_MAX + 1;
+
 pub const SECURITY_EVENT_CEL_ROOTS: &[&str] = &[
     "http",
     "dns",
@@ -34,12 +40,14 @@ pub struct SecurityRuleProfile {
 #[serde(deny_unknown_fields)]
 pub struct SecurityRuleGroup {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub defaults: BTreeMap<String, SecurityRule>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub rules: BTreeMap<String, SecurityRule>,
 }
 
 impl SecurityRuleGroup {
     pub fn is_empty(&self) -> bool {
-        self.rules.is_empty()
+        self.defaults.is_empty() && self.rules.is_empty()
     }
 }
 
@@ -93,7 +101,7 @@ pub struct SecurityRule {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub detection_level: Option<DetectionLevel>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub priority: Option<i32>,
+    pub priority: Option<SecurityRulePriority>,
     #[serde(default)]
     pub corp_locked: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -127,6 +135,32 @@ impl SecurityRuleAction {
             Self::Postprocess => "postprocess",
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum SecurityRulePriority {
+    Explicit(i32),
+    Named(SecurityRulePriorityName),
+}
+
+impl SecurityRulePriority {
+    pub const fn resolve(self) -> i32 {
+        match self {
+            Self::Explicit(priority) => priority,
+            Self::Named(SecurityRulePriorityName::Default) => DEFAULT_RULE_PRIORITY,
+        }
+    }
+
+    pub const fn is_named_default(self) -> bool {
+        matches!(self, Self::Named(SecurityRulePriorityName::Default))
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SecurityRulePriorityName {
+    Default,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -209,11 +243,11 @@ pub enum SecurityRuleSource {
 impl SecurityRuleSource {
     pub const fn default_priority(self, corp_locked: bool) -> i32 {
         if corp_locked || matches!(self, Self::Corp) {
-            -10
+            CORP_PRIORITY_MAX
         } else if matches!(self, Self::BuiltinDefault) {
-            0
+            DEFAULT_RULE_PRIORITY
         } else {
-            10
+            USER_PRIORITY_MIN
         }
     }
 }
@@ -224,6 +258,7 @@ pub struct CompiledSecurityRule {
     pub provider: String,
     pub namespace: String,
     pub rule_key: String,
+    pub default_rule: bool,
     pub name: String,
     pub action: SecurityRuleAction,
     pub condition: String,
@@ -283,6 +318,13 @@ impl SecurityRuleProfile {
         validate_rule_group("profiles", &self.profiles)?;
         for plugin_id in self.plugins.keys() {
             validate_identifier("plugin id", plugin_id)?;
+            if plugin_requires_profile_rule(plugin_id)
+                && !profile_references_plugin(self, plugin_id.as_str())
+            {
+                return Err(format!(
+                    "plugin '{plugin_id}' must be referenced by at least one rule"
+                ));
+            }
         }
         for (provider_id, provider) in &self.ai {
             validate_identifier("provider id", provider_id)?;
@@ -361,6 +403,7 @@ impl SecurityRuleProfile {
                     provider: provider_id.clone(),
                     namespace: "profiles".to_string(),
                     rule_key: rule_key.clone(),
+                    default_rule: false,
                     name: rule.name.clone(),
                     action: rule.action,
                     condition: rule.condition.clone(),
@@ -390,6 +433,27 @@ impl SecurityRuleProfile {
         source: SecurityRuleSource,
         compiled: &mut Vec<CompiledSecurityRule>,
     ) -> Result<(), String> {
+        for (rule_key, rule) in &group.defaults {
+            let priority = rule.effective_priority(source)?;
+            let compiled_condition = rule.compile_match()?;
+            compiled.push(CompiledSecurityRule {
+                rule_id: format!("{namespace}.rules.{rule_key}"),
+                provider: provider.to_string(),
+                namespace: namespace.to_string(),
+                rule_key: rule_key.clone(),
+                default_rule: true,
+                name: rule.name.clone(),
+                action: rule.action,
+                condition: rule.condition.clone(),
+                compiled_condition,
+                detection_level: rule.detection_level,
+                priority,
+                corp_locked: rule.corp_locked || matches!(source, SecurityRuleSource::Corp),
+                reason: rule.reason.clone(),
+                plugin: rule.plugin.clone(),
+                plugin_config: rule.plugin_config.clone(),
+            });
+        }
         for (rule_key, rule) in &group.rules {
             let priority = rule.effective_priority(source)?;
             let compiled_condition = rule.compile_match()?;
@@ -398,6 +462,7 @@ impl SecurityRuleProfile {
                 provider: provider.to_string(),
                 namespace: namespace.to_string(),
                 rule_key: rule_key.clone(),
+                default_rule: false,
                 name: rule.name.clone(),
                 action: rule.action,
                 condition: rule.condition.clone(),
@@ -452,7 +517,7 @@ struct SigmaCapsem {
     #[serde(default)]
     reason: Option<String>,
     #[serde(default)]
-    priority: Option<i32>,
+    priority: Option<SecurityRulePriority>,
     #[serde(default)]
     corp_locked: bool,
     #[serde(default)]
@@ -839,8 +904,15 @@ impl SecurityRule {
     pub fn effective_priority(&self, source: SecurityRuleSource) -> Result<i32, String> {
         let priority = self
             .priority
+            .map(SecurityRulePriority::resolve)
             .unwrap_or_else(|| source.default_priority(self.corp_locked));
-        validate_priority_for_source(&self.name, source, self.corp_locked, priority)?;
+        validate_priority_for_source(
+            &self.name,
+            source,
+            self.corp_locked,
+            self.priority,
+            priority,
+        )?;
         Ok(priority)
     }
 
@@ -873,15 +945,31 @@ fn validate_priority_for_source(
     rule_name: &str,
     source: SecurityRuleSource,
     corp_locked: bool,
+    raw_priority: Option<SecurityRulePriority>,
     priority: i32,
 ) -> Result<(), String> {
-    if !(-1000..=1000).contains(&priority) {
+    if raw_priority.is_some_and(SecurityRulePriority::is_named_default) {
+        if corp_locked || matches!(source, SecurityRuleSource::Corp) {
+            return Err(format!(
+                "rule '{rule_name}' corp priority cannot use named default priority"
+            ));
+        }
+        return Ok(());
+    }
+    if matches!(source, SecurityRuleSource::BuiltinDefault)
+        && raw_priority.is_none()
+        && priority == DEFAULT_RULE_PRIORITY
+    {
+        return Ok(());
+    }
+
+    if !(CORP_PRIORITY_MIN..=USER_PRIORITY_MAX).contains(&priority) {
         return Err(format!(
             "rule '{rule_name}' priority {priority} must be between -1000 and 1000"
         ));
     }
     if corp_locked || matches!(source, SecurityRuleSource::Corp) {
-        if priority <= -10 {
+        if priority <= CORP_PRIORITY_MAX {
             return Ok(());
         }
         return Err(format!(
@@ -891,11 +979,11 @@ fn validate_priority_for_source(
 
     match source {
         SecurityRuleSource::BuiltinDefault => {
-            if priority == 0 {
+            if priority == DEFAULT_RULE_PRIORITY {
                 Ok(())
             } else {
                 Err(format!(
-                    "rule '{rule_name}' default priority {priority} must be 0"
+                    "rule '{rule_name}' default priority {priority} must be default"
                 ))
             }
         }
@@ -904,7 +992,7 @@ fn validate_priority_for_source(
                 Err(format!(
                     "rule '{rule_name}' user/plugin priority {priority} cannot use negative priority"
                 ))
-            } else if priority >= 10 {
+            } else if priority >= USER_PRIORITY_MIN {
                 Ok(())
             } else {
                 Err(format!(
@@ -917,11 +1005,36 @@ fn validate_priority_for_source(
 }
 
 fn validate_rule_group(namespace: &str, group: &SecurityRuleGroup) -> Result<(), String> {
+    for (rule_key, rule) in &group.defaults {
+        validate_identifier("default rule id", rule_key)?;
+        rule.validate(&format!("{namespace}.defaults.{rule_key}"))?;
+    }
     for (rule_key, rule) in &group.rules {
         validate_identifier("rule id", rule_key)?;
         rule.validate(&format!("{namespace}.rules.{rule_key}"))?;
     }
     Ok(())
+}
+
+fn plugin_requires_profile_rule(plugin_id: &str) -> bool {
+    !plugin_id.starts_with("dummy_")
+}
+
+fn profile_references_plugin(profile: &SecurityRuleProfile, plugin_id: &str) -> bool {
+    profile
+        .corp
+        .defaults
+        .values()
+        .chain(profile.corp.rules.values())
+        .chain(profile.profiles.defaults.values())
+        .chain(profile.profiles.rules.values())
+        .chain(
+            profile
+                .ai
+                .values()
+                .flat_map(|provider| provider.rules.values()),
+        )
+        .any(|rule| rule.plugin.as_deref() == Some(plugin_id))
 }
 
 pub fn validate_security_event_match(condition: &str) -> Result<(), String> {

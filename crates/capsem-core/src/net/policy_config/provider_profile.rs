@@ -10,6 +10,17 @@ use super::{
 };
 
 const DEFAULT_PROVIDER_RULES_TOML: &str = include_str!("default_provider_rules.toml");
+const REQUIRED_BUILTIN_PLUGINS: &[&str] = &["credential_broker"];
+const REQUIRED_DEFAULT_RULE_KEYS: &[&str] = &[
+    "default_http_requests",
+    "default_dns_queries",
+    "default_mcp_activity",
+    "default_model_calls",
+    "default_file_activity",
+    "default_process_activity",
+    "default_credentials",
+    "default_snapshots",
+];
 
 pub type AiProviderProfile = SecurityRuleProvider;
 
@@ -244,9 +255,16 @@ pub struct ProviderRuleProfile {
 }
 
 impl ProviderRuleProfile {
-    pub fn builtin_defaults() -> Self {
+    pub fn builtin_security_defaults() -> SecurityRuleProfile {
         let profile = SecurityRuleProfile::parse_toml(DEFAULT_PROVIDER_RULES_TOML)
             .expect("built-in provider rule profile must parse");
+        validate_builtin_default_contract(&profile)
+            .expect("built-in provider rule profile must include default rules and plugins");
+        profile
+    }
+
+    pub fn builtin_defaults() -> Self {
+        let profile = Self::builtin_security_defaults();
         Self { ai: profile.ai }
     }
 
@@ -346,13 +364,31 @@ impl ProviderRuleProfile {
     }
 }
 
+fn validate_builtin_default_contract(profile: &SecurityRuleProfile) -> Result<(), String> {
+    for plugin_id in REQUIRED_BUILTIN_PLUGINS {
+        if !profile.plugins.contains_key(*plugin_id) {
+            return Err(format!(
+                "built-in default profile must include [plugins.{plugin_id}]"
+            ));
+        }
+    }
+    for rule_key in REQUIRED_DEFAULT_RULE_KEYS {
+        if !profile.profiles.defaults.contains_key(*rule_key) {
+            return Err(format!(
+                "built-in default profile must include [profiles.defaults.{rule_key}]"
+            ));
+        }
+    }
+    Ok(())
+}
+
 pub fn compile_provider_rules_to_security_rule_set(
     user: &ProviderRuleProfile,
     corp: &ProviderRuleProfile,
 ) -> Result<SecurityRuleSet, String> {
     let mut by_rule_id = BTreeMap::new();
-    for rule in
-        ProviderRuleProfile::builtin_defaults().compile(SecurityRuleSource::BuiltinDefault)?
+    for rule in ProviderRuleProfile::builtin_security_defaults()
+        .compile(SecurityRuleSource::BuiltinDefault)?
     {
         by_rule_id.insert(rule.rule_id.clone(), rule);
     }
@@ -396,6 +432,44 @@ mod tests {
         assert!(compiled
             .iter()
             .all(|rule| !rule.condition.contains("credential.name")));
+    }
+
+    #[test]
+    fn builtin_default_contract_requires_plugins_and_visible_default_rules() {
+        let missing_plugins = SecurityRuleProfile::parse_toml(
+            r#"
+[profiles.defaults.default_http_requests]
+name = "default_http_requests"
+action = "allow"
+priority = "default"
+reason = "Default allow for HTTP requests."
+match = 'has(http.host)'
+"#,
+        )
+        .expect("profile without plugins parses before built-in contract");
+        let err = validate_builtin_default_contract(&missing_plugins)
+            .expect_err("built-in default profile requires plugin section");
+        assert!(err.contains("[plugins.credential_broker]"), "{err}");
+
+        let missing_defaults = SecurityRuleProfile::parse_toml(
+            r#"
+[plugins.credential_broker]
+mode = "rewrite"
+
+[profiles.rules.broker]
+name = "broker"
+action = "postprocess"
+plugin = "credential_broker"
+match = 'has(http.host)'
+"#,
+        )
+        .expect("profile without defaults parses before built-in contract");
+        let err = validate_builtin_default_contract(&missing_defaults)
+            .expect_err("built-in default profile requires visible defaults");
+        assert!(
+            err.contains("[profiles.defaults.default_http_requests]"),
+            "{err}"
+        );
     }
 
     #[test]
