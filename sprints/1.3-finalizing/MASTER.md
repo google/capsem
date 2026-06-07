@@ -14,6 +14,7 @@ contract reset.
 | T4 MCP/plugins/credentials/skills UI | Not Started | Profile/server-scoped MCP, plugin modes/detection levels, credential BLAKE3 refs/counters, skills add/edit/remove. |
 | T5 VM lifecycle/assets/install | Not Started | `/vms/{id}` lifecycle, pause/resume/save/fork/status, immutable profile id, install readiness/assets status. |
 | T6 Docs/changelog/skills | Not Started | Full docs pass, changelog, skills, benchmark docs. |
+| T6.5 Invariant review | Not Started | Full pre-verification review of every master contract invariant. |
 | T7 Release verification | Not Started | Focused tests, full smoke, full test cycle, full install cycle, UI sanity, benchmark check. |
 
 ## Ground Rules
@@ -56,6 +57,7 @@ contract reset.
 Release is blocked until:
 
 - T0-T6 implementation/docs slices are complete and committed.
+- T6.5 invariant review is complete and any findings are fixed/committed.
 - T7 verification passes.
 - Changelog matches implemented behavior.
 - Full smoke, full tests, full install cycle, and UI sanity pass are recorded.

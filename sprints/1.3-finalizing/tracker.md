@@ -187,6 +187,129 @@ commit.
 - [ ] Update changelog only for behavior that is actually implemented and tested.
 - [ ] Commit T6 docs/changelog.
 
+## T6.5: Full Invariant Review Before Verification
+
+Before T7, do a fresh full-codebase review against every master contract
+invariant. This is not a substitute for tests; it is the final deliberate
+invariant sweep before release verification.
+
+### Burn/Compatibility Invariants
+
+- [ ] No old policy-v2 paths are live.
+- [ ] No old authoring API fallback routes remain.
+- [ ] No old authoring API compatibility aliases remain.
+- [ ] No runtime branch accepts both old and new ownership models.
+- [ ] No `if old shape then...` escape hatch remains.
+- [ ] Dead policy/API/config code is removed, not quarantined.
+- [ ] Tests prove old paths/shapes fail closed.
+
+### Architecture Ownership Invariants
+
+- [ ] No `NetworkRouting` abstraction was added.
+- [ ] Network engine owns mechanics only: parsing, capture, DNS/proxy mechanics,
+  ports, caching, decompression, routing mechanics, provider metadata.
+- [ ] Network engine does not own security decisions.
+- [ ] MCP owns config/discovery mechanics only: servers, tools, resources,
+  prompts, runtime discovery/status.
+- [ ] MCP does not own security decisions.
+- [ ] Service-global endpoints only report runtime/service/ledger state.
+
+### Security Rail Invariants
+
+- [ ] All allow/ask/block/rewrite/preprocess/postprocess decisions are
+  CEL/security-rule decisions over typed security events.
+- [ ] HTTP decisions use the security rule rail.
+- [ ] DNS decisions use the security rule rail.
+- [ ] MCP decisions use the security rule rail.
+- [ ] Model decisions use the security rule rail.
+- [ ] File decisions use the security rule rail.
+- [ ] Process decisions use the security rule rail.
+- [ ] Credential decisions/effects use the security rule/plugin rail.
+- [ ] Snapshot decisions use the security rule rail.
+- [ ] Default rules are visible real rules in the same `SecurityRuleSet`.
+- [ ] There is no second default engine.
+- [ ] `priority = "default"` is the only post-user catch-all sentinel.
+- [ ] Specific corp/profile/user rules evaluate before defaults.
+- [ ] Plugins expose explicit event effects and do not hide a second policy
+  engine.
+- [ ] Block decisions are absolute.
+- [ ] Runtime ledger endpoints report stored DB truth, not recomputed active
+  policy state.
+
+### Profile/Settings/Corp Invariants
+
+- [ ] A VM executes exactly one immutable profile id.
+- [ ] VM profile id cannot be edited.
+- [ ] Profile owns assets.
+- [ ] Profile owns VM config/defaults.
+- [ ] Profile owns rules/enforcement defaults.
+- [ ] Profile owns detection rules.
+- [ ] Profile owns MCP config.
+- [ ] Profile owns skills.
+- [ ] Profile owns credentials/plugins.
+- [ ] Profile owns availability.
+- [ ] Profile owns name, description, and icon/SVG.
+- [ ] `settings.toml` owns UI/application preferences only.
+- [ ] Settings do not own VM behavior.
+- [ ] Settings do not own security rules.
+- [ ] Settings do not own MCP config.
+- [ ] Settings do not own plugin config.
+- [ ] Settings do not own credentials.
+- [ ] Settings do not own profile identity or availability.
+- [ ] Corp owns constraints, locks, reporting, and integrations over profiles.
+
+### Endpoint/DTO Invariants
+
+- [ ] HTTP and UDS expose the same route contract.
+- [ ] HTTP and UDS expose the same DTO contract.
+- [ ] HTTP and UDS expose the same error contract.
+- [ ] `info` endpoints return configuration/metadata only.
+- [ ] `status` endpoints return runtime state/counters/readiness/progress.
+- [ ] `latest` endpoints return DB-backed ledger rows.
+- [ ] `list` endpoints return child collections.
+- [ ] `edit` endpoints mutate one backing contract.
+- [ ] `reload` endpoints re-read/apply owned config files.
+- [ ] No generic `rule-files` API exists.
+- [ ] Enforcement source refs are exposed through enforcement `info`.
+- [ ] Detection source refs are exposed through detection `info`.
+- [ ] Provider is not a 1.3 profile API object.
+- [ ] Credential brokerage plus rules own provider-like behavior.
+
+### UI Invariants
+
+- [ ] One UI editor surface writes one backing contract.
+- [ ] Settings UI writes only settings-backed data.
+- [ ] Profile UI writes only profile-backed data.
+- [ ] Corp UI writes only corp-backed data.
+- [ ] Runtime/ledger UI is read-only unless it calls explicit runtime action
+  endpoints.
+- [ ] Cross-source dashboards are read-only and label source data.
+- [ ] UI does not rename backend-owned objects.
+- [ ] UI does not invent explanatory config text.
+- [ ] Rule names/reasons/actions/groups/sources come from backend fields.
+- [ ] Plugin names/descriptions come from backend fields and docs links.
+- [ ] MCP server/tool/resource/prompt names come from backend fields.
+- [ ] Skill names/descriptions come from backend fields.
+- [ ] Credential ids/hashes come from backend fields.
+- [ ] Asset names/status come from backend fields.
+- [ ] Direct boolean editors use boolean controls.
+- [ ] Direct enum editors use enum controls.
+- [ ] Direct numeric editors use numeric controls with backend constraints.
+- [ ] Rich preview/composed widgets round-trip through the same contract fields.
+
+### Install/Release Invariants
+
+- [ ] Install flow does not depend on dead setup assumptions.
+- [ ] Package UI waits for service readiness.
+- [ ] Package UI reports service/install failures visibly.
+- [ ] Asset status reports missing `vmlinuz`, `initrd.img`, and rootfs
+  accurately.
+- [ ] Changelog matches implemented behavior only.
+- [ ] Docs and skills match implemented behavior only.
+- [ ] Benchmark docs include current 1.3 performance notes or explicitly state
+  what was not rerun.
+- [ ] Commit T6.5 invariant review findings/fixes before T7.
+
 ## T7: Release Verification Gate
 
 - [ ] Rust focused tests for profile/security/default/plugin/credential contracts.
