@@ -34,6 +34,9 @@ class UdsHttpClient:
     def patch(self, path, body=None, timeout=60):
         return self._curl("PATCH", path, body, timeout)
 
+    def put(self, path, body=None, timeout=60):
+        return self._curl("PUT", path, body, timeout)
+
     def get(self, path, timeout=60):
         return self._curl("GET", path, timeout=timeout)
 

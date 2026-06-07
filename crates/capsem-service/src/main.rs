@@ -3289,7 +3289,7 @@ async fn handle_assets_ensure(State(state): State<Arc<ServiceState>>) -> Json<se
     Json(status)
 }
 
-/// POST /corp-config -- apply corporate config from URL or inline TOML.
+/// PUT /corp/edit -- apply corporate config from URL or inline TOML.
 async fn handle_corp_config(
     Json(payload): Json<CorpConfigRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
@@ -5543,7 +5543,7 @@ async fn main() -> Result<()> {
         .route("/settings/validate-key", post(handle_validate_key))
         .route("/assets/status", get(handle_assets_status))
         .route("/assets/ensure", post(handle_assets_ensure))
-        .route("/corp-config", post(handle_corp_config))
+        .route("/corp/edit", put(handle_corp_config))
         .route(
             "/profiles/{profile_id}/mcp/servers/list",
             get(handle_profile_mcp_servers),

@@ -284,7 +284,7 @@ fn service_proxy_routes() -> Router<Arc<AppState>> {
         .route("/settings/validate-key", post(proxy::handle_proxy))
         .route("/assets/status", get(proxy::handle_proxy))
         .route("/assets/ensure", post(proxy::handle_proxy))
-        .route("/corp-config", post(proxy::handle_proxy))
+        .route("/corp/edit", put(proxy::handle_proxy))
         .route(
             "/profiles/{profile_id}/mcp/servers/list",
             get(proxy::handle_proxy),
@@ -478,6 +478,7 @@ mod tests {
                 "POST",
                 "/profiles/default/mcp/servers/local/tools/echo/call",
             ),
+            ("PUT", "/corp/edit"),
         ] {
             let app = service_proxy_app("/tmp/capsem-gateway-missing-service.sock");
             let resp = app
@@ -544,6 +545,22 @@ mod tests {
                 .unwrap();
             assert_eq!(resp.status(), http::StatusCode::NOT_FOUND, "{method} {uri}");
         }
+    }
+
+    #[tokio::test]
+    async fn gateway_does_not_forward_retired_corp_config_route() {
+        let app = service_proxy_app("/tmp/capsem-gateway-must-not-connect.sock");
+        let resp = app
+            .oneshot(
+                http::Request::builder()
+                    .method("POST")
+                    .uri("/corp-config")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), http::StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]

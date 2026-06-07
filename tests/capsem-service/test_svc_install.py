@@ -28,6 +28,9 @@ class TestSetupRoutesRemoved:
     def test_setup_corp_config_alias_is_removed(self, client):
         assert client.post("/setup/corp-config", {}) is None
 
+    def test_retired_corp_config_route_is_removed(self, client):
+        assert client.post("/corp-config", {}) is None
+
 
 class TestAssets:
 
@@ -84,8 +87,8 @@ class TestAssets:
 
 class TestCorpConfig:
 
-    def test_corp_config_inline_toml(self, client):
-        """POST /corp-config with inline TOML writes corp.toml.
+    def test_corp_edit_inline_toml(self, client):
+        """PUT /corp/edit with inline TOML writes corp.toml.
 
         Validates against policy_config::corp_provision::install_inline_corp_config.
         Empty [settings] is a valid corp config that locks no settings.
@@ -96,9 +99,9 @@ class TestCorpConfig:
             "[settings]\n"
             '"ai.openai.allow" = { value = false, modified = "2026-04-21T00:00:00Z" }\n'
         )
-        resp = client.post("/corp-config", {"toml": toml_content})
+        resp = client.put("/corp/edit", {"toml": toml_content})
         assert resp is not None and resp.get("success") is True, (
-            f"corp-config inline failed: {resp}"
+            f"corp edit inline failed: {resp}"
         )
 
         # Corp-locked setting must now appear as corp_locked in the tree.
@@ -108,14 +111,14 @@ class TestCorpConfig:
 
     def test_corp_config_rejects_invalid_toml(self, client):
         """Malformed TOML must be rejected with a 400-class error."""
-        resp = client.post("/corp-config", {"toml": "this is [ broken"})
+        resp = client.put("/corp/edit", {"toml": "this is [ broken"})
         assert resp is None or "error" in resp or "invalid" in str(resp).lower(), (
             f"invalid corp TOML should reject: {resp}"
         )
 
     def test_corp_config_rejects_empty_payload(self, client):
         """Body with neither `source` nor `toml` must be rejected."""
-        resp = client.post("/corp-config", {})
+        resp = client.put("/corp/edit", {})
         assert resp is None or "error" in resp or "provide either" in str(resp).lower(), (
             f"empty payload should reject: {resp}"
         )

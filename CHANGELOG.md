@@ -81,14 +81,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `/profiles/{profile_id}/plugins/list`,
   `/profiles/{profile_id}/plugins/{plugin_id}/info`, and
   `/profiles/{profile_id}/plugins/{plugin_id}/edit` report and update
-  profile-owned plugin config, `/enforcements/evaluate` sends a test event
-  through the real engine, and `/detections/{id}/latest|info` plus
+  profile-owned plugin config,
+  `/profiles/{profile_id}/enforcement/evaluate` sends a profile-scoped test
+  event through the real engine, and `/detections/{id}/latest|info` plus
   `/enforcements/{id}/latest|info` remain table-backed ledger views.
 - Added enforcement rule-management endpoints:
-  `POST|DELETE /enforcements/rules/{rule_id}` validate user profile rules
-  against the native `SecurityRuleProfile` compiler before writing
-  `user.toml`, and `POST /enforcements/reload` aliases the VM config reload
-  broadcast.
+  `PUT /profiles/{profile_id}/enforcement/rules/{rule_id}/edit` and
+  `DELETE /profiles/{profile_id}/enforcement/rules/{rule_id}/delete`
+  validate profile rules against the native `SecurityRuleProfile` compiler
+  before writing `user.toml`, and
+  `POST /profiles/{profile_id}/enforcement/reload` reloads that profile's
+  enforcement rules.
+- Replaced the retired `/corp-config` provisioning route with
+  `PUT /corp/edit`; the gateway and service now reject the old route instead
+  of forwarding it.
 - Added `SerializableSecurityEvent` as the public evaluated-event wire DTO:
   every first-party event root is present, absent roots serialize as `null`,
   and raw credential observation buffers are excluded.

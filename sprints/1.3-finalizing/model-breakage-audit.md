@@ -45,8 +45,9 @@ Current service routes still expose:
 - `/plugins`, `/plugins/global/{plugin_id}`, `/plugins/{id}` are global or
   VM-scoped plugin authoring endpoints; target is profile-scoped plugins.
 - `/settings` owns behavior config; target settings are UI/app preferences only.
-- `/corp-config` is a single mutation endpoint; target is `/corp/info`,
-  `/corp/edit`, `/corp/reload`.
+- `/corp-config` was a single mutation endpoint; `PUT /corp/edit` is now live
+  and the retired route fails closed. Remaining target routes are `/corp/info`,
+  `/corp/validate`, and `/corp/reload`.
 - `/mcp/tools`, `/mcp/policy`, `/mcp/tools/refresh`, and tool approval/call
   endpoints are global MCP surfaces; target MCP tools/resources/prompts are
   under `/profiles/{profile_id}/mcp/servers/{server_id}/...`.
