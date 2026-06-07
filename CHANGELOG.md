@@ -138,6 +138,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Split core config mutation by owner: `PATCH /settings/edit` now uses the
   UI-settings writer, while credential brokerage and host config discovery use
   explicit profile-owned config writers for VM/security/AI/credential fields.
+- Added a first-class profile manifest contract covering profile identity,
+  description, icon SVG, web/shell/mobile availability, VM asset selection,
+  VM defaults, rule files/default rules, plugins, MCP servers, skills,
+  credential broker defaults, AI/provider convenience rules, and tool config
+  source metadata.
 - Removed retired settings utility routes `/settings/lint` and
   `/settings/validate-key`; settings now expose only `info` and `edit` until
   profile/corp validation and credential broker endpoints own those workflows.

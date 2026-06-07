@@ -39,19 +39,19 @@ commit.
 
 ## T0: Schema And Ownership Contract
 
-- [ ] Define canonical profile schema/profile file shape.
+- [x] Define canonical profile schema/profile file shape.
 - [x] Define canonical `settings.toml` UI-settings-only shape.
 - [x] Define canonical corp overlay shape.
-- [ ] Define profile id and VM immutable profile assignment semantics.
-- [ ] Define default rules location/grouping in profile contract.
-- [ ] Define default rule override/mutation semantics.
+- [x] Define profile id and VM immutable profile assignment semantics.
+- [x] Define default rules location/grouping in profile contract.
+- [x] Define default rule override/mutation semantics.
 - [x] Define plugin config in profile/corp contract.
 - [x] Define credential broker profile contract, including BLAKE3 hash exposure
   and OTel/status counters.
 - [x] Add contract tests proving settings cannot own profile/VM behavior.
-- [ ] Add contract tests proving profile owns availability, name, description,
+- [x] Add contract tests proving profile owns availability, name, description,
   icon/SVG, assets, rules, MCP, skills, credentials, and VM defaults.
-- [ ] Commit T0 with tests.
+- [x] Commit T0 with tests.
 
 ### T0 Notes
 
@@ -66,6 +66,10 @@ commit.
   settings.
 - `cargo test -p capsem-core ownership::tests` passed with 6 ownership
   contract tests.
+- `cargo test -p capsem-core profile_contract::tests` passed with 3 profile
+  manifest contract tests covering identity, description, icon SVG,
+  availability, EROFS assets, VM defaults, rules/defaults, AI/provider rules,
+  plugins, MCP, skills, credentials, and tool config sources.
 - `cargo test -p capsem-core batch_update` passed with 11 batch-writer
   ownership/atomicity tests.
 - `cargo clippy -p capsem-core --all-targets -- -D warnings` passed.
