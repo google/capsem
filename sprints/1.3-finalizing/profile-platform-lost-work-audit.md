@@ -51,6 +51,189 @@ cleanup work, but the tree omitted `src/capsem/admin/*`,
 So the loss happened as snapshot omission during history repair/cleanup, not as
 an evaluated architectural decision. Treat it as release-blocking lost work.
 
+## Other Snapshot Losses To Classify
+
+Compare:
+
+```text
+git diff --name-status 82e7a58c^1 82e7a58c
+```
+
+The diff from restored main into the cleanup snapshot deleted many files. Some
+were intentional burns, but these clusters are not safe to ignore.
+
+### P0: Profile/Admin/Asset Runtime Truth
+
+Accidental or at least not consciously approved as a removal:
+
+- `config/profiles/base/coding.profile.toml`
+- `config/profiles/base/everyday-work.profile.toml`
+- `schemas/capsem.profile.v2.schema.json`
+- `schemas/capsem.service-settings.v2.schema.json`
+- profile/service-settings schema fixtures
+- `src/capsem/admin/*`
+- `src/capsem/builder/profiles.py`
+- `src/capsem/builder/service_settings.py`
+- `src/capsem/builder/image_plan.py`
+- `src/capsem/builder/image_verify.py`
+- `src/capsem/builder/image_workspace.py`
+- `src/capsem/builder/image_sbom.py`
+- `src/capsem/builder/manifest_check.py`
+- `src/capsem/builder/manifest_crypto.py`
+- `src/capsem/builder/manifest_generate.py`
+- `src/capsem/builder/manifest_version.py`
+- `scripts/build-assets.sh`
+- `scripts/materialize-install-profiles.py`
+- `scripts/prepare-admin-cli.sh`
+- `scripts/prepare-install-assets.sh`
+- `scripts/verify-local-manifest-signature.sh`
+- `scripts/verify_deb_payload.py`
+
+Impact:
+
+- Profiles no longer own asset build inputs.
+- Release/package proofs for profile-derived assets and admin tooling are gone.
+- Native packages no longer prove `capsem-admin` exists.
+- Schema/fixture gates for profile/settings contracts are gone.
+
+### P0: Service Runtime Profile Asset Pins
+
+Accidental or release-blocking until proven equivalent elsewhere:
+
+- `crates/capsem-service/src/asset_supervisor.rs`
+- `crates/capsem-service/src/asset_supervisor/tests.rs`
+- `crates/capsem-service/src/saved_vm_assets.rs`
+- `crates/capsem-core/src/profile_manifest.rs`
+- `crates/capsem-core/src/profile_payload_schema.rs`
+- `crates/capsem/src/profile_catalog_source.rs`
+- `tests/capsem-e2e/test_profile_asset_boot.py`
+- `tests/capsem-e2e/test_winterfell_fork_lineage.py`
+- `tests/helpers/profile_asset_fixture.py`
+
+Impact:
+
+- Profile catalog/payload trust and installed revision logic are gone.
+- VM boot no longer proves profile-selected asset resolution.
+- Persistent VM resume/fork no longer proves profile/base-asset pin integrity.
+
+### P1: TUI/Profile Runtime Surface
+
+Needs decision. The snapshot removed the TUI crate while restored main had TUI
+work in flight:
+
+- `crates/capsem-tui/src/*`
+- `crates/capsem-tui/Cargo.toml` was effectively replaced by
+  `crates/capsem-debug-upstream/Cargo.toml`
+- `sprints/tui-control/*`
+
+Impact:
+
+- `capsem shell`/terminal TUI behavior may be flattened or gone.
+- Profile/session readiness UX in terminal may be missing.
+- Do not assume GUI-only coverage is enough for 1.3.
+
+### P1: Debug/Status/Install Diagnostics
+
+Needs review. Some setup removal was intentional, but diagnostics and status
+proofs may not have been:
+
+- `crates/capsem-service/src/debug_report.rs`
+- `crates/capsem-service/src/debug_report/tests.rs`
+- `crates/capsem/src/status.rs`
+- `crates/capsem/src/status/tests.rs`
+- `scripts/capture-install-status.py`
+- `tests/capsem-install/test_fixture_refresh.py`
+- `tests/capsem-install/test_setup_wizard.py`
+- `tests/test_install_status_capture.py`
+- `docs/src/content/docs/debugging/debug-report.md`
+- `docs/src/content/docs/observability/vm-health.md`
+
+Impact:
+
+- The release may have lost useful install/debug evidence capture.
+- `capsem setup` removal is approved, but post-install status diagnostics still
+  need an equivalent.
+
+### P1: Detection/Security Pack Corpus And Bench Gates
+
+Partially intentional because the old policy rail was burned, but the compile,
+backtest, corpus, and benchmark discipline must be replaced by the new rule
+engine rather than simply deleted:
+
+- `src/capsem/builder/security_packs.py`
+- `crates/capsem-core/src/security_packs.rs`
+- `crates/capsem-core/tests/security_packs.rs`
+- `crates/capsem-core/benches/security_packs.rs`
+- `data/detection/*`
+- `data/enforcement/*`
+- `data/policy-context/*`
+- `schemas/capsem.detection-pack.v1.schema.json`
+- `schemas/capsem.detection.ir.v1.schema.json`
+- `schemas/capsem.enforcement-pack.v1.schema.json`
+- `tests/test_security_packs.py`
+- `tests/capsem-serial/test_security_engine_benchmark.py`
+- `benchmarks/security-engine/*`
+
+Impact:
+
+- New `SecurityRuleSet` may exist, but release loses the external corpus and
+  repeatable pack/backtest evidence unless rebuilt.
+- Benchmark docs/numbers for 1.2 security engine were deleted.
+
+### P1: KVM/Filesystem/Linux Proof
+
+Needs Linux-team review. The snapshot kept many KVM edits but deleted at least:
+
+- `crates/capsem-core/src/hypervisor/kvm/checkpoint.rs`
+- `scripts/fix-linux-kvm-devices.sh`
+- `scripts/validate-rootfs.sh`
+- `sprints/hypervisor-improvement/*`
+- `sprints/linux-kvm-proving-ground/*`
+- Linux/mac benchmark sprint evidence and benchmark artifacts.
+
+Impact:
+
+- Suspend/resume/checkpoint work may have been lost or rewritten.
+- Linux proof trail and benchmark comparison trail were removed from the tree.
+
+### P2: Documentation And Skills Memory
+
+The cleanup snapshot removed a large amount of release and architecture memory:
+
+- `docs/src/content/docs/configuration/capsem-admin.md`
+- `docs/src/content/docs/configuration/profile-assets-and-manifests.md`
+- `docs/src/content/docs/configuration/profile-catalogs.md`
+- `docs/src/content/docs/configuration/profiles.md`
+- `docs/src/content/docs/configuration/service-settings.md`
+- `docs/src/content/docs/security/*`
+- `docs/src/content/docs/benchmarks/security-engine.md`
+- `docs/src/content/docs/usage/admin-cli.md`
+- `sprints/policy-settings-profiles/*`
+- `sprints/profile-foundation/*`
+- `sprints/google/*`
+
+Impact:
+
+- The implementation may be recoverable from history, but the project memory
+  and release checklist were removed. Restore current-truth docs after code is
+  fixed; do not restore old docs verbatim if they describe burned APIs.
+
+## Likely Intentional Burns
+
+Do not restore wholesale without design review:
+
+- `crates/capsem-core/src/setup_state.rs`
+- `crates/capsem/src/setup.rs`
+- old onboarding wizard/provider setup UI
+- old `settings_profiles/*` implementation as-is
+- old standalone `capsem-security-engine`, `capsem-network-engine`,
+  `capsem-file-engine`, and `capsem-process-engine` crates as topology, if the
+  accepted 1.3 posture is in-core/security-engine modules.
+- old policy-v2 / domain-policy / MCP-policy decision rails.
+
+Even for intentional burns, the lost tests and behavioral guarantees must be
+ported into the new architecture.
+
 ## Lost Or Flattened Commit Clusters
 
 Do not cherry-pick these wholesale. Use them to rebuild the current 1.3 design

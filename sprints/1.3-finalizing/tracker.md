@@ -342,6 +342,10 @@ commit.
 - [ ] Restore package/bootstrap proof that `capsem-admin` is installed and
   runnable from native packages.
 - [ ] Restore admin manifest crypto/generate/download-check gates before release.
+- [ ] Classify every `82e7a58c^1..82e7a58c` deleted cluster as intentional
+  burn, conceptual port, or exact restore before closing T5.
+- [ ] Review TUI, debug/status diagnostics, security pack corpus/benchmarks,
+  and KVM/checkpoint proof for accidental snapshot loss.
 - [ ] Ensure service asset cache status remains service-runtime only.
 - [ ] Re-check install flow no longer depends on dead `capsem setup` assumptions.
 - [ ] Verify package UI waits for service readiness and reports install/service
