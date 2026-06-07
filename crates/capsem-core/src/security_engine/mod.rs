@@ -1,5 +1,5 @@
 use std::borrow::Cow;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::fmt;
 use std::sync::Arc;
 use std::time::Instant;
@@ -1018,7 +1018,7 @@ fn security_decision_event(
         stage: decision_stage_for_rule(rule.action),
         actor: rule.rule_id.clone(),
         rule_id: Some(rule.rule_id.clone()),
-        plugin_id: rule.plugin.clone(),
+        plugin_id: None,
         previous_decision: previous.into(),
         requested_decision: requested.into(),
         effective_decision: effective.into(),
@@ -1037,7 +1037,7 @@ fn record_rule_detection(event: &mut SecurityEvent, rule: &CompiledSecurityRule)
         source: SecurityDetectionSource::Rule,
         detection_level,
         rule_id: Some(rule.rule_id.clone()),
-        plugin_id: rule.plugin.clone(),
+        plugin_id: None,
         action: Some(rule.action),
         plugin_mode: None,
         reason: rule.reason.clone(),
@@ -1133,11 +1133,7 @@ pub fn evaluate_security_boundary(
     let action_registry =
         SecurityActionRegistry::with_builtin_actions().with_plugin_policy(plugin_policy);
 
-    let preprocess = rules.evaluate(&event).map_err(SecurityActionError::new)?;
-    for rule in preprocess.preprocess_rules() {
-        record_rule_detection(&mut event, rule);
-        event = action_registry.apply_security_rule_plugin(rule, event)?;
-    }
+    event = action_registry.apply_security_plugins(SecurityPluginStage::PreDecision, event)?;
 
     let evaluation = rules.evaluate(&event).map_err(SecurityActionError::new)?;
     for rule in evaluation.matched_rules() {
@@ -1157,10 +1153,7 @@ pub fn evaluate_security_boundary(
         enforcement.action = SecurityEnforcementAction::Ask;
     }
 
-    let postprocess = rules.evaluate(&event).map_err(SecurityActionError::new)?;
-    for rule in postprocess.postprocess_rules() {
-        event = action_registry.apply_security_rule_plugin(rule, event)?;
-    }
+    event = action_registry.apply_security_plugins(SecurityPluginStage::PostDecision, event)?;
     if matches!(event.decision.effective, SecurityDecisionKind::Block) {
         enforcement.action = SecurityEnforcementAction::Block;
     }
@@ -1387,8 +1380,6 @@ fn compiled_rule_forensic_json(rule: &CompiledSecurityRule) -> serde_json::Value
         "priority": rule.priority,
         "corp_locked": rule.corp_locked,
         "reason": rule.reason,
-        "plugin": rule.plugin,
-        "plugin_config": rule.plugin_config,
     })
 }
 
@@ -2106,23 +2097,45 @@ impl fmt::Display for SecurityActionError {
 
 impl std::error::Error for SecurityActionError {}
 
-/// A plugin invoked by a matched typed `SecurityRule`.
-///
-/// The plugin receives the compiled rule that matched and the current
-/// canonical event. It returns the next event on the same single rail.
-pub trait SecurityRulePlugin: Send + Sync {
-    fn id(&self) -> &'static str;
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SecurityPluginStage {
+    PreDecision,
+    PostDecision,
+}
 
-    fn apply(
-        &self,
-        rule: &CompiledSecurityRule,
-        event: SecurityEvent,
-    ) -> Result<SecurityEvent, SecurityActionError>;
+pub struct SecurityPluginResult {
+    pub event: SecurityEvent,
+    pub applied: bool,
+}
+
+impl SecurityPluginResult {
+    pub const fn applied(event: SecurityEvent) -> Self {
+        Self {
+            event,
+            applied: true,
+        }
+    }
+
+    pub const fn skipped(event: SecurityEvent) -> Self {
+        Self {
+            event,
+            applied: false,
+        }
+    }
+}
+
+/// A plugin that mutates or annotates the canonical security event on the same
+/// rail as CEL enforcement.
+pub trait SecurityPlugin: Send + Sync {
+    fn id(&self) -> &'static str;
+    fn stage(&self) -> SecurityPluginStage;
+
+    fn apply(&self, event: SecurityEvent) -> Result<SecurityPluginResult, SecurityActionError>;
 }
 
 #[derive(Default)]
 pub struct SecurityActionRegistry {
-    rule_plugins: HashMap<String, Arc<dyn SecurityRulePlugin>>,
+    plugins: BTreeMap<String, Arc<dyn SecurityPlugin>>,
     plugin_policy: BTreeMap<String, SecurityPluginConfig>,
 }
 
@@ -2133,12 +2146,12 @@ impl SecurityActionRegistry {
 
     pub fn with_builtin_actions() -> Self {
         Self::new()
-            .register_rule_plugin(CredentialBrokerRulePlugin)
-            .expect("built-in security rule plugin ids are unique")
-            .register_rule_plugin(DummyPreEicarRulePlugin)
-            .expect("built-in security rule plugin ids are unique")
-            .register_rule_plugin(DummyPostAllowRulePlugin)
-            .expect("built-in security rule plugin ids are unique")
+            .register_plugin(CredentialBrokerPlugin)
+            .expect("built-in security plugin ids are unique")
+            .register_plugin(DummyPreEicarPlugin)
+            .expect("built-in security plugin ids are unique")
+            .register_plugin(DummyPostAllowPlugin)
+            .expect("built-in security plugin ids are unique")
     }
 
     pub fn with_plugin_policy(
@@ -2149,44 +2162,51 @@ impl SecurityActionRegistry {
         self
     }
 
-    pub fn register_rule_plugin(
+    pub fn register_plugin(
         mut self,
-        plugin: impl SecurityRulePlugin + 'static,
+        plugin: impl SecurityPlugin + 'static,
     ) -> Result<Self, SecurityActionError> {
         let id = plugin.id();
-        if self.rule_plugins.contains_key(id) {
+        if self.plugins.contains_key(id) {
             return Err(SecurityActionError::new(format!(
-                "security rule plugin '{id}' registered twice"
+                "security plugin '{id}' registered twice"
             )));
         }
-        self.rule_plugins.insert(id.to_string(), Arc::new(plugin));
+        self.plugins.insert(id.to_string(), Arc::new(plugin));
         Ok(self)
     }
 
-    pub fn apply_security_rule_plugin(
+    pub fn apply_security_plugins(
         &self,
-        rule: &CompiledSecurityRule,
+        stage: SecurityPluginStage,
         mut event: SecurityEvent,
     ) -> Result<SecurityEvent, SecurityActionError> {
-        let Some(plugin_id) = rule.plugin.as_deref() else {
-            return Ok(event);
-        };
-        let plugin_config = self.plugin_policy.get(plugin_id).copied();
-        if plugin_config.is_some_and(|config| config.mode == SecurityPluginMode::Disable) {
-            return Ok(event);
+        for (plugin_id, config) in &self.plugin_policy {
+            if config.mode != SecurityPluginMode::Disable && !self.plugins.contains_key(plugin_id) {
+                return Err(SecurityActionError::new(format!(
+                    "security plugin '{plugin_id}' is not registered"
+                )));
+            }
         }
-        let Some(plugin) = self.rule_plugins.get(plugin_id) else {
-            return Err(SecurityActionError::new(format!(
-                "security rule plugin '{plugin_id}' is not registered"
-            )));
-        };
-        event = plugin.apply(rule, event)?;
-        if let Some(config) = plugin_config {
-            record_plugin_detection(&mut event, rule, plugin_id, config);
-        }
-        if let Some(requested) = plugin_config.and_then(|config| plugin_mode_decision(config.mode))
-        {
-            event.request_decision(requested);
+        for (plugin_id, plugin) in &self.plugins {
+            if plugin.stage() != stage {
+                continue;
+            }
+            let Some(plugin_config) = self.plugin_policy.get(plugin_id).copied() else {
+                continue;
+            };
+            if plugin_config.mode == SecurityPluginMode::Disable {
+                continue;
+            }
+            let result = plugin.apply(event)?;
+            event = result.event;
+            if !result.applied {
+                continue;
+            }
+            record_plugin_detection(&mut event, plugin_id, plugin_config);
+            if let Some(requested) = plugin_mode_decision(plugin_config.mode) {
+                event.request_decision(requested);
+            }
         }
         Ok(event)
     }
@@ -2194,7 +2214,6 @@ impl SecurityActionRegistry {
 
 fn record_plugin_detection(
     event: &mut SecurityEvent,
-    rule: &CompiledSecurityRule,
     plugin_id: &str,
     config: SecurityPluginConfig,
 ) {
@@ -2204,11 +2223,11 @@ fn record_plugin_detection(
     event.record_detection(SecurityDetectionEvent {
         source: SecurityDetectionSource::Plugin,
         detection_level,
-        rule_id: Some(rule.rule_id.clone()),
+        rule_id: None,
         plugin_id: Some(plugin_id.to_string()),
-        action: Some(rule.action),
+        action: None,
         plugin_mode: Some(config.mode),
-        reason: rule.reason.clone(),
+        reason: None,
     });
 }
 
@@ -2223,18 +2242,21 @@ fn plugin_mode_decision(mode: SecurityPluginMode) -> Option<SecurityDecisionKind
     }
 }
 
-pub struct CredentialBrokerRulePlugin;
+pub struct CredentialBrokerPlugin;
 
-impl SecurityRulePlugin for CredentialBrokerRulePlugin {
+impl SecurityPlugin for CredentialBrokerPlugin {
     fn id(&self) -> &'static str {
         "credential_broker"
     }
 
-    fn apply(
-        &self,
-        _rule: &CompiledSecurityRule,
-        mut event: SecurityEvent,
-    ) -> Result<SecurityEvent, SecurityActionError> {
+    fn stage(&self) -> SecurityPluginStage {
+        SecurityPluginStage::PostDecision
+    }
+
+    fn apply(&self, mut event: SecurityEvent) -> Result<SecurityPluginResult, SecurityActionError> {
+        if event.credential_observations.is_empty() {
+            return Ok(SecurityPluginResult::skipped(event));
+        }
         for observation in &event.credential_observations {
             let brokered = crate::credential_broker::broker_to_user_settings(observation)
                 .map_err(SecurityActionError::new)?;
@@ -2245,51 +2267,52 @@ impl SecurityRulePlugin for CredentialBrokerRulePlugin {
         event
             .action_trace
             .push(PolicyActionId::CredentialBrokerCapture);
-        Ok(event)
+        Ok(SecurityPluginResult::applied(event))
     }
 }
 
-pub struct DummyPreEicarRulePlugin;
+pub struct DummyPreEicarPlugin;
 
-impl SecurityRulePlugin for DummyPreEicarRulePlugin {
+impl SecurityPlugin for DummyPreEicarPlugin {
     fn id(&self) -> &'static str {
         "dummy_pre_eicar"
     }
 
-    fn apply(
-        &self,
-        _rule: &CompiledSecurityRule,
-        mut event: SecurityEvent,
-    ) -> Result<SecurityEvent, SecurityActionError> {
-        if security_event_contains_text(&event, DUMMY_EICAR_TEST_STRING)
-            || security_event_contains_text(&event, "EICAR")
+    fn stage(&self) -> SecurityPluginStage {
+        SecurityPluginStage::PreDecision
+    }
+
+    fn apply(&self, mut event: SecurityEvent) -> Result<SecurityPluginResult, SecurityActionError> {
+        if !security_event_contains_text(&event, DUMMY_EICAR_TEST_STRING)
+            && !security_event_contains_text(&event, "EICAR")
         {
-            event.request_decision(SecurityDecisionKind::Block);
+            return Ok(SecurityPluginResult::skipped(event));
         }
+        event.request_decision(SecurityDecisionKind::Block);
         event
             .action_trace
             .push(PolicyActionId::CredentialBrokerCapture);
-        Ok(event)
+        Ok(SecurityPluginResult::applied(event))
     }
 }
 
-pub struct DummyPostAllowRulePlugin;
+pub struct DummyPostAllowPlugin;
 
-impl SecurityRulePlugin for DummyPostAllowRulePlugin {
+impl SecurityPlugin for DummyPostAllowPlugin {
     fn id(&self) -> &'static str {
         "dummy_post_allow"
     }
 
-    fn apply(
-        &self,
-        _rule: &CompiledSecurityRule,
-        mut event: SecurityEvent,
-    ) -> Result<SecurityEvent, SecurityActionError> {
+    fn stage(&self) -> SecurityPluginStage {
+        SecurityPluginStage::PostDecision
+    }
+
+    fn apply(&self, mut event: SecurityEvent) -> Result<SecurityPluginResult, SecurityActionError> {
         event.request_decision(SecurityDecisionKind::Allow);
         event
             .action_trace
             .push(PolicyActionId::CredentialBrokerSubstitute);
-        Ok(event)
+        Ok(SecurityPluginResult::applied(event))
     }
 }
 
@@ -2392,21 +2415,17 @@ impl<E: SecurityEventEmitter> SecurityEventEngine<E> {
         rules: &SecurityRuleSet,
         mut event: SecurityEvent,
     ) -> Result<SecurityEvent, SecurityActionError> {
-        let preprocess = rules.evaluate(&event).map_err(SecurityActionError::new)?;
-        for rule in preprocess.preprocess_rules() {
-            record_rule_detection(&mut event, rule);
-            event = self
-                .action_registry
-                .apply_security_rule_plugin(rule, event)?;
-        }
+        event = self
+            .action_registry
+            .apply_security_plugins(SecurityPluginStage::PreDecision, event)?;
 
-        let postprocess = rules.evaluate(&event).map_err(SecurityActionError::new)?;
-        for rule in postprocess.postprocess_rules() {
+        let evaluation = rules.evaluate(&event).map_err(SecurityActionError::new)?;
+        for rule in evaluation.matched_rules() {
             record_rule_detection(&mut event, rule);
-            event = self
-                .action_registry
-                .apply_security_rule_plugin(rule, event)?;
         }
+        event = self
+            .action_registry
+            .apply_security_plugins(SecurityPluginStage::PostDecision, event)?;
         self.emitter
             .emit(event.clone())
             .map_err(|error| SecurityActionError::new(error.to_string()))?;

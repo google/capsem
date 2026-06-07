@@ -419,11 +419,9 @@ mod tests {
         assert!(compiled
             .iter()
             .any(|rule| rule.rule_id == "profiles.rules.ai_openai_http_api"));
-        assert!(compiled.iter().any(|rule| {
-            rule.provider == "google"
-                && rule.rule_key == "config_credential_broker"
-                && rule.plugin.as_deref() == Some("credential_broker")
-        }));
+        assert!(ProviderRuleProfile::builtin_security_defaults()
+            .plugins
+            .contains_key("credential_broker"));
         assert!(compiled
             .iter()
             .all(|rule| !rule.condition.contains("file.ingress")));
@@ -453,12 +451,6 @@ match = 'has(http.host)'
             r#"
 [plugins.credential_broker]
 mode = "rewrite"
-
-[profiles.rules.broker]
-name = "broker"
-action = "postprocess"
-plugin = "credential_broker"
-match = 'has(http.host)'
 "#,
         )
         .expect("profile without defaults parses before built-in contract");
@@ -649,19 +641,6 @@ action = "allow"
 detection_level = "informational"
 match = 'http.host.matches("(^|.*\.)openai\.com$")'
 
-[ai.openai.rules.capture_credential]
-name = "openai_capture_credential"
-plugin = "credential_broker"
-action = "postprocess"
-type = "api-key"
-credential = "api_key"
-match = 'http.host.matches("(^|.*\.)openai\.com$")'
-
-[ai.openai.rules.redact_prompt]
-name = "openai_redact_prompt"
-plugin = "pii"
-action = "preprocess"
-match = 'model.provider == "openai"'
 "#,
         )
         .expect("provider rules parse");
@@ -678,7 +657,6 @@ match = 'model.provider == "openai"'
                     rule.action,
                     rule.detection_level,
                     rule.priority,
-                    rule.plugin.as_deref(),
                 )
             })
             .collect::<Vec<_>>();
@@ -688,21 +666,6 @@ match = 'model.provider == "openai"'
             SecurityRuleAction::Allow,
             Some(DetectionLevel::Informational),
             10,
-            None
-        )));
-        assert!(ids.contains(&(
-            "profiles.rules.ai_openai_capture_credential",
-            SecurityRuleAction::Postprocess,
-            None,
-            10,
-            Some("credential_broker")
-        )));
-        assert!(ids.contains(&(
-            "profiles.rules.ai_openai_redact_prompt",
-            SecurityRuleAction::Preprocess,
-            None,
-            10,
-            Some("pii")
         )));
     }
 }

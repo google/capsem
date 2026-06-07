@@ -1,3 +1,15 @@
+[plugins.credential_broker]
+mode = "rewrite"
+detection_level = "informational"
+
+[plugins.pii]
+mode = "rewrite"
+detection_level = "medium"
+
+[plugins.virus_total]
+mode = "block"
+detection_level = "critical"
+
 [ai.openai.rules.http_api]
 name = "openai_http_api_observed"
 action = "allow"
@@ -16,16 +28,6 @@ action = "block"
 detection_level = "critical"
 reason = "OpenAI model traffic must use an OpenAI-owned endpoint"
 match = 'model.provider == "openai" && http.host != "api.openai.com"'
-
-[ai.openai.rules.api_key_broker]
-name = "openai_api_key_broker"
-plugin = "credential_broker"
-action = "postprocess"
-type = "api-key"
-header = "Authorization"
-prefix = "Bearer "
-credential = "api_key"
-match = 'http.host.matches("(^|.*\.)(openai\.com|chatgpt\.com|oaistatic\.com|oaiusercontent\.com)$")'
 
 [corp.rules.block_openai]
 name = "openai_api_block"
@@ -46,13 +48,11 @@ match = 'http.host == "local.ollama" || model.provider == "ollama"'
 
 [profiles.rules.redact_pii]
 name = "openai_prompt_pii_redact"
-plugin = "pii"
 action = "preprocess"
 match = 'has(model.request.body)'
 
 [profiles.rules.scan_import]
 name = "file_import_vt_scan"
-plugin = "virus_total"
 action = "postprocess"
 match = 'file.import.path.matches(".*")'
 

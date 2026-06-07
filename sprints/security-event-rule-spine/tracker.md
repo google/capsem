@@ -83,7 +83,8 @@
 - [x] T8.12 -- End-of-sprint docs cleanup: delete/replace old public `policy.*` / `on` / `if` / `decision` rule syntax pages so admins see one contract.
 - [ ] T9.1 -- Reconcile `sprints/perf-observability-network-lab/credential-broker-rule-memo.md` into the current rule contract.
 - [ ] T9.2 -- Add the full Agent Vault-derived credential provider catalog or explicitly reject each omitted provider with rationale.
-- [ ] T9.3 -- Add parser/compile tests for every accepted catalog credential rule using current `match` / `plugin = "credential_broker"` syntax.
+- [ ] T9.3 -- Add parser/compile tests for accepted credential broker plugin
+  config and broker-owned filtering. Rules must reject `plugin = "credential_broker"`.
 - [ ] T9.4 -- Add runtime substitution tests for accepted credential rendering types beyond the current API-key/header and query-reference path.
 - [ ] T9.5 -- Remove invalid memo-only `credential.name` predicates from any proposed rule before implementation; raw credential names remain broker-private.
 
@@ -152,18 +153,16 @@
   `[-1000, 1000]`.
 - Completed: Old callback-shaped provider fields `on`, `if`, `decision`, and
   `actions` are rejected by the new contract parser.
-- Completed: `SecurityEventEngine` now evaluates a `SecurityRuleSet` against
-  one canonical `SecurityEvent`, runs matched typed-rule plugins by
-  `plugin = "..."`, emits only the final post-action event, and fails closed
-  without emission when a matched plugin is missing or errors.
-- Completed: Plugin execution is staged: preprocess rules run first, the
-  engine re-evaluates on the mutated event, then postprocess rules run. This
-  keeps plugin-created first-party fields visible to later rule matching
-  without reintroducing callback fan-out.
-- Completed: `credential_broker` is registered as a typed security-rule plugin
-  and brokers matched `SecurityEvent` observations from postprocess rule
-  metadata without exposing raw credentials to CEL.
-- Completed: `credential.reference` is now a first-party CEL field alias for
+- Revised: `SecurityEventEngine` now evaluates a `SecurityRuleSet` against one
+  canonical `SecurityEvent`; enabled plugins run by plugin-owned stage and
+  filtering, not by `plugin = "..."` on matched rules.
+- Revised: Plugin execution is staged by plugin metadata: pre-decision plugins
+  run before CEL enforcement and post-decision plugins run after enforcement
+  selection. Configured missing plugins fail closed before emission.
+- Revised: `credential_broker` is registered as a plugin and brokers
+  `SecurityEvent` credential observations without exposing raw credentials to
+  CEL or using matched rule metadata.
+- Revised: `credential.reference` is not a first-party CEL field alias for
   the credential reference root, matching the new rule authoring language.
 - Completed: `emit_matching_security_rules_with_decision` and its blocking
   twin evaluate a `SecurityRuleSet` once, write every matched

@@ -25,4 +25,4 @@ Detection contract: enabled executions append one plugin detection record to `Se
 
 Failure: no external I/O; failures should only come from rule/plugin registration errors.
 
-Tests: `security_rule_plugin_policy_block_is_absolute_after_later_allow` and `builtin_dummy_plugins_block_eicar_and_cannot_be_downgraded_by_postprocess`.
+Tests: `security_plugin_policy_block_is_absolute_after_later_allow` and `builtin_dummy_plugins_block_eicar_and_cannot_be_downgraded_by_postprocess`.

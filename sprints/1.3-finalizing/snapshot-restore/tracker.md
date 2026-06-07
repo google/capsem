@@ -308,12 +308,12 @@ the guarantee or explicitly burn it.
   `refresh_policy`.
 - [ ] Ensure profile syntax carries modern default rules, enforcement rules,
   detection levels, provider control rules, MCP, and plugin config.
-- [ ] Do not add a credential broker invocation rule. `[plugins.credential_broker]`
+- [x] Do not add a credential broker invocation rule. `[plugins.credential_broker]`
   governs broker behavior; the broker owns its HTTP-boundary materialization
   hook internally.
-- [ ] Enforce the plugin contract: plugins own their own filtering/scope and
+- [x] Enforce the plugin contract: plugins own their own filtering/scope and
   materialization hooks. CEL rules do not invoke plugins.
-- [ ] Preserve the rule/plugin boundary: if behavior can be expressed as a
+- [x] Preserve the rule/plugin boundary: if behavior can be expressed as a
   CEL/Sigma rule, it is a rule; plugins are only for mutation, materialization,
   external scanning, credential substitution, protocol rewrites, or other
   audited side effects.
@@ -325,6 +325,8 @@ the guarantee or explicitly burn it.
   `pre_decision`, `post_decision`, and `runtime_status`. Tests must prove the
   UI/API can tell whether each plugin runs before enforcement, after
   enforcement, or only reports runtime state.
+  - Engine side now has typed `SecurityPluginStage::{PreDecision,PostDecision}`;
+    descriptor/API exposure and `runtime_status` remain open.
 - [ ] Replace the current service `plugin_catalog()` tuple shape with a typed
   plugin descriptor/registry. The descriptor owns `name`, `description`,
   `info`, `version`, stages, status schema, stats schema, benchmark spec,

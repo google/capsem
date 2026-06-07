@@ -256,6 +256,11 @@ commit.
 - [x] Ensure model/file/process decisions evaluate through `SecurityRuleSet`;
   burn fake credential/snapshot rule roots instead of pretending they have
   parsers.
+- [x] Burn rule-dispatched plugin behavior. Rules cannot use `plugin = ...`;
+  plugins run from typed plugin config, own their own filtering, and execute by
+  plugin stage.
+- [x] Add fail-closed tests proving configured-but-unregistered plugins do not
+  silently disappear.
 - [x] Add tests proving defaults execute after specific corp/profile/user rules.
 - [x] Add tests proving default catch-alls cover non-matching events.
 - [x] Add tests proving mutating defaults changes evaluation behavior.
@@ -274,9 +279,17 @@ commit.
 - Removed T2 drift from active docs: no user-facing docs now teach
   `allow_read`, `allow_write`, `custom_allow`, `custom_block`, Policy V2,
   MCP decision providers, or domain-policy engines as security authorities.
-- `cargo test -p capsem-core security_rule_profile::tests` passed with 27
+- `cargo test -p capsem-core security_rule_profile::tests` passed with 26
   rule-profile tests, including default coverage for HTTP, DNS, MCP, model,
   file, and process events.
+- `cargo test -p capsem-core --lib security_engine::tests -- --nocapture`
+  passed with 38 tests, including plugin stage execution, disabled-plugin skip,
+  configured-missing-plugin fail-closed behavior, credential broker observation
+  handling, EICAR dummy plugin block proof, absolute block lattice, and ledger
+  regeneration.
+- `cargo test -p capsem-core --lib provider_profile::tests -- --nocapture`
+  passed with 6 provider/default contract tests after broker invocation rules
+  were removed.
 - `cargo clippy -p capsem-core --all-targets -- -D warnings` passed after the
   `NetworkPolicy: Default` and test assertion clippy fixes.
 - `rg -n 'allow_read|allow_write|custom_allow|custom_block|Policy V2|policy_v2|McpPolicy|ToolDecision|DecisionProvider|PolicyHook|is_fully_blocked|default_allow|Domain policy|domain policy|default-deny|default deny|allow list|block list|/enforcements/|/detections/|/plugins/global' docs/src/content/docs -S`

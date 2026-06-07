@@ -33,14 +33,9 @@ fn parses_security_event_rule_spine_fixture() {
         openai["http_api"].detection_level,
         Some(DetectionLevel::Informational)
     );
-    assert_eq!(
-        openai["api_key_broker"].plugin.as_deref(),
-        Some("credential_broker")
-    );
-    assert_eq!(
-        openai["api_key_broker"].plugin_config["header"].as_str(),
-        Some("Authorization")
-    );
+    assert!(profile.plugins.contains_key("credential_broker"));
+    assert!(profile.plugins.contains_key("pii"));
+    assert!(profile.plugins.contains_key("virus_total"));
     assert_eq!(
         profile.profiles.rules["redact_pii"].action,
         SecurityRuleAction::Preprocess,
@@ -294,7 +289,6 @@ fn parses_profile_scoped_rules_outside_ai_provider_blocks() {
 [profiles.rules.model_pii]
 name = "model_pii_preprocess"
 action = "preprocess"
-plugin = "pii"
 match = 'has(model.request.body)'
 "#,
     )
@@ -346,14 +340,7 @@ fn compiled_rule_set_evaluates_once_over_security_event() {
             "profiles.rules.ai_openai_http_api",
         ]
     );
-    assert_eq!(
-        evaluation
-            .postprocess_rules()
-            .iter()
-            .map(|rule| rule.plugin.as_deref())
-            .collect::<Vec<_>>(),
-        vec![Some("credential_broker")]
-    );
+    assert!(evaluation.postprocess_rules().is_empty());
     assert_eq!(
         evaluation
             .enforcement_rules()
@@ -421,11 +408,7 @@ fn built_in_provider_defaults_use_security_rule_contract() {
         .rules()
         .iter()
         .all(|rule| !rule.condition.contains("credential.name")));
-    assert!(compiled.rules().iter().any(|rule| {
-        rule.provider == "openai"
-            && rule.plugin.as_deref() == Some("credential_broker")
-            && rule.action == SecurityRuleAction::Postprocess
-    }));
+    assert!(profile.plugins.contains_key("credential_broker"));
 }
 
 #[test]
@@ -715,39 +698,22 @@ match = 'http.host == "api.openai.com"'
 }
 
 #[test]
-fn postprocess_and_preprocess_require_plugin() {
-    let error = SecurityRuleProfile::parse_toml(
-        r#"
-[ai.openai.rules.redact]
-name = "openai_redact"
-action = "preprocess"
-match = 'has(model.request.body)'
-"#,
-    )
-    .expect_err("preprocess requires plugin");
-    assert!(error.contains("requires plugin"), "{error}");
-}
-
-#[test]
-fn rewrite_is_canonical_mutation_action_with_aliases_and_requires_plugin() {
+fn rewrite_is_canonical_mutation_action_with_aliases() {
     let profile = SecurityRuleProfile::parse_toml(
         r#"
 [profiles.rules.redact_model]
 name = "redact_model"
 action = "redact"
-plugin = "dummy_pre_redact"
 match = 'model.request.body.contains("secret")'
 
 [profiles.rules.neutralize_file]
 name = "neutralize_file"
 action = "neutralize"
-plugin = "dummy_pre_neutralize"
 match = 'file.import.content.contains("bad")'
 
 [profiles.rules.mutate_http]
 name = "mutate_http"
 action = "mutate"
-plugin = "dummy_pre_mutate"
 match = 'http.host == "example.com"'
 "#,
     )
@@ -775,17 +741,6 @@ match = 'http.host == "example.com"'
     let evaluation = compiled.evaluate(&event).unwrap();
     assert_eq!(evaluation.preprocess_rules().len(), 3);
     assert!(evaluation.enforcement_rules().is_empty());
-
-    let err = SecurityRuleProfile::parse_toml(
-        r#"
-[profiles.rules.rewrite_without_plugin]
-name = "rewrite_without_plugin"
-action = "rewrite"
-match = 'http.host == "example.com"'
-"#,
-    )
-    .expect_err("rewrite must name the mutation plugin");
-    assert!(err.contains("requires plugin"), "{err}");
 }
 
 #[test]
@@ -1072,24 +1027,21 @@ mode = "disable"
 }
 
 #[test]
-fn real_plugins_must_be_referenced_by_a_rule_but_dummy_plugins_may_float() {
-    let missing_rule = SecurityRuleProfile::parse_toml(
+fn plugins_own_filtering_and_rules_cannot_reference_plugins() {
+    let plugin_only = SecurityRuleProfile::parse_toml(
         r#"
 [plugins.credential_broker]
 mode = "rewrite"
 "#,
     )
-    .expect_err("real plugin without a rule is unreachable");
-    assert!(
-        missing_rule.contains("plugin 'credential_broker' must be referenced"),
-        "{missing_rule}"
+    .expect("plugins own their own filtering and do not need rule references");
+    assert_eq!(
+        plugin_only.plugins["credential_broker"].mode,
+        SecurityPluginMode::Rewrite
     );
 
-    let referenced = SecurityRuleProfile::parse_toml(
+    let old_plugin_field = SecurityRuleProfile::parse_toml(
         r#"
-[plugins.credential_broker]
-mode = "rewrite"
-
 [profiles.rules.broker]
 name = "broker"
 action = "postprocess"
@@ -1097,10 +1049,10 @@ plugin = "credential_broker"
 match = 'has(http.host)'
 "#,
     )
-    .expect("real plugin with a matching rule is valid");
-    assert_eq!(
-        referenced.plugins["credential_broker"].mode,
-        SecurityPluginMode::Rewrite
+    .expect_err("rules must not bind plugins");
+    assert!(
+        old_plugin_field.contains("must not use 'plugin'"),
+        "{old_plugin_field}"
     );
 
     let dummy = SecurityRuleProfile::parse_toml(

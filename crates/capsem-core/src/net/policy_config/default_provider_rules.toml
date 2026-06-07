@@ -85,24 +85,6 @@ action = "allow"
 detection_level = "informational"
 match = 'file.read.path == "/root/.codex/config.toml"'
 
-[ai.openai.rules.config_credential_broker]
-name = "openai_config_credential_broker"
-plugin = "credential_broker"
-action = "postprocess"
-type = "api-key"
-credential = "api_key"
-match = 'file.read.path == "/root/.codex/config.toml" && has(file.read.content)'
-
-[ai.openai.rules.http_credential_broker]
-name = "openai_http_credential_broker"
-plugin = "credential_broker"
-action = "postprocess"
-type = "api-key"
-header = "Authorization"
-prefix = "Bearer "
-credential = "api_key"
-match = 'http.host.matches("(^|.*\.)(openai\.com|chatgpt\.com|oaistatic\.com|oaiusercontent\.com)$")'
-
 [ai.openai.rules.model_api]
 name = "openai_model_api_observed"
 action = "allow"
@@ -158,23 +140,6 @@ name = "claude_credentials_read"
 action = "allow"
 detection_level = "informational"
 match = 'file.read.path == "/root/.claude/.credentials.json"'
-
-[ai.anthropic.rules.config_credential_broker]
-name = "anthropic_config_credential_broker"
-plugin = "credential_broker"
-action = "postprocess"
-type = "api-key"
-credential = "api_key"
-match = 'file.read.path == "/root/.claude/.credentials.json" && has(file.read.content)'
-
-[ai.anthropic.rules.http_credential_broker]
-name = "anthropic_http_credential_broker"
-plugin = "credential_broker"
-action = "postprocess"
-type = "api-key"
-header = "x-api-key"
-credential = "api_key"
-match = 'http.host.matches("(^|.*\.)(anthropic\.com|claude\.ai|claude\.com)$")'
 
 [ai.anthropic.rules.model_api]
 name = "anthropic_model_api_observed"
@@ -251,24 +216,6 @@ name = "google_adc_read"
 action = "allow"
 detection_level = "informational"
 match = 'file.read.path == "/root/.config/gcloud/application_default_credentials.json"'
-
-[ai.google.rules.config_credential_broker]
-name = "google_config_credential_broker"
-plugin = "credential_broker"
-action = "postprocess"
-type = "api-key"
-credential = "api_key"
-match = 'file.read.path == "/root/.config/gcloud/application_default_credentials.json" && has(file.read.content)'
-
-[ai.google.rules.http_credential_broker]
-name = "google_http_credential_broker"
-plugin = "credential_broker"
-action = "postprocess"
-type = "api-key"
-header = "Authorization"
-prefix = "Bearer "
-credential = "api_key"
-match = 'http.host.matches("(^|.*\.)(googleapis\.com|aistudio\.google\.com|gemini\.google\.com)$")'
 
 [ai.google.rules.model_api]
 name = "google_model_api_observed"

@@ -97,8 +97,6 @@ pub struct SecurityRule {
     pub corp_locked: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub plugin: Option<String>,
     #[serde(default, flatten)]
     pub plugin_config: BTreeMap<String, toml::Value>,
 }
@@ -258,8 +256,6 @@ pub struct CompiledSecurityRule {
     pub priority: i32,
     pub corp_locked: bool,
     pub reason: Option<String>,
-    pub plugin: Option<String>,
-    pub plugin_config: BTreeMap<String, toml::Value>,
 }
 
 #[derive(Debug, Clone)]
@@ -309,13 +305,6 @@ impl SecurityRuleProfile {
         validate_rule_group("profiles", &self.profiles)?;
         for plugin_id in self.plugins.keys() {
             validate_identifier("plugin id", plugin_id)?;
-            if plugin_requires_profile_rule(plugin_id)
-                && !profile_references_plugin(self, plugin_id.as_str())
-            {
-                return Err(format!(
-                    "plugin '{plugin_id}' must be referenced by at least one rule"
-                ));
-            }
         }
         for (provider_id, provider) in &self.ai {
             validate_identifier("provider id", provider_id)?;
@@ -403,8 +392,6 @@ impl SecurityRuleProfile {
                     priority,
                     corp_locked: rule.corp_locked || matches!(source, SecurityRuleSource::Corp),
                     reason: rule.reason.clone(),
-                    plugin: rule.plugin.clone(),
-                    plugin_config: rule.plugin_config.clone(),
                 });
             }
         }
@@ -441,8 +428,6 @@ impl SecurityRuleProfile {
                 priority,
                 corp_locked: rule.corp_locked || matches!(source, SecurityRuleSource::Corp),
                 reason: rule.reason.clone(),
-                plugin: rule.plugin.clone(),
-                plugin_config: rule.plugin_config.clone(),
             });
         }
         for (rule_key, rule) in &group.rules {
@@ -462,8 +447,6 @@ impl SecurityRuleProfile {
                 priority,
                 corp_locked: rule.corp_locked || matches!(source, SecurityRuleSource::Corp),
                 reason: rule.reason.clone(),
-                plugin: rule.plugin.clone(),
-                plugin_config: rule.plugin_config.clone(),
             });
         }
         Ok(())
@@ -511,8 +494,6 @@ struct SigmaCapsem {
     priority: Option<SecurityRulePriority>,
     #[serde(default)]
     corp_locked: bool,
-    #[serde(default)]
-    plugin: Option<String>,
 }
 
 impl SigmaRule {
@@ -543,7 +524,6 @@ impl SigmaRule {
                 .reason
                 .or(self.description)
                 .or_else(|| self.id.map(|id| format!("Sigma rule {id}"))),
-            plugin: self.capsem.plugin,
             plugin_config: BTreeMap::new(),
         };
         rule.validate(&format!("profiles.rules.{rule_key}"))?;
@@ -873,20 +853,19 @@ impl SecurityRule {
                 "{rule_id} must not use 'level'; use 'detection_level'"
             ));
         }
-        if matches!(
-            self.action,
-            SecurityRuleAction::Preprocess
-                | SecurityRuleAction::Rewrite
-                | SecurityRuleAction::Postprocess
-        ) && self.plugin.as_deref().is_none_or(str::is_empty)
-        {
+        if self.plugin_config.contains_key("plugin") {
             return Err(format!(
-                "{rule_id} action '{}' requires plugin",
-                self.action.as_str()
+                "{rule_id} must not use 'plugin'; plugins own their filtering"
             ));
         }
-        if let Some(plugin) = self.plugin.as_deref() {
-            validate_identifier("plugin", plugin)?;
+        if !self.plugin_config.is_empty() {
+            let fields = self
+                .plugin_config
+                .keys()
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(", ");
+            return Err(format!("{rule_id} has unknown rule fields: {fields}"));
         }
         self.validate_match()?;
         Ok(())
@@ -1005,27 +984,6 @@ fn validate_rule_group(namespace: &str, group: &SecurityRuleGroup) -> Result<(),
         rule.validate(&format!("{namespace}.rules.{rule_key}"))?;
     }
     Ok(())
-}
-
-fn plugin_requires_profile_rule(plugin_id: &str) -> bool {
-    !plugin_id.starts_with("dummy_")
-}
-
-fn profile_references_plugin(profile: &SecurityRuleProfile, plugin_id: &str) -> bool {
-    profile
-        .corp
-        .defaults
-        .values()
-        .chain(profile.corp.rules.values())
-        .chain(profile.profiles.defaults.values())
-        .chain(profile.profiles.rules.values())
-        .chain(
-            profile
-                .ai
-                .values()
-                .flat_map(|provider| provider.rules.values()),
-        )
-        .any(|rule| rule.plugin.as_deref() == Some(plugin_id))
 }
 
 pub fn validate_security_event_match(condition: &str) -> Result<(), String> {
