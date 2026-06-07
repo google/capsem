@@ -3606,6 +3606,73 @@ async fn handle_profile_info(
     }))
 }
 
+fn profile_persistence_not_implemented(operation: &str) -> AppError {
+    AppError(
+        StatusCode::NOT_IMPLEMENTED,
+        format!("{operation} requires profile file persistence, which is not enabled yet"),
+    )
+}
+
+async fn handle_profile_create() -> Result<Json<serde_json::Value>, AppError> {
+    Err(profile_persistence_not_implemented("profile create"))
+}
+
+async fn handle_profile_edit(
+    Path(profile_id): Path<String>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let _profile_id = validate_profile_route_id(profile_id)?;
+    Err(profile_persistence_not_implemented("profile edit"))
+}
+
+async fn handle_profile_delete(
+    Path(profile_id): Path<String>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let _profile_id = validate_profile_route_id(profile_id)?;
+    Err(profile_persistence_not_implemented("profile delete"))
+}
+
+async fn handle_profile_clone(
+    Path(profile_id): Path<String>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let _profile_id = validate_profile_route_id(profile_id)?;
+    Err(profile_persistence_not_implemented("profile clone"))
+}
+
+async fn handle_profile_validate(
+    Path(profile_id): Path<String>,
+    Json(request): Json<api::ProfileValidateRequest>,
+) -> Result<Json<api::ProfileValidateResponse>, AppError> {
+    let route_profile_id = validate_profile_route_id(profile_id)?;
+    let profile = if let Some(toml) = request.toml {
+        toml::from_str::<ProfileConfigFile>(&toml).map_err(|error| {
+            AppError(
+                StatusCode::BAD_REQUEST,
+                format!("invalid profile TOML: {error}"),
+            )
+        })?
+    } else if let Some(profile) = request.profile {
+        profile
+    } else {
+        ProfileConfigFile::builtin_default()
+    };
+    profile
+        .validate()
+        .map_err(|error| AppError(StatusCode::BAD_REQUEST, format!("invalid profile: {error}")))?;
+    if profile.id != route_profile_id {
+        return Err(AppError(
+            StatusCode::BAD_REQUEST,
+            format!(
+                "profile id mismatch: route has {route_profile_id}, payload has {}",
+                profile.id
+            ),
+        ));
+    }
+    Ok(Json(api::ProfileValidateResponse {
+        valid: true,
+        profile_id: profile.id,
+    }))
+}
+
 fn resolve_mcp_tool_id(server_id: &str, tool_id: &str) -> Result<String, AppError> {
     if server_id.is_empty() || tool_id.is_empty() {
         return Err(AppError(
@@ -5993,7 +6060,18 @@ async fn main() -> Result<()> {
         .route("/vms/{id}/enforcement/latest", get(handle_security_latest))
         .route("/vms/{id}/enforcement/status", get(handle_security_info))
         .route("/profiles/list", get(handle_profiles_list))
+        .route("/profiles/create", post(handle_profile_create))
         .route("/profiles/{profile_id}/info", get(handle_profile_info))
+        .route("/profiles/{profile_id}/edit", patch(handle_profile_edit))
+        .route(
+            "/profiles/{profile_id}/delete",
+            delete(handle_profile_delete),
+        )
+        .route("/profiles/{profile_id}/clone", post(handle_profile_clone))
+        .route(
+            "/profiles/{profile_id}/validate",
+            post(handle_profile_validate),
+        )
         .route(
             "/profiles/{profile_id}/enforcement/evaluate",
             post(handle_enforcement_evaluate),

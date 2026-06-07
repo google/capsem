@@ -252,7 +252,12 @@ fn service_proxy_routes() -> Router<Arc<AppState>> {
         .route("/vms/{id}/enforcement/latest", get(proxy::handle_proxy))
         .route("/vms/{id}/enforcement/status", get(proxy::handle_proxy))
         .route("/profiles/list", get(proxy::handle_proxy))
+        .route("/profiles/create", post(proxy::handle_proxy))
         .route("/profiles/{profile_id}/info", get(proxy::handle_proxy))
+        .route("/profiles/{profile_id}/edit", patch(proxy::handle_proxy))
+        .route("/profiles/{profile_id}/delete", delete(proxy::handle_proxy))
+        .route("/profiles/{profile_id}/clone", post(proxy::handle_proxy))
+        .route("/profiles/{profile_id}/validate", post(proxy::handle_proxy))
         .route(
             "/profiles/{profile_id}/enforcement/evaluate",
             post(proxy::handle_proxy),
@@ -500,7 +505,12 @@ mod tests {
             ("GET", "/vms/test-vm/enforcement/latest"),
             ("GET", "/vms/test-vm/enforcement/status"),
             ("GET", "/profiles/list"),
+            ("POST", "/profiles/create"),
             ("GET", "/profiles/default/info"),
+            ("PATCH", "/profiles/default/edit"),
+            ("DELETE", "/profiles/default/delete"),
+            ("POST", "/profiles/default/clone"),
+            ("POST", "/profiles/default/validate"),
             ("POST", "/vms/create"),
             ("GET", "/vms/list"),
             ("GET", "/vms/test-vm/info"),

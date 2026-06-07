@@ -64,6 +64,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `GET /profiles/{profile_id}/info`. The current backend exposes only the
   truthful effective `default` profile and rejects unknown profile IDs until
   independent profile files land.
+- Added profile management route gates:
+  `POST /profiles/create`, `PATCH /profiles/{profile_id}/edit`,
+  `DELETE /profiles/{profile_id}/delete`, `POST /profiles/{profile_id}/clone`,
+  and `POST /profiles/{profile_id}/validate`. Validation is real over the
+  typed `ProfileConfigFile`; mutation routes fail explicitly until profile file
+  persistence is implemented instead of writing through settings.
 - Added `GET /profiles/{profile_id}/enforcement/rules/list`, returning the
   compiled profile rule inventory with source, default-rule, priority, action,
   detection level, plugin, and lock metadata so the UI can reflect backend rule

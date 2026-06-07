@@ -268,6 +268,64 @@ async fn handle_profile_info_rejects_unknown_profiles() {
 }
 
 #[tokio::test]
+async fn handle_profile_validate_accepts_builtin_default_contract() {
+    let response = handle_profile_validate(
+        Path("default".to_string()),
+        Json(api::ProfileValidateRequest {
+            toml: None,
+            profile: None,
+        }),
+    )
+    .await
+    .expect("builtin default profile should validate")
+    .0;
+
+    assert!(response.valid);
+    assert_eq!(response.profile_id, "default");
+}
+
+#[tokio::test]
+async fn handle_profile_validate_rejects_payload_route_mismatch() {
+    let mut profile = ProfileConfigFile::builtin_default();
+    profile.id = "strict".to_string();
+
+    let err = handle_profile_validate(
+        Path("default".to_string()),
+        Json(api::ProfileValidateRequest {
+            toml: None,
+            profile: Some(profile),
+        }),
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(err.0, StatusCode::BAD_REQUEST);
+    assert!(err.1.contains("profile id mismatch"));
+}
+
+#[tokio::test]
+async fn profile_mutation_routes_fail_explicitly_until_profile_files_exist() {
+    let create = handle_profile_create().await.unwrap_err();
+    assert_eq!(create.0, StatusCode::NOT_IMPLEMENTED);
+    assert!(create.1.contains("profile file persistence"));
+
+    let edit = handle_profile_edit(Path("default".to_string()))
+        .await
+        .unwrap_err();
+    assert_eq!(edit.0, StatusCode::NOT_IMPLEMENTED);
+
+    let delete = handle_profile_delete(Path("default".to_string()))
+        .await
+        .unwrap_err();
+    assert_eq!(delete.0, StatusCode::NOT_IMPLEMENTED);
+
+    let clone = handle_profile_clone(Path("default".to_string()))
+        .await
+        .unwrap_err();
+    assert_eq!(clone.0, StatusCode::NOT_IMPLEMENTED);
+}
+
+#[tokio::test]
 async fn handle_enforcement_rules_list_returns_compiled_profile_rules() {
     let _env_lock = SETTINGS_ENV_LOCK.lock().await;
 

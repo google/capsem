@@ -1,4 +1,4 @@
-use capsem_core::net::policy_config::{DetectionLevel, SecurityRuleAction};
+use capsem_core::net::policy_config::{DetectionLevel, ProfileConfigFile, SecurityRuleAction};
 use capsem_core::session::{
     GlobalStats, McpToolSummary, ProviderSummary, SessionRecord, ToolSummary,
 };
@@ -214,6 +214,20 @@ pub struct ProfilesListResponse {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct ProfileInfoResponse {
     pub profile: ProfileSummary,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct ProfileValidateRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub toml: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile: Option<ProfileConfigFile>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct ProfileValidateResponse {
+    pub valid: bool,
+    pub profile_id: String,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]

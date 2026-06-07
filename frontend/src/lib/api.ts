@@ -114,6 +114,16 @@ export interface ProfileInfoResponse {
   profile: ProfileSummary;
 }
 
+export interface ProfileValidateRequest {
+  toml?: string;
+  profile?: Record<string, unknown>;
+}
+
+export interface ProfileValidateResponse {
+  valid: boolean;
+  profile_id: string;
+}
+
 export type SecurityRuleAction = 'allow' | 'ask' | 'block' | 'preprocess' | 'rewrite' | 'postprocess';
 export type SecurityRuleDetectionLevel = 'informational' | 'low' | 'medium' | 'high' | 'critical';
 
@@ -687,6 +697,34 @@ export async function listProfiles(): Promise<ProfilesListResponse> {
 
 export async function getProfileInfo(profileId: string): Promise<ProfileInfoResponse> {
   const resp = await _get(`/profiles/${encodeURIComponent(profileId)}/info`);
+  return await resp.json();
+}
+
+export async function validateProfile(
+  profileId: string,
+  request: ProfileValidateRequest = {},
+): Promise<ProfileValidateResponse> {
+  const resp = await _post(`/profiles/${encodeURIComponent(profileId)}/validate`, request);
+  return await resp.json();
+}
+
+export async function createProfile(request: Record<string, unknown>): Promise<unknown> {
+  const resp = await _post('/profiles/create', request);
+  return await resp.json();
+}
+
+export async function editProfile(profileId: string, request: Record<string, unknown>): Promise<unknown> {
+  const resp = await _patch(`/profiles/${encodeURIComponent(profileId)}/edit`, request);
+  return await resp.json();
+}
+
+export async function deleteProfile(profileId: string): Promise<unknown> {
+  const resp = await _delete(`/profiles/${encodeURIComponent(profileId)}/delete`);
+  return await resp.json();
+}
+
+export async function cloneProfile(profileId: string, request: Record<string, unknown>): Promise<unknown> {
+  const resp = await _post(`/profiles/${encodeURIComponent(profileId)}/clone`, request);
   return await resp.json();
 }
 

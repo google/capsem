@@ -78,9 +78,9 @@ commit.
 
 - [ ] Add approved service routes:
   - `[x] /profiles/list`
-  - `[ ] /profiles/create`
+  - `[x] /profiles/create`
   - `[x] /profiles/{profile_id}/info`
-  - `[ ] /profiles/{profile_id}/edit|delete|clone|validate`
+  - `[x] /profiles/{profile_id}/edit|delete|clone|validate`
   - `[x] /profiles/{profile_id}/reload`
   - `/profiles/{profile_id}/assets/info|edit`
   - `[x] /profiles/{profile_id}/assets/status|ensure`
@@ -131,6 +131,10 @@ commit.
   `default` summary is now sourced from `ProfileConfigFile::builtin_default()`;
   fake profile IDs fail closed while independent profile file loading remains
   a later route slice.
+- [x] Add profile create/edit/delete/clone/validate routes in service, gateway,
+  and frontend API. `validate` checks the typed `ProfileConfigFile` contract;
+  mutation routes fail explicitly with `501` until profile file persistence
+  exists.
 - [x] Add adversarial gateway tests proving retired `/plugins`,
   `/plugins/{vm_id}`, and `/plugins/global/{plugin_id}` routes are not
   forwarded.
