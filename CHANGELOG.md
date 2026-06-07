@@ -83,8 +83,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `/profiles/{profile_id}/plugins/{plugin_id}/edit` report and update
   profile-owned plugin config,
   `/profiles/{profile_id}/enforcement/evaluate` sends a profile-scoped test
-  event through the real engine, and `/detections/{id}/latest|info` plus
-  `/enforcements/{id}/latest|info` remain table-backed ledger views.
+  event through the real engine, and
+  `/vms/{vm_id}/detection/latest|status` plus
+  `/vms/{vm_id}/enforcement/latest|status` remain table-backed ledger views.
 - Added enforcement rule-management endpoints:
   `PUT /profiles/{profile_id}/enforcement/rules/{rule_id}/edit` and
   `DELETE /profiles/{profile_id}/enforcement/rules/{rule_id}/delete`
@@ -140,15 +141,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   triggering event id/type, rule id/name/action/detection level, rule snapshot,
   matched `SecurityEvent` payload, and trace id. `security_ask_events` records
   append-only pending/approved/denied ask lifecycle rows.
-- Added DB-backed security endpoints: `/security/{id}/latest` returns full
-  stored rule ledger rows and `/security/{id}/info` regenerates counters from
-  `session.db`.
+- Added DB-backed security endpoints: `/vms/{vm_id}/security/latest` returns
+  full stored rule ledger rows and `/vms/{vm_id}/security/status` regenerates
+  counters from `session.db`.
 - Added built-in provider-owned AI rules for OpenAI/Codex, Anthropic/Claude,
   Google/Gemini, and Ollama. The rules live under `[ai.<provider>.rules.*]`,
   merge as defaults < user < corp, enforce corp-only negative priorities, and
   compile into deterministic `profiles.rules.*` security-event rules whose
   matches are written to the `security_rule_events` session DB ledger and
-  exposed through `/security/{id}/latest`.
+  exposed through `/vms/{vm_id}/security/latest`.
 - Added Sigma import support that parses Sigma YAML into typed `SecurityRule`
   entries, derives valid rule ids/names, validates generated CEL against
   `SecurityEvent` roots, and keeps security-team detection authoring on the

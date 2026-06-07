@@ -36,9 +36,10 @@ Current service routes still expose:
 - `/persist/{id}` instead of `/vms/{vm_id}/save`.
 - `/fork/{id}` instead of `/vms/{vm_id}/fork`.
 - `/resume/{name}` resumes by name, not immutable VM id.
-- `/security/{id}/info`, `/detections/{id}/info`, and
-  `/enforcements/{id}/info` use `info` for ledger counters; target is
-  `status`.
+- Retired `/security/{id}/info`, `/detections/{id}/info`, and
+  `/enforcements/{id}/info` used `info` for ledger counters. VM-filtered
+  ledger routes now live under `/vms/{vm_id}/security|detection|enforcement`
+  and use `status` for counters.
 - `/enforcements/list`, `/enforcements/evaluate`,
   `/enforcements/rules/{rule_id}`, `/enforcements/reload` are global authoring
   endpoints; target is `/profiles/{profile_id}/enforcement/...`.

@@ -3760,7 +3760,7 @@ struct SecurityLedgerQuery {
     limit: Option<usize>,
 }
 
-/// GET /security/{id}/latest -- latest security rule ledger rows.
+/// GET /vms/{id}/security/latest -- latest security rule ledger rows.
 ///
 /// This is intentionally regenerated from the session DB. It returns the full
 /// stored row, including the rule snapshot and normalized SecurityEvent
@@ -3791,7 +3791,7 @@ async fn handle_security_latest(
     Ok(Json(items))
 }
 
-/// GET /security/{id}/info -- security rule ledger aggregates.
+/// GET /vms/{id}/security/status -- security rule ledger aggregates.
 async fn handle_security_info(
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
@@ -5505,12 +5505,12 @@ async fn main() -> Result<()> {
         .route("/panics", get(handle_panics))
         .route("/host-logs/{name}", get(handle_host_logs))
         .route("/timeline/{id}", get(handle_timeline))
-        .route("/security/{id}/latest", get(handle_security_latest))
-        .route("/security/{id}/info", get(handle_security_info))
-        .route("/detections/{id}/latest", get(handle_security_latest))
-        .route("/detections/{id}/info", get(handle_security_info))
-        .route("/enforcements/{id}/latest", get(handle_security_latest))
-        .route("/enforcements/{id}/info", get(handle_security_info))
+        .route("/vms/{id}/security/latest", get(handle_security_latest))
+        .route("/vms/{id}/security/status", get(handle_security_info))
+        .route("/vms/{id}/detection/latest", get(handle_security_latest))
+        .route("/vms/{id}/detection/status", get(handle_security_info))
+        .route("/vms/{id}/enforcement/latest", get(handle_security_latest))
+        .route("/vms/{id}/enforcement/status", get(handle_security_info))
         .route(
             "/profiles/{profile_id}/enforcement/evaluate",
             post(handle_enforcement_evaluate),

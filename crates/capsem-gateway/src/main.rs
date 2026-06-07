@@ -238,12 +238,12 @@ fn service_proxy_routes() -> Router<Arc<AppState>> {
         .route("/panics", get(proxy::handle_proxy))
         .route("/host-logs/{name}", get(proxy::handle_proxy))
         .route("/timeline/{id}", get(proxy::handle_proxy))
-        .route("/security/{id}/latest", get(proxy::handle_proxy))
-        .route("/security/{id}/info", get(proxy::handle_proxy))
-        .route("/detections/{id}/latest", get(proxy::handle_proxy))
-        .route("/detections/{id}/info", get(proxy::handle_proxy))
-        .route("/enforcements/{id}/latest", get(proxy::handle_proxy))
-        .route("/enforcements/{id}/info", get(proxy::handle_proxy))
+        .route("/vms/{id}/security/latest", get(proxy::handle_proxy))
+        .route("/vms/{id}/security/status", get(proxy::handle_proxy))
+        .route("/vms/{id}/detection/latest", get(proxy::handle_proxy))
+        .route("/vms/{id}/detection/status", get(proxy::handle_proxy))
+        .route("/vms/{id}/enforcement/latest", get(proxy::handle_proxy))
+        .route("/vms/{id}/enforcement/status", get(proxy::handle_proxy))
         .route(
             "/profiles/{profile_id}/enforcement/evaluate",
             post(proxy::handle_proxy),
@@ -447,11 +447,12 @@ mod tests {
     #[tokio::test]
     async fn gateway_security_routes_are_explicitly_forwarded() {
         for (method, uri) in [
-            ("GET", "/security/test-vm/latest"),
-            ("GET", "/detections/test-vm/latest"),
-            ("GET", "/detections/test-vm/info"),
-            ("GET", "/enforcements/test-vm/latest"),
-            ("GET", "/enforcements/test-vm/info"),
+            ("GET", "/vms/test-vm/security/latest"),
+            ("GET", "/vms/test-vm/security/status"),
+            ("GET", "/vms/test-vm/detection/latest"),
+            ("GET", "/vms/test-vm/detection/status"),
+            ("GET", "/vms/test-vm/enforcement/latest"),
+            ("GET", "/vms/test-vm/enforcement/status"),
             ("POST", "/profiles/default/enforcement/evaluate"),
             (
                 "PUT",
@@ -532,6 +533,31 @@ mod tests {
             ("POST", "/enforcements/rules/eicar_block"),
             ("DELETE", "/enforcements/rules/eicar_block"),
             ("POST", "/enforcements/reload"),
+        ] {
+            let app = service_proxy_app("/tmp/capsem-gateway-must-not-connect.sock");
+            let resp = app
+                .oneshot(
+                    http::Request::builder()
+                        .method(method)
+                        .uri(uri)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), http::StatusCode::NOT_FOUND, "{method} {uri}");
+        }
+    }
+
+    #[tokio::test]
+    async fn gateway_does_not_forward_retired_ledger_routes() {
+        for (method, uri) in [
+            ("GET", "/security/test-vm/latest"),
+            ("GET", "/security/test-vm/info"),
+            ("GET", "/detections/test-vm/latest"),
+            ("GET", "/detections/test-vm/info"),
+            ("GET", "/enforcements/test-vm/latest"),
+            ("GET", "/enforcements/test-vm/info"),
         ] {
             let app = service_proxy_app("/tmp/capsem-gateway-must-not-connect.sock");
             let resp = app
