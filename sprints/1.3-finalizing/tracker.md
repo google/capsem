@@ -6,6 +6,17 @@ Contract approved enough to start cleanup implementation. Keep committing
 functional slices steadily. Do not batch unrelated fixes into one giant release
 commit.
 
+## Burn Discipline
+
+- [ ] No fallback routes for old authoring APIs.
+- [ ] No compatibility aliases for old authoring APIs.
+- [ ] No hidden branch that accepts both old and new ownership models.
+- [ ] No "if old shape then..." runtime escape hatches.
+- [ ] Remove dead code instead of quarantining it.
+- [ ] Tests must prove old paths/shapes fail closed.
+- [ ] Adversarial tests are required for every security/config/API slice.
+- [ ] Changelog/docs must describe the new contract, not migration folklore.
+
 ## Contract Baseline
 
 - [x] Draft profile-first API contract in `api-contract.md`.
@@ -20,7 +31,7 @@ commit.
 
 - [ ] Review uncommitted compiler/default-rule changes.
 - [ ] Review uncommitted service/gateway `/enforcements/list` changes and
-  reshape/remove in favor of profile-addressed routes.
+  remove in favor of profile-addressed routes.
 - [ ] Review uncommitted frontend Policy section changes.
 - [ ] Decide whether to keep, reshape, or remove `sprints/security-default-rule-rail/`.
 - [ ] Reconcile every partial code change against `api-contract.md`.
@@ -80,8 +91,11 @@ commit.
   - VM/profile filtered `latest` routes.
 - [ ] Make gateway expose the exact same route contract as service.
 - [ ] Add route conformance tests for HTTP/UDS parity.
-- [ ] Add regression tests rejecting or removing old global authoring routes:
+- [ ] Burn old global authoring routes; do not leave compatibility aliases.
+- [ ] Add adversarial regression tests proving old global authoring routes fail:
   `/enforcements/list`, `/plugins/global/*`, `/mcp/policy`, `/mcp/tools`.
+- [ ] Add adversarial tests for wrong profile ids, wrong VM ids, malformed
+  rule ids, invalid enum values, and attempts to mutate immutable VM profile id.
 - [ ] Commit T1 with tests.
 
 ## T2: Security Rail Burn-Down
@@ -100,6 +114,9 @@ commit.
 - [ ] Add tests proving mutating defaults changes evaluation behavior.
 - [ ] Add tests proving MCP and network old policy engines cannot issue final
   security decisions.
+- [ ] Add adversarial tests proving MCP/network mechanics cannot bypass CEL
+  enforcement, including malformed MCP tool ids, unknown DNS/HTTP domains, and
+  conflicting default/specific rules.
 - [ ] Commit T2 with tests.
 
 ## T3: Profile/Settings/Corp UI/API Split
@@ -117,6 +134,8 @@ commit.
 - [ ] Add frontend tests proving enum fields use enum controls and boolean fields
   use boolean controls for direct editors, while preview widgets round-trip
   through contract fields.
+- [ ] Add adversarial frontend/API tests proving mixed editor submissions cannot
+  write settings/profile/corp in one request.
 - [ ] Commit T3 with tests.
 
 ## T4: MCP, Plugins, Credentials, Skills UI
@@ -129,6 +148,9 @@ commit.
   status.
 - [ ] Skill UI can add/edit/remove profile skills through profile endpoints.
 - [ ] Ensure no provider API object remains in UI for 1.3.
+- [ ] Add adversarial tests for plugin disable/enable invalid modes, invalid
+  detection levels, cross-profile MCP tool mutation, and credential secret
+  leakage attempts.
 - [ ] Commit T4 with tests.
 
 ## T5: VM Lifecycle, Assets, Install
@@ -143,6 +165,9 @@ commit.
   failures cleanly.
 - [ ] Verify assets status surfaces missing `vmlinuz`, `initrd.img`, and rootfs
   accurately.
+- [ ] Add adversarial lifecycle/install tests for start-before-assets,
+  service-down UI, immutable profile mutation, save/fork failure status, and
+  missing initrd/rootfs reporting.
 - [ ] Commit T5 with tests.
 
 ## T6: Documentation, Changelog, Skills
@@ -167,6 +192,8 @@ commit.
 - [ ] Rust focused tests for profile/security/default/plugin/credential contracts.
 - [ ] Rust service/gateway route conformance tests.
 - [ ] Frontend unit/typecheck tests.
+- [ ] Adversarial test suite for old endpoints, invalid schemas, invalid enum
+  verbs, profile/settings crossover attempts, and security bypass attempts.
 - [ ] Session DB/ledger tests proving detection/enforcement/latest/status expose
   DB-backed truth and include rule/effect/detection data.
 - [ ] Sigma parser gate with Python parser.

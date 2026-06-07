@@ -20,6 +20,11 @@ contract reset.
 
 - Current main/worktree truth stays authoritative.
 - Do not resurrect old policy-v2 paths.
+- Burn old authoring APIs and old decision engines. No fallbacks, no
+  compatibility aliases, no "if old shape then..." runtime escape hatches.
+- Remove dead code instead of quarantining it.
+- Every security/config/API slice needs adversarial tests proving old shapes and
+  bypass attempts fail closed.
 - Do not add `NetworkRouting`.
 - Network engine owns mechanics: parsing, capture, DNS/proxy mechanics, ports,
   caching, decompression, routing mechanics, provider metadata.
