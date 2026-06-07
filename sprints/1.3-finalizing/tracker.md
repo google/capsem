@@ -336,6 +336,10 @@ commit.
 - [ ] Implement/verify `pause`, `resume`, `save`, `fork`, and operation status.
 - [ ] Restore profile catalog/loader and remove the current `default`-only
   route validator.
+- [x] Add the first catalog-backed profile route slice: core parses
+  `config/profiles/code.toml` with per-arch EROFS/LZ4HC assets, and service
+  profile route validation/list/info/assets/skills/plugin checks use catalog
+  lookup for `code` instead of a hard-coded `default` stub.
 - [ ] Ensure profile asset selection is profile-backed:
   `vm.profile_id -> profile assets -> asset manifest/cache -> resolved boot paths`.
 - [ ] Restore per-arch profile asset declarations with URL/hash/signature/size

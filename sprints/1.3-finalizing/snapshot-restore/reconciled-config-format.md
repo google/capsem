@@ -167,13 +167,12 @@ compression = "lz4hc"
 compression_level = 12
 ```
 
-The current `ProfileAssetConfig` only has `channel/kernel/initrd/rootfs`
-strings. That is not enough, and `channel` should not live in the profile
-payload. Restore work must replace it with per-architecture asset declarations
-while keeping EROFS/LZ4HC as the accepted runtime format on all supported
-architectures. `refresh_policy` is a top-level profile field. Asset refresh is
-owned by `[assets].refresh_policy`. Catalog channel, manifest URL, and signing
-keys belong to the signed catalog/manifest rail where real key material exists.
+Implementation note: `ProfileAssetConfig` now parses this per-architecture
+shape, including URL/hash/signature/size/content-type asset metadata for
+kernel, initrd, and EROFS/LZ4HC rootfs artifacts. `refresh_policy` is a
+top-level profile field, and asset refresh is owned by
+`[assets].refresh_policy`. Catalog channel, manifest URL, and signing keys
+belong to the signed catalog/manifest rail where real key material exists.
 
 ## Rule Files
 

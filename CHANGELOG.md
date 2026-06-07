@@ -62,9 +62,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `start` uses the existing resume/start path; restart and reload-profile
   verify the VM exists and fail explicitly until real semantics land.
 - Added profile inventory routes `GET /profiles/list` and
-  `GET /profiles/{profile_id}/info`. The current backend exposes only the
-  truthful effective `default` profile and rejects unknown profile IDs until
-  independent profile files land.
+  `GET /profiles/{profile_id}/info`. Profile identity now comes from the
+  typed profile catalog: the built-in `code` profile is a real
+  `ProfileConfigFile`, and service route validation no longer uses a
+  hard-coded `default` profile stub.
+- Replaced the temporary flat profile asset triplet with per-architecture
+  profile asset declarations. `config/profiles/code.toml` now parses as the
+  checked-in contract for EROFS/LZ4HC kernel, initrd, and rootfs assets with
+  URL/hash/signature/size/content-type metadata.
 - Added profile management route gates:
   `POST /profiles/create`, `PATCH /profiles/{profile_id}/edit`,
   `DELETE /profiles/{profile_id}/delete`, `POST /profiles/{profile_id}/clone`,

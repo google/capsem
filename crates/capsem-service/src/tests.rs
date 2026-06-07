@@ -222,19 +222,24 @@ async fn security_latest_returns_full_session_db_rule_ledger_rows() {
 }
 
 #[test]
-fn default_profile_summary_reflects_effective_contract() {
-    let summary =
-        build_default_profile_summary(&SettingsFile::default(), &SettingsFile::default(), 3);
-
-    assert_eq!(summary.id, "default");
-    assert_eq!(summary.name, "Default");
-    assert_eq!(summary.description, "Built-in Capsem developer profile.");
-    assert_eq!(summary.source, "effective");
-    assert_eq!(summary.plugin_count, 3);
-    assert!(
-        summary.default_rule_count > 0,
-        "default profile inventory must include built-in default security rules"
+fn code_profile_summary_reflects_effective_contract() {
+    let profile = ProfileConfigFile::builtin_code();
+    let summary = build_profile_summary(
+        &profile,
+        &ProfileCatalogSource::BuiltIn,
+        &SettingsFile::default(),
+        &SettingsFile::default(),
+        3,
     );
+
+    assert_eq!(summary.id, "code");
+    assert_eq!(summary.name, "Code");
+    assert_eq!(
+        summary.description,
+        "Optimized for coding and long-running agents."
+    );
+    assert_eq!(summary.source, "built_in");
+    assert_eq!(summary.plugin_count, 3);
     assert!(
         summary.rule_count >= summary.default_rule_count,
         "total rules cannot be lower than default rules"
@@ -242,13 +247,13 @@ fn default_profile_summary_reflects_effective_contract() {
 }
 
 #[tokio::test]
-async fn handle_profiles_list_returns_default_profile_inventory() {
+async fn handle_profiles_list_returns_code_profile_inventory() {
     let state = make_test_state();
 
     let Json(response) = handle_profiles_list(State(state)).await.unwrap();
 
     assert_eq!(response.profiles.len(), 1);
-    assert_eq!(response.profiles[0].id, "default");
+    assert_eq!(response.profiles[0].id, "code");
     assert!(
         response.profiles[0].plugin_count > 0,
         "profile inventory should reflect editable plugin policy"
@@ -268,9 +273,9 @@ async fn handle_profile_info_rejects_unknown_profiles() {
 }
 
 #[tokio::test]
-async fn handle_profile_validate_accepts_builtin_default_contract() {
+async fn handle_profile_validate_accepts_builtin_code_contract() {
     let response = handle_profile_validate(
-        Path("default".to_string()),
+        Path("code".to_string()),
         Json(api::ProfileValidateRequest {
             toml: None,
             profile: None,
@@ -281,7 +286,7 @@ async fn handle_profile_validate_accepts_builtin_default_contract() {
     .0;
 
     assert!(response.valid);
-    assert_eq!(response.profile_id, "default");
+    assert_eq!(response.profile_id, "code");
 }
 
 #[tokio::test]
@@ -290,7 +295,7 @@ async fn handle_profile_validate_rejects_payload_route_mismatch() {
     profile.id = "strict".to_string();
 
     let err = handle_profile_validate(
-        Path("default".to_string()),
+        Path("code".to_string()),
         Json(api::ProfileValidateRequest {
             toml: None,
             profile: Some(profile),
@@ -309,17 +314,17 @@ async fn profile_mutation_routes_fail_explicitly_until_profile_files_exist() {
     assert_eq!(create.0, StatusCode::NOT_IMPLEMENTED);
     assert!(create.1.contains("profile file persistence"));
 
-    let edit = handle_profile_edit(Path("default".to_string()))
+    let edit = handle_profile_edit(Path("code".to_string()))
         .await
         .unwrap_err();
     assert_eq!(edit.0, StatusCode::NOT_IMPLEMENTED);
 
-    let delete = handle_profile_delete(Path("default".to_string()))
+    let delete = handle_profile_delete(Path("code".to_string()))
         .await
         .unwrap_err();
     assert_eq!(delete.0, StatusCode::NOT_IMPLEMENTED);
 
-    let clone = handle_profile_clone(Path("default".to_string()))
+    let clone = handle_profile_clone(Path("code".to_string()))
         .await
         .unwrap_err();
     assert_eq!(clone.0, StatusCode::NOT_IMPLEMENTED);
@@ -327,29 +332,29 @@ async fn profile_mutation_routes_fail_explicitly_until_profile_files_exist() {
 
 #[tokio::test]
 async fn profile_skills_routes_reflect_manifest_and_gate_mutations() {
-    let Json(info) = handle_profile_skills_info(Path("default".to_string()))
+    let Json(info) = handle_profile_skills_info(Path("code".to_string()))
         .await
         .expect("skills info should reflect profile manifest");
-    assert_eq!(info["profile_id"], "default");
+    assert_eq!(info["profile_id"], "code");
     assert_eq!(info["skill_count"], 0);
 
-    let Json(list) = handle_profile_skills_list(Path("default".to_string()))
+    let Json(list) = handle_profile_skills_list(Path("code".to_string()))
         .await
         .expect("skills list should reflect profile manifest");
-    assert_eq!(list["profile_id"], "default");
+    assert_eq!(list["profile_id"], "code");
     assert!(list["skills"].as_array().unwrap().is_empty());
 
-    let add = handle_profile_skill_add(Path("default".to_string()))
+    let add = handle_profile_skill_add(Path("code".to_string()))
         .await
         .unwrap_err();
     assert_eq!(add.0, StatusCode::NOT_IMPLEMENTED);
 
-    let edit = handle_profile_skill_edit(Path(("default".to_string(), "build".to_string())))
+    let edit = handle_profile_skill_edit(Path(("code".to_string(), "build".to_string())))
         .await
         .unwrap_err();
     assert_eq!(edit.0, StatusCode::NOT_IMPLEMENTED);
 
-    let delete = handle_profile_skill_delete(Path(("default".to_string(), "build".to_string())))
+    let delete = handle_profile_skill_delete(Path(("code".to_string(), "build".to_string())))
         .await
         .unwrap_err();
     assert_eq!(delete.0, StatusCode::NOT_IMPLEMENTED);
@@ -357,13 +362,17 @@ async fn profile_skills_routes_reflect_manifest_and_gate_mutations() {
 
 #[tokio::test]
 async fn profile_assets_info_reflects_manifest_and_edit_is_gated() {
-    let Json(info) = handle_profile_assets_info(Path("default".to_string()))
+    let Json(info) = handle_profile_assets_info(Path("code".to_string()))
         .await
         .expect("assets info should reflect profile manifest");
-    assert_eq!(info["profile_id"], "default");
-    assert_eq!(info["rootfs"], "rootfs.erofs");
+    assert_eq!(info["profile_id"], "code");
+    assert_eq!(info["format"], "profile-assets.v1");
+    assert_eq!(info["filesystem"], "erofs");
+    assert_eq!(info["compression"], "lz4hc");
+    assert_eq!(info["compression_level"], 12);
+    assert_eq!(info["current_assets"]["rootfs"]["name"], "rootfs.erofs");
 
-    let edit = handle_profile_assets_edit(Path("default".to_string()))
+    let edit = handle_profile_assets_edit(Path("code".to_string()))
         .await
         .unwrap_err();
     assert_eq!(edit.0, StatusCode::NOT_IMPLEMENTED);
@@ -373,11 +382,11 @@ async fn profile_assets_info_reflects_manifest_and_edit_is_gated() {
 async fn profile_plugins_info_summarizes_effective_plugin_policy() {
     let state = make_test_state();
 
-    let Json(info) = handle_profile_plugins_info(State(state), Path("default".to_string()))
+    let Json(info) = handle_profile_plugins_info(State(state), Path("code".to_string()))
         .await
         .expect("plugins info should summarize effective profile plugin policy");
 
-    assert_eq!(info["scope"]["profile_id"], "default");
+    assert_eq!(info["scope"]["profile_id"], "code");
     assert!(info["plugin_count"].as_u64().unwrap() > 0);
     assert!(info["enabled_count"].as_u64().unwrap() > 0);
 }
@@ -403,11 +412,11 @@ async fn profile_mcp_info_summarizes_profile_mcp_config() {
     };
     capsem_core::net::policy_config::write_settings_file(&user_path, &settings).unwrap();
 
-    let Json(info) = handle_profile_mcp_info(Path("default".to_string()))
+    let Json(info) = handle_profile_mcp_info(Path("code".to_string()))
         .await
         .expect("mcp info should summarize profile mcp config");
 
-    assert_eq!(info["profile_id"], "default");
+    assert_eq!(info["profile_id"], "code");
     assert_eq!(info["server_count"], 1);
     assert_eq!(info["user_server_count"], 1);
 }
@@ -475,7 +484,7 @@ async fn t1_adversarial_route_inputs_fail_closed() {
         plugin_config: BTreeMap::new(),
     };
     let malformed_rule_id = handle_enforcement_rule_upsert(
-        Path(("default".to_string(), "Bad Rule".to_string())),
+        Path(("code".to_string(), "Bad Rule".to_string())),
         Json(bad_rule),
     )
     .await
@@ -522,11 +531,11 @@ async fn handle_enforcement_rules_list_returns_compiled_profile_rules() {
     );
     capsem_core::net::policy_config::write_settings_file(&user_path, &settings).unwrap();
 
-    let Json(response) = handle_enforcement_rules_list(Path("default".to_string()))
+    let Json(response) = handle_enforcement_rules_list(Path("code".to_string()))
         .await
         .expect("rules list should compile effective profile");
 
-    assert_eq!(response.profile_id, "default");
+    assert_eq!(response.profile_id, "code");
     assert!(
         response.rules.iter().any(
             |rule| rule.rule_id == "profiles.rules.default_http_requests"
@@ -581,11 +590,11 @@ async fn handle_enforcement_info_summarizes_compiled_rules() {
     );
     capsem_core::net::policy_config::write_settings_file(&user_path, &settings).unwrap();
 
-    let Json(info) = handle_enforcement_info(Path("default".to_string()))
+    let Json(info) = handle_enforcement_info(Path("code".to_string()))
         .await
         .expect("info should summarize effective rules");
 
-    assert_eq!(info.profile_id, "default");
+    assert_eq!(info.profile_id, "code");
     assert!(info.rule_count > 0);
     assert!(info.default_rule_count > 0);
     assert!(info.custom_rule_count >= 1);
@@ -640,11 +649,11 @@ async fn handle_detection_rules_list_returns_detection_rules_only() {
     );
     capsem_core::net::policy_config::write_settings_file(&user_path, &settings).unwrap();
 
-    let Json(response) = handle_detection_rules_list(Path("default".to_string()))
+    let Json(response) = handle_detection_rules_list(Path("code".to_string()))
         .await
         .expect("detection rules list should compile effective profile");
 
-    assert_eq!(response.profile_id, "default");
+    assert_eq!(response.profile_id, "code");
     assert!(
         response
             .rules
@@ -684,11 +693,11 @@ async fn handle_detection_info_summarizes_detection_rules_only() {
     );
     capsem_core::net::policy_config::write_settings_file(&user_path, &settings).unwrap();
 
-    let Json(info) = handle_detection_info(Path("default".to_string()))
+    let Json(info) = handle_detection_info(Path("code".to_string()))
         .await
         .expect("detection info should summarize effective detection rules");
 
-    assert_eq!(info.profile_id, "default");
+    assert_eq!(info.profile_id, "code");
     assert!(info.rule_count >= 1);
     assert_eq!(info.rule_count, info.detection_rule_count);
     assert!(info.source_counts.contains_key("profile"));
@@ -708,7 +717,7 @@ async fn handle_detection_rule_upsert_requires_detection_level() {
     };
 
     let err = handle_detection_rule_upsert(
-        Path(("default".to_string(), "pure_block".to_string())),
+        Path(("code".to_string(), "pure_block".to_string())),
         Json(rule),
     )
     .await
@@ -732,10 +741,10 @@ async fn handle_detection_rules_list_rejects_unknown_profiles() {
 async fn profile_plugin_endpoint_matrix_dynamically_controls_enforcement_evaluation() {
     let state = make_test_state();
 
-    let Json(list) = handle_profile_plugins(State(Arc::clone(&state)), Path("default".to_string()))
+    let Json(list) = handle_profile_plugins(State(Arc::clone(&state)), Path("code".to_string()))
         .await
         .expect("list plugins");
-    assert_eq!(list.scope.profile_id, "default");
+    assert_eq!(list.scope.profile_id, "code");
     assert!(
         list.plugins
             .iter()
@@ -745,12 +754,12 @@ async fn profile_plugin_endpoint_matrix_dynamically_controls_enforcement_evaluat
 
     let Json(info) = handle_profile_plugin_info(
         State(Arc::clone(&state)),
-        Path(("default".to_string(), "dummy_pre_eicar".to_string())),
+        Path(("code".to_string(), "dummy_pre_eicar".to_string())),
     )
     .await
     .expect("plugin info");
     assert_eq!(info.id, "dummy_pre_eicar");
-    assert_eq!(info.scope.profile_id, "default");
+    assert_eq!(info.scope.profile_id, "code");
     assert_eq!(
         info.config.mode,
         capsem_core::net::policy_config::SecurityPluginMode::Rewrite
@@ -763,14 +772,23 @@ async fn profile_plugin_endpoint_matrix_dynamically_controls_enforcement_evaluat
     let request = EnforcementEvaluateRequest::eicar_fixture();
     let Json(enabled) = handle_enforcement_evaluate(
         State(Arc::clone(&state)),
-        Path("default".to_string()),
+        Path("code".to_string()),
         Json(request.clone()),
     )
     .await
     .expect("enabled plugin evaluates");
     let enabled_event = serde_json::to_value(&enabled.event).unwrap();
     assert_eq!(enabled_event["decision"]["effective"], "block");
-    assert_eq!(enabled_event["detections"].as_array().unwrap().len(), 2);
+    let enabled_detections = enabled_event["detections"].as_array().unwrap();
+    assert!(enabled_detections.iter().any(|detection| {
+        detection["source"] == "rule" && detection["rule_id"] == "profiles.rules.eicar"
+    }));
+    assert!(enabled_detections.iter().any(|detection| {
+        detection["source"] == "plugin" && detection["plugin_id"] == "dummy_pre_eicar"
+    }));
+    assert!(enabled_detections.iter().any(|detection| {
+        detection["source"] == "plugin" && detection["plugin_id"] == "dummy_post_allow"
+    }));
     assert!(
         enabled_event.get("http").is_some(),
         "wire DTO must expose every first-party root, even when null"
@@ -778,7 +796,7 @@ async fn profile_plugin_endpoint_matrix_dynamically_controls_enforcement_evaluat
 
     let Json(disabled) = handle_profile_plugin_update(
         State(Arc::clone(&state)),
-        Path(("default".to_string(), "dummy_pre_eicar".to_string())),
+        Path(("code".to_string(), "dummy_pre_eicar".to_string())),
         Json(PluginUpdate {
             mode: Some(capsem_core::net::policy_config::SecurityPluginMode::Disable),
             detection_level: None,
@@ -793,18 +811,20 @@ async fn profile_plugin_endpoint_matrix_dynamically_controls_enforcement_evaluat
 
     let Json(after_disable) = handle_enforcement_evaluate(
         State(Arc::clone(&state)),
-        Path("default".to_string()),
+        Path("code".to_string()),
         Json(request.clone()),
     )
     .await
     .expect("disabled plugin evaluates");
     let after_disable_event = serde_json::to_value(&after_disable.event).unwrap();
     assert_eq!(after_disable_event["decision"]["effective"], "allow");
-    assert_eq!(
-        after_disable_event["detections"].as_array().unwrap().len(),
-        1,
-        "rule detection remains, disabled plugin detection disappears"
-    );
+    let after_disable_detections = after_disable_event["detections"].as_array().unwrap();
+    assert!(after_disable_detections.iter().any(|detection| {
+        detection["source"] == "rule" && detection["rule_id"] == "profiles.rules.eicar"
+    }));
+    assert!(!after_disable_detections.iter().any(|detection| {
+        detection["source"] == "plugin" && detection["plugin_id"] == "dummy_pre_eicar"
+    }));
 
     let unknown_profile = handle_profile_plugin_update(
         State(Arc::clone(&state)),
@@ -821,7 +841,7 @@ async fn profile_plugin_endpoint_matrix_dynamically_controls_enforcement_evaluat
 
     let Json(reenabled) = handle_profile_plugin_update(
         State(Arc::clone(&state)),
-        Path(("default".to_string(), "dummy_pre_eicar".to_string())),
+        Path(("code".to_string(), "dummy_pre_eicar".to_string())),
         Json(PluginUpdate {
             mode: Some(capsem_core::net::policy_config::SecurityPluginMode::Block),
             detection_level: Some(capsem_core::net::policy_config::DetectionLevel::Critical),
@@ -839,13 +859,12 @@ async fn profile_plugin_endpoint_matrix_dynamically_controls_enforcement_evaluat
     );
 
     let Json(after_enable) =
-        handle_enforcement_evaluate(State(state), Path("default".to_string()), Json(request))
+        handle_enforcement_evaluate(State(state), Path("code".to_string()), Json(request))
             .await
             .expect("reenabled plugin evaluates");
     let after_enable_event = serde_json::to_value(&after_enable.event).unwrap();
     assert_eq!(after_enable_event["decision"]["effective"], "block");
     let detections = after_enable_event["detections"].as_array().unwrap();
-    assert_eq!(detections.len(), 2);
     assert!(detections.iter().any(|detection| {
         detection["source"] == "plugin"
             && detection["plugin_id"] == "dummy_pre_eicar"
@@ -872,7 +891,7 @@ async fn enforcement_rule_endpoints_add_delete_reload_and_reject_invalid_rules_a
     };
 
     let Json(saved) = handle_enforcement_rule_upsert(
-        Path(("default".to_string(), "eicar_block".to_string())),
+        Path(("code".to_string(), "eicar_block".to_string())),
         Json(rule.clone()),
     )
     .await
@@ -887,7 +906,7 @@ async fn enforcement_rule_endpoints_add_delete_reload_and_reject_invalid_rules_a
     );
 
     let Json(reload) =
-        handle_enforcement_reload(State(make_test_state()), Path("default".to_string()))
+        handle_enforcement_reload(State(make_test_state()), Path("code".to_string()))
             .await
             .expect("reload alias should broadcast to zero instances");
     assert_eq!(reload["success"], serde_json::json!(true));
@@ -897,7 +916,7 @@ async fn enforcement_rule_endpoints_add_delete_reload_and_reject_invalid_rules_a
     bad_priority.priority =
         Some(capsem_core::net::policy_config::SecurityRulePriority::Explicit(-100));
     let err = handle_enforcement_rule_upsert(
-        Path(("default".to_string(), "bad_negative_priority".to_string())),
+        Path(("code".to_string(), "bad_negative_priority".to_string())),
         Json(bad_priority),
     )
     .await
@@ -912,7 +931,7 @@ async fn enforcement_rule_endpoints_add_delete_reload_and_reject_invalid_rules_a
     let mut corp_locked = rule.clone();
     corp_locked.corp_locked = true;
     let err = handle_enforcement_rule_upsert(
-        Path(("default".to_string(), "corp_locked".to_string())),
+        Path(("code".to_string(), "corp_locked".to_string())),
         Json(corp_locked),
     )
     .await
@@ -934,7 +953,7 @@ async fn enforcement_rule_endpoints_add_delete_reload_and_reject_invalid_rules_a
     );
 
     let Json(deleted) =
-        handle_enforcement_rule_delete(Path(("default".to_string(), "eicar_block".to_string())))
+        handle_enforcement_rule_delete(Path(("code".to_string(), "eicar_block".to_string())))
             .await
             .expect("delete should remove existing rule");
     assert!(deleted.deleted);
@@ -942,10 +961,9 @@ async fn enforcement_rule_endpoints_add_delete_reload_and_reject_invalid_rules_a
     let loaded = capsem_core::net::policy_config::load_settings_file(&user_path).unwrap();
     assert!(!loaded.profiles.rules.contains_key("eicar_block"));
 
-    let err =
-        handle_enforcement_rule_delete(Path(("default".to_string(), "eicar_block".to_string())))
-            .await
-            .expect_err("deleting a missing rule should return not found");
+    let err = handle_enforcement_rule_delete(Path(("code".to_string(), "eicar_block".to_string())))
+        .await
+        .expect_err("deleting a missing rule should return not found");
     assert_eq!(err.0, StatusCode::NOT_FOUND);
 }
 

@@ -344,7 +344,7 @@ describe('api', () => {
       const profiles = {
         profiles: [
           {
-            id: 'default',
+            id: 'code',
             name: 'Default',
             description: 'Built-in Capsem developer profile.',
             source: 'effective',
@@ -365,7 +365,7 @@ describe('api', () => {
     it('getProfileInfo sends GET /profiles/{profile_id}/info', async () => {
       const info = {
         profile: {
-          id: 'default',
+          id: 'code',
           name: 'Default',
           description: 'Built-in Capsem developer profile.',
           source: 'effective',
@@ -376,19 +376,19 @@ describe('api', () => {
         },
       };
       mockFetch.mockReturnValueOnce(jsonResponse(info));
-      const result = await api.getProfileInfo('default');
+      const result = await api.getProfileInfo('code');
       expect(result).toEqual(info);
       const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
-      expect(call[0]).toContain('/profiles/default/info');
+      expect(call[0]).toContain('/profiles/code/info');
     });
 
     it('validateProfile sends POST /profiles/{profile_id}/validate', async () => {
-      const response = { valid: true, profile_id: 'default' };
+      const response = { valid: true, profile_id: 'code' };
       mockFetch.mockReturnValueOnce(jsonResponse(response));
-      const result = await api.validateProfile('default');
+      const result = await api.validateProfile('code');
       expect(result).toEqual(response);
       const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
-      expect(call[0]).toContain('/profiles/default/validate');
+      expect(call[0]).toContain('/profiles/code/validate');
       expect(call[1].method).toBe('POST');
     });
 
@@ -399,56 +399,56 @@ describe('api', () => {
       expect(mockFetch.mock.calls[mockFetch.mock.calls.length - 1][0]).toContain('/profiles/create');
       expect(mockFetch.mock.calls[mockFetch.mock.calls.length - 1][1].method).toBe('POST');
 
-      await api.editProfile('default', {});
-      expect(mockFetch.mock.calls[mockFetch.mock.calls.length - 1][0]).toContain('/profiles/default/edit');
+      await api.editProfile('code', {});
+      expect(mockFetch.mock.calls[mockFetch.mock.calls.length - 1][0]).toContain('/profiles/code/edit');
       expect(mockFetch.mock.calls[mockFetch.mock.calls.length - 1][1].method).toBe('PATCH');
 
-      await api.deleteProfile('default');
-      expect(mockFetch.mock.calls[mockFetch.mock.calls.length - 1][0]).toContain('/profiles/default/delete');
+      await api.deleteProfile('code');
+      expect(mockFetch.mock.calls[mockFetch.mock.calls.length - 1][0]).toContain('/profiles/code/delete');
       expect(mockFetch.mock.calls[mockFetch.mock.calls.length - 1][1].method).toBe('DELETE');
 
-      await api.cloneProfile('default', {});
-      expect(mockFetch.mock.calls[mockFetch.mock.calls.length - 1][0]).toContain('/profiles/default/clone');
+      await api.cloneProfile('code', {});
+      expect(mockFetch.mock.calls[mockFetch.mock.calls.length - 1][0]).toContain('/profiles/code/clone');
       expect(mockFetch.mock.calls[mockFetch.mock.calls.length - 1][1].method).toBe('POST');
     });
 
     it('profile skill helpers use profile-scoped routes', async () => {
       mockFetch.mockReturnValue(jsonResponse({ ok: true }));
 
-      await api.getProfileSkillsInfo('default');
-      expect(mockFetch.mock.calls[mockFetch.mock.calls.length - 1][0]).toContain('/profiles/default/skills/info');
+      await api.getProfileSkillsInfo('code');
+      expect(mockFetch.mock.calls[mockFetch.mock.calls.length - 1][0]).toContain('/profiles/code/skills/info');
 
-      await api.listProfileSkills('default');
-      expect(mockFetch.mock.calls[mockFetch.mock.calls.length - 1][0]).toContain('/profiles/default/skills/list');
+      await api.listProfileSkills('code');
+      expect(mockFetch.mock.calls[mockFetch.mock.calls.length - 1][0]).toContain('/profiles/code/skills/list');
 
-      await api.addProfileSkill('default', {});
-      expect(mockFetch.mock.calls[mockFetch.mock.calls.length - 1][0]).toContain('/profiles/default/skills/add');
+      await api.addProfileSkill('code', {});
+      expect(mockFetch.mock.calls[mockFetch.mock.calls.length - 1][0]).toContain('/profiles/code/skills/add');
       expect(mockFetch.mock.calls[mockFetch.mock.calls.length - 1][1].method).toBe('POST');
 
-      await api.editProfileSkill('default', 'build', {});
-      expect(mockFetch.mock.calls[mockFetch.mock.calls.length - 1][0]).toContain('/profiles/default/skills/build/edit');
+      await api.editProfileSkill('code', 'build', {});
+      expect(mockFetch.mock.calls[mockFetch.mock.calls.length - 1][0]).toContain('/profiles/code/skills/build/edit');
       expect(mockFetch.mock.calls[mockFetch.mock.calls.length - 1][1].method).toBe('PATCH');
 
-      await api.deleteProfileSkill('default', 'build');
-      expect(mockFetch.mock.calls[mockFetch.mock.calls.length - 1][0]).toContain('/profiles/default/skills/build/delete');
+      await api.deleteProfileSkill('code', 'build');
+      expect(mockFetch.mock.calls[mockFetch.mock.calls.length - 1][0]).toContain('/profiles/code/skills/build/delete');
       expect(mockFetch.mock.calls[mockFetch.mock.calls.length - 1][1].method).toBe('DELETE');
     });
 
     it('profile asset, plugin, and mcp info helpers use profile-scoped routes', async () => {
       mockFetch.mockReturnValue(jsonResponse({ ok: true }));
 
-      await api.getProfileAssetsInfo('default');
-      expect(mockFetch.mock.calls[mockFetch.mock.calls.length - 1][0]).toContain('/profiles/default/assets/info');
+      await api.getProfileAssetsInfo('code');
+      expect(mockFetch.mock.calls[mockFetch.mock.calls.length - 1][0]).toContain('/profiles/code/assets/info');
 
-      await api.editProfileAssets('default', {});
-      expect(mockFetch.mock.calls[mockFetch.mock.calls.length - 1][0]).toContain('/profiles/default/assets/edit');
+      await api.editProfileAssets('code', {});
+      expect(mockFetch.mock.calls[mockFetch.mock.calls.length - 1][0]).toContain('/profiles/code/assets/edit');
       expect(mockFetch.mock.calls[mockFetch.mock.calls.length - 1][1].method).toBe('PATCH');
 
-      await api.getProfilePluginsInfo('default');
-      expect(mockFetch.mock.calls[mockFetch.mock.calls.length - 1][0]).toContain('/profiles/default/plugins/info');
+      await api.getProfilePluginsInfo('code');
+      expect(mockFetch.mock.calls[mockFetch.mock.calls.length - 1][0]).toContain('/profiles/code/plugins/info');
 
-      await api.getProfileMcpInfo('default');
-      expect(mockFetch.mock.calls[mockFetch.mock.calls.length - 1][0]).toContain('/profiles/default/mcp/info');
+      await api.getProfileMcpInfo('code');
+      expect(mockFetch.mock.calls[mockFetch.mock.calls.length - 1][0]).toContain('/profiles/code/mcp/info');
     });
   });
 
@@ -464,7 +464,7 @@ describe('api', () => {
 
     it('listEnforcementRules sends GET /profiles/{profile_id}/enforcement/rules/list', async () => {
       const response = {
-        profile_id: 'default',
+        profile_id: 'code',
         rules: [
           {
             rule_id: 'profiles.rules.default_http_requests',
@@ -482,15 +482,15 @@ describe('api', () => {
         ],
       };
       mockFetch.mockReturnValueOnce(jsonResponse(response));
-      const result = await api.listEnforcementRules('default');
+      const result = await api.listEnforcementRules('code');
       expect(result).toEqual(response);
       const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
-      expect(call[0]).toContain('/profiles/default/enforcement/rules/list');
+      expect(call[0]).toContain('/profiles/code/enforcement/rules/list');
     });
 
     it('getEnforcementInfo sends GET /profiles/{profile_id}/enforcement/info', async () => {
       const response = {
-        profile_id: 'default',
+        profile_id: 'code',
         rule_count: 8,
         default_rule_count: 7,
         custom_rule_count: 1,
@@ -500,10 +500,10 @@ describe('api', () => {
         action_counts: { allow: 7, block: 1 },
       };
       mockFetch.mockReturnValueOnce(jsonResponse(response));
-      const result = await api.getEnforcementInfo('default');
+      const result = await api.getEnforcementInfo('code');
       expect(result).toEqual(response);
       const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
-      expect(call[0]).toContain('/profiles/default/enforcement/info');
+      expect(call[0]).toContain('/profiles/code/enforcement/info');
     });
   });
 
@@ -517,7 +517,7 @@ describe('api', () => {
 
     it('listDetectionRules sends GET /profiles/{profile_id}/detection/rules/list', async () => {
       const response = {
-        profile_id: 'default',
+        profile_id: 'code',
         rules: [
           {
             rule_id: 'profiles.rules.skill_loaded',
@@ -536,15 +536,15 @@ describe('api', () => {
         ],
       };
       mockFetch.mockReturnValueOnce(jsonResponse(response));
-      const result = await api.listDetectionRules('default');
+      const result = await api.listDetectionRules('code');
       expect(result).toEqual(response);
       const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
-      expect(call[0]).toContain('/profiles/default/detection/rules/list');
+      expect(call[0]).toContain('/profiles/code/detection/rules/list');
     });
 
     it('getDetectionInfo sends GET /profiles/{profile_id}/detection/info', async () => {
       const response = {
-        profile_id: 'default',
+        profile_id: 'code',
         rule_count: 2,
         default_rule_count: 1,
         custom_rule_count: 1,
@@ -554,10 +554,10 @@ describe('api', () => {
         action_counts: { allow: 2 },
       };
       mockFetch.mockReturnValueOnce(jsonResponse(response));
-      const result = await api.getDetectionInfo('default');
+      const result = await api.getDetectionInfo('code');
       expect(result).toEqual(response);
       const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
-      expect(call[0]).toContain('/profiles/default/detection/info');
+      expect(call[0]).toContain('/profiles/code/detection/info');
     });
   });
 
@@ -604,14 +604,14 @@ describe('api', () => {
 
     it('listPlugins sends GET /profiles/{profile_id}/plugins/list', async () => {
       const plugins = {
-        scope: { kind: 'profile', profile_id: 'default' },
+        scope: { kind: 'profile', profile_id: 'code' },
         plugins: [],
       };
       mockFetch.mockReturnValueOnce(jsonResponse(plugins));
-      const result = await api.listPlugins('default');
+      const result = await api.listPlugins('code');
       expect(result).toEqual(plugins);
       const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
-      expect(call[0]).toContain('/profiles/default/plugins/list');
+      expect(call[0]).toContain('/profiles/code/plugins/list');
     });
 
     it('updatePlugin sends PATCH /profiles/{profile_id}/plugins/{plugin_id}/edit', async () => {
@@ -657,16 +657,16 @@ describe('api', () => {
     it('getMcpServers sends GET /profiles/{profile_id}/mcp/servers/list', async () => {
       const servers = [{ name: 'srv', url: 'http://x', enabled: true }];
       mockFetch.mockReturnValueOnce(jsonResponse(servers));
-      const result = await api.getMcpServers('default');
+      const result = await api.getMcpServers('code');
       expect(result).toEqual(servers);
       const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
-      expect(call[0]).toContain('/profiles/default/mcp/servers/list');
+      expect(call[0]).toContain('/profiles/code/mcp/servers/list');
     });
 
     it('getMcpServers returns [] when disconnected', async () => {
       mockFetch.mockRejectedValueOnce(new Error('fail'));
       await api.init(); // disconnect
-      const result = await api.getMcpServers('default');
+      const result = await api.getMcpServers('code');
       expect(result).toEqual([]);
     });
 
@@ -679,10 +679,10 @@ describe('api', () => {
 
       const tools = [{ namespaced_name: 'bash', server_name: 'system' }];
       mockFetch.mockReturnValueOnce(jsonResponse(tools));
-      const result = await api.getMcpTools('default', 'system');
+      const result = await api.getMcpTools('code', 'system');
       expect(result).toEqual(tools);
       const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
-      expect(call[0]).toContain('/profiles/default/mcp/servers/system/tools/list');
+      expect(call[0]).toContain('/profiles/code/mcp/servers/system/tools/list');
     });
 
     it('refreshMcpTools sends POST /profiles/{profile_id}/mcp/servers/{server_id}/refresh', async () => {
@@ -692,9 +692,9 @@ describe('api', () => {
       await api.init();
 
       mockFetch.mockReturnValueOnce(jsonResponse(null));
-      await api.refreshMcpTools('default', 'my-server');
+      await api.refreshMcpTools('code', 'my-server');
       const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
-      expect(call[0]).toContain('/profiles/default/mcp/servers/my-server/refresh');
+      expect(call[0]).toContain('/profiles/code/mcp/servers/my-server/refresh');
     });
 
     it('approveMcpTool sends PATCH /profiles/{profile_id}/mcp/servers/{server_id}/tools/{tool_id}/edit', async () => {
@@ -704,9 +704,9 @@ describe('api', () => {
       await api.init();
 
       mockFetch.mockReturnValueOnce(jsonResponse(null));
-      await api.approveMcpTool('default', 'local', 'bash');
+      await api.approveMcpTool('code', 'local', 'bash');
       const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
-      expect(call[0]).toContain('/profiles/default/mcp/servers/local/tools/bash/edit');
+      expect(call[0]).toContain('/profiles/code/mcp/servers/local/tools/bash/edit');
       expect(call[1].method).toBe('PATCH');
       expect(JSON.parse(call[1].body)).toEqual({ approved: true });
     });
@@ -718,10 +718,10 @@ describe('api', () => {
       await api.init();
 
       mockFetch.mockReturnValueOnce(jsonResponse({ result: 'ok' }));
-      const result = await api.callMcpTool('default', 'local', 'bash', { command: 'ls' });
+      const result = await api.callMcpTool('code', 'local', 'bash', { command: 'ls' });
       expect(result).toEqual({ result: 'ok' });
       const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
-      expect(call[0]).toContain('/profiles/default/mcp/servers/local/tools/bash/call');
+      expect(call[0]).toContain('/profiles/code/mcp/servers/local/tools/bash/call');
     });
   });
 
@@ -859,7 +859,7 @@ describe('api', () => {
   });
 
   describe('reloadProfile', () => {
-    it('sends POST /profiles/default/reload by default', async () => {
+    it('sends POST /profiles/code/reload by default', async () => {
       mockFetch
         .mockReturnValueOnce(jsonResponse({ ok: true, version: '1.0.0', service_socket: '/tmp/s' }))
         .mockReturnValueOnce(jsonResponse({ token: 'tok' }));
@@ -868,7 +868,7 @@ describe('api', () => {
       mockFetch.mockReturnValueOnce(jsonResponse(null));
       await api.reloadProfile();
       const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
-      expect(call[0]).toContain('/profiles/default/reload');
+      expect(call[0]).toContain('/profiles/code/reload');
       expect(call[1].method).toBe('POST');
     });
   });
@@ -884,19 +884,19 @@ describe('api', () => {
     it('getAssetsStatus sends GET /profiles/{profile_id}/assets/status', async () => {
       const response = { ready: true, assets: [], missing: [] };
       mockFetch.mockReturnValueOnce(jsonResponse(response));
-      const result = await api.getAssetsStatus('default');
+      const result = await api.getAssetsStatus('code');
       expect(result).toEqual(response);
       const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
-      expect(call[0]).toContain('/profiles/default/assets/status');
+      expect(call[0]).toContain('/profiles/code/assets/status');
     });
 
     it('ensureAssets sends POST /profiles/{profile_id}/assets/ensure', async () => {
       const response = { ready: true, ensured: true, downloaded: 0, assets: [], missing: [] };
       mockFetch.mockReturnValueOnce(jsonResponse(response));
-      const result = await api.ensureAssets('default');
+      const result = await api.ensureAssets('code');
       expect(result).toEqual(response);
       const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
-      expect(call[0]).toContain('/profiles/default/assets/ensure');
+      expect(call[0]).toContain('/profiles/code/assets/ensure');
       expect(call[1].method).toBe('POST');
     });
   });
@@ -908,7 +908,7 @@ describe('api', () => {
         .mockReturnValueOnce(jsonResponse({ token: 'tok' }));
       await api.init();
 
-      mockFetch.mockReturnValueOnce(jsonResponse({ images: [{ name: 'default' }] }));
+      mockFetch.mockReturnValueOnce(jsonResponse({ images: [{ name: 'code' }] }));
       const result = await api.getImages();
       expect(result.images).toHaveLength(1);
     });

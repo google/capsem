@@ -427,6 +427,11 @@ the guarantee or explicitly burn it.
 
 ## S2: Runtime Profile Assets And Pins
 
+- [x] Add core `ProfileCatalog` loader and parse the checked-in
+  `config/profiles/code.toml` as the built-in real profile entry.
+- [x] Replace service profile route validation/list/info/assets/skills/plugin
+  profile checks with catalog-backed `code` profile lookup instead of a
+  hard-coded `default` profile stub.
 - [ ] Restore profile catalog/loader and remove all `default`-only profile code
   paths.
 - [ ] Represent default/built-in profiles as real catalog/profile entries using

@@ -12,6 +12,8 @@ id = "developer"
 name = "Developer"
 description = "Default developer VM profile."
 icon_svg = "<svg viewBox=\"0 0 16 16\"></svg>"
+revision = "2026.0607.1"
+refresh_policy = "24h"
 
 [availability]
 web = true
@@ -19,10 +21,38 @@ shell = true
 mobile = false
 
 [assets]
-channel = "stable"
-kernel = "vmlinuz"
-initrd = "initrd.img"
-rootfs = "rootfs.erofs"
+format = "profile-assets.v1"
+refresh_policy = "on_profile_refresh"
+filesystem = "erofs"
+compression = "lz4hc"
+compression_level = 12
+
+[assets.arch.arm64.kernel]
+name = "vmlinuz"
+url = "https://example.invalid/arm64-vmlinuz"
+hash = "blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+signature = "minisig:test"
+size = 1
+content_type = "application/octet-stream"
+
+[assets.arch.arm64.initrd]
+name = "initrd.img"
+url = "https://example.invalid/arm64-initrd.img"
+hash = "blake3:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+signature = "minisig:test"
+size = 1
+content_type = "application/octet-stream"
+
+[assets.arch.arm64.rootfs]
+name = "rootfs.erofs"
+url = "https://example.invalid/arm64-rootfs.erofs"
+hash = "blake3:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+signature = "minisig:test"
+size = 1
+content_type = "application/vnd.capsem.erofs"
+filesystem = "erofs"
+compression = "lz4hc"
+compression_level = 12
 
 [vm]
 cpu_count = 6
@@ -89,12 +119,16 @@ allowed_overlays = ["mcp_injection", "broker_placeholders", "endpoint_selection"
 
     profile.validate().expect("profile contract validates");
     assert_eq!(profile.id, "developer");
-    assert_eq!(profile.assets.rootfs, "rootfs.erofs");
+    assert_eq!(profile.assets.arch["arm64"].rootfs.name, "rootfs.erofs");
     assert_eq!(profile.vm.cpu_count, 6);
-    assert!(profile
-        .profiles
-        .defaults
-        .contains_key("default_http_requests"));
+    assert_eq!(
+        profile.rule_files.enforcement.as_deref(),
+        Some("rules/enforcement.toml")
+    );
+    assert_eq!(
+        profile.rule_files.sigma.as_deref(),
+        Some("rules/detection.yaml")
+    );
     assert!(profile.profiles.rules.contains_key("skill_loaded"));
     assert!(profile.ai.contains_key("openai"));
     assert!(profile.plugins.contains_key("dummy_pre_eicar"));
@@ -108,15 +142,27 @@ fn builtin_default_profile_manifest_is_valid_and_erofs_backed() {
     profile
         .validate()
         .expect("builtin default profile validates");
-    assert_eq!(profile.id, "default");
-    assert_eq!(profile.name, "Default");
-    assert_eq!(profile.assets.rootfs, "rootfs.erofs");
+    assert_eq!(profile.id, "code");
+    assert_eq!(profile.name, "Code");
+    assert_eq!(
+        profile
+            .assets
+            .current_arch_assets()
+            .expect("current architecture assets")
+            .rootfs
+            .name,
+        "rootfs.erofs"
+    );
     assert!(profile.availability.web);
     assert!(profile.availability.shell);
-    assert!(profile
-        .profiles
-        .defaults
-        .contains_key("default_http_requests"));
+    assert_eq!(
+        profile.rule_files.enforcement.as_deref(),
+        Some("profiles/code/enforcement.toml")
+    );
+    assert_eq!(
+        profile.rule_files.sigma.as_deref(),
+        Some("profiles/code/detection.yaml")
+    );
     assert!(profile.plugins.contains_key("credential_broker"));
 }
 
@@ -127,6 +173,8 @@ fn profile_config_rejects_credential_broker_settings() {
 id = "developer"
 name = "Developer"
 description = "Default developer VM profile."
+revision = "2026.0607.1"
+refresh_policy = "24h"
 
 [credentials]
 broker_enabled = true
@@ -143,6 +191,8 @@ fn profile_config_rejects_ui_settings_soup() {
 id = "developer"
 name = "Developer"
 description = "Default developer VM profile."
+revision = "2026.0607.1"
+refresh_policy = "24h"
 
 [settings."appearance.dark_mode"]
 value = true
@@ -155,13 +205,8 @@ modified = "2026-06-07T00:00:00Z"
 
 #[test]
 fn profile_config_validation_rejects_bad_identity_assets_and_vm_defaults() {
-    let mut profile = parse_profile(
-        r#"
-id = "Bad Profile"
-name = "Developer"
-description = "Default developer VM profile."
-"#,
-    );
+    let mut profile = ProfileConfigFile::builtin_code();
+    profile.id = "Bad Profile".to_string();
     assert!(profile.validate().unwrap_err().contains("lowercase ascii"));
 
     profile.id = "developer".to_string();
@@ -173,6 +218,48 @@ description = "Default developer VM profile."
     assert!(profile.validate().unwrap_err().contains("cpu_count"));
 
     profile.vm.cpu_count = 4;
-    profile.assets.rootfs.clear();
-    assert!(profile.validate().unwrap_err().contains("rootfs"));
+    profile.assets.arch.clear();
+    assert!(profile.validate().unwrap_err().contains("assets.arch"));
+}
+
+#[test]
+fn checked_in_code_profile_parses_and_validates() {
+    let profile = toml::from_str::<ProfileConfigFile>(include_str!(
+        "../../../../../../config/profiles/code.toml"
+    ))
+    .expect("checked-in code profile parses");
+
+    profile
+        .validate()
+        .expect("checked-in code profile validates");
+    assert_eq!(profile.id, "code");
+    assert_eq!(profile.assets.filesystem, "erofs");
+    assert_eq!(profile.assets.compression, "lz4hc");
+    assert_eq!(profile.assets.compression_level, 12);
+    assert!(profile.assets.arch.contains_key("arm64"));
+    assert!(profile.assets.arch.contains_key("x86_64"));
+    assert!(profile.plugins.contains_key("credential_broker"));
+}
+
+#[test]
+fn profile_catalog_loads_directory_profiles_and_rejects_id_mismatch() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("code.toml"),
+        include_str!("../../../../../../config/profiles/code.toml"),
+    )
+    .unwrap();
+
+    let catalog = ProfileCatalog::load_from_dir(dir.path()).expect("catalog loads");
+    let profile = catalog.get("code").expect("code profile exists");
+    assert_eq!(profile.name, "Code");
+    assert_eq!(catalog.profiles().count(), 1);
+
+    std::fs::write(
+        dir.path().join("wrong.toml"),
+        include_str!("../../../../../../config/profiles/code.toml"),
+    )
+    .unwrap();
+    let error = ProfileCatalog::load_from_dir(dir.path()).unwrap_err();
+    assert!(error.contains("id mismatch"), "{error}");
 }

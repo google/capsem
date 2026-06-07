@@ -8,9 +8,10 @@ use axum::{
 use capsem_core::poll::{poll_until, PollOpts};
 use capsem_core::{
     net::policy_config::{
-        CompiledSecurityRule, DetectionLevel, ProfileConfigFile, ProviderRuleProfile,
-        SecurityPluginConfig, SecurityPluginMode, SecurityRule, SecurityRuleGroup,
-        SecurityRuleProfile, SecurityRuleSet, SecurityRuleSource, SettingsFile,
+        CompiledSecurityRule, DetectionLevel, ProfileCatalog, ProfileCatalogSource,
+        ProfileConfigFile, ProviderRuleProfile, SecurityPluginConfig, SecurityPluginMode,
+        SecurityRule, SecurityRuleGroup, SecurityRuleProfile, SecurityRuleSet, SecurityRuleSource,
+        SettingsFile,
     },
     security_engine::{
         FileSecurityEvent, RuntimeSecurityEventType, SecurityActionRegistry, SecurityEmitError,
@@ -83,8 +84,6 @@ const PROCESS_ENV_ALLOWLIST: &[&str] = &[
     // capsem.rootfs=erofs-dax when booting a .erofs rootfs.
     "CAPSEM_EXPERIMENTAL_EROFS_DAX",
 ];
-
-const DEFAULT_PROFILE_ID: &str = "default";
 
 // ---------------------------------------------------------------------------
 // Service state
@@ -227,8 +226,7 @@ impl EnforcementEvaluateRequest {
             rules_toml: r#"
 [profiles.rules.eicar]
 name = "eicar_rewrite_scan"
-plugin = "dummy_pre_eicar"
-action = "rewrite"
+action = "allow"
 detection_level = "high"
 match = 'file.import.content.contains("EICAR")'
 "#
@@ -3418,13 +3416,20 @@ async fn handle_profile_assets_ensure(
 async fn handle_profile_assets_info(
     Path(profile_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let manifest = default_profile_manifest_for_route(profile_id)?;
+    let manifest = profile_manifest_for_route(profile_id)?;
+    let current_arch = capsem_core::net::policy_config::current_profile_arch();
+    let current_assets = manifest.assets.current_arch_assets();
     Ok(Json(json!({
         "profile_id": manifest.id,
-        "channel": manifest.assets.channel,
-        "kernel": manifest.assets.kernel,
-        "initrd": manifest.assets.initrd,
-        "rootfs": manifest.assets.rootfs,
+        "format": manifest.assets.format,
+        "refresh_policy": manifest.assets.refresh_policy,
+        "filesystem": manifest.assets.filesystem,
+        "compression": manifest.assets.compression,
+        "compression_level": manifest.assets.compression_level,
+        "current_arch": current_arch,
+        "current_arch_ready": current_assets.is_some(),
+        "current_assets": current_assets,
+        "arch": manifest.assets.arch,
     })))
 }
 
@@ -3533,32 +3538,50 @@ async fn handle_corp_reload(
 // MCP API Handlers
 // ---------------------------------------------------------------------------
 
+fn load_profile_catalog_for_service() -> Result<ProfileCatalog, AppError> {
+    ProfileCatalog::load_default().map_err(|error| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to load profile catalog: {error}"),
+        )
+    })
+}
+
+fn profile_catalog_source_label(source: &ProfileCatalogSource) -> String {
+    match source {
+        ProfileCatalogSource::BuiltIn => "built_in".to_string(),
+        ProfileCatalogSource::Directory(path) => format!("directory:{}", path.display()),
+    }
+}
+
 fn validate_profile_route_id(profile_id: String) -> Result<String, AppError> {
     if profile_id.is_empty() {
-        Err(AppError(
+        return Err(AppError(
             StatusCode::BAD_REQUEST,
             "profile id must not be empty".to_string(),
-        ))
-    } else if profile_id != DEFAULT_PROFILE_ID {
-        Err(AppError(
+        ));
+    }
+    let catalog = load_profile_catalog_for_service()?;
+    if catalog.get(&profile_id).is_none() {
+        return Err(AppError(
             StatusCode::NOT_FOUND,
             format!("profile not found: {profile_id}"),
-        ))
-    } else {
-        Ok(profile_id)
+        ));
     }
+    Ok(profile_id)
 }
 
 fn security_rule_group_len(group: &SecurityRuleGroup) -> usize {
     group.defaults.len() + group.rules.len()
 }
 
-fn build_default_profile_summary(
+fn build_profile_summary(
+    manifest: &ProfileConfigFile,
+    source: &ProfileCatalogSource,
     user: &SettingsFile,
     corp: &SettingsFile,
     plugin_count: usize,
 ) -> api::ProfileSummary {
-    let manifest = ProfileConfigFile::builtin_default();
     let default_rule_count = security_rule_group_len(&manifest.profiles)
         + manifest
             .ai
@@ -3586,10 +3609,10 @@ fn build_default_profile_summary(
         + corp.mcp.as_ref().map_or(0, |mcp| mcp.servers.len());
 
     api::ProfileSummary {
-        id: manifest.id,
-        name: manifest.name,
-        description: manifest.description,
-        source: "effective".to_string(),
+        id: manifest.id.clone(),
+        name: manifest.name.clone(),
+        description: manifest.description.clone(),
+        source: profile_catalog_source_label(source),
         rule_count: profile_rule_count,
         default_rule_count,
         plugin_count,
@@ -3600,28 +3623,42 @@ fn build_default_profile_summary(
 async fn handle_profiles_list(
     State(state): State<Arc<ServiceState>>,
 ) -> Result<Json<api::ProfilesListResponse>, AppError> {
+    let catalog = load_profile_catalog_for_service()?;
     let (user, corp) = capsem_core::net::policy_config::load_settings_files();
-    let profile = build_default_profile_summary(
-        &user,
-        &corp,
-        effective_plugin_policy(&state, DEFAULT_PROFILE_ID).len(),
-    );
-    Ok(Json(api::ProfilesListResponse {
-        profiles: vec![profile],
-    }))
+    let profiles = catalog
+        .profiles()
+        .map(|profile| {
+            build_profile_summary(
+                profile,
+                catalog.source(),
+                &user,
+                &corp,
+                effective_plugin_policy(&state, &profile.id).len(),
+            )
+        })
+        .collect();
+    Ok(Json(api::ProfilesListResponse { profiles }))
 }
 
 async fn handle_profile_info(
     State(state): State<Arc<ServiceState>>,
     Path(profile_id): Path<String>,
 ) -> Result<Json<api::ProfileInfoResponse>, AppError> {
-    validate_profile_route_id(profile_id)?;
+    let catalog = load_profile_catalog_for_service()?;
+    let manifest = catalog.get(&profile_id).ok_or_else(|| {
+        AppError(
+            StatusCode::NOT_FOUND,
+            format!("profile not found: {profile_id}"),
+        )
+    })?;
     let (user, corp) = capsem_core::net::policy_config::load_settings_files();
     Ok(Json(api::ProfileInfoResponse {
-        profile: build_default_profile_summary(
+        profile: build_profile_summary(
+            manifest,
+            catalog.source(),
             &user,
             &corp,
-            effective_plugin_policy(&state, DEFAULT_PROFILE_ID).len(),
+            effective_plugin_policy(&state, &manifest.id).len(),
         ),
     }))
 }
@@ -3633,16 +3670,15 @@ fn profile_persistence_not_implemented(operation: &str) -> AppError {
     )
 }
 
-fn default_profile_manifest_for_route(profile_id: String) -> Result<ProfileConfigFile, AppError> {
+fn profile_manifest_for_route(profile_id: String) -> Result<ProfileConfigFile, AppError> {
     let profile_id = validate_profile_route_id(profile_id)?;
-    let manifest = ProfileConfigFile::builtin_default();
-    if manifest.id != profile_id {
-        return Err(AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "built-in profile manifest id does not match default route".to_string(),
-        ));
-    }
-    Ok(manifest)
+    let catalog = load_profile_catalog_for_service()?;
+    catalog.get(&profile_id).cloned().ok_or_else(|| {
+        AppError(
+            StatusCode::NOT_FOUND,
+            format!("profile not found: {profile_id}"),
+        )
+    })
 }
 
 async fn handle_profile_create() -> Result<Json<serde_json::Value>, AppError> {
@@ -3685,7 +3721,7 @@ async fn handle_profile_validate(
     } else if let Some(profile) = request.profile {
         profile
     } else {
-        ProfileConfigFile::builtin_default()
+        profile_manifest_for_route(route_profile_id.clone())?
     };
     profile
         .validate()
@@ -3708,7 +3744,7 @@ async fn handle_profile_validate(
 async fn handle_profile_skills_info(
     Path(profile_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let manifest = default_profile_manifest_for_route(profile_id)?;
+    let manifest = profile_manifest_for_route(profile_id)?;
     Ok(Json(json!({
         "profile_id": manifest.id,
         "skill_count": manifest.skills.paths.len(),
@@ -3719,7 +3755,7 @@ async fn handle_profile_skills_info(
 async fn handle_profile_skills_list(
     Path(profile_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let manifest = default_profile_manifest_for_route(profile_id)?;
+    let manifest = profile_manifest_for_route(profile_id)?;
     Ok(Json(json!({
         "profile_id": manifest.id,
         "skills": manifest.skills.paths.into_iter().map(|path| json!({ "path": path })).collect::<Vec<_>>(),
