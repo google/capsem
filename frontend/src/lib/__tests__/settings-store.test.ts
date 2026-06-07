@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { buildMockSettingsResponse, mockSettings, recomputeEnabled } from '../mock-settings';
 import type { SettingsResponse } from '../types/settings';
 
-// Mock the API module -- settings store calls getSettings/saveSettings/applyPreset.
+// Mock the API module -- settings store calls getSettings/saveSettings.
 let mockResponse: SettingsResponse;
 
 vi.mock('../api', () => ({
@@ -16,20 +16,6 @@ vi.mock('../api', () => ({
       }
     }
     recomputeEnabled();
-    mockResponse = buildMockSettingsResponse();
-    return mockResponse;
-  }),
-  applyPreset: vi.fn(async (id: string) => {
-    const preset = mockResponse.presets.find(p => p.id === id);
-    if (preset) {
-      for (const [settingId, value] of Object.entries(preset.settings)) {
-        const setting = mockSettings.find(s => s.id === settingId);
-        if (setting) {
-          setting.effective_value = value as any;
-        }
-      }
-      recomputeEnabled();
-    }
     mockResponse = buildMockSettingsResponse();
     return mockResponse;
   }),
@@ -61,10 +47,6 @@ describe('settingsStore', () => {
 
     it('issues are populated after load', () => {
       expect(settingsStore.issues.length).toBeGreaterThan(0);
-    });
-
-    it('presets are populated after load', () => {
-      expect(settingsStore.model!.presets.length).toBeGreaterThan(0);
     });
 
     it('loading flag is false after load completes', () => {
@@ -243,21 +225,5 @@ describe('settingsStore', () => {
       expect(settingsStore.section('Nonexistent')).toBeUndefined();
     });
 
-    it('activePresetId is null when no preset matches', () => {
-      expect(settingsStore.activePresetId).toBeNull();
-    });
-  });
-
-  describe('presets', () => {
-    it('applySecurityPreset changes settings', async () => {
-      await settingsStore.applySecurityPreset('medium');
-      const bing = settingsStore.findLeaf('security.services.search.bing.allow');
-      expect(bing!.effective_value).toBe(true);
-    });
-
-    it('applySecurityPreset clears applying flag', async () => {
-      await settingsStore.applySecurityPreset('high');
-      expect(settingsStore.applyingPreset).toBeNull();
-    });
   });
 });

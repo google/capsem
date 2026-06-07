@@ -3000,20 +3000,6 @@ async fn handle_save_settings(
     Ok(Json(serde_json::to_value(resp).unwrap_or_default()))
 }
 
-/// GET /settings/presets -- list security presets.
-async fn handle_get_presets() -> Json<serde_json::Value> {
-    let presets = capsem_core::net::policy_config::security_presets();
-    Json(serde_json::to_value(presets).unwrap_or_default())
-}
-
-/// POST /settings/presets/{id} -- apply a security preset, return refreshed tree.
-async fn handle_apply_preset(Path(id): Path<String>) -> Result<Json<serde_json::Value>, AppError> {
-    capsem_core::net::policy_config::apply_preset(&id)
-        .map_err(|e| AppError(StatusCode::BAD_REQUEST, e))?;
-    let resp = capsem_core::net::policy_config::load_settings_response();
-    Ok(Json(serde_json::to_value(resp).unwrap_or_default()))
-}
-
 fn asset_status_value(state: &ServiceState) -> serde_json::Value {
     let reconcile = state
         .asset_reconcile
@@ -5527,8 +5513,6 @@ async fn main() -> Result<()> {
         .route("/fork/{id}", post(handle_fork))
         .route("/settings/info", get(handle_get_settings))
         .route("/settings/edit", patch(handle_save_settings))
-        .route("/settings/presets", get(handle_get_presets))
-        .route("/settings/presets/{id}", post(handle_apply_preset))
         .route("/assets/status", get(handle_assets_status))
         .route("/assets/ensure", post(handle_assets_ensure))
         .route("/corp/edit", put(handle_corp_config))

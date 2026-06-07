@@ -8,7 +8,7 @@ contract reset.
 | Stream | Status | Notes |
 | --- | --- | --- |
 | T0 Schema and ownership | Not Started | Profile/settings/corp schemas, immutable VM profile id, defaults/plugin/credential contract. |
-| T1 Service/gateway API | In Progress | Profile plugin, MCP server/tool, enforcement authoring, `/corp/edit`, `/settings/info|edit`, profile reload, and VM ledger routes are live; retired plugin global/VM, global MCP, global enforcement authoring, `/corp-config`, `GET|POST /settings`, `/settings/lint`, `/settings/validate-key`, `/reload-config`, and old ledger routes fail closed. Other authoring routes still need profile burn-down. |
+| T1 Service/gateway API | In Progress | Profile plugin, MCP server/tool, enforcement authoring, `/corp/edit`, `/settings/info|edit`, profile reload, and VM ledger routes are live; retired plugin global/VM, global MCP, global enforcement authoring, `/corp-config`, `GET|POST /settings`, `/settings/lint`, `/settings/validate-key`, `/settings/presets`, `/reload-config`, and old ledger routes fail closed. Other authoring routes still need profile burn-down. |
 | T2 Security rail burn-down | In Progress | Network web decision settings and MCP policy objects burned; remaining work is route/authoring/profile completion plus full invariant sweep. |
 | T3 Profile/settings/corp UI/API split | Not Started | Settings UI-only, profile behavior profile-backed, one editor writes one contract. |
 | T4 MCP/plugins/credentials/skills UI | In Progress | Plugin UI/API use profile routes; MCP tools now load under profile/server routes. MCP resources/prompts, credentials, and skills remain. |

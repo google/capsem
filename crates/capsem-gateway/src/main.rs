@@ -276,8 +276,6 @@ fn service_proxy_routes() -> Router<Arc<AppState>> {
         .route("/fork/{id}", post(proxy::handle_proxy))
         .route("/settings/info", get(proxy::handle_proxy))
         .route("/settings/edit", patch(proxy::handle_proxy))
-        .route("/settings/presets", get(proxy::handle_proxy))
-        .route("/settings/presets/{id}", post(proxy::handle_proxy))
         .route("/assets/status", get(proxy::handle_proxy))
         .route("/assets/ensure", post(proxy::handle_proxy))
         .route("/corp/edit", put(proxy::handle_proxy))
@@ -609,6 +607,8 @@ mod tests {
     #[tokio::test]
     async fn gateway_does_not_forward_retired_settings_utility_routes() {
         for (method, uri) in [
+            ("GET", "/settings/presets"),
+            ("POST", "/settings/presets/high"),
             ("POST", "/settings/lint"),
             ("POST", "/settings/validate-key"),
         ] {

@@ -1821,16 +1821,6 @@ async fn handle_get_settings_returns_tree() {
 }
 
 #[tokio::test]
-async fn handle_get_presets_returns_list() {
-    let Json(val) = handle_get_presets().await;
-    let arr = val.as_array().expect("presets should be an array");
-    assert!(!arr.is_empty(), "should have at least one preset");
-    assert!(arr[0].get("id").is_some());
-    assert!(arr[0].get("name").is_some());
-    assert!(arr[0].get("settings").is_some());
-}
-
-#[tokio::test]
 async fn handle_save_settings_rejects_unknown_key() {
     let mut changes = HashMap::new();
     changes.insert("nonexistent.setting.xyz".into(), serde_json::json!("value"));

@@ -16,7 +16,6 @@ import type {
 } from './types/gateway';
 import type {
   SettingsResponse,
-  SecurityPreset,
 } from './types/settings';
 import type {
   DownloadProgress,
@@ -615,18 +614,6 @@ export async function getSettings(): Promise<SettingsResponse> {
 /** Save settings changes. Returns the updated settings tree. */
 export async function saveSettings(changes: Record<string, unknown>): Promise<SettingsResponse> {
   const resp = await _patch('/settings/edit', changes);
-  return await resp.json();
-}
-
-/** List available security presets. */
-export async function getPresets(): Promise<SecurityPreset[]> {
-  const resp = await _get('/settings/presets');
-  return await resp.json();
-}
-
-/** Apply a security preset by ID. Returns updated settings. */
-export async function applyPreset(id: string): Promise<SettingsResponse> {
-  const resp = await _post(`/settings/presets/${encodeURIComponent(id)}`);
   return await resp.json();
 }
 

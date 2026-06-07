@@ -277,21 +277,6 @@ describe('api', () => {
       expect(JSON.parse(call[1].body)).toEqual(changes);
     });
 
-    it('getPresets sends GET /settings/presets', async () => {
-      const presets = [{ id: 'high', name: 'High', description: 'desc', settings: {}, mcp: null }];
-      mockFetch.mockReturnValueOnce(jsonResponse(presets));
-      const result = await api.getPresets();
-      expect(result).toEqual(presets);
-    });
-
-    it('applyPreset sends POST /settings/presets/{id}', async () => {
-      mockFetch.mockReturnValueOnce(jsonResponse({ tree: [], issues: [], presets: [] }));
-      await api.applyPreset('medium');
-      const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
-      expect(call[0]).toContain('/settings/presets/medium');
-      expect(call[1].method).toBe('POST');
-    });
-
   });
 
   // ---- MCP config (via settings) ----

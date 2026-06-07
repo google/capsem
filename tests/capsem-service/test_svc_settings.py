@@ -1,5 +1,4 @@
-"""Settings endpoints: /settings/info, /settings/edit, /settings/presets,
-/settings/presets/{id}.
+"""Settings endpoints: /settings/info and /settings/edit.
 
 These endpoints read and write under CAPSEM_HOME (user.toml, corp.toml).
 The conftest's `service_env` fixture isolates CAPSEM_HOME to a tmpdir,
@@ -82,40 +81,11 @@ class TestSettingsTree:
         assert client.post("/settings", {"app.auto_update": False}) is None
 
 
-class TestPresets:
-
-    def test_presets_lists_medium_and_high(self, client):
-        """/settings/presets returns the compile-time embedded presets."""
-        resp = client.get("/settings/presets")
-        assert isinstance(resp, list) and resp, f"presets empty: {resp}"
-        ids = {p["id"] for p in resp}
-        assert {"medium", "high"}.issubset(ids), f"expected medium+high, got {ids}"
-        for preset in resp:
-            for key in ("id", "name", "description", "settings"):
-                assert key in preset, f"preset missing '{key}': {preset}"
-
-    def test_apply_preset_returns_refreshed_tree(self, isolated_client):
-        """POST /settings/presets/{id} applies settings and returns the new tree.
-
-        Uses `isolated_client` because the `high` preset mutates shared
-        CAPSEM_HOME state that
-        leaks into sibling files' assertions about the unset default.
-        """
-        resp = isolated_client.post("/settings/presets/high", {})
-        assert resp is not None
-        # apply_preset returns the same shape as GET /settings/info.
-        for key in ("tree", "issues", "presets"):
-            assert key in resp, f"missing '{key}': {list(resp.keys())}"
-
-    def test_apply_unknown_preset_rejected(self, client):
-        """Unknown preset IDs must fail with a 400-class error."""
-        resp = client.post("/settings/presets/doesnotexist", {})
-        assert resp is None or "error" in resp or "unknown" in str(resp).lower(), (
-            f"unknown preset should reject: {resp}"
-        )
-
-
 class TestRetiredSettingsUtilityRoutes:
+
+    def test_presets_route_is_removed(self, client):
+        assert client.get("/settings/presets") is None
+        assert client.post("/settings/presets/high", {}) is None
 
     def test_lint_route_is_removed(self, client):
         assert client.post("/settings/lint", {}) is None

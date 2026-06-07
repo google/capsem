@@ -5,7 +5,6 @@
   import { themeStore } from '../../stores/theme.svelte.ts';
   import { Widget, SideEffect, ActionKind } from '../../models/settings-enums';
   import Self from './SettingsSection.svelte';
-  import PresetSection from './PresetSection.svelte';
   import ToggleControl from './widgets/ToggleControl.svelte';
   import TextControl from './widgets/TextControl.svelte';
   import NumberControl from './widgets/NumberControl.svelte';
@@ -107,15 +106,7 @@
 {/snippet}
 
 {#snippet actionControl(a: SettingsAction)}
-  {#if a.action === ActionKind.PresetSelect}
-    <div class="mt-4 first:mt-0 mb-2">
-      <h3 class="text-sm font-medium text-foreground mb-1">{a.name}</h3>
-      {#if a.description}
-        <p class="text-xs text-muted-foreground-1 mb-2">{a.description}</p>
-      {/if}
-      <PresetSection />
-    </div>
-  {:else if a.action === ActionKind.CheckUpdate}
+  {#if a.action === ActionKind.CheckUpdate}
     <div class="flex items-center justify-between py-3">
       <div>
         <span class="text-sm font-medium text-foreground">{a.name}</span>
