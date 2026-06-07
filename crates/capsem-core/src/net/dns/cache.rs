@@ -98,7 +98,6 @@ impl DnsAnswerCache {
     /// Returns `Some(bytes)` only if:
     /// * The entry exists.
     /// * It has not expired.
-    /// * `policy.is_fully_blocked(qname)` is None (not now-blocked).
     /// * `policy.find_dns_redirect(qname, qtype)` is None (not
     ///   now-redirected).
     ///
@@ -136,18 +135,16 @@ impl DnsAnswerCache {
             trace!(qname, qtype, "dns cache: expired entry evicted");
             return None;
         }
-        // Coherence: re-check policy on every hit. A domain that
-        // becomes blocked or redirected after we cached its answer
-        // must NOT serve from cache.
-        if policy.is_fully_blocked(qname).is_some()
-            || policy.find_dns_redirect(qname, qtype).is_some()
-        {
+        // Coherence: re-check redirect mechanics on every hit. Security-rule
+        // enforcement happens before cache lookup in the DNS handler, so this
+        // cache layer does not own allow/block decisions.
+        if policy.find_dns_redirect(qname, qtype).is_some() {
             guard.pop(&key);
             ::metrics::counter!(m::DNS_CACHE_MISSES_TOTAL).increment(1);
             trace!(
                 qname,
                 qtype,
-                "dns cache: entry invalidated by policy change"
+                "dns cache: entry invalidated by redirect change"
             );
             return None;
         }

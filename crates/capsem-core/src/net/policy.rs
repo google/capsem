@@ -1,18 +1,13 @@
-//! Network policy engine: per-domain read/write verb control plus
-//! DNS-level redirects (T3.d).
-//!
-//! Each rule matches a domain pattern and specifies whether read methods
-//! (GET, HEAD, OPTIONS) and write methods (POST, PUT, DELETE, PATCH) are
-//! allowed. Rules are evaluated in order; first match wins. If no rule
-//! matches, the default applies.
+//! Network policy mechanics: derived domain metadata, body capture settings,
+//! plain-HTTP port mechanics, and DNS-level redirects.
 //!
 //! `DnsRedirect` rules let an admin override DNS resolution for a
 //! specific qname (and optionally qtype) -- useful for redirecting
 //! telemetry domains to a local trap, simulating a domain that would
 //! otherwise need real internet, or pinning a name to a known IP for
-//! deterministic test runs. The DNS handler checks redirects after
-//! `is_fully_blocked` (a blocked domain stays NXDOMAIN; redirect
-//! never weakens block) and before the upstream forward.
+//! deterministic test runs. The DNS handler checks security-rule
+//! enforcement before redirects, then applies redirects before the
+//! upstream forward.
 
 use std::net::IpAddr;
 
@@ -65,17 +60,6 @@ pub struct PolicyRule {
     pub allow_write: bool,
 }
 
-/// The result of evaluating a request against the policy.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PolicyDecision {
-    /// Whether the request is allowed.
-    pub allowed: bool,
-    /// The rule pattern that matched (e.g., "*.github.com" or "default").
-    pub matched_rule: String,
-    /// Human-readable reason (e.g., "write denied by rule api.openai.com").
-    pub reason: String,
-}
-
 /// A DNS-level redirect rule (T3.d). When the DNS handler sees a
 /// query whose qname matches `matcher` and (if set) whose qtype
 /// matches `qtype`, the answer is synthesized locally from `answers`
@@ -116,10 +100,11 @@ impl DnsRedirect {
     }
 }
 
-/// Network policy: per-domain read/write verb control with defaults.
+/// Network mechanics derived from profile/corp config.
 ///
-/// Rules are evaluated in order; first match wins.
-/// If no rule matches, the default read/write permissions apply.
+/// Security decisions live in the security-rule engine. The domain rule fields
+/// remain as derived metadata while the profile contract is being finalized;
+/// runtime allow/ask/block must not call back into this type.
 #[derive(Debug, Clone)]
 pub struct NetworkPolicy {
     pub rules: Vec<PolicyRule>,
@@ -136,11 +121,8 @@ pub struct NetworkPolicy {
     /// before the upstream dial. Default: `[80]`. Extend for Ollama
     /// (11434) or other local-LLM servers via config / dev defaults.
     pub http_upstream_ports: Vec<u16>,
-    /// DNS redirect rules (T3.d). Evaluated in order, first match
-    /// wins, only checked AFTER `is_fully_blocked` (a blocked
-    /// domain stays NXDOMAIN -- redirect never weakens block).
-    /// Empty by default; admins populate via the frontend policy
-    /// editor or the corp config plumb.
+    /// DNS redirect rules (T3.d). Evaluated in order, first match wins after
+    /// security-rule enforcement has allowed the query. Empty by default.
     pub dns_redirects: Vec<DnsRedirect>,
 }
 
@@ -216,70 +198,6 @@ impl NetworkPolicy {
         ];
         Self::new(rules, true, false)
     }
-
-    /// Evaluate a request against the policy.
-    ///
-    /// Classifies the method as read (GET, HEAD, OPTIONS) or write
-    /// (POST, PUT, DELETE, PATCH, etc.), then checks rules in order.
-    pub fn evaluate(&self, domain: &str, method: &str) -> PolicyDecision {
-        let is_read = is_read_method(method);
-
-        for rule in &self.rules {
-            if rule.matcher.matches(domain) {
-                let pattern = rule.matcher.pattern_str();
-                let allowed = if is_read {
-                    rule.allow_read
-                } else {
-                    rule.allow_write
-                };
-                let verb_class = if is_read { "read" } else { "write" };
-                let action = if allowed { "allowed" } else { "denied" };
-                return PolicyDecision {
-                    allowed,
-                    matched_rule: pattern.clone(),
-                    reason: format!("{verb_class} {action} by rule {pattern}"),
-                };
-            }
-        }
-
-        // No rule matched -- use defaults.
-        let allowed = if is_read {
-            self.default_allow_read
-        } else {
-            self.default_allow_write
-        };
-        let verb_class = if is_read { "read" } else { "write" };
-        let action = if allowed { "allowed" } else { "denied" };
-        PolicyDecision {
-            allowed,
-            matched_rule: "default".to_string(),
-            reason: format!("{verb_class} {action} by default policy"),
-        }
-    }
-
-    /// Check if a domain is fully blocked (both read and write denied).
-    ///
-    /// Used to decide whether to proceed with TLS handshake at all.
-    /// If a domain is fully blocked, we can skip the expensive cert minting.
-    pub fn is_fully_blocked(&self, domain: &str) -> Option<String> {
-        for rule in &self.rules {
-            if rule.matcher.matches(domain) {
-                if !rule.allow_read && !rule.allow_write {
-                    return Some(rule.matcher.pattern_str());
-                }
-                return None;
-            }
-        }
-        if !self.default_allow_read && !self.default_allow_write {
-            return Some("default".to_string());
-        }
-        None
-    }
-}
-
-/// Classify a method as "read" (safe, idempotent).
-fn is_read_method(method: &str) -> bool {
-    matches!(method.to_uppercase().as_str(), "GET" | "HEAD" | "OPTIONS")
 }
 
 /// Helper to build a rule from a pattern string.
@@ -297,251 +215,6 @@ mod tests {
 
     fn dev_policy() -> NetworkPolicy {
         NetworkPolicy::default_dev()
-    }
-
-    // -- Read access --
-
-    #[test]
-    fn get_to_github_allowed() {
-        let policy = dev_policy();
-        let d = policy.evaluate("github.com", "GET");
-        assert!(d.allowed);
-        assert_eq!(d.matched_rule, "github.com");
-    }
-
-    #[test]
-    fn get_to_unknown_domain_allowed_by_default() {
-        let policy = dev_policy();
-        let d = policy.evaluate("example.com", "GET");
-        assert!(d.allowed);
-        assert_eq!(d.matched_rule, "default");
-        assert!(d.reason.contains("read allowed by default"));
-    }
-
-    #[test]
-    fn head_is_read() {
-        let policy = dev_policy();
-        let d = policy.evaluate("example.com", "HEAD");
-        assert!(d.allowed);
-    }
-
-    #[test]
-    fn options_is_read() {
-        let policy = dev_policy();
-        let d = policy.evaluate("example.com", "OPTIONS");
-        assert!(d.allowed);
-    }
-
-    // -- Write access --
-
-    #[test]
-    fn post_to_github_allowed() {
-        let policy = dev_policy();
-        let d = policy.evaluate("github.com", "POST");
-        assert!(d.allowed);
-        assert_eq!(d.matched_rule, "github.com");
-    }
-
-    #[test]
-    fn post_to_unknown_domain_denied_by_default() {
-        let policy = dev_policy();
-        let d = policy.evaluate("example.com", "POST");
-        assert!(!d.allowed);
-        assert_eq!(d.matched_rule, "default");
-        assert!(d.reason.contains("write denied by default"));
-    }
-
-    #[test]
-    fn put_is_write() {
-        let policy = dev_policy();
-        let d = policy.evaluate("example.com", "PUT");
-        assert!(!d.allowed);
-    }
-
-    #[test]
-    fn delete_is_write() {
-        let policy = dev_policy();
-        let d = policy.evaluate("example.com", "DELETE");
-        assert!(!d.allowed);
-    }
-
-    #[test]
-    fn patch_is_write() {
-        let policy = dev_policy();
-        let d = policy.evaluate("example.com", "PATCH");
-        assert!(!d.allowed);
-    }
-
-    // -- Blocked domains --
-
-    #[test]
-    fn openai_fully_blocked() {
-        let policy = dev_policy();
-        let d = policy.evaluate("api.openai.com", "GET");
-        assert!(!d.allowed);
-        assert_eq!(d.matched_rule, "api.openai.com");
-        assert!(d.reason.contains("denied"));
-    }
-
-    #[test]
-    fn openai_post_blocked() {
-        let policy = dev_policy();
-        let d = policy.evaluate("api.openai.com", "POST");
-        assert!(!d.allowed);
-    }
-
-    #[test]
-    fn anthropic_fully_blocked() {
-        let policy = dev_policy();
-        let d = policy.evaluate("api.anthropic.com", "GET");
-        assert!(!d.allowed);
-    }
-
-    // -- Gemini allowed --
-
-    #[test]
-    fn gemini_get_allowed() {
-        let policy = dev_policy();
-        let d = policy.evaluate("generativelanguage.googleapis.com", "GET");
-        assert!(d.allowed);
-    }
-
-    #[test]
-    fn gemini_post_allowed() {
-        let policy = dev_policy();
-        let d = policy.evaluate("generativelanguage.googleapis.com", "POST");
-        assert!(d.allowed);
-    }
-
-    // -- Wildcards --
-
-    #[test]
-    fn wildcard_subdomain_match() {
-        let policy = dev_policy();
-        let d = policy.evaluate("api.github.com", "GET");
-        assert!(d.allowed);
-        assert_eq!(d.matched_rule, "*.github.com");
-    }
-
-    #[test]
-    fn wildcard_does_not_match_base() {
-        let policy = NetworkPolicy::new(vec![rule("*.example.com", true, false)], false, false);
-        let d = policy.evaluate("example.com", "GET");
-        assert!(!d.allowed);
-        assert_eq!(d.matched_rule, "default");
-    }
-
-    #[test]
-    fn deep_subdomain_matches_wildcard() {
-        let policy = dev_policy();
-        let d = policy.evaluate("raw.githubusercontent.com", "GET");
-        assert!(d.allowed);
-    }
-
-    // -- First match wins --
-
-    #[test]
-    fn first_match_wins() {
-        let policy = NetworkPolicy::new(
-            vec![
-                rule("example.com", false, false), // block
-                rule("example.com", true, true),   // allow (never reached)
-            ],
-            true,
-            true,
-        );
-        let d = policy.evaluate("example.com", "GET");
-        assert!(!d.allowed);
-    }
-
-    // -- Case insensitivity --
-
-    #[test]
-    fn case_insensitive_domain() {
-        let policy = dev_policy();
-        let d = policy.evaluate("GitHub.COM", "GET");
-        assert!(d.allowed);
-    }
-
-    #[test]
-    fn case_insensitive_method() {
-        let policy = dev_policy();
-        let d = policy.evaluate("example.com", "get");
-        assert!(d.allowed);
-    }
-
-    // -- Read-only package registries --
-
-    #[test]
-    fn pypi_get_allowed() {
-        let policy = dev_policy();
-        let d = policy.evaluate("pypi.org", "GET");
-        assert!(d.allowed);
-    }
-
-    #[test]
-    fn pypi_post_denied() {
-        let policy = dev_policy();
-        let d = policy.evaluate("pypi.org", "POST");
-        assert!(!d.allowed);
-        assert_eq!(d.matched_rule, "pypi.org");
-    }
-
-    #[test]
-    fn crates_io_get_allowed() {
-        let policy = dev_policy();
-        let d = policy.evaluate("crates.io", "GET");
-        assert!(d.allowed);
-    }
-
-    #[test]
-    fn crates_io_post_denied() {
-        let policy = dev_policy();
-        let d = policy.evaluate("crates.io", "POST");
-        assert!(!d.allowed);
-    }
-
-    // -- is_fully_blocked --
-
-    #[test]
-    fn openai_is_fully_blocked() {
-        let policy = dev_policy();
-        assert!(policy.is_fully_blocked("api.openai.com").is_some());
-    }
-
-    #[test]
-    fn github_not_fully_blocked() {
-        let policy = dev_policy();
-        assert!(policy.is_fully_blocked("github.com").is_none());
-    }
-
-    #[test]
-    fn unknown_domain_not_fully_blocked() {
-        // default_allow_read=true, so not fully blocked
-        let policy = dev_policy();
-        assert!(policy.is_fully_blocked("example.com").is_none());
-    }
-
-    #[test]
-    fn fully_blocked_when_both_defaults_false() {
-        let policy = NetworkPolicy::new(vec![], false, false);
-        assert!(policy.is_fully_blocked("anything.com").is_some());
-    }
-
-    // -- Custom policy --
-
-    #[test]
-    fn custom_default_all_allowed() {
-        let policy = NetworkPolicy::new(vec![], true, true);
-        let d = policy.evaluate("anything.com", "POST");
-        assert!(d.allowed);
-    }
-
-    #[test]
-    fn custom_default_all_denied() {
-        let policy = NetworkPolicy::new(vec![], false, false);
-        let d = policy.evaluate("anything.com", "GET");
-        assert!(!d.allowed);
     }
 
     // -- DomainMatcher::parse --
@@ -564,21 +237,6 @@ mod tests {
     fn parse_uppercased_normalized() {
         let m = DomainMatcher::parse("GitHub.COM");
         assert!(m.matches("github.com"));
-    }
-
-    // -- elie.net --
-
-    #[test]
-    fn elie_net_full_access() {
-        let policy = dev_policy();
-        assert!(policy.evaluate("elie.net", "GET").allowed);
-        assert!(policy.evaluate("elie.net", "POST").allowed);
-    }
-
-    #[test]
-    fn elie_subdomain_full_access() {
-        let policy = dev_policy();
-        assert!(policy.evaluate("blog.elie.net", "POST").allowed);
     }
 
     // -- log_bodies default --

@@ -5,7 +5,7 @@ use std::net::Ipv4Addr;
 use hickory_proto::op::{Message, MessageType, OpCode, Query, ResponseCode};
 use hickory_proto::rr::{rdata, Name, RData, Record, RecordType};
 
-use crate::net::policy::{DnsRedirect, DomainMatcher, NetworkPolicy, PolicyRule};
+use crate::net::policy::{DnsRedirect, NetworkPolicy};
 
 /// Build a synthetic A-record answer for `qname` with `ttl` seconds
 /// on the answer record. Used to seed cache entries with known TTLs.
@@ -65,28 +65,6 @@ fn miss_when_qclass_differs() {
     cache.insert("example.com", 1, 1, &bytes);
     // CHAOS qclass on the same name+qtype -- must miss.
     assert!(cache.get("example.com", 1, 3, 0, &policy).is_none());
-}
-
-#[test]
-fn invalidated_when_policy_now_blocks() {
-    let cache = DnsAnswerCache::new(16, 300);
-    let bytes = build_answer("anthropic.com.", 60, [10, 0, 0, 1]);
-    cache.insert("anthropic.com", 1, 1, &bytes);
-
-    // Hit under allow-all policy.
-    assert!(cache.get("anthropic.com", 1, 1, 0, &allow_all()).is_some());
-
-    // Now construct a policy that blocks it.
-    let mut blocked = NetworkPolicy::new(vec![], true, true);
-    blocked.rules.push(PolicyRule {
-        matcher: DomainMatcher::parse("anthropic.com"),
-        allow_read: false,
-        allow_write: false,
-    });
-    // Lookup with the new policy MUST miss + drop the entry.
-    assert!(cache.get("anthropic.com", 1, 1, 0, &blocked).is_none());
-    // Subsequent lookup also misses (entry was popped).
-    assert!(cache.get("anthropic.com", 1, 1, 0, &blocked).is_none());
 }
 
 #[test]

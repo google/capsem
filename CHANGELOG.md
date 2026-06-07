@@ -152,6 +152,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `mcp.global_policy`, `mcp.default_tool_permission`, and
   `mcp.tool_permissions` keys fail closed at settings load, and MCP blocking
   tests now use profile security rules.
+- Removed `NetworkPolicy::evaluate`, `PolicyDecision`, and
+  `NetworkPolicy::is_fully_blocked` from the network engine. Network policy
+  code now carries only mechanics such as DNS redirects, HTTP port metadata,
+  and body-capture settings; HTTP/DNS allow, ask, block, and default behavior
+  must come from profile/corp security rules.
 - Replaced the old callback-demux rule authoring language with CEL over
   first-party event roots. Admin-visible rules use `match = ...` and typed
   actions rather than callback-local `on`/`if`/`decision` fields.
