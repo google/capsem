@@ -96,6 +96,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Replaced the retired `/corp-config` provisioning route with
   `PUT /corp/edit`; the gateway and service now reject the old route instead
   of forwarding it.
+- Added the rest of the corp plane routes: `GET /corp/info`,
+  `POST /corp/validate`, and `POST /corp/reload`, all forwarded explicitly by
+  the gateway.
 - Replaced the ambiguous `GET|POST /settings` route with
   `GET /settings/info` and `PATCH /settings/edit`; the old magic settings
   route now fails closed in the service and gateway.

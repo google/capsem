@@ -87,6 +87,12 @@ class TestAssets:
 
 class TestCorpConfig:
 
+    def test_corp_info_returns_overlay_summary(self, client):
+        resp = client.get("/corp/info")
+        assert resp is not None, "corp info returned no body"
+        assert isinstance(resp.get("installed"), bool), f"missing installed bool: {resp}"
+        assert isinstance(resp.get("paths"), list), f"missing paths list: {resp}"
+
     def test_corp_edit_inline_toml(self, client):
         """PUT /corp/edit with inline TOML writes corp.toml.
 
@@ -109,6 +115,25 @@ class TestCorpConfig:
         locked = _find_setting_flag(tree, "ai.openai.allow", "corp_locked")
         assert locked is True, f"corp-locked not surfaced after install: {locked}"
 
+        info = client.get("/corp/info")
+        assert info is not None and info.get("installed") is True, f"corp info stale: {info}"
+        source = info.get("source") or {}
+        assert source.get("content_hash"), f"corp source did not expose content hash: {info}"
+
+    def test_corp_validate_accepts_valid_inline_toml(self, client):
+        resp = client.post("/corp/validate", {
+            "toml": "refresh_interval_hours = 24\n\n[settings]\n",
+        })
+        assert resp is not None and resp.get("success") is True, (
+            f"valid corp TOML should validate: {resp}"
+        )
+
+    def test_corp_validate_rejects_invalid_toml(self, client):
+        resp = client.post("/corp/validate", {"toml": "this is [ broken"})
+        assert resp is None or "error" in resp or "invalid" in str(resp).lower(), (
+            f"invalid corp TOML should reject: {resp}"
+        )
+
     def test_corp_config_rejects_invalid_toml(self, client):
         """Malformed TOML must be rejected with a 400-class error."""
         resp = client.put("/corp/edit", {"toml": "this is [ broken"})
@@ -122,6 +147,14 @@ class TestCorpConfig:
         assert resp is None or "error" in resp or "provide either" in str(resp).lower(), (
             f"empty payload should reject: {resp}"
         )
+
+    def test_corp_reload_no_instances(self, client):
+        client.post("/purge", {"all": True})
+        resp = client.post("/corp/reload", {})
+        assert resp is not None and resp.get("success") is True, (
+            f"corp reload failed: {resp}"
+        )
+        assert resp.get("reloaded") == 0, f"expected no VM reloads: {resp}"
 
 
 def _find_setting_flag(tree, dotted_id, flag):

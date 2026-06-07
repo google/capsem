@@ -80,7 +80,7 @@ commit.
   - `/vms/{vm_id}/start|resume|pause|stop|restart|save|fork|reload-profile`
   - `/vms/{vm_id}/save/status`
   - `/vms/{vm_id}/fork/status`
-- [ ] Add approved corp routes:
+- [x] Add approved corp routes:
   - `/corp/info|edit|validate|reload`
 - [ ] Add approved settings routes:
   - `/settings/info|edit`
@@ -119,6 +119,8 @@ commit.
 - [x] Replace the retired `/corp-config` mutation route with `PUT /corp/edit`
   in service and gateway, with regression tests proving the old route is not
   forwarded.
+- [x] Add approved `/corp/info`, `/corp/validate`, and `/corp/reload` routes
+  in service and gateway.
 - [x] Replace ambiguous `GET|POST /settings` with `GET /settings/info` and
   `PATCH /settings/edit` in service, gateway, and frontend API, with
   regression tests proving the old route is removed.

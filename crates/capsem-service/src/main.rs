@@ -3298,6 +3298,69 @@ async fn handle_corp_config(
     Ok(Json(json!({ "success": true })))
 }
 
+/// GET /corp/info -- summarize the installed corporate overlay without exposing TOML.
+async fn handle_corp_info() -> Result<Json<serde_json::Value>, AppError> {
+    use capsem_core::net::policy_config::{corp_config_paths, corp_provision};
+
+    let capsem_dir = capsem_core::paths::capsem_home_opt().ok_or(AppError(
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "HOME not set".into(),
+    ))?;
+    let paths: Vec<_> = corp_config_paths()
+        .into_iter()
+        .map(|path| {
+            json!({
+                "path": path.display().to_string(),
+                "exists": path.exists(),
+            })
+        })
+        .collect();
+    let source = corp_provision::read_corp_source(&capsem_dir);
+    Ok(Json(json!({
+        "installed": paths.iter().any(|path| path["exists"].as_bool().unwrap_or(false)),
+        "paths": paths,
+        "source": source,
+    })))
+}
+
+/// POST /corp/validate -- validate corporate config from URL or inline TOML without installing it.
+async fn handle_corp_validate(
+    Json(payload): Json<CorpConfigRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    use capsem_core::net::policy_config::corp_provision;
+
+    if let Some(source) = &payload.source {
+        let client = reqwest::Client::new();
+        corp_provision::fetch_corp_config(&client, source)
+            .await
+            .map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))?;
+    } else if let Some(toml_content) = &payload.toml {
+        corp_provision::validate_corp_toml(toml_content)
+            .map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))?;
+    } else {
+        return Err(AppError(
+            StatusCode::BAD_REQUEST,
+            "provide either 'source' (URL) or 'toml' (inline content)".into(),
+        ));
+    }
+
+    Ok(Json(json!({ "success": true })))
+}
+
+/// POST /corp/reload -- refresh/re-read corp overlay and notify running VMs.
+async fn handle_corp_reload(
+    State(state): State<Arc<ServiceState>>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    use capsem_core::net::policy_config::corp_provision;
+
+    let capsem_dir = capsem_core::paths::capsem_home_opt().ok_or(AppError(
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "HOME not set".into(),
+    ))?;
+    corp_provision::refresh_corp_config_if_stale(capsem_dir).await;
+    handle_reload_config(State(state)).await
+}
+
 // ---------------------------------------------------------------------------
 // MCP API Handlers
 // ---------------------------------------------------------------------------
@@ -5515,7 +5578,10 @@ async fn main() -> Result<()> {
         .route("/settings/edit", patch(handle_save_settings))
         .route("/assets/status", get(handle_assets_status))
         .route("/assets/ensure", post(handle_assets_ensure))
+        .route("/corp/info", get(handle_corp_info))
         .route("/corp/edit", put(handle_corp_config))
+        .route("/corp/validate", post(handle_corp_validate))
+        .route("/corp/reload", post(handle_corp_reload))
         .route(
             "/profiles/{profile_id}/mcp/servers/list",
             get(handle_profile_mcp_servers),

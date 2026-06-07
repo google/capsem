@@ -278,7 +278,10 @@ fn service_proxy_routes() -> Router<Arc<AppState>> {
         .route("/settings/edit", patch(proxy::handle_proxy))
         .route("/assets/status", get(proxy::handle_proxy))
         .route("/assets/ensure", post(proxy::handle_proxy))
+        .route("/corp/info", get(proxy::handle_proxy))
         .route("/corp/edit", put(proxy::handle_proxy))
+        .route("/corp/validate", post(proxy::handle_proxy))
+        .route("/corp/reload", post(proxy::handle_proxy))
         .route(
             "/profiles/{profile_id}/mcp/servers/list",
             get(proxy::handle_proxy),
@@ -477,6 +480,9 @@ mod tests {
             ("GET", "/settings/info"),
             ("PATCH", "/settings/edit"),
             ("POST", "/profiles/default/reload"),
+            ("GET", "/corp/info"),
+            ("POST", "/corp/validate"),
+            ("POST", "/corp/reload"),
         ] {
             let app = service_proxy_app("/tmp/capsem-gateway-missing-service.sock");
             let resp = app
