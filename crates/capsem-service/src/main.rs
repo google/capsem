@@ -2332,6 +2332,32 @@ async fn handle_vm_fork_status(
     vm_operation_status(state, id, "fork").await
 }
 
+async fn unsupported_vm_operation(
+    state: Arc<ServiceState>,
+    id: String,
+    operation: &'static str,
+) -> Result<Json<api::VmOperationStatusResponse>, AppError> {
+    let _ = handle_vm_status(State(Arc::clone(&state)), Path(id)).await?;
+    Err(AppError(
+        StatusCode::NOT_IMPLEMENTED,
+        format!("{operation} is not supported yet"),
+    ))
+}
+
+async fn handle_vm_restart(
+    State(state): State<Arc<ServiceState>>,
+    Path(id): Path<String>,
+) -> Result<Json<api::VmOperationStatusResponse>, AppError> {
+    unsupported_vm_operation(state, id, "restart").await
+}
+
+async fn handle_vm_reload_profile(
+    State(state): State<Arc<ServiceState>>,
+    Path(id): Path<String>,
+) -> Result<Json<api::VmOperationStatusResponse>, AppError> {
+    unsupported_vm_operation(state, id, "reload-profile").await
+}
+
 /// GET /stats -- return full main.db aggregation in one response.
 async fn handle_stats(
     State(state): State<Arc<ServiceState>>,
@@ -5639,10 +5665,13 @@ async fn main() -> Result<()> {
         .route("/vms/{id}/stop", post(handle_stop))
         .route("/vms/{id}/pause", post(handle_suspend))
         .route("/vms/{id}/delete", delete(handle_delete))
+        .route("/vms/{id}/start", post(handle_resume))
         .route("/vms/{id}/resume", post(handle_resume))
+        .route("/vms/{id}/restart", post(handle_vm_restart))
         .route("/vms/{id}/save", post(handle_persist))
         .route("/vms/{id}/save/status", get(handle_vm_save_status))
         .route("/vms/{id}/fork/status", get(handle_vm_fork_status))
+        .route("/vms/{id}/reload-profile", post(handle_vm_reload_profile))
         .route("/purge", post(handle_purge))
         .route("/run", post(handle_run))
         .route("/stats", get(handle_stats))

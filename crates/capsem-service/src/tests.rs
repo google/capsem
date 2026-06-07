@@ -1582,6 +1582,24 @@ async fn handle_vm_operation_status_rejects_unknown_vm() {
 }
 
 #[tokio::test]
+async fn handle_unsupported_vm_operations_fail_explicitly() {
+    let state = make_test_state();
+    insert_fake_instance(&state, "ops-vm", 5150);
+
+    let restart = handle_vm_restart(State(Arc::clone(&state)), Path("ops-vm".into()))
+        .await
+        .unwrap_err();
+    assert_eq!(restart.0, StatusCode::NOT_IMPLEMENTED);
+    assert!(restart.1.contains("restart is not supported yet"));
+
+    let reload = handle_vm_reload_profile(State(state), Path("ops-vm".into()))
+        .await
+        .unwrap_err();
+    assert_eq!(reload.0, StatusCode::NOT_IMPLEMENTED);
+    assert!(reload.1.contains("reload-profile is not supported yet"));
+}
+
+#[tokio::test]
 async fn handle_suspend_rejects_ephemeral_vm() {
     let (state, _dir) = make_test_state_with_tempdir();
 

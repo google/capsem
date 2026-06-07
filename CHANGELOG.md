@@ -56,6 +56,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `GET /vms/{vm_id}/save/status` and
   `GET /vms/{vm_id}/fork/status`; because save/fork are synchronous today,
   existing VMs report explicit `idle` operation state rather than fake progress.
+- Added VM action route coverage for `POST /vms/{vm_id}/start`,
+  `POST /vms/{vm_id}/restart`, and `POST /vms/{vm_id}/reload-profile`.
+  `start` uses the existing resume/start path; restart and reload-profile
+  verify the VM exists and fail explicitly until real semantics land.
 
 ### Added (security event rule spine)
 - Replaced callback-shaped Policy V2 authoring with one native rule contract
