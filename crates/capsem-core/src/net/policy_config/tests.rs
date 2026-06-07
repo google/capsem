@@ -4249,47 +4249,6 @@ fn apply_preset_does_not_clobber_unrelated_settings() {
 }
 
 #[test]
-fn apply_preset_mcp_permission_set() {
-    let dir = tempfile::tempdir().unwrap();
-    let user_path = dir.path().join("user.toml");
-    let corp_path = dir.path().join("corp.toml");
-    write_settings_file(&user_path, &SettingsFile::default()).unwrap();
-
-    apply_preset_to("medium", &user_path, &corp_path).unwrap();
-    let loaded = load_settings_file(&user_path).unwrap();
-    assert_eq!(
-        loaded.mcp.as_ref().unwrap().default_tool_permission,
-        Some(crate::mcp::policy::ToolDecision::Allow),
-    );
-
-    apply_preset_to("high", &user_path, &corp_path).unwrap();
-    let loaded = load_settings_file(&user_path).unwrap();
-    assert_eq!(
-        loaded.mcp.as_ref().unwrap().default_tool_permission,
-        Some(crate::mcp::policy::ToolDecision::Warn),
-    );
-}
-
-#[test]
-fn apply_preset_mcp_skips_when_corp_locked() {
-    let dir = tempfile::tempdir().unwrap();
-    let user_path = dir.path().join("user.toml");
-    let corp_path = dir.path().join("corp.toml");
-    write_settings_file(&user_path, &SettingsFile::default()).unwrap();
-    let corp = SettingsFile {
-        mcp: Some(crate::mcp::policy::McpUserConfig {
-            default_tool_permission: Some(crate::mcp::policy::ToolDecision::Block),
-            ..Default::default()
-        }),
-        ..Default::default()
-    };
-    write_settings_file(&corp_path, &corp).unwrap();
-
-    let skipped = apply_preset_to("medium", &user_path, &corp_path).unwrap();
-    assert!(skipped.contains(&"mcp.default_tool_permission".to_string()));
-}
-
-#[test]
 fn apply_preset_unknown_id_errors() {
     let dir = tempfile::tempdir().unwrap();
     let user_path = dir.path().join("user.toml");
@@ -4402,11 +4361,6 @@ fn merged_defaults_only() {
     // Default: no allow rules, network blocks everything
     assert!(!m.network.default_allow_read);
     assert!(!m.network.default_allow_write);
-    // MCP default is allow
-    assert_eq!(
-        m.mcp.default_tool_decision,
-        crate::mcp::policy::ToolDecision::Allow
-    );
 }
 
 #[test]
@@ -4440,29 +4394,6 @@ fn merged_user_enables_search() {
         has_google_search,
         "expected google search domains in allow rules"
     );
-}
-
-#[test]
-fn merged_mcp_default_is_allow() {
-    let m = MergedPolicies::from_files(&empty_file(), &empty_file());
-    assert_eq!(
-        m.mcp.default_tool_decision,
-        crate::mcp::policy::ToolDecision::Allow
-    );
-}
-
-#[test]
-fn merged_user_sets_mcp_warn() {
-    use crate::mcp::policy::{McpUserConfig, ToolDecision};
-    let user = file_with_mcp(
-        vec![],
-        McpUserConfig {
-            default_tool_permission: Some(ToolDecision::Warn),
-            ..Default::default()
-        },
-    );
-    let m = MergedPolicies::from_files(&user, &empty_file());
-    assert_eq!(m.mcp.default_tool_decision, ToolDecision::Warn);
 }
 
 #[test]
@@ -4501,24 +4432,6 @@ fn apply_and_merge(preset_id: &str) -> MergedPolicies {
 }
 
 #[test]
-fn preset_high_merged_mcp_warn() {
-    let m = apply_and_merge("high");
-    assert_eq!(
-        m.mcp.default_tool_decision,
-        crate::mcp::policy::ToolDecision::Warn
-    );
-}
-
-#[test]
-fn preset_medium_merged_mcp_allow() {
-    let m = apply_and_merge("medium");
-    assert_eq!(
-        m.mcp.default_tool_decision,
-        crate::mcp::policy::ToolDecision::Allow
-    );
-}
-
-#[test]
 fn preset_high_merged_network_blocks_web() {
     let m = apply_and_merge("high");
     assert!(!m.network.default_allow_read);
@@ -4534,7 +4447,6 @@ fn preset_medium_merged_network_allows_read() {
 
 #[test]
 fn preset_switch_medium_to_high() {
-    use crate::mcp::policy::ToolDecision;
     let dir = tempfile::tempdir().unwrap();
     let user_path = dir.path().join("user.toml");
     let corp_path = dir.path().join("corp.toml");
@@ -4545,20 +4457,17 @@ fn preset_switch_medium_to_high() {
     let user = load_settings_file(&user_path).unwrap();
     let corp = load_settings_file(&corp_path).unwrap();
     let m = MergedPolicies::from_files(&user, &corp);
-    assert_eq!(m.mcp.default_tool_decision, ToolDecision::Allow);
     assert!(m.network.default_allow_read);
 
     apply_preset_to("high", &user_path, &corp_path).unwrap();
     let user = load_settings_file(&user_path).unwrap();
     let corp = load_settings_file(&corp_path).unwrap();
     let m = MergedPolicies::from_files(&user, &corp);
-    assert_eq!(m.mcp.default_tool_decision, ToolDecision::Warn);
     assert!(!m.network.default_allow_read);
 }
 
 #[test]
 fn preset_switch_high_to_medium() {
-    use crate::mcp::policy::ToolDecision;
     let dir = tempfile::tempdir().unwrap();
     let user_path = dir.path().join("user.toml");
     let corp_path = dir.path().join("corp.toml");
@@ -4569,13 +4478,12 @@ fn preset_switch_high_to_medium() {
     let user = load_settings_file(&user_path).unwrap();
     let corp = load_settings_file(&corp_path).unwrap();
     let m = MergedPolicies::from_files(&user, &corp);
-    assert_eq!(m.mcp.default_tool_decision, ToolDecision::Warn);
+    assert!(!m.network.default_allow_read);
 
     apply_preset_to("medium", &user_path, &corp_path).unwrap();
     let user = load_settings_file(&user_path).unwrap();
     let corp = load_settings_file(&corp_path).unwrap();
     let m = MergedPolicies::from_files(&user, &corp);
-    assert_eq!(m.mcp.default_tool_decision, ToolDecision::Allow);
     assert!(m.network.default_allow_read);
 }
 
@@ -4661,66 +4569,6 @@ fn corp_sets_custom_block_list() {
 }
 
 #[test]
-fn corp_mcp_overrides_preset() {
-    use crate::mcp::policy::{McpUserConfig, ToolDecision};
-    let dir = tempfile::tempdir().unwrap();
-    let user_path = dir.path().join("user.toml");
-    let corp_path = dir.path().join("corp.toml");
-    write_settings_file(&user_path, &SettingsFile::default()).unwrap();
-    let corp = SettingsFile {
-        settings: HashMap::new(),
-        mcp: Some(McpUserConfig {
-            default_tool_permission: Some(ToolDecision::Block),
-            ..Default::default()
-        }),
-        ..Default::default()
-    };
-    write_settings_file(&corp_path, &corp).unwrap();
-
-    let skipped = apply_preset_to("high", &user_path, &corp_path).unwrap();
-    assert!(skipped.contains(&"mcp.default_tool_permission".to_string()));
-
-    let user = load_settings_file(&user_path).unwrap();
-    let corp = load_settings_file(&corp_path).unwrap();
-    let m = MergedPolicies::from_files(&user, &corp);
-    assert_eq!(m.mcp.default_tool_decision, ToolDecision::Block);
-}
-
-#[test]
-fn corp_mcp_survives_both_presets() {
-    use crate::mcp::policy::{McpUserConfig, ToolDecision};
-    let dir = tempfile::tempdir().unwrap();
-    let user_path = dir.path().join("user.toml");
-    let corp_path = dir.path().join("corp.toml");
-    write_settings_file(&user_path, &SettingsFile::default()).unwrap();
-    let corp = SettingsFile {
-        settings: HashMap::new(),
-        mcp: Some(McpUserConfig {
-            default_tool_permission: Some(ToolDecision::Block),
-            ..Default::default()
-        }),
-        ..Default::default()
-    };
-    write_settings_file(&corp_path, &corp).unwrap();
-
-    apply_preset_to("medium", &user_path, &corp_path).unwrap();
-    let u = load_settings_file(&user_path).unwrap();
-    let c = load_settings_file(&corp_path).unwrap();
-    assert_eq!(
-        MergedPolicies::from_files(&u, &c).mcp.default_tool_decision,
-        ToolDecision::Block
-    );
-
-    apply_preset_to("high", &user_path, &corp_path).unwrap();
-    let u = load_settings_file(&user_path).unwrap();
-    let c = load_settings_file(&corp_path).unwrap();
-    assert_eq!(
-        MergedPolicies::from_files(&u, &c).mcp.default_tool_decision,
-        ToolDecision::Block
-    );
-}
-
-#[test]
 fn corp_setting_persists_after_preset() {
     let dir = tempfile::tempdir().unwrap();
     let user_path = dir.path().join("user.toml");
@@ -4764,35 +4612,8 @@ fn corp_locks_multiple_all_skipped() {
 }
 
 #[test]
-fn corp_mcp_not_written_to_user_toml() {
-    use crate::mcp::policy::{McpUserConfig, ToolDecision};
-    let dir = tempfile::tempdir().unwrap();
-    let user_path = dir.path().join("user.toml");
-    let corp_path = dir.path().join("corp.toml");
-    write_settings_file(&user_path, &SettingsFile::default()).unwrap();
-    let corp = SettingsFile {
-        settings: HashMap::new(),
-        mcp: Some(McpUserConfig {
-            default_tool_permission: Some(ToolDecision::Block),
-            ..Default::default()
-        }),
-        ..Default::default()
-    };
-    write_settings_file(&corp_path, &corp).unwrap();
-
-    apply_preset_to("high", &user_path, &corp_path).unwrap();
-    let user = load_settings_file(&user_path).unwrap();
-    // User TOML should NOT have MCP permission set (corp blocked it)
-    let user_perm = user.mcp.as_ref().and_then(|m| m.default_tool_permission);
-    assert!(
-        user_perm.is_none(),
-        "user.toml should not have default_tool_permission when corp locks it"
-    );
-}
-
-#[test]
 fn preset_preserves_user_mcp_servers() {
-    use crate::mcp::policy::{McpManualServer, McpUserConfig, ToolDecision};
+    use crate::mcp::policy::{McpManualServer, McpUserConfig};
     let dir = tempfile::tempdir().unwrap();
     let user_path = dir.path().join("user.toml");
     let corp_path = dir.path().join("corp.toml");
@@ -4806,11 +4627,6 @@ fn preset_preserves_user_mcp_servers() {
                 bearer_token: None,
                 enabled: true,
             }],
-            tool_permissions: {
-                let mut m = HashMap::new();
-                m.insert("myserver__danger".into(), ToolDecision::Block);
-                m
-            },
             ..Default::default()
         }),
         ..Default::default()
@@ -4823,11 +4639,6 @@ fn preset_preserves_user_mcp_servers() {
     let mcp = user.mcp.unwrap();
     assert_eq!(mcp.servers.len(), 1);
     assert_eq!(mcp.servers[0].name, "myserver");
-    assert_eq!(
-        mcp.tool_permissions.get("myserver__danger"),
-        Some(&ToolDecision::Block)
-    );
-    assert_eq!(mcp.default_tool_permission, Some(ToolDecision::Warn));
 }
 
 // -----------------------------------------------------------------------
@@ -4841,10 +4652,7 @@ fn merged_from_missing_user_toml() {
     let user = load_settings_file(&nonexistent).unwrap_or_default();
     let m = MergedPolicies::from_files(&user, &empty_file());
     // Should produce valid defaults without panicking
-    assert_eq!(
-        m.mcp.default_tool_decision,
-        crate::mcp::policy::ToolDecision::Allow
-    );
+    assert!(!m.network.default_allow_read);
 }
 
 #[test]
@@ -4864,10 +4672,6 @@ fn merged_from_both_missing() {
     let c = load_settings_file(&dir.path().join("c.toml")).unwrap_or_default();
     let m = MergedPolicies::from_files(&u, &c);
     assert!(!m.network.default_allow_read);
-    assert_eq!(
-        m.mcp.default_tool_decision,
-        crate::mcp::policy::ToolDecision::Allow
-    );
 }
 
 #[test]
@@ -4880,10 +4684,7 @@ fn merged_from_invalid_user_toml() {
     // Fallback to default still works
     let user = result.unwrap_or_default();
     let m = MergedPolicies::from_files(&user, &empty_file());
-    assert_eq!(
-        m.mcp.default_tool_decision,
-        crate::mcp::policy::ToolDecision::Allow
-    );
+    assert!(!m.network.default_allow_read);
 }
 
 #[test]
@@ -4961,29 +4762,7 @@ fn merged_empty_mcp_section() {
     use crate::mcp::policy::McpUserConfig;
     let user = file_with_mcp(vec![], McpUserConfig::default());
     let m = MergedPolicies::from_files(&user, &empty_file());
-    assert_eq!(
-        m.mcp.default_tool_decision,
-        crate::mcp::policy::ToolDecision::Allow
-    );
-}
-
-#[test]
-fn merged_mcp_invalid_permission_string() {
-    // ToolDecision serde will reject "yolo" during TOML parsing.
-    // If we construct it manually via the struct, the default path handles it.
-    // Test that from_files handles a default McpUserConfig gracefully.
-    let user = file_with_mcp(
-        vec![],
-        crate::mcp::policy::McpUserConfig {
-            default_tool_permission: None, // "yolo" can't be constructed as ToolDecision
-            ..Default::default()
-        },
-    );
-    let m = MergedPolicies::from_files(&user, &empty_file());
-    assert_eq!(
-        m.mcp.default_tool_decision,
-        crate::mcp::policy::ToolDecision::Allow
-    );
+    assert!(!m.network.default_allow_read);
 }
 
 // -----------------------------------------------------------------------
@@ -5570,11 +5349,12 @@ match = 'http.host.matches("(^|.*\.)openai\.com$")'
     assert!(
         evaluation
             .rules_for_action(SecurityRuleAction::Allow)
-            .is_empty(),
-        "user provider allow rule must be replaced by the corp block"
+            .iter()
+            .all(|rule| rule.rule_id != "profiles.rules.ai_openai_http_api"),
+        "user provider allow rule must be replaced by the corp block, not matched alongside it"
     );
     assert_eq!(
-        evaluation.rules_for_action(SecurityRuleAction::Block)[0].rule_id,
+        evaluation.enforcement_rules()[0].rule_id,
         "profiles.rules.ai_openai_http_api"
     );
 }
@@ -5677,17 +5457,16 @@ fn load_settings_response_exposes_provider_rules_without_policy_payload() {
 #[test]
 fn merged_partial_settings_file() {
     // TOML with only [mcp] section, no [settings]
-    use crate::mcp::policy::{McpUserConfig, ToolDecision};
+    use crate::mcp::policy::McpUserConfig;
     let user = SettingsFile {
         settings: HashMap::new(),
         mcp: Some(McpUserConfig {
-            default_tool_permission: Some(ToolDecision::Block),
+            health_check_interval_secs: Some(30),
             ..Default::default()
         }),
         ..Default::default()
     };
     let m = MergedPolicies::from_files(&user, &empty_file());
-    assert_eq!(m.mcp.default_tool_decision, ToolDecision::Block);
     // No settings -> defaults for everything else
     assert!(!m.network.default_allow_read);
 }
@@ -5698,11 +5477,6 @@ fn merged_partial_settings_only() {
     let user = file_with(vec![("ai.anthropic.allow", SettingValue::Bool(true))]);
     assert!(user.mcp.is_none());
     let m = MergedPolicies::from_files(&user, &empty_file());
-    // MCP defaults
-    assert_eq!(
-        m.mcp.default_tool_decision,
-        crate::mcp::policy::ToolDecision::Allow
-    );
     // Settings applied
     let has_anthropic = m
         .network

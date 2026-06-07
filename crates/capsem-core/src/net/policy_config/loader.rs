@@ -60,6 +60,7 @@ pub fn corp_config_paths() -> Vec<std::path::PathBuf> {
 pub fn load_settings_file(path: &Path) -> Result<SettingsFile, String> {
     match std::fs::read_to_string(path) {
         Ok(content) => {
+            reject_retired_mcp_policy_keys(path, &content)?;
             let mut file: SettingsFile = toml::from_str(&content)
                 .map_err(|e| format!("failed to parse {}: {}", path.display(), e))?;
             migrate_setting_ids(&mut file);
@@ -76,6 +77,27 @@ pub fn load_settings_file(path: &Path) -> Result<SettingsFile, String> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(SettingsFile::default()),
         Err(e) => Err(format!("failed to read {}: {}", path.display(), e)),
     }
+}
+
+fn reject_retired_mcp_policy_keys(path: &Path, content: &str) -> Result<(), String> {
+    let root: toml::Value = toml::from_str(content)
+        .map_err(|e| format!("failed to parse {}: {}", path.display(), e))?;
+    let Some(mcp) = root.get("mcp").and_then(|value| value.as_table()) else {
+        return Ok(());
+    };
+    for retired in [
+        "global_policy",
+        "default_tool_permission",
+        "tool_permissions",
+    ] {
+        if mcp.contains_key(retired) {
+            return Err(format!(
+                "failed to validate {}: retired MCP policy key mcp.{retired}; use profile security rules instead",
+                path.display()
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn merge_referenced_security_rule_profile(
@@ -366,12 +388,7 @@ fn parse_mcp_section(toml_str: &str, source: PolicySource) -> Vec<McpServerDef> 
     let mut servers = Vec::new();
     for (key, val) in mcp_table {
         // Skip global config keys that aren't server definitions
-        if key == "global_policy"
-            || key == "default_tool_permission"
-            || key == "health_check_interval_secs"
-            || key == "server_enabled"
-            || key == "tool_permissions"
-        {
+        if key == "health_check_interval_secs" || key == "server_enabled" {
             continue;
         }
 
@@ -418,12 +435,7 @@ fn parse_mcp_section_json(json_str: &str, source: PolicySource) -> Vec<McpServer
     let mut servers = Vec::new();
     for (key, val) in mcp_obj {
         // Skip global config keys that aren't server definitions
-        if key == "global_policy"
-            || key == "default_tool_permission"
-            || key == "health_check_interval_secs"
-            || key == "server_enabled"
-            || key == "tool_permissions"
-        {
+        if key == "health_check_interval_secs" || key == "server_enabled" {
             continue;
         }
 

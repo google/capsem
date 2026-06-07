@@ -19,7 +19,7 @@ def isolated_client():
 
     The session-scoped `service_env` is reused by every test in the
     `tests/capsem-service/` worker. Preset application writes keys like
-    `mcp.default_tool_permission = "warn"` into that shared CAPSEM_HOME,
+    user settings into that shared CAPSEM_HOME,
     which then leaks into `test_svc_mcp_api.py::test_policy_returns_merged_shape`
     (which expects the unset-default `"allow"`). Any test that mutates
     user.toml state other tests depend on should use this fixture instead.
@@ -93,7 +93,7 @@ class TestPresets:
         """POST /settings/presets/{id} applies settings and returns the new tree.
 
         Uses `isolated_client` because the `high` preset mutates shared
-        CAPSEM_HOME state (e.g. mcp.default_tool_permission = "warn") that
+        CAPSEM_HOME state that
         leaks into sibling files' assertions about the unset default.
         """
         resp = isolated_client.post("/settings/presets/high", {})

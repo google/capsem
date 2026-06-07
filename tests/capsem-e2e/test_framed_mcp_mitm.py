@@ -593,7 +593,14 @@ print(json.dumps({"responses": responses, "stderr": proc.stderr.read()}))
 
         config_path = svc.tmp_dir / "user.toml"
         config_path.write_text(
-            "[mcp.tool_permissions]\nlocal__echo = \"block\"\n",
+            """
+[profiles.rules.block_local_echo]
+name = "block_local_echo"
+action = "block"
+priority = 10
+match = 'mcp.tool_call.name == "local__echo"'
+reason = "test blocks local echo through security rules"
+""".lstrip(),
             encoding="utf-8",
         )
         reload_response = svc.client().post("/reload-config", {}, timeout=15)
@@ -610,7 +617,7 @@ print(json.dumps({"responses": responses, "stderr": proc.stderr.read()}))
             lambda r: r["request_id"] == "3" and r["decision"] == "denied",
         )
         assert denied["policy_action"] == "deny"
-        assert denied["policy_rule"] == "mcp.tool.local__echo"
+        assert denied["policy_rule"] == "profiles.rules.block_local_echo"
         assert "after-reload" in denied["request_preview"]
     finally:
         if proc is not None and proc.poll() is None:

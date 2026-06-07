@@ -358,7 +358,6 @@ export interface SecurityPreset {
   name: string;
   description: string;
   settings: Record<string, SettingValue>;
-  mcp: { default_tool_permission?: string } | null;
 }
 
 // ---------------------------------------------------------------------------

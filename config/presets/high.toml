@@ -7,6 +7,3 @@ description = "Blocks all web access by default. Only Google search is allowed. 
 "security.services.search.google.allow" = true
 "security.services.search.bing.allow" = false
 "security.services.search.duckduckgo.allow" = false
-
-[mcp]
-default_tool_permission = "warn"

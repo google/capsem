@@ -413,7 +413,6 @@ pub fn settings_to_vm_settings(resolved: &[ResolvedSetting]) -> VmSettings {
 /// `resolve_settings()` call, ensuring consistency.
 pub struct MergedPolicies {
     pub network: crate::net::policy::NetworkPolicy,
-    pub mcp: crate::mcp::policy::McpPolicy,
     pub security_rules: SecurityRuleSet,
     pub plugins: BTreeMap<String, SecurityPluginConfig>,
     pub model_endpoints: ModelEndpointRegistry,
@@ -425,8 +424,6 @@ impl MergedPolicies {
     /// Pure merge function. No I/O, fully testable.
     pub fn from_files(user: &SettingsFile, corp: &SettingsFile) -> Self {
         let resolved = resolve_settings(user, corp);
-        let mcp_user = user.mcp.clone().unwrap_or_default();
-        let mcp_corp = corp.mcp.clone().unwrap_or_default();
         let security_rules = match compile_merged_security_rules(user, corp) {
             Ok(rules) => rules,
             Err(error) => {
@@ -444,7 +441,6 @@ impl MergedPolicies {
         let plugins = merge_plugin_policy(user, corp);
         Self {
             network: build_network_policy(&resolved),
-            mcp: mcp_user.to_policy(&mcp_corp),
             security_rules,
             plugins,
             model_endpoints,

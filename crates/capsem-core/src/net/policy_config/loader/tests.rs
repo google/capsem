@@ -267,11 +267,9 @@ fn parse_mcp_section_ignores_invalid_toml() {
 }
 
 #[test]
-fn parse_mcp_section_skips_global_keys() {
+fn parse_mcp_section_skips_non_server_mechanics_keys() {
     let toml = r#"
 [mcp]
-global_policy = "any"
-default_tool_permission = "deny"
 health_check_interval_secs = 60
 
 [mcp.my_server]
@@ -288,6 +286,30 @@ command = "example-mcp"
     // enabled defaults to true via the `default_true` helper.
     assert!(servers[0].enabled);
     assert!(!servers[0].corp_locked);
+}
+
+#[test]
+fn load_settings_file_rejects_retired_mcp_policy_keys() {
+    let dir = tempfile::tempdir().unwrap();
+    for retired in [
+        r#"[mcp]
+global_policy = "block"
+"#,
+        r#"[mcp]
+default_tool_permission = "warn"
+"#,
+        r#"[mcp.tool_permissions]
+local__echo = "block"
+"#,
+    ] {
+        let path = dir.path().join("user.toml");
+        std::fs::write(&path, retired).unwrap();
+        let error = load_settings_file(&path).unwrap_err();
+        assert!(
+            error.contains("retired MCP policy key"),
+            "unexpected error: {error}"
+        );
+    }
 }
 
 #[test]
@@ -319,7 +341,6 @@ fn parse_mcp_section_json_ignores_missing_section() {
 fn parse_mcp_section_json_parses_builtin_server() {
     let json = r#"{
       "mcp": {
-        "global_policy": "any",
         "my_tool": {
           "name": "My Tool",
           "transport": "stdio",

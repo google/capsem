@@ -103,7 +103,7 @@ commit.
 ## T2: Security Rail Burn-Down
 
 - [ ] Remove MCP decision provider behavior.
-- [ ] Remove or neutralize `McpPolicy` allow/ask/block evaluation.
+- [x] Remove or neutralize `McpPolicy` allow/ask/block evaluation.
 - [ ] Move MCP server/tool/resource/prompt decisions to profile rules.
 - [ ] Remove NetworkPolicy allow/block decision behavior from security path.
 - [ ] Keep network mechanics in network engine: parsing, capture, routing,
@@ -116,6 +116,9 @@ commit.
 - [ ] Add tests proving mutating defaults changes evaluation behavior.
 - [ ] Add tests proving MCP and network old policy engines cannot issue final
   security decisions.
+- [x] Burn `McpPolicy`/`ToolDecision`, remove preset MCP permissions, reject
+  retired MCP policy config keys, and convert MCP blocking fixture to
+  `[profiles.rules.*]`.
 - [ ] Add adversarial tests proving MCP/network mechanics cannot bypass CEL
   enforcement, including malformed MCP tool ids, unknown DNS/HTTP domains, and
   conflicting default/specific rules.
@@ -382,9 +385,9 @@ invariant sweep before release verification.
 
 ## Coverage Ledger
 
-- Unit/contract: `cargo test -p capsem-core net::policy_config::security_rule_profile --lib`; `cargo test -p capsem-core net::policy_config::provider_profile --lib`.
+- Unit/contract: `cargo test -p capsem-core net::policy_config::security_rule_profile --lib`; `cargo test -p capsem-core net::policy_config::provider_profile --lib`; `cargo test -p capsem-core net::policy_config --lib`; `cargo test -p capsem-core mcp:: --lib`.
 - Functional API: `cargo check -p capsem-service -p capsem-gateway -p capsem`; `uv run python -m pytest tests/capsem-service/test_svc_mcp_api.py -q`.
-- Adversarial: `/mcp/policy` removed from service route table and gateway forwarding, with `tests/capsem-service/test_svc_mcp_api.py::TestMcpPolicy::test_policy_endpoint_is_burned` and `cargo test -p capsem-gateway gateway_`.
+- Adversarial: `/mcp/policy` removed from service route table and gateway forwarding, with `tests/capsem-service/test_svc_mcp_api.py::TestMcpPolicy::test_policy_endpoint_is_burned` and `cargo test -p capsem-gateway gateway_`; retired `mcp.global_policy`, `mcp.default_tool_permission`, and `mcp.tool_permissions` rejected by `load_settings_file_rejects_retired_mcp_policy_keys`.
 - E2E/VM: pending.
 - Telemetry/session DB: pending.
 - Frontend: `pnpm --dir frontend test src/lib/__tests__/api.test.ts src/lib/__tests__/mcp-store.test.ts`; `pnpm --dir frontend check`.

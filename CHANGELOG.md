@@ -147,6 +147,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Removed the global MCP policy API/UI/CLI surface (`/mcp/policy`,
   `capsem mcp policy`, and frontend MCP policy mutators). MCP runtime endpoints
   now report mechanics only; MCP decisions must be expressed as security rules.
+- Removed the old `McpPolicy`/`ToolDecision` decision object from core config.
+  Security presets no longer write MCP tool permissions, retired
+  `mcp.global_policy`, `mcp.default_tool_permission`, and
+  `mcp.tool_permissions` keys fail closed at settings load, and MCP blocking
+  tests now use profile security rules.
 - Replaced the old callback-demux rule authoring language with CEL over
   first-party event roots. Admin-visible rules use `match = ...` and typed
   actions rather than callback-local `on`/`if`/`decision` fields.

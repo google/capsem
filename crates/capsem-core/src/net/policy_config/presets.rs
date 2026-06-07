@@ -16,14 +16,6 @@ struct PresetToml {
     description: String,
     #[serde(default)]
     settings: HashMap<String, toml::Value>,
-    #[serde(default)]
-    mcp: Option<PresetMcpConfig>,
-}
-
-/// MCP configuration within a preset.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-pub struct PresetMcpConfig {
-    pub default_tool_permission: Option<crate::mcp::policy::ToolDecision>,
 }
 
 /// A security preset with its settings and MCP config.
@@ -33,7 +25,6 @@ pub struct SecurityPreset {
     pub name: String,
     pub description: String,
     pub settings: HashMap<String, SettingValue>,
-    pub mcp: Option<PresetMcpConfig>,
 }
 
 fn parse_preset(id: &str, toml_str: &str) -> SecurityPreset {
@@ -54,7 +45,6 @@ fn parse_preset(id: &str, toml_str: &str) -> SecurityPreset {
         name: parsed.name,
         description: parsed.description,
         settings,
-        mcp: parsed.mcp,
     }
 }
 
@@ -68,7 +58,6 @@ pub fn security_presets() -> Vec<SecurityPreset> {
 
 /// Apply a security preset by ID. Batch-writes settings to user.toml,
 /// skipping any corp-locked keys. Returns the list of skipped setting IDs.
-/// Also sets `mcp.default_tool_permission` if the preset specifies one.
 pub fn apply_preset(preset_id: &str) -> Result<Vec<String>, String> {
     let user_path = super::user_config_path().ok_or("HOME not set")?;
     let corp_path = super::corp_config_path();
@@ -105,20 +94,6 @@ pub fn apply_preset_to(
                 modified: now.clone(),
             },
         );
-    }
-
-    // Apply MCP default_tool_permission if specified and not corp-locked.
-    if let Some(ref mcp_config) = preset.mcp {
-        if let Some(perm) = mcp_config.default_tool_permission {
-            let corp_mcp = corp.mcp.unwrap_or_default();
-            if corp_mcp.default_tool_permission.is_some() {
-                skipped.push("mcp.default_tool_permission".to_string());
-            } else {
-                let mut user_mcp = file.mcp.clone().unwrap_or_default();
-                user_mcp.default_tool_permission = Some(perm);
-                file.mcp = Some(user_mcp);
-            }
-        }
     }
 
     write_settings_file(user_path, &file)?;

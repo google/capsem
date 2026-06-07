@@ -7,6 +7,3 @@ description = "Allows read-only web access (GET/HEAD) and all search engines. Bl
 "security.services.search.google.allow" = true
 "security.services.search.bing.allow" = true
 "security.services.search.duckduckgo.allow" = true
-
-[mcp]
-default_tool_permission = "allow"

@@ -319,7 +319,6 @@ export const MOCK_PRESETS = [
       'security.services.search.bing.allow': true,
       'security.services.search.duckduckgo.allow': true,
     },
-    mcp: { default_tool_permission: 'allow' },
   },
   {
     id: 'high',
@@ -332,7 +331,6 @@ export const MOCK_PRESETS = [
       'security.services.search.bing.allow': false,
       'security.services.search.duckduckgo.allow': false,
     },
-    mcp: { default_tool_permission: 'warn' },
   },
 ];
 
