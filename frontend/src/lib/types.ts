@@ -332,25 +332,6 @@ export interface LogSessionInfo {
   entry_count: number;
 }
 
-/** Result of validating an API key against a provider endpoint. */
-export interface KeyValidation {
-  valid: boolean;
-  message: string;
-}
-
-/** Host configuration detected from the macOS host. */
-export interface HostConfig {
-  git_name: string | null;
-  git_email: string | null;
-  ssh_public_key: string | null;
-  anthropic_api_key: string | null;
-  google_api_key: string | null;
-  openai_api_key: string | null;
-  github_token: string | null;
-  claude_oauth_credentials: string | null;
-  google_adc: string | null;
-}
-
 // ---------------------------------------------------------------------------
 // Stats / view data types (UI-side shapes after mapping DB rows)
 // ---------------------------------------------------------------------------

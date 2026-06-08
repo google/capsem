@@ -480,6 +480,11 @@ the guarantee or explicitly burn it.
 - [ ] Burn stale settings/defaults `settings.ai.*` and credential injection
   blocks that pretend to write host credentials into the VM. Credential
   brokering is plugin-owned and logs only brokered BLAKE3 references.
+- [x] Delete the dead `host_config` detector/writeback module and its frontend
+  DTOs. This removes the setup-era path that scanned raw host API
+  keys/OAuth/ADC/GitHub tokens and wrote them into settings; credential capture
+  remains broker/plugin-owned, and `/settings/validate-key` stays a retired
+  gateway route.
 - [ ] Replace legacy `[profiles.defaults.*]` parsing with `[default.<domain>]`
   rule parsing. A rule is default because `priority = "default"`, not because
   its table path says defaults twice.
@@ -570,6 +575,10 @@ the guarantee or explicitly burn it.
   A non-`--lib` provider-profile filter also passed its unit assertions but
   then hit the known macOS signing wrapper while walking an unrelated
   integration binary, so the lib-only rerun is the canonical proof.
+- Coverage for dead host detector burn:
+  `cargo test -p capsem-core --no-run`;
+  `cargo test -p capsem-gateway gateway_does_not_forward_retired_settings_utility_routes -- --nocapture`;
+  `pnpm -C frontend check`.
 - [ ] Commit S2.
 
 ## S3: TUI And Terminal Shell

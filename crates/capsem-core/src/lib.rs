@@ -2,7 +2,6 @@ pub mod asset_manager;
 pub mod auto_snapshot;
 pub mod credential_broker;
 pub mod fs_monitor;
-pub mod host_config;
 pub mod host_state;
 pub mod hypervisor;
 pub mod ipc_handshake;

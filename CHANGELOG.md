@@ -41,6 +41,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   discovered or brokered by the credential broker plugin through runtime
   security events and broker-owned references instead of being copied through a
   setup wizard.
+- Removed the dead host credential detection module that could scan raw host
+  API keys/OAuth files and write them into settings. Credential capture now
+  stays behind the credential broker/plugin path, and the retired settings key
+  validation surface remains fail-closed at the gateway.
 
 ### Changed (service/API)
 - Moved VM APIs under the explicit `/vms/...` contract. VM creation, listing,
