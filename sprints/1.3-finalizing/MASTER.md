@@ -3,6 +3,18 @@
 This is the coordination page for closing 1.3 after the profile/API/security
 contract reset.
 
+## Active Gate: Snapshot Restore First
+
+`snapshot-restore/` is the active blocking sprint. Do not advance broad
+1.3-finalizing workstreams, UI polish, docs polish, install smoke, or release
+verification until `snapshot-restore/tracker.md` is complete, committed, and
+its S1-S6 restore/port decisions have been reconciled into this master.
+
+If context is lost or this page conflicts with `snapshot-restore/MASTER.md`,
+follow the snapshot-restore tracker from the top. The current required order is:
+S0 verification and committed inventory, then the commit inspection ledger in
+order, then implementation/verification slices derived from that ledger.
+
 ## Workstreams
 
 | Stream | Status | Notes |

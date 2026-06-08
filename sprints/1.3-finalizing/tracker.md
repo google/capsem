@@ -1,10 +1,20 @@
 # Sprint: 1.3 Finalizing
 
+## Active Gate: Snapshot Restore First
+
+- [ ] Do not advance this parent tracker until
+  `snapshot-restore/tracker.md` is complete and committed.
+- [ ] If context is lost, resume from the top of
+  `snapshot-restore/tracker.md`, not from the broad 1.3 checklist below.
+- [ ] Reconcile completed snapshot-restore decisions back into this tracker
+  only after the focused restore sprint is done.
+
 ## Status
 
-Contract approved enough to start cleanup implementation. Keep committing
-functional slices steadily. Do not batch unrelated fixes into one giant release
-commit.
+Snapshot restore is the active blocking sprint. The broad 1.3 checklist below
+is not the execution source of truth until the restore ledger is complete.
+Keep committing functional slices steadily inside the restore sprint; do not
+batch unrelated fixes into one giant release commit.
 
 ## Burn Discipline
 
