@@ -9,7 +9,7 @@ The MCP aggregator (`capsem-mcp-aggregator`) is a low-privilege subprocess that 
 
 ## Why a separate process
 
-External MCP servers require network access, bearer tokens, and custom HTTP headers. The main per-VM process (`capsem-process`) has extensive privileges: VM control, session database, VirtioFS workspace, service IPC. Running external server connections inside capsem-process would expose all of those privileges to any vulnerability in an MCP server connection or the HTTP/SSE transport layer.
+External MCP servers require network access, broker-resolved auth material, and custom HTTP headers. The main per-VM process (`capsem-process`) has extensive privileges: VM control, session database, VirtioFS workspace, service IPC. Running external server connections inside capsem-process would expose all of those privileges to any vulnerability in an MCP server connection or the HTTP/SSE transport layer.
 
 The aggregator subprocess enforces a hard privilege boundary:
 
@@ -20,9 +20,9 @@ The aggregator subprocess enforces a hard privilege boundary:
 | VirtioFS workspace | Yes | No |
 | Service IPC | Yes | No |
 | Network (external MCP servers) | No | Yes |
-| Bearer tokens / API keys | No | Yes |
+| Broker-resolved auth material | No | Yes |
 
-If the aggregator is compromised, the attacker has network access and MCP server credentials -- but cannot reach the VM, read telemetry, or modify files.
+If the aggregator is compromised, the attacker has network access and short-lived MCP auth material resolved by the broker -- but cannot reach the VM, read telemetry, or modify files.
 
 ## Architecture
 
@@ -88,7 +88,7 @@ sequenceDiagram
     participant Ext as External MCP servers
 
     Proc->>Agg: spawn (stdin/stdout piped, stderr inherited)
-    Proc->>Agg: [{"name":"github","url":"...","bearer_token":"..."}]\n (first line)
+    Proc->>Agg: [{"name":"github","url":"...","auth":{"kind":"oauth","credential_ref":"credential:blake3:..."}}]\n (first line)
     Agg->>Ext: HTTP MCP initialize (per enabled server)
     Ext-->>Agg: tools/list, resources/list, prompts/list
     Note over Agg: Build unified catalogs
@@ -126,13 +126,21 @@ The first line on stdin is a JSON array of server definitions:
     "name": "github",
     "url": "https://api.githubcopilot.com/mcp/",
     "headers": {},
-    "bearer_token": "ghp_xxxx",
+    "auth": {
+      "kind": "oauth",
+      "credential_ref": "credential:blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
     "enabled": true,
     "source": "claude",
     "unsupported_stdio": false
   }
 ]
 ```
+
+Raw API keys, OAuth access tokens, refresh tokens, and `Authorization` headers
+are never serialized into MCP config. Remote MCP auth is broker-owned: the
+server definition carries only an opaque `credential:blake3:*` reference and
+the connector resolves it at the HTTP transport boundary.
 
 Servers marked `unsupported_stdio: true` are stdio-only servers that cannot be connected over HTTP -- the aggregator skips them. Disabled servers are also skipped.
 

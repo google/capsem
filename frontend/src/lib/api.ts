@@ -888,7 +888,6 @@ export async function addMcpServer(
   name: string,
   url: string,
   headers: Record<string, string>,
-  bearerToken: string | null,
 ): Promise<void> {
   const changes: Record<string, unknown> = {
     [`mcp.servers.${name}.url`]: url,
@@ -896,9 +895,6 @@ export async function addMcpServer(
   };
   if (Object.keys(headers).length > 0) {
     changes[`mcp.servers.${name}.headers`] = headers;
-  }
-  if (bearerToken) {
-    changes[`mcp.servers.${name}.bearer_token`] = bearerToken;
   }
   await saveSettings(changes);
 }

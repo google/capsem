@@ -282,8 +282,19 @@ impl McpServerManager {
     /// Connect to an HTTP MCP server.
     async fn connect_http(&self, def: &McpServerDef) -> Result<RunningService<RoleClient, ()>> {
         let mut config = StreamableHttpClientTransportConfig::with_uri(def.url.as_str());
-        if let Some(ref token) = def.bearer_token {
-            config = config.auth_header(token.clone());
+        if let Some(auth) = &def.auth {
+            let token = crate::credential_broker::resolve_broker_reference_for_provider(
+                crate::credential_broker::CredentialProvider::Mcp,
+                &auth.credential_ref,
+            )
+            .map_err(|error| anyhow::anyhow!(error))?
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "MCP auth credential reference could not be resolved for server '{}'",
+                    def.name
+                )
+            })?;
+            config = config.auth_header(token);
         }
         if !def.headers.is_empty() {
             let mut headers = HashMap::new();
@@ -551,7 +562,7 @@ mod tests {
             name: "test".to_string(),
             url: "https://mcp.example.com/v1".to_string(),
             headers: HashMap::new(),
-            bearer_token: None,
+            auth: None,
             enabled: true,
             source: "test".to_string(),
             command: None,
@@ -753,7 +764,7 @@ mod tests {
             name: "deepwiki".to_string(),
             url: "https://mcp.deepwiki.com/mcp".to_string(),
             headers: HashMap::new(),
-            bearer_token: None,
+            auth: None,
             enabled: true,
             source: "test".to_string(),
             command: None,
@@ -783,7 +794,7 @@ mod tests {
     /// Live integration test that connects to all HTTP MCP servers from the
     /// developer's config (user.toml manual servers + auto-detected from
     /// ~/.claude/settings.json and ~/.gemini/settings.json). Skips if none found.
-    /// Covers bearer_token auth, custom headers, and multi-server catalog building.
+    /// Covers brokered auth references, custom headers, and multi-server catalog building.
     #[tokio::test]
     async fn integration_live_configured_mcp_servers() {
         use crate::mcp::build_server_list;

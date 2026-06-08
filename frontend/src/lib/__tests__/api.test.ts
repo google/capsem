@@ -303,15 +303,15 @@ describe('api', () => {
       expect(body['mcp.servers.my-server.enabled']).toBe(true);
     });
 
-    it('addMcpServer calls saveSettings with url, enabled, headers, token', async () => {
+    it('addMcpServer calls saveSettings with url, enabled, and non-secret headers', async () => {
       mockFetch.mockReturnValueOnce(jsonResponse({ tree: [], issues: [] }));
-      await api.addMcpServer('srv', 'http://x', { 'X-Key': 'val' }, 'tok123');
+      await api.addMcpServer('srv', 'http://x', { 'X-Trace': 'val' });
       const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
       const body = JSON.parse(call[1].body);
       expect(body['mcp.servers.srv.url']).toBe('http://x');
       expect(body['mcp.servers.srv.enabled']).toBe(true);
-      expect(body['mcp.servers.srv.headers']).toEqual({ 'X-Key': 'val' });
-      expect(body['mcp.servers.srv.bearer_token']).toBe('tok123');
+      expect(body['mcp.servers.srv.headers']).toEqual({ 'X-Trace': 'val' });
+      expect(Object.keys(body).some((key) => key.includes('bearer_token'))).toBe(false);
     });
 
     it('removeMcpServer sends null for the server key', async () => {

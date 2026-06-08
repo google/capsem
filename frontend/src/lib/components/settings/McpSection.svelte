@@ -38,7 +38,6 @@
   let showAddForm = $state(false);
   let newName = $state('');
   let newUrl = $state('');
-  let newBearerToken = $state('');
   let newHeaders = $state<{ key: string; value: string }[]>([]);
   let saving = $state(false);
 
@@ -51,7 +50,6 @@
   function resetForm() {
     newName = '';
     newUrl = '';
-    newBearerToken = '';
     newHeaders = [];
     showAddForm = false;
   }
@@ -76,7 +74,6 @@
         newName.trim(),
         newUrl.trim(),
         headers,
-        newBearerToken.trim() || null,
       );
       await api.reloadProfile();
       resetForm();
@@ -274,19 +271,6 @@
               class="w-full py-2 px-3 text-sm font-mono rounded-lg border border-line-2 bg-layer text-foreground focus:outline-hidden focus:border-primary"
               placeholder="https://mcp.example.com/v1"
               bind:value={newUrl}
-            />
-          </div>
-          <!-- Bearer token -->
-          <div>
-            <label for="mcp-token" class="text-xs font-medium text-foreground block mb-1">
-              Bearer token <span class="text-muted-foreground-1 font-normal">(optional)</span>
-            </label>
-            <input
-              id="mcp-token"
-              type="password"
-              class="w-full py-2 px-3 text-sm font-mono rounded-lg border border-line-2 bg-layer text-foreground focus:outline-hidden focus:border-primary"
-              placeholder="tok_..."
-              bind:value={newBearerToken}
             />
           </div>
           <!-- Custom headers -->

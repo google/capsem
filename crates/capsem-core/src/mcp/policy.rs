@@ -2,6 +2,8 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
+use crate::mcp::types::McpAuthConfig;
+
 // ---------------------------------------------------------------------------
 // MCP server config (stored under [mcp])
 // ---------------------------------------------------------------------------
@@ -11,6 +13,7 @@ use serde::{Deserialize, Serialize};
 /// This is server discovery/configuration only. MCP allow/ask/block decisions
 /// are security rules over canonical MCP security events.
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct McpUserConfig {
     /// Health check interval in seconds (default: 300).
     #[serde(default)]
@@ -25,6 +28,7 @@ pub struct McpUserConfig {
 
 /// A manually configured MCP server definition.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct McpManualServer {
     pub name: String,
     /// HTTP endpoint URL for the MCP server.
@@ -32,11 +36,52 @@ pub struct McpManualServer {
     /// Custom HTTP headers to send with every request.
     #[serde(default)]
     pub headers: HashMap<String, String>,
-    /// Bearer token for Authorization header.
+    /// Brokered auth material for the remote MCP server.
     #[serde(default)]
-    pub bearer_token: Option<String>,
+    pub auth: Option<McpAuthConfig>,
     #[serde(default = "default_true")]
     pub enabled: bool,
+}
+
+impl McpUserConfig {
+    pub fn validate(&self, context: &str) -> Result<(), String> {
+        for server in &self.servers {
+            server.validate(context)?;
+        }
+        Ok(())
+    }
+}
+
+impl McpManualServer {
+    fn validate(&self, context: &str) -> Result<(), String> {
+        for key in self.headers.keys() {
+            if is_secret_header(key) {
+                return Err(format!(
+                    "{context}.mcp.servers.{}.headers.{key} is secret-bearing; use auth.credential_ref through the credential broker",
+                    self.name
+                ));
+            }
+        }
+        if let Some(auth) = &self.auth {
+            if !capsem_logger::is_credential_reference(&auth.credential_ref) {
+                return Err(format!(
+                    "{context}.mcp.servers.{}.auth.credential_ref must be a credential:blake3 reference",
+                    self.name
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
+pub fn is_secret_header(key: &str) -> bool {
+    let key = key.to_ascii_lowercase();
+    key == "authorization"
+        || key == "proxy-authorization"
+        || key == "x-api-key"
+        || key == "api-key"
+        || key == "x-auth-token"
+        || key.ends_with("-token")
 }
 
 fn default_true() -> bool {

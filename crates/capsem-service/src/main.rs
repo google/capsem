@@ -4522,7 +4522,7 @@ async fn handle_profile_mcp_servers(
             api::McpServerInfoResponse {
                 name: s.name.clone(),
                 url: s.url.clone(),
-                has_bearer_token: s.bearer_token.is_some(),
+                has_auth_credential: s.auth.is_some(),
                 custom_header_count: s.headers.len(),
                 source: s.source.clone(),
                 enabled: s.enabled,

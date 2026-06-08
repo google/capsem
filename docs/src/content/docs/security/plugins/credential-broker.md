@@ -25,10 +25,23 @@ mode = "rewrite"
 detection_level = "informational"
 ```
 
-Inputs: outbound HTTP boundaries plus plugin-owned broker state. Raw
-credentials remain private to the broker and are not exposed as CEL fields.
+Inputs: outbound HTTP boundaries, remote MCP auth boundaries, plus
+plugin-owned broker state. Raw credentials remain private to the broker and are
+not exposed as CEL fields.
 
 Mutation: stores observed credentials through the broker and writes the brokered `credential:blake3:*` reference back onto the event.
+
+MCP contract: remote MCP server config may carry only brokered auth metadata:
+
+```toml
+[mcp.servers.remote.auth]
+kind = "oauth" # or "bearer"
+credential_ref = "credential:blake3:..."
+```
+
+The broker owns OAuth/API-key material and resolution. MCP TOML must not store
+raw `bearer_token`, `bearerToken`, `Authorization`, `X-Api-Key`, refresh tokens,
+or access tokens.
 
 Decision: plugin policy can request `allow`, `ask`, `block`, or `rewrite`; `rewrite` keeps the effective decision at `allow` while recording mutation intent.
 

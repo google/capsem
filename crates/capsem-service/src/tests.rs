@@ -597,7 +597,7 @@ async fn profile_mcp_info_summarizes_profile_mcp_config() {
                 name: "settings-only".to_string(),
                 url: "https://settings.invalid/mcp".to_string(),
                 headers: Default::default(),
-                bearer_token: None,
+                auth: None,
                 enabled: true,
             }],
             ..Default::default()
@@ -825,7 +825,7 @@ async fn mounted_read_routes_reflect_profile_settings_corp_mcp_and_assets_contra
                 name: "settings-only".to_string(),
                 url: "https://settings.invalid/mcp".to_string(),
                 headers: Default::default(),
-                bearer_token: None,
+                auth: None,
                 enabled: true,
             }],
             ..Default::default()
@@ -1095,7 +1095,7 @@ async fn mounted_mcp_routes_are_profile_scoped_mechanics_only() {
                     name: "settings-only".to_string(),
                     url: "https://settings.invalid/mcp".to_string(),
                     headers: Default::default(),
-                    bearer_token: None,
+                    auth: None,
                     enabled: true,
                 }],
                 ..Default::default()

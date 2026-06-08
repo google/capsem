@@ -175,6 +175,10 @@ batch unrelated fixes into one giant release commit.
   `/profiles/{profile_id}/mcp/servers/{server_id}/refresh`,
   `/profiles/{profile_id}/mcp/servers/{server_id}/tools/{tool_id}/edit`, and
   `/profiles/{profile_id}/mcp/servers/{server_id}/tools/{tool_id}/call`.
+- [x] Burn raw MCP credentials from the profile/corp/frontend config path:
+  MCP auth is `auth.kind = bearer|oauth` plus broker-owned
+  `auth.credential_ref`, raw `bearer_token`/`bearerToken` imports are skipped
+  or rejected, and secret-bearing MCP headers fail validation.
 - [x] Replace global enforcement authoring routes with profile-owned routes:
   `/profiles/{profile_id}/enforcement/evaluate`,
   `PUT /profiles/{profile_id}/enforcement/rules/{rule_id}/edit`,

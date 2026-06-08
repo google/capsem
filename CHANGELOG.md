@@ -120,6 +120,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stubs, profile/settings/corp reads, corp edit/reload, plugin edit/evaluate,
   MCP profile scoping, service-wide security ledgers, and file import/export
   boundary logging.
+- Moved remote MCP auth onto the credential broker contract. MCP profile/corp
+  config now carries `auth.kind` plus opaque `auth.credential_ref` for bearer
+  or OAuth material; raw `bearer_token`/`bearerToken` imports are rejected or
+  skipped, secret-bearing MCP headers fail validation, and UI status reports
+  `has_auth_credential` instead of token presence.
 - Added a profile-owned rule-file compilation guard: profile enforcement TOML
   and Sigma detection YAML now materialize as `SecurityRuleProfile` and compile
   only through the unified `SecurityRuleSet`/CEL rail, rejecting old policy

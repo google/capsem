@@ -107,7 +107,7 @@ fn local_builtin_server_def(
         args: vec![],
         env: builtin_env,
         headers: std::collections::HashMap::new(),
-        bearer_token: None,
+        auth: None,
         enabled,
         source: "builtin".to_string(),
         pool_size,
@@ -164,7 +164,7 @@ pub fn build_profile_server_list(
                 args: vec![],
                 env: HashMap::new(),
                 headers: manual.headers.clone(),
-                bearer_token: manual.bearer_token.clone(),
+                auth: manual.auth.clone(),
                 enabled: manual.enabled,
                 source: "profile".to_string(),
                 pool_size: None,
@@ -233,7 +233,7 @@ pub fn build_server_list_with_builtin(
                 args: vec![],
                 env: HashMap::new(),
                 headers: corp_server.headers.clone(),
-                bearer_token: corp_server.bearer_token.clone(),
+                auth: corp_server.auth.clone(),
                 enabled: corp_server.enabled,
                 source: "corp".to_string(),
                 pool_size: None,
@@ -290,7 +290,7 @@ pub fn build_server_list_with_builtin(
                 args: vec![],
                 env: HashMap::new(),
                 headers: manual.headers.clone(),
-                bearer_token: manual.bearer_token.clone(),
+                auth: manual.auth.clone(),
                 enabled: manual.enabled,
                 source: "manual".to_string(),
                 pool_size: None,
@@ -533,12 +533,26 @@ fn parse_mcp_servers_from_file(path: &Path, source: &str) -> Option<Vec<McpServe
                         .collect()
                 })
                 .unwrap_or_default();
+            if headers
+                .keys()
+                .any(|key| crate::mcp::policy::is_secret_header(key))
+            {
+                warn!(
+                    name,
+                    source,
+                    "detected MCP server contains secret-bearing headers; skipping server until credential broker auth is configured"
+                );
+                continue;
+            }
 
-            let bearer_token = config
-                .get("bearer_token")
-                .or_else(|| config.get("bearerToken"))
-                .and_then(|v| v.as_str())
-                .map(String::from);
+            if config.get("bearer_token").is_some() || config.get("bearerToken").is_some() {
+                warn!(
+                    name,
+                    source,
+                    "detected MCP server contains raw bearer token; skipping server until credential broker auth is configured"
+                );
+                continue;
+            }
 
             debug!(name, source, url, "detected HTTP MCP server");
             defs.push(McpServerDef {
@@ -548,7 +562,7 @@ fn parse_mcp_servers_from_file(path: &Path, source: &str) -> Option<Vec<McpServe
                 args: vec![],
                 env: HashMap::new(),
                 headers,
-                bearer_token,
+                auth: None,
                 enabled: true,
                 source: source.to_string(),
                 pool_size: None,
@@ -587,7 +601,7 @@ fn parse_mcp_servers_from_file(path: &Path, source: &str) -> Option<Vec<McpServe
                 args,
                 env,
                 headers: HashMap::new(),
-                bearer_token: None,
+                auth: None,
                 enabled: true,
                 source: source.to_string(),
                 pool_size: None,

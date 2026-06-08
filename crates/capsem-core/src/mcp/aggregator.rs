@@ -412,7 +412,7 @@ mod tests {
                     args: vec![],
                     env: Default::default(),
                     headers: Default::default(),
-                    bearer_token: None,
+                    auth: None,
                     enabled: true,
                     source: "manual".into(),
                     pool_size: None,

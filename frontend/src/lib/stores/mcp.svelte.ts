@@ -60,8 +60,8 @@ class McpStore {
     await this.load();
   }
 
-  async addServer(name: string, url: string, headers: Record<string, string>, bearerToken: string | null) {
-    await addMcpServer(name, url, headers, bearerToken);
+  async addServer(name: string, url: string, headers: Record<string, string>) {
+    await addMcpServer(name, url, headers);
     await this.load();
   }
 

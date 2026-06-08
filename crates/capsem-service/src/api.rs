@@ -430,7 +430,7 @@ pub struct ErrorResponse {
 pub struct McpServerInfoResponse {
     pub name: String,
     pub url: String,
-    pub has_bearer_token: bool,
+    pub has_auth_credential: bool,
     pub custom_header_count: usize,
     pub source: String,
     pub enabled: bool,

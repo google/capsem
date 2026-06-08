@@ -448,6 +448,9 @@ impl SettingsFile {
         for plugin_id in self.plugins.keys() {
             super::security_rule_profile::validate_identifier("plugin id", plugin_id)?;
         }
+        if let Some(mcp) = &self.mcp {
+            mcp.validate("settings")?;
+        }
         Ok(())
     }
 }

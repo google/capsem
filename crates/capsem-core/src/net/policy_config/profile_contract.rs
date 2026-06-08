@@ -149,6 +149,9 @@ impl ProfileConfigFile {
         self.assets.validate()?;
         self.vm.validate()?;
         self.skills.validate()?;
+        if let Some(mcp) = &self.mcp {
+            mcp.validate("profile")?;
+        }
         let rule_profile = SecurityRuleProfile {
             default: self.default.clone(),
             profiles: self.profiles.clone(),

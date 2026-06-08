@@ -288,7 +288,7 @@ fn build_server_list_manual_servers() {
             name: "myserver".into(),
             url: "https://mcp.example.com/v1".into(),
             headers: HashMap::new(),
-            bearer_token: None,
+            auth: None,
             enabled: true,
         }],
         ..Default::default()
@@ -308,7 +308,7 @@ fn build_server_list_corp_servers_added() {
             name: "corp-server".into(),
             url: "https://corp.internal/mcp".into(),
             headers: HashMap::new(),
-            bearer_token: None,
+            auth: None,
             enabled: true,
         }],
         ..Default::default()
@@ -326,7 +326,7 @@ fn build_server_list_reject_builtin_name() {
             name: "builtin".into(),
             url: "https://evil.com/mcp".into(),
             headers: HashMap::new(),
-            bearer_token: None,
+            auth: None,
             enabled: true,
         }],
         ..Default::default()
@@ -343,7 +343,7 @@ fn build_server_list_empty_name_rejected() {
             name: "".into(),
             url: "https://test.com/mcp".into(),
             headers: HashMap::new(),
-            bearer_token: None,
+            auth: None,
             enabled: true,
         }],
         ..Default::default()
@@ -354,17 +354,101 @@ fn build_server_list_empty_name_rejected() {
 }
 
 #[test]
+fn mcp_config_rejects_raw_bearer_token_field() {
+    let err = toml::from_str::<McpUserConfig>(
+        r#"
+[[servers]]
+name = "remote"
+url = "https://mcp.example.com/v1"
+bearer_token = "tok_raw"
+"#,
+    )
+    .expect_err("raw bearer_token must not be accepted in MCP config");
+    assert!(err.to_string().contains("bearer_token"), "{err}");
+}
+
+#[test]
+fn mcp_config_rejects_secret_bearing_headers() {
+    let cfg: McpUserConfig = toml::from_str(
+        r#"
+[[servers]]
+name = "remote"
+url = "https://mcp.example.com/v1"
+[servers.headers]
+Authorization = "Bearer raw"
+"#,
+    )
+    .unwrap();
+    let err = cfg
+        .validate("profile")
+        .expect_err("Authorization headers must be brokered, not stored in TOML");
+    assert!(err.contains("credential broker"), "{err}");
+}
+
+#[test]
+fn mcp_config_accepts_oauth_broker_reference() {
+    let cfg: McpUserConfig = toml::from_str(&format!(
+        r#"
+[[servers]]
+name = "remote"
+url = "https://mcp.example.com/v1"
+
+[servers.auth]
+kind = "oauth"
+credential_ref = "credential:blake3:{}"
+"#,
+        "a".repeat(64)
+    ))
+    .unwrap();
+    cfg.validate("profile")
+        .expect("brokered OAuth auth must validate");
+    assert_eq!(
+        cfg.servers[0].auth.as_ref().unwrap().kind,
+        crate::mcp::types::McpAuthKind::OAuth
+    );
+}
+
+#[test]
+fn credential_broker_resolves_mcp_oauth_material_by_reference() {
+    let _lock = crate::credential_broker::TEST_ENV_LOCK.blocking_lock();
+    let dir = tempfile::tempdir().unwrap();
+    let _store_guard = EnvVarGuard::set(
+        crate::credential_broker::TEST_STORE_ENV,
+        dir.path().join("store.json"),
+    );
+    let observation = crate::credential_broker::CredentialObservation {
+        provider: crate::credential_broker::CredentialProvider::Mcp,
+        raw_value: "oauth-access-token".to_string(),
+        source: "mcp.auth.remote".to_string(),
+        event_type: None,
+        confidence: 1.0,
+        trace_id: None,
+        context_json: None,
+    };
+    let brokered = crate::credential_broker::broker_observed_credential(&observation).unwrap();
+    let resolved = crate::credential_broker::resolve_broker_reference_for_provider(
+        crate::credential_broker::CredentialProvider::Mcp,
+        &brokered.credential_ref,
+    )
+    .unwrap();
+    assert_eq!(resolved.as_deref(), Some("oauth-access-token"));
+}
+
+#[test]
 fn build_server_list_corp_shadows_user_on_same_name() {
     // AB-002: user manual servers must not shadow corp-defined servers with
     // the same name. The corp.toml policy is the highest-trust layer; if a
     // user defines `github` and corp also defines `github`, the corp URL,
-    // headers, and bearer token must be the surviving definition.
+    // headers, and brokered auth ref must be the surviving definition.
     let user = McpUserConfig {
         servers: vec![McpManualServer {
             name: "github".into(),
             url: "https://user.example/mcp".into(),
             headers: HashMap::new(),
-            bearer_token: Some("user-token".into()),
+            auth: Some(crate::mcp::types::McpAuthConfig {
+                kind: crate::mcp::types::McpAuthKind::OAuth,
+                credential_ref: format!("credential:blake3:{}", "1".repeat(64)),
+            }),
             enabled: true,
         }],
         ..Default::default()
@@ -374,7 +458,10 @@ fn build_server_list_corp_shadows_user_on_same_name() {
             name: "github".into(),
             url: "https://corp.internal/mcp".into(),
             headers: HashMap::new(),
-            bearer_token: Some("corp-token".into()),
+            auth: Some(crate::mcp::types::McpAuthConfig {
+                kind: crate::mcp::types::McpAuthKind::OAuth,
+                credential_ref: format!("credential:blake3:{}", "2".repeat(64)),
+            }),
             enabled: true,
         }],
         ..Default::default()
@@ -389,7 +476,14 @@ fn build_server_list_corp_shadows_user_on_same_name() {
         "corp definition must win over same-name user"
     );
     assert_eq!(github.url, "https://corp.internal/mcp");
-    assert_eq!(github.bearer_token.as_deref(), Some("corp-token"));
+    let corp_ref = format!("credential:blake3:{}", "2".repeat(64));
+    assert_eq!(
+        github
+            .auth
+            .as_ref()
+            .map(|auth| auth.credential_ref.as_str()),
+        Some(corp_ref.as_str())
+    );
     // Only one entry, not two.
     assert_eq!(list.iter().filter(|s| s.name == "github").count(), 1);
 }
@@ -403,7 +497,7 @@ fn build_server_list_unique_user_server_survives_with_corp_present() {
             name: "user-only".into(),
             url: "https://user.example/mcp".into(),
             headers: HashMap::new(),
-            bearer_token: None,
+            auth: None,
             enabled: true,
         }],
         ..Default::default()
@@ -413,7 +507,7 @@ fn build_server_list_unique_user_server_survives_with_corp_present() {
             name: "corp-only".into(),
             url: "https://corp.internal/mcp".into(),
             headers: HashMap::new(),
-            bearer_token: None,
+            auth: None,
             enabled: true,
         }],
         ..Default::default()
@@ -437,7 +531,7 @@ fn build_server_list_corp_enabled_override_on_user_server() {
             name: "user-server".into(),
             url: "https://user.example/mcp".into(),
             headers: HashMap::new(),
-            bearer_token: None,
+            auth: None,
             enabled: true,
         }],
         ..Default::default()
@@ -465,7 +559,7 @@ fn build_server_list_enabled_override() {
             name: "myserver".into(),
             url: "https://mcp.example.com/v1".into(),
             headers: HashMap::new(),
-            bearer_token: None,
+            auth: None,
             enabled: true,
         }],
         server_enabled: {
@@ -488,7 +582,7 @@ fn build_profile_server_list_uses_profile_manual_servers_only() {
             name: "profile-api".into(),
             url: "https://profile.example/mcp".into(),
             headers: HashMap::new(),
-            bearer_token: None,
+            auth: None,
             enabled: true,
         }],
         ..Default::default()
@@ -564,11 +658,10 @@ fn parse_http_server_from_settings() {
     .unwrap();
 
     let defs = parse_mcp_servers_from_file(&path, "claude").unwrap();
-    assert_eq!(defs.len(), 1);
-    assert_eq!(defs[0].name, "api");
-    assert_eq!(defs[0].url, "https://mcp.example.com/v1");
-    assert_eq!(defs[0].bearer_token.as_deref(), Some("tok_123"));
-    assert!(!defs[0].is_stdio());
+    assert!(
+        defs.is_empty(),
+        "auto-detected MCP configs with raw bearerToken must not be imported; credentials must be brokered first"
+    );
 }
 
 #[test]
@@ -623,14 +716,14 @@ fn build_server_list_rejects_names_with_separator() {
         name: "bad__name".to_string(),
         url: "http://localhost".to_string(),
         headers: HashMap::new(),
-        bearer_token: None,
+        auth: None,
         enabled: true,
     });
     user.servers.push(crate::mcp::policy::McpManualServer {
         name: "goodname".to_string(),
         url: "http://localhost".to_string(),
         headers: HashMap::new(),
-        bearer_token: None,
+        auth: None,
         enabled: true,
     });
 
@@ -639,7 +732,7 @@ fn build_server_list_rejects_names_with_separator() {
         name: "corp__bad".to_string(),
         url: "http://localhost".to_string(),
         headers: HashMap::new(),
-        bearer_token: None,
+        auth: None,
         enabled: true,
     });
 

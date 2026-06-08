@@ -214,7 +214,7 @@ export interface ToolAnnotations {
 export interface McpServerInfo {
   name: string;
   url: string;
-  has_bearer_token: boolean;
+  has_auth_credential: boolean;
   custom_header_count: number;
   source: string;
   enabled: boolean;

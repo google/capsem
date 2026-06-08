@@ -5,7 +5,7 @@ const mockServers: McpServerInfo[] = [
   {
     name: 'builtin',
     url: '',
-    has_bearer_token: false,
+    has_auth_credential: false,
     custom_header_count: 0,
     source: 'default',
     enabled: true,
@@ -16,7 +16,7 @@ const mockServers: McpServerInfo[] = [
   {
     name: 'external',
     url: 'https://mcp.example.com',
-    has_bearer_token: true,
+    has_auth_credential: true,
     custom_header_count: 1,
     source: 'user',
     enabled: true,
@@ -89,9 +89,9 @@ describe('mcpStore', () => {
 
   it('addServer calls API and reloads', async () => {
     await mcpStore.load();
-    await mcpStore.addServer('new-srv', 'http://new', { 'X-H': 'v' }, 'tok');
+    await mcpStore.addServer('new-srv', 'http://new', { 'X-H': 'v' });
     const { addMcpServer } = await import('../api');
-    expect(addMcpServer).toHaveBeenCalledWith('new-srv', 'http://new', { 'X-H': 'v' }, 'tok');
+    expect(addMcpServer).toHaveBeenCalledWith('new-srv', 'http://new', { 'X-H': 'v' });
   });
 
   it('removeServer calls API and reloads', async () => {

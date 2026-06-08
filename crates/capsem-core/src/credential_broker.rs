@@ -23,11 +23,18 @@ pub enum CredentialProvider {
     Google,
     OpenAi,
     Github,
+    Mcp,
 }
 
 impl CredentialProvider {
     pub fn all() -> &'static [Self] {
-        &[Self::Anthropic, Self::Google, Self::OpenAi, Self::Github]
+        &[
+            Self::Anthropic,
+            Self::Google,
+            Self::OpenAi,
+            Self::Github,
+            Self::Mcp,
+        ]
     }
 
     pub fn as_str(self) -> &'static str {
@@ -36,6 +43,7 @@ impl CredentialProvider {
             Self::Google => "google",
             Self::OpenAi => "openai",
             Self::Github => "github",
+            Self::Mcp => "mcp",
         }
     }
 
@@ -44,7 +52,7 @@ impl CredentialProvider {
             Self::Anthropic => Some("anthropic"),
             Self::Google => Some("google"),
             Self::OpenAi => Some("openai"),
-            Self::Github => None,
+            Self::Github | Self::Mcp => None,
         }
     }
 }
