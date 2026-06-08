@@ -67,12 +67,12 @@ fn has_security_rule(policies: &MergedPolicies, rule_id: &str) -> bool {
 
 #[test]
 fn corp_override_bool() {
-    let user = file_with(vec![("ai.anthropic.allow", SettingValue::Bool(true))]);
-    let corp = file_with(vec![("ai.anthropic.allow", SettingValue::Bool(false))]);
+    let user = file_with(vec![(SETTING_GITHUB_ALLOW, SettingValue::Bool(true))]);
+    let corp = file_with(vec![(SETTING_GITHUB_ALLOW, SettingValue::Bool(false))]);
     let resolved = resolve_settings(&user, &corp);
     let s = resolved
         .iter()
-        .find(|s| s.id == "ai.anthropic.allow")
+        .find(|s| s.id == SETTING_GITHUB_ALLOW)
         .unwrap();
     assert_eq!(s.effective_value, SettingValue::Bool(false));
     assert_eq!(s.source, PolicySource::Corp);
@@ -119,19 +119,31 @@ fn corp_override_number() {
 #[test]
 fn corp_override_api_key() {
     let user = file_with(vec![(
-        "ai.anthropic.api_key",
-        SettingValue::Text("user-key".into()),
+        SETTING_GITHUB_TOKEN,
+        SettingValue::Text(
+            "credential:blake3:1111111111111111111111111111111111111111111111111111111111111111"
+                .into(),
+        ),
     )]);
     let corp = file_with(vec![(
-        "ai.anthropic.api_key",
-        SettingValue::Text("corp-key".into()),
+        SETTING_GITHUB_TOKEN,
+        SettingValue::Text(
+            "credential:blake3:2222222222222222222222222222222222222222222222222222222222222222"
+                .into(),
+        ),
     )]);
     let resolved = resolve_settings(&user, &corp);
     let s = resolved
         .iter()
-        .find(|s| s.id == "ai.anthropic.api_key")
+        .find(|s| s.id == SETTING_GITHUB_TOKEN)
         .unwrap();
-    assert_eq!(s.effective_value, SettingValue::Text("corp-key".into()));
+    assert_eq!(
+        s.effective_value,
+        SettingValue::Text(
+            "credential:blake3:2222222222222222222222222222222222222222222222222222222222222222"
+                .into()
+        )
+    );
     assert_eq!(s.source, PolicySource::Corp);
 }
 
@@ -154,22 +166,22 @@ fn corp_override_guest_env() {
 #[test]
 fn corp_override_mixed_categories() {
     let user = file_with(vec![
-        ("ai.anthropic.allow", SettingValue::Bool(true)),
+        (SETTING_GITHUB_ALLOW, SettingValue::Bool(true)),
         ("vm.resources.log_bodies", SettingValue::Bool(true)),
         ("appearance.dark_mode", SettingValue::Bool(false)),
     ]);
     let corp = file_with(vec![
-        ("ai.anthropic.allow", SettingValue::Bool(false)),
+        (SETTING_GITHUB_ALLOW, SettingValue::Bool(false)),
         ("vm.resources.log_bodies", SettingValue::Bool(false)),
     ]);
     let resolved = resolve_settings(&user, &corp);
 
-    let ai = resolved
+    let repo = resolved
         .iter()
-        .find(|s| s.id == "ai.anthropic.allow")
+        .find(|s| s.id == SETTING_GITHUB_ALLOW)
         .unwrap();
-    assert_eq!(ai.effective_value, SettingValue::Bool(false));
-    assert_eq!(ai.source, PolicySource::Corp);
+    assert_eq!(repo.effective_value, SettingValue::Bool(false));
+    assert_eq!(repo.source, PolicySource::Corp);
 
     let log = resolved
         .iter()
@@ -232,13 +244,12 @@ fn corp_overrides_all_registry_and_repository_toggles() {
 
 #[test]
 fn user_cannot_enable_blocked_provider() {
-    // Corp blocks anthropic, user tries to enable
-    let user = file_with(vec![("ai.anthropic.allow", SettingValue::Bool(true))]);
-    let corp = file_with(vec![("ai.anthropic.allow", SettingValue::Bool(false))]);
+    let user = file_with(vec![(SETTING_GITHUB_ALLOW, SettingValue::Bool(true))]);
+    let corp = file_with(vec![(SETTING_GITHUB_ALLOW, SettingValue::Bool(false))]);
     let resolved = resolve_settings(&user, &corp);
     let s = resolved
         .iter()
-        .find(|s| s.id == "ai.anthropic.allow")
+        .find(|s| s.id == SETTING_GITHUB_ALLOW)
         .unwrap();
     assert_eq!(s.effective_value, SettingValue::Bool(false));
     assert!(s.corp_locked);
@@ -266,19 +277,31 @@ fn user_cannot_change_corp_network_mechanics_ports() {
 #[test]
 fn user_cannot_override_corp_api_key() {
     let user = file_with(vec![(
-        "ai.openai.api_key",
-        SettingValue::Text("user-key".into()),
+        SETTING_GITHUB_TOKEN,
+        SettingValue::Text(
+            "credential:blake3:1111111111111111111111111111111111111111111111111111111111111111"
+                .into(),
+        ),
     )]);
     let corp = file_with(vec![(
-        "ai.openai.api_key",
-        SettingValue::Text("corp-key".into()),
+        SETTING_GITHUB_TOKEN,
+        SettingValue::Text(
+            "credential:blake3:2222222222222222222222222222222222222222222222222222222222222222"
+                .into(),
+        ),
     )]);
     let resolved = resolve_settings(&user, &corp);
     let s = resolved
         .iter()
-        .find(|s| s.id == "ai.openai.api_key")
+        .find(|s| s.id == SETTING_GITHUB_TOKEN)
         .unwrap();
-    assert_eq!(s.effective_value, SettingValue::Text("corp-key".into()));
+    assert_eq!(
+        s.effective_value,
+        SettingValue::Text(
+            "credential:blake3:2222222222222222222222222222222222222222222222222222222222222222"
+                .into()
+        )
+    );
     assert!(s.corp_locked);
 }
 
@@ -305,7 +328,7 @@ fn write_user_settings_roundtrip() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("roundtrip.toml");
     let file = file_with(vec![
-        ("ai.anthropic.allow", SettingValue::Bool(true)),
+        (SETTING_GITHUB_ALLOW, SettingValue::Bool(true)),
         ("vm.resources.max_body_capture", SettingValue::Number(8192)),
         ("guest.env.EDITOR", SettingValue::Text("vim".into())),
     ]);
@@ -323,7 +346,7 @@ fn write_user_settings_preserves_other_settings() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("preserve.toml");
     let mut file = file_with(vec![
-        ("ai.anthropic.allow", SettingValue::Bool(true)),
+        (SETTING_GITHUB_ALLOW, SettingValue::Bool(true)),
         ("vm.resources.log_bodies", SettingValue::Bool(false)),
     ]);
     write_settings_file(&path, &file).unwrap();
@@ -337,7 +360,7 @@ fn write_user_settings_preserves_other_settings() {
 
     let loaded = load_settings_file(&path).unwrap();
     assert_eq!(
-        loaded.settings.get("ai.anthropic.allow").unwrap().value,
+        loaded.settings.get(SETTING_GITHUB_ALLOW).unwrap().value,
         SettingValue::Bool(true),
     );
     assert_eq!(
@@ -377,11 +400,10 @@ fn default_resolve_has_all_definitions() {
 fn default_ai_providers_all_enabled() {
     let resolved = resolve_settings(&empty_file(), &empty_file());
     for id in &["ai.anthropic.allow", "ai.openai.allow", "ai.google.allow"] {
-        let s = resolved.iter().find(|s| s.id == *id).unwrap();
         assert_eq!(
-            s.effective_value,
-            SettingValue::Bool(true),
-            "expected {id} to be true"
+            resolved.iter().find(|s| s.id == *id),
+            None,
+            "{id} must not be a settings-owned provider toggle"
         );
     }
 }
@@ -494,10 +516,10 @@ fn ai_providers_have_domains_settings() {
     for prefix in &["ai.anthropic", "ai.openai", "ai.google"] {
         let domains_id = format!("{prefix}.domains");
         let def = defs.iter().find(|d| d.id == domains_id);
-        assert!(def.is_some(), "missing {domains_id} setting");
-        let def = def.unwrap();
-        assert_eq!(def.setting_type, SettingType::Text);
-        assert!(def.enabled_by.is_some());
+        assert!(
+            def.is_none(),
+            "{domains_id} must not be a settings-owned provider domain setting"
+        );
     }
 }
 
@@ -574,9 +596,9 @@ fn source_dynamic_guest_env() {
 
 #[test]
 fn is_setting_corp_locked_test() {
-    let corp = file_with(vec![("ai.anthropic.allow", SettingValue::Bool(false))]);
-    assert!(is_setting_corp_locked("ai.anthropic.allow", &corp));
-    assert!(!is_setting_corp_locked("ai.openai.allow", &corp));
+    let corp = file_with(vec![(SETTING_GITHUB_ALLOW, SettingValue::Bool(false))]);
+    assert!(is_setting_corp_locked(SETTING_GITHUB_ALLOW, &corp));
+    assert!(!is_setting_corp_locked(SETTING_GITLAB_ALLOW, &corp));
 }
 
 // -----------------------------------------------------------------------
@@ -585,24 +607,23 @@ fn is_setting_corp_locked_test() {
 
 #[test]
 fn enabled_by_parent_on_child_enabled() {
-    let user = file_with(vec![("ai.anthropic.allow", SettingValue::Bool(true))]);
+    let user = file_with(vec![(SETTING_GITHUB_ALLOW, SettingValue::Bool(true))]);
     let resolved = resolve_settings(&user, &empty_file());
     let child = resolved
         .iter()
-        .find(|s| s.id == "ai.anthropic.api_key")
+        .find(|s| s.id == SETTING_GITHUB_TOKEN)
         .unwrap();
     assert!(child.enabled);
-    assert_eq!(child.enabled_by, Some("ai.anthropic.allow".to_string()));
+    assert_eq!(child.enabled_by, Some(SETTING_GITHUB_ALLOW.to_string()));
 }
 
 #[test]
 fn enabled_by_parent_off_child_disabled() {
-    // User explicitly disables anthropic
-    let user = file_with(vec![("ai.anthropic.allow", SettingValue::Bool(false))]);
+    let user = file_with(vec![(SETTING_GITHUB_ALLOW, SettingValue::Bool(false))]);
     let resolved = resolve_settings(&user, &empty_file());
     let child = resolved
         .iter()
-        .find(|s| s.id == "ai.anthropic.api_key")
+        .find(|s| s.id == SETTING_GITHUB_TOKEN)
         .unwrap();
     assert!(!child.enabled);
 }
@@ -620,22 +641,20 @@ fn enabled_by_none_always_enabled() {
 
 #[test]
 fn enabled_by_chain_not_supported() {
-    // Only one level of enabled_by is supported.
-    // When the toggle is off, api_key is disabled.
-    let mut user = file_with(vec![("ai.openai.allow", SettingValue::Bool(false))]);
+    let mut user = file_with(vec![(SETTING_GITHUB_ALLOW, SettingValue::Bool(false))]);
     let resolved = resolve_settings(&user, &empty_file());
     let key = resolved
         .iter()
-        .find(|s| s.id == "ai.openai.api_key")
+        .find(|s| s.id == SETTING_GITHUB_TOKEN)
         .unwrap();
     assert!(!key.enabled);
 
     // Turn on the toggle -> key is enabled
-    user = file_with(vec![("ai.openai.allow", SettingValue::Bool(true))]);
+    user = file_with(vec![(SETTING_GITHUB_ALLOW, SettingValue::Bool(true))]);
     let resolved = resolve_settings(&user, &empty_file());
     let key = resolved
         .iter()
-        .find(|s| s.id == "ai.openai.api_key")
+        .find(|s| s.id == SETTING_GITHUB_TOKEN)
         .unwrap();
     assert!(key.enabled);
 }
@@ -909,33 +928,45 @@ fn parse_toml_api_key_with_special_chars() {
 
 #[test]
 fn parse_toml_resolves_with_api_key_type() {
-    // Parse from raw TOML, then resolve -- api_key settings must have
+    // Parse from raw TOML, then resolve -- token settings must have
     // setting_type == ApiKey, not Text.
     let toml_str = r#"
 [settings]
-"ai.anthropic.allow" = { value = true, modified = "2026-01-01T00:00:00Z" }
-"ai.anthropic.api_key" = { value = "sk-test", modified = "2026-01-01T00:00:00Z" }
+"repository.providers.github.allow" = { value = true, modified = "2026-01-01T00:00:00Z" }
+"repository.providers.github.token" = { value = "credential:blake3:1111111111111111111111111111111111111111111111111111111111111111", modified = "2026-01-01T00:00:00Z" }
 "#;
     let user: SettingsFile = toml::from_str(toml_str).unwrap();
     let resolved = resolve_settings(&user, &empty_file());
     let s = resolved
         .iter()
-        .find(|s| s.id == "ai.anthropic.api_key")
+        .find(|s| s.id == SETTING_GITHUB_TOKEN)
         .unwrap();
     assert_eq!(
         s.setting_type,
         SettingType::ApiKey,
-        "api_key settings must have ApiKey type"
+        "token settings must have ApiKey type"
     );
-    assert_eq!(s.effective_value, SettingValue::Text("sk-test".into()));
+    assert_eq!(
+        s.effective_value,
+        SettingValue::Text(
+            "credential:blake3:1111111111111111111111111111111111111111111111111111111111111111"
+                .into()
+        )
+    );
 }
 
 #[test]
 fn parse_toml_serialized_format_roundtrips() {
     // Verify that toml::to_string_pretty output parses back correctly
     let file = file_with(vec![
-        ("ai.google.api_key", SettingValue::Text("AIzaTest".into())),
-        ("ai.anthropic.allow", SettingValue::Bool(true)),
+        (
+            SETTING_GITHUB_TOKEN,
+            SettingValue::Text(
+                "credential:blake3:1111111111111111111111111111111111111111111111111111111111111111"
+                    .into(),
+            ),
+        ),
+        (SETTING_GITHUB_ALLOW, SettingValue::Bool(true)),
         ("vm.resources.max_body_capture", SettingValue::Number(4096)),
     ]);
     let serialized = toml::to_string_pretty(&file).unwrap();
@@ -960,10 +991,10 @@ fn json_metadata_fields_present_when_empty() {
     let json = serde_json::to_string(&resolved).unwrap();
     let parsed: Vec<serde_json::Value> = serde_json::from_str(&json).unwrap();
 
-    // Find a setting with empty metadata (e.g., api_key settings)
+    // Find a setting with sparse metadata (e.g., a token setting)
     let api_key = parsed
         .iter()
-        .find(|v| v["id"] == "ai.anthropic.api_key")
+        .find(|v| v["id"] == SETTING_GITHUB_TOKEN)
         .unwrap();
     let meta = &api_key["metadata"];
 
@@ -985,8 +1016,8 @@ fn resolved_settings_json_serialization() {
     // pipeline: parse TOML -> resolve -> serialize to JSON -> has setting_type.
     let toml_str = r#"
 [settings]
-"ai.anthropic.allow" = { value = true, modified = "2026-01-01T00:00:00Z" }
-"ai.anthropic.api_key" = { value = "sk-test", modified = "2026-01-01T00:00:00Z" }
+"repository.providers.github.allow" = { value = true, modified = "2026-01-01T00:00:00Z" }
+"repository.providers.github.token" = { value = "credential:blake3:1111111111111111111111111111111111111111111111111111111111111111", modified = "2026-01-01T00:00:00Z" }
 "#;
     let user: SettingsFile = toml::from_str(toml_str).unwrap();
     let resolved = resolve_settings(&user, &empty_file());
@@ -996,23 +1027,26 @@ fn resolved_settings_json_serialization() {
     let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
     let arr = parsed.as_array().unwrap();
 
-    // Find the api_key setting
+    // Find the token setting
     let api_key = arr
         .iter()
-        .find(|v| v["id"] == "ai.anthropic.api_key")
-        .expect("should have ai.anthropic.api_key in JSON");
+        .find(|v| v["id"] == SETTING_GITHUB_TOKEN)
+        .expect("should have repository.providers.github.token in JSON");
     assert_eq!(
         api_key["setting_type"], "apikey",
         "setting_type must be 'apikey' in JSON"
     );
-    assert_eq!(api_key["effective_value"], "sk-test");
+    assert_eq!(
+        api_key["effective_value"],
+        "credential:blake3:1111111111111111111111111111111111111111111111111111111111111111"
+    );
     assert_eq!(api_key["enabled"], true);
 
     // Find a bool setting
     let allow = arr
         .iter()
-        .find(|v| v["id"] == "ai.anthropic.allow")
-        .expect("should have ai.anthropic.allow in JSON");
+        .find(|v| v["id"] == SETTING_GITHUB_ALLOW)
+        .expect("should have repository.providers.github.allow in JSON");
     assert_eq!(allow["setting_type"], "bool");
     assert_eq!(allow["effective_value"], true);
 
@@ -1176,7 +1210,7 @@ fn brokered_api_key_ref_stays_out_of_guest_env() {
     };
     crate::credential_broker::broker_observed_credential(&obs).unwrap();
     let user = load_settings_file(&user_path).unwrap();
-    assert!(!user.settings.contains_key(SETTING_ANTHROPIC_API_KEY));
+    assert!(!user.settings.contains_key("ai.anthropic.api_key"));
     let resolved = resolve_settings(&user, &empty_file());
     let gc = settings_to_guest_config(&resolved);
     let env = gc.env.unwrap_or_default();
@@ -1210,7 +1244,7 @@ fn brokered_google_api_key_ref_stays_out_of_guest_env() {
     };
     crate::credential_broker::broker_observed_credential(&obs).unwrap();
     let user = load_settings_file(&user_path).unwrap();
-    assert!(!user.settings.contains_key(SETTING_GOOGLE_API_KEY));
+    assert!(!user.settings.contains_key("ai.google.api_key"));
     let resolved = resolve_settings(&user, &empty_file());
     let gc = settings_to_guest_config(&resolved);
     let env = gc.env.unwrap_or_default();
@@ -1247,7 +1281,7 @@ fn brokered_openai_key_writes_provider_discovery_without_raw_secret() {
     let brokered = crate::credential_broker::broker_observed_credential(&obs).unwrap();
     let loaded = load_settings_file(&user_path).unwrap();
     assert!(
-        !loaded.settings.contains_key(SETTING_OPENAI_API_KEY),
+        !loaded.settings.contains_key("ai.openai.api_key"),
         "credential broker must not materialize broker refs into settings"
     );
 
@@ -1276,23 +1310,10 @@ fn brokered_provider_discovery_does_not_write_corp_locked_credential_setting() {
     let _lock = crate::credential_broker::TEST_ENV_LOCK.blocking_lock();
     let dir = tempfile::tempdir().unwrap();
     let user_path = dir.path().join("user.toml");
-    let corp_path = dir.path().join("corp.toml");
     let store_path = dir.path().join("credential-store.json");
     write_settings_file(&user_path, &SettingsFile::default()).unwrap();
-    write_settings_file(
-        &corp_path,
-        &file_with(vec![(
-            SETTING_OPENAI_API_KEY,
-            SettingValue::Text(
-                "credential:blake3:0000000000000000000000000000000000000000000000000000000000000000"
-                    .into(),
-            ),
-        )]),
-    )
-    .unwrap();
 
     let _user_guard = EnvVarGuard::set("CAPSEM_USER_CONFIG", &user_path);
-    let _corp_guard = EnvVarGuard::set("CAPSEM_CORP_CONFIG", &corp_path);
     let _home_guard = EnvVarGuard::set("HOME", dir.path());
     let _store_guard = EnvVarGuard::set(crate::credential_broker::TEST_STORE_ENV, &store_path);
 
@@ -1314,7 +1335,7 @@ fn brokered_provider_discovery_does_not_write_corp_locked_credential_setting() {
 
     let loaded = load_settings_file(&user_path).unwrap();
     assert!(
-        !loaded.settings.contains_key(SETTING_OPENAI_API_KEY),
+        !loaded.settings.contains_key("ai.openai.api_key"),
         "credential setting must never be written by the broker"
     );
     assert!(
@@ -1671,11 +1692,6 @@ fn filetype_metadata_propagated() {
         .find(|d| d.id == "vm.environment.shell.tmux_conf")
         .unwrap();
     assert_eq!(tmux.metadata.filetype.as_deref(), Some("conf"));
-    let claude = defs
-        .iter()
-        .find(|d| d.id == "ai.anthropic.claude.settings_json")
-        .unwrap();
-    assert_eq!(claude.metadata.filetype.as_deref(), Some("json"));
 }
 
 // -----------------------------------------------------------------------
@@ -1691,35 +1707,31 @@ fn file_type_exists_in_setting_type_enum() {
 }
 
 #[test]
-fn gemini_json_settings_use_file_type() {
-    // All .json Gemini settings should be SettingType::File, not Text.
+fn ai_cli_json_settings_are_not_settings() {
     let defs = setting_definitions();
     for id in &[
         "ai.google.gemini.settings_json",
         "ai.google.gemini.projects_json",
         "ai.google.gemini.trusted_folders_json",
     ] {
-        let def = defs.iter().find(|d| d.id == *id).unwrap();
-        assert_eq!(
-            def.setting_type,
-            SettingType::File,
-            "{id} should be File type"
+        assert!(
+            defs.iter().all(|d| d.id != *id),
+            "{id} must not be settings-owned AI CLI state"
         );
     }
 }
 
 #[test]
-fn gemini_installation_id_is_file_type() {
-    // installation_id is now a File type (path + content).
+fn shell_boot_files_are_file_type() {
     let defs = setting_definitions();
     let def = defs
         .iter()
-        .find(|d| d.id == "ai.google.gemini.installation_id")
+        .find(|d| d.id == "vm.environment.shell.bashrc")
         .unwrap();
     assert_eq!(def.setting_type, SettingType::File);
     let (path, content) = def.default_value.as_file().expect("should be File value");
-    assert_eq!(path, "/root/.gemini/installation_id");
-    assert!(content.starts_with("capsem-sandbox-"));
+    assert_eq!(path, "/root/.bashrc");
+    assert!(content.contains("alias "));
 }
 
 #[test]
@@ -1814,7 +1826,7 @@ fn validate_non_json_file_accepts_anything() {
 #[test]
 fn validate_non_file_settings_pass_through() {
     // Bool, Number, etc. settings always pass validation.
-    let result = validate_setting_value("ai.anthropic.allow", &SettingValue::Bool(true));
+    let result = validate_setting_value(SETTING_GITHUB_ALLOW, &SettingValue::Bool(true));
     assert!(result.is_ok());
 }
 
@@ -1824,11 +1836,11 @@ fn file_type_resolved_setting_has_file_value() {
     let resolved = resolve_settings(&empty_file(), &empty_file());
     let s = resolved
         .iter()
-        .find(|s| s.id == "ai.google.gemini.settings_json")
+        .find(|s| s.id == "vm.environment.shell.bashrc")
         .unwrap();
     assert_eq!(s.setting_type, SettingType::File);
     let (path, _content) = s.effective_value.as_file().expect("should be a File value");
-    assert_eq!(path, "/root/.gemini/settings.json");
+    assert_eq!(path, "/root/.bashrc");
 }
 
 // -----------------------------------------------------------------------
@@ -1843,13 +1855,9 @@ fn api_key_settings_do_not_drive_guest_env_vars() {
         "ai.openai.api_key",
         "ai.google.api_key",
     ] {
-        let def = defs
-            .iter()
-            .find(|d| d.id == id)
-            .unwrap_or_else(|| panic!("missing setting {id}"));
         assert!(
-            def.metadata.env_vars.is_empty(),
-            "{id} must not expose guest env vars; credential broker owns materialization"
+            defs.iter().all(|d| d.id != id),
+            "{id} must not be a settings-owned provider credential"
         );
     }
 }
@@ -2223,10 +2231,10 @@ fn toml_registry_ids_from_path() {
 fn toml_registry_category_inherited() {
     // Category is inherited from the nearest ancestor group with a `name`.
     let defs = setting_definitions();
-    let anthropic_allow = defs.iter().find(|d| d.id == "ai.anthropic.allow").unwrap();
+    let github_allow = defs.iter().find(|d| d.id == SETTING_GITHUB_ALLOW).unwrap();
     assert!(
-        !anthropic_allow.category.is_empty(),
-        "ai.anthropic.allow should have a category inherited from its group",
+        !github_allow.category.is_empty(),
+        "repository.providers.github.allow should have a category inherited from its group",
     );
 }
 
@@ -2235,19 +2243,19 @@ fn toml_registry_enabled_by_inherited() {
     // enabled_by is inherited from the group and applied to children
     // but NOT to the toggle setting itself.
     let defs = setting_definitions();
-    let allow = defs.iter().find(|d| d.id == "ai.anthropic.allow").unwrap();
+    let allow = defs.iter().find(|d| d.id == SETTING_GITHUB_ALLOW).unwrap();
     assert!(
         allow.enabled_by.is_none(),
         "the toggle itself should not have enabled_by",
     );
     let api_key = defs
         .iter()
-        .find(|d| d.id == "ai.anthropic.api_key")
+        .find(|d| d.id == SETTING_GITHUB_TOKEN)
         .unwrap();
     assert_eq!(
         api_key.enabled_by.as_deref(),
-        Some("ai.anthropic.allow"),
-        "api_key should inherit enabled_by from its group",
+        Some(SETTING_GITHUB_ALLOW),
+        "token should inherit enabled_by from its group",
     );
 }
 
@@ -2275,14 +2283,9 @@ fn toml_registry_meta_fields() {
         "http_upstream_ports should be an int list"
     );
 
-    // API key settings are brokered credential references, not boot env vars.
-    let key = defs
-        .iter()
-        .find(|d| d.id == "ai.anthropic.api_key")
-        .unwrap();
     assert!(
-        key.metadata.env_vars.is_empty(),
-        "api_key settings must not have env_vars metadata",
+        defs.iter().all(|d| !d.id.starts_with("ai.")),
+        "AI provider controls must not be settings-owned"
     );
 }
 
@@ -2947,14 +2950,6 @@ fn config_lint_non_key_issue_no_docs_url() {
 #[test]
 fn docs_url_parsed_from_toml() {
     let defs = setting_definitions();
-    let anthropic_key = defs
-        .iter()
-        .find(|d| d.id == "ai.anthropic.api_key")
-        .unwrap();
-    assert_eq!(
-        anthropic_key.metadata.docs_url.as_deref(),
-        Some("https://console.anthropic.com/settings/keys")
-    );
     let github_token = defs.iter().find(|d| d.id == SETTING_GITHUB_TOKEN).unwrap();
     assert_eq!(
         github_token.metadata.docs_url.as_deref(),
@@ -3035,7 +3030,6 @@ fn settings_tree_groups_have_expected_names() {
 
     let names = collect_group_names(&tree);
     for expected in &[
-        "AI Providers",
         "Security",
         "Network Mechanics",
         "Services",
@@ -3121,11 +3115,10 @@ fn settings_tree_enabled_by_on_groups() {
         None
     }
 
-    // ai.anthropic group should have enabled_by = "ai.anthropic.allow"
-    let anthropic = find_group(&tree, "ai.anthropic");
-    assert!(anthropic.is_some(), "should find ai.anthropic group");
-    if let Some(SettingsNode::Group { enabled_by, .. }) = anthropic {
-        assert_eq!(enabled_by, Some("ai.anthropic.allow".to_string()));
+    let github = find_group(&tree, "repository.providers.github");
+    assert!(github.is_some(), "should find repository.providers.github group");
+    if let Some(SettingsNode::Group { enabled_by, .. }) = github {
+        assert_eq!(enabled_by, Some(SETTING_GITHUB_ALLOW.to_string()));
     }
 }
 
@@ -3296,7 +3289,7 @@ fn batch_update_accepts_valid_changes() {
     with_temp_configs(vec![], vec![], |_, _| {
         let mut changes = HashMap::new();
         changes.insert(
-            SETTING_ANTHROPIC_API_KEY.to_string(),
+            SETTING_GITHUB_TOKEN.to_string(),
             SettingValue::Text(
                 "credential:blake3:1111111111111111111111111111111111111111111111111111111111111111"
                     .into(),
@@ -3305,7 +3298,7 @@ fn batch_update_accepts_valid_changes() {
         let result = loader::batch_update_profile_settings(&changes);
         assert!(result.is_ok(), "valid changes should succeed: {:?}", result);
         let applied = result.unwrap();
-        assert_eq!(applied, vec![SETTING_ANTHROPIC_API_KEY]);
+        assert_eq!(applied, vec![SETTING_GITHUB_TOKEN]);
     });
 }
 
@@ -3313,11 +3306,11 @@ fn batch_update_accepts_valid_changes() {
 fn batch_update_rejects_corp_locked() {
     with_temp_configs(
         vec![],
-        vec![(SETTING_ANTHROPIC_ALLOW, SettingValue::Bool(false))],
+        vec![(SETTING_GITHUB_ALLOW, SettingValue::Bool(false))],
         |_, _| {
             let mut changes = HashMap::new();
             changes.insert(
-                SETTING_ANTHROPIC_ALLOW.to_string(),
+                SETTING_GITHUB_ALLOW.to_string(),
                 SettingValue::Bool(true),
             );
             let result = loader::batch_update_profile_settings(&changes);
@@ -3331,17 +3324,20 @@ fn batch_update_rejects_corp_locked() {
 fn batch_update_rejects_mixed_batch_atomically() {
     with_temp_configs(
         vec![],
-        vec![(SETTING_ANTHROPIC_ALLOW, SettingValue::Bool(false))],
+        vec![(SETTING_GITHUB_ALLOW, SettingValue::Bool(false))],
         |user_path, _| {
             let mut changes = HashMap::new();
             // One valid change
             changes.insert(
-                SETTING_ANTHROPIC_API_KEY.to_string(),
-                SettingValue::Text("sk-ant-test".into()),
+                SETTING_GITHUB_TOKEN.to_string(),
+                SettingValue::Text(
+                    "credential:blake3:1111111111111111111111111111111111111111111111111111111111111111"
+                        .into(),
+                ),
             );
             // One corp-locked change
             changes.insert(
-                SETTING_ANTHROPIC_ALLOW.to_string(),
+                SETTING_GITHUB_ALLOW.to_string(),
                 SettingValue::Bool(true),
             );
             let result = loader::batch_update_profile_settings(&changes);
@@ -3350,7 +3346,7 @@ fn batch_update_rejects_mixed_batch_atomically() {
             // Verify nothing was written (atomic rejection)
             let file = loader::load_settings_file(user_path).unwrap();
             assert!(
-                !file.settings.contains_key(SETTING_ANTHROPIC_API_KEY),
+                !file.settings.contains_key(SETTING_GITHUB_TOKEN),
                 "valid change should NOT be written when batch is rejected"
             );
         },
@@ -3712,12 +3708,6 @@ fn setting_id_constants_exist_in_registry() {
     let defs = setting_definitions();
     let ids: Vec<&str> = defs.iter().map(|d| d.id.as_str()).collect();
     for constant in [
-        SETTING_ANTHROPIC_ALLOW,
-        SETTING_ANTHROPIC_API_KEY,
-        SETTING_OPENAI_ALLOW,
-        SETTING_OPENAI_API_KEY,
-        SETTING_GOOGLE_ALLOW,
-        SETTING_GOOGLE_API_KEY,
         SETTING_GITHUB_ALLOW,
         SETTING_GITHUB_TOKEN,
         SETTING_GITLAB_ALLOW,
@@ -3798,11 +3788,6 @@ fn token_settings_have_prefix_metadata() {
     assert_eq!(gh.metadata.prefix.as_deref(), Some("ghp_"));
     let gl = defs.iter().find(|d| d.id == SETTING_GITLAB_TOKEN).unwrap();
     assert_eq!(gl.metadata.prefix.as_deref(), Some("glpat-"));
-    let anthropic = defs
-        .iter()
-        .find(|d| d.id == SETTING_ANTHROPIC_API_KEY)
-        .unwrap();
-    assert_eq!(anthropic.metadata.prefix.as_deref(), Some("sk-ant-"));
 }
 
 // -----------------------------------------------------------------------
@@ -3944,7 +3929,7 @@ fn apply_preset_does_not_clobber_unrelated_settings() {
     let corp_path = dir.path().join("corp.toml");
     let mut initial = SettingsFile::default();
     initial.settings.insert(
-        "ai.google.api_key".to_string(),
+        SETTING_GITHUB_TOKEN.to_string(),
         SettingEntry {
             value: SettingValue::Text(
                 "credential:blake3:2222222222222222222222222222222222222222222222222222222222222222"
@@ -3959,7 +3944,7 @@ fn apply_preset_does_not_clobber_unrelated_settings() {
 
     let loaded = load_settings_file(&user_path).unwrap();
     assert_eq!(
-        loaded.settings["ai.google.api_key"].value,
+        loaded.settings[SETTING_GITHUB_TOKEN].value,
         SettingValue::Text(
             "credential:blake3:2222222222222222222222222222222222222222222222222222222222222222"
                 .into()
@@ -4513,7 +4498,7 @@ fn batch_update_settings_json_rejects_old_policy_rule_shape_atomically() {
     with_temp_configs(vec![], vec![], |user_path, _| {
         let mut changes = HashMap::new();
         changes.insert(
-            SETTING_ANTHROPIC_API_KEY.to_string(),
+            SETTING_GITHUB_TOKEN.to_string(),
             serde_json::json!("credential:blake3:0000000000000000000000000000000000000000000000000000000000000000"),
         );
         changes.insert(
@@ -4735,7 +4720,6 @@ fn settings_loader_rejects_raw_provider_credentials_but_accepts_broker_refs() {
         &valid_path,
         r#"
 [settings]
-"ai.openai.api_key" = { value = "credential:blake3:0000000000000000000000000000000000000000000000000000000000000000", modified = "2026-06-06T10:00:00Z" }
 "repository.providers.github.token" = { value = "", modified = "2026-06-06T10:00:00Z" }
 "#,
     )
@@ -4757,8 +4741,8 @@ fn settings_loader_rejects_raw_provider_credentials_but_accepts_broker_refs() {
     .unwrap();
     let error = load_settings_file(&raw_path).expect_err("raw provider credential must fail");
     assert!(
-        error.contains("credential:blake3"),
-        "error should point to broker refs: {error}"
+        error.contains("retired AI setting id ai.openai.api_key"),
+        "error should reject retired AI setting ids: {error}"
     );
 }
 
@@ -4767,15 +4751,16 @@ fn batch_update_settings_rejects_raw_provider_credentials_atomically() {
     with_temp_configs(vec![], vec![], |user_path, _| {
         let mut changes = HashMap::new();
         changes.insert(
-            SETTING_OPENAI_API_KEY.to_string(),
+            "ai.openai.api_key".to_string(),
             serde_json::json!("sk-raw-openai"),
         );
 
         let result = loader::batch_update_profile_settings_json(&changes);
-        assert!(result.is_err(), "raw API key writes must be rejected");
+        let error = result.expect_err("retired API key writes must be rejected");
+        assert!(error.contains("unknown setting"), "{error}");
         let loaded = loader::load_settings_file(user_path).unwrap();
         assert!(
-            !loaded.settings.contains_key(SETTING_OPENAI_API_KEY),
+            !loaded.settings.contains_key("ai.openai.api_key"),
             "raw rejected setting must not be written"
         );
     });
@@ -5064,8 +5049,6 @@ fn load_settings_response_exposes_provider_status_without_static_runtime_evidenc
         &user_path,
         r#"
 [settings]
-"ai.openai.api_key" = { value = "credential:blake3:0000000000000000000000000000000000000000000000000000000000000000", modified = "2026-06-06T10:00:00Z" }
-
 [ai.openai.discovery]
 observed_at = "2026-06-06T10:00:00Z"
 source = "http.header.authorization"

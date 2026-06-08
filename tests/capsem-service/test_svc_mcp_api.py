@@ -17,7 +17,7 @@ from helpers.service import wait_exec_ready, vm_name
 
 pytestmark = pytest.mark.integration
 
-PROFILE = "default"
+PROFILE = "code"
 SERVER = "local"
 
 
@@ -136,7 +136,10 @@ class TestMcpCall:
         -> aggregator), even if the downstream MCP call itself fails.
         """
         name = vm_name("mcpcall")
-        client.post("/vms/create", {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
+        client.post(
+            "/vms/create",
+            {"name": name, "profile_id": PROFILE, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS},
+        )
         try:
             assert wait_exec_ready(client, name, timeout=EXEC_READY_TIMEOUT), (
                 f"{name} never exec-ready"

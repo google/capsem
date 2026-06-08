@@ -107,7 +107,7 @@ class TestCorpConfig:
             "refresh_interval_hours = 24\n"
             "\n"
             "[settings]\n"
-            '"ai.openai.allow" = { value = false, modified = "2026-04-21T00:00:00Z" }\n'
+            '"repository.providers.github.allow" = { value = false, modified = "2026-04-21T00:00:00Z" }\n'
         )
         resp = client.put("/corp/edit", {"toml": toml_content})
         assert resp is not None and resp.get("success") is True, (
@@ -116,7 +116,7 @@ class TestCorpConfig:
 
         # Corp-locked setting must now appear as corp_locked in the tree.
         tree = client.get("/settings/info")["tree"]
-        locked = _find_setting_flag(tree, "ai.openai.allow", "corp_locked")
+        locked = _find_setting_flag(tree, "repository.providers.github.allow", "corp_locked")
         assert locked is True, f"corp-locked not surfaced after install: {locked}"
 
         info = client.get("/corp/info")

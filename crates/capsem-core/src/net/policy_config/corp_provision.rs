@@ -80,6 +80,8 @@ pub async fn fetch_corp_config(
 /// Validate that a string is valid corp TOML (parseable as SettingsFile).
 pub fn validate_corp_toml(content: &str) -> Result<SettingsFile> {
     let file: SettingsFile = toml::from_str(content).context("invalid corp TOML")?;
+    super::loader::reject_retired_ai_setting_ids_in_content("corp TOML", content)
+        .map_err(anyhow::Error::msg)?;
     Ok(file)
 }
 
@@ -253,12 +255,22 @@ mod tests {
     fn test_validate_valid_corp_toml() {
         let content = r#"
 [settings]
-"ai.anthropic.allow" = { value = true, modified = "2024-01-01T00:00:00Z" }
+"repository.providers.github.allow" = { value = true, modified = "2024-01-01T00:00:00Z" }
 "#;
         let result = validate_corp_toml(content);
         assert!(result.is_ok());
         let file = result.unwrap();
-        assert!(file.settings.contains_key("ai.anthropic.allow"));
+        assert!(file.settings.contains_key("repository.providers.github.allow"));
+    }
+
+    #[test]
+    fn test_validate_rejects_retired_ai_settings() {
+        let content = r#"
+[settings]
+"ai.anthropic.allow" = { value = true, modified = "2024-01-01T00:00:00Z" }
+"#;
+        let error = validate_corp_toml(content).unwrap_err().to_string();
+        assert!(error.contains("retired AI setting id ai.anthropic.allow"));
     }
 
     #[test]
@@ -292,7 +304,7 @@ mod tests {
         // Raw string without SettingEntry wrapper should fail
         let content = r#"
 [settings]
-"ai.anthropic.allow" = "yes"
+"repository.providers.github.allow" = "yes"
 "#;
         assert!(validate_corp_toml(content).is_err());
     }

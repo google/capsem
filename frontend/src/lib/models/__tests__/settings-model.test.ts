@@ -11,9 +11,9 @@ describe('SettingsModel', () => {
   describe('tree indexing', () => {
     it('finds leaf settings by ID', () => {
       const model = loadModel();
-      const leaf = model.getLeaf('ai.anthropic.allow');
+      const leaf = model.getLeaf('repository.providers.github.allow');
       expect(leaf).toBeDefined();
-      expect(leaf!.name).toBe('Allow Anthropic');
+      expect(leaf!.name).toBe('Allow GitHub');
     });
 
     it('returns undefined for unknown ID', () => {
@@ -32,7 +32,6 @@ describe('SettingsModel', () => {
       const model = loadModel();
       const names = model.sections.map(s => s.name);
       expect(names).toContain('App');
-      expect(names).toContain('AI Providers');
       expect(names).toContain('Repositories');
       expect(names).toContain('Security');
       expect(names).toContain('VM');
@@ -40,27 +39,25 @@ describe('SettingsModel', () => {
 
     it('section() finds by name', () => {
       const model = loadModel();
-      const ai = model.section('AI Providers');
-      expect(ai).toBeDefined();
-      expect(ai!.key).toBe('ai');
+      const repositories = model.section('Repositories');
+      expect(repositories).toBeDefined();
+      expect(repositories!.key).toBe('repository');
     });
   });
 
   describe('getGroup', () => {
     it('finds nested groups', () => {
       const model = loadModel();
-      const claude = model.getGroup('Claude Code');
-      expect(claude).toBeDefined();
-      expect(claude!.key).toBe('ai.anthropic.claude');
+      const github = model.getGroup('GitHub');
+      expect(github).toBeDefined();
+      expect(github!.key).toBe('repository.providers.github');
     });
   });
 
   describe('issues', () => {
     it('filters issues by ID', () => {
       const model = loadModel();
-      const issues = model.issuesFor('ai.anthropic.api_key');
-      expect(issues.length).toBeGreaterThan(0);
-      expect(issues[0].severity).toBe('warning');
+      expect(model.issuesFor('repository.providers.github.token')).toEqual([]);
     });
 
     it('returns empty for IDs without issues', () => {
@@ -86,19 +83,19 @@ describe('SettingsModel', () => {
   describe('getWidget', () => {
     it('returns Toggle for bool type', () => {
       const model = loadModel();
-      const leaf = model.getLeaf('ai.anthropic.allow')!;
+      const leaf = model.getLeaf('repository.providers.github.allow')!;
       expect(model.getWidget(leaf)).toBe(Widget.Toggle);
     });
 
     it('returns PasswordInput for apikey type', () => {
       const model = loadModel();
-      const leaf = model.getLeaf('ai.anthropic.api_key')!;
+      const leaf = model.getLeaf('repository.providers.github.token')!;
       expect(model.getWidget(leaf)).toBe(Widget.PasswordInput);
     });
 
     it('returns FileEditor for file type', () => {
       const model = loadModel();
-      const leaf = model.getLeaf('ai.anthropic.claude.settings_json')!;
+      const leaf = model.getLeaf('vm.environment.shell.bashrc')!;
       expect(model.getWidget(leaf)).toBe(Widget.FileEditor);
     });
 
@@ -163,7 +160,7 @@ describe('SettingsModel', () => {
   describe('enabled / visibility', () => {
     it('isEnabled returns true for settings without enabled_by', () => {
       const model = loadModel();
-      expect(model.isEnabled('ai.anthropic.allow')).toBe(true);
+      expect(model.isEnabled('vm.resources.cpu_count')).toBe(true);
     });
 
     it('isCorpLocked returns false for normal settings', () => {
@@ -271,8 +268,8 @@ describe('SettingsModel', () => {
 
     it('stage boolean false', () => {
       const model = loadModel();
-      model.stage('ai.anthropic.allow', false);
-      expect(model.pendingChanges.get('ai.anthropic.allow')).toBe(false);
+      model.stage('repository.providers.github.allow', false);
+      expect(model.pendingChanges.get('repository.providers.github.allow')).toBe(false);
     });
 
     it('stage number zero', () => {
@@ -318,6 +315,13 @@ describe('SettingsModel', () => {
       expect(kinds.has('group')).toBe(true);
       expect(kinds.has('leaf')).toBe(true);
       expect(kinds.has('action')).toBe(true);
+    });
+
+    it('does not expose retired AI provider settings', () => {
+      const model = loadModel();
+      expect(model.section('AI Providers')).toBeUndefined();
+      expect(model.getLeaf('ai.anthropic.allow')).toBeUndefined();
+      expect(model.getLeaf('ai.openai.api_key')).toBeUndefined();
     });
   });
 });

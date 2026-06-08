@@ -3,7 +3,14 @@ title: Settings System
 description: How Capsem loads, merges, and applies configuration from defaults, user, and enterprise sources.
 ---
 
-Capsem's settings system controls everything from AI provider access to VM resources. Settings are declared in TOML, merged from three sources with enterprise override, rendered in a dynamic UI, and injected into the guest VM at boot. This page covers the full architecture.
+Capsem's settings system controls service and UI preferences such as VM
+resources, repository settings, and explicit non-secret boot configuration.
+Provider access, enforcement, detections, and credential brokerage are owned by
+profile/corp security rules plus plugins, not by settings-owned AI provider
+toggles. Settings are declared in TOML, merged from defaults, user, and
+enterprise sources with enterprise override, rendered in a dynamic UI, and
+translated into the small boot-time config surface that is allowed to enter the
+guest VM.
 
 ## File Sources
 
@@ -81,15 +88,16 @@ The UI renders these via a finite `ActionKind` enum -- not string comparison.
 Each leaf setting can have a `.meta` sub-table with extra fields:
 
 ```toml
-[settings.ai.anthropic.api_key.meta]
-env_vars = ["ANTHROPIC_API_KEY"]
-docs_url = "https://console.anthropic.com/settings/keys"
-prefix = "sk-ant-"
-widget = "password_input"
-side_effect = "toggle_theme"   # only on appearance.dark_mode
+[settings.appearance.dark_mode.meta]
+widget = "toggle"
+side_effect = "toggle_theme"
 ```
 
-Key metadata fields: `widget` (override default UI widget), `side_effect` (frontend action on change), `hidden` (exclude from UI but still active for policy), `builtin` (non-removable), `env_vars` (inject into guest), `domains` (network policy), `rules` (HTTP method permissions).
+Key metadata fields: `widget` (override default UI widget), `side_effect`
+(frontend action on change), `hidden` (exclude from UI but still active for
+settings resolution), and `builtin` (non-removable). Static API-key metadata and
+provider network policy metadata are retired from settings; credentials are
+broker/plugin-owned and network enforcement is rule-owned.
 
 ## Value Resolution
 
@@ -118,7 +126,10 @@ effective_enabled = explicit_enabled AND enabled_by_result
 - **explicit_enabled**: corp `enabled` field > user `enabled` > defaults `enabled` > `true`
 - **enabled_by_result**: if no `enabled_by` pointer, `true`. Otherwise, look up the parent toggle's effective boolean value.
 
-Example: when `ai.anthropic.allow` is `false` (corp-locked off), all child settings (`api_key`, `domains`, config files) are `enabled: false` -- greyed out in the UI and excluded from policy.
+Example: when `repository.providers.github.allow` is `false` (corp-locked off),
+child settings such as the repository token field are `enabled: false` and
+greyed out in the UI. Provider allow/block behavior is not represented this
+way; it is expressed as profile/corp security rules.
 
 ### Hidden resolution
 
@@ -199,7 +210,7 @@ Returns the full `SettingsResponse` in one call:
 | `tree` | `SettingsNode[]` | Hierarchical tree: groups, leaves, actions, MCP servers |
 | `issues` | `ConfigIssue[]` | Validation warnings (invalid JSON, invalid paths, blocked setting writes, etc.) |
 | `presets` | `SecurityPreset[]` | Available security presets with their setting values |
-| `providers` | `ProviderStatus[]` | Provider endpoint routing, discovery breadcrumbs, and corp block status |
+| `providers` | `ProviderStatus[]` | Runtime/provider discovery breadcrumbs and rule-derived status, not static credential inventory |
 
 ### save_settings
 
@@ -255,9 +266,10 @@ flowchart TD
 
 The model class is independently testable (43 vitest tests) and works identically whether talking to the gateway or using mock data.
 
-## Boot-Time Config Injection
+## Boot-Time Config Materialization
 
-At VM boot, resolved settings are translated into environment variables and files injected into the guest:
+At VM boot, resolved settings are translated into the limited non-secret
+environment variables and files that are allowed to enter the guest:
 
 ```mermaid
 sequenceDiagram
@@ -267,10 +279,8 @@ sequenceDiagram
 
   Proc->>Core: load_merged_guest_config()
   Core->>Core: Resolve settings (corp > user > defaults)
-  Core->>Core: Collect env vars from meta.env_vars
+  Core->>Core: Collect explicit non-secret guest env settings
   Core->>Core: Collect boot files (type=file settings with content)
-  Core->>Core: Inject MCP servers into agent config files
-  Core->>Core: Generate .git-credentials from tokens
   Proc->>VM: send_boot_config()
   loop Each env var
     Proc->>VM: SetEnv { key, value }
@@ -283,16 +293,22 @@ sequenceDiagram
 
 Key behaviors:
 
-- **API keys are always injected** (even if the provider toggle is off) so the user can enable a provider at runtime without rebooting.
-- **Provider/profile rules control network access**, not file injection. HTTP
-  and DNS traffic is blocked or allowed by `SecurityRuleSet` over
+- **API keys and provider credentials are never settings materialized boot
+  secrets.** They are detected, substituted, and audited by the credential
+  broker plugin using opaque BLAKE3 references.
+- **Profile/corp rules control network access.** HTTP, DNS, MCP, model, file,
+  and process events are blocked or allowed by `SecurityRuleSet` over canonical
   `SecurityEvent` fields.
-- **File permissions** default to `0o600` (owner-only) for sensitive content like API keys and SSH keys.
-- **MCP servers** are injected into each AI agent's config file format (Claude JSON, Gemini JSON, Codex TOML).
+- **File permissions** default to `0o600` (owner-only) for sensitive explicit
+  boot files such as SSH keys.
+- **Static AI CLI config-file injection is retired.** Tool/provider
+  observations belong to runtime plugin/security-ledger evidence, not
+  settings-owned provider files.
 
 ## MCP Server Definitions
 
-MCP servers are declared in a separate `[mcp]` section and auto-injected into AI agent config files at boot:
+MCP servers are declared in a separate `[mcp]` section and resolved as profile
+configuration:
 
 ```mermaid
 flowchart LR
@@ -300,9 +316,8 @@ flowchart LR
   UM["user.toml\n[mcp.my_tool]"] --> MR
   CM["corp.toml\n[mcp.acme]"] --> MR
   MR --> MS["Resolved MCP Servers"]
-  MS --> CJ["Claude settings.json\nmcpServers: {...}"]
-  MS --> GJ["Gemini settings.json\nmcpServers: {...}"]
-  MS --> CT2["Codex config.toml\n[mcp_servers.*]"]
+  MS --> ROUTE["Network/MCP runtime routing"]
+  MS --> TOOLS["Per-server tool inventory"]
   MS --> TREE["Settings Tree\nMcpServer nodes in UI"]
 ```
 
@@ -317,7 +332,7 @@ command = "/run/capsem-mcp-server"
 builtin = true
 ```
 
-Enterprises can add MCP servers via `corp.toml`:
+Enterprises can add MCP servers via corp-owned profile configuration:
 
 ```toml
 [mcp.internal_tools]
@@ -345,7 +360,7 @@ Enterprise administrators distribute `corp.toml` via MDM. It controls:
 | Capability | How |
 |---|---|
 | **Force a value** | Set the key in corp.toml -- user cannot override |
-| **Disable a provider** | Set `ai.anthropic.allow = false` -- all children disabled |
+| **Disable provider traffic** | Add a corp/profile enforcement rule that matches the provider boundary and uses `action = "block"` |
 | **Hide a setting** | Set `hidden = true` on the override entry |
 | **Block preset application** | Corp-locked settings are skipped during preset apply |
 | **Add MCP servers** | Add entries to `[mcp]` section -- user cannot remove |

@@ -28,6 +28,34 @@
 - [x] Confirm old `config/defaults.toml` `settings.ai.*` defaults and
   host-credential injection blocks are burned or reshaped into profile-owned
   rules plus plugin-owned runtime status. They must not remain UI settings.
+- [x] Burn generated/runtime settings-owned AI provider registry. Decision:
+  intentional_burn. `config/defaults.toml`, generated defaults JSON, generated
+  mock settings, frontend settings-store/model tests, integration config
+  fixtures, and the settings architecture page no longer expose
+  `settings.ai.*` provider toggles/API keys/domains. Loader and inline corp
+  validation reject retired flat AI setting IDs. Coverage:
+  `just _generate-settings`, `cargo test -p capsem-core --lib policy_config --
+  --nocapture`, `uv run pytest tests/test_config.py -q`, `pnpm -C frontend
+  check`, and `pnpm -C frontend test
+  src/lib/models/__tests__/settings-model.test.ts
+  src/lib/__tests__/settings-store.test.ts`.
+- [x] Burn stale settings-based API-key injection tests. Decision:
+  intentional_burn. Removed `tests/test_api_key_injection.sh` and the old
+  Python E2E that expected broker references in guest env; broker/plugin
+  behavior remains covered in credential broker, fs monitor, security engine,
+  and MITM telemetry hook tests.
+- [x] Burn retired service-global asset status helper. Decision:
+  intentional_burn. Removed the dead `asset_status_value` helper and converted
+  reconcile-progress coverage to `profile_asset_status_value` over the
+  profile-owned hash-prefixed asset contract. Coverage:
+  `cargo test -p capsem-service asset_status_reports_reconcile_progress_fields
+  -- --nocapture`, `cargo test -p capsem-service --no-run`, and `uv run pytest
+  tests/capsem-service/test_svc_install.py tests/capsem-service/test_svc_mcp_api.py -q`.
+- [ ] Follow-up: sweep remaining Python integration/gateway VM creation
+  fixtures so every `/vms/create` payload carries explicit `profile_id =
+  "code"` or intentionally asserts the missing-profile rejection. The shared
+  service fixture and touched MCP endpoint test are fixed; the broader harness
+  still has older create calls.
 - [ ] Commit S0.
 
 ## Commit Inspection Ledger

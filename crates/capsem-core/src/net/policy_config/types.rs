@@ -17,12 +17,6 @@ use serde::{Deserialize, Serialize};
 // Setting ID constants (must match defaults.toml paths)
 // ---------------------------------------------------------------------------
 
-pub const SETTING_ANTHROPIC_ALLOW: &str = "ai.anthropic.allow";
-pub const SETTING_ANTHROPIC_API_KEY: &str = "ai.anthropic.api_key";
-pub const SETTING_OPENAI_ALLOW: &str = "ai.openai.allow";
-pub const SETTING_OPENAI_API_KEY: &str = "ai.openai.api_key";
-pub const SETTING_GOOGLE_ALLOW: &str = "ai.google.allow";
-pub const SETTING_GOOGLE_API_KEY: &str = "ai.google.api_key";
 pub const SETTING_GITHUB_ALLOW: &str = "repository.providers.github.allow";
 pub const SETTING_GITHUB_TOKEN: &str = "repository.providers.github.token";
 pub const SETTING_GITLAB_ALLOW: &str = "repository.providers.gitlab.allow";
@@ -475,11 +469,7 @@ pub fn validate_stored_setting_contract(id: &str, value: &SettingValue) -> Resul
 pub fn is_brokered_credential_setting_id(id: &str) -> bool {
     matches!(
         id,
-        SETTING_ANTHROPIC_API_KEY
-            | SETTING_OPENAI_API_KEY
-            | SETTING_GOOGLE_API_KEY
-            | SETTING_GITHUB_TOKEN
-            | SETTING_GITLAB_TOKEN
+        SETTING_GITHUB_TOKEN | SETTING_GITLAB_TOKEN
     )
 }
 

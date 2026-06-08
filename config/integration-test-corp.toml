@@ -1,6 +1,10 @@
-# Corporate policy for integration tests (locks settings).
+# Corporate policy for integration tests.
 # Used by scripts/integration_test.py.
 
-[settings]
-"ai.openai.allow" = { value = false, modified = "2026-03-05T00:00:00Z" }
-"ai.anthropic.allow" = { value = false, modified = "2026-03-05T00:00:00Z" }
+[corp.rules.block_example_invalid]
+name = "block_example_invalid"
+action = "block"
+priority = -100
+detection_level = "high"
+reason = "Integration proof that corp-owned rules, not settings-owned AI toggles, control enforcement."
+match = 'http.host == "example.invalid"'

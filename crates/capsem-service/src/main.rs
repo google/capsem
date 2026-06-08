@@ -3405,42 +3405,6 @@ async fn handle_save_settings(
     Ok(Json(serde_json::to_value(resp).unwrap_or_default()))
 }
 
-fn asset_status_value(state: &ServiceState) -> serde_json::Value {
-    let reconcile = state
-        .asset_reconcile
-        .lock()
-        .map(|s| s.clone())
-        .unwrap_or_default();
-    match state.resolve_asset_paths() {
-        Ok(resolved) => {
-            let assets = vec![
-                json!({ "name": "vmlinuz", "path": resolved.kernel.display().to_string(), "status": if resolved.kernel.exists() { "present" } else { "missing" } }),
-                json!({ "name": "initrd.img", "path": resolved.initrd.display().to_string(), "status": if resolved.initrd.exists() { "present" } else { "missing" } }),
-                json!({ "name": resolved.rootfs.file_name().and_then(|name| name.to_str()).unwrap_or("rootfs"), "path": resolved.rootfs.display().to_string(), "status": if resolved.rootfs.exists() { "present" } else { "missing" } }),
-            ];
-            let all_ready = assets.iter().all(|a| a["status"] == "present");
-            let mut value = json!({
-                "ready": all_ready,
-                "downloading": reconcile.in_progress,
-                "asset_version": resolved.asset_version,
-                "assets": assets,
-            });
-            append_asset_reconcile_status(&mut value, &reconcile);
-            value
-        }
-        Err(e) => {
-            let mut value = json!({
-                "ready": false,
-                "downloading": reconcile.in_progress,
-                "error": e.to_string(),
-                "assets": [],
-            });
-            append_asset_reconcile_status(&mut value, &reconcile);
-            value
-        }
-    }
-}
-
 fn profile_asset_status_value(
     state: &ServiceState,
     profile: &ProfileConfigFile,

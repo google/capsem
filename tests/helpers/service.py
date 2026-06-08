@@ -20,6 +20,7 @@ PROCESS_BINARY = PROJECT_ROOT / "target/debug/capsem-process"
 GATEWAY_BINARY = PROJECT_ROOT / "target/debug/capsem-gateway"
 TRAY_BINARY = PROJECT_ROOT / "target/debug/capsem-tray"
 ASSETS_DIR = PROJECT_ROOT / "assets"
+PROFILES_DIR = PROJECT_ROOT / "config" / "profiles"
 
 
 ARTIFACT_MAX_FILE_BYTES = 25 * 1024 * 1024  # 25 MB hard cap per file
@@ -192,6 +193,7 @@ class ServiceInstance:
         env["RUST_LOG"] = "debug"
         env["CAPSEM_RUN_DIR"] = str(self.tmp_dir)
         env["CAPSEM_HOME"] = str(self.tmp_dir)
+        env["CAPSEM_PROFILES_DIR"] = str(PROFILES_DIR)
         env["HOME"] = str(self.tmp_dir)
 
         log_path = self.tmp_dir / "service.log"

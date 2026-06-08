@@ -16,236 +16,6 @@
         "action": "check_update"
       }
     },
-    "ai": {
-      "name": "AI Providers",
-      "description": "AI model provider configuration",
-      "collapsed": false,
-      "anthropic": {
-        "name": "Anthropic",
-        "description": "Claude Code AI agent",
-        "enabled_by": "ai.anthropic.allow",
-        "collapsed": false,
-        "allow": {
-          "name": "Allow Anthropic",
-          "description": "Enable API access to Anthropic (*.anthropic.com).",
-          "type": "bool",
-          "default": true,
-          "meta": {
-            "rules": {
-              "default": {
-                "get": true,
-                "post": true
-              }
-            }
-          }
-        },
-        "api_key": {
-          "name": "Anthropic API Key",
-          "description": "Brokered credential reference for Anthropic API access.",
-          "type": "apikey",
-          "default": "",
-          "meta": {
-            "docs_url": "https://console.anthropic.com/settings/keys",
-            "prefix": "sk-ant-"
-          }
-        },
-        "domains": {
-          "name": "Anthropic Domains",
-          "description": "Comma-separated domain patterns. Wildcards (*.example.com) match all subdomains.",
-          "type": "text",
-          "default": "*.anthropic.com, *.claude.com"
-        },
-        "claude": {
-          "name": "Claude Code",
-          "description": "Claude Code configuration files",
-          "settings_json": {
-            "name": "Claude Code settings.json",
-            "description": "Content for /root/.claude/settings.json. Bypass permissions, disable telemetry/updates for sandboxed execution.",
-            "type": "file",
-            "default": {
-              "path": "/root/.claude/settings.json",
-              "content": "{\"permissions\":{\"defaultMode\":\"bypassPermissions\"},\"env\":{\"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC\":\"1\"}}"
-            },
-            "meta": {
-              "filetype": "json"
-            }
-          },
-          "state_json": {
-            "name": "Claude Code state (.claude.json)",
-            "description": "Content for /root/.claude.json. Skips onboarding, trust dialogs, and keybinding prompts.",
-            "type": "file",
-            "default": {
-              "path": "/root/.claude.json",
-              "content": "{\"hasCompletedOnboarding\":true,\"hasTrustDialogAccepted\":true,\"hasTrustDialogHooksAccepted\":true,\"shiftEnterKeyBindingInstalled\":true,\"theme\":\"dark\",\"numStartups\":1,\"opusProMigrationComplete\":true,\"sonnet1m45MigrationComplete\":true,\"projects\":{\"/root\":{\"allowedTools\":[],\"hasTrustDialogAccepted\":true,\"projectOnboardingSeenCount\":1}}}"
-            },
-            "meta": {
-              "filetype": "json"
-            }
-          },
-          "credentials_json": {
-            "name": "Claude Code OAuth credentials",
-            "description": "Legacy placeholder for Claude Code OAuth credentials. Credential materialization is broker-owned.",
-            "type": "file",
-            "default": {
-              "path": "/root/.claude/.credentials.json",
-              "content": ""
-            },
-            "meta": {
-              "filetype": "json"
-            }
-          }
-        }
-      },
-      "google": {
-        "name": "Google AI",
-        "description": "Google Gemini AI provider",
-        "enabled_by": "ai.google.allow",
-        "collapsed": false,
-        "allow": {
-          "name": "Allow Google AI",
-          "description": "Enable API access to Google AI (*.googleapis.com).",
-          "type": "bool",
-          "default": true,
-          "meta": {
-            "rules": {
-              "default": {
-                "get": true,
-                "post": true
-              }
-            }
-          }
-        },
-        "api_key": {
-          "name": "Google AI API Key",
-          "description": "Brokered credential reference for Google AI API access.",
-          "type": "apikey",
-          "default": "",
-          "meta": {
-            "docs_url": "https://aistudio.google.com/apikey",
-            "prefix": "AIza"
-          }
-        },
-        "domains": {
-          "name": "Google AI Domains",
-          "description": "Comma-separated domain patterns. Wildcards (*.example.com) match all subdomains.",
-          "type": "text",
-          "default": "*.googleapis.com"
-        },
-        "gemini": {
-          "name": "Gemini CLI",
-          "description": "Gemini CLI configuration files",
-          "settings_json": {
-            "name": "Gemini CLI settings.json",
-            "description": "Content for /root/.gemini/settings.json. Bypass permissions, disable telemetry/updates for sandboxed execution.",
-            "type": "file",
-            "default": {
-              "path": "/root/.gemini/settings.json",
-              "content": "{\"homeDirectoryWarningDismissed\":true,\"general\":{\"disableAutoUpdate\":true,\"disableUpdateNag\":true},\"ui\":{\"hideTips\":true,\"hideBanner\":false},\"privacy\":{\"usageStatisticsEnabled\":false,\"sessionRetention\":\"none\"},\"telemetry\":{\"enabled\":false},\"security\":{\"auth\":{\"selectedType\":\"gemini-api-key\"},\"folderTrust.enabled\":false},\"ide\":{\"hasSeenNudge\":true},\"tools\":{\"sandbox\":false}}"
-            },
-            "meta": {
-              "filetype": "json"
-            }
-          },
-          "projects_json": {
-            "name": "Gemini CLI projects.json",
-            "description": "Content for /root/.gemini/projects.json. Project directory mappings.",
-            "type": "file",
-            "default": {
-              "path": "/root/.gemini/projects.json",
-              "content": "{\"projects\":{\"/root\":\"root\"}}"
-            },
-            "meta": {
-              "filetype": "json"
-            }
-          },
-          "trusted_folders_json": {
-            "name": "Gemini CLI trustedFolders.json",
-            "description": "Content for /root/.gemini/trustedFolders.json. Pre-trusted workspace dirs.",
-            "type": "file",
-            "default": {
-              "path": "/root/.gemini/trustedFolders.json",
-              "content": "{\"/root\":\"TRUST_FOLDER\"}"
-            },
-            "meta": {
-              "filetype": "json"
-            }
-          },
-          "installation_id": {
-            "name": "Gemini CLI installation_id",
-            "description": "Content for /root/.gemini/installation_id. Stable UUID avoids first-run prompts.",
-            "type": "file",
-            "default": {
-              "path": "/root/.gemini/installation_id",
-              "content": "capsem-sandbox-00000000-0000-0000-0000-000000000000"
-            }
-          },
-          "google_adc_json": {
-            "name": "Google Cloud ADC",
-            "description": "Legacy placeholder for Google ADC credentials. Credential materialization is broker-owned.",
-            "type": "file",
-            "default": {
-              "path": "/root/.config/gcloud/application_default_credentials.json",
-              "content": ""
-            },
-            "meta": {
-              "filetype": "json"
-            }
-          }
-        }
-      },
-      "openai": {
-        "name": "OpenAI",
-        "description": "OpenAI API provider",
-        "enabled_by": "ai.openai.allow",
-        "collapsed": false,
-        "allow": {
-          "name": "Allow OpenAI",
-          "description": "Enable API access to OpenAI (*.openai.com).",
-          "type": "bool",
-          "default": true,
-          "meta": {
-            "rules": {
-              "default": {
-                "get": true,
-                "post": true
-              }
-            }
-          }
-        },
-        "api_key": {
-          "name": "OpenAI API Key",
-          "description": "Brokered credential reference for OpenAI API access.",
-          "type": "apikey",
-          "default": "",
-          "meta": {
-            "docs_url": "https://platform.openai.com/api-keys",
-            "prefix": "sk-"
-          }
-        },
-        "domains": {
-          "name": "OpenAI Domains",
-          "description": "Comma-separated domain patterns. Wildcards (*.example.com) match all subdomains.",
-          "type": "text",
-          "default": "*.openai.com"
-        },
-        "codex": {
-          "name": "Codex CLI",
-          "description": "Codex CLI configuration files",
-          "config_toml": {
-            "name": "Codex CLI config.toml",
-            "description": "Content for /root/.codex/config.toml. MCP servers, auth, etc.",
-            "type": "file",
-            "default": {
-              "path": "/root/.codex/config.toml",
-              "content": "[mcp_servers.capsem]\ncommand = \"/run/capsem-mcp-server\""
-            },
-            "meta": {
-              "filetype": "toml"
-            }
-          }
-        }
-      }
-    },
     "repository": {
       "name": "Repositories",
       "description": "Code hosting and git configuration",
@@ -317,10 +87,14 @@
           },
           "token": {
             "name": "GitHub Token",
-            "description": "Brokered credential reference for GitHub HTTPS access.",
+            "description": "Personal access token for git push over HTTPS. Injected into .git-credentials.",
             "type": "apikey",
             "default": "",
             "meta": {
+              "env_vars": [
+                "GH_TOKEN",
+                "GITHUB_TOKEN"
+              ],
               "docs_url": "https://github.com/settings/tokens",
               "prefix": "ghp_"
             }
@@ -359,10 +133,13 @@
           },
           "token": {
             "name": "GitLab Token",
-            "description": "Brokered credential reference for GitLab HTTPS access.",
+            "description": "Personal access token for git push over HTTPS. Injected into .git-credentials.",
             "type": "apikey",
             "default": "",
             "meta": {
+              "env_vars": [
+                "GITLAB_TOKEN"
+              ],
               "docs_url": "https://gitlab.com/-/user_settings/personal_access_tokens",
               "prefix": "glpat-"
             }

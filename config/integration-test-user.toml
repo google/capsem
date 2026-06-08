@@ -2,14 +2,6 @@
 value = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBkujAwh+zwKM656FDYEuYdJcBCuMSxXDpTdCoz6PNMI"
 modified = "2026-04-20T14:54:44Z"
 
-[settings."ai.anthropic.allow"]
-value = false
-modified = "2026-03-05T00:00:00Z"
-
-[settings."ai.openai.allow"]
-value = false
-modified = "2026-03-05T00:00:00Z"
-
 [settings."repository.git.identity.author_name"]
 value = "Elie Bursztein"
 modified = "2026-04-20T14:54:44Z"
@@ -17,7 +9,3 @@ modified = "2026-04-20T14:54:44Z"
 [settings."repository.git.identity.author_email"]
 value = "github@elie.net"
 modified = "2026-04-20T14:54:44Z"
-
-[settings."ai.google.allow"]
-value = true
-modified = "2026-03-05T00:00:00Z"

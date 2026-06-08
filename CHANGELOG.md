@@ -50,6 +50,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   env vars, or AI CLI config files into VM boot env/files. Settings can still
   provide UI/app preferences and explicit non-secret `guest.env.*`; credential
   materialization is broker/plugin-owned.
+- Removed the generated/UI `settings.ai.*` provider registry and the stale
+  settings-based API-key injection tests. Retired flat AI setting IDs now fail
+  validation for both settings file loads and inline corp config installs;
+  provider control remains profile/corp rule-owned and credential handling
+  remains plugin-owned.
 
 ### Changed (service/API)
 - Moved VM APIs under the explicit `/vms/...` contract. VM creation, listing,
@@ -144,6 +149,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `/profiles/{profile_id}/assets/status` and
   `/profiles/{profile_id}/assets/ensure`; retired global `/assets/status` and
   `/assets/ensure` so asset selection stays under the profile contract.
+- Removed the retired service-global asset status helper from the service
+  binary and converted its reconcile-progress unit coverage to the
+  profile-owned asset status contract.
 - Added profile-scoped skills route surfaces. Skills `info|list` reflect the
   typed profile manifest; add/edit/delete fail explicitly until profile
   persistence is implemented.

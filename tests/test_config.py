@@ -504,31 +504,18 @@ class TestGenerateDefaultsJsonStructure:
         cfg = load_guest_config(guest_full)
         result = generate_defaults_json(cfg)
         settings = result["settings"]
-        for group in ("app", "ai", "repository", "security", "vm", "appearance"):
+        for group in ("app", "repository", "security", "vm", "appearance"):
             assert group in settings, f"missing top-level group: {group}"
 
-    def test_ai_provider_has_allow_setting(self, guest_full):
+    def test_ai_provider_settings_are_not_generated(self, guest_full):
         cfg = load_guest_config(guest_full)
         result = generate_defaults_json(cfg)
-        google = result["settings"]["ai"]["google"]
-        assert "allow" in google
-        assert google["allow"]["type"] == "bool"
-
-    def test_ai_provider_has_apikey_setting(self, guest_full):
-        cfg = load_guest_config(guest_full)
-        result = generate_defaults_json(cfg)
-        google = result["settings"]["ai"]["google"]
-        assert "api_key" in google
-        assert google["api_key"]["type"] == "apikey"
-        assert google["api_key"]["meta"]["env_vars"] == ["GEMINI_API_KEY"]
-
-    def test_ai_provider_has_domains_setting(self, guest_full):
-        cfg = load_guest_config(guest_full)
-        result = generate_defaults_json(cfg)
-        google = result["settings"]["ai"]["google"]
-        assert "domains" in google
-        assert google["domains"]["type"] == "text"
-        assert "*.googleapis.com" in google["domains"]["default"]
+        settings = result["settings"]
+        assert "ai" not in settings
+        ids = _collect_setting_ids(settings)
+        assert "ai.google.allow" not in ids
+        assert "ai.google.api_key" not in ids
+        assert "ai.google.domains" not in ids
 
     def test_web_security_structure(self, guest_full):
         cfg = load_guest_config(guest_full)
@@ -620,16 +607,10 @@ class TestGenerateDefaultsJsonConformance:
                     assert generated["mcp"][key].get(field) == current_defaults["mcp"][key][field], \
                         f"mcp.{key}.{field}: mismatch"
 
-    def test_ai_provider_enabled_by(self, generated, current_defaults):
-        """AI provider groups have correct enabled_by."""
-        for key in current_defaults["settings"]["ai"]:
-            if key in ("name", "description", "collapsed"):
-                continue
-            cur = current_defaults["settings"]["ai"][key]
-            gen = generated["settings"]["ai"][key]
-            if "enabled_by" in cur:
-                assert gen.get("enabled_by") == cur["enabled_by"], \
-                    f"ai.{key}.enabled_by: {cur['enabled_by']!r} vs {gen.get('enabled_by')!r}"
+    def test_ai_provider_settings_do_not_reappear(self, generated, current_defaults):
+        """Runtime AI provider control must stay out of generated settings."""
+        assert "ai" not in generated["settings"]
+        assert "ai" not in current_defaults["settings"]
 
     def test_web_service_enabled_by(self, generated, current_defaults):
         """Web service groups have correct enabled_by."""

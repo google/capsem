@@ -159,92 +159,6 @@ def _http_rules(allow_get: bool, allow_post: bool) -> dict:
     return {"default": rule} if rule else {}
 
 
-def _ai_provider_section(key: str, prov: AiProviderConfig) -> dict:
-    """Build the JSON object for one AI provider under settings.ai."""
-    section: dict[str, Any] = {
-        "name": prov.name,
-        "description": prov.description,
-        "enabled_by": f"ai.{key}.allow",
-        "collapsed": False,
-        "allow": {
-            "name": f"Allow {prov.name}",
-            "description": f"Enable API access to {prov.name} ({prov.network.domains[0]}).",
-            "type": "bool",
-            "default": prov.enabled,
-            "meta": {"rules": _http_rules(prov.network.allow_get, prov.network.allow_post)},
-        },
-        "api_key": {
-            "name": prov.api_key.name,
-            "description": f"API key for {prov.name}. Injected as {prov.api_key.env_vars[0]} env var.",
-            "type": "apikey",
-            "default": "",
-            "meta": {
-                "env_vars": prov.api_key.env_vars,
-                **({"docs_url": prov.api_key.docs_url} if prov.api_key.docs_url else {}),
-                **({"prefix": prov.api_key.prefix} if prov.api_key.prefix else {}),
-            },
-        },
-        "domains": {
-            "name": f"{prov.name} Domains",
-            "description": "Comma-separated domain patterns. Wildcards (*.example.com) match all subdomains.",
-            "type": "text",
-            "default": ", ".join(prov.network.domains),
-        },
-    }
-
-    # CLI sub-group for files
-    if prov.files and prov.cli:
-        cli_group: dict[str, Any] = {
-            "name": prov.cli.name,
-            "description": prov.cli.description,
-        }
-        for file_key, file_cfg in prov.files.items():
-            file_entry: dict[str, Any] = {
-                "name": _file_display_name(prov.cli.name, file_key),
-                "description": _file_description(prov.cli.name, file_key, file_cfg.path),
-                "type": "file",
-                "default": {"path": file_cfg.path, "content": file_cfg.content},
-            }
-            filetype = _infer_filetype(file_cfg.path)
-            if filetype:
-                file_entry["meta"] = {"filetype": filetype}
-            cli_group[file_key] = file_entry
-        section[prov.cli.key] = cli_group
-
-    return section
-
-
-def _file_display_name(cli_name: str, file_key: str) -> str:
-    """Derive display name for a file setting."""
-    # Map common file keys to human-readable names
-    key_names = {
-        "settings_json": f"{cli_name} settings.json",
-        "state_json": f"{cli_name} state (.claude.json)",
-        "credentials_json": f"{cli_name} OAuth credentials",
-        "config_toml": f"{cli_name} config.toml",
-        "projects_json": f"{cli_name} projects.json",
-        "trusted_folders_json": f"{cli_name} trustedFolders.json",
-        "installation_id": f"{cli_name} installation_id",
-        "google_adc_json": "Google Cloud ADC",
-    }
-    return key_names.get(file_key, f"{cli_name} {file_key}")
-
-
-def _file_description(cli_name: str, file_key: str, path: str) -> str:
-    """Derive description for a file setting."""
-    descs = {
-        "settings_json": f"Content for {path}. Bypass permissions, disable telemetry/updates for sandboxed execution.",
-        "state_json": f"Content for {path}. Skips onboarding, trust dialogs, and keybinding prompts.",
-        "credentials_json": f"Content for {path}. OAuth tokens for subscription-based auth (Pro/Max). Injected from host when detected.",
-        "config_toml": f"Content for {path}. MCP servers, auth, etc.",
-        "projects_json": f"Content for {path}. Project directory mappings.",
-        "trusted_folders_json": f"Content for {path}. Pre-trusted workspace dirs.",
-        "installation_id": f"Content for {path}. Stable UUID avoids first-run prompts.",
-        "google_adc_json": f"Content for {path}. OAuth credentials for Google Cloud auth. Injected from host when detected.",
-    }
-    return descs.get(file_key, f"Content for {path}.")
-
-
 def _infer_filetype(path: str) -> str | None:
     """Infer filetype from file extension."""
     if path.endswith(".json"):
@@ -333,16 +247,6 @@ def generate_defaults_json(config: GuestImageConfig) -> dict:
             "action": "check_update",
         },
     }
-
-    # -- ai (from TOML configs) --
-    ai_section: dict[str, Any] = {
-        "name": "AI Providers",
-        "description": "AI model provider configuration",
-        "collapsed": False,
-    }
-    for key, prov in config.ai_providers.items():
-        ai_section[key] = _ai_provider_section(key, prov)
-    settings["ai"] = ai_section
 
     # -- repository (git identity host-only + providers from web.toml) --
     repo_provs: dict[str, Any] = {

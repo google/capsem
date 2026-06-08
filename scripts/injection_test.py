@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""End-to-end injection test: generate configs, boot VMs, verify all injection paths.
+"""End-to-end boot-config test for non-secret settings materialization.
 
 Each scenario writes a temporary user.toml (and optionally corp.toml), boots the VM
 with `capsem-doctor -k injection`, and checks the exit code. The in-VM tests read
-/tmp/capsem-injection-manifest.json to verify every env var and file arrived.
+/tmp/capsem-injection-manifest.json to verify the emitted boot env/files are
+well-formed.
 
 Usage:
     python3 scripts/injection_test.py              # uses target/debug/capsem
@@ -57,65 +58,41 @@ class Results:
 #   name: human-readable label
 #   user_toml: TOML string for CAPSEM_USER_CONFIG
 #   corp_toml: optional TOML string for CAPSEM_CORP_CONFIG (None = no corp override)
+#
+# Runtime AI credentials are intentionally absent here. Provider access and
+# credential brokerage now flow through profile/corp security rules plus plugins,
+# not settings-owned AI toggles or static boot-time secret injection.
 
 SCENARIOS = [
     {
-        "name": "all_enabled",
-        "description": "All AI providers on, both repo tokens set, git identity set",
+        "name": "git_identity",
+        "description": "Non-secret git identity and repository toggles materialize cleanly",
         "user_toml": """\
 [settings]
-"ai.anthropic.allow" = { value = true, modified = "2026-01-01T00:00:00Z" }
-"ai.google.allow" = { value = true, modified = "2026-01-01T00:00:00Z" }
-"ai.openai.allow" = { value = true, modified = "2026-01-01T00:00:00Z" }
-"ai.anthropic.api_key" = { value = "sk-ant-test-key-injection", modified = "2026-01-01T00:00:00Z" }
-"ai.google.api_key" = { value = "AIzaSy_test_key_injection", modified = "2026-01-01T00:00:00Z" }
 "repository.providers.github.allow" = { value = true, modified = "2026-01-01T00:00:00Z" }
-"repository.providers.github.token" = { value = "ghp_test_token_injection", modified = "2026-01-01T00:00:00Z" }
 "repository.providers.gitlab.allow" = { value = true, modified = "2026-01-01T00:00:00Z" }
-"repository.providers.gitlab.token" = { value = "glpat-test_token_injection", modified = "2026-01-01T00:00:00Z" }
 "repository.git.identity.author_name" = { value = "Test User", modified = "2026-01-01T00:00:00Z" }
 "repository.git.identity.author_email" = { value = "test@example.com", modified = "2026-01-01T00:00:00Z" }
 """,
         "corp_toml": None,
     },
     {
-        "name": "partial",
-        "description": "Only Google enabled, only GitHub token, no git identity",
+        "name": "broker_refs_not_boot_secrets",
+        "description": "Brokered repository credential references are accepted but not materialized as raw boot secrets",
         "user_toml": """\
 [settings]
-"ai.anthropic.allow" = { value = false, modified = "2026-01-01T00:00:00Z" }
-"ai.google.allow" = { value = true, modified = "2026-01-01T00:00:00Z" }
-"ai.openai.allow" = { value = false, modified = "2026-01-01T00:00:00Z" }
-"ai.google.api_key" = { value = "AIzaSy_partial_key", modified = "2026-01-01T00:00:00Z" }
 "repository.providers.github.allow" = { value = true, modified = "2026-01-01T00:00:00Z" }
-"repository.providers.github.token" = { value = "ghp_partial_token", modified = "2026-01-01T00:00:00Z" }
-"repository.providers.gitlab.allow" = { value = false, modified = "2026-01-01T00:00:00Z" }
-""",
-        "corp_toml": None,
-    },
-    {
-        "name": "all_disabled",
-        "description": "All providers off, tokens set but allow=false -- .git-credentials must NOT exist",
-        "user_toml": """\
-[settings]
-"ai.anthropic.allow" = { value = false, modified = "2026-01-01T00:00:00Z" }
-"ai.google.allow" = { value = false, modified = "2026-01-01T00:00:00Z" }
-"ai.openai.allow" = { value = false, modified = "2026-01-01T00:00:00Z" }
-"repository.providers.github.allow" = { value = false, modified = "2026-01-01T00:00:00Z" }
-"repository.providers.github.token" = { value = "ghp_should_not_appear", modified = "2026-01-01T00:00:00Z" }
-"repository.providers.gitlab.allow" = { value = false, modified = "2026-01-01T00:00:00Z" }
-"repository.providers.gitlab.token" = { value = "glpat-should_not_appear", modified = "2026-01-01T00:00:00Z" }
+"repository.providers.github.token" = { value = "credential:blake3:1111111111111111111111111111111111111111111111111111111111111111", modified = "2026-01-01T00:00:00Z" }
+"repository.providers.gitlab.allow" = { value = true, modified = "2026-01-01T00:00:00Z" }
+"repository.providers.gitlab.token" = { value = "credential:blake3:2222222222222222222222222222222222222222222222222222222222222222", modified = "2026-01-01T00:00:00Z" }
 """,
         "corp_toml": None,
     },
     {
         "name": "empty_tokens",
-        "description": "Providers on but tokens empty -- .git-credentials must NOT exist",
+        "description": "Repository providers on with empty tokens -- no credential file should be emitted",
         "user_toml": """\
 [settings]
-"ai.anthropic.allow" = { value = true, modified = "2026-01-01T00:00:00Z" }
-"ai.google.allow" = { value = true, modified = "2026-01-01T00:00:00Z" }
-"ai.openai.allow" = { value = true, modified = "2026-01-01T00:00:00Z" }
 "repository.providers.github.allow" = { value = true, modified = "2026-01-01T00:00:00Z" }
 "repository.providers.github.token" = { value = "", modified = "2026-01-01T00:00:00Z" }
 "repository.providers.gitlab.allow" = { value = true, modified = "2026-01-01T00:00:00Z" }
@@ -124,19 +101,20 @@ SCENARIOS = [
         "corp_toml": None,
     },
     {
-        "name": "corp_override",
-        "description": "User enables all, corp blocks Anthropic -- CAPSEM_ANTHROPIC_ALLOWED=0",
+        "name": "corp_rule_file",
+        "description": "Corp rule config loads without resurrecting settings-owned AI provider toggles",
         "user_toml": """\
 [settings]
-"ai.anthropic.allow" = { value = true, modified = "2026-01-01T00:00:00Z" }
-"ai.google.allow" = { value = true, modified = "2026-01-01T00:00:00Z" }
-"ai.openai.allow" = { value = true, modified = "2026-01-01T00:00:00Z" }
-"ai.anthropic.api_key" = { value = "sk-ant-corp-test-key", modified = "2026-01-01T00:00:00Z" }
-"ai.google.api_key" = { value = "AIzaSy_corp_test_key", modified = "2026-01-01T00:00:00Z" }
+"repository.git.identity.author_name" = { value = "Corp Test User", modified = "2026-01-01T00:00:00Z" }
 """,
         "corp_toml": """\
-[settings]
-"ai.anthropic.allow" = { value = false, modified = "2026-01-01T00:00:00Z" }
+[corp.rules.block_example_invalid]
+name = "block_example_invalid"
+action = "block"
+priority = -100
+detection_level = "high"
+reason = "Integration proof that corp rules own enforcement."
+match = 'http.host == "example.invalid"'
 """,
     },
 ]
@@ -221,7 +199,7 @@ def run_scenario(
 
 def main():
     parser = argparse.ArgumentParser(
-        description="End-to-end injection test for capsem boot config.",
+        description="End-to-end non-secret boot config test.",
     )
     parser.add_argument(
         "--binary",

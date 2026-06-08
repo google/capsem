@@ -60,6 +60,7 @@ pub fn load_settings_file(path: &Path) -> Result<SettingsFile, String> {
     match std::fs::read_to_string(path) {
         Ok(content) => {
             reject_retired_mcp_policy_keys(path, &content)?;
+            reject_retired_ai_setting_ids(path, &content)?;
             let mut file: SettingsFile = toml::from_str(&content)
                 .map_err(|e| format!("failed to parse {}: {}", path.display(), e))?;
             migrate_setting_ids(&mut file);
@@ -93,6 +94,29 @@ fn reject_retired_mcp_policy_keys(path: &Path, content: &str) -> Result<(), Stri
             return Err(format!(
                 "failed to validate {}: retired MCP policy key mcp.{retired}; use profile security rules instead",
                 path.display()
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn reject_retired_ai_setting_ids(path: &Path, content: &str) -> Result<(), String> {
+    reject_retired_ai_setting_ids_in_content(&path.display().to_string(), content)
+}
+
+pub(super) fn reject_retired_ai_setting_ids_in_content(
+    label: &str,
+    content: &str,
+) -> Result<(), String> {
+    let root: toml::Value = toml::from_str(content)
+        .map_err(|e| format!("failed to parse {label}: {e}"))?;
+    let Some(settings) = root.get("settings").and_then(|value| value.as_table()) else {
+        return Ok(());
+    };
+    for key in settings.keys() {
+        if key.starts_with("ai.") {
+            return Err(format!(
+                "failed to validate {label}: retired AI setting id {key}; use profile/corp security rules, provider discovery, and plugins instead",
             ));
         }
     }

@@ -1124,10 +1124,19 @@ fn resolve_asset_paths_falls_back_to_squashfs() {
 #[test]
 fn asset_status_reports_reconcile_progress_fields() {
     let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("vmlinuz"), b"kernel").unwrap();
-    std::fs::write(dir.path().join("initrd.img"), b"initrd").unwrap();
-    std::fs::write(dir.path().join("rootfs.erofs"), b"erofs").unwrap();
+    let arch = capsem_core::net::policy_config::current_profile_arch();
+    let arch_dir = dir.path().join(arch);
+    std::fs::create_dir_all(&arch_dir).unwrap();
     let state = make_asset_state(dir.path().to_path_buf());
+    let profile = ProfileConfigFile::builtin_code();
+    let arch_assets = profile.assets.current_arch_assets().unwrap();
+    for asset in [
+        &arch_assets.kernel,
+        &arch_assets.initrd,
+        &arch_assets.rootfs,
+    ] {
+        std::fs::write(arch_dir.join(profile_asset_hash_name(asset)), b"asset").unwrap();
+    }
     {
         let mut reconcile = state.asset_reconcile.lock().unwrap();
         *reconcile = AssetReconcileState {
@@ -1140,7 +1149,8 @@ fn asset_status_reports_reconcile_progress_fields() {
         };
     }
 
-    let status = asset_status_value(&state);
+    let status = profile_asset_status_value(&state, &profile);
+    assert_eq!(status["profile_id"], "code");
     assert_eq!(status["ready"], true);
     assert_eq!(status["downloading"], true);
     assert_eq!(status["current_asset"], "rootfs.erofs");

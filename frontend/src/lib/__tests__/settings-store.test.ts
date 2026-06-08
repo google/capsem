@@ -37,7 +37,7 @@ describe('settingsStore', () => {
 
     it('sections includes expected groups', () => {
       expect(settingsStore.sections).toContain('App');
-      expect(settingsStore.sections).toContain('AI Providers');
+      expect(settingsStore.sections).toContain('Repositories');
       expect(settingsStore.sections).toContain('VM');
     });
 
@@ -45,8 +45,8 @@ describe('settingsStore', () => {
       expect(settingsStore.tree.length).toBeGreaterThan(0);
     });
 
-    it('issues are populated after load', () => {
-      expect(settingsStore.issues.length).toBeGreaterThan(0);
+    it('issues load from the response', () => {
+      expect(settingsStore.issues).toEqual([]);
     });
 
     it('loading flag is false after load completes', () => {
@@ -187,7 +187,7 @@ describe('settingsStore', () => {
 
   describe('lookup', () => {
     it('findLeaf returns leaf by ID', () => {
-      const leaf = settingsStore.findLeaf('ai.anthropic.allow');
+      const leaf = settingsStore.findLeaf('repository.providers.github.allow');
       expect(leaf).toBeDefined();
       expect(leaf!.setting_type).toBe('bool');
     });
@@ -197,18 +197,18 @@ describe('settingsStore', () => {
     });
 
     it('findGroup returns group by name', () => {
-      const g = settingsStore.findGroup('Claude Code');
+      const g = settingsStore.findGroup('GitHub');
       expect(g).toBeDefined();
-      expect(g!.key).toBe('ai.anthropic.claude');
+      expect(g!.key).toBe('repository.providers.github');
     });
 
     it('findGroup returns undefined for unknown name', () => {
       expect(settingsStore.findGroup('Nonexistent')).toBeUndefined();
     });
 
-    it('issuesFor returns issues for known ID', () => {
-      const issues = settingsStore.issuesFor('ai.anthropic.api_key');
-      expect(issues.length).toBeGreaterThan(0);
+    it('issuesFor returns empty for known ID without issues', () => {
+      const issues = settingsStore.issuesFor('repository.providers.github.token');
+      expect(issues).toEqual([]);
     });
 
     it('issuesFor returns empty for ID without issues', () => {
