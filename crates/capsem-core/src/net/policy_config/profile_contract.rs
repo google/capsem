@@ -137,10 +137,6 @@ pub struct ProfileSkills {
 }
 
 impl ProfileConfigFile {
-    pub fn builtin_default() -> Self {
-        Self::builtin_code()
-    }
-
     pub fn builtin_code() -> Self {
         toml::from_str(include_str!("../../../../../config/profiles/code.toml"))
             .expect("built-in code profile TOML must parse")

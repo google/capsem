@@ -256,7 +256,7 @@ impl ProviderRuleProfile {
     pub fn builtin_security_defaults() -> SecurityRuleProfile {
         let profile = SecurityRuleProfile::parse_toml(DEFAULT_PROVIDER_RULES_TOML)
             .expect("built-in provider rule profile must parse");
-        validate_builtin_default_contract(&profile)
+        validate_builtin_profile_contract(&profile)
             .expect("built-in provider rule profile must include default rules and plugins");
         profile
     }
@@ -362,18 +362,18 @@ impl ProviderRuleProfile {
     }
 }
 
-fn validate_builtin_default_contract(profile: &SecurityRuleProfile) -> Result<(), String> {
+fn validate_builtin_profile_contract(profile: &SecurityRuleProfile) -> Result<(), String> {
     for plugin_id in REQUIRED_BUILTIN_PLUGINS {
         if !profile.plugins.contains_key(*plugin_id) {
             return Err(format!(
-                "built-in default profile must include [plugins.{plugin_id}]"
+                "built-in profile must include [plugins.{plugin_id}]"
             ));
         }
     }
     for rule_key in REQUIRED_DEFAULT_RULE_KEYS {
         if !profile.profiles.defaults.contains_key(*rule_key) {
             return Err(format!(
-                "built-in default profile must include [profiles.defaults.{rule_key}]"
+                "built-in profile must include visible default rule [profiles.defaults.{rule_key}]"
             ));
         }
     }
@@ -431,7 +431,7 @@ mod tests {
     }
 
     #[test]
-    fn builtin_default_contract_requires_plugins_and_visible_default_rules() {
+    fn builtin_profile_contract_requires_plugins_and_visible_default_rules() {
         let missing_plugins = SecurityRuleProfile::parse_toml(
             r#"
 [profiles.defaults.default_http_requests]
@@ -443,8 +443,8 @@ match = 'has(http.host)'
 "#,
         )
         .expect("profile without plugins parses before built-in contract");
-        let err = validate_builtin_default_contract(&missing_plugins)
-            .expect_err("built-in default profile requires plugin section");
+        let err = validate_builtin_profile_contract(&missing_plugins)
+            .expect_err("built-in profile requires plugin section");
         assert!(err.contains("[plugins.credential_broker]"), "{err}");
 
         let missing_defaults = SecurityRuleProfile::parse_toml(
@@ -454,8 +454,8 @@ mode = "rewrite"
 "#,
         )
         .expect("profile without defaults parses before built-in contract");
-        let err = validate_builtin_default_contract(&missing_defaults)
-            .expect_err("built-in default profile requires visible defaults");
+        let err = validate_builtin_profile_contract(&missing_defaults)
+            .expect_err("built-in profile requires visible defaults");
         assert!(
             err.contains("[profiles.defaults.default_http_requests]"),
             "{err}"

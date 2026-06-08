@@ -136,12 +136,10 @@ allowed_overlays = ["mcp_injection", "broker_placeholders", "endpoint_selection"
 }
 
 #[test]
-fn builtin_default_profile_manifest_is_valid_and_erofs_backed() {
-    let profile = ProfileConfigFile::builtin_default();
+fn builtin_code_profile_manifest_is_valid_and_erofs_backed() {
+    let profile = ProfileConfigFile::builtin_code();
 
-    profile
-        .validate()
-        .expect("builtin default profile validates");
+    profile.validate().expect("builtin code profile validates");
     assert_eq!(profile.id, "code");
     assert_eq!(profile.name, "Code");
     assert_eq!(

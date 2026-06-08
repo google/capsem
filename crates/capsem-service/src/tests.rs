@@ -410,7 +410,7 @@ async fn handle_profile_validate_accepts_builtin_code_contract() {
         }),
     )
     .await
-    .expect("builtin default profile should validate")
+    .expect("builtin code profile should validate")
     .0;
 
     assert!(response.valid);
@@ -419,7 +419,7 @@ async fn handle_profile_validate_accepts_builtin_code_contract() {
 
 #[tokio::test]
 async fn handle_profile_validate_rejects_payload_route_mismatch() {
-    let mut profile = ProfileConfigFile::builtin_default();
+    let mut profile = ProfileConfigFile::builtin_code();
     profile.id = "strict".to_string();
 
     let err = handle_profile_validate(

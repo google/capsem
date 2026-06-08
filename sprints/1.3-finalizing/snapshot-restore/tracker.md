@@ -523,6 +523,10 @@ the guarantee or explicitly burn it.
   profile, accepts `--profile`, and forwards through
   `/profiles/{profile_id}/assets/...`; gateway coverage also forwards
   `/profiles/status` and `/profiles/reload` explicitly.
+- [x] Remove the `ProfileConfigFile::builtin_default()` compatibility alias and
+  rename built-in profile validation/tests away from "default profile"
+  language. `default` remains only rule priority/visible default-rule
+  vocabulary, not a profile id or fallback loader.
 - [ ] Restore profile catalog/loader and remove all `default`-only profile code
   paths.
 - [ ] Represent default/built-in profiles as real catalog/profile entries using
@@ -558,6 +562,14 @@ the guarantee or explicitly burn it.
   `git diff --check`.
   Python API checks were attempted with `pytest` and `python3 -m pytest`, but
   this shell lacks the `pytest` module.
+- Coverage for built-in profile vocabulary burn:
+  `cargo test -p capsem-core --lib profile_contract -- --nocapture`;
+  `cargo test -p capsem-core --lib provider_profile -- --nocapture`;
+  `cargo test -p capsem-service profile -- --nocapture`;
+  `cargo test -p capsem-core --no-run`.
+  A non-`--lib` provider-profile filter also passed its unit assertions but
+  then hit the known macOS signing wrapper while walking an unrelated
+  integration binary, so the lib-only rerun is the canonical proof.
 - [ ] Commit S2.
 
 ## S3: TUI And Terminal Shell

@@ -68,6 +68,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   route validation no longer uses a hard-coded `default` profile stub, and
   catalog reload/status reports profile readiness through the profile asset
   contract.
+- Removed the `ProfileConfigFile::builtin_default()` compatibility alias and
+  updated built-in profile validation/tests to name the real `code` profile.
+  “Default” now refers only to visible default rules, not a hidden profile id.
 - Replaced the temporary flat profile asset triplet with per-architecture
   profile asset declarations. `config/profiles/code.toml` now parses as the
   checked-in contract for EROFS/LZ4HC kernel, initrd, and rootfs assets with
