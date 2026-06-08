@@ -5,13 +5,17 @@
 //! `cargo bench -p capsem-core --bench security_actions`.
 
 use capsem_core::credential_broker::{
-    broker_to_user_settings, CredentialObservation, CredentialProvider,
+    broker_observed_credential, CredentialObservation, CredentialProvider,
 };
 use capsem_core::net::ai_traffic::provider::ProviderKind;
-use capsem_core::net::policy_config::{SecurityRuleProfile, SecurityRuleSet, SecurityRuleSource};
+use capsem_core::net::policy_config::{
+    DetectionLevel, SecurityPluginConfig, SecurityPluginMode, SecurityRuleProfile, SecurityRuleSet,
+    SecurityRuleSource,
+};
 use capsem_core::security_engine::{
     materialize_http_request_for_upstream, HttpRequestSecurityEvent, HttpSecurityEvent,
     RuntimeSecurityEvent, RuntimeSecurityEventType, SecurityActionRegistry, SecurityEvent,
+    SecurityPluginStage,
 };
 use capsem_logger::{Decision, McpCall, ModelCall, NetEvent, WriteOp};
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
@@ -59,23 +63,11 @@ match = 'http.host == "api.anthropic.com"'
     )
 }
 
-fn plugin_rule_set(plugin: &str) -> SecurityRuleSet {
-    security_rules(&format!(
-        r#"
-[profiles.rules.plugin_rule]
-name = "plugin_rule"
-action = "preprocess"
-plugin = "{plugin}"
-match = 'http.host == "api.anthropic.com"'
-"#
-    ))
-}
-
 fn brokered_header_event() -> (SecurityEvent, tempfile::TempDir, EnvVarGuard) {
     let tmp = tempfile::tempdir().unwrap();
     let store_path = tmp.path().join("broker-store.json");
     let guard = EnvVarGuard::set(TEST_STORE_ENV, store_path.as_os_str());
-    let brokered = broker_to_user_settings(&CredentialObservation {
+    let brokered = broker_observed_credential(&CredentialObservation {
         provider: CredentialProvider::Anthropic,
         raw_value: "sk-ant-security-action-bench".to_string(),
         source: "http.request.headers.authorization".to_string(),
@@ -216,7 +208,6 @@ fn bench_rule_match(c: &mut Criterion) {
 }
 
 fn bench_action_chain(c: &mut Criterion) {
-    let registry = SecurityActionRegistry::with_builtin_actions();
     for (label, plugin) in [
         (
             "security_action_plugin_credential_broker",
@@ -225,13 +216,17 @@ fn bench_action_chain(c: &mut Criterion) {
         ("security_action_plugin_dummy_pre", "dummy_pre"),
         ("security_action_plugin_dummy_post", "dummy_post"),
     ] {
-        let rules = plugin_rule_set(plugin);
-        let rule = rules.rules().first().expect("bench rule");
+        let stage = if plugin == "dummy_post" {
+            SecurityPluginStage::PostDecision
+        } else {
+            SecurityPluginStage::PreDecision
+        };
+        let registry = registry_for_plugin(plugin);
         c.bench_function(label, |b| {
             b.iter(|| {
                 let event = registry
-                    .apply_security_rule_plugin(
-                        black_box(rule),
+                    .apply_security_plugins(
+                        black_box(stage),
                         SecurityEvent::new(RuntimeSecurityEventType::HttpRequest),
                     )
                     .unwrap();
@@ -242,20 +237,33 @@ fn bench_action_chain(c: &mut Criterion) {
 }
 
 fn bench_broker_substitute(c: &mut Criterion) {
-    let registry = SecurityActionRegistry::with_builtin_actions();
-    let rules = plugin_rule_set("credential_broker");
-    let rule = rules.rules().first().expect("bench rule");
+    let registry = registry_for_plugin("credential_broker");
     let (event, _tmp, _guard) = brokered_header_event();
 
     c.bench_function("security_action_broker_substitute_header_ref", |b| {
         b.iter(|| {
             let event = registry
-                .apply_security_rule_plugin(black_box(rule), black_box(event.clone()))
+                .apply_security_plugins(
+                    black_box(SecurityPluginStage::PreDecision),
+                    black_box(event.clone()),
+                )
                 .unwrap();
             let materialized = materialize_http_request_for_upstream(&event).unwrap();
             black_box(materialized);
         });
     });
+}
+
+fn registry_for_plugin(plugin: &str) -> SecurityActionRegistry {
+    let mut policy = BTreeMap::new();
+    policy.insert(
+        plugin.to_string(),
+        SecurityPluginConfig {
+            mode: SecurityPluginMode::Rewrite,
+            detection_level: DetectionLevel::Informational,
+        },
+    );
+    SecurityActionRegistry::with_builtin_actions().with_plugin_policy(policy)
 }
 
 fn bench_runtime_event_handoff(c: &mut Criterion) {

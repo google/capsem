@@ -2282,7 +2282,7 @@ impl SecurityPlugin for CredentialBrokerPlugin {
             return Ok(SecurityPluginResult::skipped(event));
         }
         for observation in &event.credential_observations {
-            let brokered = crate::credential_broker::broker_to_user_settings(observation)
+            let brokered = crate::credential_broker::broker_observed_credential(observation)
                 .map_err(SecurityActionError::new)?;
             if event.credential_ref.is_none() {
                 event.credential_ref = Some(brokered.credential_ref);

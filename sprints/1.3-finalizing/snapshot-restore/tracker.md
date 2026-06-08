@@ -505,6 +505,17 @@ the guarantee or explicitly burn it.
     passed 7 tests including the static metadata rejection test; full
     `cargo test -p capsem-core --lib policy_config -- --nocapture` passed 393
     tests; `pnpm -C frontend check` and `git diff --check` passed.
+  - [x] Burn credential broker writeback into settings IDs. The broker stores
+    secrets in the credential store/keychain, writes substitution ledger rows,
+    and records provider discovery for AI observations; it no longer persists
+    `credential:blake3` references into `settings.ai.*.api_key` or repository
+    token setting rows.
+    Proof: `cargo test -p capsem-core --lib credential_broker -- --nocapture`
+    passed 7 tests; `cargo test -p capsem-core --lib brokered_ -- --nocapture`
+    passed 6 focused policy_config tests; full
+    `cargo test -p capsem-core --lib policy_config -- --nocapture` passed 393
+    tests; `cargo test -p capsem-core --no-run`, `cargo bench -p capsem-core
+    --bench security_actions --no-run`, and `git diff --check` passed.
 - [x] Delete the dead `host_config` detector/writeback module and its frontend
   DTOs. This removes the setup-era path that scanned raw host API
   keys/OAuth/ADC/GitHub tokens and wrote them into settings; credential capture

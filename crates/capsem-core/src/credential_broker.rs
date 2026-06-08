@@ -7,8 +7,7 @@ use tracing::warn;
 use crate::net::ai_traffic::provider::ProviderKind;
 use crate::net::policy_config::{
     batch_update_profile_settings_with_provider_discoveries, ProviderDiscovery,
-    ProviderDiscoveryPatch, SecurityRuleSet, SettingValue, SETTING_ANTHROPIC_API_KEY,
-    SETTING_GITHUB_TOKEN, SETTING_GOOGLE_API_KEY, SETTING_OPENAI_API_KEY,
+    ProviderDiscoveryPatch, SecurityRuleSet,
 };
 use crate::security_engine::RuntimeSecurityEventType;
 
@@ -40,25 +39,6 @@ impl CredentialProvider {
         }
     }
 
-    pub fn setting_id(self) -> &'static str {
-        match self {
-            Self::Anthropic => SETTING_ANTHROPIC_API_KEY,
-            Self::Google => SETTING_GOOGLE_API_KEY,
-            Self::OpenAi => SETTING_OPENAI_API_KEY,
-            Self::Github => SETTING_GITHUB_TOKEN,
-        }
-    }
-
-    pub fn from_setting_id(setting_id: &str) -> Option<Self> {
-        match setting_id {
-            SETTING_ANTHROPIC_API_KEY => Some(Self::Anthropic),
-            SETTING_GOOGLE_API_KEY => Some(Self::Google),
-            SETTING_OPENAI_API_KEY => Some(Self::OpenAi),
-            SETTING_GITHUB_TOKEN => Some(Self::Github),
-            _ => None,
-        }
-    }
-
     pub fn ai_provider_id(self) -> Option<&'static str> {
         match self {
             Self::Anthropic => Some("anthropic"),
@@ -83,7 +63,6 @@ pub struct CredentialObservation {
 #[derive(Debug, Clone, PartialEq)]
 pub struct BrokeredCredential {
     pub provider: CredentialProvider,
-    pub setting_id: String,
     pub credential_ref: String,
     pub keychain_account: String,
 }
@@ -111,7 +90,7 @@ impl CredentialObservation {
     }
 }
 
-pub fn broker_to_user_settings(
+pub fn broker_observed_credential(
     observation: &CredentialObservation,
 ) -> Result<BrokeredCredential, String> {
     let credential_ref = observation.credential_ref();
@@ -121,12 +100,7 @@ pub fn broker_to_user_settings(
         &credential_ref,
         &observation.raw_value,
     )?;
-    let setting_id = observation.provider.setting_id().to_string();
-    let mut changes = HashMap::new();
-    changes.insert(
-        setting_id.clone(),
-        SettingValue::Text(credential_ref.clone()),
-    );
+    let changes = HashMap::new();
     let provider_discoveries = observation
         .provider
         .ai_provider_id()
@@ -137,20 +111,9 @@ pub fn broker_to_user_settings(
     batch_update_profile_settings_with_provider_discoveries(&changes, &provider_discoveries)?;
     Ok(BrokeredCredential {
         provider: observation.provider,
-        setting_id,
         credential_ref,
         keychain_account,
     })
-}
-
-pub fn resolve_credential_setting_value(setting_id: &str, value: &str) -> Result<String, String> {
-    if value.is_empty() || !is_broker_reference(value) {
-        return Ok(value.to_string());
-    }
-    let Some(provider) = CredentialProvider::from_setting_id(setting_id) else {
-        return Ok(value.to_string());
-    };
-    load_credential_secret(provider, value)
 }
 
 pub fn resolve_broker_reference_for_provider(
@@ -292,7 +255,7 @@ pub async fn broker_and_log_observations(
         }
         let save_outcome = match tokio::task::spawn_blocking({
             let observation = observation.clone();
-            move || broker_to_user_settings(&observation)
+            move || broker_observed_credential(&observation)
         })
         .await
         {

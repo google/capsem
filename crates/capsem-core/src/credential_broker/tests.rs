@@ -116,7 +116,7 @@ fn substitution_is_domain_separated_by_provider() {
 }
 
 #[test]
-fn broker_writes_user_setting_and_returns_reference() {
+fn broker_stores_secret_without_writing_user_settings() {
     let _lock = TEST_ENV_LOCK.blocking_lock();
     let dir = tempfile::tempdir().unwrap();
     let user_config = dir.path().join("user.toml");
@@ -133,26 +133,23 @@ fn broker_writes_user_setting_and_returns_reference() {
         context_json: None,
     };
 
-    let brokered = broker_to_user_settings(&obs).unwrap();
-    assert_eq!(brokered.setting_id, SETTING_GITHUB_TOKEN);
+    let brokered = broker_observed_credential(&obs).unwrap();
     assert!(is_broker_reference(&brokered.credential_ref));
     assert_eq!(
         brokered.keychain_account,
         keychain_account(CredentialProvider::Github, &brokered.credential_ref)
     );
 
-    let loaded =
-        crate::net::policy_config::load_settings_file(&user_config).expect("settings load");
-    assert_eq!(
-        loaded.settings[SETTING_GITHUB_TOKEN].value,
-        SettingValue::Text(brokered.credential_ref.clone())
+    assert!(
+        !user_config.exists(),
+        "credential broker must not create settings files for credential refs"
     );
-    let settings_text = std::fs::read_to_string(&user_config).unwrap();
-    assert!(!settings_text.contains("github_pat_store_me"));
 
     assert_eq!(
-        resolve_credential_setting_value(SETTING_GITHUB_TOKEN, &brokered.credential_ref).unwrap(),
-        "github_pat_store_me"
+        resolve_broker_reference_for_provider(CredentialProvider::Github, &brokered.credential_ref)
+            .unwrap()
+            .as_deref(),
+        Some("github_pat_store_me")
     );
     assert!(!brokered.credential_ref.contains("github_pat_store_me"));
 }

@@ -1174,22 +1174,19 @@ fn brokered_api_key_ref_stays_out_of_guest_env() {
         trace_id: None,
         context_json: None,
     };
-    let brokered = crate::credential_broker::broker_to_user_settings(&obs).unwrap();
-    let user = file_with(vec![
-        ("ai.anthropic.allow", SettingValue::Bool(true)),
-        (
-            "ai.anthropic.api_key",
-            SettingValue::Text(brokered.credential_ref.clone()),
-        ),
-    ]);
+    crate::credential_broker::broker_observed_credential(&obs).unwrap();
+    let user = load_settings_file(&user_path).unwrap();
+    assert!(!user.settings.contains_key(SETTING_ANTHROPIC_API_KEY));
     let resolved = resolve_settings(&user, &empty_file());
     let gc = settings_to_guest_config(&resolved);
     let env = gc.env.unwrap_or_default();
 
     assert!(!env.contains_key("ANTHROPIC_API_KEY"));
-    assert!(!std::fs::read_to_string(&user_path)
-        .unwrap()
-        .contains("sk-ant-keychain-env"));
+    let user_toml = std::fs::read_to_string(&user_path).unwrap();
+    assert!(user_toml.contains("[ai.anthropic.discovery]"));
+    assert!(user_toml.contains("credential_ref = \"credential:blake3:"));
+    assert!(!user_toml.contains("sk-ant-keychain-env"));
+    assert!(!user_toml.contains("ai.anthropic.api_key"));
 }
 
 #[test]
@@ -1211,23 +1208,20 @@ fn brokered_google_api_key_ref_stays_out_of_guest_env() {
         trace_id: None,
         context_json: None,
     };
-    let brokered = crate::credential_broker::broker_to_user_settings(&obs).unwrap();
-    let user = file_with(vec![
-        ("ai.google.allow", SettingValue::Bool(true)),
-        (
-            "ai.google.api_key",
-            SettingValue::Text(brokered.credential_ref.clone()),
-        ),
-    ]);
+    crate::credential_broker::broker_observed_credential(&obs).unwrap();
+    let user = load_settings_file(&user_path).unwrap();
+    assert!(!user.settings.contains_key(SETTING_GOOGLE_API_KEY));
     let resolved = resolve_settings(&user, &empty_file());
     let gc = settings_to_guest_config(&resolved);
     let env = gc.env.unwrap_or_default();
 
     assert!(!env.contains_key("GEMINI_API_KEY"));
     assert!(!env.contains_key("GOOGLE_API_KEY"));
-    assert!(!std::fs::read_to_string(&user_path)
-        .unwrap()
-        .contains("AIza-keychain-env"));
+    let user_toml = std::fs::read_to_string(&user_path).unwrap();
+    assert!(user_toml.contains("[ai.google.discovery]"));
+    assert!(user_toml.contains("credential_ref = \"credential:blake3:"));
+    assert!(!user_toml.contains("AIza-keychain-env"));
+    assert!(!user_toml.contains("ai.google.api_key"));
 }
 
 #[test]
@@ -1250,11 +1244,11 @@ fn brokered_openai_key_writes_provider_discovery_without_raw_secret() {
         context_json: None,
     };
 
-    let brokered = crate::credential_broker::broker_to_user_settings(&obs).unwrap();
+    let brokered = crate::credential_broker::broker_observed_credential(&obs).unwrap();
     let loaded = load_settings_file(&user_path).unwrap();
-    assert_eq!(
-        loaded.settings[SETTING_OPENAI_API_KEY].value,
-        SettingValue::Text(brokered.credential_ref.clone())
+    assert!(
+        !loaded.settings.contains_key(SETTING_OPENAI_API_KEY),
+        "credential broker must not materialize broker refs into settings"
     );
 
     let discovery = loaded
@@ -1278,7 +1272,7 @@ fn brokered_openai_key_writes_provider_discovery_without_raw_secret() {
 }
 
 #[test]
-fn brokered_provider_discovery_is_atomic_with_corp_locked_credential_setting() {
+fn brokered_provider_discovery_does_not_write_corp_locked_credential_setting() {
     let _lock = crate::credential_broker::TEST_ENV_LOCK.blocking_lock();
     let dir = tempfile::tempdir().unwrap();
     let user_path = dir.path().join("user.toml");
@@ -1312,17 +1306,24 @@ fn brokered_provider_discovery_is_atomic_with_corp_locked_credential_setting() {
         context_json: None,
     };
 
-    let result = crate::credential_broker::broker_to_user_settings(&obs);
-    assert!(result.is_err(), "corp locked credential setting must fail");
+    let result = crate::credential_broker::broker_observed_credential(&obs);
+    assert!(
+        result.is_ok(),
+        "provider discovery must not touch stale credential setting ids"
+    );
 
     let loaded = load_settings_file(&user_path).unwrap();
     assert!(
         !loaded.settings.contains_key(SETTING_OPENAI_API_KEY),
-        "credential setting must not be written after corp lock failure"
+        "credential setting must never be written by the broker"
     );
     assert!(
-        !loaded.ai.contains_key("openai"),
-        "provider discovery must be atomic with the credential setting write"
+        loaded
+            .ai
+            .get("openai")
+            .and_then(|provider| provider.discovery.as_ref())
+            .is_some(),
+        "provider discovery should still be recorded"
     );
 }
 

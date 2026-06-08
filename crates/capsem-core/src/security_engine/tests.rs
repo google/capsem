@@ -1,6 +1,6 @@
 use super::*;
 use crate::credential_broker::{
-    broker_to_user_settings, CredentialObservation, CredentialProvider,
+    broker_observed_credential, CredentialObservation, CredentialProvider,
 };
 use crate::net::ai_traffic::provider::ProviderKind;
 use crate::net::policy_config::{
@@ -2477,7 +2477,7 @@ fn brokered_anthropic_header_event() -> (
     let store_path = tmp.path().join("broker-store.jsonl");
     let store_guard = EnvVarGuard::set(crate::credential_broker::TEST_STORE_ENV, &store_path);
     let raw = "sk-ant-materialize-secret";
-    let brokered = broker_to_user_settings(&CredentialObservation {
+    let brokered = broker_observed_credential(&CredentialObservation {
         provider: CredentialProvider::Anthropic,
         raw_value: raw.to_string(),
         source: "http.request.headers.authorization".to_string(),
