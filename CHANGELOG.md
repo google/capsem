@@ -116,6 +116,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and route-level tests exercise the same mounted API contract, including
   detection-rule authoring through `/profiles/.../detection/rules/...` and
   ledger readback through `/vms/.../security/latest`.
+- Expanded mounted service route contract tests across fail-closed profile/VM
+  stubs, profile/settings/corp reads, corp edit/reload, plugin edit/evaluate,
+  MCP profile scoping, service-wide security ledgers, and file import/export
+  boundary logging.
 - Added a profile-owned rule-file compilation guard: profile enforcement TOML
   and Sigma detection YAML now materialize as `SecurityRuleProfile` and compile
   only through the unified `SecurityRuleSet`/CEL rail, rejecting old policy

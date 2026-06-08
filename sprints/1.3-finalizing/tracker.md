@@ -99,6 +99,13 @@ batch unrelated fixes into one giant release commit.
   `cargo test -p capsem-service route_authored_detection_rule_triggers_runtime_ledger_and_latest_routes -- --nocapture`.
 - [x] Add mounted-route dry-run guard:
   `cargo test -p capsem-service route_enforcement_evaluate_is_dry_run_and_does_not_write_ledger_rows -- --nocapture`.
+- [x] Add mounted route matrix for fail-closed stubs, profile/settings/corp
+  reads, corp edit/reload, plugin edit/evaluate, MCP profile scoping,
+  service-wide ledger, and file import/export boundary logging:
+  `cargo test -p capsem-service mounted_ -- --nocapture`.
+- [ ] Finish remaining mounted-route gaps from `route-e2e-gate.md`: route
+  inventory, settings edit, profile reload/assets status/ensure, history/timeline
+  seeded DB reads, MCP tool edit/call, and actual VM-boundary enforcement refusal.
 
 - [x] Add approved service routes:
   - `[x] /profiles/list`

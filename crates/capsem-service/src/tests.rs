@@ -111,6 +111,34 @@ fn make_test_state() -> Arc<ServiceState> {
     })
 }
 
+async fn route_request(
+    app: axum::Router,
+    method: axum::http::Method,
+    uri: &str,
+    body: Option<serde_json::Value>,
+) -> (StatusCode, serde_json::Value) {
+    let mut builder = axum::http::Request::builder().method(method).uri(uri);
+    let request_body = if let Some(body) = body {
+        builder = builder.header(axum::http::header::CONTENT_TYPE, "application/json");
+        Body::from(serde_json::to_vec(&body).unwrap())
+    } else {
+        Body::empty()
+    };
+    let response = app
+        .oneshot(builder.body(request_body).unwrap())
+        .await
+        .expect("route should respond");
+    let status = response.status();
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let json = if bytes.is_empty() {
+        serde_json::Value::Null
+    } else {
+        serde_json::from_slice(&bytes)
+            .unwrap_or_else(|_| json!({ "raw": String::from_utf8_lossy(&bytes).to_string() }))
+    };
+    (status, json)
+}
+
 fn make_asset_state(assets_dir: PathBuf) -> Arc<ServiceState> {
     let run_dir = assets_dir.join("run");
     let asset_status_path = asset_status_path_for_run_dir(&run_dir);
@@ -697,6 +725,435 @@ async fn t1_adversarial_route_inputs_fail_closed() {
     .await
     .unwrap_err();
     assert_eq!(immutable_profile.0, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn mounted_fail_closed_stub_routes_return_explicit_errors() {
+    let state = make_test_state();
+    insert_fake_instance(&state, "ops-vm", std::process::id());
+    let app = build_service_router(state);
+
+    for (method, uri, body, expected_error) in [
+        (
+            axum::http::Method::POST,
+            "/profiles/create",
+            None,
+            "profile create requires profile file persistence",
+        ),
+        (
+            axum::http::Method::PATCH,
+            "/profiles/code/edit",
+            None,
+            "profile edit requires profile file persistence",
+        ),
+        (
+            axum::http::Method::DELETE,
+            "/profiles/code/delete",
+            None,
+            "profile delete requires profile file persistence",
+        ),
+        (
+            axum::http::Method::POST,
+            "/profiles/code/clone",
+            None,
+            "profile clone requires profile file persistence",
+        ),
+        (
+            axum::http::Method::PATCH,
+            "/profiles/code/assets/edit",
+            None,
+            "profile assets edit requires profile file persistence",
+        ),
+        (
+            axum::http::Method::POST,
+            "/profiles/code/skills/add",
+            Some(json!({ "path": "/root/.codex/skills/security/SKILL.md" })),
+            "profile skill add requires profile file persistence",
+        ),
+        (
+            axum::http::Method::PATCH,
+            "/profiles/code/skills/security/edit",
+            Some(json!({ "path": "/root/.codex/skills/security/SKILL.md" })),
+            "profile skill edit requires profile file persistence",
+        ),
+        (
+            axum::http::Method::DELETE,
+            "/profiles/code/skills/security/delete",
+            None,
+            "profile skill delete requires profile file persistence",
+        ),
+        (
+            axum::http::Method::PATCH,
+            "/vms/ops-vm/edit",
+            Some(json!({ "ram_mb": 8192 })),
+            "live VM resource/persistence edits are not supported yet",
+        ),
+        (
+            axum::http::Method::POST,
+            "/vms/ops-vm/restart",
+            None,
+            "restart is not supported yet",
+        ),
+        (
+            axum::http::Method::POST,
+            "/vms/ops-vm/reload-profile",
+            None,
+            "reload-profile is not supported yet",
+        ),
+    ] {
+        let (status, body) = route_request(app.clone(), method, uri, body).await;
+        assert_eq!(status, StatusCode::NOT_IMPLEMENTED, "{uri}: {body}");
+        assert!(
+            body["error"]
+                .as_str()
+                .unwrap_or_default()
+                .contains(expected_error),
+            "{uri}: expected {expected_error:?}, got {body}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn mounted_read_routes_reflect_profile_settings_corp_mcp_and_assets_contracts() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+
+    let dir = tempfile::tempdir().unwrap();
+    let (_env_guard, user_path, _) = install_empty_settings_env(&dir);
+    let settings = capsem_core::net::policy_config::SettingsFile {
+        mcp: Some(capsem_core::mcp::policy::McpUserConfig {
+            servers: vec![capsem_core::mcp::policy::McpManualServer {
+                name: "settings-only".to_string(),
+                url: "https://settings.invalid/mcp".to_string(),
+                headers: Default::default(),
+                bearer_token: None,
+                enabled: true,
+            }],
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    capsem_core::net::policy_config::write_settings_file(&user_path, &settings).unwrap();
+
+    let state = make_test_state();
+    let app = build_service_router(state);
+
+    let (status, profiles) =
+        route_request(app.clone(), axum::http::Method::GET, "/profiles/list", None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(profiles["profiles"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|profile| profile["id"] == "code" && profile["name"].is_string()));
+
+    let (status, profile) = route_request(
+        app.clone(),
+        axum::http::Method::GET,
+        "/profiles/code/info",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(profile["profile"]["id"], "code");
+    assert!(profile["profile"]["description"].is_string());
+
+    let (status, status_body) = route_request(
+        app.clone(),
+        axum::http::Method::GET,
+        "/profiles/status",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(status_body["profile_count"].as_u64().unwrap() > 0);
+
+    let (status, validation) = route_request(
+        app.clone(),
+        axum::http::Method::POST,
+        "/profiles/code/validate",
+        Some(json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(validation["valid"], true);
+    assert_eq!(validation["profile_id"], "code");
+
+    let (status, assets_info) = route_request(
+        app.clone(),
+        axum::http::Method::GET,
+        "/profiles/code/assets/info",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(assets_info["profile_id"], "code");
+    assert_eq!(assets_info["format"], "profile-assets.v1");
+    assert_eq!(
+        assets_info["current_assets"]["rootfs"]["name"],
+        "rootfs.erofs"
+    );
+    assert!(
+        assets_info.get("filesystem").is_none() && assets_info.get("compression").is_none(),
+        "assets route must not expose build-only filesystem/compression metadata: {assets_info}"
+    );
+
+    let (status, mcp_info) = route_request(
+        app.clone(),
+        axum::http::Method::GET,
+        "/profiles/code/mcp/info",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(mcp_info["profile_id"], "code");
+    assert_eq!(mcp_info["manual_server_count"], 0);
+    assert_eq!(mcp_info["builtin_local_enabled"], true);
+
+    let (status, settings) =
+        route_request(app.clone(), axum::http::Method::GET, "/settings/info", None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        settings.get("tree").is_some() || settings.get("issues").is_some(),
+        "settings/info must expose the settings response contract: {settings}"
+    );
+
+    let (status, corp_info) = route_request(app, axum::http::Method::GET, "/corp/info", None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(corp_info["installed"].is_boolean());
+    assert!(corp_info["paths"].is_array());
+}
+
+#[tokio::test]
+async fn mounted_corp_routes_validate_install_report_and_reload_inline_toml() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+
+    let dir = tempfile::tempdir().unwrap();
+    let (_settings_guard, _, _) = install_empty_settings_env(&dir);
+    let _home_guard = EnvVarGuard::set("CAPSEM_HOME", dir.path());
+    let app = build_service_router(make_test_state());
+    let corp_toml = r#"
+refresh_interval_hours = 24
+
+[corp.rules.block_evil_example]
+name = "block_evil_example"
+action = "block"
+priority = -100
+detection_level = "high"
+reason = "Mounted corp route proof."
+match = 'http.host.contains("evil.example")'
+"#;
+
+    let (status, invalid) = route_request(
+        app.clone(),
+        axum::http::Method::POST,
+        "/corp/validate",
+        Some(json!({ "toml": "this is [ broken" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(invalid["error"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("invalid corp TOML"));
+
+    let (status, valid) = route_request(
+        app.clone(),
+        axum::http::Method::POST,
+        "/corp/validate",
+        Some(json!({ "toml": corp_toml })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{valid}");
+    assert_eq!(valid["success"], true);
+
+    let (status, installed) = route_request(
+        app.clone(),
+        axum::http::Method::PUT,
+        "/corp/edit",
+        Some(json!({ "toml": corp_toml })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{installed}");
+    assert_eq!(installed["success"], true);
+    let written = std::fs::read_to_string(dir.path().join("corp.toml")).unwrap();
+    assert!(written.contains("block_evil_example"));
+
+    let (status, info) =
+        route_request(app.clone(), axum::http::Method::GET, "/corp/info", None).await;
+    assert_eq!(status, StatusCode::OK, "{info}");
+    assert_eq!(info["installed"], true);
+    assert_eq!(info["source"]["refresh_interval_hours"], 24);
+    assert!(info["source"]["content_hash"].is_string());
+
+    let (status, reload) = route_request(app, axum::http::Method::POST, "/corp/reload", None).await;
+    assert_eq!(status, StatusCode::OK, "{reload}");
+    assert_eq!(reload["success"], true);
+    assert_eq!(reload["reloaded"], 0);
+}
+
+#[tokio::test]
+async fn mounted_plugin_routes_control_profile_evaluation() {
+    let state = make_test_state();
+    let app = build_service_router(state);
+    let eval_body = json!({
+        "rules_toml": r#"
+[profiles.rules.eicar]
+name = "eicar"
+action = "allow"
+detection_level = "high"
+match = 'file.import.content.contains("EICAR")'
+"#,
+        "event": {
+            "event_type": "file.import",
+            "file_import_content": capsem_core::security_engine::DUMMY_EICAR_TEST_STRING,
+        }
+    });
+
+    let (status, list) = route_request(
+        app.clone(),
+        axum::http::Method::GET,
+        "/profiles/code/plugins/list",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(list["plugins"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|plugin| plugin["id"] == "dummy_pre_eicar"));
+
+    let (status, enabled) = route_request(
+        app.clone(),
+        axum::http::Method::POST,
+        "/profiles/code/enforcement/evaluate",
+        Some(eval_body.clone()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(enabled["event"]["decision"]["effective"], "block");
+
+    let (status, disabled) = route_request(
+        app.clone(),
+        axum::http::Method::PATCH,
+        "/profiles/code/plugins/dummy_pre_eicar/edit",
+        Some(json!({ "mode": "disable" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(disabled["config"]["mode"], "disable");
+
+    let (status, after_disable) = route_request(
+        app.clone(),
+        axum::http::Method::POST,
+        "/profiles/code/enforcement/evaluate",
+        Some(eval_body.clone()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(after_disable["event"]["decision"]["effective"], "allow");
+
+    let (status, reenabled) = route_request(
+        app.clone(),
+        axum::http::Method::PATCH,
+        "/profiles/code/plugins/dummy_pre_eicar/edit",
+        Some(json!({ "mode": "block", "detection_level": "critical" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(reenabled["config"]["mode"], "block");
+    assert_eq!(reenabled["config"]["detection_level"], "critical");
+
+    let (status, after_enable) = route_request(
+        app,
+        axum::http::Method::POST,
+        "/profiles/code/enforcement/evaluate",
+        Some(eval_body),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(after_enable["event"]["decision"]["effective"], "block");
+    assert!(after_enable["event"]["detections"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|detection| detection["plugin_id"] == "dummy_pre_eicar"
+            && detection["detection_level"] == "critical"));
+}
+
+#[tokio::test]
+async fn mounted_mcp_routes_are_profile_scoped_mechanics_only() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+
+    let dir = tempfile::tempdir().unwrap();
+    let (_env_guard, user_path, _) = install_empty_settings_env(&dir);
+    capsem_core::net::policy_config::write_settings_file(
+        &user_path,
+        &capsem_core::net::policy_config::SettingsFile {
+            mcp: Some(capsem_core::mcp::policy::McpUserConfig {
+                servers: vec![capsem_core::mcp::policy::McpManualServer {
+                    name: "settings-only".to_string(),
+                    url: "https://settings.invalid/mcp".to_string(),
+                    headers: Default::default(),
+                    bearer_token: None,
+                    enabled: true,
+                }],
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+
+    let app = build_service_router(make_test_state());
+
+    let (status, servers) = route_request(
+        app.clone(),
+        axum::http::Method::GET,
+        "/profiles/code/mcp/servers/list",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(!servers
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|server| server["name"] == "settings-only"));
+
+    let (status, mcp_info) = route_request(
+        app.clone(),
+        axum::http::Method::GET,
+        "/profiles/code/mcp/info",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(mcp_info["builtin_local_enabled"], true);
+
+    let (status, refresh) = route_request(
+        app.clone(),
+        axum::http::Method::POST,
+        "/profiles/code/mcp/servers/local/refresh",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(refresh["success"], true);
+    assert_eq!(refresh["server_id"], "local");
+
+    let (status, body) = route_request(
+        app,
+        axum::http::Method::GET,
+        "/profiles/code/mcp/servers/settings-only/tools/list",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert!(body["error"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("MCP server not found in profile code"));
 }
 
 #[tokio::test]
@@ -1408,6 +1865,100 @@ match = 'file.import.content.contains("EICAR")'
         events.is_empty(),
         "evaluate routes are dry-run only; runtime boundaries must own ledger writes"
     )
+}
+
+#[tokio::test]
+async fn mounted_service_ledger_routes_read_real_session_db_rows() {
+    let state = make_test_state();
+    let app = build_service_router(Arc::clone(&state));
+    let dir = tempfile::tempdir().unwrap();
+    let session_dir = dir.path().join("sessions").join("service-ledger-vm");
+    std::fs::create_dir_all(&session_dir).unwrap();
+    insert_fake_instance_with_session_dir(
+        &state,
+        "service-ledger-vm",
+        std::process::id(),
+        session_dir.clone(),
+    );
+
+    let rule_set = SecurityRuleSet::new(
+        SecurityRuleProfile {
+            profiles: SecurityRuleGroup {
+                rules: BTreeMap::from([(
+                    "service_http_detect".to_string(),
+                    capsem_core::net::policy_config::SecurityRule {
+                        name: "service_http_detect".to_string(),
+                        action: capsem_core::net::policy_config::SecurityRuleAction::Allow,
+                        condition: r#"http.host.contains("example.com")"#.to_string(),
+                        detection_level: Some(
+                            capsem_core::net::policy_config::DetectionLevel::Informational,
+                        ),
+                        priority: Some(
+                            capsem_core::net::policy_config::SecurityRulePriority::Explicit(10),
+                        ),
+                        corp_locked: false,
+                        reason: Some("service ledger route proof".to_string()),
+                        plugin_config: BTreeMap::new(),
+                    },
+                )]),
+            },
+            ..SecurityRuleProfile::default()
+        }
+        .compile(SecurityRuleSource::User)
+        .unwrap(),
+    );
+    let writer = capsem_logger::DbWriter::open(&session_dir.join("session.db"), 16).unwrap();
+    let event_id = capsem_core::security_engine::SecurityEventId::parse("123abc456def").unwrap();
+    let event = SecurityEvent::new(RuntimeSecurityEventType::HttpRequest).with_http(
+        capsem_core::security_engine::HttpSecurityEvent {
+            host: Some("api.example.com".to_string()),
+            method: Some("GET".to_string()),
+            path: Some("/health".to_string()),
+            status: Some("200".to_string()),
+            body: None,
+        },
+    );
+    let emitted = capsem_core::security_engine::emit_matching_security_rules(
+        &writer,
+        event_id,
+        RuntimeSecurityEventType::HttpRequest,
+        &rule_set,
+        &event,
+        1_789_000_223_456,
+    )
+    .await
+    .unwrap();
+    writer.shutdown_blocking();
+    assert_eq!(emitted, 1);
+
+    for uri in [
+        "/security/latest?limit=10",
+        "/enforcement/latest?limit=10",
+        "/detection/latest?limit=10",
+    ] {
+        let (status, rows) = route_request(app.clone(), axum::http::Method::GET, uri, None).await;
+        assert_eq!(status, StatusCode::OK, "{uri}: {rows}");
+        let rows = rows.as_array().unwrap();
+        assert_eq!(rows.len(), 1, "{uri}: {rows:?}");
+        assert_eq!(rows[0]["vm_id"], "service-ledger-vm");
+        assert_eq!(rows[0]["event"]["event_id"], "123abc456def");
+        assert_eq!(
+            rows[0]["event"]["rule_id"],
+            "profiles.rules.service_http_detect"
+        );
+        assert_eq!(rows[0]["event"]["detection_level"], "informational");
+    }
+
+    for uri in [
+        "/security/status",
+        "/enforcement/status",
+        "/detection/status",
+    ] {
+        let (status, body) = route_request(app.clone(), axum::http::Method::GET, uri, None).await;
+        assert_eq!(status, StatusCode::OK, "{uri}: {body}");
+        assert_eq!(body["total"], 1, "{uri}: {body}");
+        assert_eq!(body["sessions"][0]["vm_id"], "service-ledger-vm");
+    }
 }
 
 #[test]
@@ -3373,6 +3924,29 @@ struct SettingsEnvGuard {
     previous_corp: Option<std::ffi::OsString>,
 }
 
+struct EnvVarGuard {
+    key: &'static str,
+    previous: Option<std::ffi::OsString>,
+}
+
+impl EnvVarGuard {
+    fn set(key: &'static str, value: impl AsRef<std::ffi::OsStr>) -> Self {
+        let previous = std::env::var_os(key);
+        std::env::set_var(key, value);
+        Self { key, previous }
+    }
+}
+
+impl Drop for EnvVarGuard {
+    fn drop(&mut self) {
+        if let Some(previous) = self.previous.take() {
+            std::env::set_var(self.key, previous);
+        } else {
+            std::env::remove_var(self.key);
+        }
+    }
+}
+
 impl Drop for SettingsEnvGuard {
     fn drop(&mut self) {
         if let Some(previous_user) = self.previous_user.take() {
@@ -3857,6 +4431,84 @@ async fn download_logs_file_export_before_returning_response() {
             assert_eq!(*size, b"export through ledger".len() as u64);
         }
         other => panic!("download must log file export before response, got {other:?}"),
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn mounted_file_import_export_routes_log_boundary_events() {
+    let dir = tempfile::tempdir().unwrap();
+    let (state, _state_dir) = make_test_state_with_tempdir();
+    let (_ipc_dir, uds_path, ipc) = spawn_file_boundary_ipc(2).await;
+    setup_vm_with_workspace_and_uds(&state, dir.path(), "file-route-vm", uds_path);
+    let app = build_service_router(state);
+
+    let upload_response = app
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method(axum::http::Method::POST)
+                .uri("/vms/file-route-vm/files/content?path=new.txt")
+                .body(Body::from("uploaded over mounted route"))
+                .unwrap(),
+        )
+        .await
+        .expect("upload route should respond");
+    assert_eq!(upload_response.status(), StatusCode::OK);
+    let upload_body = to_bytes(upload_response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let upload_json: serde_json::Value = serde_json::from_slice(&upload_body).unwrap();
+    assert_eq!(upload_json["success"], true);
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("session/guest/workspace/new.txt")).unwrap(),
+        "uploaded over mounted route"
+    );
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .method(axum::http::Method::GET)
+                .uri("/vms/file-route-vm/files/content?path=new.txt")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("download route should respond");
+    assert_eq!(response.status(), StatusCode::OK);
+    let downloaded = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    assert_eq!(&downloaded[..], b"uploaded over mounted route");
+
+    let messages = ipc.await.unwrap();
+    assert_eq!(messages.len(), 2);
+    match &messages[0] {
+        ServiceToProcess::LogFileBoundary {
+            action,
+            path,
+            data,
+            size,
+            ..
+        } => {
+            assert_eq!(*action, FileBoundaryAction::Import);
+            assert_eq!(path, "new.txt");
+            assert_eq!(data, b"uploaded over mounted route");
+            assert_eq!(*size, b"uploaded over mounted route".len() as u64);
+        }
+        other => panic!("upload route must log import first, got {other:?}"),
+    }
+    match &messages[1] {
+        ServiceToProcess::LogFileBoundary {
+            action,
+            path,
+            data,
+            size,
+            ..
+        } => {
+            assert_eq!(*action, FileBoundaryAction::Export);
+            assert_eq!(path, "new.txt");
+            assert_eq!(data, b"uploaded over mounted route");
+            assert_eq!(*size, b"uploaded over mounted route".len() as u64);
+        }
+        other => panic!("download route must log export first, got {other:?}"),
     }
 }
 

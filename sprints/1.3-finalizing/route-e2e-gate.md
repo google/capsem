@@ -21,24 +21,24 @@ must distinguish those states.
 | Area | Routes | Status | Notes |
 | --- | --- | --- | --- |
 | VM lifecycle | `/vms/create`, `/vms/list`, `/vms/{id}/info`, `/status`, `/start`, `/resume`, `/pause`, `/stop`, `/delete`, `/save`, `/fork` | real, needs_e2e | Existing service/VM suites cover much of this; final route gate must name exact tests. |
-| VM edit/restart/reload | `/vms/{id}/edit`, `/restart`, `/reload-profile` | fail_closed_stub | `edit` validates immutable/unknown fields and rejects real edits; restart/reload-profile return `501`. |
+| VM edit/restart/reload | `/vms/{id}/edit`, `/restart`, `/reload-profile` | fail_closed_stub, mounted_proof | `mounted_fail_closed_stub_routes_return_explicit_errors` asserts the public `501` error shape. |
 | VM operation status | `/vms/{id}/save/status`, `/fork/status` | real-minimal | Returns truthful synchronous `idle` state; no async progress yet. |
-| VM files/history/timeline | `/vms/{id}/files/*`, `/history/*`, `/timeline` | real, needs_e2e | File import/export ledger behavior has service tests; final gate must include black-box route coverage. |
-| Service ledger | `/security/latest|status`, `/enforcement/latest|status`, `/detection/latest|status` | real, needs_e2e | Service-wide DB-backed views exist. |
+| VM files/history/timeline | `/vms/{id}/files/*`, `/history/*`, `/timeline` | real, partial_mounted_proof | `mounted_file_import_export_routes_log_boundary_events` proves mounted file import/export routes send ledger boundary IPC before bytes move. History/timeline still need mounted route proof. |
+| Service ledger | `/security/latest|status`, `/enforcement/latest|status`, `/detection/latest|status` | real, mounted_proof | `mounted_service_ledger_routes_read_real_session_db_rows` proves service-wide latest/status read real session DB rows. |
 | VM ledger | `/vms/{id}/security/latest|status`, `/detection/latest|status`, `/enforcement/latest|status` | real | Bridge test proves route-authored detection can trigger runtime ledger rows and be read back from VM latest route. |
 | Profile ledger | profile-filtered latest/status | absent | Do not claim this route exists until implemented. |
-| Profiles read/status | `/profiles/list`, `/profiles/status`, `/profiles/reload`, `/profiles/{id}/info`, `/profiles/{id}/validate`, `/profiles/{id}/reload` | real/read_only | Uses the typed profile catalog and reload broadcast path. |
-| Profiles write | `/profiles/create`, `/profiles/{id}/edit`, `/delete`, `/clone` | fail_closed_stub | Returns explicit `501 profile file persistence not enabled yet`. |
-| Profile assets | `/profiles/{id}/assets/status`, `/info`, `/ensure` | real, needs_e2e | Profile-owned asset status/info/ensure exists. |
-| Profile assets edit | `/profiles/{id}/assets/edit` | fail_closed_stub | Returns explicit `501`. |
+| Profiles read/status | `/profiles/list`, `/profiles/status`, `/profiles/reload`, `/profiles/{id}/info`, `/profiles/{id}/validate`, `/profiles/{id}/reload` | real/read_only, partial_mounted_proof | `mounted_read_routes_reflect_profile_settings_corp_mcp_and_assets_contracts` covers list/status/info/validate. Reload routes still need named mounted proof. |
+| Profiles write | `/profiles/create`, `/profiles/{id}/edit`, `/delete`, `/clone` | fail_closed_stub, mounted_proof | `mounted_fail_closed_stub_routes_return_explicit_errors` asserts the public `501` error shape. |
+| Profile assets | `/profiles/{id}/assets/status`, `/info`, `/ensure` | real, partial_mounted_proof | Mounted read proof covers assets info. Status/ensure still need named mounted proof. |
+| Profile assets edit | `/profiles/{id}/assets/edit` | fail_closed_stub, mounted_proof | `mounted_fail_closed_stub_routes_return_explicit_errors` asserts the public `501` error shape. |
 | Enforcement rules | `/profiles/{id}/enforcement/info`, `/rules/list`, `/evaluate`, `/reload`, `/rules/{rule_id}/edit|delete` | real/dry_run | Rule edit/delete persists user profile rules. `evaluate` is dry-run and does not write a session ledger. |
 | Detection rules | `/profiles/{id}/detection/info`, `/rules/list`, `/evaluate`, `/reload`, `/rules/{rule_id}/edit|delete` | real/dry_run | Same rule rail as enforcement; detection edit requires `detection_level`. |
-| Plugins | `/profiles/{id}/plugins/list`, `/info`, `/{plugin_id}/info`, `/{plugin_id}/edit` | real, needs_e2e | Handler tests cover dynamic plugin enable/disable and evaluation effects. |
-| Skills read | `/profiles/{id}/skills/info`, `/list` | read_only | Reads profile manifest paths. |
-| Skills write | `/profiles/{id}/skills/add`, `/{skill_id}/edit|delete` | fail_closed_stub | Validates input then returns explicit `501`. |
-| MCP mechanics | `/profiles/{id}/mcp/info`, `/servers/list`, `/servers/{server}/tools/list`, `/refresh`, `/tools/{tool}/edit|call` | real, needs_e2e | Profile-scoped MCP mechanics only; no MCP security decision provider. |
-| Settings | `/settings/info`, `/settings/edit` | real | UI/app settings only. |
-| Corp | `/corp/info`, `/corp/edit`, `/corp/validate`, `/corp/reload` | real, needs_e2e | Corp validation/edit/reload exists. |
+| Plugins | `/profiles/{id}/plugins/list`, `/info`, `/{plugin_id}/info`, `/{plugin_id}/edit` | real, mounted_proof | `mounted_plugin_routes_control_profile_evaluation` proves list/edit and evaluation effect through mounted routes. |
+| Skills read | `/profiles/{id}/skills/info`, `/list` | read_only | Reads profile manifest paths; handler proof exists, mounted proof still needed. |
+| Skills write | `/profiles/{id}/skills/add`, `/{skill_id}/edit|delete` | fail_closed_stub, mounted_proof | `mounted_fail_closed_stub_routes_return_explicit_errors` asserts the public `501` error shape. |
+| MCP mechanics | `/profiles/{id}/mcp/info`, `/servers/list`, `/servers/{server}/tools/list`, `/refresh`, `/tools/{tool}/edit|call` | real, partial_mounted_proof | `mounted_mcp_routes_are_profile_scoped_mechanics_only` proves profile/server isolation and refresh. Tool edit/call still need named mounted proof. |
+| Settings | `/settings/info`, `/settings/edit` | real, partial_mounted_proof | Mounted read proof covers `/settings/info`; edit still needs named mounted proof. |
+| Corp | `/corp/info`, `/corp/edit`, `/corp/validate`, `/corp/reload` | real, mounted_proof | `mounted_corp_routes_validate_install_report_and_reload_inline_toml` proves validate/edit/info/reload with temp `CAPSEM_HOME`. |
 | Gateway parity | explicit service routes | real | Gateway has explicit allowlist; unknown and retired paths 404 instead of fallback-forwarding. |
 
 ## First Bridge Proof
@@ -84,17 +84,37 @@ Proof command:
 cargo test -p capsem-service route_enforcement_evaluate_is_dry_run_and_does_not_write_ledger_rows -- --nocapture
 ```
 
+## Mounted Route Matrix
+
+Implemented in `crates/capsem-service/src/tests.rs`:
+
+- `mounted_fail_closed_stub_routes_return_explicit_errors`
+- `mounted_read_routes_reflect_profile_settings_corp_mcp_and_assets_contracts`
+- `mounted_corp_routes_validate_install_report_and_reload_inline_toml`
+- `mounted_plugin_routes_control_profile_evaluation`
+- `mounted_mcp_routes_are_profile_scoped_mechanics_only`
+- `mounted_service_ledger_routes_read_real_session_db_rows`
+- `mounted_file_import_export_routes_log_boundary_events`
+
+Proof command:
+
+```bash
+cargo test -p capsem-service mounted_ -- --nocapture
+```
+
+These are mounted Axum route tests, not direct handler calls. The file route
+test uses a mock capsem-process IPC responder and proves import/export route
+calls send `LogFileBoundary` before bytes are written or returned.
+
 ## Remaining Gate
 
 - Add a generated/maintained route inventory so service, gateway, frontend API,
   CLI, and TUI cannot drift silently.
-- For each `real` route, name at least one functional test and one adversarial
-  test.
-- For every route marked `fail_closed_stub`, add a test asserting the explicit
-  error shape and keep it visible in release notes until real semantics land.
+- For each remaining `real` route without mounted proof, name at least one
+  functional test and one adversarial test.
 - Add at least one black-box service/VM route test for:
-  - detection rule -> actual runtime boundary -> session DB/latest route,
-  - enforcement block -> boundary refuses action/network/tool,
-  - plugin enable/disable -> runtime effect plus ledger detection vector,
-  - file import/export ledger route,
-  - MCP server/tool mechanics route.
+  - enforcement block -> actual runtime boundary refuses action/network/tool,
+  - MCP tool edit/call with a mock or live route target,
+  - history/timeline mounted route reads with seeded DB data,
+  - profile reload/assets status/assets ensure mounted routes,
+  - settings edit mounted route.
