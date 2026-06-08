@@ -112,6 +112,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `/status`, and `/vms/...` contracts, restores Alt-owned shortcuts,
   create/fork/pause/resume/stop/delete/recovery flows, vt-backed terminal
   reconnect behavior, and deterministic text/SVG snapshot inspection.
+- Moved the service route table into a single shared router builder so startup
+  and route-level tests exercise the same mounted API contract, including
+  detection-rule authoring through `/profiles/.../detection/rules/...` and
+  ledger readback through `/vms/.../security/latest`.
 - Added a profile-owned rule-file compilation guard: profile enforcement TOML
   and Sigma detection YAML now materialize as `SecurityRuleProfile` and compile
   only through the unified `SecurityRuleSet`/CEL rail, rejecting old policy

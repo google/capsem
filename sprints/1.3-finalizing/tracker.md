@@ -88,6 +88,18 @@ batch unrelated fixes into one giant release commit.
 
 ## T1: Service And Gateway API Routes
 
+### T1 Correction
+
+- [ ] T1 route presence/gateway parity is not the same as full route
+  semantics. Use `route-e2e-gate.md` as the route truth table until every route
+  has named functional, adversarial, and E2E/ledger proof.
+- [ ] Correct the over-broad “VM/profile filtered latest routes” claim:
+  VM-filtered ledger routes exist; profile-filtered ledger routes do not.
+- [x] Add first route-to-ledger bridge proof:
+  `cargo test -p capsem-service route_authored_detection_rule_triggers_runtime_ledger_and_latest_routes -- --nocapture`.
+- [x] Add mounted-route dry-run guard:
+  `cargo test -p capsem-service route_enforcement_evaluate_is_dry_run_and_does_not_write_ledger_rows -- --nocapture`.
+
 - [x] Add approved service routes:
   - `[x] /profiles/list`
   - `[x] /profiles/create`
@@ -123,7 +135,8 @@ batch unrelated fixes into one giant release commit.
   - `[x] /security/latest|status`
   - `[x] /enforcement/latest|status`
   - `[x] /detection/latest|status`
-  - `[x] VM/profile filtered latest routes`
+  - `[x] VM-filtered latest/status routes`
+  - `[ ] Profile-filtered latest/status routes`
 - [x] Make gateway expose the exact same route contract as service.
 - [x] Add route conformance tests for HTTP/UDS parity.
 - [x] Burn old global authoring routes; do not leave compatibility aliases.

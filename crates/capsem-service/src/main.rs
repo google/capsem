@@ -6775,6 +6775,215 @@ async fn handle_run(
     response
 }
 
+fn build_service_router(state: Arc<ServiceState>) -> Router {
+    Router::new()
+        .route(
+            "/version",
+            get(|| async { Json(serde_json::json!({ "version": env!("CARGO_PKG_VERSION") })) }),
+        )
+        .route("/vms/create", post(handle_provision))
+        .route("/vms/list", get(handle_list))
+        .route("/vms/{id}/info", get(handle_info))
+        .route("/vms/{id}/status", get(handle_vm_status))
+        .route("/vms/{id}/edit", patch(handle_vm_edit))
+        .route("/vms/{id}/logs", get(handle_logs))
+        .route("/vms/{id}/inspect", post(handle_inspect))
+        .route("/vms/{id}/exec", post(handle_exec))
+        .route("/vms/{id}/files/write", post(handle_write_file))
+        .route("/vms/{id}/files/read", post(handle_read_file))
+        .route("/vms/{id}/stop", post(handle_stop))
+        .route("/vms/{id}/pause", post(handle_suspend))
+        .route("/vms/{id}/delete", delete(handle_delete))
+        .route("/vms/{id}/start", post(handle_resume))
+        .route("/vms/{id}/resume", post(handle_resume))
+        .route("/vms/{id}/restart", post(handle_vm_restart))
+        .route("/vms/{id}/save", post(handle_persist))
+        .route("/vms/{id}/save/status", get(handle_vm_save_status))
+        .route("/vms/{id}/fork/status", get(handle_vm_fork_status))
+        .route("/vms/{id}/reload-profile", post(handle_vm_reload_profile))
+        .route("/purge", post(handle_purge))
+        .route("/run", post(handle_run))
+        .route("/stats", get(handle_stats))
+        .route("/service-logs", get(handle_service_logs))
+        .route("/triage", get(handle_triage))
+        .route("/panics", get(handle_panics))
+        .route("/host-logs/{name}", get(handle_host_logs))
+        .route("/vms/{id}/timeline", get(handle_timeline))
+        .route("/vms/{id}/security/latest", get(handle_security_latest))
+        .route("/vms/{id}/security/status", get(handle_security_info))
+        .route("/vms/{id}/detection/latest", get(handle_security_latest))
+        .route("/vms/{id}/detection/status", get(handle_security_info))
+        .route("/vms/{id}/enforcement/latest", get(handle_security_latest))
+        .route("/vms/{id}/enforcement/status", get(handle_security_info))
+        .route("/security/latest", get(handle_service_security_latest))
+        .route("/security/status", get(handle_service_security_status))
+        .route("/enforcement/latest", get(handle_service_security_latest))
+        .route("/enforcement/status", get(handle_service_security_status))
+        .route("/detection/latest", get(handle_service_detection_latest))
+        .route("/detection/status", get(handle_service_detection_status))
+        .route("/profiles/list", get(handle_profiles_list))
+        .route("/profiles/status", get(handle_profiles_status))
+        .route("/profiles/reload", post(handle_profiles_reload))
+        .route("/profiles/create", post(handle_profile_create))
+        .route("/profiles/{profile_id}/info", get(handle_profile_info))
+        .route("/profiles/{profile_id}/edit", patch(handle_profile_edit))
+        .route(
+            "/profiles/{profile_id}/delete",
+            delete(handle_profile_delete),
+        )
+        .route("/profiles/{profile_id}/clone", post(handle_profile_clone))
+        .route(
+            "/profiles/{profile_id}/validate",
+            post(handle_profile_validate),
+        )
+        .route(
+            "/profiles/{profile_id}/enforcement/evaluate",
+            post(handle_enforcement_evaluate),
+        )
+        .route(
+            "/profiles/{profile_id}/enforcement/info",
+            get(handle_enforcement_info),
+        )
+        .route(
+            "/profiles/{profile_id}/enforcement/rules/{rule_id}/edit",
+            put(handle_enforcement_rule_upsert),
+        )
+        .route(
+            "/profiles/{profile_id}/enforcement/rules/{rule_id}/delete",
+            delete(handle_enforcement_rule_delete),
+        )
+        .route(
+            "/profiles/{profile_id}/enforcement/reload",
+            post(handle_enforcement_reload),
+        )
+        .route(
+            "/profiles/{profile_id}/enforcement/rules/list",
+            get(handle_enforcement_rules_list),
+        )
+        .route(
+            "/profiles/{profile_id}/detection/evaluate",
+            post(handle_detection_evaluate),
+        )
+        .route(
+            "/profiles/{profile_id}/detection/info",
+            get(handle_detection_info),
+        )
+        .route(
+            "/profiles/{profile_id}/detection/rules/{rule_id}/edit",
+            put(handle_detection_rule_upsert),
+        )
+        .route(
+            "/profiles/{profile_id}/detection/rules/{rule_id}/delete",
+            delete(handle_detection_rule_delete),
+        )
+        .route(
+            "/profiles/{profile_id}/detection/reload",
+            post(handle_detection_reload),
+        )
+        .route(
+            "/profiles/{profile_id}/detection/rules/list",
+            get(handle_detection_rules_list),
+        )
+        .route(
+            "/profiles/{profile_id}/plugins/list",
+            get(handle_profile_plugins),
+        )
+        .route(
+            "/profiles/{profile_id}/plugins/info",
+            get(handle_profile_plugins_info),
+        )
+        .route(
+            "/profiles/{profile_id}/plugins/{plugin_id}/info",
+            get(handle_profile_plugin_info),
+        )
+        .route(
+            "/profiles/{profile_id}/plugins/{plugin_id}/edit",
+            patch(handle_profile_plugin_update),
+        )
+        .route("/profiles/{profile_id}/reload", post(handle_profile_reload))
+        .route("/vms/{id}/fork", post(handle_fork))
+        .route("/settings/info", get(handle_get_settings))
+        .route("/settings/edit", patch(handle_save_settings))
+        .route(
+            "/profiles/{profile_id}/assets/status",
+            get(handle_profile_assets_status),
+        )
+        .route(
+            "/profiles/{profile_id}/assets/info",
+            get(handle_profile_assets_info),
+        )
+        .route(
+            "/profiles/{profile_id}/assets/edit",
+            patch(handle_profile_assets_edit),
+        )
+        .route(
+            "/profiles/{profile_id}/assets/ensure",
+            post(handle_profile_assets_ensure),
+        )
+        .route(
+            "/profiles/{profile_id}/skills/info",
+            get(handle_profile_skills_info),
+        )
+        .route(
+            "/profiles/{profile_id}/skills/list",
+            get(handle_profile_skills_list),
+        )
+        .route(
+            "/profiles/{profile_id}/skills/add",
+            post(handle_profile_skill_add),
+        )
+        .route(
+            "/profiles/{profile_id}/skills/{skill_id}/edit",
+            patch(handle_profile_skill_edit),
+        )
+        .route(
+            "/profiles/{profile_id}/skills/{skill_id}/delete",
+            delete(handle_profile_skill_delete),
+        )
+        .route("/corp/info", get(handle_corp_info))
+        .route("/corp/edit", put(handle_corp_config))
+        .route("/corp/validate", post(handle_corp_validate))
+        .route("/corp/reload", post(handle_corp_reload))
+        .route(
+            "/profiles/{profile_id}/mcp/servers/list",
+            get(handle_profile_mcp_servers),
+        )
+        .route(
+            "/profiles/{profile_id}/mcp/info",
+            get(handle_profile_mcp_info),
+        )
+        .route(
+            "/profiles/{profile_id}/mcp/servers/{server_id}/tools/list",
+            get(handle_profile_mcp_server_tools),
+        )
+        .route(
+            "/profiles/{profile_id}/mcp/servers/{server_id}/refresh",
+            post(handle_profile_mcp_server_refresh),
+        )
+        .route(
+            "/profiles/{profile_id}/mcp/servers/{server_id}/tools/{tool_id}/edit",
+            patch(handle_profile_mcp_tool_edit),
+        )
+        .route(
+            "/profiles/{profile_id}/mcp/servers/{server_id}/tools/{tool_id}/call",
+            post(handle_profile_mcp_tool_call),
+        )
+        .route("/vms/{id}/history", get(handle_history))
+        .route("/vms/{id}/history/processes", get(handle_history_processes))
+        .route("/vms/{id}/history/counts", get(handle_history_counts))
+        .route(
+            "/vms/{id}/history/transcript",
+            get(handle_history_transcript),
+        )
+        .route("/vms/{id}/files/list", get(handle_list_files))
+        .route(
+            "/vms/{id}/files/content",
+            get(handle_download_file).post(handle_upload_file),
+        )
+        .layer(TraceLayer::new_for_http())
+        .with_state(state)
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
@@ -7063,212 +7272,7 @@ async fn main() -> Result<()> {
         });
     }
 
-    let app = Router::new()
-        .route(
-            "/version",
-            get(|| async { Json(serde_json::json!({ "version": env!("CARGO_PKG_VERSION") })) }),
-        )
-        .route("/vms/create", post(handle_provision))
-        .route("/vms/list", get(handle_list))
-        .route("/vms/{id}/info", get(handle_info))
-        .route("/vms/{id}/status", get(handle_vm_status))
-        .route("/vms/{id}/edit", patch(handle_vm_edit))
-        .route("/vms/{id}/logs", get(handle_logs))
-        .route("/vms/{id}/inspect", post(handle_inspect))
-        .route("/vms/{id}/exec", post(handle_exec))
-        .route("/vms/{id}/files/write", post(handle_write_file))
-        .route("/vms/{id}/files/read", post(handle_read_file))
-        .route("/vms/{id}/stop", post(handle_stop))
-        .route("/vms/{id}/pause", post(handle_suspend))
-        .route("/vms/{id}/delete", delete(handle_delete))
-        .route("/vms/{id}/start", post(handle_resume))
-        .route("/vms/{id}/resume", post(handle_resume))
-        .route("/vms/{id}/restart", post(handle_vm_restart))
-        .route("/vms/{id}/save", post(handle_persist))
-        .route("/vms/{id}/save/status", get(handle_vm_save_status))
-        .route("/vms/{id}/fork/status", get(handle_vm_fork_status))
-        .route("/vms/{id}/reload-profile", post(handle_vm_reload_profile))
-        .route("/purge", post(handle_purge))
-        .route("/run", post(handle_run))
-        .route("/stats", get(handle_stats))
-        .route("/service-logs", get(handle_service_logs))
-        .route("/triage", get(handle_triage))
-        .route("/panics", get(handle_panics))
-        .route("/host-logs/{name}", get(handle_host_logs))
-        .route("/vms/{id}/timeline", get(handle_timeline))
-        .route("/vms/{id}/security/latest", get(handle_security_latest))
-        .route("/vms/{id}/security/status", get(handle_security_info))
-        .route("/vms/{id}/detection/latest", get(handle_security_latest))
-        .route("/vms/{id}/detection/status", get(handle_security_info))
-        .route("/vms/{id}/enforcement/latest", get(handle_security_latest))
-        .route("/vms/{id}/enforcement/status", get(handle_security_info))
-        .route("/security/latest", get(handle_service_security_latest))
-        .route("/security/status", get(handle_service_security_status))
-        .route("/enforcement/latest", get(handle_service_security_latest))
-        .route("/enforcement/status", get(handle_service_security_status))
-        .route("/detection/latest", get(handle_service_detection_latest))
-        .route("/detection/status", get(handle_service_detection_status))
-        .route("/profiles/list", get(handle_profiles_list))
-        .route("/profiles/status", get(handle_profiles_status))
-        .route("/profiles/reload", post(handle_profiles_reload))
-        .route("/profiles/create", post(handle_profile_create))
-        .route("/profiles/{profile_id}/info", get(handle_profile_info))
-        .route("/profiles/{profile_id}/edit", patch(handle_profile_edit))
-        .route(
-            "/profiles/{profile_id}/delete",
-            delete(handle_profile_delete),
-        )
-        .route("/profiles/{profile_id}/clone", post(handle_profile_clone))
-        .route(
-            "/profiles/{profile_id}/validate",
-            post(handle_profile_validate),
-        )
-        .route(
-            "/profiles/{profile_id}/enforcement/evaluate",
-            post(handle_enforcement_evaluate),
-        )
-        .route(
-            "/profiles/{profile_id}/enforcement/info",
-            get(handle_enforcement_info),
-        )
-        .route(
-            "/profiles/{profile_id}/enforcement/rules/{rule_id}/edit",
-            put(handle_enforcement_rule_upsert),
-        )
-        .route(
-            "/profiles/{profile_id}/enforcement/rules/{rule_id}/delete",
-            delete(handle_enforcement_rule_delete),
-        )
-        .route(
-            "/profiles/{profile_id}/enforcement/reload",
-            post(handle_enforcement_reload),
-        )
-        .route(
-            "/profiles/{profile_id}/enforcement/rules/list",
-            get(handle_enforcement_rules_list),
-        )
-        .route(
-            "/profiles/{profile_id}/detection/evaluate",
-            post(handle_detection_evaluate),
-        )
-        .route(
-            "/profiles/{profile_id}/detection/info",
-            get(handle_detection_info),
-        )
-        .route(
-            "/profiles/{profile_id}/detection/rules/{rule_id}/edit",
-            put(handle_detection_rule_upsert),
-        )
-        .route(
-            "/profiles/{profile_id}/detection/rules/{rule_id}/delete",
-            delete(handle_detection_rule_delete),
-        )
-        .route(
-            "/profiles/{profile_id}/detection/reload",
-            post(handle_detection_reload),
-        )
-        .route(
-            "/profiles/{profile_id}/detection/rules/list",
-            get(handle_detection_rules_list),
-        )
-        .route(
-            "/profiles/{profile_id}/plugins/list",
-            get(handle_profile_plugins),
-        )
-        .route(
-            "/profiles/{profile_id}/plugins/info",
-            get(handle_profile_plugins_info),
-        )
-        .route(
-            "/profiles/{profile_id}/plugins/{plugin_id}/info",
-            get(handle_profile_plugin_info),
-        )
-        .route(
-            "/profiles/{profile_id}/plugins/{plugin_id}/edit",
-            patch(handle_profile_plugin_update),
-        )
-        .route("/profiles/{profile_id}/reload", post(handle_profile_reload))
-        .route("/vms/{id}/fork", post(handle_fork))
-        .route("/settings/info", get(handle_get_settings))
-        .route("/settings/edit", patch(handle_save_settings))
-        .route(
-            "/profiles/{profile_id}/assets/status",
-            get(handle_profile_assets_status),
-        )
-        .route(
-            "/profiles/{profile_id}/assets/info",
-            get(handle_profile_assets_info),
-        )
-        .route(
-            "/profiles/{profile_id}/assets/edit",
-            patch(handle_profile_assets_edit),
-        )
-        .route(
-            "/profiles/{profile_id}/assets/ensure",
-            post(handle_profile_assets_ensure),
-        )
-        .route(
-            "/profiles/{profile_id}/skills/info",
-            get(handle_profile_skills_info),
-        )
-        .route(
-            "/profiles/{profile_id}/skills/list",
-            get(handle_profile_skills_list),
-        )
-        .route(
-            "/profiles/{profile_id}/skills/add",
-            post(handle_profile_skill_add),
-        )
-        .route(
-            "/profiles/{profile_id}/skills/{skill_id}/edit",
-            patch(handle_profile_skill_edit),
-        )
-        .route(
-            "/profiles/{profile_id}/skills/{skill_id}/delete",
-            delete(handle_profile_skill_delete),
-        )
-        .route("/corp/info", get(handle_corp_info))
-        .route("/corp/edit", put(handle_corp_config))
-        .route("/corp/validate", post(handle_corp_validate))
-        .route("/corp/reload", post(handle_corp_reload))
-        .route(
-            "/profiles/{profile_id}/mcp/servers/list",
-            get(handle_profile_mcp_servers),
-        )
-        .route(
-            "/profiles/{profile_id}/mcp/info",
-            get(handle_profile_mcp_info),
-        )
-        .route(
-            "/profiles/{profile_id}/mcp/servers/{server_id}/tools/list",
-            get(handle_profile_mcp_server_tools),
-        )
-        .route(
-            "/profiles/{profile_id}/mcp/servers/{server_id}/refresh",
-            post(handle_profile_mcp_server_refresh),
-        )
-        .route(
-            "/profiles/{profile_id}/mcp/servers/{server_id}/tools/{tool_id}/edit",
-            patch(handle_profile_mcp_tool_edit),
-        )
-        .route(
-            "/profiles/{profile_id}/mcp/servers/{server_id}/tools/{tool_id}/call",
-            post(handle_profile_mcp_tool_call),
-        )
-        .route("/vms/{id}/history", get(handle_history))
-        .route("/vms/{id}/history/processes", get(handle_history_processes))
-        .route("/vms/{id}/history/counts", get(handle_history_counts))
-        .route(
-            "/vms/{id}/history/transcript",
-            get(handle_history_transcript),
-        )
-        .route("/vms/{id}/files/list", get(handle_list_files))
-        .route(
-            "/vms/{id}/files/content",
-            get(handle_download_file).post(handle_upload_file),
-        )
-        .layer(TraceLayer::new_for_http())
-        .with_state(state.clone());
+    let app = build_service_router(Arc::clone(&state));
 
     info!(socket = %service_sock.display(), "listening on UDS");
 

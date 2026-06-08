@@ -1,5 +1,7 @@
 use super::*;
+use axum::body::{to_bytes, Body};
 use std::sync::atomic::AtomicU64;
+use tower::ServiceExt;
 
 static SETTINGS_ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
@@ -1193,6 +1195,219 @@ async fn enforcement_rule_endpoints_add_delete_reload_and_reject_invalid_rules_a
         .await
         .expect_err("deleting a missing rule should return not found");
     assert_eq!(err.0, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn route_authored_detection_rule_triggers_runtime_ledger_and_latest_routes() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+
+    let dir = tempfile::tempdir().unwrap();
+    let (_env_guard, user_path, _) = install_empty_settings_env(&dir);
+    let state = make_test_state();
+    let app = build_service_router(Arc::clone(&state));
+    let session_dir = dir.path().join("sessions").join("route-ledger-vm");
+    std::fs::create_dir_all(&session_dir).unwrap();
+    insert_fake_instance_with_session_dir(
+        &state,
+        "route-ledger-vm",
+        std::process::id(),
+        session_dir.clone(),
+    );
+
+    let rule = capsem_core::net::policy_config::SecurityRule {
+        name: "openai_http_observed".to_string(),
+        action: capsem_core::net::policy_config::SecurityRuleAction::Allow,
+        condition: r#"http.host.contains("openai.com")"#.to_string(),
+        detection_level: Some(capsem_core::net::policy_config::DetectionLevel::Informational),
+        priority: Some(capsem_core::net::policy_config::SecurityRulePriority::Explicit(10)),
+        corp_locked: false,
+        reason: Some("route-authored detection proof".to_string()),
+        plugin_config: BTreeMap::new(),
+    };
+
+    let save_response = app
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method(axum::http::Method::PUT)
+                .uri("/profiles/code/detection/rules/openai_http_observed/edit")
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(Body::from(serde_json::to_vec(&rule).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .expect("detection route should respond");
+    assert_eq!(save_response.status(), StatusCode::OK);
+    let save_body = to_bytes(save_response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let saved: serde_json::Value = serde_json::from_slice(&save_body).unwrap();
+    assert_eq!(
+        saved["compiled_rule_id"],
+        "profiles.rules.openai_http_observed"
+    );
+
+    let loaded = capsem_core::net::policy_config::load_settings_file(&user_path).unwrap();
+    let compiled = SecurityRuleProfile {
+        profiles: loaded.profiles,
+        ..SecurityRuleProfile::default()
+    }
+    .compile(SecurityRuleSource::User)
+    .expect("route-authored rules compile for runtime");
+    let rule_set = SecurityRuleSet::new(compiled);
+    let writer = capsem_logger::DbWriter::open(&session_dir.join("session.db"), 16).unwrap();
+    let event_id = capsem_core::security_engine::SecurityEventId::parse("abcdef123456")
+        .expect("fixed event id is 12 hex");
+    let event = SecurityEvent::new(RuntimeSecurityEventType::HttpRequest)
+        .with_trace_id("trace_route_authored_detection")
+        .with_http(capsem_core::security_engine::HttpSecurityEvent {
+            host: Some("api.openai.com".to_string()),
+            method: Some("POST".to_string()),
+            path: Some("/v1/responses".to_string()),
+            status: Some("200".to_string()),
+            body: None,
+        });
+
+    let emitted = capsem_core::security_engine::emit_matching_security_rules(
+        &writer,
+        event_id,
+        RuntimeSecurityEventType::HttpRequest,
+        &rule_set,
+        &event,
+        1_789_000_123_456,
+    )
+    .await
+    .expect("matching rule emits ledger rows");
+    writer.shutdown_blocking();
+    assert_eq!(emitted, 1);
+
+    let latest_response = app
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method(axum::http::Method::GET)
+                .uri("/vms/route-ledger-vm/security/latest?limit=10")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("security latest route should respond");
+    assert_eq!(latest_response.status(), StatusCode::OK);
+    let latest_body = to_bytes(latest_response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let events: Vec<capsem_logger::SecurityRuleEvent> =
+        serde_json::from_slice(&latest_body).unwrap();
+    assert_eq!(events.len(), 1);
+    let event = &events[0];
+    assert_eq!(event.event_id, "abcdef123456");
+    assert_eq!(event.event_type, "http.request");
+    assert_eq!(event.rule_id, "profiles.rules.openai_http_observed");
+    assert_eq!(event.rule_action, capsem_logger::SecurityRuleAction::Allow);
+    assert_eq!(
+        event.detection_level,
+        capsem_logger::SecurityDetectionLevel::Informational
+    );
+    assert!(event.rule_json.contains("openai_http_observed"));
+    assert!(event.event_json.contains(r#""api.openai.com""#));
+    assert_eq!(
+        event.trace_id.as_deref(),
+        Some("trace_route_authored_detection")
+    );
+
+    let detection_response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .method(axum::http::Method::GET)
+                .uri("/vms/route-ledger-vm/detection/latest?limit=10")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("detection latest route should respond");
+    assert_eq!(detection_response.status(), StatusCode::OK);
+    let detection_body = to_bytes(detection_response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let detection_events: Vec<capsem_logger::SecurityRuleEvent> =
+        serde_json::from_slice(&detection_body).unwrap();
+    assert_eq!(detection_events[0].rule_id, event.rule_id);
+}
+
+#[tokio::test]
+async fn route_enforcement_evaluate_is_dry_run_and_does_not_write_ledger_rows() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+
+    let dir = tempfile::tempdir().unwrap();
+    let (_env_guard, _, _) = install_empty_settings_env(&dir);
+    let state = make_test_state();
+    let app = build_service_router(Arc::clone(&state));
+    let session_dir = dir.path().join("sessions").join("dry-run-vm");
+    std::fs::create_dir_all(&session_dir).unwrap();
+    insert_fake_instance_with_session_dir(
+        &state,
+        "dry-run-vm",
+        std::process::id(),
+        session_dir.clone(),
+    );
+    capsem_logger::DbWriter::open(&session_dir.join("session.db"), 16)
+        .unwrap()
+        .shutdown_blocking();
+
+    let eval_response = app
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method(axum::http::Method::POST)
+                .uri("/profiles/code/enforcement/evaluate")
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    serde_json::to_vec(&json!({
+                        "rules_toml": r#"
+[profiles.rules.eicar]
+name = "eicar"
+action = "block"
+detection_level = "high"
+match = 'file.import.content.contains("EICAR")'
+"#,
+                        "event": {
+                            "event_type": "file.import",
+                            "file_import_content": capsem_core::security_engine::DUMMY_EICAR_TEST_STRING,
+                        }
+                    }))
+                    .unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .expect("evaluate route should respond");
+    assert_eq!(eval_response.status(), StatusCode::OK);
+    let eval_body = to_bytes(eval_response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let evaluated: serde_json::Value = serde_json::from_slice(&eval_body).unwrap();
+    assert_eq!(evaluated["event"]["decision"]["effective"], "block");
+
+    let latest_response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .method(axum::http::Method::GET)
+                .uri("/vms/dry-run-vm/security/latest?limit=10")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("latest route should respond");
+    assert_eq!(latest_response.status(), StatusCode::OK);
+    let latest_body = to_bytes(latest_response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let events: Vec<capsem_logger::SecurityRuleEvent> =
+        serde_json::from_slice(&latest_body).unwrap();
+    assert!(
+        events.is_empty(),
+        "evaluate routes are dry-run only; runtime boundaries must own ledger writes"
+    )
 }
 
 #[test]
