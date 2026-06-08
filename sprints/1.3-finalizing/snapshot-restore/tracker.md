@@ -1003,7 +1003,13 @@ the guarantee or explicitly burn it.
   profile-gated and no longer directly invokes `capsem-builder`;
   `just build-assets` exits immediately with code 2 and the profile-required
   message before setup, cleanup, Docker, or builder work can run.
-- [ ] Commit S1.
+- [x] Commit S1. S1 is closed through focused commits:
+  `894776fd feat: restore profile asset build rail`,
+  `161d5e96 feat: add profile asset verification gates`,
+  `a89b84ab fix: package restored admin tools`, and
+  `9193bde9 feat: materialize profile image workspaces`. Remaining VM boot,
+  release SBOM attestation, benchmarks, and `capsem-doctor` proof are tracked
+  in S4/S6 final verification, not as open S1 admin command work.
 
 ## S2: Runtime Profile Assets And Pins
 

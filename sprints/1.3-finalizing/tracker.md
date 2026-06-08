@@ -396,16 +396,21 @@ batch unrelated fixes into one giant release commit.
 - [ ] Restore TUI crate and terminal shell behavior; `capsem shell` must work
   through the TUI again.
 - [ ] Restore launchable-profile filtering for UI/TUI/gateway.
-- [ ] Reconcile release/CI profile asset generation so package profiles point at
-  release EROFS/lz4hc assets.
-- [ ] Restore `capsem-admin` as the typed profile/settings/asset/manifest/security
+- [x] Reconcile release/CI profile asset generation so package profiles point at
+  release EROFS/lz4hc assets. Snapshot S1 restored the profile-required
+  `capsem-admin image build` rail and release workflow calls
+  `just build-kernel <arch> code` / `just build-rootfs <arch> code`.
+- [x] Restore `capsem-admin` as the typed profile/settings/asset/manifest/security
   pack command surface used by `just`, CI, package payloads, and release gates.
-- [ ] Restore `scripts/build-assets.sh --profile <profile>` or an equivalent
+- [x] Restore `scripts/build-assets.sh --profile <profile>` or an equivalent
   `just build-assets profile=...` path that delegates profile-derived
   kernel/rootfs builds through `capsem-admin`, not raw shell state.
-- [ ] Restore package/bootstrap proof that `capsem-admin` is installed and
+- [x] Restore package/bootstrap proof that `capsem-admin` is installed and
   runnable from native packages.
-- [ ] Restore admin manifest crypto/generate/download-check gates before release.
+- [x] Restore admin manifest generate/verify gates before release. Manifest
+  crypto/signing and `download-check` are intentionally burned; the current
+  gate is BLAKE3 `manifest check|generate|verify` plus SBOM/provenance release
+  evidence.
 - [ ] Classify every `82e7a58c^1..82e7a58c` deleted cluster as intentional
   burn, conceptual port, or exact restore before closing T5.
 - [ ] Restore or Linux-team handoff the KVM/checkpoint, EROFS/LZ4HC, multi-arch,
