@@ -25,6 +25,11 @@
   ];
   const PROFILE_ID = 'code';
 
+  function runtimeSummary(plugin: PluginInfo): string {
+    const { runtime } = plugin;
+    return `${runtime.event_count} events, ${runtime.detection_count} detections`;
+  }
+
   let response = $state<PluginListResponse | null>(null);
   let loading = $state(true);
   let saving = $state<Record<string, boolean>>({});
@@ -98,7 +103,7 @@
 
   <div class="bg-card border border-card-line rounded-xl divide-y divide-card-divider">
     {#each response.plugins as plugin (plugin.id)}
-      <div class="grid grid-cols-[minmax(0,1fr)_10rem_12rem] items-center gap-x-4 p-4">
+      <div class="grid grid-cols-[minmax(0,1fr)_minmax(10rem,14rem)_10rem_12rem] items-center gap-x-4 p-4">
         <div class="min-w-0">
           <div class="flex items-center gap-x-2">
             <p class="text-sm font-medium text-foreground truncate">{plugin.id}</p>
@@ -107,6 +112,22 @@
             {/if}
           </div>
           <p class="text-xs text-muted-foreground-1 mt-0.5 line-clamp-2">{plugin.description}</p>
+          <p class="text-[11px] text-muted-foreground-2 mt-1">{plugin.stage} · v{plugin.version}</p>
+        </div>
+
+        <div class="min-w-0 text-xs text-muted-foreground-1">
+          <p class="truncate">{runtimeSummary(plugin)}</p>
+          <p class="truncate">blocks {plugin.runtime.block_count} · rewrites {plugin.runtime.rewrite_count}</p>
+          {#if plugin.runtime.last_error}
+            <p class="truncate text-destructive-foreground">{plugin.runtime.last_error}</p>
+          {/if}
+          {#if plugin.id === 'credential_broker' && plugin.runtime.brokered_credentials.length > 0}
+            <ul class="mt-1 space-y-0.5">
+              {#each plugin.runtime.brokered_credentials as credential (credential.credential_ref)}
+                <li class="truncate font-mono text-[11px]">{credential.credential_ref}</li>
+              {/each}
+            </ul>
+          {/if}
         </div>
 
         <select

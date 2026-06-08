@@ -622,6 +622,17 @@ describe('api', () => {
         overridden: true,
         scope: { kind: 'profile', profile_id: 'strict' },
         description: 'debug plugin',
+        stage: 'preprocess',
+        version: '1',
+        runtime: {
+          enabled: true,
+          event_count: 1,
+          detection_count: 1,
+          block_count: 1,
+          rewrite_count: 0,
+          last_error: null,
+          brokered_credentials: [],
+        },
       };
       mockFetch.mockReturnValueOnce(jsonResponse(plugin));
       const result = await api.updatePlugin('strict', 'dummy_pre_eicar', {

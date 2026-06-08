@@ -327,8 +327,14 @@ commit.
   and `uv run pytest tests/capsem-service/test_svc_mcp_api.py -q`.
 - [x] Plugin UI reads profile plugin metadata and edits enable/disable, mode,
   and detection logging level through profile endpoints.
-- [ ] Credential UI reads only credential-broker plugin runtime status/stats and
-  lists brokered refs/BLAKE3 hashes from that plugin-owned state.
+- [x] Credential UI reads only credential-broker plugin runtime status/stats and
+  lists brokered refs/BLAKE3 hashes from that plugin-owned state. Plugin API
+  DTOs now expose backend-owned `stage`, `version`, and `runtime` fields; the
+  UI renders credential refs only from
+  `plugin.runtime.brokered_credentials`. Coverage: `cargo test -p
+  capsem-service profile_plugin_endpoint_matrix_dynamically_controls_enforcement_evaluation
+  -- --nocapture`, `pnpm -C frontend test src/lib/__tests__/api.test.ts`, and
+  `pnpm -C frontend check`.
 - [ ] Skill UI can add/edit/remove profile skills through profile endpoints.
 - [x] Ensure no provider API object remains in UI for 1.3. `/settings/info`
   now serializes only `tree` and `issues`, the frontend settings model/store

@@ -236,6 +236,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Enabled plugins append `SecurityDetectionEvent` records onto
   `SecurityEvent.detections`, rules with `detection_level` append the same
   reporting vector, and `rewrite` is the canonical mutation mode.
+- Extended profile plugin API responses with backend-owned plugin metadata and
+  runtime status: stage, version, counters, errors, and brokered credential
+  references. The settings UI now reads brokered credential refs only from the
+  credential-broker plugin runtime status shape.
 - Added the plugin/detection/enforcement endpoint taxonomy:
   `/profiles/{profile_id}/plugins/list`,
   `/profiles/{profile_id}/plugins/{plugin_id}/info`, and

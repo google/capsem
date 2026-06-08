@@ -894,6 +894,19 @@ async fn profile_plugin_endpoint_matrix_dynamically_controls_enforcement_evaluat
             .any(|plugin| plugin.id == "dummy_pre_eicar"),
         "built-in plugin list must include dummy_pre_eicar"
     );
+    let broker = list
+        .plugins
+        .iter()
+        .find(|plugin| plugin.id == "credential_broker")
+        .expect("built-in plugin list must include credential_broker");
+    assert_eq!(broker.stage, PluginStage::PreAndPost);
+    assert_eq!(broker.version, "1");
+    assert!(broker.runtime.enabled);
+    assert_eq!(broker.runtime.event_count, 0);
+    assert!(
+        broker.runtime.brokered_credentials.is_empty(),
+        "credential broker refs must be reported from plugin runtime state, not settings/providers"
+    );
 
     let Json(info) = handle_profile_plugin_info(
         State(Arc::clone(&state)),
@@ -903,6 +916,10 @@ async fn profile_plugin_endpoint_matrix_dynamically_controls_enforcement_evaluat
     .expect("plugin info");
     assert_eq!(info.id, "dummy_pre_eicar");
     assert_eq!(info.scope.profile_id, "code");
+    assert_eq!(info.stage, PluginStage::Preprocess);
+    assert_eq!(info.version, "1");
+    assert!(info.runtime.enabled);
+    assert!(info.runtime.brokered_credentials.is_empty());
     assert_eq!(
         info.config.mode,
         capsem_core::net::policy_config::SecurityPluginMode::Rewrite

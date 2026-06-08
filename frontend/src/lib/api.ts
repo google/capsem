@@ -70,6 +70,7 @@ export type InitResult = {
 
 export type PluginMode = 'allow' | 'ask' | 'block' | 'disable' | 'rewrite';
 export type PluginDetectionLevel = 'informational' | 'low' | 'medium' | 'high' | 'critical';
+export type PluginStage = 'preprocess' | 'postprocess' | 'pre_and_post';
 
 export interface PluginConfig {
   mode: PluginMode;
@@ -81,6 +82,24 @@ export interface PluginScope {
   profile_id: string;
 }
 
+export interface BrokeredCredentialStatus {
+  provider: string | null;
+  credential_ref: string;
+  observed_count: number;
+  substituted_count: number;
+  last_seen: string | null;
+}
+
+export interface PluginRuntimeStatus {
+  enabled: boolean;
+  event_count: number;
+  detection_count: number;
+  block_count: number;
+  rewrite_count: number;
+  last_error: string | null;
+  brokered_credentials: BrokeredCredentialStatus[];
+}
+
 export interface PluginInfo {
   id: string;
   config: PluginConfig;
@@ -88,6 +107,9 @@ export interface PluginInfo {
   overridden: boolean;
   scope: PluginScope;
   description: string;
+  stage: PluginStage;
+  version: string;
+  runtime: PluginRuntimeStatus;
 }
 
 export interface PluginListResponse {

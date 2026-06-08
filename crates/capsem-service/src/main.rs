@@ -195,6 +195,34 @@ struct PluginListResponse {
     plugins: Vec<PluginInfo>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum PluginStage {
+    Preprocess,
+    Postprocess,
+    PreAndPost,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct PluginRuntimeStatus {
+    enabled: bool,
+    event_count: u64,
+    detection_count: u64,
+    block_count: u64,
+    rewrite_count: u64,
+    last_error: Option<String>,
+    brokered_credentials: Vec<BrokeredCredentialStatus>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct BrokeredCredentialStatus {
+    provider: Option<String>,
+    credential_ref: String,
+    observed_count: u64,
+    substituted_count: u64,
+    last_seen: Option<String>,
+}
+
 #[derive(Debug, Serialize)]
 struct PluginInfo {
     id: String,
@@ -203,6 +231,9 @@ struct PluginInfo {
     overridden: bool,
     scope: PluginScope,
     description: &'static str,
+    stage: PluginStage,
+    version: &'static str,
+    runtime: PluginRuntimeStatus,
 }
 
 #[derive(Debug, Deserialize)]
@@ -5045,28 +5076,43 @@ fn default_plugin_config(mode: SecurityPluginMode) -> SecurityPluginConfig {
     }
 }
 
-fn plugin_catalog() -> BTreeMap<String, (&'static str, SecurityPluginConfig)> {
+#[derive(Debug, Clone, Copy)]
+struct PluginCatalogEntry {
+    description: &'static str,
+    default_config: SecurityPluginConfig,
+    stage: PluginStage,
+    version: &'static str,
+}
+
+fn plugin_catalog() -> BTreeMap<String, PluginCatalogEntry> {
     BTreeMap::from([
         (
             "credential_broker".to_string(),
-            (
-                "captures observed credentials into brokered credential references",
-                default_plugin_config(SecurityPluginMode::Rewrite),
-            ),
+            PluginCatalogEntry {
+                description: "captures observed credentials into brokered credential references",
+                default_config: default_plugin_config(SecurityPluginMode::Rewrite),
+                stage: PluginStage::PreAndPost,
+                version: "1",
+            },
         ),
         (
             "dummy_pre_eicar".to_string(),
-            (
-                "debug preprocess plugin that blocks harmless EICAR test content",
-                default_plugin_config(SecurityPluginMode::Rewrite),
-            ),
+            PluginCatalogEntry {
+                description: "debug preprocess plugin that blocks harmless EICAR test content",
+                default_config: default_plugin_config(SecurityPluginMode::Rewrite),
+                stage: PluginStage::Preprocess,
+                version: "1",
+            },
         ),
         (
             "dummy_post_allow".to_string(),
-            (
-                "debug postprocess plugin that requests allow to prove block is absolute",
-                default_plugin_config(SecurityPluginMode::Allow),
-            ),
+            PluginCatalogEntry {
+                description:
+                    "debug postprocess plugin that requests allow to prove block is absolute",
+                default_config: default_plugin_config(SecurityPluginMode::Allow),
+                stage: PluginStage::Postprocess,
+                version: "1",
+            },
         ),
     ])
 }
@@ -5084,7 +5130,7 @@ fn effective_plugin_policy(
 ) -> BTreeMap<String, SecurityPluginConfig> {
     let mut policy: BTreeMap<_, _> = plugin_catalog()
         .into_iter()
-        .map(|(id, (_, config))| (id, config))
+        .map(|(id, entry)| (id, entry.default_config))
         .collect();
     if let Some(overrides) = state
         .plugin_policy_by_profile
@@ -5105,14 +5151,17 @@ fn plugin_info_for(
     scope: PluginScope,
 ) -> Result<PluginInfo, AppError> {
     let catalog = plugin_catalog();
-    let Some((description, default_config)) = catalog.get(plugin_id).copied() else {
+    let Some(catalog_entry) = catalog.get(plugin_id).copied() else {
         return Err(AppError(
             StatusCode::NOT_FOUND,
             format!("unknown plugin: {plugin_id}"),
         ));
     };
     let effective = effective_plugin_policy(state, &scope.profile_id);
-    let config = effective.get(plugin_id).copied().unwrap_or(default_config);
+    let config = effective
+        .get(plugin_id)
+        .copied()
+        .unwrap_or(catalog_entry.default_config);
     let overridden = state
         .plugin_policy_by_profile
         .lock()
@@ -5122,11 +5171,26 @@ fn plugin_info_for(
     Ok(PluginInfo {
         id: plugin_id.to_string(),
         config,
-        default_config,
+        default_config: catalog_entry.default_config,
         overridden,
         scope,
-        description,
+        description: catalog_entry.description,
+        stage: catalog_entry.stage,
+        version: catalog_entry.version,
+        runtime: plugin_runtime_status(plugin_id, config),
     })
+}
+
+fn plugin_runtime_status(_plugin_id: &str, config: SecurityPluginConfig) -> PluginRuntimeStatus {
+    PluginRuntimeStatus {
+        enabled: config.mode != SecurityPluginMode::Disable,
+        event_count: 0,
+        detection_count: 0,
+        block_count: 0,
+        rewrite_count: 0,
+        last_error: None,
+        brokered_credentials: Vec::new(),
+    }
 }
 
 async fn handle_profile_plugins(
