@@ -191,6 +191,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `[default.<domain>]` contract. Default rules still compile into ordinary late
   CEL rules under `profiles.rules.default_<domain>`, and the old namespace is
   rejected instead of aliased.
+- Removed static `tool_config_sources` from settings/profile contracts and the
+  settings UI response. Tool config observations now belong to runtime
+  plugin/security-ledger evidence with BLAKE3 references, and static
+  `tool_config_sources` tables fail closed.
 - Added a security-event engine that runs configured preprocess plugins before
   detection/enforcement, evaluates CEL once against the canonical event, then
   runs configured postprocess plugins only after the decision allows

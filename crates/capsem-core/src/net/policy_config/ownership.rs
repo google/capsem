@@ -72,9 +72,6 @@ fn reject_non_settings_sections(file: &SettingsFile) -> Result<(), String> {
     if !file.plugins.is_empty() {
         return Err("settings.toml cannot define plugins".to_string());
     }
-    if !file.tool_config_sources.is_empty() {
-        return Err("settings.toml cannot define tool config sources".to_string());
-    }
     if file.mcp.is_some() {
         return Err("settings.toml cannot define MCP servers".to_string());
     }

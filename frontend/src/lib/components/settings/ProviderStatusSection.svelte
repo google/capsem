@@ -1,20 +1,16 @@
 <script lang="ts">
-  import type { ProviderStatus, ToolConfigSourceRecord } from '../../types/settings';
+  import type { ProviderStatus } from '../../types/settings';
   import Brain from 'phosphor-svelte/lib/Brain';
   import CheckCircle from 'phosphor-svelte/lib/CheckCircle';
-  import FileText from 'phosphor-svelte/lib/FileText';
   import Key from 'phosphor-svelte/lib/Key';
   import ShieldWarning from 'phosphor-svelte/lib/ShieldWarning';
 
   let {
     providers = [],
-    toolConfigSources = {},
   }: {
     providers?: ProviderStatus[];
-    toolConfigSources?: Record<string, ToolConfigSourceRecord>;
   } = $props();
 
-  let sourceEntries = $derived(Object.entries(toolConfigSources));
   let discoveredCount = $derived(providers.filter((provider) => provider.discovery).length);
   let brokeredCount = $derived(providers.filter((provider) => provider.brokered_credential_ref).length);
 
@@ -26,13 +22,9 @@
     }
     return ref.length > 28 ? `${ref.slice(0, 12)}...${ref.slice(-12)}` : ref;
   }
-
-  function formatOverlay(value: string): string {
-    return value.replace(/_/g, ' ');
-  }
 </script>
 
-{#if providers.length > 0 || sourceEntries.length > 0}
+{#if providers.length > 0}
   <section class="mb-6">
     <div class="flex items-center justify-between gap-3 mb-2">
       <h3 class="text-xs font-semibold text-foreground uppercase tracking-wider">Provider Runtime</h3>
@@ -110,51 +102,5 @@
       </div>
     {/if}
 
-    {#if sourceEntries.length > 0}
-      <div class="mt-4 bg-card border border-card-line rounded-lg divide-y divide-card-divider">
-        {#each sourceEntries as [key, source] (key)}
-          <div class="p-4">
-            <div class="flex items-start justify-between gap-3">
-              <div class="min-w-0">
-                <p class="inline-flex items-center gap-2 text-sm font-medium text-foreground">
-                  <FileText size={16} />
-                  {source.tool_id}
-                </p>
-                <p class="mt-1 font-mono text-xs text-muted-foreground-1 truncate">{source.guest_path}</p>
-              </div>
-              <span class="rounded-md border border-line-2 bg-layer px-2 py-1 text-[11px] font-medium text-muted-foreground-1">
-                {source.format}
-              </span>
-            </div>
-            <div class="mt-3 grid gap-2 text-xs sm:grid-cols-2">
-              {#if source.inferred_endpoint_ref}
-                <div>
-                  <p class="text-muted-foreground-1">Provider</p>
-                  <p class="text-foreground">{source.inferred_endpoint_ref}</p>
-                </div>
-              {/if}
-              {#if source.observed_hash}
-                <div>
-                  <p class="text-muted-foreground-1">Hash</p>
-                  <p class="font-mono text-[11px] text-foreground truncate">{source.observed_hash}</p>
-                </div>
-              {/if}
-              {#if source.credential_refs.length > 0}
-                <div>
-                  <p class="text-muted-foreground-1">Credentials</p>
-                  <p class="font-mono text-[11px] text-foreground truncate">{source.credential_refs.map(shortRef).join(', ')}</p>
-                </div>
-              {/if}
-              {#if source.allowed_overlays.length > 0}
-                <div>
-                  <p class="text-muted-foreground-1">Overlays</p>
-                  <p class="text-foreground truncate">{source.allowed_overlays.map(formatOverlay).join(', ')}</p>
-                </div>
-              {/if}
-            </div>
-          </div>
-        {/each}
-      </div>
-    {/if}
   </section>
 {/if}

@@ -106,14 +106,6 @@ enabled = true
 [skills]
 paths = ["/root/.codex/skills/security/SKILL.md"]
 
-[tool_config_sources.codex]
-tool_id = "codex"
-guest_path = "/root/.codex/config.toml"
-format = "toml"
-observed_hash = "blake3:2222222222222222222222222222222222222222222222222222222222222222"
-inferred_endpoint_ref = "ai.openai"
-credential_refs = ["credential:blake3:1111111111111111111111111111111111111111111111111111111111111111"]
-allowed_overlays = ["mcp_injection", "broker_placeholders", "endpoint_selection"]
 "#,
     );
 
@@ -134,6 +126,27 @@ allowed_overlays = ["mcp_injection", "broker_placeholders", "endpoint_selection"
     assert!(profile.ai.contains_key("openai"));
     assert!(profile.plugins.contains_key("dummy_pre_eicar"));
     assert_eq!(profile.mcp.unwrap().servers[0].name, "filesystem");
+}
+
+#[test]
+fn profile_config_rejects_static_tool_config_sources() {
+    let error = toml::from_str::<ProfileConfigFile>(
+        r#"
+id = "developer"
+name = "Developer"
+description = "Developer profile"
+revision = "2026.06.07.1"
+refresh_policy = "24h"
+
+[tool_config_sources.codex]
+tool_id = "codex"
+guest_path = "/root/.codex/config.toml"
+format = "toml"
+"#,
+    )
+    .expect_err("tool_config_sources are runtime ledger evidence, not static profile config");
+
+    assert!(error.to_string().contains("tool_config_sources"), "{error}");
 }
 
 #[test]

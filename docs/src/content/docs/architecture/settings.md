@@ -200,7 +200,6 @@ Returns the full `SettingsResponse` in one call:
 | `issues` | `ConfigIssue[]` | Validation warnings (missing API keys, invalid JSON, etc.) |
 | `presets` | `SecurityPreset[]` | Available security presets with their setting values |
 | `providers` | `ProviderStatus[]` | Provider discovery, endpoint, and credential broker status |
-| `tool_config_sources` | `ToolConfigSourceRecord` map | Observed tool-owned config metadata without raw file content |
 
 ### save_settings
 

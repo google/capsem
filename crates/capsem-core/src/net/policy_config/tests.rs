@@ -4649,7 +4649,7 @@ credential_ref = "sk-raw-secret"
 }
 
 #[test]
-fn tool_config_source_index_parses_and_roundtrips_without_config_content() {
+fn tool_config_sources_are_rejected_from_settings_files() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("user.toml");
     std::fs::write(
@@ -4668,31 +4668,12 @@ allowed_overlays = ["mcp_injection", "broker_placeholders"]
     )
     .unwrap();
 
-    let loaded = load_settings_file(&path).expect("tool config source metadata should load");
-    let record = loaded
-        .tool_config_sources
-        .get("codex_config")
-        .expect("codex config source should be indexed");
-    assert_eq!(record.tool_id, "codex");
-    assert_eq!(record.guest_path, "/root/.codex/config.toml");
-    assert_eq!(record.format, ToolConfigFormat::Toml);
-    assert_eq!(record.inferred_endpoint_ref.as_deref(), Some("ai.openai"));
-    assert_eq!(
-        record.allowed_overlays,
-        vec![
-            ToolConfigOverlay::McpInjection,
-            ToolConfigOverlay::BrokerPlaceholders
-        ]
-    );
-
-    let serialized = toml::to_string_pretty(&loaded).unwrap();
-    assert!(serialized.contains("[tool_config_sources.codex_config]"));
-    assert!(!serialized.contains("content ="));
-    assert!(!serialized.contains("[settings.\"ai.openai"));
+    let error = load_settings_file(&path).expect_err("tool_config_sources is runtime evidence");
+    assert!(error.contains("tool_config_sources"), "{error}");
 }
 
 #[test]
-fn tool_config_source_index_rejects_raw_credentials_rendered_content_and_bad_hash() {
+fn tool_config_sources_are_not_a_static_credential_escape_hatch() {
     let cases = [
         (
             "raw credential ref",
@@ -4740,10 +4721,8 @@ inferred_endpoint_ref = "openai"
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("user.toml");
         std::fs::write(&path, toml_text).unwrap();
-        assert!(
-            load_settings_file(&path).is_err(),
-            "{name} must be rejected"
-        );
+        let error = load_settings_file(&path).expect_err("tool_config_sources is retired");
+        assert!(error.contains("tool_config_sources"), "{name}: {error}");
     }
 }
 
@@ -5079,7 +5058,7 @@ match = 'http.host.matches("(^|.*\.)openai\.com$")'
 }
 
 #[test]
-fn load_settings_response_exposes_provider_and_tool_config_status() {
+fn load_settings_response_exposes_provider_status_without_tool_config_sources() {
     let _guard = crate::credential_broker::TEST_ENV_LOCK.blocking_lock();
 
     let dir = tempfile::tempdir().unwrap();
@@ -5097,15 +5076,6 @@ source = "http.header.authorization"
 event_type = "http.request"
 confidence = 1.0
 credential_ref = "credential:blake3:0000000000000000000000000000000000000000000000000000000000000000"
-
-[tool_config_sources.codex_config]
-tool_id = "codex"
-guest_path = "/root/.codex/config.toml"
-format = "toml"
-observed_hash = "blake3:1111111111111111111111111111111111111111111111111111111111111111"
-inferred_endpoint_ref = "ai.openai"
-credential_refs = ["credential:blake3:0000000000000000000000000000000000000000000000000000000000000000"]
-allowed_overlays = ["mcp_injection", "broker_placeholders"]
 "#,
     )
     .unwrap();
@@ -5142,13 +5112,11 @@ match = 'http.host.matches("(^|.*\.)openai\.com$")'
     );
     assert!(openai.corp_blocked);
 
-    let codex = response
-        .tool_config_sources
-        .get("codex_config")
-        .expect("Codex config source should be exposed");
-    assert_eq!(codex.tool_id, "codex");
-    assert_eq!(codex.guest_path, "/root/.codex/config.toml");
-    assert_eq!(codex.inferred_endpoint_ref.as_deref(), Some("ai.openai"));
+    let serialized = serde_json::to_value(&response).expect("settings response serializes");
+    assert!(
+        serialized.get("tool_config_sources").is_none(),
+        "settings response must not expose runtime tool config observations"
+    );
 }
 
 #[test]

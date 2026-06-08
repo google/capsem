@@ -82,16 +82,6 @@ describe('SettingsModel', () => {
       expect(openai?.corp_blocked).toBe(false);
     });
 
-    it('exposes tool config source indexes without raw config content', () => {
-      const model = loadModel();
-      const codexConfig = model.toolConfigSources.codex_config;
-
-      expect(codexConfig.tool_id).toBe('codex');
-      expect(codexConfig.guest_path).toBe('/root/.codex/config.toml');
-      expect(codexConfig.inferred_endpoint_ref).toBe('ai.openai');
-      expect(codexConfig.observed_hash).toMatch(/^blake3:[0-9a-f]{64}$/);
-      expect(JSON.stringify(codexConfig)).not.toContain('sk-');
-    });
   });
 
   describe('getWidget', () => {

@@ -11,7 +11,6 @@ import {
   type ConfigIssue,
   type SettingsResponse,
   type ProviderStatus,
-  type ToolConfigSourceRecord,
 } from '../types/settings';
 import {
   SettingType,
@@ -24,7 +23,6 @@ export class SettingsModel {
   private _tree: SettingsNode[];
   private _issues: ConfigIssue[];
   private _providers: ProviderStatus[];
-  private _toolConfigSources: Record<string, ToolConfigSourceRecord>;
   private _leafIndex: Map<string, SettingsLeaf>;
   private _mcpIndex: Map<string, McpServerNode>;
   private _pendingChanges: Map<string, SettingsChangeValue>;
@@ -33,7 +31,6 @@ export class SettingsModel {
     this._tree = response.tree;
     this._issues = response.issues;
     this._providers = response.providers ?? [];
-    this._toolConfigSources = response.tool_config_sources ?? {};
     this._leafIndex = new Map();
     this._mcpIndex = new Map();
     this._pendingChanges = new Map();
@@ -112,10 +109,6 @@ export class SettingsModel {
 
   get providers(): ProviderStatus[] {
     return this._providers;
-  }
-
-  get toolConfigSources(): Record<string, ToolConfigSourceRecord> {
-    return this._toolConfigSources;
   }
 
   // --- Enabled / visibility ---

@@ -408,7 +408,6 @@
         {#if activeDynamicGroup.key === 'ai'}
           <ProviderStatusSection
             providers={settingsStore.model?.providers ?? []}
-            toolConfigSources={settingsStore.model?.toolConfigSources ?? {}}
           />
         {/if}
         <SettingsSection group={activeDynamicGroup} />

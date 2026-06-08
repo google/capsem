@@ -45,24 +45,6 @@ export interface ProviderStatus {
   corp_blocked: boolean;
 }
 
-export type ToolConfigFormat = 'toml' | 'json' | 'yaml' | 'env' | 'text';
-export type ToolConfigOverlay =
-  | 'mcp_injection'
-  | 'broker_placeholders'
-  | 'telemetry_disablement'
-  | 'endpoint_selection';
-
-export interface ToolConfigSourceRecord {
-  tool_id: string;
-  guest_path: string;
-  format: ToolConfigFormat;
-  observed_hash?: string | null;
-  observed_version?: string | null;
-  inferred_endpoint_ref?: string | null;
-  credential_refs: string[];
-  allowed_overlays: ToolConfigOverlay[];
-}
-
 export type SettingsChangeValue = SettingValue | null;
 
 /** Per-rule HTTP method permissions. */
@@ -187,7 +169,6 @@ export interface SettingsResponse {
   tree: SettingsNode[];
   issues: ConfigIssue[];
   providers?: ProviderStatus[];
-  tool_config_sources?: Record<string, ToolConfigSourceRecord>;
 }
 
 /** Info about an available update. */

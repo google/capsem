@@ -521,9 +521,14 @@ the guarantee or explicitly burn it.
 - [ ] Delete or reshape static `ProfileConfigFile.ai` / `[ai.*]` parser support
   so provider UI/status cannot be invented from metadata without allow/configured
   truth.
-- [ ] Delete `tool_config_sources` from static profile parsing and add a
+- [x] Delete `tool_config_sources` from static profile parsing and add a
   rejection test. Observed tool config sources belong to runtime status/security
   ledger evidence with real BLAKE3 hashes and credential refs.
+  Proof: `cargo test -p capsem-core --lib tool_config_sources -- --nocapture`
+  passed 4 rejection/response tests; full
+  `cargo test -p capsem-core --lib policy_config -- --nocapture` passed 392
+  tests; `cargo test -p capsem-core --no-run`, `pnpm -C frontend check`, and
+  `git diff --check` passed.
 - [ ] Validate profile parsing compiles into the new `SecurityRuleSet`/CEL rail;
   no second policy syntax or compatibility rail.
 - [ ] Restore `capsem-admin` CLI package and entry point.

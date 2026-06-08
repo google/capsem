@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use super::provider_profile::AiProviderProfile;
 use super::security_rule_profile::{SecurityPluginConfig, SecurityRuleGroup, SecurityRuleProfile};
-use super::types::{RuleFileReferences, ToolConfigSourceRecord};
+use super::types::RuleFileReferences;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -43,8 +43,6 @@ pub struct ProfileConfigFile {
     pub mcp: Option<crate::mcp::policy::McpUserConfig>,
     #[serde(default)]
     pub skills: ProfileSkills,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub tool_config_sources: BTreeMap<String, ToolConfigSourceRecord>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -167,9 +165,6 @@ impl ProfileConfigFile {
             ..SecurityRuleProfile::default()
         };
         rule_profile.validate()?;
-        for (record_id, record) in &self.tool_config_sources {
-            record.validate(record_id)?;
-        }
         Ok(())
     }
 }

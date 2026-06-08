@@ -441,9 +441,6 @@ pub struct SettingsFile {
     /// Runtime plugin policy (`[plugins]`).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub plugins: BTreeMap<String, super::security_rule_profile::SecurityPluginConfig>,
-    /// Metadata index for tool-owned config files observed inside the VM.
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub tool_config_sources: BTreeMap<String, ToolConfigSourceRecord>,
     /// MCP server configuration (optional section in user.toml / corp.toml).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mcp: Option<crate::mcp::policy::McpUserConfig>,
@@ -456,9 +453,6 @@ impl SettingsFile {
         }
         for plugin_id in self.plugins.keys() {
             super::security_rule_profile::validate_identifier("plugin id", plugin_id)?;
-        }
-        for (record_id, record) in &self.tool_config_sources {
-            record.validate(record_id)?;
         }
         Ok(())
     }
@@ -487,117 +481,6 @@ pub fn is_brokered_credential_setting_id(id: &str) -> bool {
             | SETTING_GITHUB_TOKEN
             | SETTING_GITLAB_TOKEN
     )
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
-#[serde(rename_all = "kebab-case")]
-pub enum ToolConfigFormat {
-    Toml,
-    Json,
-    Yaml,
-    Env,
-    Text,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum ToolConfigOverlay {
-    McpInjection,
-    BrokerPlaceholders,
-    TelemetryDisablement,
-    EndpointSelection,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
-pub struct ToolConfigSourceRecord {
-    pub tool_id: String,
-    pub guest_path: String,
-    pub format: ToolConfigFormat,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub observed_hash: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub observed_version: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub inferred_endpoint_ref: Option<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub credential_refs: Vec<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub allowed_overlays: Vec<ToolConfigOverlay>,
-}
-
-impl ToolConfigSourceRecord {
-    pub fn validate(&self, record_id: &str) -> Result<(), String> {
-        validate_settings_identifier("tool config source id", record_id)?;
-        validate_settings_identifier("tool config source tool_id", &self.tool_id)?;
-        capsem_proto::validate_file_path(&self.guest_path)
-            .map_err(|e| format!("tool_config_sources.{record_id}.guest_path: {e}"))?;
-        if let Some(hash) = self.observed_hash.as_deref() {
-            validate_blake3_ref(
-                &format!("tool_config_sources.{record_id}.observed_hash"),
-                hash,
-            )?;
-        }
-        if let Some(version) = self.observed_version.as_deref() {
-            validate_non_empty_setting(
-                &format!("tool_config_sources.{record_id}.observed_version"),
-                version,
-            )?;
-        }
-        if let Some(endpoint_ref) = self.inferred_endpoint_ref.as_deref() {
-            validate_endpoint_ref(
-                &format!("tool_config_sources.{record_id}.inferred_endpoint_ref"),
-                endpoint_ref,
-            )?;
-        }
-        for credential_ref in &self.credential_refs {
-            if !capsem_logger::is_credential_reference(credential_ref) {
-                return Err(format!(
-                    "tool_config_sources.{record_id}.credential_refs must contain only credential:blake3 references"
-                ));
-            }
-        }
-        Ok(())
-    }
-}
-
-fn validate_endpoint_ref(path: &str, value: &str) -> Result<(), String> {
-    let Some(provider_id) = value.strip_prefix("ai.") else {
-        return Err(format!("{path} must use ai.<provider_id>"));
-    };
-    validate_settings_identifier(path, provider_id)
-}
-
-fn validate_blake3_ref(path: &str, value: &str) -> Result<(), String> {
-    let Some(hex) = value.strip_prefix("blake3:") else {
-        return Err(format!("{path} must use blake3:<64-hex>"));
-    };
-    if hex.len() != 64 || !hex.chars().all(|ch| ch.is_ascii_hexdigit()) {
-        return Err(format!("{path} must use blake3:<64-hex>"));
-    }
-    Ok(())
-}
-
-fn validate_settings_identifier(kind: &str, value: &str) -> Result<(), String> {
-    validate_non_empty_setting(kind, value)?;
-    if value
-        .chars()
-        .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-')
-    {
-        Ok(())
-    } else {
-        Err(format!(
-            "{kind} must contain only ASCII letters, digits, '_' or '-'"
-        ))
-    }
-}
-
-fn validate_non_empty_setting(kind: &str, value: &str) -> Result<(), String> {
-    if value.trim().is_empty() {
-        Err(format!("{kind} must not be empty"))
-    } else {
-        Ok(())
-    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]
@@ -752,8 +635,6 @@ pub struct SettingsResponse {
     pub issues: Vec<crate::net::policy_config::lint::ConfigIssue>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub providers: Vec<ProviderStatus>,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub tool_config_sources: BTreeMap<String, ToolConfigSourceRecord>,
 }
 
 #[derive(Serialize, Debug, Clone, PartialEq)]

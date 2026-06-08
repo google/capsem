@@ -511,7 +511,6 @@ pub fn load_settings_response() -> super::types::SettingsResponse {
         tree: super::tree::build_settings_tree_with_mcp(&resolved, &mcp_servers),
         issues: super::lint::config_lint(&resolved),
         providers: build_provider_statuses(&user, &corp, &resolved),
-        tool_config_sources: user.tool_config_sources.clone(),
     }
 }
 

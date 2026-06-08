@@ -9,7 +9,6 @@ import type {
   ResolvedSetting,
   SettingsNode,
   SettingsResponse,
-  ToolConfigSourceRecord,
 } from './types/settings';
 
 // Helper: creates a mock setting with sensible defaults for empty fields.
@@ -364,7 +363,6 @@ export let MOCK_MCP_TOOLS: McpToolInfo[] = [
 ];
 
 const MOCK_CREDENTIAL_REF = `credential:blake3:${'0'.repeat(64)}`;
-const MOCK_CODEX_CONFIG_HASH = `blake3:${'1'.repeat(64)}`;
 
 export const MOCK_PROVIDER_STATUS: ProviderStatus[] = [
   {
@@ -415,19 +413,6 @@ export const MOCK_PROVIDER_STATUS: ProviderStatus[] = [
   },
 ];
 
-export const MOCK_TOOL_CONFIG_SOURCES: Record<string, ToolConfigSourceRecord> = {
-  codex_config: {
-    tool_id: 'codex',
-    guest_path: '/root/.codex/config.toml',
-    format: 'toml',
-    observed_hash: MOCK_CODEX_CONFIG_HASH,
-    observed_version: '0.1.0-dev',
-    inferred_endpoint_ref: 'ai.openai',
-    credential_refs: [MOCK_CREDENTIAL_REF],
-    allowed_overlays: ['mcp_injection', 'broker_placeholders'],
-  },
-};
-
 export function buildMockSettingsResponse(): SettingsResponse {
   return {
     tree: buildMockTree(),
@@ -437,6 +422,5 @@ export function buildMockSettingsResponse(): SettingsResponse {
       { id: 'ai.openai.api_key', severity: 'warning', message: 'No OpenAI API key configured. Codex CLI will not be able to authenticate.', docs_url: 'https://platform.openai.com/api-keys' },
     ],
     providers: MOCK_PROVIDER_STATUS,
-    tool_config_sources: MOCK_TOOL_CONFIG_SOURCES,
   };
 };
