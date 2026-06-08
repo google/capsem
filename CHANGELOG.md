@@ -79,6 +79,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   before boot state is created, persistent registry rows store `profile_id`,
   fork/save/resume preserve it, and list/info responses expose it. A VM's
   `profile_id` remains immutable after creation.
+- Made VM boot preflight and process spawn resolve kernel, initrd, and rootfs
+  from the selected profile asset contract. Profile resolution supports the
+  approved hash-prefixed downloaded layout and logical-name dev layout, but
+  both are derived from profile asset descriptors instead of the old
+  service-global file guess.
 - Added profile management route gates:
   `POST /profiles/create`, `PATCH /profiles/{profile_id}/edit`,
   `DELETE /profiles/{profile_id}/delete`, `POST /profiles/{profile_id}/clone`,

@@ -1062,11 +1062,39 @@ fn profile_asset_status_uses_profile_current_arch_contract() {
 }
 
 #[test]
+fn resolve_profile_asset_paths_uses_profile_hash_prefixed_assets() {
+    let dir = tempfile::tempdir().unwrap();
+    let profile = ProfileConfigFile::builtin_code();
+    let arch = capsem_core::net::policy_config::current_profile_arch();
+    let arch_dir = dir.path().join(arch);
+    std::fs::create_dir_all(&arch_dir).unwrap();
+    let arch_assets = profile.assets.current_arch_assets().unwrap();
+    for asset in [
+        &arch_assets.kernel,
+        &arch_assets.initrd,
+        &arch_assets.rootfs,
+    ] {
+        let hash = asset.hash.strip_prefix("blake3:").unwrap();
+        let name = capsem_core::asset_manager::hash_filename(&asset.name, hash);
+        std::fs::write(arch_dir.join(name), b"asset").unwrap();
+    }
+    let state = make_asset_state(dir.path().to_path_buf());
+
+    let resolved = state.resolve_profile_asset_paths(&profile).unwrap();
+
+    assert!(resolved.kernel.exists());
+    assert!(resolved.initrd.exists());
+    assert!(resolved.rootfs.exists());
+    assert!(resolved.asset_version.starts_with("profile:code@"));
+    assert_ne!(resolved.rootfs.file_name().unwrap(), "rootfs.erofs");
+}
+
+#[test]
 fn vm_asset_block_reason_reports_missing_assets() {
     let dir = tempfile::tempdir().unwrap();
     let state = make_asset_state(dir.path().to_path_buf());
 
-    let reason = vm_asset_block_reason(&state).expect("missing assets must block VM start");
+    let reason = vm_asset_block_reason(&state, "code").expect("missing assets must block VM start");
 
     assert!(reason.contains("VM assets are not ready"));
     assert!(reason.contains("vmlinuz"));
@@ -1079,7 +1107,7 @@ fn vm_asset_block_reason_reports_downloading_assets() {
     let state = make_asset_state(dir.path().to_path_buf());
     state.asset_reconcile.lock().unwrap().in_progress = true;
 
-    let reason = vm_asset_block_reason(&state).expect("missing assets must block VM start");
+    let reason = vm_asset_block_reason(&state, "code").expect("missing assets must block VM start");
 
     assert!(reason.contains("VM assets are still downloading"));
 }
@@ -1092,7 +1120,7 @@ fn vm_asset_block_reason_allows_ready_assets() {
     std::fs::write(dir.path().join("rootfs.erofs"), b"erofs").unwrap();
     let state = make_asset_state(dir.path().to_path_buf());
 
-    assert!(vm_asset_block_reason(&state).is_none());
+    assert!(vm_asset_block_reason(&state, "code").is_none());
 }
 
 #[test]

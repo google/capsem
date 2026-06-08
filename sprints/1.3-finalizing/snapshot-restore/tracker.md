@@ -126,6 +126,17 @@ the guarantee or explicitly burn it.
   `handle_fork_from_persistent_registry`,
   `handle_persist_preserves_profile_identity`, and
   `sandbox_info_rejects_missing_profile_id`.
+- [x] Current-architecture slice: VM boot preflight and process spawn now
+  resolve kernel/initrd/rootfs from the selected profile's current-arch asset
+  descriptors. Decision: conceptual_port of profile-selected boot assets into
+  current `ProfileConfigFile`/`ProfileCatalog`; old service-global asset
+  guessing no longer drives create/run/resume boot. The resolver accepts
+  hash-prefixed downloaded assets and logical-name dev assets only when they
+  derive from the profile descriptor. Tests: `cargo test -p capsem-service
+  resolve_profile_asset_paths_uses_profile_hash_prefixed_assets -- --nocapture`,
+  `cargo test -p capsem-service vm_asset_block_reason -- --nocapture`,
+  `cargo test -p capsem-service --no-run`, and `cargo test -p capsem-service
+  profile -- --nocapture`.
 - [ ] `b2fb7e33 feat: export session policy contexts`
 - [ ] `7a5afc9c test: prove process enforcement logs in real vm`
 - [ ] `f2a6247f docs: close s07 debt ledger`

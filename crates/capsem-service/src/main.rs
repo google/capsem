@@ -8,10 +8,10 @@ use axum::{
 use capsem_core::poll::{poll_until, PollOpts};
 use capsem_core::{
     net::policy_config::{
-        CompiledSecurityRule, DetectionLevel, ProfileCatalog, ProfileCatalogSource,
-        ProfileConfigFile, ProviderRuleProfile, SecurityPluginConfig, SecurityPluginMode,
-        SecurityRule, SecurityRuleGroup, SecurityRuleProfile, SecurityRuleSet, SecurityRuleSource,
-        SettingsFile,
+        CompiledSecurityRule, DetectionLevel, ProfileAssetDescriptor, ProfileCatalog,
+        ProfileCatalogSource, ProfileConfigFile, ProviderRuleProfile, SecurityPluginConfig,
+        SecurityPluginMode, SecurityRule, SecurityRuleGroup, SecurityRuleProfile, SecurityRuleSet,
+        SecurityRuleSource, SettingsFile,
     },
     security_engine::{
         FileSecurityEvent, RuntimeSecurityEventType, SecurityActionRegistry, SecurityEmitError,
@@ -590,7 +590,8 @@ impl ServiceState {
                 .context("failed to clone sandbox state")?;
         }
 
-        let resolved = self.resolve_asset_paths()?;
+        let profile = self.profile_config(&profile_id)?;
+        let resolved = self.resolve_profile_asset_paths(&profile)?;
         if !resolved.rootfs.exists() {
             let entries = std::fs::read_dir(&self.assets_dir)
                 .map(|d| d.map(|e| e.unwrap().file_name()).collect::<Vec<_>>())
@@ -882,7 +883,8 @@ impl ServiceState {
         let _ = std::fs::remove_file(&uds_path);
         let _ = std::fs::remove_file(uds_path.with_extension("ready"));
 
-        let resolved = self.resolve_asset_paths()?;
+        let profile = self.profile_config(&entry.profile_id)?;
+        let resolved = self.resolve_profile_asset_paths(&profile)?;
         if !resolved.rootfs.exists() {
             return Err(anyhow!("rootfs not found at {}", resolved.rootfs.display()));
         }
@@ -1130,6 +1132,60 @@ impl ServiceState {
             asset_version: "dev".to_string(),
         })
     }
+
+    fn profile_config(&self, profile_id: &str) -> Result<ProfileConfigFile> {
+        let catalog =
+            ProfileCatalog::load_default().map_err(|e| anyhow!("load profile catalog: {e}"))?;
+        catalog
+            .get(profile_id)
+            .cloned()
+            .ok_or_else(|| anyhow!("profile not found: {profile_id}"))
+    }
+
+    fn resolve_profile_asset_paths(
+        &self,
+        profile: &ProfileConfigFile,
+    ) -> Result<capsem_core::asset_manager::ResolvedAssets> {
+        let arch = capsem_core::net::policy_config::current_profile_arch();
+        let arch_assets = profile.assets.current_arch_assets().ok_or_else(|| {
+            anyhow!(
+                "profile {} has no assets for architecture {arch}",
+                profile.id
+            )
+        })?;
+
+        Ok(capsem_core::asset_manager::ResolvedAssets {
+            kernel: profile_asset_descriptor_path(&self.assets_dir, arch, &arch_assets.kernel),
+            initrd: profile_asset_descriptor_path(&self.assets_dir, arch, &arch_assets.initrd),
+            rootfs: profile_asset_descriptor_path(&self.assets_dir, arch, &arch_assets.rootfs),
+            asset_version: format!("profile:{}@{}", profile.id, profile.revision),
+        })
+    }
+}
+
+fn profile_asset_descriptor_path(
+    assets_dir: &StdPath,
+    arch: &str,
+    asset: &ProfileAssetDescriptor,
+) -> PathBuf {
+    let hash = asset.hash.strip_prefix("blake3:").unwrap_or(&asset.hash);
+    let hash_name = capsem_core::asset_manager::hash_filename(&asset.name, hash);
+    let bases = [assets_dir.join(arch), assets_dir.to_path_buf()];
+
+    for base in &bases {
+        let path = base.join(&hash_name);
+        if path.exists() {
+            return path;
+        }
+    }
+    for base in &bases {
+        let path = base.join(&asset.name);
+        if path.exists() {
+            return path;
+        }
+    }
+
+    bases[0].join(&asset.name)
 }
 
 /// Identify the launchd-cleanup-saturation transient that masquerades
@@ -1858,7 +1914,7 @@ async fn handle_provision(
     Json(payload): Json<ProvisionRequest>,
 ) -> Result<Json<ProvisionResponse>, AppError> {
     let profile_id = validate_profile_route_id(payload.profile_id.clone())?;
-    if let Some(reason) = vm_asset_block_reason(&state) {
+    if let Some(reason) = vm_asset_block_reason(&state, &profile_id) {
         return Err(AppError(StatusCode::PRECONDITION_FAILED, reason));
     }
 
@@ -3308,8 +3364,12 @@ fn append_asset_reconcile_status(value: &mut serde_json::Value, reconcile: &Asse
     }
 }
 
-fn vm_asset_block_reason(state: &ServiceState) -> Option<String> {
-    let resolved = match state.resolve_asset_paths() {
+fn vm_asset_block_reason(state: &ServiceState, profile_id: &str) -> Option<String> {
+    let profile = match state.profile_config(profile_id) {
+        Ok(profile) => profile,
+        Err(error) => return Some(format!("VM assets are not ready: {error}")),
+    };
+    let resolved = match state.resolve_profile_asset_paths(&profile) {
         Ok(resolved) => resolved,
         Err(error) => return Some(format!("VM assets are not ready: {error}")),
     };
@@ -5966,10 +6026,10 @@ async fn handle_run(
     State(state): State<Arc<ServiceState>>,
     Json(payload): Json<RunRequest>,
 ) -> Result<Json<ExecResponse>, AppError> {
-    if let Some(reason) = vm_asset_block_reason(&state) {
+    let profile_id = validate_profile_route_id(payload.profile_id.clone())?;
+    if let Some(reason) = vm_asset_block_reason(&state, &profile_id) {
         return Err(AppError(StatusCode::PRECONDITION_FAILED, reason));
     }
-    let profile_id = validate_profile_route_id(payload.profile_id.clone())?;
 
     let id = {
         let existing: Vec<String> = state.instances.lock().unwrap().keys().cloned().collect();
