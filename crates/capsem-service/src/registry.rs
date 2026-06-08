@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct PersistentVmEntry {
     pub name: String,
+    pub profile_id: String,
     pub ram_mb: u64,
     pub cpus: u32,
     pub base_version: String,
@@ -124,6 +125,7 @@ mod tests {
     fn make_entry(name: &str, session_dir: PathBuf) -> PersistentVmEntry {
         PersistentVmEntry {
             name: name.into(),
+            profile_id: "code".into(),
             ram_mb: 2048,
             cpus: 2,
             base_version: "0.1.0".into(),

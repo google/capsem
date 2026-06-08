@@ -19,6 +19,7 @@ pub struct StatsResponse {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ProvisionRequest {
     pub name: Option<String>,
+    pub profile_id: String,
     /// RAM in megabytes. If absent, service resolves from merged VM settings
     /// (vm.resources.ram_gb, default 4 GiB).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -66,6 +67,7 @@ pub struct ProvisionResponse {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct SandboxInfo {
     pub id: String,
+    pub profile_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     pub pid: u32,
@@ -122,9 +124,10 @@ pub struct SandboxInfo {
 
 impl SandboxInfo {
     /// Construct with only the core fields; all telemetry fields default to None.
-    pub fn new(id: String, pid: u32, status: String, persistent: bool) -> Self {
+    pub fn new(id: String, profile_id: String, pid: u32, status: String, persistent: bool) -> Self {
         Self {
             id,
+            profile_id,
             name: None,
             pid,
             status,
@@ -301,6 +304,7 @@ pub struct PurgeResponse {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct RunRequest {
     pub command: String,
+    pub profile_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeout_secs: Option<u64>,
     /// Guest RAM in MiB. Falls back to merged VM settings
@@ -542,9 +546,10 @@ mod tests {
 
     #[test]
     fn provision_request_with_name() {
-        let json = json!({"name": "my-vm", "ram_mb": 4096, "cpus": 4, "persistent": true});
+        let json = json!({"name": "my-vm", "profile_id": "code", "ram_mb": 4096, "cpus": 4, "persistent": true});
         let r: ProvisionRequest = serde_json::from_value(json).unwrap();
         assert_eq!(r.name, Some("my-vm".into()));
+        assert_eq!(r.profile_id, "code");
         assert_eq!(r.ram_mb, Some(4096));
         assert_eq!(r.cpus, Some(4));
         assert!(r.persistent);
@@ -552,10 +557,17 @@ mod tests {
     }
 
     #[test]
+    fn provision_request_requires_profile_id() {
+        let json = json!({"name": "my-vm", "ram_mb": 4096, "cpus": 4});
+        let err = serde_json::from_value::<ProvisionRequest>(json).unwrap_err();
+        assert!(err.to_string().contains("profile_id"));
+    }
+
+    #[test]
     fn provision_request_ram_cpus_omitted_deserializes_as_none() {
         // Service handler fills these from merged VM settings. Callers like
         // the tray's "New Session" rely on this to honor user defaults.
-        let json = json!({"name": "my-vm"});
+        let json = json!({"name": "my-vm", "profile_id": "code"});
         let r: ProvisionRequest = serde_json::from_value(json).unwrap();
         assert_eq!(r.ram_mb, None);
         assert_eq!(r.cpus, None);
@@ -563,7 +575,7 @@ mod tests {
 
     #[test]
     fn provision_request_with_env() {
-        let json = json!({"ram_mb": 2048, "cpus": 2, "env": {"FOO": "bar", "BAZ": "qux"}});
+        let json = json!({"profile_id": "code", "ram_mb": 2048, "cpus": 2, "env": {"FOO": "bar", "BAZ": "qux"}});
         let r: ProvisionRequest = serde_json::from_value(json).unwrap();
         let env = r.env.unwrap();
         assert_eq!(env.get("FOO").unwrap(), "bar");
@@ -574,6 +586,7 @@ mod tests {
     fn provision_request_env_omitted() {
         let r = ProvisionRequest {
             name: None,
+            profile_id: "code".into(),
             ram_mb: Some(2048),
             cpus: Some(2),
             persistent: false,
@@ -587,7 +600,7 @@ mod tests {
 
     #[test]
     fn provision_request_without_name() {
-        let json = json!({"ram_mb": 2048, "cpus": 2});
+        let json = json!({"profile_id": "code", "ram_mb": 2048, "cpus": 2});
         let r: ProvisionRequest = serde_json::from_value(json).unwrap();
         assert_eq!(r.name, None);
         assert!(!r.persistent);
@@ -595,14 +608,14 @@ mod tests {
 
     #[test]
     fn provision_request_with_from() {
-        let json = json!({"ram_mb": 2048, "cpus": 2, "from": "my-fork"});
+        let json = json!({"profile_id": "code", "ram_mb": 2048, "cpus": 2, "from": "my-fork"});
         let r: ProvisionRequest = serde_json::from_value(json).unwrap();
         assert_eq!(r.from.as_deref(), Some("my-fork"));
     }
 
     #[test]
     fn provision_request_image_alias_deserializes_to_from() {
-        let json = json!({"ram_mb": 2048, "cpus": 2, "image": "old-img"});
+        let json = json!({"profile_id": "code", "ram_mb": 2048, "cpus": 2, "image": "old-img"});
         let r: ProvisionRequest = serde_json::from_value(json).unwrap();
         assert_eq!(r.from.as_deref(), Some("old-img"));
     }
@@ -642,13 +655,14 @@ mod tests {
         let r = ListResponse {
             sandboxes: vec![
                 {
-                    let mut s = SandboxInfo::new("a".into(), 100, "Running".into(), true);
+                    let mut s =
+                        SandboxInfo::new("a".into(), "code".into(), 100, "Running".into(), true);
                     s.name = Some("a".into());
                     s.ram_mb = Some(2048);
                     s.cpus = Some(2);
                     s
                 },
-                SandboxInfo::new("b".into(), 200, "Running".into(), false),
+                SandboxInfo::new("b".into(), "code".into(), 200, "Running".into(), false),
             ],
             asset_health: None,
         };
@@ -663,7 +677,7 @@ mod tests {
 
     #[test]
     fn sandbox_info_optional_fields_omitted() {
-        let s = SandboxInfo::new("x".into(), 1, "Running".into(), false);
+        let s = SandboxInfo::new("x".into(), "code".into(), 1, "Running".into(), false);
         let json = serde_json::to_string(&s).unwrap();
         assert!(!json.contains("ram_mb"));
         assert!(!json.contains("cpus"));
@@ -715,17 +729,25 @@ mod tests {
     #[test]
     fn run_request_defaults() {
         // ram_mb/cpus omitted -> None; handler resolves from VM settings.
-        let json = json!({"command": "echo hello"});
+        let json = json!({"command": "echo hello", "profile_id": "code"});
         let r: RunRequest = serde_json::from_value(json).unwrap();
         assert_eq!(r.command, "echo hello");
+        assert_eq!(r.profile_id, "code");
         assert_eq!(r.timeout_secs, None);
         assert_eq!(r.ram_mb, None);
         assert_eq!(r.cpus, None);
     }
 
     #[test]
+    fn run_request_requires_profile_id() {
+        let json = json!({"command": "echo hello"});
+        let err = serde_json::from_value::<RunRequest>(json).unwrap_err();
+        assert!(err.to_string().contains("profile_id"));
+    }
+
+    #[test]
     fn run_request_custom() {
-        let json = json!({"command": "ls", "timeout_secs": 120, "ram_mb": 4096, "cpus": 4});
+        let json = json!({"command": "ls", "profile_id": "code", "timeout_secs": 120, "ram_mb": 4096, "cpus": 4});
         let r: RunRequest = serde_json::from_value(json).unwrap();
         assert_eq!(r.timeout_secs, Some(120));
         assert_eq!(r.ram_mb, Some(4096));

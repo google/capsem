@@ -7,7 +7,7 @@ contract reset.
 
 | Stream | Status | Notes |
 | --- | --- | --- |
-| T0 Schema and ownership | Not Started | Profile/settings/corp schemas, immutable VM profile id, defaults/plugin contract, and credential broker plugin runtime state. |
+| T0 Schema and ownership | In Progress | Immutable VM profile id is wired through create/run/fork/save/resume/list/info; profile/settings/corp schemas, defaults/plugin contract, and credential broker runtime state still need the remaining invariant sweep. |
 | T1 Service/gateway API | In Progress | Profile plugin, MCP server/tool, enforcement authoring, full `/corp/info|edit|validate|reload`, `/settings/info|edit`, profile reload, VM ledger routes, VM core/lifecycle routes, and VM utility routes now live under `/vms...`; retired plugin global/VM, global MCP, global enforcement authoring, `/corp-config`, `GET|POST /settings`, `/settings/lint`, `/settings/validate-key`, `/settings/presets`, `/reload-config`, old ledger routes, and old top-level VM routes fail closed. Other authoring routes still need profile burn-down. |
 | T2 Security rail burn-down | In Progress | Network web decision settings and MCP policy objects burned; remaining work is route/authoring/profile completion plus full invariant sweep. |
 | T3 Profile/settings/corp UI/API split | Not Started | Settings UI-only, profile behavior profile-backed, one editor writes one contract. |

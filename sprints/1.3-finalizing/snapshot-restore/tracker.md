@@ -114,6 +114,18 @@ the guarantee or explicitly burn it.
 
 ### S2 Runtime Profile Assets/Pins Commits
 
+- [x] Current-architecture slice: VM creation now requires a real profile id
+  and persists it through runtime state, persistent registry rows, fork, save,
+  resume, list, and info. Decision: conceptual_port of the lost
+  profile-selected create/lineage guarantees into the current profile catalog.
+  Tests: `cargo test -p capsem-service profile_id -- --nocapture`,
+  `cargo test -p capsem-service profile -- --nocapture`, targeted
+  `provision_rejects_unknown_profile_before_boot`,
+  `provision_rejects_source_with_different_profile`,
+  `handle_fork_creates_persistent_sandbox`,
+  `handle_fork_from_persistent_registry`,
+  `handle_persist_preserves_profile_identity`, and
+  `sandbox_info_rejects_missing_profile_id`.
 - [ ] `b2fb7e33 feat: export session policy contexts`
 - [ ] `7a5afc9c test: prove process enforcement logs in real vm`
 - [ ] `f2a6247f docs: close s07 debt ledger`

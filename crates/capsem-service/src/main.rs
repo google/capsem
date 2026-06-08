@@ -154,6 +154,7 @@ struct AssetReconcileState {
 
 struct InstanceInfo {
     id: String,
+    profile_id: String,
     pid: u32,
     uds_path: PathBuf,
     session_dir: PathBuf,
@@ -271,6 +272,7 @@ struct EnforcementRuleDeleteResponse {
 
 pub struct ProvisionOptions<'a> {
     pub id: &'a str,
+    pub profile_id: String,
     pub ram_mb: u64,
     pub cpus: u32,
     pub version_override: Option<String>,
@@ -476,6 +478,7 @@ impl ServiceState {
     fn provision_sandbox(self: &Arc<Self>, options: ProvisionOptions) -> Result<()> {
         let ProvisionOptions {
             id,
+            profile_id,
             ram_mb,
             cpus,
             version_override,
@@ -484,6 +487,8 @@ impl ServiceState {
             from,
             description,
         } = options;
+        validate_profile_route_id(profile_id.clone())
+            .map_err(|error| anyhow!("invalid profile_id: {}", error.1))?;
 
         let vm_settings = capsem_core::net::policy_config::load_merged_vm_settings();
         let max_concurrent_vms = vm_settings.max_concurrent_vms.unwrap_or(10) as usize;
@@ -541,6 +546,14 @@ impl ServiceState {
                 .get(from_name)
                 .ok_or_else(|| anyhow!("source sandbox '{}' not found", from_name))?
                 .clone();
+            if entry.profile_id != profile_id {
+                return Err(anyhow!(
+                    "source sandbox '{}' uses profile '{}', not '{}'",
+                    from_name,
+                    entry.profile_id,
+                    profile_id
+                ));
+            }
             Some(entry)
         } else {
             None
@@ -780,6 +793,7 @@ impl ServiceState {
             let mut registry = self.persistent_registry.lock().unwrap();
             registry.register(PersistentVmEntry {
                 name: id.to_string(),
+                profile_id: profile_id.clone(),
                 ram_mb,
                 cpus,
                 base_version: version.clone(),
@@ -806,6 +820,7 @@ impl ServiceState {
             id.to_string(),
             InstanceInfo {
                 id: id.to_string(),
+                profile_id,
                 pid,
                 uds_path,
                 session_dir: session_dir.clone(),
@@ -994,6 +1009,7 @@ impl ServiceState {
             name.to_string(),
             InstanceInfo {
                 id: name.to_string(),
+                profile_id: entry.profile_id.clone(),
                 pid,
                 uds_path,
                 session_dir: entry.session_dir.clone(),
@@ -1671,11 +1687,12 @@ async fn handle_fork(
     }
 
     // Find source: running instance or stopped persistent VM
-    let (session_dir, ram_mb, cpus, base_version, uds_path) = {
+    let (session_dir, profile_id, ram_mb, cpus, base_version, uds_path) = {
         let instances = state.instances.lock().unwrap();
         if let Some(i) = instances.get(&id) {
             (
                 i.session_dir.clone(),
+                i.profile_id.clone(),
                 i.ram_mb,
                 i.cpus,
                 i.base_version.clone(),
@@ -1687,6 +1704,7 @@ async fn handle_fork(
             if let Some(p) = registry.get(&id) {
                 (
                     p.session_dir.clone(),
+                    p.profile_id.clone(),
                     p.ram_mb,
                     p.cpus,
                     p.base_version.clone(),
@@ -1754,6 +1772,7 @@ async fn handle_fork(
         registry
             .register(PersistentVmEntry {
                 name: name.clone(),
+                profile_id,
                 ram_mb,
                 cpus,
                 base_version,
@@ -1838,6 +1857,7 @@ async fn handle_provision(
     State(state): State<Arc<ServiceState>>,
     Json(payload): Json<ProvisionRequest>,
 ) -> Result<Json<ProvisionResponse>, AppError> {
+    let profile_id = validate_profile_route_id(payload.profile_id.clone())?;
     if let Some(reason) = vm_asset_block_reason(&state) {
         return Err(AppError(StatusCode::PRECONDITION_FAILED, reason));
     }
@@ -1880,6 +1900,7 @@ async fn handle_provision(
         let id = id_for_loop.clone();
         let payload_env = payload.env.clone();
         let payload_from = payload.from.clone();
+        let payload_profile_id = profile_id.clone();
         let payload_persistent = payload.persistent;
         let attempt = attempt_num.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
         async move {
@@ -1906,6 +1927,7 @@ async fn handle_provision(
                 &id,
                 ram_mb,
                 cpus,
+                payload_profile_id,
                 payload_persistent,
                 payload_env,
                 payload_from,
@@ -1971,6 +1993,7 @@ async fn provision_attempt(
     id: &str,
     ram_mb: u64,
     cpus: u32,
+    profile_id: String,
     persistent: bool,
     env: Option<std::collections::HashMap<String, String>>,
     from: Option<String>,
@@ -1981,6 +2004,7 @@ async fn provision_attempt(
     let provision_result = match tokio::task::spawn_blocking(move || {
         state_clone.provision_sandbox(ProvisionOptions {
             id: &id_owned,
+            profile_id,
             ram_mb,
             cpus,
             version_override: Some(version),
@@ -2077,7 +2101,13 @@ async fn handle_list(State(state): State<Arc<ServiceState>>) -> Json<ListRespons
     {
         let instances = state.instances.lock().unwrap();
         for i in instances.values() {
-            let mut info = SandboxInfo::new(i.id.clone(), i.pid, "Running".into(), i.persistent);
+            let mut info = SandboxInfo::new(
+                i.id.clone(),
+                i.profile_id.clone(),
+                i.pid,
+                "Running".into(),
+                i.persistent,
+            );
             info.name = if i.persistent {
                 Some(i.id.clone())
             } else {
@@ -2109,7 +2139,13 @@ async fn handle_list(State(state): State<Arc<ServiceState>>) -> Json<ListRespons
                 } else {
                     "Stopped"
                 };
-                let mut info = SandboxInfo::new(entry.name.clone(), 0, status.into(), true);
+                let mut info = SandboxInfo::new(
+                    entry.name.clone(),
+                    entry.profile_id.clone(),
+                    0,
+                    status.into(),
+                    true,
+                );
                 info.name = Some(entry.name.clone());
                 info.ram_mb = Some(entry.ram_mb);
                 info.cpus = Some(entry.cpus);
@@ -2169,8 +2205,13 @@ async fn handle_info(
             let instances = state.instances.lock().unwrap();
             match instances.get(&id) {
                 Some(i) => {
-                    let mut info =
-                        SandboxInfo::new(i.id.clone(), i.pid, "Running".into(), i.persistent);
+                    let mut info = SandboxInfo::new(
+                        i.id.clone(),
+                        i.profile_id.clone(),
+                        i.pid,
+                        "Running".into(),
+                        i.persistent,
+                    );
                     info.name = if i.persistent {
                         Some(i.id.clone())
                     } else {
@@ -2203,7 +2244,13 @@ async fn handle_info(
             } else {
                 "Stopped"
             };
-            let mut info = SandboxInfo::new(entry.name.clone(), 0, status.into(), true);
+            let mut info = SandboxInfo::new(
+                entry.name.clone(),
+                entry.profile_id.clone(),
+                0,
+                status.into(),
+                true,
+            );
             info.name = Some(entry.name.clone());
             info.ram_mb = Some(entry.ram_mb);
             info.cpus = Some(entry.cpus);
@@ -5740,7 +5787,7 @@ async fn handle_persist(
     }
 
     // Find the running ephemeral instance
-    let (old_session_dir, ram_mb, cpus, base_version, forked_from, env) = {
+    let (old_session_dir, profile_id, ram_mb, cpus, base_version, forked_from, env) = {
         let instances = state.instances.lock().unwrap();
         let i = instances
             .get(&id)
@@ -5753,6 +5800,7 @@ async fn handle_persist(
         }
         (
             i.session_dir.clone(),
+            i.profile_id.clone(),
             i.ram_mb,
             i.cpus,
             i.base_version.clone(),
@@ -5777,6 +5825,7 @@ async fn handle_persist(
         registry
             .register(PersistentVmEntry {
                 name: name.clone(),
+                profile_id: profile_id.clone(),
                 ram_mb,
                 cpus,
                 base_version: base_version.clone(),
@@ -5807,6 +5856,7 @@ async fn handle_persist(
                 name.clone(),
                 InstanceInfo {
                     id: name.clone(),
+                    profile_id,
                     pid: info.pid,
                     uds_path: info.uds_path,
                     session_dir: new_session_dir,
@@ -5919,6 +5969,7 @@ async fn handle_run(
     if let Some(reason) = vm_asset_block_reason(&state) {
         return Err(AppError(StatusCode::PRECONDITION_FAILED, reason));
     }
+    let profile_id = validate_profile_route_id(payload.profile_id.clone())?;
 
     let id = {
         let existing: Vec<String> = state.instances.lock().unwrap().keys().cloned().collect();
@@ -5950,6 +6001,7 @@ async fn handle_run(
     let provision_result = tokio::task::spawn_blocking(move || {
         state_clone.provision_sandbox(ProvisionOptions {
             id: &id_clone,
+            profile_id,
             ram_mb,
             cpus,
             version_override: Some(version),

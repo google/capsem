@@ -152,6 +152,7 @@ fn insert_fake_instance_with_session_dir(
         id.to_string(),
         InstanceInfo {
             id: id.to_string(),
+            profile_id: "code".into(),
             pid,
             uds_path: PathBuf::from(format!("/tmp/{}.sock", id)),
             session_dir,
@@ -1519,14 +1520,21 @@ fn auto_id_format() {
 
 #[test]
 fn provision_request_no_name() {
-    let json = serde_json::json!({"ram_mb": 2048, "cpus": 2});
+    let json = serde_json::json!({"profile_id": "code", "ram_mb": 2048, "cpus": 2});
     let req: ProvisionRequest = serde_json::from_value(json).unwrap();
     assert!(req.name.is_none());
 }
 
 #[test]
+fn provision_request_rejects_missing_profile_id() {
+    let json = serde_json::json!({"ram_mb": 2048, "cpus": 2});
+    let err = serde_json::from_value::<ProvisionRequest>(json).unwrap_err();
+    assert!(err.to_string().contains("profile_id"));
+}
+
+#[test]
 fn provision_request_empty_name() {
-    let json = serde_json::json!({"name": "", "ram_mb": 2048, "cpus": 2});
+    let json = serde_json::json!({"name": "", "profile_id": "code", "ram_mb": 2048, "cpus": 2});
     let req: ProvisionRequest = serde_json::from_value(json).unwrap();
     assert_eq!(req.name.unwrap(), "");
 }
@@ -1534,7 +1542,8 @@ fn provision_request_empty_name() {
 #[test]
 fn provision_request_name_with_path_separator() {
     // This is a security edge case -- names with / could create path traversal
-    let json = serde_json::json!({"name": "../escape", "ram_mb": 2048, "cpus": 2});
+    let json =
+        serde_json::json!({"name": "../escape", "profile_id": "code", "ram_mb": 2048, "cpus": 2});
     let req: ProvisionRequest = serde_json::from_value(json).unwrap();
     assert_eq!(req.name.unwrap(), "../escape");
     // Note: the service SHOULD reject this, but currently doesn't validate
@@ -1633,6 +1642,7 @@ fn provision_accepts_name_just_under_uds_limit() {
     let ok_name = "x".repeat(name_len);
     let result = state.provision_sandbox(ProvisionOptions {
         id: &ok_name,
+        profile_id: "code".into(),
         ram_mb: 2048,
         cpus: 2,
         version_override: None,
@@ -1656,6 +1666,7 @@ fn provision_short_name_passes_path_check() {
     let state = make_test_state();
     let result = state.provision_sandbox(ProvisionOptions {
         id: "my-vm",
+        profile_id: "code".into(),
         ram_mb: 2048,
         cpus: 2,
         version_override: None,
@@ -1674,6 +1685,31 @@ fn provision_short_name_passes_path_check() {
     }
 }
 
+#[test]
+fn provision_rejects_unknown_profile_before_boot() {
+    let (state, _dir) = make_test_state_with_tempdir();
+    let result = state.provision_sandbox(ProvisionOptions {
+        id: "my-vm",
+        profile_id: "missing-profile".into(),
+        ram_mb: 2048,
+        cpus: 2,
+        version_override: None,
+        persistent: false,
+        env: None,
+        from: None,
+        description: None,
+    });
+    let err = result.unwrap_err().to_string();
+    assert!(
+        err.contains("profile not found: missing-profile"),
+        "unknown profile must fail before boot, got: {err}"
+    );
+    assert!(
+        !state.run_dir.join("sessions/my-vm").exists(),
+        "unknown profile must not create session state"
+    );
+}
+
 // -----------------------------------------------------------------------
 // Provision rejects duplicate persistent VM
 // -----------------------------------------------------------------------
@@ -1688,6 +1724,7 @@ fn provision_persistent_rejects_duplicate_name() {
             "taken".into(),
             PersistentVmEntry {
                 name: "taken".into(),
+                profile_id: "code".into(),
                 ram_mb: 2048,
                 cpus: 2,
                 base_version: "0.0.0".into(),
@@ -1705,6 +1742,7 @@ fn provision_persistent_rejects_duplicate_name() {
     }
     let result = state.provision_sandbox(ProvisionOptions {
         id: "taken",
+        profile_id: "code".into(),
         ram_mb: 2048,
         cpus: 2,
         version_override: None,
@@ -1727,6 +1765,7 @@ fn provision_persistent_validates_name() {
     let state = make_test_state();
     let result = state.provision_sandbox(ProvisionOptions {
         id: "../evil",
+        profile_id: "code".into(),
         ram_mb: 2048,
         cpus: 2,
         version_override: None,
@@ -1784,6 +1823,7 @@ async fn handle_fork_creates_persistent_sandbox() {
         "fork-src".into(),
         InstanceInfo {
             id: "fork-src".into(),
+            profile_id: "code".into(),
             pid: std::process::id(),
             uds_path: PathBuf::from("/tmp/fork-src.sock"),
             session_dir: session_dir.clone(),
@@ -1811,6 +1851,7 @@ async fn handle_fork_creates_persistent_sandbox() {
     // Verify fork created a persistent sandbox entry in the registry
     let registry = state.persistent_registry.lock().unwrap();
     let entry = registry.get("my-fork").unwrap();
+    assert_eq!(entry.profile_id, "code");
     assert_eq!(entry.forked_from, Some("fork-src".into()));
     assert_eq!(entry.description, Some("test".into()));
     assert_eq!(entry.base_version, "0.0.0");
@@ -1844,6 +1885,7 @@ async fn handle_fork_duplicate_returns_conflict() {
         "dup-src".into(),
         InstanceInfo {
             id: "dup-src".into(),
+            profile_id: "code".into(),
             pid: std::process::id(),
             uds_path: PathBuf::from("/tmp/dup-src.sock"),
             session_dir,
@@ -1895,6 +1937,7 @@ async fn handle_fork_from_persistent_registry() {
             "pers-vm".into(),
             PersistentVmEntry {
                 name: "pers-vm".into(),
+                profile_id: "code".into(),
                 ram_mb: 2048,
                 cpus: 2,
                 base_version: "0.0.0".into(),
@@ -1912,7 +1955,7 @@ async fn handle_fork_from_persistent_registry() {
     }
     // state is already Arc<ServiceState> from make_test_state*
     let result = handle_fork(
-        State(state),
+        State(state.clone()),
         Path("pers-vm".into()),
         Json(ForkRequest {
             name: "from-pers".into(),
@@ -1922,6 +1965,53 @@ async fn handle_fork_from_persistent_registry() {
     .await
     .unwrap();
     assert_eq!(result.0.name, "from-pers");
+    let registry = state.persistent_registry.lock().unwrap();
+    let entry = registry.get("from-pers").unwrap();
+    assert_eq!(entry.profile_id, "code");
+}
+
+#[tokio::test]
+async fn handle_persist_preserves_profile_identity() {
+    let (state, _dir) = make_test_state_with_tempdir();
+    let session_dir = state.run_dir.join("sessions/persist-src");
+    std::fs::create_dir_all(&session_dir).unwrap();
+    state.instances.lock().unwrap().insert(
+        "persist-src".into(),
+        InstanceInfo {
+            id: "persist-src".into(),
+            profile_id: "code".into(),
+            pid: std::process::id(),
+            uds_path: PathBuf::from("/tmp/persist-src.sock"),
+            session_dir: session_dir.clone(),
+            ram_mb: 2048,
+            cpus: 2,
+            start_time: std::time::Instant::now(),
+            base_version: "0.0.0".into(),
+            persistent: false,
+            env: None,
+            forked_from: None,
+        },
+    );
+
+    let _ = handle_persist(
+        State(state.clone()),
+        Path("persist-src".into()),
+        Json(PersistRequest {
+            name: "persisted".into(),
+        }),
+    )
+    .await
+    .unwrap();
+
+    let registry = state.persistent_registry.lock().unwrap();
+    let entry = registry.get("persisted").unwrap();
+    assert_eq!(entry.profile_id, "code");
+    drop(registry);
+
+    let instances = state.instances.lock().unwrap();
+    let info = instances.get("persisted").unwrap();
+    assert_eq!(info.profile_id, "code");
+    assert!(info.persistent);
 }
 
 #[test]
@@ -1929,6 +2019,7 @@ fn provision_rejects_nonexistent_source_sandbox() {
     let (state, _dir) = make_test_state_with_tempdir();
     let result = state.provision_sandbox(ProvisionOptions {
         id: "vm1",
+        profile_id: "code".into(),
         ram_mb: 2048,
         cpus: 2,
         version_override: None,
@@ -1942,6 +2033,49 @@ fn provision_rejects_nonexistent_source_sandbox() {
     assert!(
         err.contains("not found"),
         "expected sandbox not found, got: {err}"
+    );
+}
+
+#[test]
+fn provision_rejects_source_with_different_profile() {
+    let (state, _dir) = make_test_state_with_tempdir();
+    {
+        let mut reg = state.persistent_registry.lock().unwrap();
+        reg.data.vms.insert(
+            "other-profile-source".into(),
+            PersistentVmEntry {
+                name: "other-profile-source".into(),
+                profile_id: "other-profile".into(),
+                ram_mb: 2048,
+                cpus: 2,
+                base_version: "0.0.0".into(),
+                created_at: "0".into(),
+                session_dir: PathBuf::from("/tmp/other-profile-source"),
+                forked_from: None,
+                description: None,
+                suspended: false,
+                defunct: false,
+                last_error: None,
+                checkpoint_path: None,
+                env: None,
+            },
+        );
+    }
+    let result = state.provision_sandbox(ProvisionOptions {
+        id: "vm1",
+        profile_id: "code".into(),
+        ram_mb: 2048,
+        cpus: 2,
+        version_override: None,
+        persistent: false,
+        env: None,
+        from: Some("other-profile-source".into()),
+        description: None,
+    });
+    let err = result.unwrap_err().to_string();
+    assert!(
+        err.contains("uses profile 'other-profile', not 'code'"),
+        "source profile mismatch must fail, got: {err}"
     );
 }
 
@@ -1960,6 +2094,7 @@ async fn handle_list_shows_suspended_status() {
             "susp-vm".into(),
             PersistentVmEntry {
                 name: "susp-vm".into(),
+                profile_id: "code".into(),
                 ram_mb: 2048,
                 cpus: 2,
                 base_version: "0.0.0".into(),
@@ -1983,6 +2118,7 @@ async fn handle_list_shows_suspended_status() {
             "stop-vm".into(),
             PersistentVmEntry {
                 name: "stop-vm".into(),
+                profile_id: "code".into(),
                 ram_mb: 1024,
                 cpus: 1,
                 base_version: "0.0.0".into(),
@@ -2024,6 +2160,7 @@ async fn handle_info_shows_suspended_status() {
             "info-susp".into(),
             PersistentVmEntry {
                 name: "info-susp".into(),
+                profile_id: "code".into(),
                 ram_mb: 2048,
                 cpus: 2,
                 base_version: "0.0.0".into(),
@@ -2153,6 +2290,7 @@ async fn handle_suspend_rejects_ephemeral_vm() {
             "eph-vm".into(),
             InstanceInfo {
                 id: "eph-vm".into(),
+                profile_id: "code".into(),
                 pid: 0,
                 uds_path: state.run_dir.join("instances/eph-vm.sock"),
                 session_dir: state.run_dir.join("sessions/eph-vm"),
@@ -2195,6 +2333,7 @@ fn archive_failed_restore_checkpoint_moves_checkpoint_aside() {
             "resume-vm".into(),
             PersistentVmEntry {
                 name: "resume-vm".into(),
+                profile_id: "code".into(),
                 ram_mb: 2048,
                 cpus: 2,
                 base_version: "0.0.0".into(),
@@ -2250,7 +2389,7 @@ fn main_db_path_resolves_to_sessions_dir() {
 
 #[test]
 fn sandbox_info_new_defaults_telemetry_to_none() {
-    let info = SandboxInfo::new("test".into(), 1, "Running".into(), false);
+    let info = SandboxInfo::new("test".into(), "code".into(), 1, "Running".into(), false);
     assert_eq!(info.id, "test");
     assert_eq!(info.pid, 1);
     assert!(!info.persistent);
@@ -2263,7 +2402,7 @@ fn sandbox_info_new_defaults_telemetry_to_none() {
 
 #[test]
 fn sandbox_info_telemetry_fields_serialize_when_present() {
-    let mut info = SandboxInfo::new("test".into(), 1, "Running".into(), false);
+    let mut info = SandboxInfo::new("test".into(), "code".into(), 1, "Running".into(), false);
     info.total_input_tokens = Some(1000);
     info.total_estimated_cost = Some(0.42);
     info.model_call_count = Some(5);
@@ -2275,7 +2414,7 @@ fn sandbox_info_telemetry_fields_serialize_when_present() {
 
 #[test]
 fn sandbox_info_telemetry_fields_omitted_when_none() {
-    let info = SandboxInfo::new("test".into(), 1, "Running".into(), false);
+    let info = SandboxInfo::new("test".into(), "code".into(), 1, "Running".into(), false);
     let json = serde_json::to_string(&info).unwrap();
     assert!(!json.contains("total_input_tokens"));
     assert!(!json.contains("total_estimated_cost"));
@@ -2284,12 +2423,10 @@ fn sandbox_info_telemetry_fields_omitted_when_none() {
 }
 
 #[test]
-fn sandbox_info_backwards_compatible_deserialization() {
-    // Old JSON without telemetry fields should still deserialize
+fn sandbox_info_rejects_missing_profile_id() {
     let json = r#"{"id":"x","pid":1,"status":"Running","persistent":false}"#;
-    let info: SandboxInfo = serde_json::from_str(json).unwrap();
-    assert_eq!(info.id, "x");
-    assert!(info.total_input_tokens.is_none());
+    let err = serde_json::from_str::<SandboxInfo>(json).unwrap_err();
+    assert!(err.to_string().contains("profile_id"));
 }
 
 // -----------------------------------------------------------------------
@@ -2563,6 +2700,7 @@ fn resolve_rejects_symlink_escape() {
         "test-vm".into(),
         InstanceInfo {
             id: "test-vm".into(),
+            profile_id: "code".into(),
             pid: 1,
             uds_path: PathBuf::from("/tmp/test.sock"),
             session_dir,
@@ -2593,6 +2731,7 @@ fn resolve_valid_path_inside_workspace() {
         "test-vm".into(),
         InstanceInfo {
             id: "test-vm".into(),
+            profile_id: "code".into(),
             pid: 1,
             uds_path: PathBuf::from("/tmp/test.sock"),
             session_dir,
@@ -2712,6 +2851,7 @@ fn setup_vm_with_workspace_and_uds(
         vm_id.into(),
         InstanceInfo {
             id: vm_id.into(),
+            profile_id: "code".into(),
             pid: 1,
             uds_path,
             session_dir,
@@ -2952,6 +3092,7 @@ async fn write_file_logs_import_before_guest_write() {
         "write-ledger-vm".into(),
         InstanceInfo {
             id: "write-ledger-vm".into(),
+            profile_id: "code".into(),
             pid: 1,
             uds_path,
             session_dir: state.run_dir.join("sessions/write-ledger-vm"),

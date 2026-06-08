@@ -74,6 +74,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   current-architecture asset contract instead of a service-global asset guess,
   including profile id, revision, expected hashes, signatures, sizes,
   filesystem/compression metadata, and present/missing state.
+- Made VM creation profile-explicit. `POST /vms/create`/provision and
+  one-shot `run` payloads now require `profile_id`; unknown profiles fail
+  before boot state is created, persistent registry rows store `profile_id`,
+  fork/save/resume preserve it, and list/info responses expose it. A VM's
+  `profile_id` remains immutable after creation.
 - Added profile management route gates:
   `POST /profiles/create`, `PATCH /profiles/{profile_id}/edit`,
   `DELETE /profiles/{profile_id}/delete`, `POST /profiles/{profile_id}/clone`,
