@@ -44,6 +44,36 @@ fn create_params_serializes_camel() {
 }
 
 #[test]
+fn default_profile_id_is_real_code_profile() {
+    assert_eq!(DEFAULT_PROFILE_ID, "code");
+}
+
+#[test]
+fn create_body_includes_required_profile_id() {
+    let params = CreateParams {
+        name: Some("vm".into()),
+        ram_mb: Some(2048),
+        cpu_count: Some(2),
+        version: None,
+        env: None,
+        from: None,
+    };
+    let body = build_create_body(&params);
+    assert_eq!(body["profile_id"], "code");
+}
+
+#[test]
+fn run_body_includes_required_profile_id() {
+    let params = RunParams {
+        command: "echo ok".into(),
+        timeout: None,
+        env: None,
+    };
+    let body = build_run_body(&params);
+    assert_eq!(body["profile_id"], "code");
+}
+
+#[test]
 fn exec_params_roundtrip() {
     let json = json!({"id": "vm-1", "command": "echo hi"});
     let p: ExecParams = serde_json::from_value(json).unwrap();

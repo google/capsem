@@ -240,14 +240,47 @@ the guarantee or explicitly burn it.
   `cargo test -p capsem-service profile -- --nocapture`, `git diff --check`,
   and targeted `rg` sweeps for manifest signing and removed profile asset
   fields.
-- [ ] `b2fb7e33 feat: export session policy contexts`
-- [ ] `7a5afc9c test: prove process enforcement logs in real vm`
-- [ ] `f2a6247f docs: close s07 debt ledger`
-- [ ] `f5aea0fc test: gate release image boot proof`
-- [ ] `dcba8776 feat: harden profile trust and policy runtime`
-- [ ] `e3be977e feat: prove s08 profile-selected gateway create`
-- [ ] `694aa75b feat: select profiles during vm create`
-- [ ] `2a1d079d test: prove vm fork lineage`
+- [x] `b2fb7e33 feat: export session policy contexts` decision:
+  conceptual_port. The old exported policy-context rows are superseded by the
+  unified security-event ledger: emitted events carry the canonical event type,
+  family, rule id, action, detection level, and forensic event payload in
+  session DB rows. Do not restore the old context-export shape. Proof locations:
+  `crates/capsem-core/src/security_engine/mod.rs` and
+  `crates/capsem-core/src/security_engine/tests.rs`.
+- [x] `7a5afc9c test: prove process enforcement logs in real vm` decision:
+  conceptual_port. Process exec/audit/complete events now enter the single
+  `SecurityRuleSet`/security-event writer path, with exec and completion rows
+  sharing the exec event id. Current VM proof remains part of final smoke; unit
+  coverage is in
+  `emit_process_exec_and_complete_rules_share_exec_event_id`.
+- [x] `f2a6247f docs: close s07 debt ledger` decision: conceptual_port. The
+  useful asset-health/readiness contract is now in the profile-owned status,
+  ensure, boot-pin, and cleanup slices below; old profile-manifest prose stays
+  burned.
+- [x] `f5aea0fc test: gate release image boot proof` decision:
+  conceptual_port. The current release gate remains profile-asset boot proof:
+  the final S2/S4 gate must build/verify EROFS lz4hc assets and run the VM
+  doctor smoke. The old test fixture is not copied because profile payload
+  signing and setup wizard assumptions are burned.
+- [x] `dcba8776 feat: harden profile trust and policy runtime` decision:
+  conceptual_port plus intentional_burn. The useful policy-runtime hardening
+  lives in the new security engine/CEL path and typed security events. The old
+  `policy_v2`, domain hook, `NetworkPolicy`, and MCP decision rails remain
+  burned and must not be restored.
+- [x] `e3be977e feat: prove s08 profile-selected gateway create` decision:
+  conceptual_port. Current gateway/service fixtures require explicit
+  `profile_id = "code"` for `/vms/create` and `/run`, reject missing profile
+  ids, and response surfaces carry profile id/revision/status through the
+  current `ProvisionResponse`/VM info shape.
+- [x] `694aa75b feat: select profiles during vm create` decision:
+  conceptual_port. VM create/run/fork/save/resume now require and preserve a
+  real profile id, resolving boot assets through the selected
+  `ProfileConfigFile` instead of any service-global default. Coverage is listed
+  in the current-architecture profile id and boot-asset pin slices above.
+- [x] `2a1d079d test: prove vm fork lineage` decision: conceptual_port. Fork
+  and persist preserve profile id, profile revision, profile payload hash, and
+  boot asset pins; drift rejection is covered by the current service tests
+  named in the profile pinning slice above.
 - [x] `204ce825 feat: schedule profile catalog reconciliation` decision:
   conceptual_port. The old scheduled remote manifest reconciler depended on
   deleted profile-manifest/settings-profile infrastructure, so this slice adds
@@ -263,8 +296,18 @@ the guarantee or explicitly burn it.
   profile_catalog_reload_rejects_invalid_directory_catalog -- --nocapture`,
   `cargo test -p capsem-service profile -- --nocapture`, and `cargo test -p
   capsem-service --no-run`.
-- [ ] `438c9642 feat: fetch profile catalogs from URL`
-- [ ] `3204f27a test: prove profile asset boot flow`
+- [x] `438c9642 feat: fetch profile catalogs from URL` decision:
+  intentional_burn. The old command fetched signed profile catalog manifests
+  through `capsem profile reconcile-catalog --manifest-url --pubkey`; that
+  belongs to the deleted profile-manifest/minisign authority rail. Current
+  profile/corp provisioning uses explicit profile/corp config, BLAKE3 asset
+  verification, and catalog reload/status; no URL+pubkey compatibility command
+  is restored.
+- [x] `3204f27a test: prove profile asset boot flow` decision:
+  conceptual_port. Current boot preflight resolves kernel/initrd/rootfs from
+  the selected profile's current-arch descriptors and blocks boot when profile
+  assets are missing. CLI asset status/ensure also default to the real `code`
+  profile.
 - [x] `95155405 feat: expose profile asset provenance` decision:
   conceptual_port. Current `/profiles/{profile_id}/assets/status` now exposes
   profile revision, typed profile payload hash, descriptor provenance, and
@@ -275,9 +318,20 @@ the guarantee or explicitly burn it.
   ensure_profile_assets_downloads_profile_descriptors -- --nocapture`,
   `cargo test -p capsem-service profile -- --nocapture`, and `cargo test -p
   capsem-service --no-run`.
-- [ ] `0a87e26a test: harden profile asset reconcile races`
-- [ ] `deb1b083 refactor: remove legacy asset manifest runtime`
-- [ ] `d069710f feat: trigger profile asset reconcile from update`
+- [x] `0a87e26a test: harden profile asset reconcile races` decision:
+  conceptual_port. Current `/profiles/{profile_id}/assets/ensure` shares the
+  single profile-asset rail and returns refreshed readiness. Remaining race
+  stress belongs in the final release gate; do not restore the old
+  service-global reconcile endpoint.
+- [x] `deb1b083 refactor: remove legacy asset manifest runtime` decision:
+  exact_restore in spirit. Legacy runtime manifest loading and manifest signing
+  are removed; runtime uses profile descriptors plus BLAKE3/size verification.
+  Current cleanup is confirmed by targeted `rg` sweeps and profile/manifest
+  tests.
+- [x] `d069710f feat: trigger profile asset reconcile from update` decision:
+  conceptual_port. The old update-triggered global reconcile path is replaced
+  by explicit profile-scoped `assets/ensure` and profile catalog
+  `status`/`reload`; installer/update final smoke must call the profile route.
 - [x] `2d7e1470 feat: derive profile asset retention roots` decision:
   conceptual_port. The current tree no longer has the old `saved_vm_assets.rs`
   shape, so cleanup now accepts an explicit preserve set and service startup
@@ -289,15 +343,55 @@ the guarantee or explicitly burn it.
   --nocapture`, `cargo test -p capsem-core cleanup -- --nocapture`, `cargo
   test -p capsem-service profile -- --nocapture`, and `cargo test -p
   capsem-service --no-run`.
-- [ ] `911d6a67 feat: fetch signed profile payloads`
-- [ ] `dd42a2d4 feat: verify profile payload signatures`
-- [ ] `237d2bbc feat: materialize verified profile payloads`
-- [ ] `152c7780 feat: verify installable profile payloads`
-- [ ] `d50d8a13 feat: add profile catalog lifecycle gates`
-- [ ] `048d7cf5 feat: drive runtime assets from profiles`
-- [ ] `d759668c feat: validate profile payload schema in rust`
-- [ ] `996de225 feat: add profile manifest catalog types`
-- [ ] `f3578c3d release-debug-loop: finalize saved VM asset tracking and status surfaces`
+- [x] `911d6a67 feat: fetch signed profile payloads` decision:
+  intentional_burn. Signed profile payload fetching depended on profile
+  manifest/minisign theater; do not restore.
+- [x] `dd42a2d4 feat: verify profile payload signatures` decision:
+  intentional_burn. Profile payload signature verification depended on baked
+  public keys/admin-provided signature rails that we removed. Current trust is
+  explicit corp/profile source selection plus BLAKE3 asset verification and
+  SBOM/provenance evidence.
+- [x] `237d2bbc feat: materialize verified profile payloads` decision:
+  conceptual_port plus intentional_burn. Current `ProfileCatalog::load_default`
+  materializes built-in or directory TOML profiles after schema validation; the
+  verified-payload cache/signature half stays burned.
+- [x] `152c7780 feat: verify installable profile payloads` decision:
+  conceptual_port. Current `ProfileConfigFile::validate`,
+  `ProfileCatalog::load_from_dir`, and profile asset status/ensure routes prove
+  installable profile shape without restoring profile signatures.
+- [x] `d50d8a13 feat: add profile catalog lifecycle gates` decision:
+  conceptual_port. Current `/profiles/status` and `/profiles/reload` validate
+  the active catalog and report source/profile readiness. Old signed-catalog
+  lifecycle checks stay burned.
+- [x] `048d7cf5 feat: drive runtime assets from profiles` decision:
+  conceptual_port. Current boot, resume, save, fork, cleanup, status, and
+  ensure resolve and pin assets from the selected profile. This is the core S2
+  restored contract.
+- [x] `d759668c feat: validate profile payload schema in rust` decision:
+  conceptual_port. The old JSON schema artifact is replaced by the Rust
+  `ProfileConfigFile` TOML contract with `deny_unknown_fields`, strict
+  validation, checked-in `config/profiles/code.toml`, and profile contract
+  tests.
+- [x] `996de225 feat: add profile manifest catalog types` decision:
+  conceptual_port plus intentional_burn. The useful typed catalog concept is
+  now `ProfileCatalog` over real profile TOML files; old profile manifest
+  catalog and signature metadata stay burned.
+- [x] `f3578c3d release-debug-loop: finalize saved VM asset tracking and status surfaces`
+  decision: conceptual_port. Current status surfaces include profile asset
+  readiness, persistent VM profile/asset pins, profile catalog status, and
+  explicit profile-scoped asset routes. Legacy setup/status/provider UI pieces
+  from that commit remain burned.
+
+- [x] Current-architecture cleanup slice: CLI and `capsem-mcp` MCP commands
+  now use the real built-in `code` profile instead of the retired `default`
+  profile for profile-scoped MCP server/tool routes, and `capsem-mcp`
+  create/run request bodies include the service-required `profile_id`.
+  Decision: conceptual_port of profile-scoped CLI/MCP behavior into the
+  current endpoint contract. Tests: `cargo test -p capsem
+  cli_default_profile_is_real_code_profile -- --nocapture`, `cargo test -p
+  capsem parse_assets -- --nocapture`, `cargo test -p capsem-mcp profile_id --
+  --nocapture`, and a targeted `rg` sweep for `DEFAULT_PROFILE_ID = "default"`
+  and `/profiles/default`.
 
 ### S3 TUI/Shell And Lower-Priority Debug Commits
 
@@ -655,17 +749,17 @@ the guarantee or explicitly burn it.
   rename built-in profile validation/tests away from "default profile"
   language. `default` remains only rule priority/visible default-rule
   vocabulary, not a profile id or fallback loader.
-- [ ] Restore profile catalog/loader and remove all `default`-only profile code
+- [x] Restore profile catalog/loader and remove all `default`-only profile code
   paths.
-- [ ] Represent default/built-in profiles as real catalog/profile entries using
+- [x] Represent default/built-in profiles as real catalog/profile entries using
   the same loader/status/asset machinery as every other profile.
-- [ ] Restore service profile inventory/status surface: profile id,
+- [x] Restore service profile inventory/status surface: profile id,
   name/description/icon, revision, catalog status, installed status,
   launchability, asset readiness, reconcile/download state, and errors.
-- [ ] Restore profile list/info/status/reload/reconcile/assets-ensure routes
+- [x] Restore profile list/info/status/reload/reconcile/assets-ensure routes
   needed by UI, TUI, CLI, and install checks.
-- [ ] Restore profile asset download/check/refresh management in the service.
-- [ ] Ensure profile asset management verifies BLAKE3 hashes and reports
+- [x] Restore profile asset download/check/refresh management in the service.
+- [x] Ensure profile asset management verifies BLAKE3 hashes and reports
   progress/errors per profile.
 - [x] Enforce refresh policy at every profile/corp/asset metadata layer.
   Current contract evidence:
@@ -675,18 +769,22 @@ the guarantee or explicitly burn it.
   now requires top-level `refresh_policy` with generator/docs/tests updated.
   BLAKE3 hash enforcement remains tracked by the adjacent asset verification
   items.
-- [ ] Ensure VM launch fails closed on missing/corrupt profile-selected assets.
-- [ ] Restore per-arch profile asset declarations with URL/hash/size.
-- [ ] Restore profile-aware asset supervisor/reconcile/status/ensure.
-- [ ] Ensure VM create requires and persists immutable `profile_id`.
-- [ ] Restore VM profile revision/payload hash/base-asset pins.
-- [ ] Make resume/fork/save fail closed on missing/corrupt/revoked/mismatched
-  profile or base-asset pins.
-- [ ] Expose profile id/revision/status/pins in service/gateway/client DTOs.
-- [ ] Add adversarial tests for fake profiles, two profiles with different
-  assets, corrupt assets, missing pins, and revoked/deprecated profiles.
+- [x] Ensure VM launch fails closed on missing/corrupt profile-selected assets.
+- [x] Restore per-arch profile asset declarations with URL/hash/size.
+- [x] Restore profile-aware asset supervisor/reconcile/status/ensure.
+- [x] Ensure VM create requires and persists immutable `profile_id`.
+- [x] Restore VM profile revision/payload hash/base-asset pins.
+- [x] Make resume/fork/save fail closed on missing/corrupt/mismatched profile
+  or base-asset pins. Revoked/deprecated profile payload states belonged to the
+  burned signed-profile-manifest rail and are not part of the current 1.3
+  contract.
+- [x] Expose profile id/revision/status/pins in service/gateway/client DTOs.
+- [x] Add adversarial tests for fake profiles, profile mismatch, corrupt or
+  missing assets, missing pins, and asset/profile drift. Revoked/deprecated
+  signed-payload tests are intentionally not restored.
 - Coverage for profile-route burn slice:
   `cargo test -p capsem parse_assets -- --nocapture`;
+  `cargo test -p capsem-mcp profile_id -- --nocapture`;
   `cargo test -p capsem-gateway gateway_security_routes_are_explicitly_forwarded -- --nocapture`;
   `cargo test -p capsem-gateway gateway_does_not_forward_retired_profile_credential_routes -- --nocapture`;
   `cargo test -p capsem-service profile -- --nocapture`;

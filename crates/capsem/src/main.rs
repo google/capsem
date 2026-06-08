@@ -21,7 +21,7 @@ use client::{
     ProvisionResponse, PurgeRequest, PurgeResponse, RunRequest, SessionInfo, UdsClient,
 };
 
-const DEFAULT_PROFILE_ID: &str = "default";
+const DEFAULT_PROFILE_ID: &str = "code";
 
 const fn cli_styles() -> Styles {
     Styles::styled()
@@ -2571,6 +2571,11 @@ mod tests {
             }
             _ => panic!("expected assets status"),
         }
+    }
+
+    #[test]
+    fn cli_default_profile_is_real_code_profile() {
+        assert_eq!(DEFAULT_PROFILE_ID, "code");
     }
 
     #[test]

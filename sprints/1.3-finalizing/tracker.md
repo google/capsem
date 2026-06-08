@@ -138,9 +138,9 @@ batch unrelated fixes into one giant release commit.
   gateway, and frontend API.
 - [x] Add profile inventory routes in service, gateway, and frontend API:
   `GET /profiles/list` and `GET /profiles/{profile_id}/info`. The built-in
-  `default` summary is now sourced from `ProfileConfigFile::builtin_default()`;
-  fake profile IDs fail closed while independent profile file loading remains
-  a later route slice.
+  `code` summary is now sourced from the real `ProfileConfigFile` catalog
+  entry; fake profile IDs fail closed while independent profile file loading
+  remains a later route slice.
 - [x] Add profile create/edit/delete/clone/validate routes in service, gateway,
   and frontend API. `validate` checks the typed `ProfileConfigFile` contract;
   mutation routes fail explicitly with `501` until profile file persistence

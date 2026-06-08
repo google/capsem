@@ -16,7 +16,7 @@ use std::sync::Arc;
 use tokio::net::UnixStream;
 use tracing::{error, info};
 
-const DEFAULT_PROFILE_ID: &str = "default";
+const DEFAULT_PROFILE_ID: &str = "code";
 
 /// Case-insensitive line-level grep over a block of text.
 fn grep_lines(text: &str, pattern: &str) -> String {
@@ -157,6 +157,7 @@ fn build_create_body(params: &CreateParams) -> Value {
     let persistent = params.name.is_some();
     let mut body = json!({
         "name": params.name,
+        "profile_id": DEFAULT_PROFILE_ID,
         "persistent": persistent,
     });
     if let Some(ram) = params.ram_mb {
@@ -178,6 +179,7 @@ fn build_create_body(params: &CreateParams) -> Value {
 fn build_run_body(params: &RunParams) -> Value {
     let mut body = json!({
         "command": params.command,
+        "profile_id": DEFAULT_PROFILE_ID,
         "timeout_secs": params.timeout.unwrap_or(60),
     });
     if let Some(ref env) = params.env {

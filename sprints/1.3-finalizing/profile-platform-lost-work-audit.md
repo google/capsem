@@ -265,8 +265,10 @@ Likely lost:
 - CLI/service endpoints for catalog/revision reconciliation.
 - Profile payload hash as part of runtime identity.
 
-Current replacement is much weaker: a built-in `ProfileConfigFile::builtin_default()`
-and `default`-only profile route validation.
+Current replacement at the start of the rescue was much weaker: a built-in
+default-profile stub and `default`-only profile route validation. S2 replaced
+that with a real catalog-backed `code` profile, profile-owned assets, and
+profile id/revision/payload/asset pins.
 
 ### B. Profile-Owned Asset Resolution And Download
 
