@@ -288,6 +288,107 @@ async fn handle_profiles_list_returns_code_profile_inventory() {
 }
 
 #[tokio::test]
+async fn handle_profiles_status_reports_builtin_catalog_readiness() {
+    let (state, dir) = make_test_state_with_tempdir();
+    install_test_profile_assets(&state);
+
+    let Json(status) = handle_profiles_status(State(state))
+        .await
+        .expect("profile status should load built-in catalog");
+
+    assert_eq!(status["source"], "built_in");
+    assert_eq!(status["profile_count"], 1);
+    assert_eq!(status["ready_count"], 1);
+    assert_eq!(status["profiles"][0]["id"], "code");
+    assert_eq!(
+        status["profiles"][0]["profile_payload_hash"],
+        test_profile_payload_hash()
+    );
+    assert_eq!(
+        status["profiles"][0]["missing_assets"]
+            .as_array()
+            .unwrap()
+            .len(),
+        0
+    );
+    drop(dir);
+}
+
+#[test]
+fn profile_catalog_status_reports_directory_catalog_readiness() {
+    let (state, dir) = make_test_state_with_tempdir();
+    install_test_profile_assets(&state);
+    let profiles_dir = dir.path().join("profiles");
+    std::fs::create_dir_all(&profiles_dir).unwrap();
+    std::fs::write(
+        profiles_dir.join("code.toml"),
+        toml::to_string(&ProfileConfigFile::builtin_code()).unwrap(),
+    )
+    .unwrap();
+    let catalog = ProfileCatalog::load_from_dir(&profiles_dir).unwrap();
+
+    let status = profile_catalog_status_value(&state, &catalog);
+
+    assert!(
+        status["source"]
+            .as_str()
+            .is_some_and(|source| source.starts_with("directory:")),
+        "status should expose directory source, got: {status}"
+    );
+    assert_eq!(status["profile_count"], 1);
+    assert_eq!(status["ready_count"], 1);
+    assert_eq!(status["profiles"][0]["id"], "code");
+    assert_eq!(
+        status["profiles"][0]["profile_payload_hash"],
+        test_profile_payload_hash()
+    );
+    assert_eq!(
+        status["profiles"][0]["missing_assets"]
+            .as_array()
+            .unwrap()
+            .len(),
+        0
+    );
+}
+
+#[tokio::test]
+async fn handle_profiles_reload_reports_active_catalog_status() {
+    let (state, _dir) = make_test_state_with_tempdir();
+    install_test_profile_assets(&state);
+
+    let Json(response) = handle_profiles_reload(State(state))
+        .await
+        .expect("profile reload should validate active catalog");
+
+    assert_eq!(response["reloaded"], true);
+    assert_eq!(response["catalog"]["source"], "built_in");
+    assert_eq!(response["catalog"]["profile_count"], 1);
+    assert_eq!(response["catalog"]["ready_count"], 1);
+}
+
+#[test]
+fn profile_catalog_reload_rejects_invalid_directory_catalog() {
+    let state = make_test_state();
+    let dir = tempfile::tempdir().unwrap();
+    let profiles_dir = dir.path().join("profiles");
+    std::fs::create_dir_all(&profiles_dir).unwrap();
+    let mut profile = ProfileConfigFile::builtin_code();
+    profile.id = "strict".to_string();
+    std::fs::write(
+        profiles_dir.join("code.toml"),
+        toml::to_string(&profile).unwrap(),
+    )
+    .unwrap();
+    drop(state);
+
+    let err = ProfileCatalog::load_from_dir(&profiles_dir).unwrap_err();
+    assert!(
+        err.contains("id mismatch"),
+        "expected catalog validation error, got: {err}"
+    );
+}
+
+#[tokio::test]
 async fn handle_profile_info_rejects_unknown_profiles() {
     let state = make_test_state();
 

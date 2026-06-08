@@ -4113,6 +4113,52 @@ fn profile_catalog_source_label(source: &ProfileCatalogSource) -> String {
     }
 }
 
+fn profile_catalog_status_value(
+    state: &ServiceState,
+    catalog: &ProfileCatalog,
+) -> serde_json::Value {
+    let profiles = catalog
+        .profiles()
+        .map(|profile| {
+            let status = profile_asset_status_value(state, profile);
+            let missing = status["assets"]
+                .as_array()
+                .map(|assets| {
+                    assets
+                        .iter()
+                        .filter(|asset| asset["status"] == "missing")
+                        .filter_map(|asset| asset["name"].as_str().map(str::to_string))
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            json!({
+                "id": profile.id,
+                "name": profile.name,
+                "description": profile.description,
+                "revision": profile.revision,
+                "profile_payload_hash": profile_payload_hash(profile).ok(),
+                "ready": status["ready"].as_bool().unwrap_or(false),
+                "current_arch": status["current_arch"].clone(),
+                "missing_assets": missing,
+                "asset_count": status["assets"].as_array().map_or(0, Vec::len),
+                "filesystem": profile.assets.filesystem,
+                "compression": profile.assets.compression,
+                "compression_level": profile.assets.compression_level,
+            })
+        })
+        .collect::<Vec<_>>();
+    let ready_count = profiles
+        .iter()
+        .filter(|profile| profile["ready"].as_bool().unwrap_or(false))
+        .count();
+    json!({
+        "source": profile_catalog_source_label(catalog.source()),
+        "profile_count": profiles.len(),
+        "ready_count": ready_count,
+        "profiles": profiles,
+    })
+}
+
 fn validate_profile_route_id(profile_id: String) -> Result<String, AppError> {
     if profile_id.is_empty() {
         return Err(AppError(
@@ -4197,6 +4243,23 @@ async fn handle_profiles_list(
         })
         .collect();
     Ok(Json(api::ProfilesListResponse { profiles }))
+}
+
+async fn handle_profiles_status(
+    State(state): State<Arc<ServiceState>>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let catalog = load_profile_catalog_for_service()?;
+    Ok(Json(profile_catalog_status_value(&state, &catalog)))
+}
+
+async fn handle_profiles_reload(
+    State(state): State<Arc<ServiceState>>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let catalog = load_profile_catalog_for_service()?;
+    Ok(Json(json!({
+        "reloaded": true,
+        "catalog": profile_catalog_status_value(&state, &catalog),
+    })))
 }
 
 async fn handle_profile_info(
@@ -6963,6 +7026,8 @@ async fn main() -> Result<()> {
         .route("/detection/latest", get(handle_service_detection_latest))
         .route("/detection/status", get(handle_service_detection_status))
         .route("/profiles/list", get(handle_profiles_list))
+        .route("/profiles/status", get(handle_profiles_status))
+        .route("/profiles/reload", post(handle_profiles_reload))
         .route("/profiles/create", post(handle_profile_create))
         .route("/profiles/{profile_id}/info", get(handle_profile_info))
         .route("/profiles/{profile_id}/edit", patch(handle_profile_edit))

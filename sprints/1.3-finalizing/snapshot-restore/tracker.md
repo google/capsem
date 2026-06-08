@@ -172,7 +172,21 @@ the guarantee or explicitly burn it.
 - [ ] `e3be977e feat: prove s08 profile-selected gateway create`
 - [ ] `694aa75b feat: select profiles during vm create`
 - [ ] `2a1d079d test: prove vm fork lineage`
-- [ ] `204ce825 feat: schedule profile catalog reconciliation`
+- [x] `204ce825 feat: schedule profile catalog reconciliation` decision:
+  conceptual_port. The old scheduled remote manifest reconciler depended on
+  deleted profile-manifest/settings-profile infrastructure, so this slice adds
+  explicit current-contract catalog status/reload routes instead:
+  `GET /profiles/status` and `POST /profiles/reload` validate the active
+  `ProfileCatalog`, expose source/profile counts, and summarize per-profile
+  readiness through the same profile asset contract used by boot. Tests:
+  `cargo test -p capsem-service
+  handle_profiles_status_reports_builtin_catalog_readiness -- --nocapture`,
+  `cargo test -p capsem-service
+  profile_catalog_status_reports_directory_catalog_readiness -- --nocapture`,
+  `cargo test -p capsem-service
+  profile_catalog_reload_rejects_invalid_directory_catalog -- --nocapture`,
+  `cargo test -p capsem-service profile -- --nocapture`, and `cargo test -p
+  capsem-service --no-run`.
 - [ ] `438c9642 feat: fetch profile catalogs from URL`
 - [ ] `3204f27a test: prove profile asset boot flow`
 - [x] `95155405 feat: expose profile asset provenance` decision:
