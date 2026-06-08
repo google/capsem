@@ -724,7 +724,14 @@ the guarantee or explicitly burn it.
   `SecurityRuleSet` path. Profile rule files reject old `policy.*` syntax and
   profile-file attempts to smuggle `corp.rules`. Proof:
   `cargo test -p capsem-core --lib profile_contract -- --nocapture`.
-- [ ] Restore `capsem-admin` CLI package and entry point.
+- [x] Restore `capsem-admin` CLI package and entry point. Current restore is a
+  Rust binary crate so admin validation can call the exact
+  `ProfileConfigFile` and `SecurityRuleSet` compiler used by the service,
+  instead of duplicating profile/rule schemas in Python. First command:
+  `capsem-admin profile validate <profile.toml> --config-root <config>`.
+  Proof: `cargo test -p capsem-admin -- --nocapture` and
+  `cargo run -p capsem-admin -- profile validate config/profiles/code.toml
+  --config-root config --json`.
 - [ ] Restore profile/settings `init|schema|validate|doctor` commands.
 - [ ] Restore image `plan|verify|workspace|build` commands.
 - [ ] Restore manifest `check|download-check|generate|verify` commands only

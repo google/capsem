@@ -106,6 +106,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and Sigma detection YAML now materialize as `SecurityRuleProfile` and compile
   only through the unified `SecurityRuleSet`/CEL rail, rejecting old policy
   syntax and profile-file attempts to smuggle `corp.rules`.
+- Restored the `capsem-admin` executable as a Rust admin front door. Its first
+  command, `capsem-admin profile validate`, parses the current profile TOML and
+  compiles referenced enforcement/Sigma rule files through the same
+  `SecurityRuleSet`/CEL contract used at runtime.
 - Replaced the temporary flat profile asset triplet with per-architecture
   profile asset declarations. `config/profiles/code.toml` now parses as the
   checked-in contract for EROFS/LZ4HC kernel, initrd, and rootfs assets with
