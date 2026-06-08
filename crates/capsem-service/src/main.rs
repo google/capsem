@@ -4177,7 +4177,7 @@ fn validate_profile_route_id(profile_id: String) -> Result<String, AppError> {
 }
 
 fn security_rule_group_len(group: &SecurityRuleGroup) -> usize {
-    group.defaults.len() + group.rules.len()
+    group.rules.len()
 }
 
 fn build_profile_summary(
@@ -4187,19 +4187,19 @@ fn build_profile_summary(
     corp: &SettingsFile,
     plugin_count: usize,
 ) -> api::ProfileSummary {
-    let default_rule_count = security_rule_group_len(&manifest.profiles)
+    let default_rule_count = manifest.default.len()
+        + security_rule_group_len(&manifest.profiles)
         + manifest
             .ai
             .values()
             .map(|provider| provider.rules.len())
             .sum::<usize>()
-        + user.profiles.defaults.len()
-        + corp.profiles.defaults.len();
+        + user.default.len()
+        + corp.default.len();
     let profile_rule_count = default_rule_count
         + user.profiles.rules.len()
         + corp.profiles.rules.len()
         + corp.corp.rules.len()
-        + corp.corp.defaults.len()
         + user
             .ai
             .values()
@@ -5564,7 +5564,6 @@ fn validate_single_user_profile_rule(
     let profile = SecurityRuleProfile {
         profiles: SecurityRuleGroup {
             rules: BTreeMap::from([(rule_id.to_string(), rule.clone())]),
-            defaults: BTreeMap::new(),
         },
         ..SecurityRuleProfile::default()
     };

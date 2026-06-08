@@ -665,11 +665,12 @@ async fn handle_enforcement_rules_list_returns_compiled_profile_rules() {
 
     assert_eq!(response.profile_id, "code");
     assert!(
-        response.rules.iter().any(
-            |rule| rule.rule_id == "profiles.rules.default_http_requests"
+        response
+            .rules
+            .iter()
+            .any(|rule| rule.rule_id == "profiles.rules.default_http"
                 && rule.source == api::EnforcementRuleSource::BuiltinDefault
-                && rule.default_rule
-        ),
+                && rule.default_rule),
         "list must expose built-in default rules as first-class rows"
     );
     let custom = response

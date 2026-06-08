@@ -2121,7 +2121,7 @@ fn web_search_bing_duckduckgo_blocked_by_default() {
 fn default_http_allow_is_security_rule_not_network_policy() {
     let m = MergedPolicies::from_files(&empty_file(), &empty_file());
     assert!(
-        has_security_rule(&m, "profiles.rules.default_http_requests"),
+        has_security_rule(&m, "profiles.rules.default_http"),
         "default HTTP behavior must be a visible security rule"
     );
 }
@@ -4077,11 +4077,8 @@ fn file_with_mcp(
 #[test]
 fn merged_defaults_only() {
     let m = MergedPolicies::from_files(&empty_file(), &empty_file());
-    assert!(has_security_rule(
-        &m,
-        "profiles.rules.default_http_requests"
-    ));
-    assert!(has_security_rule(&m, "profiles.rules.default_dns_queries"));
+    assert!(has_security_rule(&m, "profiles.rules.default_http"));
+    assert!(has_security_rule(&m, "profiles.rules.default_dns"));
 }
 
 #[test]
@@ -4101,10 +4098,7 @@ fn merged_user_enables_search() {
         SettingValue::Bool(true),
     )]);
     let m = MergedPolicies::from_files(&user, &empty_file());
-    assert!(has_security_rule(
-        &m,
-        "profiles.rules.default_http_requests"
-    ));
+    assert!(has_security_rule(&m, "profiles.rules.default_http"));
 }
 
 #[test]
@@ -4140,19 +4134,13 @@ fn apply_and_merge(preset_id: &str) -> MergedPolicies {
 #[test]
 fn preset_high_merged_network_blocks_web() {
     let m = apply_and_merge("high");
-    assert!(has_security_rule(
-        &m,
-        "profiles.rules.default_http_requests"
-    ));
+    assert!(has_security_rule(&m, "profiles.rules.default_http"));
 }
 
 #[test]
 fn preset_medium_merged_keeps_default_http_rule() {
     let m = apply_and_merge("medium");
-    assert!(has_security_rule(
-        &m,
-        "profiles.rules.default_http_requests"
-    ));
+    assert!(has_security_rule(&m, "profiles.rules.default_http"));
 }
 
 #[test]
@@ -4221,10 +4209,7 @@ fn corp_forces_provider_off() {
     let user = file_with(vec![("ai.anthropic.allow", SettingValue::Bool(true))]);
     let corp = file_with(vec![("ai.anthropic.allow", SettingValue::Bool(false))]);
     let m = MergedPolicies::from_files(&user, &corp);
-    assert!(has_security_rule(
-        &m,
-        "profiles.rules.default_http_requests"
-    ));
+    assert!(has_security_rule(&m, "profiles.rules.default_http"));
 }
 
 #[test]
@@ -4385,10 +4370,7 @@ fn merged_from_missing_user_toml() {
     let user = load_settings_file(&nonexistent).unwrap_or_default();
     let m = MergedPolicies::from_files(&user, &empty_file());
     // Should produce valid defaults without panicking
-    assert!(has_security_rule(
-        &m,
-        "profiles.rules.default_http_requests"
-    ));
+    assert!(has_security_rule(&m, "profiles.rules.default_http"));
 }
 
 #[test]
@@ -4410,10 +4392,7 @@ fn merged_from_both_missing() {
     let u = load_settings_file(&dir.path().join("u.toml")).unwrap_or_default();
     let c = load_settings_file(&dir.path().join("c.toml")).unwrap_or_default();
     let m = MergedPolicies::from_files(&u, &c);
-    assert!(has_security_rule(
-        &m,
-        "profiles.rules.default_http_requests"
-    ));
+    assert!(has_security_rule(&m, "profiles.rules.default_http"));
 }
 
 #[test]
@@ -4426,10 +4405,7 @@ fn merged_from_invalid_user_toml() {
     // Fallback to default still works
     let user = result.unwrap_or_default();
     let m = MergedPolicies::from_files(&user, &empty_file());
-    assert!(has_security_rule(
-        &m,
-        "profiles.rules.default_http_requests"
-    ));
+    assert!(has_security_rule(&m, "profiles.rules.default_http"));
 }
 
 #[test]
@@ -4497,10 +4473,7 @@ fn merged_retired_custom_allow_setting_is_ignored() {
     )]);
     let m = MergedPolicies::from_files(&user, &empty_file());
     // Should not crash, empty string -> no domains added
-    assert!(has_security_rule(
-        &m,
-        "profiles.rules.default_http_requests"
-    ));
+    assert!(has_security_rule(&m, "profiles.rules.default_http"));
 }
 
 #[test]
@@ -4508,10 +4481,7 @@ fn merged_empty_mcp_section() {
     use crate::mcp::policy::McpUserConfig;
     let user = file_with_mcp(vec![], McpUserConfig::default());
     let m = MergedPolicies::from_files(&user, &empty_file());
-    assert!(has_security_rule(
-        &m,
-        "profiles.rules.default_http_requests"
-    ));
+    assert!(has_security_rule(&m, "profiles.rules.default_http"));
 }
 
 // -----------------------------------------------------------------------
@@ -5217,10 +5187,7 @@ fn merged_partial_settings_file() {
     };
     let m = MergedPolicies::from_files(&user, &empty_file());
     // No settings -> defaults for everything else
-    assert!(has_security_rule(
-        &m,
-        "profiles.rules.default_http_requests"
-    ));
+    assert!(has_security_rule(&m, "profiles.rules.default_http"));
 }
 
 #[test]

@@ -414,6 +414,9 @@ pub struct SettingsFile {
     /// External rule files shared by user profiles and corporate policy.
     #[serde(default, skip_serializing_if = "RuleFileReferences::is_empty")]
     pub rule_files: RuleFileReferences,
+    /// Visible default security rules (`[default.<domain>]`).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub default: BTreeMap<String, super::security_rule_profile::SecurityRule>,
     /// Optional corp provisioning refresh interval metadata.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub refresh_interval_hours: Option<u32>,

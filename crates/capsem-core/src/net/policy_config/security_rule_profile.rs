@@ -17,6 +17,8 @@ pub const SECURITY_EVENT_CEL_ROOTS: &[&str] =
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SecurityRuleProfile {
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub default: BTreeMap<String, SecurityRule>,
     #[serde(default, skip_serializing_if = "SecurityRuleGroup::is_empty")]
     pub corp: SecurityRuleGroup,
     #[serde(default, skip_serializing_if = "SecurityRuleGroup::is_empty")]
@@ -31,14 +33,12 @@ pub struct SecurityRuleProfile {
 #[serde(deny_unknown_fields)]
 pub struct SecurityRuleGroup {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub defaults: BTreeMap<String, SecurityRule>,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub rules: BTreeMap<String, SecurityRule>,
 }
 
 impl SecurityRuleGroup {
     pub fn is_empty(&self) -> bool {
-        self.defaults.is_empty() && self.rules.is_empty()
+        self.rules.is_empty()
     }
 }
 
@@ -301,6 +301,7 @@ impl SecurityRuleProfile {
     }
 
     pub fn validate(&self) -> Result<(), String> {
+        validate_default_rules(&self.default)?;
         validate_rule_group("corp", &self.corp)?;
         validate_rule_group("profiles", &self.profiles)?;
         for plugin_id in self.plugins.keys() {
@@ -360,6 +361,7 @@ impl SecurityRuleProfile {
     pub fn compile(&self, source: SecurityRuleSource) -> Result<Vec<CompiledSecurityRule>, String> {
         self.validate()?;
         let mut compiled = Vec::new();
+        self.compile_default_rules(source, &mut compiled)?;
         self.compile_group(
             "corp",
             "corp",
@@ -403,22 +405,20 @@ impl SecurityRuleProfile {
         Ok(compiled)
     }
 
-    fn compile_group(
+    fn compile_default_rules(
         &self,
-        namespace: &str,
-        provider: &str,
-        group: &SecurityRuleGroup,
         source: SecurityRuleSource,
         compiled: &mut Vec<CompiledSecurityRule>,
     ) -> Result<(), String> {
-        for (rule_key, rule) in &group.defaults {
+        for (rule_key, rule) in &self.default {
             let priority = rule.effective_priority(source)?;
             let compiled_condition = rule.compile_match()?;
+            let compiled_rule_key = format!("default_{rule_key}");
             compiled.push(CompiledSecurityRule {
-                rule_id: format!("{namespace}.rules.{rule_key}"),
-                provider: provider.to_string(),
-                namespace: namespace.to_string(),
-                rule_key: rule_key.clone(),
+                rule_id: format!("profiles.rules.{compiled_rule_key}"),
+                provider: "profiles".to_string(),
+                namespace: "profiles".to_string(),
+                rule_key: compiled_rule_key,
                 default_rule: true,
                 name: rule.name.clone(),
                 action: rule.action,
@@ -430,6 +430,17 @@ impl SecurityRuleProfile {
                 reason: rule.reason.clone(),
             });
         }
+        Ok(())
+    }
+
+    fn compile_group(
+        &self,
+        namespace: &str,
+        provider: &str,
+        group: &SecurityRuleGroup,
+        source: SecurityRuleSource,
+        compiled: &mut Vec<CompiledSecurityRule>,
+    ) -> Result<(), String> {
         for (rule_key, rule) in &group.rules {
             let priority = rule.effective_priority(source)?;
             let compiled_condition = rule.compile_match()?;
@@ -975,13 +986,17 @@ fn validate_priority_for_source(
 }
 
 fn validate_rule_group(namespace: &str, group: &SecurityRuleGroup) -> Result<(), String> {
-    for (rule_key, rule) in &group.defaults {
-        validate_identifier("default rule id", rule_key)?;
-        rule.validate(&format!("{namespace}.defaults.{rule_key}"))?;
-    }
     for (rule_key, rule) in &group.rules {
         validate_identifier("rule id", rule_key)?;
         rule.validate(&format!("{namespace}.rules.{rule_key}"))?;
+    }
+    Ok(())
+}
+
+fn validate_default_rules(default: &BTreeMap<String, SecurityRule>) -> Result<(), String> {
+    for (rule_key, rule) in default {
+        validate_identifier("default rule id", rule_key)?;
+        rule.validate(&format!("default.{rule_key}"))?;
     }
     Ok(())
 }

@@ -502,12 +502,20 @@ the guarantee or explicitly burn it.
   keys/OAuth/ADC/GitHub tokens and wrote them into settings; credential capture
   remains broker/plugin-owned, and `/settings/validate-key` stays a retired
   gateway route.
-- [ ] Replace legacy `[profiles.defaults.*]` parsing with `[default.<domain>]`
+- [x] Replace legacy `[profiles.defaults.*]` parsing with `[default.<domain>]`
   rule parsing. A rule is default because `priority = "default"`, not because
   its table path says defaults twice.
-- [ ] Burn `default_credentials` / `[default.credential]`; brokered credential
+  Proof: `cargo test -p capsem-core --lib security_rule_profile -- --nocapture`
+  includes `legacy_profiles_defaults_authoring_is_rejected`; full
+  `cargo test -p capsem-core --lib policy_config -- --nocapture` passed 391
+  tests; `cargo test -p capsem-service --no-run` passed.
+- [x] Burn `default_credentials` / `[default.credential]`; brokered credential
   references are evidence on real security events, not a standalone default
   traffic family.
+  Proof: programmatic hunt found no `default_credentials` or `[default.credential]`
+  implementation; the default-rule parser accepts only the real default
+  first-party domains present in `config/profiles/code/enforcement.toml` and
+  `default_provider_rules.toml`.
 - [x] Delete `ProfileCredentialConfig` / `credentials.broker_enabled` parser
   support and add a rejection test for `[credentials]`.
 - [ ] Delete or reshape static `ProfileConfigFile.ai` / `[ai.*]` parser support

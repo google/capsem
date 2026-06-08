@@ -63,8 +63,8 @@ scratch_disk_size_gb = 32
 enforcement = "rules/enforcement.toml"
 sigma = "rules/detection.yaml"
 
-[profiles.defaults.default_http_requests]
-name = "default_http_requests"
+[default.http]
+name = "default_http"
 action = "allow"
 priority = "default"
 reason = "Default allow for HTTP requests."
@@ -129,6 +129,7 @@ allowed_overlays = ["mcp_injection", "broker_placeholders", "endpoint_selection"
         profile.rule_files.sigma.as_deref(),
         Some("rules/detection.yaml")
     );
+    assert!(profile.default.contains_key("http"));
     assert!(profile.profiles.rules.contains_key("skill_loaded"));
     assert!(profile.ai.contains_key("openai"));
     assert!(profile.plugins.contains_key("dummy_pre_eicar"));

@@ -7,36 +7,36 @@
 mode = "rewrite"
 detection_level = "informational"
 
-[profiles.defaults.default_http_requests]
-name = "default_http_requests"
+[default.http]
+name = "http"
 action = "allow"
 priority = "default"
 reason = "Default allow for HTTP requests."
 match = 'has(http.host)'
 
-[profiles.defaults.default_dns_queries]
-name = "default_dns_queries"
+[default.dns]
+name = "dns"
 action = "allow"
 priority = "default"
 reason = "Default allow for DNS queries."
 match = 'has(dns.qname)'
 
-[profiles.defaults.default_mcp_activity]
-name = "default_mcp_activity"
+[default.mcp]
+name = "mcp"
 action = "allow"
 priority = "default"
 reason = "Default allow for MCP server activity and tool calls."
 match = 'has(mcp.method) || has(mcp.server.name) || has(mcp.tool_call.name) || has(mcp.tool_list)'
 
-[profiles.defaults.default_model_calls]
-name = "default_model_calls"
+[default.model]
+name = "model"
 action = "allow"
 priority = "default"
 reason = "Default allow for model calls."
 match = 'has(model.provider) || has(model.name) || has(model.request.body) || has(model.response.body) || has(model.request.tool_calls)'
 
-[profiles.defaults.default_file_activity]
-name = "default_file_activity"
+[default.file]
+name = "file"
 action = "allow"
 priority = "default"
 reason = "Default allow for file reads, writes, creates, deletes, imports, and exports."
@@ -50,8 +50,8 @@ has(file.read.path)
 || has(file.content)
 '''
 
-[profiles.defaults.default_process_activity]
-name = "default_process_activity"
+[default.process]
+name = "process"
 action = "allow"
 priority = "default"
 reason = "Default allow for process execution and audit activity."

@@ -82,6 +82,16 @@ match = 'has(http.host)'
 "#,
         ),
         (
+            "default",
+            r#"
+[default.http]
+name = "http"
+action = "allow"
+priority = "default"
+match = 'has(http.host)'
+"#,
+        ),
+        (
             "corp",
             r#"
 [corp.rules.block_http]
@@ -136,8 +146,8 @@ modified = "2026-06-07T00:00:00Z"
 enforcement = "rules/enforcement.toml"
 sigma = "rules/detection.yaml"
 
-[profiles.defaults.default_http_requests]
-name = "default_http_requests"
+[default.http]
+name = "default_http"
 action = "allow"
 priority = "default"
 match = 'has(http.host)'

@@ -419,27 +419,27 @@ fn built_in_defaults_cover_each_runtime_boundary_last() {
 
     let expected = [
         (
-            "profiles.rules.default_http_requests",
+            "profiles.rules.default_http",
             "Default allow for HTTP requests.",
         ),
         (
-            "profiles.rules.default_dns_queries",
+            "profiles.rules.default_dns",
             "Default allow for DNS queries.",
         ),
         (
-            "profiles.rules.default_mcp_activity",
+            "profiles.rules.default_mcp",
             "Default allow for MCP server activity and tool calls.",
         ),
         (
-            "profiles.rules.default_model_calls",
+            "profiles.rules.default_model",
             "Default allow for model calls.",
         ),
         (
-            "profiles.rules.default_file_activity",
+            "profiles.rules.default_file",
             "Default allow for file reads, writes, creates, deletes, imports, and exports.",
         ),
         (
-            "profiles.rules.default_process_activity",
+            "profiles.rules.default_process",
             "Default allow for process execution and audit activity.",
         ),
     ];
@@ -465,7 +465,7 @@ fn built_in_defaults_match_each_first_party_security_event_family() {
 
     let cases = [
         (
-            "profiles.rules.default_http_requests",
+            "profiles.rules.default_http",
             SecurityEvent::new(RuntimeSecurityEventType::HttpRequest).with_http(
                 HttpSecurityEvent {
                     host: Some("example.com".to_string()),
@@ -474,14 +474,14 @@ fn built_in_defaults_match_each_first_party_security_event_family() {
             ),
         ),
         (
-            "profiles.rules.default_dns_queries",
+            "profiles.rules.default_dns",
             SecurityEvent::new(RuntimeSecurityEventType::DnsQuery).with_dns(DnsSecurityEvent {
                 qname: Some("example.com".to_string()),
                 qtype: Some("A".to_string()),
             }),
         ),
         (
-            "profiles.rules.default_mcp_activity",
+            "profiles.rules.default_mcp",
             SecurityEvent::new(RuntimeSecurityEventType::McpEvent).with_mcp(McpSecurityEvent {
                 method: Some("resources/read".to_string()),
                 server_name: Some("filesystem".to_string()),
@@ -489,7 +489,7 @@ fn built_in_defaults_match_each_first_party_security_event_family() {
             }),
         ),
         (
-            "profiles.rules.default_model_calls",
+            "profiles.rules.default_model",
             SecurityEvent::new(RuntimeSecurityEventType::ModelCall).with_model(
                 ModelSecurityEvent {
                     provider: Some("openai".to_string()),
@@ -499,7 +499,7 @@ fn built_in_defaults_match_each_first_party_security_event_family() {
             ),
         ),
         (
-            "profiles.rules.default_file_activity",
+            "profiles.rules.default_file",
             SecurityEvent::new(RuntimeSecurityEventType::FileEvent).with_file(FileSecurityEvent {
                 read_path: Some("/workspace/skills/build.md".to_string()),
                 read_name: Some("build.md".to_string()),
@@ -509,7 +509,7 @@ fn built_in_defaults_match_each_first_party_security_event_family() {
             }),
         ),
         (
-            "profiles.rules.default_process_activity",
+            "profiles.rules.default_process",
             SecurityEvent::new(RuntimeSecurityEventType::ProcessExec).with_process(
                 ProcessSecurityEvent {
                     exec_path: Some("/usr/bin/python3".to_string()),
@@ -545,8 +545,8 @@ action = "block"
 priority = 10
 match = 'http.host == "evil.example"'
 
-[profiles.defaults.default_http_requests]
-name = "default_http_requests"
+[default.http]
+name = "default_http"
 action = "allow"
 priority = "default"
 reason = "Default allow for HTTP requests."
@@ -577,7 +577,7 @@ match = 'has(http.host)'
                 USER_PRIORITY_MIN,
             ),
             (
-                "profiles.rules.default_http_requests",
+                "profiles.rules.default_http",
                 SecurityRuleAction::Allow,
                 DEFAULT_RULE_PRIORITY,
             ),
@@ -590,8 +590,8 @@ match = 'has(http.host)'
 fn mutating_default_rules_changes_security_evaluation() {
     let profile = SecurityRuleProfile::parse_toml(
         r#"
-[profiles.defaults.default_http_requests]
-name = "default_http_requests"
+[default.http]
+name = "default_http"
 action = "allow"
 priority = "default"
 reason = "Default allow for approved HTTP requests only."
@@ -620,7 +620,7 @@ match = 'http.host == "approved.example"'
             .iter()
             .map(|rule| rule.rule_id.as_str())
             .collect::<Vec<_>>(),
-        vec!["profiles.rules.default_http_requests"]
+        vec!["profiles.rules.default_http"]
     );
     assert!(
         compiled
@@ -629,6 +629,26 @@ match = 'http.host == "approved.example"'
             .enforcement_rules()
             .is_empty(),
         "a default rule is editable profile policy, not hidden network fallback"
+    );
+}
+
+#[test]
+fn legacy_profiles_defaults_authoring_is_rejected() {
+    let error = SecurityRuleProfile::parse_toml(
+        r#"
+[profiles.defaults.default_http]
+name = "default_http"
+action = "allow"
+priority = "default"
+reason = "Old default namespace must not parse."
+match = 'has(http.host)'
+"#,
+    )
+    .expect_err("profiles.defaults is retired");
+
+    assert!(
+        error.contains("unknown field") || error.contains("defaults"),
+        "{error}"
     );
 }
 

@@ -28,6 +28,8 @@ pub struct ProfileConfigFile {
     pub vm: ProfileVmDefaults,
     #[serde(default, skip_serializing_if = "RuleFileReferences::is_empty")]
     pub rule_files: RuleFileReferences,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub default: BTreeMap<String, super::security_rule_profile::SecurityRule>,
     #[serde(
         default,
         skip_serializing_if = "super::security_rule_profile::SecurityRuleGroup::is_empty"
@@ -158,6 +160,7 @@ impl ProfileConfigFile {
         self.vm.validate()?;
         self.skills.validate()?;
         let rule_profile = SecurityRuleProfile {
+            default: self.default.clone(),
             profiles: self.profiles.clone(),
             ai: self.ai.clone(),
             plugins: self.plugins.clone(),

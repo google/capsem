@@ -51,14 +51,17 @@ fn reject_non_settings_sections(file: &SettingsFile) -> Result<(), String> {
     if !file.rule_files.is_empty() {
         return Err("settings.toml cannot define rule_files".to_string());
     }
+    if !file.default.is_empty() {
+        return Err("settings.toml cannot define default rules".to_string());
+    }
     if file.refresh_interval_hours.is_some() {
         return Err("settings.toml cannot define corp refresh metadata".to_string());
     }
     if !file.profiles.is_empty() {
-        return Err("settings.toml cannot define profiles.rules or profiles.defaults".to_string());
+        return Err("settings.toml cannot define profiles.rules".to_string());
     }
     if !file.corp.is_empty() {
-        return Err("settings.toml cannot define corp.rules or corp.defaults".to_string());
+        return Err("settings.toml cannot define corp.rules".to_string());
     }
     if !file.corp_rule_files.is_empty() {
         return Err("settings.toml cannot define corp rule-file endpoints".to_string());

@@ -187,6 +187,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added typed runtime-family markers for first-party CEL roots versus
   ledger-only `credential.substitution`/`snapshot.event` rows, with regression
   tests tying the markers to `SECURITY_EVENT_CEL_ROOTS`.
+- Replaced legacy `[profiles.defaults.*]` rule authoring with the visible
+  `[default.<domain>]` contract. Default rules still compile into ordinary late
+  CEL rules under `profiles.rules.default_<domain>`, and the old namespace is
+  rejected instead of aliased.
 - Added a security-event engine that runs configured preprocess plugins before
   detection/enforcement, evaluates CEL once against the canonical event, then
   runs configured postprocess plugins only after the decision allows

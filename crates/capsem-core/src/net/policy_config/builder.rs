@@ -263,6 +263,7 @@ fn compile_merged_security_rules(
         by_rule_id.insert(rule.rule_id.clone(), rule.clone());
     }
     let user_profile = SecurityRuleProfile {
+        default: user.default.clone(),
         profiles: user.profiles.clone(),
         ..SecurityRuleProfile::default()
     };
@@ -270,6 +271,7 @@ fn compile_merged_security_rules(
         by_rule_id.insert(rule.rule_id.clone(), rule);
     }
     let corp_profile = SecurityRuleProfile {
+        default: corp.default.clone(),
         corp: corp.corp.clone(),
         profiles: corp.profiles.clone(),
         ..SecurityRuleProfile::default()

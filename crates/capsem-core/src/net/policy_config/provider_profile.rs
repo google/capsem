@@ -11,14 +11,7 @@ use super::{
 
 const DEFAULT_PROVIDER_RULES_TOML: &str = include_str!("default_provider_rules.toml");
 const REQUIRED_BUILTIN_PLUGINS: &[&str] = &["credential_broker"];
-const REQUIRED_DEFAULT_RULE_KEYS: &[&str] = &[
-    "default_http_requests",
-    "default_dns_queries",
-    "default_mcp_activity",
-    "default_model_calls",
-    "default_file_activity",
-    "default_process_activity",
-];
+const REQUIRED_DEFAULT_RULE_KEYS: &[&str] = &["http", "dns", "mcp", "model", "file", "process"];
 
 pub type AiProviderProfile = SecurityRuleProvider;
 
@@ -371,9 +364,9 @@ fn validate_builtin_profile_contract(profile: &SecurityRuleProfile) -> Result<()
         }
     }
     for rule_key in REQUIRED_DEFAULT_RULE_KEYS {
-        if !profile.profiles.defaults.contains_key(*rule_key) {
+        if !profile.default.contains_key(*rule_key) {
             return Err(format!(
-                "built-in profile must include visible default rule [profiles.defaults.{rule_key}]"
+                "built-in profile must include visible default rule [default.{rule_key}]"
             ));
         }
     }
@@ -434,11 +427,11 @@ mod tests {
     fn builtin_profile_contract_requires_plugins_and_visible_default_rules() {
         let missing_plugins = SecurityRuleProfile::parse_toml(
             r#"
-[profiles.defaults.default_http_requests]
-name = "default_http_requests"
-action = "allow"
-priority = "default"
-reason = "Default allow for HTTP requests."
+    [default.http]
+    name = "http"
+    action = "allow"
+    priority = "default"
+    reason = "Default allow for HTTP requests."
 match = 'has(http.host)'
 "#,
         )
@@ -456,10 +449,7 @@ mode = "rewrite"
         .expect("profile without defaults parses before built-in contract");
         let err = validate_builtin_profile_contract(&missing_defaults)
             .expect_err("built-in profile requires visible defaults");
-        assert!(
-            err.contains("[profiles.defaults.default_http_requests]"),
-            "{err}"
-        );
+        assert!(err.contains("[default.http]"), "{err}");
     }
 
     #[test]
