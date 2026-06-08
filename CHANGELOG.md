@@ -72,8 +72,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   URL/hash/signature/size/content-type metadata.
 - Made `/profiles/{profile_id}/assets/status` report the selected profile's
   current-architecture asset contract instead of a service-global asset guess,
-  including profile id, revision, expected hashes, signatures, sizes,
-  filesystem/compression metadata, and present/missing state.
+  including profile id, revision, profile payload hash, expected hashes,
+  signatures, sizes, source URLs, filesystem/compression metadata, and
+  present/missing state from the same hash-prefixed resolver used by boot.
 - Made VM creation profile-explicit. `POST /vms/create`/provision and
   one-shot `run` payloads now require `profile_id`; unknown profiles fail
   before boot state is created, persistent registry rows store `profile_id`,
@@ -88,8 +89,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   selected profile's current-architecture kernel, initrd, and rootfs URLs into
   hash-prefixed asset files, verifies each file with the profile BLAKE3 hash,
   updates reconcile status, and skips already-verified profile assets.
-- Made persistent VM lifecycle state pin the selected profile revision and boot
-  payload hash plus boot asset descriptors. Create/save/fork/resume preserve
+- Made persistent VM lifecycle state pin the selected profile revision, profile
+  payload hash, and boot asset descriptors. Create/save/fork/resume preserve
   the pinned profile revision, typed profile payload BLAKE3 hash, and
   kernel/initrd/rootfs name+hash pins; save/fork/resume fail closed when the
   current profile revision, profile payload hash, or boot asset pins drift.

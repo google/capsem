@@ -1052,15 +1052,20 @@ fn profile_asset_status_uses_profile_current_arch_contract() {
     let arch = capsem_core::net::policy_config::current_profile_arch();
     let arch_dir = dir.path().join(arch);
     std::fs::create_dir_all(&arch_dir).unwrap();
-    std::fs::write(arch_dir.join("vmlinuz"), b"kernel").unwrap();
-    std::fs::write(arch_dir.join("rootfs.erofs"), b"erofs").unwrap();
     let state = make_asset_state(dir.path().to_path_buf());
     let profile = ProfileConfigFile::builtin_code();
+    let arch_assets = profile.assets.current_arch_assets().unwrap();
+    for asset in [&arch_assets.kernel, &arch_assets.rootfs] {
+        let hash = asset.hash.strip_prefix("blake3:").unwrap();
+        let name = capsem_core::asset_manager::hash_filename(&asset.name, hash);
+        std::fs::write(arch_dir.join(name), b"asset").unwrap();
+    }
 
     let status = profile_asset_status_value(&state, &profile);
 
     assert_eq!(status["profile_id"], "code");
     assert_eq!(status["revision"], profile.revision);
+    assert_eq!(status["profile_payload_hash"], test_profile_payload_hash());
     assert_eq!(status["current_arch"], arch);
     assert_eq!(status["ready"], false, "initrd is intentionally missing");
     assert_eq!(status["filesystem"], "erofs");
@@ -1070,6 +1075,9 @@ fn profile_asset_status_uses_profile_current_arch_contract() {
     assert!(assets.iter().any(|asset| {
         asset["kind"] == "kernel"
             && asset["name"] == "vmlinuz"
+            && asset["resolved_name"]
+                .as_str()
+                .is_some_and(|name| name.starts_with("vmlinuz-"))
             && asset["status"] == "present"
             && asset["hash"]
                 .as_str()
@@ -1081,6 +1089,9 @@ fn profile_asset_status_uses_profile_current_arch_contract() {
     assert!(assets.iter().any(|asset| {
         asset["kind"] == "rootfs"
             && asset["name"] == "rootfs.erofs"
+            && asset["resolved_name"]
+                .as_str()
+                .is_some_and(|name| name.starts_with("rootfs-"))
             && asset["status"] == "present"
             && asset["compression"] == "lz4hc"
             && asset["compression_level"] == 12
@@ -1171,6 +1182,21 @@ async fn ensure_profile_assets_downloads_profile_descriptors() {
     let reconcile = state.asset_reconcile.lock().unwrap().clone();
     assert_eq!(reconcile.last_downloaded, Some(3));
     assert!(reconcile.last_error.is_none());
+
+    let status = profile_asset_status_value(&state, &profile);
+    assert_eq!(status["ready"], true);
+    assert_eq!(
+        status["profile_payload_hash"],
+        profile_payload_hash(&profile).unwrap()
+    );
+    let assets = status["assets"].as_array().unwrap();
+    assert!(assets.iter().all(|asset| asset["status"] == "present"));
+    assert!(assets.iter().any(|asset| {
+        asset["kind"] == "rootfs"
+            && asset["resolved_name"]
+                .as_str()
+                .is_some_and(|name| name.starts_with("rootfs-"))
+    }));
 
     let downloaded = ensure_profile_assets_for_state(state, &profile)
         .await

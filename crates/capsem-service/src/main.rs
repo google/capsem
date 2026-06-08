@@ -3428,6 +3428,7 @@ fn profile_asset_status_value(
         let mut value = json!({
             "profile_id": profile.id,
             "revision": profile.revision,
+            "profile_payload_hash": profile_payload_hash(profile).ok(),
             "ready": false,
             "downloading": reconcile.in_progress,
             "current_arch": current_arch,
@@ -3438,11 +3439,6 @@ fn profile_asset_status_value(
         return value;
     };
 
-    let base = if state.assets_dir.join(current_arch).is_dir() {
-        state.assets_dir.join(current_arch)
-    } else {
-        state.assets_dir.clone()
-    };
     let assets = [
         ("kernel", &arch_assets.kernel),
         ("initrd", &arch_assets.initrd),
@@ -3450,10 +3446,16 @@ fn profile_asset_status_value(
     ]
     .into_iter()
     .map(|(kind, asset)| {
-        let path = base.join(&asset.name);
+        let path = profile_asset_descriptor_path(&state.assets_dir, current_arch, asset);
+        let resolved_name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or(&asset.name);
         json!({
             "kind": kind,
             "name": asset.name,
+            "logical_name": asset.name,
+            "resolved_name": resolved_name,
             "path": path.display().to_string(),
             "status": if path.exists() { "present" } else { "missing" },
             "hash": asset.hash,
@@ -3471,6 +3473,7 @@ fn profile_asset_status_value(
     let mut value = json!({
         "profile_id": profile.id,
         "revision": profile.revision,
+        "profile_payload_hash": profile_payload_hash(profile).ok(),
         "ready": all_ready,
         "downloading": reconcile.in_progress,
         "current_arch": current_arch,

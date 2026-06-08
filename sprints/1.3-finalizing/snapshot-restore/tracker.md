@@ -175,7 +175,16 @@ the guarantee or explicitly burn it.
 - [ ] `204ce825 feat: schedule profile catalog reconciliation`
 - [ ] `438c9642 feat: fetch profile catalogs from URL`
 - [ ] `3204f27a test: prove profile asset boot flow`
-- [ ] `95155405 feat: expose profile asset provenance`
+- [x] `95155405 feat: expose profile asset provenance` decision:
+  conceptual_port. Current `/profiles/{profile_id}/assets/status` now exposes
+  profile revision, typed profile payload hash, descriptor provenance, and
+  present/missing state through the same hash-prefixed resolver used by boot,
+  rather than restoring the old asset supervisor shape. Tests: `cargo test -p
+  capsem-service profile_asset_status_uses_profile_current_arch_contract --
+  --nocapture`, `cargo test -p capsem-service
+  ensure_profile_assets_downloads_profile_descriptors -- --nocapture`,
+  `cargo test -p capsem-service profile -- --nocapture`, and `cargo test -p
+  capsem-service --no-run`.
 - [ ] `0a87e26a test: harden profile asset reconcile races`
 - [ ] `deb1b083 refactor: remove legacy asset manifest runtime`
 - [ ] `d069710f feat: trigger profile asset reconcile from update`
