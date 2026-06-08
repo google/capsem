@@ -336,6 +336,12 @@ commit.
   -- --nocapture`, `pnpm -C frontend test src/lib/__tests__/api.test.ts`, and
   `pnpm -C frontend check`.
 - [ ] Skill UI can add/edit/remove profile skills through profile endpoints.
+  Current backend posture is strict-but-gated: profile skill list/info reflect
+  the profile manifest, add/edit payloads are typed with unknown-field
+  rejection and empty-path validation, and mutations return `501` until profile
+  persistence lands. Coverage: `cargo test -p capsem-service
+  profile_skills_routes_reflect_manifest_and_gate_mutations -- --nocapture`
+  and `pnpm -C frontend test src/lib/__tests__/api.test.ts`.
 - [x] Ensure no provider API object remains in UI for 1.3. `/settings/info`
   now serializes only `tree` and `issues`, the frontend settings model/store
   have no provider-status accessor, and runtime `top_providers` analytics stay

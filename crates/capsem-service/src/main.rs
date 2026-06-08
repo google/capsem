@@ -251,6 +251,18 @@ struct McpToolEditRequest {
     approved: Option<bool>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProfileSkillAddRequest {
+    path: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProfileSkillEditRequest {
+    path: String,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 struct EnforcementEvaluateRequest {
     rules_toml: String,
@@ -4383,15 +4395,19 @@ async fn handle_profile_skills_list(
 
 async fn handle_profile_skill_add(
     Path(profile_id): Path<String>,
+    Json(request): Json<ProfileSkillAddRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let _profile_id = validate_profile_route_id(profile_id)?;
+    validate_skill_path(&request.path)?;
     Err(profile_persistence_not_implemented("profile skill add"))
 }
 
 async fn handle_profile_skill_edit(
     Path((profile_id, _skill_id)): Path<(String, String)>,
+    Json(request): Json<ProfileSkillEditRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let _profile_id = validate_profile_route_id(profile_id)?;
+    validate_skill_path(&request.path)?;
     Err(profile_persistence_not_implemented("profile skill edit"))
 }
 
@@ -4399,7 +4415,28 @@ async fn handle_profile_skill_delete(
     Path((profile_id, _skill_id)): Path<(String, String)>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let _profile_id = validate_profile_route_id(profile_id)?;
+    validate_skill_id(&_skill_id)?;
     Err(profile_persistence_not_implemented("profile skill delete"))
+}
+
+fn validate_skill_path(path: &str) -> Result<(), AppError> {
+    if path.trim().is_empty() {
+        return Err(AppError(
+            StatusCode::BAD_REQUEST,
+            "profile skill path must not be empty".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_skill_id(skill_id: &str) -> Result<(), AppError> {
+    if skill_id.trim().is_empty() {
+        return Err(AppError(
+            StatusCode::BAD_REQUEST,
+            "profile skill id must not be empty".to_string(),
+        ));
+    }
+    Ok(())
 }
 
 fn resolve_mcp_tool_id(server_id: &str, tool_id: &str) -> Result<String, AppError> {

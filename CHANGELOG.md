@@ -243,6 +243,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Hardened plugin edit requests so unknown fields are rejected instead of
   ignored. Invalid modes, invalid detection levels, unknown plugins/profiles,
   and credential-reference smuggling attempts fail closed.
+- Hardened profile skill mutation routes with typed, strict payloads. Add/edit
+  requests now reject unknown fields and empty paths before the current
+  profile-persistence gate returns `501 Not Implemented`.
 - Added the plugin/detection/enforcement endpoint taxonomy:
   `/profiles/{profile_id}/plugins/list`,
   `/profiles/{profile_id}/plugins/{plugin_id}/info`, and

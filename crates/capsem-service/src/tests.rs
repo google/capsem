@@ -472,14 +472,43 @@ async fn profile_skills_routes_reflect_manifest_and_gate_mutations() {
     assert_eq!(list["profile_id"], "code");
     assert!(list["skills"].as_array().unwrap().is_empty());
 
-    let add = handle_profile_skill_add(Path("code".to_string()))
-        .await
-        .unwrap_err();
+    let unknown_field = serde_json::from_value::<ProfileSkillAddRequest>(json!({
+        "path": "/root/.codex/skills/security/SKILL.md",
+        "credential_ref": "sk-leak"
+    }));
+    assert!(
+        unknown_field.is_err(),
+        "skill mutation payloads must reject credential/provider theater fields"
+    );
+
+    let empty_path = handle_profile_skill_add(
+        Path("code".to_string()),
+        Json(ProfileSkillAddRequest {
+            path: " ".to_string(),
+        }),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(empty_path.0, StatusCode::BAD_REQUEST);
+
+    let add = handle_profile_skill_add(
+        Path("code".to_string()),
+        Json(ProfileSkillAddRequest {
+            path: "/root/.codex/skills/security/SKILL.md".to_string(),
+        }),
+    )
+    .await
+    .unwrap_err();
     assert_eq!(add.0, StatusCode::NOT_IMPLEMENTED);
 
-    let edit = handle_profile_skill_edit(Path(("code".to_string(), "build".to_string())))
-        .await
-        .unwrap_err();
+    let edit = handle_profile_skill_edit(
+        Path(("code".to_string(), "build".to_string())),
+        Json(ProfileSkillEditRequest {
+            path: "/root/.codex/skills/build/SKILL.md".to_string(),
+        }),
+    )
+    .await
+    .unwrap_err();
     assert_eq!(edit.0, StatusCode::NOT_IMPLEMENTED);
 
     let delete = handle_profile_skill_delete(Path(("code".to_string(), "build".to_string())))
