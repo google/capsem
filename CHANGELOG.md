@@ -72,6 +72,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   content checks use local text/HTML fixtures, integration tests use local
   allowed/throughput/blocked HTTP paths, and session DB row-generation tests no
   longer curl public services.
+- Routed local release-proof network traffic through the normal guest
+  iptables-nft redirect rail. The local fixture is only the upstream target;
+  doctor, integration, and benchmark paths no longer inject proxy environment
+  variables or explicit WebSocket proxy sockets.
 
 ### Changed (service/API)
 - Updated architecture docs and local development skills to match the 1.3

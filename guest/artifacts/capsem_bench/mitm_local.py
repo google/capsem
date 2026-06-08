@@ -7,7 +7,6 @@ benchmark local, repeatable, and free of public-network variance.
 """
 
 import os
-import socket
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.parse import urlsplit, urlunsplit
@@ -17,7 +16,6 @@ from rich.table import Table
 from .helpers import console, percentile
 
 BASE_URL_ENV = "CAPSEM_BENCH_MITM_LOCAL_BASE_URL"
-PROXY_URL_ENV = "CAPSEM_BENCH_MITM_LOCAL_PROXY_URL"
 TOTAL_REQUESTS_ENV = "CAPSEM_BENCH_MITM_LOCAL_N"
 CONCURRENCY_ENV = "CAPSEM_BENCH_MITM_LOCAL_CONCURRENCY"
 TIMEOUT_ENV = "CAPSEM_BENCH_MITM_LOCAL_TIMEOUT"
@@ -97,16 +95,6 @@ def _ws_url(base_url, path):
     parts = urlsplit(base_url)
     scheme = "wss" if parts.scheme == "https" else "ws"
     return urlunsplit((scheme, parts.netloc, path, "", ""))
-
-
-def _proxy_socket(timeout_s):
-    proxy_url = os.environ.get(PROXY_URL_ENV)
-    if not proxy_url:
-        return None
-    parts = urlsplit(proxy_url)
-    if parts.scheme != "http" or not parts.hostname:
-        raise ValueError(f"invalid {PROXY_URL_ENV}: {proxy_url!r}")
-    return socket.create_connection((parts.hostname, parts.port or 80), timeout_s)
 
 
 def _timed_http_get(session, url, timeout_s, scenario):
@@ -264,10 +252,8 @@ def _run_websocket_scenario(base_url, scenario, timeout_s):
     frames = scenario["frames"]
     start = time.monotonic()
     try:
-        sock = _proxy_socket(timeout_s)
         with connect(
             url,
-            sock=sock,
             proxy=None,
             open_timeout=timeout_s,
             close_timeout=timeout_s,

@@ -163,9 +163,8 @@ def test_ws_url_matches_base_scheme():
     )
 
 
-def test_websocket_uses_explicit_capsem_proxy_socket(monkeypatch):
+def test_websocket_uses_plain_url_without_socket_override(monkeypatch):
     captured = {}
-    fake_sock = object()
 
     class FakeWebSocket:
         def __init__(self):
@@ -183,11 +182,6 @@ def test_websocket_uses_explicit_capsem_proxy_socket(monkeypatch):
         def recv(self, timeout=None):
             return self.last_payload
 
-    def fake_create_connection(target, timeout):
-        captured["target"] = target
-        captured["socket_timeout"] = timeout
-        return fake_sock
-
     def fake_connect(url, **kwargs):
         captured["url"] = url
         captured["connect_kwargs"] = kwargs
@@ -195,11 +189,6 @@ def test_websocket_uses_explicit_capsem_proxy_socket(monkeypatch):
 
     import websockets.sync.client as ws_client
 
-    monkeypatch.setenv(
-        mitm_local.PROXY_URL_ENV,
-        "http://127.0.0.1:10080",
-    )
-    monkeypatch.setattr(mitm_local.socket, "create_connection", fake_create_connection)
     monkeypatch.setattr(ws_client, "connect", fake_connect)
 
     result = mitm_local._run_websocket_scenario(
@@ -209,9 +198,8 @@ def test_websocket_uses_explicit_capsem_proxy_socket(monkeypatch):
     )
 
     assert result["failed"] is False
-    assert captured["target"] == ("127.0.0.1", 10080)
     assert captured["url"] == "ws://127.0.0.1:50233/ws/echo"
-    assert captured["connect_kwargs"]["sock"] is fake_sock
+    assert "sock" not in captured["connect_kwargs"]
     assert captured["connect_kwargs"]["proxy"] is None
 
 

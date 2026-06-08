@@ -1622,22 +1622,11 @@ async fn main() -> Result<()> {
             let debug_base_url = debug_upstream.base_url();
             println!("Local debug upstream: {debug_base_url}");
 
-            let proxy_url = "http://127.0.0.1:10080".to_string();
             let mut doctor_env = std::collections::HashMap::new();
             doctor_env.insert(
                 "CAPSEM_BENCH_MITM_LOCAL_BASE_URL".to_string(),
                 debug_base_url.clone(),
             );
-            doctor_env.insert("HTTP_PROXY".to_string(), proxy_url.clone());
-            doctor_env.insert("http_proxy".to_string(), proxy_url.clone());
-            doctor_env.insert("HTTPS_PROXY".to_string(), proxy_url.clone());
-            doctor_env.insert("https_proxy".to_string(), proxy_url.clone());
-            doctor_env.insert("WS_PROXY".to_string(), proxy_url.clone());
-            doctor_env.insert("ws_proxy".to_string(), proxy_url.clone());
-            doctor_env.insert("WSS_PROXY".to_string(), proxy_url.clone());
-            doctor_env.insert("wss_proxy".to_string(), proxy_url);
-            doctor_env.insert("NO_PROXY".to_string(), String::new());
-            doctor_env.insert("no_proxy".to_string(), String::new());
 
             let req = ProvisionRequest {
                 name: None,

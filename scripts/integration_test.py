@@ -143,21 +143,8 @@ def _stop_process(proc: subprocess.Popen | None) -> None:
         proc.kill()
 
 
-def _local_proxy_env(base_url: str) -> dict[str, str]:
-    proxy = "http://127.0.0.1:10080"
-    return {
-        "CAPSEM_BENCH_MITM_LOCAL_BASE_URL": base_url,
-        "HTTP_PROXY": proxy,
-        "http_proxy": proxy,
-        "HTTPS_PROXY": proxy,
-        "https_proxy": proxy,
-        "WS_PROXY": proxy,
-        "ws_proxy": proxy,
-        "WSS_PROXY": proxy,
-        "wss_proxy": proxy,
-        "NO_PROXY": "",
-        "no_proxy": "",
-    }
+def _local_fixture_env(base_url: str) -> dict[str, str]:
+    return {"CAPSEM_BENCH_MITM_LOCAL_BASE_URL": base_url}
 
 
 def _vm_command(include_gemini_probe: bool, local_base_url: str) -> str:
@@ -353,10 +340,11 @@ def run_vm(binary: str, assets_dir: str) -> tuple[str, int, bool]:
         debug_proc, debug_base_url = _start_debug_upstream()
         print(f"{BOLD}Local debug upstream:{RESET} {debug_base_url}")
 
-        # Pass API key and deterministic local network fixture settings via
-        # --env so they reach the VM through the service.
+        # Pass API key and deterministic local fixture settings via --env so
+        # they reach the VM through the service. Do not inject proxy variables:
+        # guest traffic must prove the iptables-nft redirect rail.
         cmd = [binary, "run", "--timeout", "300"]
-        for key, value in _local_proxy_env(debug_base_url).items():
+        for key, value in _local_fixture_env(debug_base_url).items():
             cmd.extend(["--env", f"{key}={value}"])
         if google_key:
             cmd.extend(["--env", f"GEMINI_API_KEY={google_key}"])

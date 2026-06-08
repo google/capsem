@@ -27,6 +27,7 @@ pytestmark = [pytest.mark.serial, pytest.mark.benchmark]
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 DEBUG_UPSTREAM_BINARY = PROJECT_ROOT / "target" / "debug" / "capsem-debug-upstream"
+DEBUG_UPSTREAM_ADDR = "127.0.0.1:11434"
 
 
 def _project_version():
@@ -82,7 +83,7 @@ def _start_debug_upstream():
             f"{DEBUG_UPSTREAM_BINARY} not found; run `cargo build -p capsem-debug-upstream`"
         )
     proc = subprocess.Popen(
-        [str(DEBUG_UPSTREAM_BINARY), "--addr", "127.0.0.1:0"],
+        [str(DEBUG_UPSTREAM_BINARY), "--addr", DEBUG_UPSTREAM_ADDR],
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
@@ -220,6 +221,13 @@ def test_mitm_local_benchmark_artifact():
     if not base_url:
         upstream_proc, ready = _start_debug_upstream()
         base_url = ready["base_url"]
+    parsed_base = urlsplit(base_url)
+    if parsed_base.hostname != "127.0.0.1" or (parsed_base.port or 80) != 11434:
+        pytest.skip(
+            "mitm-local benchmark release proof requires "
+            "CAPSEM_BENCH_MITM_LOCAL_BASE_URL=http://127.0.0.1:11434 "
+            "so guest traffic traverses iptables-nft redirection"
+        )
 
     total_requests = int(os.environ.get("CAPSEM_BENCH_MITM_LOCAL_N", "10"))
     concurrency = int(os.environ.get("CAPSEM_BENCH_MITM_LOCAL_CONCURRENCY", "1"))
@@ -240,24 +248,10 @@ def test_mitm_local_benchmark_artifact():
             f"{name} not ready"
         )
 
-        proxy = "http://127.0.0.1:10080"
-        env = {
-            "HTTP_PROXY": proxy,
-            "http_proxy": proxy,
-            "HTTPS_PROXY": proxy,
-            "https_proxy": proxy,
-            "WS_PROXY": proxy,
-            "ws_proxy": proxy,
-            "WSS_PROXY": proxy,
-            "wss_proxy": proxy,
-            "CAPSEM_BENCH_MITM_LOCAL_PROXY_URL": proxy,
-            "NO_PROXY": "",
-            "no_proxy": "",
-        }
         command = shlex.join(
             [
                 "env",
-                *(f"{key}={value}" for key, value in env.items()),
+                f"CAPSEM_BENCH_MITM_LOCAL_BASE_URL={base_url}",
                 "capsem-bench",
                 "mitm-local",
                 base_url,

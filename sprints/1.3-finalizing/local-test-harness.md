@@ -26,10 +26,10 @@ The discipline is:
 - Add a reusable local Streamable HTTP MCP server with a real rmcp tool.
 - Replace remote MCP manager tests with local proofs.
 - Replace builtin HTTP fetch/grep/header tests with local fixture proofs.
-- Make `capsem doctor` start a host-side local debug upstream, inject
-  `CAPSEM_BENCH_MITM_LOCAL_BASE_URL`, and force guest HTTP clients through the
-  local network proxy with `NO_PROXY=` so doctor and benchmark proofs do not
-  depend on public services.
+- Make `capsem doctor` start a host-side local debug upstream on
+  `127.0.0.1:11434` and inject only `CAPSEM_BENCH_MITM_LOCAL_BASE_URL`; guest
+  HTTP/WebSocket clients must reach it through normal iptables-nft redirection,
+  not direct proxy environment variables or socket overrides.
 - Replace integration-test Google/CDN traffic with the local debug upstream
   `/tiny`, `/bytes/10mb`, and corp-blocked `/deny-target` fixtures.
 - Replace session DB row-generation curls with deterministic denied-domain
@@ -47,8 +47,9 @@ The discipline is:
     it through the production manager dispatch path.
   - Builtin `fetch_http`, `grep_http`, and `http_headers` call a local HTTP
     fixture through the production reqwest path.
-  - `capsem doctor` provisions its VM with a local debug upstream/proxy env so
-    doctor MCP and network diagnostics exercise the real spine locally.
+  - `capsem doctor` provisions its VM with a local debug upstream base URL so
+    doctor MCP and network diagnostics exercise the real iptables-nft/MITM spine
+    locally.
 - Adversarial:
   - Missing broker credential reference fails closed before the local MCP
     server receives any request.
