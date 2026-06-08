@@ -1,10 +1,10 @@
 # Corporate policy for integration tests.
 # Used by scripts/integration_test.py.
 
-[corp.rules.block_example_invalid]
-name = "block_example_invalid"
+[corp.rules.block_local_deny_target]
+name = "block_local_deny_target"
 action = "block"
 priority = -100
 detection_level = "high"
-reason = "Integration proof that corp-owned rules, not settings-owned AI toggles, control enforcement."
-match = 'http.host == "example.invalid"'
+reason = "Integration proof that corp-owned rules block a deterministic local HTTP fixture path."
+match = 'http.host == "127.0.0.1" && http.path == "/deny-target"'

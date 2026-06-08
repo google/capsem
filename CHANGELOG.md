@@ -66,6 +66,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   include the full host tool set including `capsem-admin`,
   `capsem-tui`, `capsem-mcp-aggregator`, and `capsem-mcp-builtin`.
 
+### Changed (release proof)
+- Replaced public-service release proof with deterministic local fixtures:
+  `capsem doctor` now starts/passes a local `capsem-debug-upstream`, doctor MCP
+  content checks use local text/HTML fixtures, integration tests use local
+  allowed/throughput/blocked HTTP paths, and session DB row-generation tests no
+  longer curl public services.
+
 ### Changed (service/API)
 - Updated architecture docs and local development skills to match the 1.3
   contract: settings endpoints are `/settings/info|edit` and expose only

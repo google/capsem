@@ -190,6 +190,11 @@ batch unrelated fixes into one giant release commit.
   the production manager connects to a local rmcp Streamable HTTP server,
   resolves broker-owned OAuth material before dispatch, calls a real tool, and
   fails unresolved broker refs before any outbound request.
+- [x] Burn public-service reliance from the release proof lanes: `capsem doctor`
+  starts/passes a local debug upstream, doctor MCP content checks use local
+  HTML/text fixtures, integration net/throughput/enforcement proof uses local
+  `/tiny`, `/bytes/10mb`, and blocked `/deny-target`, and session DB tests use
+  deterministic denied probes instead of public curls.
 - [x] Replace global enforcement authoring routes with profile-owned routes:
   `/profiles/{profile_id}/enforcement/evaluate`,
   `PUT /profiles/{profile_id}/enforcement/rules/{rule_id}/edit`,

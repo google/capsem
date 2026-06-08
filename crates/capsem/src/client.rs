@@ -24,6 +24,7 @@ use crate::{paths, service_install};
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ProvisionRequest {
     pub name: Option<String>,
+    pub profile_id: String,
     pub ram_mb: u64,
     pub cpus: u32,
     #[serde(default)]
@@ -121,6 +122,7 @@ pub struct PersistRequest {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct RunRequest {
     pub command: String,
+    pub profile_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeout_secs: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]

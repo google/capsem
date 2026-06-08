@@ -22,6 +22,18 @@ use tokio::net::TcpListener;
 use tokio::sync::oneshot;
 
 const TINY_BODY: &[u8] = b"capsem-debug-upstream:tiny\n";
+const HTML_ABOUT: &str = r#"<!doctype html>
+<html>
+  <head><title>Capsem Debug About</title></head>
+  <body>
+    <div id="about">
+      <p>Capsem debug upstream about page for local MCP fetch tests.</p>
+      <p>Google, Anthropic, and OpenAI appear here as fixture text only.</p>
+      <a href="https://example.invalid/local">Local fixture link</a>
+    </div>
+  </body>
+</html>
+"#;
 const SLOW_CHUNK_DELAY: Duration = Duration::from_millis(10);
 
 #[derive(Debug, Clone, Serialize)]
@@ -57,7 +69,16 @@ impl DebugUpstreamHandle {
 }
 
 pub async fn spawn_debug_upstream() -> anyhow::Result<DebugUpstreamHandle> {
-    let listener = TcpListener::bind("127.0.0.1:0")
+    spawn_debug_upstream_on(
+        "127.0.0.1:0"
+            .parse()
+            .expect("valid debug upstream bind address"),
+    )
+    .await
+}
+
+pub async fn spawn_debug_upstream_on(addr: SocketAddr) -> anyhow::Result<DebugUpstreamHandle> {
+    let listener = TcpListener::bind(addr)
         .await
         .context("bind debug upstream")?;
     let addr = listener
@@ -84,6 +105,8 @@ pub fn ready_payload(addr: SocketAddr) -> ReadyPayload {
         base_url: format!("http://{addr}"),
         endpoints: vec![
             "/tiny",
+            "/html/about",
+            "/html/large",
             "/bytes/{size}",
             "/gzip/{size}",
             "/sse/model",
@@ -111,6 +134,8 @@ where
 pub fn app() -> Router {
     Router::new()
         .route("/tiny", get(tiny))
+        .route("/html/about", get(html_about))
+        .route("/html/large", get(html_large))
         .route("/bytes/{size}", get(bytes_endpoint))
         .route("/gzip/{size}", get(gzip_endpoint))
         .route("/sse/model", get(sse_model))
@@ -125,6 +150,21 @@ pub fn app() -> Router {
 
 async fn tiny() -> impl IntoResponse {
     ([(CONTENT_TYPE, "text/plain; charset=utf-8")], TINY_BODY)
+}
+
+async fn html_about() -> impl IntoResponse {
+    ([(CONTENT_TYPE, "text/html; charset=utf-8")], HTML_ABOUT)
+}
+
+async fn html_large() -> impl IntoResponse {
+    let mut body = String::from("<!doctype html><html><body><main>\n");
+    for idx in 0..80 {
+        body.push_str(&format!(
+            "<p>Capsem local pagination fixture paragraph {idx}: debug upstream content for MCP fetch tests.</p>\n"
+        ));
+    }
+    body.push_str("</main></body></html>\n");
+    ([(CONTENT_TYPE, "text/html; charset=utf-8")], body)
 }
 
 async fn bytes_endpoint(Path(size): Path<String>) -> Response {
@@ -344,6 +384,28 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(tiny.as_ref(), TINY_BODY);
+
+        let html_about = client
+            .get(format!("{}/html/about", upstream.base_url()))
+            .send()
+            .await
+            .unwrap()
+            .text()
+            .await
+            .unwrap();
+        assert!(html_about.contains("Capsem debug upstream about page"));
+        assert!(html_about.contains("Google"));
+
+        let html_large = client
+            .get(format!("{}/html/large", upstream.base_url()))
+            .send()
+            .await
+            .unwrap()
+            .text()
+            .await
+            .unwrap();
+        assert!(html_large.len() > 5000);
+        assert!(html_large.contains("pagination fixture paragraph 79"));
 
         let bytes = client
             .get(format!("{}/bytes/10kb", upstream.base_url()))

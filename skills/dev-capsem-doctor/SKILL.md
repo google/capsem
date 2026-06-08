@@ -10,7 +10,8 @@ capsem-doctor is a pytest-based diagnostic suite that runs inside the guest VM. 
 ## Running
 
 ```bash
-just run "capsem-doctor"              # Full suite (~10s total including VM boot)
+just run "capsem-doctor"              # Full suite inside an existing VM
+capsem doctor                         # Boots a fresh VM and injects local debug upstream
 just run "capsem-doctor -k sandbox"   # Only sandbox tests
 just run "capsem-doctor -k network"   # Only network tests
 just run "capsem-doctor -x"           # Stop on first failure
@@ -22,14 +23,14 @@ just run "capsem-doctor -v"           # Extra verbose
 | File | What it validates |
 |------|-------------------|
 | `test_sandbox.py` | Read-only rootfs, binary permissions (chmod 555), no setuid/setgid, kernel hardening (no modules, no debugfs, no IPv6, no swap, no kallsyms), process integrity (pty-agent, dnsmasq running; no systemd, sshd, cron), network isolation (dummy0, fake DNS, iptables, no real NICs) |
-| `test_network.py` | MITM CA in system store + certifi, curl without -k works, Python urllib HTTPS, CA env vars set (SSL_CERT_FILE, REQUESTS_CA_BUNDLE, NODE_EXTRA_CA_CERTS), HTTP/80 blocked, non-443 ports blocked, direct IP blocked, multi-domain DNS faking, AI provider domains reachable |
+| `test_network.py` | MITM CA in system store + certifi, CA env vars set (SSL_CERT_FILE, REQUESTS_CA_BUNDLE, NODE_EXTRA_CA_CERTS), local debug-upstream HTTP/throughput proof when `CAPSEM_BENCH_MITM_LOCAL_BASE_URL` is injected, HTTP/80 proxying, non-443 ports blocked, direct IP blocked, and explicit opt-in public smokes only when `CAPSEM_RUN_PUBLIC_NETWORK_SMOKE=1` |
 | `test_environment.py` | TERM/HOME/PATH env vars correct, shell is bash, kernel version, aarch64 arch, mount points (/proc, /sys, /dev, /dev/pts), tmpfs verification |
 | `test_runtimes.py` | Python3, Node.js, npm, pip3, git version checks; Python file I/O; Node file I/O; git init+commit workflow |
 | `test_utilities.py` | ~36 unix utilities available (coreutils, text processing, network, system tools, capsem-bench) |
 | `test_workflows.py` | Text write/read, JSON roundtrip (Python + Node), shell pipes, large file (10MB) |
 | `test_ai_cli.py` | claude, gemini, codex installed and executable without crashing |
 | `test_virtiofs.py` | VirtioFS root mount, ext4 loopback upper, loop device active, workspace write/read/large file/subdir, system overlay writable, pip install works, file delete+recreate (skipped in block mode) |
-| `test_mcp.py` | Guest MCP endpoint tool routing, domain blocking via MCP |
+| `test_mcp.py` | Guest MCP endpoint tool routing, local debug-upstream fetch/grep/header content checks, domain blocking via MCP |
 | `test_injection.py` | Security injection tests |
 | `conftest.py` | Test infrastructure (auto-skip outside VM, `run()` helper, output dir fixture) |
 
@@ -56,8 +57,13 @@ def output_dir():
 1. Add test functions to the appropriate `guest/artifacts/diagnostics/test_*.py` file, or create `test_<category>.py`
 2. Use `from conftest import run` for shell commands, `output_dir` fixture for temp files
 3. Tests auto-skip outside the capsem VM (no special guards needed)
-4. `just run "capsem-doctor"` picks up changes immediately (diagnostics repacked into initrd)
-5. For rootfs-baked changes: `just build-assets` then `just run "capsem-doctor"`
+4. `capsem doctor` is the preferred release smoke because it starts the
+   host-side local debug upstream and passes the deterministic network env into
+   the VM. `just run "capsem-doctor"` is for running inside an already-prepared
+   VM and expects `CAPSEM_BENCH_MITM_LOCAL_BASE_URL` if local network tests
+   should run.
+5. `just run "capsem-doctor"` picks up changes immediately (diagnostics repacked into initrd)
+6. For rootfs-baked changes: `just build-assets` then `capsem doctor`
 
 ## Where tests live on disk
 

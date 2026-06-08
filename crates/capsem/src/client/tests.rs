@@ -167,6 +167,7 @@ fn api_response_empty_error() {
 fn provision_request_serde() {
     let req = ProvisionRequest {
         name: Some("test".into()),
+        profile_id: "code".into(),
         ram_mb: 4096,
         cpus: 4,
         persistent: true,
@@ -176,6 +177,7 @@ fn provision_request_serde() {
     let json = serde_json::to_string(&req).unwrap();
     let req2: ProvisionRequest = serde_json::from_str(&json).unwrap();
     assert_eq!(req2.name, Some("test".into()));
+    assert_eq!(req2.profile_id, "code");
     assert_eq!(req2.ram_mb, 4096);
     assert!(req2.persistent);
     assert!(req2.env.is_none());
@@ -187,6 +189,7 @@ fn provision_request_with_env() {
     env.insert("FOO".into(), "bar".into());
     let req = ProvisionRequest {
         name: Some("test".into()),
+        profile_id: "code".into(),
         ram_mb: 2048,
         cpus: 2,
         persistent: true,
@@ -203,6 +206,7 @@ fn provision_request_with_env() {
 fn provision_request_env_omitted_when_none() {
     let req = ProvisionRequest {
         name: None,
+        profile_id: "code".into(),
         ram_mb: 2048,
         cpus: 2,
         persistent: false,
@@ -217,6 +221,7 @@ fn provision_request_env_omitted_when_none() {
 fn provision_request_with_from() {
     let req = ProvisionRequest {
         name: None,
+        profile_id: "code".into(),
         ram_mb: 2048,
         cpus: 2,
         persistent: false,
@@ -233,6 +238,7 @@ fn provision_request_with_from() {
 fn provision_request_from_omitted_when_none() {
     let req = ProvisionRequest {
         name: None,
+        profile_id: "code".into(),
         ram_mb: 2048,
         cpus: 2,
         persistent: false,
@@ -438,12 +444,14 @@ fn run_request_serde() {
     env.insert("KEY".into(), "val".into());
     let req = RunRequest {
         command: "echo hi".into(),
+        profile_id: "code".into(),
         timeout_secs: Some(60),
         env: Some(env),
     };
     let json = serde_json::to_string(&req).unwrap();
     let req2: RunRequest = serde_json::from_str(&json).unwrap();
     assert_eq!(req2.command, "echo hi");
+    assert_eq!(req2.profile_id, "code");
     assert_eq!(req2.timeout_secs, Some(60));
     assert_eq!(req2.env.unwrap().get("KEY").unwrap(), "val");
 }
@@ -452,6 +460,7 @@ fn run_request_serde() {
 fn run_request_env_omitted_when_none() {
     let req = RunRequest {
         command: "ls".into(),
+        profile_id: "code".into(),
         timeout_secs: None,
         env: None,
     };

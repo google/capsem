@@ -6,6 +6,7 @@ the exact layer that broke.
 
 import os
 import subprocess
+from urllib.parse import urlsplit
 
 import pytest
 
@@ -20,6 +21,22 @@ def _local_debug_url(path):
     if not base_url:
         return None
     return f"{base_url.rstrip('/')}/{path.lstrip('/')}"
+
+
+def _require_local_debug_url(path, reason):
+    url = _local_debug_url(path)
+    if not url:
+        pytest.skip(
+            f"{reason}; set {LOCAL_DEBUG_UPSTREAM_ENV} for deterministic local proof"
+        )
+    parsed = urlsplit(url)
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    if parsed.scheme == "http" and port not in (80, 11434):
+        pytest.skip(
+            f"{reason}; local debug upstream port {port} is outside the "
+            "default HTTP upstream allowlist"
+        )
+    return url
 
 
 def _public_network_smoke_enabled():
@@ -434,6 +451,7 @@ def test_http_port_80_is_proxied():
     """Plain HTTP (port 80) is inspected by the MITM proxy."""
     local_url = _local_debug_url("/tiny")
     if local_url:
+        local_url = _require_local_debug_url("/tiny", "local HTTP proxy smoke")
         result = run(
             f"curl -sS --connect-timeout 5 {local_url} 2>&1",
             timeout=15,
@@ -501,6 +519,7 @@ def test_proxy_download_throughput():
     """
     local_url = _local_debug_url("/bytes/10mb")
     if local_url:
+        local_url = _require_local_debug_url("/bytes/10mb", "local proxy throughput smoke")
         result = run(
             f"curl -sL -o /dev/null"
             f" -w '%{{speed_download}} %{{size_download}} %{{time_total}}'"

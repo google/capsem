@@ -19,7 +19,9 @@ import argparse
 import json
 import os
 import re
+import selectors
 import signal
+import shlex
 import sqlite3
 import subprocess
 import sys
@@ -59,6 +61,8 @@ SESSIONS_DIR = _run_dir() / "sessions"
 MAIN_DB = CAPSEM_HOME / "sessions" / "main.db"
 SERVICE_SOCKET = _run_dir() / "service.sock"
 SERVICE_PIDFILE = _run_dir() / "service.pid"
+DEBUG_UPSTREAM_BINARY = Path("target/debug/capsem-debug-upstream")
+DEBUG_UPSTREAM_ADDR = "127.0.0.1:11434"
 
 def _gemini_api_key() -> Optional[str]:
     """Find a Gemini API key for the optional live model telemetry probe."""
@@ -77,39 +81,95 @@ def _gemini_api_key() -> Optional[str]:
     return None
 
 
-def _integration_block_domain() -> str:
-    """Read the first blocked domain from the integration test config."""
-    deny_domain = "example.com"
-    config_path = Path("config/integration-test-user.toml")
-    if not config_path.exists():
-        return deny_domain
-
-    in_custom_block = False
-    with open(config_path, "r") as f:
-        for line in f:
-            stripped = line.strip()
-            if stripped.startswith("[settings."):
-                in_custom_block = stripped == '[settings."security.web.custom_block"]'
+def _read_debug_upstream_ready(proc: subprocess.Popen, timeout_s: float = 10.0) -> dict:
+    selector = selectors.DefaultSelector()
+    selector.register(proc.stdout, selectors.EVENT_READ)
+    deadline = time.monotonic() + timeout_s
+    lines: list[str] = []
+    while time.monotonic() < deadline:
+        if proc.poll() is not None:
+            raise RuntimeError(
+                f"capsem-debug-upstream exited early with code {proc.returncode}: "
+                f"{''.join(lines)}"
+            )
+        for key, _ in selector.select(timeout=0.2):
+            line = key.fileobj.readline()
+            if not line:
                 continue
+            lines.append(line)
+            try:
+                payload = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if payload.get("service") == "capsem-debug-upstream":
+                return payload
+    raise TimeoutError(
+        "capsem-debug-upstream did not become ready; "
+        f"stdout={''.join(lines)!r}"
+    )
 
-            # Support the older inline form too:
-            # "security.web.custom_block" = { value = "domain.com", ... }
-            if 'security.web.custom_block' in stripped and 'value =' in stripped:
-                in_custom_block = True
 
-            if in_custom_block and 'value =' in stripped:
-                match = re.search(r'value\s*=\s*"(.*?)"', stripped)
-                if match:
-                    return match.group(1).split(",")[0].strip()
-    return deny_domain
+def _start_debug_upstream() -> tuple[subprocess.Popen, str]:
+    if not DEBUG_UPSTREAM_BINARY.exists():
+        raise RuntimeError(
+            f"{DEBUG_UPSTREAM_BINARY} not found; run `cargo build -p capsem-debug-upstream`"
+        )
+    proc = subprocess.Popen(
+        [str(DEBUG_UPSTREAM_BINARY), "--addr", DEBUG_UPSTREAM_ADDR],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
+    )
+    try:
+        ready = _read_debug_upstream_ready(proc)
+        return proc, ready["base_url"]
+    except Exception:
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+        raise
 
 
-def _vm_command(include_gemini_probe: bool) -> str:
+def _stop_process(proc: subprocess.Popen | None) -> None:
+    if proc is None:
+        return
+    proc.terminate()
+    try:
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+
+
+def _local_proxy_env(base_url: str) -> dict[str, str]:
+    proxy = "http://127.0.0.1:10080"
+    return {
+        "CAPSEM_BENCH_MITM_LOCAL_BASE_URL": base_url,
+        "HTTP_PROXY": proxy,
+        "http_proxy": proxy,
+        "HTTPS_PROXY": proxy,
+        "https_proxy": proxy,
+        "WS_PROXY": proxy,
+        "ws_proxy": proxy,
+        "WSS_PROXY": proxy,
+        "wss_proxy": proxy,
+        "NO_PROXY": "",
+        "no_proxy": "",
+    }
+
+
+def _vm_command(include_gemini_probe: bool, local_base_url: str) -> str:
     """Build the compound command executed inside the VM.
 
     Semicolons ensure every step runs even if an earlier one fails -- the
     host-side assertions decide pass/fail.
     """
+    tiny_url = shlex.quote(f"{local_base_url.rstrip('/')}/tiny")
+    bytes_url = shlex.quote(f"{local_base_url.rstrip('/')}/bytes/10mb")
+    deny_url = shlex.quote(f"{local_base_url.rstrip('/')}/deny-target")
+
     commands = [
     # -- fs_events: create, modify, and delete files --
     "echo 'integration-test-data' > /root/integration_test.txt",
@@ -119,21 +179,16 @@ def _vm_command(include_gemini_probe: bool) -> str:
     "sleep 0.2",  # let debouncer see the create before we delete
     "rm /root/delete_me.txt",
 
-    # -- net_events: HTTPS fetch to allowed + denied domains --
-    "curl -sf https://google.com -o /dev/null",
-    "curl -sf https://example.com/ -o /dev/null || true",  # denied by policy
+    # -- net_events: local allowed fetch + denied domain --
+    f"curl -sf {tiny_url} -o /dev/null",
+    f"curl -sf {deny_url} -o /dev/null || true",  # denied by corp rule
 
-    # -- throughput: ~10MB PDF through the full MITM proxy pipeline --
-    # cdn.elie.net 301-redirects to elie.net; -L proves the proxy handles
-    # cross-host redirects too. The previous target (ash-speed.hetzner.com/
-    # 1MB.bin) 404'd silently -- curl reported 146 bytes of nginx error page
-    # while the test asserted only "request logged" + "decision=allowed",
-    # so throughput was untested for months.
+    # -- throughput: deterministic 10MB fixture through the full MITM proxy pipeline --
     (
         "curl -sL -o /dev/null"
         " -w 'throughput: %{speed_download} B/s in %{time_total}s\\n'"
         " --connect-timeout 5 -m 30"
-        " https://cdn.elie.net/static/files/i-am-a-legend/i-am-a-legend-slides.pdf"
+        f" {bytes_url}"
     ),
 
     # -- mcp_calls: capsem-doctor MCP test subset --
@@ -276,6 +331,7 @@ def run_vm(binary: str, assets_dir: str) -> tuple[str, int, bool]:
     }
 
     google_key = _gemini_api_key()
+    debug_proc = None
 
     # Restart the dev service with CAPSEM_{USER,CORP}_CONFIG in its env so
     # the policy rules from `config/integration-test-user.toml` actually
@@ -293,19 +349,29 @@ def run_vm(binary: str, assets_dir: str) -> tuple[str, int, bool]:
     # Snapshot session dirs before so we can find the new one after.
     existing = set(p.name for p in SESSIONS_DIR.iterdir()) if SESSIONS_DIR.exists() else set()
 
-    # Pass API key via --env so it reaches the VM through the service.
-    cmd = [binary, "run", "--timeout", "300"]
-    if google_key:
-        cmd.extend(["--env", f"GEMINI_API_KEY={google_key}"])
-    cmd.append(_vm_command(include_gemini_probe=google_key is not None))
-
-    print(f"{BOLD}Booting VM with test command ...{RESET}")
     try:
+        debug_proc, debug_base_url = _start_debug_upstream()
+        print(f"{BOLD}Local debug upstream:{RESET} {debug_base_url}")
+
+        # Pass API key and deterministic local network fixture settings via
+        # --env so they reach the VM through the service.
+        cmd = [binary, "run", "--timeout", "300"]
+        for key, value in _local_proxy_env(debug_base_url).items():
+            cmd.extend(["--env", f"{key}={value}"])
+        if google_key:
+            cmd.extend(["--env", f"GEMINI_API_KEY={google_key}"])
+        cmd.append(_vm_command(
+            include_gemini_probe=google_key is not None,
+            local_base_url=debug_base_url,
+        ))
+
+        print(f"{BOLD}Booting VM with test command ...{RESET}")
         proc = subprocess.run(
             cmd,
             env=env, capture_output=True, text=True, timeout=300,
         )
     finally:
+        _stop_process(debug_proc)
         # Always tear down the test service. Subsequent smoke steps spawn
         # their own fixtures, and leaving this one around would shadow any
         # default-config service the pipeline expects next.
@@ -428,22 +494,22 @@ def verify_session(session_id: str, expect_model_calls: bool) -> bool:
         "no net_events recorded",
     )
 
-    # google.com from the curl.
-    elie = conn.execute(
-        "SELECT * FROM net_events WHERE domain = 'google.com'"
+    # Local fixture /tiny from the curl.
+    local_tiny = conn.execute(
+        "SELECT * FROM net_events WHERE domain = '127.0.0.1' AND path = '/tiny'"
     ).fetchone()
     r.check(
-        elie is not None,
-        "google.com request logged (curl)",
-        "google.com NOT found in net_events (curl may have failed)",
+        local_tiny is not None,
+        "local debug /tiny request logged (curl)",
+        "local debug /tiny NOT found in net_events (curl may have failed)",
     )
 
     # Allowed decision.
-    if elie:
+    if local_tiny:
         r.check(
-            elie["decision"] == "allowed",
-            "google.com decision = allowed",
-            f"google.com decision = {elie['decision']} (expected allowed)",
+            local_tiny["decision"] == "allowed",
+            "local debug /tiny decision = allowed",
+            f"local debug /tiny decision = {local_tiny['decision']} (expected allowed)",
         )
 
     # Google/Gemini API requests are live-credential dependent. Smoke must pass
@@ -461,15 +527,14 @@ def verify_session(session_id: str, expect_model_calls: bool) -> bool:
     else:
         r.warn("Gemini live model probe skipped (no GEMINI_API_KEY/GOOGLE_API_KEY)")
 
-    # cdn.elie.net / elie.net throughput download (~10MB PDF, -L follows
-    # 301 to elie.net, so both hosts should appear in net_events).
+    # Local deterministic 10MB fixture throughput download.
     throughput_rows = conn.execute(
-        "SELECT * FROM net_events WHERE domain IN ('cdn.elie.net', 'elie.net')"
+        "SELECT * FROM net_events WHERE domain = '127.0.0.1' AND path = '/bytes/10mb'"
     ).fetchall()
     r.check(
         len(throughput_rows) > 0,
-        f"{len(throughput_rows)} throughput net_events recorded (cdn.elie.net/elie.net)",
-        "no throughput net_events found (10MB download may have failed through MITM)",
+        f"{len(throughput_rows)} local throughput net_events recorded (/bytes/10mb)",
+        "no local throughput net_events found (10MB fixture may have failed through MITM)",
     )
     if throughput_rows:
         allowed = sum(1 for row in throughput_rows if row["decision"] == "allowed")
@@ -496,18 +561,20 @@ def verify_session(session_id: str, expect_model_calls: bool) -> bool:
         "no net_events with HTTP status codes (MITM proxy may not be recording)",
     )
 
-    # Denied DNS event from curl to blocked domain (from test config). A DNS
-    # deny never reaches the HTTP MITM layer, so the custom block belongs in
-    # dns_events, while MCP builtin blocked fetches below prove denied net_events.
-    deny_domain = _integration_block_domain()
-    dns_denied_count = conn.execute(
-        "SELECT COUNT(*) FROM dns_events WHERE decision = 'denied' AND qname = ?",
-        (deny_domain,)
+    # Denied local HTTP event from the corp-owned integration rule.
+    denied_target_count = conn.execute(
+        """
+        SELECT COUNT(*)
+        FROM net_events
+        WHERE decision = 'denied'
+          AND domain = '127.0.0.1'
+          AND path = '/deny-target'
+        """
     ).fetchone()[0]
     r.check(
-        dns_denied_count >= 1,
-        f"{dns_denied_count} denied dns_events for {deny_domain} (policy enforcement working)",
-        f"no denied dns_events for {deny_domain} (curl to blocked domain may have failed silently)",
+        denied_target_count >= 1,
+        f"{denied_target_count} denied local /deny-target net_events (corp enforcement working)",
+        "no denied local /deny-target net_events (corp rule may not have applied)",
     )
 
     denied_count = conn.execute(

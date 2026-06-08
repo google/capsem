@@ -12,12 +12,21 @@ import pytest
 
 from conftest import run
 
-PUBLIC_NETWORK_SMOKE_ENV = "CAPSEM_RUN_PUBLIC_NETWORK_SMOKE"
+LOCAL_DEBUG_UPSTREAM_ENV = "CAPSEM_BENCH_MITM_LOCAL_BASE_URL"
 
 
-def _require_public_network_smoke(reason):
-    if os.environ.get(PUBLIC_NETWORK_SMOKE_ENV) != "1":
-        pytest.skip(f"{reason}; set {PUBLIC_NETWORK_SMOKE_ENV}=1")
+def _local_debug_url(path):
+    base_url = os.environ.get(LOCAL_DEBUG_UPSTREAM_ENV)
+    if not base_url:
+        return None
+    return f"{base_url.rstrip('/')}/{path.lstrip('/')}"
+
+
+def _require_local_debug_url(path, reason):
+    url = _local_debug_url(path)
+    if not url:
+        pytest.skip(f"{reason}; set {LOCAL_DEBUG_UPSTREAM_ENV}")
+    return url
 
 
 # ---------------------------------------------------------------------------
@@ -212,8 +221,8 @@ def test_mcp_oversized_request_returns_local_error_and_recovers():
 
 
 def test_mcp_fetch_http_allowed_domain():
-    """fetch_http on an allowed domain succeeds."""
-    _require_public_network_smoke("public MCP fetch_http smoke")
+    """fetch_http on the local debug upstream succeeds."""
+    url = _require_local_debug_url("/tiny", "local MCP fetch_http smoke")
     responses = _mcp_call([
         {
             "jsonrpc": "2.0",
@@ -232,7 +241,7 @@ def test_mcp_fetch_http_allowed_domain():
             "method": "tools/call",
             "params": {
                 "name": "local__fetch_http",
-                "arguments": {"url": "https://elie.net", "max_length": 1000},
+                "arguments": {"url": url, "max_length": 1000},
             },
         },
     ])
@@ -241,7 +250,8 @@ def test_mcp_fetch_http_allowed_domain():
     result = call_resp[0]["result"]
     assert result.get("isError") is not True
     content_text = result["content"][0]["text"]
-    assert "URL: https://elie.net" in content_text
+    assert f"URL: {url}" in content_text
+    assert "capsem-debug-upstream:tiny" in content_text
 
 
 def test_mcp_fetch_http_blocked_domain():
@@ -325,20 +335,16 @@ def _init_and_call(tool_name, arguments, call_id=10, timeout=15):
 # ---------------------------------------------------------------------------
 
 def test_mcp_fetch_http_returns_real_content():
-    """fetch_http on elie.net returns actual page content, not empty text."""
-    _require_public_network_smoke("public MCP fetch_http content smoke")
+    """fetch_http returns actual local fixture content, not empty text."""
+    url = _require_local_debug_url("/tiny", "local MCP fetch_http content smoke")
     result = _init_and_call(
         "fetch_http",
-        {"url": "https://elie.net", "max_length": 5000},
+        {"url": url, "max_length": 5000},
     )
     assert result.get("isError") is not True, f"fetch failed: {result}"
     text = result["content"][0]["text"]
-    # Must contain the domain echo
-    assert "elie.net" in text
-    # Must contain actual content from the page (not just metadata headers)
-    text_lower = text.lower()
-    assert "elie" in text_lower, (
-        f"fetch_http returned no real content from elie.net (missing 'elie'): {text[:500]}"
+    assert "capsem-debug-upstream:tiny" in text, (
+        f"fetch_http returned no real local fixture content: {text[:500]}"
     )
 
 
@@ -347,16 +353,16 @@ def test_mcp_fetch_http_returns_real_content():
 # ---------------------------------------------------------------------------
 
 def test_mcp_grep_http_finds_matches():
-    """grep_http on elie.net with pattern 'elie' must find matches."""
-    _require_public_network_smoke("public MCP grep_http smoke")
+    """grep_http on the local debug upstream must find matches."""
+    url = _require_local_debug_url("/html/about", "local MCP grep_http smoke")
     result = _init_and_call(
         "grep_http",
-        {"url": "https://elie.net", "pattern": "elie"},
+        {"url": url, "pattern": "Google"},
     )
     assert result.get("isError") is not True, f"grep failed: {result}"
     text = result["content"][0]["text"]
     assert "Matches found: 0" not in text, (
-        f"grep_http found 0 matches for 'elie' on elie.net -- extraction broken: {text[:500]}"
+        f"grep_http found 0 matches on local fixture -- extraction broken: {text[:500]}"
     )
     assert "Match 1" in text, (
         f"grep_http output missing match blocks: {text[:500]}"
@@ -392,11 +398,11 @@ def test_mcp_http_headers_blocked_domain():
 # ---------------------------------------------------------------------------
 
 def test_mcp_http_headers_allowed_domain():
-    """http_headers on elie.net returns status and headers."""
-    _require_public_network_smoke("public MCP http_headers smoke")
+    """http_headers on the local debug upstream returns status and headers."""
+    url = _require_local_debug_url("/tiny", "local MCP http_headers smoke")
     result = _init_and_call(
         "http_headers",
-        {"url": "https://elie.net"},
+        {"url": url},
     )
     assert result.get("isError") is not True, f"http_headers failed: {result}"
     text = result["content"][0]["text"]
@@ -587,25 +593,25 @@ def test_mcp_fetch_http_invalid_url():
 
 
 def test_mcp_fetch_http_subpath():
-    """fetch_http on elie.net/about returns real page content."""
-    _require_public_network_smoke("public MCP fetch_http subpath smoke")
+    """fetch_http on the local HTML fixture returns real page content."""
+    url = _require_local_debug_url("/html/about", "local MCP fetch_http subpath smoke")
     result = _init_and_call(
         "fetch_http",
-        {"url": "https://elie.net/about", "max_length": 2000},
+        {"url": url, "max_length": 2000},
     )
     assert result.get("isError") is not True, f"fetch failed: {result}"
     text = result["content"][0]["text"]
-    assert "Bursztein" in text, (
-        f"fetch_http on /about must contain 'Bursztein': {text[:500]}"
+    assert "Capsem debug upstream about page" in text, (
+        f"fetch_http on /html/about must contain fixture text: {text[:500]}"
     )
 
 
 def test_mcp_fetch_http_raw_mode():
     """fetch_http with format=raw returns HTML tags."""
-    _require_public_network_smoke("public MCP fetch_http raw smoke")
+    url = _require_local_debug_url("/html/about", "local MCP fetch_http raw smoke")
     result = _init_and_call(
         "fetch_http",
-        {"url": "https://elie.net/about", "format": "raw", "max_length": 10000},
+        {"url": url, "format": "raw", "max_length": 10000},
     )
     assert result.get("isError") is not True, f"fetch raw failed: {result}"
     text = result["content"][0]["text"]
@@ -615,25 +621,25 @@ def test_mcp_fetch_http_raw_mode():
 
 
 def test_mcp_grep_http_with_pattern():
-    """grep_http on elie.net/about finds 'Google' matches."""
-    _require_public_network_smoke("public MCP grep_http pattern smoke")
+    """grep_http on the local HTML fixture finds 'Google' matches."""
+    url = _require_local_debug_url("/html/about", "local MCP grep_http pattern smoke")
     result = _init_and_call(
         "grep_http",
-        {"url": "https://elie.net/about", "pattern": "Google"},
+        {"url": url, "pattern": "Google"},
     )
     assert result.get("isError") is not True, f"grep failed: {result}"
     text = result["content"][0]["text"]
     assert "Match 1" in text, (
-        f"grep_http must find 'Google' on /about: {text[:500]}"
+        f"grep_http must find 'Google' on local fixture: {text[:500]}"
     )
 
 
 def test_mcp_fetch_http_pagination():
     """fetch_http with small max_length shows pagination hint."""
-    _require_public_network_smoke("public MCP fetch_http pagination smoke")
+    url = _require_local_debug_url("/html/large", "local MCP fetch_http pagination smoke")
     result = _init_and_call(
         "fetch_http",
-        {"url": "https://elie.net/about", "max_length": 500},
+        {"url": url, "max_length": 500},
     )
     assert result.get("isError") is not True, f"fetch failed: {result}"
     text = result["content"][0]["text"]

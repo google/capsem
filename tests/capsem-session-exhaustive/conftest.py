@@ -26,10 +26,10 @@ def exhaustive_env():
         svc.stop()
         pytest.fail(f"VM {vm_name} never became exec-ready")
 
-    # Run workloads to populate tables
-    # Network event: curl an allowed domain
+    # Run workloads to populate tables.
+    # Network event: deterministic denied request, no public service dependency.
     client.post(f"/vms/{vm_name}/exec", {
-        "command": "curl -s -o /dev/null https://elie.net/ 2>&1 || true"
+        "command": "curl -skI --connect-timeout 5 https://evil-never-allowed.invalid 2>&1 || true"
     })
     # File event: write a file
     client.post(f"/write-file/{vm_name}", {

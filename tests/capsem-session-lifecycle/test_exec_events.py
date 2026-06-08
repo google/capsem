@@ -11,9 +11,10 @@ def test_exec_curl_creates_net_event(lifecycle_env, lifecycle_db):
     """An HTTPS request from guest should appear in net_events."""
     client, vm_name, _, _ = lifecycle_env
 
-    # Trigger a network request
+    # Trigger a deterministic denied network request. This proves logging
+    # without relying on any external service.
     client.post(f"/vms/{vm_name}/exec", {
-        "command": "curl -s -o /dev/null https://elie.net/ 2>&1 || true"
+        "command": "curl -skI --connect-timeout 5 https://evil-never-allowed.invalid 2>&1 || true"
     })
 
     # Wait for async writer to flush

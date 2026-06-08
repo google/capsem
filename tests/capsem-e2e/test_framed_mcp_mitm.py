@@ -13,8 +13,11 @@ import sqlite3
 import subprocess
 import sys
 import textwrap
+import threading
 import time
 import uuid
+from contextlib import contextmanager
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
@@ -26,6 +29,39 @@ PROJECT_ROOT = Path(__file__).parent.parent.parent
 CLI_BINARY = PROJECT_ROOT / "target/debug/capsem"
 
 pytestmark = pytest.mark.e2e
+
+
+class _BuiltinHttpFixture(BaseHTTPRequestHandler):
+    def do_HEAD(self):
+        self.send_response(200)
+        self.send_header("content-type", "text/plain; charset=utf-8")
+        self.send_header("x-capsem-fixture", "builtin-http")
+        self.end_headers()
+
+    def do_GET(self):
+        body = b"capsem local builtin HTTP fixture\n"
+        self.send_response(200)
+        self.send_header("content-type", "text/plain; charset=utf-8")
+        self.send_header("content-length", str(len(body)))
+        self.send_header("x-capsem-fixture", "builtin-http")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, format, *args):
+        return
+
+
+@contextmanager
+def _local_builtin_http_fixture():
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _BuiltinHttpFixture)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_port}"
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
+        server.server_close()
 
 
 def _guest_python(script: str) -> str:
@@ -631,12 +667,13 @@ reason = "test blocks local echo through security rules"
 
 
 def test_framed_guest_mcp_builtin_http_policy_writes_mcp_and_net_rows():
-    svc = _start_service()
-    vm = None
-    try:
-        config_path = svc.tmp_dir / "user.toml"
-        config_path.write_text(
-            """
+    with _local_builtin_http_fixture() as allowed_url:
+        svc = _start_service()
+        vm = None
+        try:
+            config_path = svc.tmp_dir / "user.toml"
+            config_path.write_text(
+                """
 [profiles.rules.block_builtin_http]
 name = "block_builtin_http"
 action = "block"
@@ -644,13 +681,13 @@ priority = 10
 match = 'http.host == "blocked-builtin-http.invalid"'
 reason = "test blocks builtin HTTP through security rules"
 """.lstrip(),
-            encoding="utf-8",
-        )
-        reload_response = svc.client().post("/profiles/code/reload", {}, timeout=15)
-        assert reload_response["success"] is True
+                encoding="utf-8",
+            )
+            reload_response = svc.client().post("/profiles/code/reload", {}, timeout=15)
+            assert reload_response["success"] is True
 
-        vm = _create_vm(svc, "framed-builtin-http")
-        script = r'''
+            vm = _create_vm(svc, "framed-builtin-http")
+            script = r'''
 import json
 import subprocess
 import sys
@@ -664,7 +701,7 @@ messages = [
     {"jsonrpc": "2.0", "method": "notifications/initialized"},
     {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {
         "name": "local__http_headers",
-        "arguments": {"url": "https://example.com/", "method": "HEAD"},
+        "arguments": {"url": "__ALLOWED_URL__", "method": "HEAD"},
     }},
     {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {
         "name": "local__http_headers",
@@ -686,52 +723,53 @@ print(json.dumps({
     "responses": responses,
 }))
 sys.exit(proc.returncode)
-'''
-        result = _exec_cli(svc, vm, _guest_python(script), timeout=120)
-        assert result.returncode == 0, result.stderr
-        responses = _responses_by_id(result.stdout)
-        assert "Status:" in json.dumps(responses[2]["result"])
-        assert "domain blocked by policy: blocked-builtin-http.invalid" in json.dumps(
-            responses[3]["result"]
-        )
+'''.replace("__ALLOWED_URL__", allowed_url + "/")
+            result = _exec_cli(svc, vm, _guest_python(script), timeout=120)
+            assert result.returncode == 0, result.stderr
+            responses = _responses_by_id(result.stdout)
+            assert "Status:" in json.dumps(responses[2]["result"])
+            assert "domain blocked by policy: blocked-builtin-http.invalid" in json.dumps(
+                responses[3]["result"]
+            )
 
-        db_path = _session_db(svc, vm)
-        allowed_mcp = _wait_for_mcp_row(
-            db_path,
-            lambda r: r["request_id"] == "2" and r["tool_name"] == "local__http_headers",
-        )
-        assert allowed_mcp["decision"] == "allowed"
-        blocked_mcp = _wait_for_mcp_row(
-            db_path,
-            lambda r: r["request_id"] == "3" and r["tool_name"] == "local__http_headers",
-        )
-        assert blocked_mcp["decision"] == "allowed"
-        assert "blocked-builtin-http.invalid" in (blocked_mcp["response_preview"] or "")
+            db_path = _session_db(svc, vm)
+            allowed_mcp = _wait_for_mcp_row(
+                db_path,
+                lambda r: r["request_id"] == "2" and r["tool_name"] == "local__http_headers",
+            )
+            assert allowed_mcp["decision"] == "allowed"
+            blocked_mcp = _wait_for_mcp_row(
+                db_path,
+                lambda r: r["request_id"] == "3" and r["tool_name"] == "local__http_headers",
+            )
+            assert blocked_mcp["decision"] == "allowed"
+            assert "blocked-builtin-http.invalid" in (blocked_mcp["response_preview"] or "")
 
-        allowed_net = _wait_for_net_row(
-            db_path,
-            lambda r: r["domain"] == "example.com" and r["method"] == "HEAD",
-        )
-        assert allowed_net["decision"] == "allowed"
-        assert allowed_net["process_name"] == "mcp_builtin"
-        assert allowed_net["conn_type"] == "mcp_builtin"
-        assert allowed_net["status_code"] is not None
+            allowed_net = _wait_for_net_row(
+                db_path,
+                lambda r: r["domain"] == "127.0.0.1" and r["method"] == "HEAD",
+            )
+            assert allowed_net["decision"] == "allowed"
+            assert allowed_net["path"] == "/"
+            assert allowed_net["process_name"] == "mcp_builtin"
+            assert allowed_net["conn_type"] == "mcp_builtin"
+            assert allowed_net["status_code"] is not None
 
-        blocked_net = _wait_for_net_row(
-            db_path,
-            lambda r: r["domain"] == "blocked-builtin-http.invalid",
-        )
-        assert blocked_net["decision"] == "denied"
-        assert blocked_net["method"] == "HEAD"
-        assert blocked_net["path"] == "/no-upstream"
-        assert blocked_net["process_name"] == "mcp_builtin"
-        assert blocked_net["bytes_sent"] == 0
-        assert blocked_net["bytes_received"] == 0
-        assert blocked_net["status_code"] is None
-    finally:
-        if vm is not None:
-            _delete_vm(svc, vm)
-        svc.stop()
+            blocked_net = _wait_for_net_row(
+                db_path,
+                lambda r: r["domain"] == "blocked-builtin-http.invalid",
+            )
+            assert blocked_net["decision"] == "denied"
+            assert blocked_net["method"] == "HEAD"
+            assert blocked_net["path"] == "/no-upstream"
+            assert blocked_net["process_name"] == "mcp_builtin"
+            assert blocked_net["bytes_sent"] == 0
+            assert blocked_net["bytes_received"] == 0
+            assert blocked_net["status_code"] is None
+        finally:
+            if vm is not None:
+                _delete_vm(svc, vm)
+            svc.stop()
 
 
 def test_framed_guest_mcp_concurrent_process_attribution():

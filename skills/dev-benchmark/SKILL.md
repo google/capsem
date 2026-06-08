@@ -27,8 +27,8 @@ Python tool that runs inside the VM. Rich tables to stderr (human), structured J
 | disk | `capsem-bench disk` | Sequential/random I/O on scratch disk (write/read throughput, IOPS) |
 | rootfs | `capsem-bench rootfs` | Read-only rootfs performance (sequential + random 4K reads) |
 | startup | `capsem-bench startup` | Cold-start latency for python3, node, claude, gemini, codex |
-| http | `capsem-bench http [URL] [N] [C]` | HTTP throughput through MITM proxy (requests/sec, latency percentiles) |
-| throughput | `capsem-bench throughput` | 100MB download through MITM proxy (end-to-end MB/s) |
+| http | `capsem-bench http [URL] [N] [C]` | HTTP throughput through MITM proxy (requests/sec, latency percentiles). Defaults to the local debug upstream when `CAPSEM_BENCH_MITM_LOCAL_BASE_URL` is set. |
+| throughput | `capsem-bench throughput` | Deterministic 10MB local fixture download through MITM proxy (end-to-end MB/s) when `CAPSEM_BENCH_MITM_LOCAL_BASE_URL` is set; public throughput is explicit opt-in only. |
 | snapshot | `capsem-bench snapshot` | Snapshot create/list/changes/revert/delete via MCP (ms per op at 10/100/500 files) |
 | all | `capsem-bench` | All of the above |
 
@@ -68,6 +68,10 @@ Key metrics: per-operation latency in ms. Regressions in `create` usually mean t
 
 - `CAPSEM_BENCH_DIR`: Test directory for disk benchmarks (default: `/root`)
 - `CAPSEM_BENCH_SIZE_MB`: Write test size in MB (default: 256)
+- `CAPSEM_BENCH_MITM_LOCAL_BASE_URL`: Host-side `capsem-debug-upstream`
+  base URL for deterministic HTTP/throughput/MITM benchmarks.
+- `CAPSEM_BENCH_ALLOW_PUBLIC_NETWORK=1`: Explicit public-network smoke opt-in.
+  Do not use public mode as release proof.
 
 ## Investigating slowness
 

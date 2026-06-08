@@ -40,9 +40,10 @@ def test_net_event_has_domain_field(lifecycle_env, lifecycle_db):
     """Net events should have a non-empty domain field."""
     client, vm_name, _, _ = lifecycle_env
 
-    # Trigger a request to a default-allowed domain so it reaches HTTP telemetry.
+    # Trigger a deterministic denied request so it reaches HTTP telemetry
+    # without depending on public network reachability.
     client.post(f"/vms/{vm_name}/exec", {
-        "command": "curl -s -o /dev/null https://elie.net/ 2>&1 || true"
+        "command": "curl -skI --connect-timeout 5 https://evil-never-allowed.invalid 2>&1 || true"
     })
 
     time.sleep(3)

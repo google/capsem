@@ -1084,6 +1084,7 @@ async fn main() -> Result<()> {
             let persistent = name.is_some() || from.is_some();
             let req = ProvisionRequest {
                 name: name.clone(),
+                profile_id: DEFAULT_PROFILE_ID.to_string(),
                 ram_mb: ram * 1024,
                 cpus: *cpu,
                 persistent,
@@ -1223,6 +1224,7 @@ async fn main() -> Result<()> {
         }) => {
             let req = RunRequest {
                 command: command.clone(),
+                profile_id: DEFAULT_PROFILE_ID.to_string(),
                 timeout_secs: *timeout,
                 env: client::parse_env_vars(env)?,
             };
@@ -1599,12 +1601,51 @@ async fn main() -> Result<()> {
             println!("Running capsem-doctor...");
             println!("Log: {}", log_path.display());
 
+            let preferred_debug_addr = "127.0.0.1:11434"
+                .parse()
+                .expect("valid doctor debug upstream bind address");
+            let debug_upstream = match capsem_debug_upstream::spawn_debug_upstream_on(
+                preferred_debug_addr,
+            )
+            .await
+            {
+                Ok(handle) => handle,
+                Err(err) => {
+                    eprintln!(
+                            "warning: local debug upstream could not bind 127.0.0.1:11434 ({err}); falling back to an ephemeral port"
+                        );
+                    capsem_debug_upstream::spawn_debug_upstream()
+                        .await
+                        .context("start local debug upstream for capsem-doctor")?
+                }
+            };
+            let debug_base_url = debug_upstream.base_url();
+            println!("Local debug upstream: {debug_base_url}");
+
+            let proxy_url = "http://127.0.0.1:10080".to_string();
+            let mut doctor_env = std::collections::HashMap::new();
+            doctor_env.insert(
+                "CAPSEM_BENCH_MITM_LOCAL_BASE_URL".to_string(),
+                debug_base_url.clone(),
+            );
+            doctor_env.insert("HTTP_PROXY".to_string(), proxy_url.clone());
+            doctor_env.insert("http_proxy".to_string(), proxy_url.clone());
+            doctor_env.insert("HTTPS_PROXY".to_string(), proxy_url.clone());
+            doctor_env.insert("https_proxy".to_string(), proxy_url.clone());
+            doctor_env.insert("WS_PROXY".to_string(), proxy_url.clone());
+            doctor_env.insert("ws_proxy".to_string(), proxy_url.clone());
+            doctor_env.insert("WSS_PROXY".to_string(), proxy_url.clone());
+            doctor_env.insert("wss_proxy".to_string(), proxy_url);
+            doctor_env.insert("NO_PROXY".to_string(), String::new());
+            doctor_env.insert("no_proxy".to_string(), String::new());
+
             let req = ProvisionRequest {
                 name: None,
+                profile_id: DEFAULT_PROFILE_ID.to_string(),
                 ram_mb: 2048,
                 cpus: 2,
                 persistent: false,
-                env: None,
+                env: Some(doctor_env),
                 from: None,
             };
             let resp: ApiResponse<ProvisionResponse> = client.post("/vms/create", req).await?;
@@ -1822,6 +1863,7 @@ async fn main() -> Result<()> {
             }
 
             delete_vm(&client, &vm_id).await;
+            let _ = debug_upstream.shutdown().await;
             if exit_code != 0 {
                 eprintln!("Full log: {}", log_path.display());
                 std::process::exit(exit_code);
