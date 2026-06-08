@@ -106,6 +106,10 @@ batch unrelated fixes into one giant release commit.
 - [ ] Finish remaining mounted-route gaps from `route-e2e-gate.md`: route
   inventory, settings edit, profile reload/assets status/ensure, history/timeline
   seeded DB reads, MCP tool edit/call, and actual VM-boundary enforcement refusal.
+- [x] Start next-generation local harness in `local-test-harness.md`: replace
+  remote MCP manager proof with a local recording Streamable HTTP MCP server,
+  add reusable local HTTP recording support, and prove broker-owned MCP auth
+  without contacting public services.
 
 - [x] Add approved service routes:
   - `[x] /profiles/list`
@@ -179,6 +183,10 @@ batch unrelated fixes into one giant release commit.
   MCP auth is `auth.kind = bearer|oauth` plus broker-owned
   `auth.credential_ref`, raw `bearer_token`/`bearerToken` imports are skipped
   or rejected, and secret-bearing MCP headers fail validation.
+- [x] Replace remote MCP manager live tests with local recording MCP proofs:
+  the production manager connects to a local rmcp Streamable HTTP server,
+  resolves broker-owned OAuth material before dispatch, calls a real tool, and
+  fails unresolved broker refs before any outbound request.
 - [x] Replace global enforcement authoring routes with profile-owned routes:
   `/profiles/{profile_id}/enforcement/evaluate`,
   `PUT /profiles/{profile_id}/enforcement/rules/{rule_id}/edit`,

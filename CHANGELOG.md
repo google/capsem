@@ -125,6 +125,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   or OAuth material; raw `bearer_token`/`bearerToken` imports are rejected or
   skipped, secret-bearing MCP headers fail validation, and UI status reports
   `has_auth_credential` instead of token presence.
+- Replaced internet-backed MCP manager proof with local recording test
+  infrastructure. The normal MCP manager suite now uses a local Streamable
+  HTTP MCP server and HTTP recorder to prove broker-owned auth resolution,
+  tool discovery, tool dispatch, and fail-closed missing credentials without
+  contacting public services.
 - Added a profile-owned rule-file compilation guard: profile enforcement TOML
   and Sigma detection YAML now materialize as `SecurityRuleProfile` and compile
   only through the unified `SecurityRuleSet`/CEL rail, rejecting old policy

@@ -36,7 +36,7 @@ must distinguish those states.
 | Plugins | `/profiles/{id}/plugins/list`, `/info`, `/{plugin_id}/info`, `/{plugin_id}/edit` | real, mounted_proof | `mounted_plugin_routes_control_profile_evaluation` proves list/edit and evaluation effect through mounted routes. |
 | Skills read | `/profiles/{id}/skills/info`, `/list` | read_only | Reads profile manifest paths; handler proof exists, mounted proof still needed. |
 | Skills write | `/profiles/{id}/skills/add`, `/{skill_id}/edit|delete` | fail_closed_stub, mounted_proof | `mounted_fail_closed_stub_routes_return_explicit_errors` asserts the public `501` error shape. |
-| MCP mechanics | `/profiles/{id}/mcp/info`, `/servers/list`, `/servers/{server}/tools/list`, `/refresh`, `/tools/{tool}/edit|call` | real, partial_mounted_proof | `mounted_mcp_routes_are_profile_scoped_mechanics_only` proves profile/server isolation and refresh. MCP auth must be broker-owned (`auth.kind`, `auth.credential_ref`) and raw `bearer_token`/secret headers fail closed. Tool edit/call still need named mounted proof. |
+| MCP mechanics | `/profiles/{id}/mcp/info`, `/servers/list`, `/servers/{server}/tools/list`, `/refresh`, `/tools/{tool}/edit|call` | real, partial_mounted_proof | `mounted_mcp_routes_are_profile_scoped_mechanics_only` proves profile/server isolation and refresh. `local_http_mcp_e2e_uses_brokered_oauth_and_records_tool_call` proves the production MCP manager can connect to a local recording Streamable HTTP MCP server, resolve broker-owned auth, list a tool, and dispatch a call without remote services. Route-level tool edit/call still need named mounted proof. |
 | Settings | `/settings/info`, `/settings/edit` | real, partial_mounted_proof | Mounted read proof covers `/settings/info`; edit still needs named mounted proof. |
 | Corp | `/corp/info`, `/corp/edit`, `/corp/validate`, `/corp/reload` | real, mounted_proof | `mounted_corp_routes_validate_install_report_and_reload_inline_toml` proves validate/edit/info/reload with temp `CAPSEM_HOME`. |
 | Gateway parity | explicit service routes | real | Gateway has explicit allowlist; unknown and retired paths 404 instead of fallback-forwarding. |
@@ -114,7 +114,7 @@ calls send `LogFileBoundary` before bytes are written or returned.
   functional test and one adversarial test.
 - Add at least one black-box service/VM route test for:
   - enforcement block -> actual runtime boundary refuses action/network/tool,
-  - MCP tool edit/call with a mock or live route target,
+  - MCP route-level tool edit/call with the local recording MCP target,
   - history/timeline mounted route reads with seeded DB data,
   - profile reload/assets status/assets ensure mounted routes,
   - settings edit mounted route.

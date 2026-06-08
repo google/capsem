@@ -16,6 +16,8 @@ pub mod paths;
 pub mod security_engine;
 pub mod session;
 pub mod telemetry;
+#[cfg(test)]
+pub(crate) mod test_support;
 pub mod uds;
 pub mod vm;
 use std::path::Path;

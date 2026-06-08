@@ -557,6 +557,28 @@ impl McpServerManager {
 mod tests {
     use super::*;
 
+    struct EnvVarGuard {
+        key: &'static str,
+        old: Option<String>,
+    }
+
+    impl EnvVarGuard {
+        fn set(key: &'static str, value: impl AsRef<std::path::Path>) -> Self {
+            let old = std::env::var(key).ok();
+            std::env::set_var(key, value.as_ref());
+            Self { key, old }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            match &self.old {
+                Some(value) => std::env::set_var(self.key, value),
+                None => std::env::remove_var(self.key),
+            }
+        }
+    }
+
     fn test_server_def() -> McpServerDef {
         McpServerDef {
             name: "test".to_string(),
@@ -755,16 +777,12 @@ mod tests {
         }
     }
 
-    /// Live integration test against DeepWiki's public MCP server (no auth).
-    /// Uses connect_and_initialize directly so errors propagate instead of
-    /// being silently swallowed by initialize_all's warn-and-continue logic.
-    #[tokio::test]
-    async fn integration_live_mcp_server() {
+    fn local_http_mcp_def(url: String, auth: Option<McpAuthConfig>) -> McpServerDef {
         let def = McpServerDef {
-            name: "deepwiki".to_string(),
-            url: "https://mcp.deepwiki.com/mcp".to_string(),
+            name: "localtest".to_string(),
+            url,
             headers: HashMap::new(),
-            auth: None,
+            auth,
             enabled: true,
             source: "test".to_string(),
             command: None,
@@ -773,78 +791,127 @@ mod tests {
             pool_size: None,
             pool_safe_tools: Vec::new(),
         };
+        assert!(!def.is_stdio());
+        def
+    }
+
+    #[tokio::test]
+    async fn local_http_mcp_e2e_uses_brokered_oauth_and_records_tool_call() {
+        let _lock = crate::credential_broker::TEST_ENV_LOCK.lock().await;
+        let dir = tempfile::tempdir().unwrap();
+        let _store_guard = EnvVarGuard::set(
+            crate::credential_broker::TEST_STORE_ENV,
+            dir.path().join("store.json"),
+        );
+        let harness = crate::test_support::mcp::spawn_recording_mcp_server()
+            .await
+            .unwrap();
+        let observation = crate::credential_broker::CredentialObservation {
+            provider: crate::credential_broker::CredentialProvider::Mcp,
+            raw_value: "local-mcp-oauth-token".to_string(),
+            source: "mcp.auth.local_e2e".to_string(),
+            event_type: Some("mcp.server.auth".to_string()),
+            confidence: 1.0,
+            trace_id: Some("trace-local-mcp".to_string()),
+            context_json: None,
+        };
+        let brokered = crate::credential_broker::broker_observed_credential(&observation)
+            .expect("test credential should broker");
+        let def = local_http_mcp_def(
+            harness.url.clone(),
+            Some(McpAuthConfig {
+                kind: McpAuthKind::OAuth,
+                credential_ref: brokered.credential_ref.clone(),
+            }),
+        );
         let mut mgr = McpServerManager::new(vec![def.clone()], reqwest::Client::new());
-        // Call connect_and_initialize directly -- errors surface immediately
-        // instead of being silently logged by initialize_all.
+
         mgr.connect_and_initialize(&def)
             .await
-            .expect("failed to connect to DeepWiki MCP server");
+            .expect("local MCP server should initialize");
 
         assert!(
-            mgr.is_running("deepwiki"),
-            "server should be running after successful init"
+            mgr.is_running("localtest"),
+            "local server should be running after successful init"
         );
         assert!(
-            mgr.tool_count_for_server("deepwiki") > 0,
-            "DeepWiki should expose at least one tool, got catalog: {:?}",
             mgr.tool_catalog()
+                .iter()
+                .any(|tool| tool.namespaced_name == "localtest__echo"),
+            "local MCP should expose echo, got catalog: {:?}",
+            mgr.tool_catalog()
+        );
+
+        let result = mgr
+            .call_tool(
+                "localtest__echo",
+                serde_json::json!({ "message": "winter" }),
+            )
+            .await
+            .expect("local echo tool should dispatch");
+        let result_json = serde_json::to_string(&result).unwrap();
+        assert!(
+            result_json.contains("echo:winter"),
+            "tool result should include echo output: {result_json}"
+        );
+
+        let tool_calls = harness.state.tool_calls();
+        assert_eq!(
+            tool_calls,
+            vec![crate::test_support::mcp::RecordedMcpToolCall {
+                tool: "echo".to_string(),
+                arguments: serde_json::json!({ "message": "winter" }),
+            }]
+        );
+
+        let requests = harness.state.http_requests();
+        assert!(
+            requests.iter().any(|request| request
+                .header("authorization")
+                .is_some_and(|value| value == "Bearer local-mcp-oauth-token")),
+            "local MCP server should receive the broker-resolved bearer token: {requests:?}"
+        );
+        assert!(
+            requests.iter().all(|request| !request
+                .header("authorization")
+                .unwrap_or_default()
+                .contains("credential:blake3:")),
+            "broker references must not be sent as auth material: {requests:?}"
         );
     }
 
-    /// Live integration test that connects to all HTTP MCP servers from the
-    /// developer's config (user.toml manual servers + auto-detected from
-    /// ~/.claude/settings.json and ~/.gemini/settings.json). Skips if none found.
-    /// Covers brokered auth references, custom headers, and multi-server catalog building.
     #[tokio::test]
-    async fn integration_live_configured_mcp_servers() {
-        use crate::mcp::build_server_list;
-        use crate::mcp::policy::McpUserConfig;
-        use crate::net::policy_config::{load_settings_file, user_config_path};
-
-        let user_mcp = user_config_path()
-            .and_then(|p| load_settings_file(&p).ok())
-            .and_then(|f| f.mcp)
-            .unwrap_or_default();
-        let corp_mcp = McpUserConfig::default();
-
-        let servers = build_server_list(&user_mcp, &corp_mcp);
-        let http_servers: Vec<_> = servers
-            .iter()
-            .filter(|s| s.enabled && !s.is_stdio())
-            .collect();
-
-        if http_servers.is_empty() {
-            eprintln!("no HTTP MCP servers configured, skipping");
-            return;
-        }
-
-        let mut mgr = McpServerManager::new(
-            http_servers.iter().map(|s| (*s).clone()).collect(),
-            reqwest::Client::new(),
+    async fn local_http_mcp_unresolved_broker_ref_fails_before_network_dispatch() {
+        let _lock = crate::credential_broker::TEST_ENV_LOCK.lock().await;
+        let dir = tempfile::tempdir().unwrap();
+        let _store_guard = EnvVarGuard::set(
+            crate::credential_broker::TEST_STORE_ENV,
+            dir.path().join("store.json"),
         );
+        let harness = crate::test_support::mcp::spawn_recording_mcp_server()
+            .await
+            .unwrap();
+        let def = local_http_mcp_def(
+            harness.url.clone(),
+            Some(McpAuthConfig {
+                kind: McpAuthKind::Bearer,
+                credential_ref: "credential:blake3:missing-local-mcp-token".to_string(),
+            }),
+        );
+        let mut mgr = McpServerManager::new(vec![def.clone()], reqwest::Client::new());
 
-        for def in &http_servers {
-            match mgr.connect_and_initialize(def).await {
-                Ok(()) => {
-                    assert!(
-                        mgr.is_running(&def.name),
-                        "server '{}' should be running after init",
-                        def.name,
-                    );
-                    assert!(
-                        mgr.tool_count_for_server(&def.name) > 0,
-                        "server '{}' should expose at least one tool, got catalog: {:?}",
-                        def.name,
-                        mgr.tool_catalog(),
-                    );
-                }
-                Err(e) => {
-                    panic!(
-                        "failed to connect to configured MCP server '{}' (url={}): {e:#}",
-                        def.name, def.url,
-                    );
-                }
-            }
-        }
+        let err = mgr
+            .connect_and_initialize(&def)
+            .await
+            .expect_err("unresolved broker ref must fail closed");
+
+        assert!(
+            err.to_string().contains("could not be resolved"),
+            "unexpected error: {err:#}"
+        );
+        assert!(
+            harness.state.http_requests().is_empty(),
+            "unresolved broker refs must fail before any remote MCP request"
+        );
     }
 }

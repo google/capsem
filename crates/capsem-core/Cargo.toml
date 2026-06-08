@@ -50,7 +50,7 @@ flate2 = "1"
 regex = { workspace = true }
 scraper = "0.25"
 
-rmcp = { version = "1.2", features = ["client", "transport-streamable-http-client-reqwest", "transport-child-process", "reqwest"] }
+rmcp = { workspace = true, features = ["transport-streamable-http-client-reqwest", "transport-streamable-http-server", "transport-child-process", "reqwest"] }
 hickory-proto = { workspace = true }
 # Bounded LRU primitive used by `net::dns::cache` for the TTL-honoring
 # answer cache (T3.f). Pure-Rust, no_std-compatible, single small dep.
@@ -85,6 +85,7 @@ tempfile = "3"
 dotenvy = "0.15"
 criterion = { version = "0.5", features = ["html_reports"] }
 metrics-util = "0.19"
+axum = { workspace = true }
 # Property-based tests for the DNS wire codec (T3.f). Cheap dev-dep,
 # scoped to test runs only.
 proptest = "1"

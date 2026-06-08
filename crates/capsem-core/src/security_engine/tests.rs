@@ -2470,12 +2470,14 @@ fn brokered_anthropic_header_event() -> (
     String,
     tempfile::TempDir,
     EnvVarGuard,
+    EnvVarGuard,
     tokio::sync::MutexGuard<'static, ()>,
 ) {
     let lock = crate::credential_broker::TEST_ENV_LOCK.blocking_lock();
     let tmp = tempfile::tempdir().unwrap();
     let store_path = tmp.path().join("broker-store.jsonl");
     let store_guard = EnvVarGuard::set(crate::credential_broker::TEST_STORE_ENV, &store_path);
+    let user_config_guard = EnvVarGuard::set("CAPSEM_USER_CONFIG", tmp.path().join("user.toml"));
     let raw = "sk-ant-materialize-secret";
     let brokered = broker_observed_credential(&CredentialObservation {
         provider: CredentialProvider::Anthropic,
@@ -2508,13 +2510,15 @@ fn brokered_anthropic_header_event() -> (
         raw.to_string(),
         tmp,
         store_guard,
+        user_config_guard,
         lock,
     )
 }
 
 #[test]
 fn http_materializer_without_substitute_action_keeps_reference() {
-    let (event, reference, _raw, _tmp, _store_guard, _lock) = brokered_anthropic_header_event();
+    let (event, reference, _raw, _tmp, _store_guard, _user_config_guard, _lock) =
+        brokered_anthropic_header_event();
 
     let materialized = materialize_http_request_for_upstream(&event).unwrap();
 
@@ -2570,7 +2574,8 @@ fn http_materializer_requires_allow_enforcement_decision() {
 
 #[test]
 fn http_materializer_resolves_broker_ref_only_for_upstream_copy() {
-    let (mut event, reference, raw, _tmp, _store_guard, _lock) = brokered_anthropic_header_event();
+    let (mut event, reference, raw, _tmp, _store_guard, _user_config_guard, _lock) =
+        brokered_anthropic_header_event();
     event
         .action_trace
         .push(PolicyActionId::CredentialBrokerSubstitute);
