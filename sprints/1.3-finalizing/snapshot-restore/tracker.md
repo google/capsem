@@ -497,6 +497,14 @@ the guarantee or explicitly burn it.
     so settings are UI/app preferences only and provider state comes from
     profiles, rules, plugin runtime status, observed ledger evidence, and
     routing config.
+  - [x] Reshape provider `[ai.*]` endpoint metadata to routing/rules/discovery
+    only. Static `credential_setting_id`, provider-level `credential_ref`, and
+    provider `files` are rejected; settings provider status no longer exposes
+    brokered credential refs or static credential setting ids.
+    Proof: `cargo test -p capsem-core --lib provider_profile -- --nocapture`
+    passed 7 tests including the static metadata rejection test; full
+    `cargo test -p capsem-core --lib policy_config -- --nocapture` passed 393
+    tests; `pnpm -C frontend check` and `git diff --check` passed.
 - [x] Delete the dead `host_config` detector/writeback module and its frontend
   DTOs. This removes the setup-era path that scanned raw host API
   keys/OAuth/ADC/GitHub tokens and wrote them into settings; credential capture
@@ -518,7 +526,7 @@ the guarantee or explicitly burn it.
   `default_provider_rules.toml`.
 - [x] Delete `ProfileCredentialConfig` / `credentials.broker_enabled` parser
   support and add a rejection test for `[credentials]`.
-- [ ] Delete or reshape static `ProfileConfigFile.ai` / `[ai.*]` parser support
+- [x] Delete or reshape static `ProfileConfigFile.ai` / `[ai.*]` parser support
   so provider UI/status cannot be invented from metadata without allow/configured
   truth.
 - [x] Delete `tool_config_sources` from static profile parsing and add a

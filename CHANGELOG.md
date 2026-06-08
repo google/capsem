@@ -195,6 +195,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   settings UI response. Tool config observations now belong to runtime
   plugin/security-ledger evidence with BLAKE3 references, and static
   `tool_config_sources` tables fail closed.
+- Removed static credential/config-file metadata from `[ai.*]` provider
+  endpoint records. Provider records now carry routing/rule/discovery
+  information only; `credential_setting_id`, provider-level `credential_ref`,
+  and provider `files` fail closed, and settings provider cards no longer expose
+  brokered credential refs.
 - Added a security-event engine that runs configured preprocess plugins before
   detection/enforcement, evaluates CEL once against the canonical event, then
   runs configured postprocess plugins only after the decision allows

@@ -381,8 +381,6 @@ export const MOCK_PROVIDER_STATUS: ProviderStatus[] = [
       credential_ref: MOCK_CREDENTIAL_REF,
       trace_id: 'abc123def456',
     },
-    credential_setting_id: 'ai.openai.api_key',
-    brokered_credential_ref: MOCK_CREDENTIAL_REF,
     corp_blocked: false,
   },
   {
@@ -394,8 +392,6 @@ export const MOCK_PROVIDER_STATUS: ProviderStatus[] = [
     listen_ports: [443],
     allowed_remote_targets: ['api.anthropic.com:443'],
     discovery: null,
-    credential_setting_id: 'ai.anthropic.api_key',
-    brokered_credential_ref: null,
     corp_blocked: false,
   },
   {
@@ -407,8 +403,6 @@ export const MOCK_PROVIDER_STATUS: ProviderStatus[] = [
     listen_ports: [11434],
     allowed_remote_targets: ['127.0.0.1:11434', 'local.ollama:11434'],
     discovery: null,
-    credential_setting_id: null,
-    brokered_credential_ref: null,
     corp_blocked: false,
   },
 ];
@@ -416,11 +410,7 @@ export const MOCK_PROVIDER_STATUS: ProviderStatus[] = [
 export function buildMockSettingsResponse(): SettingsResponse {
   return {
     tree: buildMockTree(),
-    issues: [
-      { id: 'ai.anthropic.api_key', severity: 'warning', message: 'No Anthropic API key configured. Claude Code will not be able to authenticate.', docs_url: 'https://console.anthropic.com/settings/keys' },
-      { id: 'ai.google.api_key', severity: 'warning', message: 'No Google AI API key configured. Gemini CLI will not be able to authenticate.', docs_url: 'https://aistudio.google.com/apikey' },
-      { id: 'ai.openai.api_key', severity: 'warning', message: 'No OpenAI API key configured. Codex CLI will not be able to authenticate.', docs_url: 'https://platform.openai.com/api-keys' },
-    ],
+    issues: [],
     providers: MOCK_PROVIDER_STATUS,
   };
 };

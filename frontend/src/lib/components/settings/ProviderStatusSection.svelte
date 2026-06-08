@@ -2,7 +2,6 @@
   import type { ProviderStatus } from '../../types/settings';
   import Brain from 'phosphor-svelte/lib/Brain';
   import CheckCircle from 'phosphor-svelte/lib/CheckCircle';
-  import Key from 'phosphor-svelte/lib/Key';
   import ShieldWarning from 'phosphor-svelte/lib/ShieldWarning';
 
   let {
@@ -12,16 +11,6 @@
   } = $props();
 
   let discoveredCount = $derived(providers.filter((provider) => provider.discovery).length);
-  let brokeredCount = $derived(providers.filter((provider) => provider.brokered_credential_ref).length);
-
-  function shortRef(ref: string | null | undefined): string {
-    if (!ref) return '';
-    const marker = 'credential:blake3:';
-    if (ref.startsWith(marker)) {
-      return `${marker}${ref.slice(-12)}`;
-    }
-    return ref.length > 28 ? `${ref.slice(0, 12)}...${ref.slice(-12)}` : ref;
-  }
 </script>
 
 {#if providers.length > 0}
@@ -32,10 +21,6 @@
         <span class="inline-flex items-center gap-1">
           <Brain size={13} />
           {discoveredCount}/{providers.length} discovered
-        </span>
-        <span class="inline-flex items-center gap-1">
-          <Key size={13} />
-          {brokeredCount} brokered
         </span>
       </div>
     </div>
@@ -56,11 +41,6 @@
                   <ShieldWarning size={13} />
                   Blocked
                 </span>
-              {:else if provider.brokered_credential_ref}
-                <span class="inline-flex items-center gap-1 rounded-md border border-primary/20 bg-primary/10 px-2 py-1 text-[11px] font-medium text-primary">
-                  <Key size={13} />
-                  Brokered
-                </span>
               {:else if provider.discovery}
                 <span class="inline-flex items-center gap-1 rounded-md border border-line-2 bg-layer px-2 py-1 text-[11px] font-medium text-foreground">
                   <CheckCircle size={13} />
@@ -68,7 +48,7 @@
                 </span>
               {:else}
                 <span class="rounded-md border border-line-2 bg-layer px-2 py-1 text-[11px] font-medium text-muted-foreground-1">
-                  Configured
+                  Endpoint
                 </span>
               {/if}
             </div>
@@ -82,12 +62,6 @@
                 <div class="flex items-center justify-between gap-3">
                   <dt class="text-muted-foreground-1">Event</dt>
                   <dd class="text-foreground truncate">{provider.discovery.event_type ?? 'unknown'}</dd>
-                </div>
-              {/if}
-              {#if provider.brokered_credential_ref}
-                <div class="flex items-center justify-between gap-3">
-                  <dt class="text-muted-foreground-1">Credential</dt>
-                  <dd class="font-mono text-[11px] text-foreground truncate">{shortRef(provider.brokered_credential_ref)}</dd>
                 </div>
               {/if}
               {#if provider.discovery?.trace_id}

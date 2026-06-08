@@ -51,10 +51,7 @@ pub struct ModelEndpoint {
     pub upstream_url: String,
     pub aliases: Vec<String>,
     pub listen_ports: Vec<u16>,
-    pub credential_setting_id: Option<String>,
-    pub credential_ref: Option<String>,
     pub allowed_remote_targets: Vec<String>,
-    pub files: Vec<String>,
 }
 
 impl ModelEndpoint {
@@ -145,10 +142,7 @@ impl ModelEndpointRegistry {
                     upstream_url: url.to_string(),
                     aliases: provider.aliases.clone(),
                     listen_ports: provider.listen_ports.clone(),
-                    credential_setting_id: provider.credential_setting_id.clone(),
-                    credential_ref: provider.credential_ref.clone(),
                     allowed_remote_targets: provider.allowed_remote_targets.clone(),
-                    files: provider.files.clone(),
                 },
             );
         }
@@ -303,19 +297,9 @@ impl ProviderRuleProfile {
                     if !override_provider.listen_ports.is_empty() {
                         base_provider.listen_ports = override_provider.listen_ports.clone();
                     }
-                    if override_provider.credential_setting_id.is_some() {
-                        base_provider.credential_setting_id =
-                            override_provider.credential_setting_id.clone();
-                    }
-                    if override_provider.credential_ref.is_some() {
-                        base_provider.credential_ref = override_provider.credential_ref.clone();
-                    }
                     if !override_provider.allowed_remote_targets.is_empty() {
                         base_provider.allowed_remote_targets =
                             override_provider.allowed_remote_targets.clone();
-                    }
-                    if !override_provider.files.is_empty() {
-                        base_provider.files = override_provider.files.clone();
                     }
                     if override_provider.discovery.is_some() {
                         base_provider.discovery = override_provider.discovery.clone();
@@ -503,11 +487,6 @@ mode = "rewrite"
         let openai = registry.get("openai").expect("openai endpoint");
         assert_eq!(openai.aliases, vec!["api.openai.com"]);
         assert_eq!(openai.listen_ports, vec![443]);
-        assert_eq!(
-            openai.credential_setting_id.as_deref(),
-            Some("ai.openai.api_key")
-        );
-        assert!(openai.credential_ref.is_none());
         assert_eq!(openai.allowed_remote_targets, vec!["api.openai.com:443"]);
     }
 
@@ -521,10 +500,7 @@ protocol = "openai-compatible"
 url = "https://llm.internal.example/v1"
 aliases = ["company-openai", "llm.internal.example"]
 listen_ports = [443, 8443]
-credential_setting_id = "ai.private_gateway.api_key"
-credential_ref = "credential:blake3:2222222222222222222222222222222222222222222222222222222222222222"
 allowed_remote_targets = ["llm.internal.example:443", "company-openai:8443"]
-files = ["/root/.config/private-gateway/config.toml"]
 
 [ai.private_gateway.rules.http_api]
 name = "private_gateway_http_seen"
@@ -543,18 +519,6 @@ match = 'http.host == "llm.internal.example"'
         assert_eq!(endpoint.protocol, ModelProtocol::OpenAi);
         assert_eq!(endpoint.upstream_url, "https://llm.internal.example/v1");
         assert_eq!(
-            endpoint.credential_setting_id.as_deref(),
-            Some("ai.private_gateway.api_key")
-        );
-        assert_eq!(
-            endpoint.credential_ref.as_deref(),
-            Some("credential:blake3:2222222222222222222222222222222222222222222222222222222222222222")
-        );
-        assert_eq!(
-            endpoint.files,
-            vec!["/root/.config/private-gateway/config.toml"]
-        );
-        assert_eq!(
             registry.protocol_for_host("llm.internal.example"),
             Some(ModelProtocol::OpenAi)
         );
@@ -567,6 +531,36 @@ match = 'http.host == "llm.internal.example"'
             Some(ModelProtocol::OpenAi)
         );
         assert_eq!(registry.protocol_for_target("company-openai", 11434), None);
+    }
+
+    #[test]
+    fn provider_endpoint_metadata_rejects_static_credentials_and_config_files() {
+        for (field, value) in [
+            ("credential_setting_id", r#""ai.private_gateway.api_key""#),
+            (
+                "credential_ref",
+                r#""credential:blake3:2222222222222222222222222222222222222222222222222222222222222222""#,
+            ),
+            ("files", r#"["/root/.config/private-gateway/config.toml"]"#),
+        ] {
+            let input = format!(
+                r#"
+[ai.private_gateway]
+name = "Private Gateway"
+protocol = "openai-compatible"
+url = "https://llm.internal.example/v1"
+{field} = {value}
+
+[ai.private_gateway.rules.http_api]
+name = "private_gateway_http_seen"
+action = "allow"
+match = 'http.host == "llm.internal.example"'
+"#
+            );
+            let err = ProviderRuleProfile::parse_toml(&input)
+                .expect_err("provider static credential/config metadata must be rejected");
+            assert!(err.contains(field), "{field}: {err}");
+        }
     }
 
     #[test]

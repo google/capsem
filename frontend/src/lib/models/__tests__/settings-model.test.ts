@@ -70,12 +70,11 @@ describe('SettingsModel', () => {
   });
 
   describe('provider status', () => {
-    it('exposes provider discovery and brokered credential refs from the response', () => {
+    it('exposes provider discovery and routing from the response', () => {
       const model = loadModel();
       const openai = model.providers.find((provider) => provider.id === 'openai');
 
       expect(openai?.discovery?.event_type).toBe('file.event');
-      expect(openai?.brokered_credential_ref).toMatch(/^credential:blake3:[0-9a-f]{64}$/);
       expect(openai?.aliases).toContain('api.openai.com');
       expect(openai?.listen_ports).toEqual([443]);
       expect(openai?.allowed_remote_targets).toContain('api.openai.com:443');

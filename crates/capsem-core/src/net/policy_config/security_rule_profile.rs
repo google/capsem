@@ -55,14 +55,8 @@ pub struct SecurityRuleProvider {
     pub aliases: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub listen_ports: Vec<u16>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub credential_setting_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub credential_ref: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub allowed_remote_targets: Vec<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub files: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub discovery: Option<ProviderDiscovery>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -326,21 +320,8 @@ impl SecurityRuleProfile {
                     return Err(format!("ai.{provider_id}.listen_ports cannot include 0"));
                 }
             }
-            if let Some(setting_id) = provider.credential_setting_id.as_deref() {
-                validate_non_empty("provider credential_setting_id", setting_id)?;
-            }
-            if let Some(credential_ref) = provider.credential_ref.as_deref() {
-                if !capsem_logger::is_credential_reference(credential_ref) {
-                    return Err(format!(
-                        "ai.{provider_id}.credential_ref must be a credential:blake3 reference"
-                    ));
-                }
-            }
             for target in &provider.allowed_remote_targets {
                 validate_non_empty("provider allowed_remote_target", target)?;
-            }
-            for path in &provider.files {
-                validate_non_empty("provider file", path)?;
             }
             if let Some(discovery) = &provider.discovery {
                 discovery.validate(&format!("ai.{provider_id}.discovery"))?;

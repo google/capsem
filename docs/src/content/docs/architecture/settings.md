@@ -197,9 +197,9 @@ Returns the full `SettingsResponse` in one call:
 | Field | Type | Content |
 |---|---|---|
 | `tree` | `SettingsNode[]` | Hierarchical tree: groups, leaves, actions, MCP servers |
-| `issues` | `ConfigIssue[]` | Validation warnings (missing API keys, invalid JSON, etc.) |
+| `issues` | `ConfigIssue[]` | Validation warnings (invalid JSON, invalid paths, blocked setting writes, etc.) |
 | `presets` | `SecurityPreset[]` | Available security presets with their setting values |
-| `providers` | `ProviderStatus[]` | Provider discovery, endpoint, and credential broker status |
+| `providers` | `ProviderStatus[]` | Provider endpoint routing, discovery breadcrumbs, and corp block status |
 
 ### save_settings
 

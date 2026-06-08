@@ -389,10 +389,8 @@ fn built_in_provider_defaults_use_security_rule_contract() {
     let openai = profile.ai.get("openai").expect("openai defaults exist");
     assert_eq!(openai.name.as_deref(), Some("OpenAI"));
     assert_eq!(openai.protocol.as_deref(), Some("openai"));
-    assert!(openai
-        .files
-        .iter()
-        .any(|path| path == "/root/.codex/config.toml"));
+    assert_eq!(openai.url.as_deref(), Some("https://api.openai.com/v1"));
+    assert_eq!(openai.allowed_remote_targets, vec!["api.openai.com:443"]);
 
     let compiled = SecurityRuleSet::compile_profile(&profile, SecurityRuleSource::BuiltinDefault)
         .expect("provider defaults compile");

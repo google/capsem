@@ -40,8 +40,6 @@ export interface ProviderStatus {
   listen_ports: number[];
   allowed_remote_targets: string[];
   discovery?: ProviderDiscovery | null;
-  credential_setting_id?: string | null;
-  brokered_credential_ref?: string | null;
   corp_blocked: boolean;
 }
 

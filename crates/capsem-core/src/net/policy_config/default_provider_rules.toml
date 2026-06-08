@@ -63,9 +63,7 @@ protocol = "openai"
 url = "https://api.openai.com/v1"
 aliases = ["api.openai.com"]
 listen_ports = [443]
-credential_setting_id = "ai.openai.api_key"
 allowed_remote_targets = ["api.openai.com:443"]
-files = ["/root/.codex/config.toml"]
 
 [ai.openai.rules.http_api]
 name = "openai_http_api_observed"
@@ -103,13 +101,7 @@ protocol = "anthropic"
 url = "https://api.anthropic.com/v1"
 aliases = ["api.anthropic.com"]
 listen_ports = [443]
-credential_setting_id = "ai.anthropic.api_key"
 allowed_remote_targets = ["api.anthropic.com:443"]
-files = [
-  "/root/.claude/settings.json",
-  "/root/.claude.json",
-  "/root/.claude/.credentials.json",
-]
 
 [ai.anthropic.rules.http_api]
 name = "anthropic_http_api_observed"
@@ -159,15 +151,7 @@ protocol = "google"
 url = "https://generativelanguage.googleapis.com/v1beta"
 aliases = ["generativelanguage.googleapis.com"]
 listen_ports = [443]
-credential_setting_id = "ai.google.api_key"
 allowed_remote_targets = ["generativelanguage.googleapis.com:443"]
-files = [
-  "/root/.gemini/settings.json",
-  "/root/.gemini/projects.json",
-  "/root/.gemini/trustedFolders.json",
-  "/root/.gemini/installation_id",
-  "/root/.config/gcloud/application_default_credentials.json",
-]
 
 [ai.google.rules.http_gemini_api]
 name = "google_gemini_http_observed"
@@ -241,7 +225,6 @@ allowed_remote_targets = [
   "host.docker.internal:11434",
   "local.ollama:11434",
 ]
-files = []
 
 [ai.ollama.rules.http_local_host]
 name = "ollama_local_http_observed"

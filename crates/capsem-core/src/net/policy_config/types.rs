@@ -653,10 +653,6 @@ pub struct ProviderStatus {
     pub allowed_remote_targets: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub discovery: Option<super::security_rule_profile::ProviderDiscovery>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub credential_setting_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub brokered_credential_ref: Option<String>,
     pub corp_blocked: bool,
 }
 

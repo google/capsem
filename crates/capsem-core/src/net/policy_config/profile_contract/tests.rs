@@ -82,9 +82,7 @@ protocol = "openai"
 url = "https://api.openai.com/v1"
 aliases = ["api.openai.com"]
 listen_ports = [443]
-credential_setting_id = "ai.openai.api_key"
 allowed_remote_targets = ["api.openai.com:443"]
-files = ["/root/.codex/config.toml"]
 
 [ai.openai.rules.http_api]
 name = "openai_http_api"

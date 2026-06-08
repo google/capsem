@@ -4852,8 +4852,6 @@ protocol = "openai-compatible"
 url = "https://llm.internal.example/v1"
 aliases = ["company-openai"]
 listen_ports = [443, 8443]
-credential_setting_id = "ai.private_gateway.api_key"
-credential_ref = "credential:blake3:2222222222222222222222222222222222222222222222222222222222222222"
 allowed_remote_targets = ["llm.internal.example:443", "company-openai:8443"]
 
 [ai.private_gateway.rules.http_api]
@@ -4892,13 +4890,10 @@ match = 'http.host == "llm.internal.example"'
         .model_endpoints
         .get("private_gateway")
         .expect("private endpoint");
+    assert_eq!(endpoint.provider_id, "private_gateway");
     assert_eq!(
-        endpoint.credential_setting_id.as_deref(),
-        Some("ai.private_gateway.api_key")
-    );
-    assert_eq!(
-        endpoint.credential_ref.as_deref(),
-        Some("credential:blake3:2222222222222222222222222222222222222222222222222222222222222222")
+        endpoint.allowed_remote_targets,
+        vec!["llm.internal.example:443", "company-openai:8443"]
     );
 }
 
@@ -5058,7 +5053,7 @@ match = 'http.host.matches("(^|.*\.)openai\.com$")'
 }
 
 #[test]
-fn load_settings_response_exposes_provider_status_without_tool_config_sources() {
+fn load_settings_response_exposes_provider_status_without_static_runtime_evidence() {
     let _guard = crate::credential_broker::TEST_ENV_LOCK.blocking_lock();
 
     let dir = tempfile::tempdir().unwrap();
@@ -5106,16 +5101,24 @@ match = 'http.host.matches("(^|.*\.)openai\.com$")'
     assert_eq!(openai.listen_ports, vec![443]);
     assert_eq!(openai.allowed_remote_targets, vec!["api.openai.com:443"]);
     assert!(openai.discovery.is_some());
-    assert_eq!(
-        openai.brokered_credential_ref.as_deref(),
-        Some("credential:blake3:0000000000000000000000000000000000000000000000000000000000000000")
-    );
     assert!(openai.corp_blocked);
 
     let serialized = serde_json::to_value(&response).expect("settings response serializes");
     assert!(
         serialized.get("tool_config_sources").is_none(),
         "settings response must not expose runtime tool config observations"
+    );
+    let provider = serialized["providers"]
+        .as_array()
+        .and_then(|providers| providers.iter().find(|provider| provider["id"] == "openai"))
+        .expect("serialized OpenAI provider");
+    assert!(
+        provider.get("credential_setting_id").is_none(),
+        "provider status must not expose static credential setting ids"
+    );
+    assert!(
+        provider.get("brokered_credential_ref").is_none(),
+        "credential broker refs belong to discovery/plugin status, not provider cards"
     );
 }
 

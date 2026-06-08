@@ -5,8 +5,7 @@ use super::provider_profile::ProviderDiscoveryPatch;
 use super::types::{McpServerDef, McpTransport, PolicySource};
 use super::{
     setting_id_owner, validate_stored_setting_contract, ConfigOwner, ProviderRuleProfile,
-    ProviderStatus, SecurityRuleAction, SettingValue, SettingsFile, SETTING_ANTHROPIC_API_KEY,
-    SETTING_GOOGLE_API_KEY, SETTING_OPENAI_API_KEY,
+    ProviderStatus, SecurityRuleAction, SettingValue, SettingsFile,
 };
 
 // ---------------------------------------------------------------------------
@@ -510,15 +509,11 @@ pub fn load_settings_response() -> super::types::SettingsResponse {
     super::types::SettingsResponse {
         tree: super::tree::build_settings_tree_with_mcp(&resolved, &mcp_servers),
         issues: super::lint::config_lint(&resolved),
-        providers: build_provider_statuses(&user, &corp, &resolved),
+        providers: build_provider_statuses(&user, &corp),
     }
 }
 
-fn build_provider_statuses(
-    user: &SettingsFile,
-    corp: &SettingsFile,
-    resolved: &[super::types::ResolvedSetting],
-) -> Vec<ProviderStatus> {
+fn build_provider_statuses(user: &SettingsFile, corp: &SettingsFile) -> Vec<ProviderStatus> {
     let merged = ProviderRuleProfile::merge_defaults_user_and_corp(
         &ProviderRuleProfile {
             ai: user.ai.clone(),
@@ -536,13 +531,6 @@ fn build_provider_statuses(
         .ai
         .iter()
         .map(|(id, provider)| {
-            let credential_setting_id = credential_setting_id_for_provider(id).map(str::to_string);
-            let brokered_credential_ref = credential_setting_id
-                .as_deref()
-                .and_then(|setting_id| resolved.iter().find(|setting| setting.id == setting_id))
-                .and_then(|setting| setting.effective_value.as_text())
-                .filter(|value| capsem_logger::is_credential_reference(value))
-                .map(str::to_string);
             let corp_blocked = corp.ai.get(id).is_some_and(|provider| {
                 provider
                     .rules
@@ -558,21 +546,10 @@ fn build_provider_statuses(
                 listen_ports: provider.listen_ports.clone(),
                 allowed_remote_targets: provider.allowed_remote_targets.clone(),
                 discovery: provider.discovery.clone(),
-                credential_setting_id,
-                brokered_credential_ref,
                 corp_blocked,
             }
         })
         .collect()
-}
-
-fn credential_setting_id_for_provider(provider_id: &str) -> Option<&'static str> {
-    match provider_id {
-        "anthropic" => Some(SETTING_ANTHROPIC_API_KEY),
-        "google" => Some(SETTING_GOOGLE_API_KEY),
-        "openai" => Some(SETTING_OPENAI_API_KEY),
-        _ => None,
-    }
 }
 
 // ---------------------------------------------------------------------------
