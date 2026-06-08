@@ -1204,6 +1204,7 @@ class TestGenerateChecksums:
         # manifest.json was written (v2 format: orthogonal assets vs binaries).
         manifest = json.loads((tmp_path / "manifest.json").read_text())
         assert manifest["format"] == 2
+        assert manifest["refresh_policy"] == "24h"
         assert manifest["binaries"]["current"] == "0.13.0"
         assert "0.13.0" in manifest["binaries"]["releases"]
         asset_version = manifest["assets"]["current"]

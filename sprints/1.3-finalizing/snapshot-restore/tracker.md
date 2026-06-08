@@ -636,8 +636,14 @@ the guarantee or explicitly burn it.
 - [ ] Restore profile asset download/check/refresh management in the service.
 - [ ] Ensure profile asset management verifies hashes/signatures and reports
   progress/errors per profile.
-- [ ] Enforce refresh policy at every signed layer: corp manifest, profile
-  manifest, and profile asset manifest.
+- [x] Enforce refresh policy at every signed layer: corp manifest, profile
+  manifest, and profile asset manifest. Current contract evidence:
+  `config/corp.toml` has top-level `refresh_policy`, `ProfileConfigFile`
+  requires top-level profile `refresh_policy`,
+  `ProfileAssetConfig` requires `assets.refresh_policy`, and `ManifestV2`
+  now requires top-level `refresh_policy` with generator/docs/tests updated.
+  Signature/hash enforcement remains tracked by the adjacent asset verification
+  and signed manifest chain items.
 - [ ] Ensure VM launch fails closed on missing/corrupt profile-selected assets.
 - [ ] Restore per-arch profile asset declarations with URL/hash/signature/size.
 - [ ] Restore profile-aware asset supervisor/reconcile/status/ensure.

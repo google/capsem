@@ -38,6 +38,7 @@ def _arch_hashed_files(arch_dir: Path) -> set[str]:
 def _write_manifest(assets_dir: Path, initrd_hash: str) -> None:
     manifest = {
         "format": 2,
+        "refresh_policy": "24h",
         "assets": {
             "current": "2026.0101.1",
             "releases": {

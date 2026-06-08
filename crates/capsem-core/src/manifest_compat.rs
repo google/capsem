@@ -2,7 +2,7 @@
 //!
 //! Supports v2 manifest format:
 //! ```json
-//! {"format": 2, "assets": {"current": "...", "releases": {"...": {"arches": {"arm64": {"vmlinuz": {"hash": "...", "size": 0}}}}}}}
+//! {"format": 2, "refresh_policy": "24h", "assets": {"current": "...", "releases": {"...": {"arches": {"arm64": {"vmlinuz": {"hash": "...", "size": 0}}}}}}}
 //! ```
 
 use std::collections::HashMap;

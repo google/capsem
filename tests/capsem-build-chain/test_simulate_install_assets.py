@@ -41,6 +41,7 @@ def _write_assets(root: Path, initrd_prefix: str) -> tuple[str, str]:
     (arch_dir / arch).mkdir()
     manifest = {
         "format": 2,
+        "refresh_policy": "24h",
         "assets": {
             "current": "2030.0101.1",
             "releases": {

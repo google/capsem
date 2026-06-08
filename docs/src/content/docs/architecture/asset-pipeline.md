@@ -55,6 +55,7 @@ The manifest (`assets/manifest.json`, format 2) is a single top-level file cover
 ```json
 {
   "format": 2,
+  "refresh_policy": "24h",
   "assets": {
     "current": "2026.0421.30",
     "releases": {

@@ -95,6 +95,7 @@ def main():
 
     manifest = {
         "format": 2,
+        "refresh_policy": "24h",
         "assets": {
             "current": asset_version,
             "releases": {

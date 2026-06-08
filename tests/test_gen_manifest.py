@@ -48,6 +48,7 @@ class TestGenManifestV2:
 
         # v2 format marker
         assert manifest["format"] == 2
+        assert manifest["refresh_policy"] == "24h"
 
         # Assets section
         assert "assets" in manifest

@@ -243,6 +243,7 @@ Every build produces `assets/manifest.json` (format 2) -- a single top-level fil
 ```json
 {
   "format": 2,
+  "refresh_policy": "24h",
   "assets": {
     "current": "2026.0421.30",
     "releases": {

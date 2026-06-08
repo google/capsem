@@ -4,6 +4,7 @@ use super::*;
 
 const V2_MANIFEST: &str = r#"{
     "format": 2,
+    "refresh_policy": "24h",
     "assets": {
         "current": "2026.0415.1",
         "releases": {

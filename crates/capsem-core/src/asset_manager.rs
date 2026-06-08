@@ -137,6 +137,7 @@ pub struct BinariesSection {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ManifestV2 {
     pub format: u32,
+    pub refresh_policy: String,
     pub assets: AssetsSection,
     pub binaries: BinariesSection,
 }
@@ -369,6 +370,9 @@ impl ManifestV2 {
             serde_json::from_str(content).context("failed to parse manifest JSON")?;
         if manifest.format != 2 {
             bail!("expected manifest format 2, got {}", manifest.format);
+        }
+        if manifest.refresh_policy.trim().is_empty() {
+            bail!("manifest refresh_policy must not be empty");
         }
         validate_version(&manifest.assets.current)?;
         validate_version(&manifest.binaries.current)?;
@@ -823,6 +827,7 @@ mod tests {
 
     const SAMPLE_V2_MANIFEST: &str = r#"{
         "format": 2,
+        "refresh_policy": "24h",
         "assets": {
             "current": "2026.0415.1",
             "releases": {
@@ -856,6 +861,7 @@ mod tests {
     fn manifest_parse() {
         let m = ManifestV2::from_json(SAMPLE_V2_MANIFEST).unwrap();
         assert_eq!(m.format, 2);
+        assert_eq!(m.refresh_policy, "24h");
         assert_eq!(m.assets.current, "2026.0415.1");
         assert_eq!(m.binaries.current, "1.0.1776269479");
         assert_eq!(m.assets.releases.len(), 1);
@@ -866,6 +872,17 @@ mod tests {
         let arm64 = &rel.arches["arm64"];
         assert_eq!(arm64.len(), 3);
         assert_eq!(arm64["vmlinuz"].size, 7797248);
+    }
+
+    #[test]
+    fn manifest_requires_refresh_policy() {
+        let json = SAMPLE_V2_MANIFEST.replace(r#""refresh_policy": "24h","#, "");
+        let err = ManifestV2::from_json(&json).unwrap_err();
+        let error_chain = format!("{err:#}");
+        assert!(
+            error_chain.contains("refresh_policy"),
+            "missing refresh policy must fail closed, got: {error_chain}"
+        );
     }
 
     #[test]

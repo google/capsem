@@ -27,6 +27,7 @@ def _write_assets(root: Path) -> str:
     (arch_dir / arch).mkdir()
     manifest = {
         "format": 2,
+        "refresh_policy": "24h",
         "assets": {
             "current": "2030.0101.1",
             "releases": {
