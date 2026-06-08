@@ -19,7 +19,7 @@ from pathlib import Path
 
 import pytest
 
-from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB
+from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB
 from helpers.service import ServiceInstance, wait_exec_ready
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
@@ -46,6 +46,7 @@ def _create_vm(svc: ServiceInstance, prefix: str, *, persistent: bool = False) -
         "/vms/create",
         {
             "name": vm,
+            "profile_id": CODE_PROFILE_ID,
             "ram_mb": DEFAULT_RAM_MB,
             "cpus": DEFAULT_CPUS,
             "persistent": persistent,

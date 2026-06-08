@@ -2,7 +2,7 @@
 
 import pytest
 
-from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB
+from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB
 from helpers.service import vm_name
 
 pytestmark = pytest.mark.integration
@@ -16,7 +16,10 @@ class TestProvision:
         assert resp.get("id") == name or name in str(resp)
 
     def test_create_without_name(self, client):
-        resp = client.post("/vms/create", {"ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
+        resp = client.post(
+            "/vms/create",
+            {"profile_id": CODE_PROFILE_ID, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS},
+        )
         assert resp is not None
         vm_id = resp.get("id")
         assert vm_id, f"No ID in response: {resp}"
@@ -34,7 +37,15 @@ class TestProvision:
     def test_create_duplicate_name(self, fresh_vm, client):
         name, _ = fresh_vm("dup")
         # Second create with same name should fail
-        resp = client.post("/vms/create", {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
+        resp = client.post(
+            "/vms/create",
+            {
+                "name": name,
+                "profile_id": CODE_PROFILE_ID,
+                "ram_mb": DEFAULT_RAM_MB,
+                "cpus": DEFAULT_CPUS,
+            },
+        )
         assert resp is None or "error" in str(resp).lower() or "already" in str(resp).lower(), (
             f"Expected error for duplicate name, got: {resp}"
         )
@@ -50,7 +61,10 @@ class TestPersistence:
         assert info["id"] == name
 
     def test_provision_default_not_persistent(self, client):
-        resp = client.post("/vms/create", {"ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
+        resp = client.post(
+            "/vms/create",
+            {"profile_id": CODE_PROFILE_ID, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS},
+        )
         assert resp is not None
         vm_id = resp.get("id")
         assert vm_id
@@ -100,7 +114,15 @@ class TestDelete:
 
     def test_delete_removes_from_list(self, client):
         name = vm_name("del")
-        client.post("/vms/create", {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
+        client.post(
+            "/vms/create",
+            {
+                "name": name,
+                "profile_id": CODE_PROFILE_ID,
+                "ram_mb": DEFAULT_RAM_MB,
+                "cpus": DEFAULT_CPUS,
+            },
+        )
         client.delete(f"/vms/{name}/delete")
         resp = client.get("/vms/list")
         ids = [s["id"] for s in resp["sandboxes"]]
@@ -108,7 +130,15 @@ class TestDelete:
 
     def test_delete_twice(self, client):
         name = vm_name("del2x")
-        client.post("/vms/create", {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
+        client.post(
+            "/vms/create",
+            {
+                "name": name,
+                "profile_id": CODE_PROFILE_ID,
+                "ram_mb": DEFAULT_RAM_MB,
+                "cpus": DEFAULT_CPUS,
+            },
+        )
         client.delete(f"/vms/{name}/delete")
         resp = client.delete(f"/vms/{name}/delete")
         assert resp is None or "error" in str(resp).lower() or "not found" in str(resp).lower()

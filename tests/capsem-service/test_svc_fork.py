@@ -4,7 +4,7 @@ import uuid
 
 import pytest
 
-from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
+from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
 from helpers.service import wait_exec_ready, vm_name
 
 pytestmark = pytest.mark.integration
@@ -15,6 +15,7 @@ def _provision_persistent(client, prefix="fork"):
     name = vm_name(prefix)
     resp = client.post("/vms/create", {
         "name": name,
+        "profile_id": CODE_PROFILE_ID,
         "ram_mb": DEFAULT_RAM_MB,
         "cpus": DEFAULT_CPUS,
         "persistent": True,

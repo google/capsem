@@ -51,11 +51,23 @@
   `cargo test -p capsem-service asset_status_reports_reconcile_progress_fields
   -- --nocapture`, `cargo test -p capsem-service --no-run`, and `uv run pytest
   tests/capsem-service/test_svc_install.py tests/capsem-service/test_svc_mcp_api.py -q`.
-- [ ] Follow-up: sweep remaining Python integration/gateway VM creation
+- [x] Follow-up: sweep remaining Python integration/gateway VM creation
   fixtures so every `/vms/create` payload carries explicit `profile_id =
-  "code"` or intentionally asserts the missing-profile rejection. The shared
-  service fixture and touched MCP endpoint test are fixed; the broader harness
-  still has older create calls.
+  "code"` or intentionally asserts the missing-profile rejection. Also made
+  one-shot `/run` tests profile-explicit after the real service rejected the
+  old payload shape, and tightened the gateway mock so `/vms/create` and
+  `/run` reject missing profile ids. Coverage: read-only payload sweep over
+  `/vms/create` and `/run`, `git diff --check`, `uv run pytest
+  tests/capsem-gateway/test_gw_proxy.py tests/capsem-gateway/test_gw_proxy_advanced.py
+  tests/capsem-gateway/test_gw_concurrent.py -q`, `uv run pytest
+  tests/capsem-service/test_svc_provision.py tests/capsem-service/test_svc_exec_ready.py
+  tests/capsem-service/test_svc_fork.py tests/capsem-service/test_svc_startup.py -q`,
+  `uv run pytest tests/capsem-service/test_svc_persistence.py
+  tests/capsem-service/test_svc_resume_paths.py -q`, `uv run pytest
+  tests/capsem-service/test_svc_suspend_corruption.py
+  tests/capsem-service/test_svc_loop_device_after_resume.py -q`, `uv run pytest
+  tests/capsem-gateway/test_mitm_policy.py -q`, and `uv run pytest
+  tests/capsem-e2e/test_framed_mcp_mitm.py --collect-only -q`.
 - [ ] Commit S0.
 
 ## Commit Inspection Ledger

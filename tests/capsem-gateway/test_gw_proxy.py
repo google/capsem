@@ -8,7 +8,7 @@ import subprocess
 
 import pytest
 
-from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB
+from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB
 from helpers.gateway import GatewayInstance, TcpHttpClient
 
 pytestmark = pytest.mark.gateway
@@ -25,7 +25,10 @@ class TestProxyForwarding:
 
     def test_post_provision_with_body(self, gw_client):
         """POST /vms/create with JSON body returns an id."""
-        resp = gw_client.post("/vms/create", {"ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
+        resp = gw_client.post(
+            "/vms/create",
+            {"profile_id": CODE_PROFILE_ID, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS},
+        )
         assert resp is not None
         assert "id" in resp
 

@@ -31,7 +31,7 @@ from pathlib import Path
 
 import pytest
 
-from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB
+from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB
 from helpers.gateway import GatewayInstance, TcpHttpClient
 
 pytestmark = pytest.mark.gateway
@@ -142,6 +142,9 @@ class MockServiceHandler(BaseHTTPRequestHandler):
         path_only = self.clean_path.split("?", 1)[0]
         if path_only == "/vms/create":
             data = json.loads(body) if body else {}
+            if data.get("profile_id") != CODE_PROFILE_ID:
+                self._send_error(400, "profile_id is required")
+                return
             vm_id = f"vm-{uuid.uuid4().hex[:8]}"
             self._send_json({"id": vm_id})
         elif path_only.startswith("/vms/") and path_only.endswith("/exec"):
@@ -163,6 +166,10 @@ class MockServiceHandler(BaseHTTPRequestHandler):
         elif path_only == "/purge":
             self._send_json({"purged": 0, "persistent_purged": 0, "ephemeral_purged": 0})
         elif path_only == "/run":
+            data = json.loads(body) if body else {}
+            if data.get("profile_id") != CODE_PROFILE_ID:
+                self._send_error(400, "profile_id is required")
+                return
             self._send_json({"stdout": "mock run output\n", "stderr": "", "exit_code": 0})
         elif path_only.startswith("/vms/") and path_only.endswith("/resume"):
             self._send_json({"id": "vm-resumed"})

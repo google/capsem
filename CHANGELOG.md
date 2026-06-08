@@ -62,6 +62,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   timeline, and file read/write/list/content routes now live under
   `/vms`/`/vms/{vm_id}`; the retired top-level routes fail closed in the
   service/gateway route contract.
+- Tightened the Python service, gateway, and E2E harnesses around the
+  profile-owned VM contract: every VM creation and one-shot run test now passes
+  the real `code` profile id explicitly, and the gateway mock rejects missing
+  profile ids instead of accepting old default-profile payloads.
 - Added `GET /vms/{vm_id}/status` as the runtime-state endpoint for one VM so
   UI state reads no longer need to treat `/vms/{vm_id}/info` as a status API.
 - Added `PATCH /vms/{vm_id}/edit` as a fail-closed VM edit gate: attempts to

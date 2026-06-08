@@ -8,7 +8,7 @@ import uuid
 
 import pytest
 
-from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT, EXEC_TIMEOUT_SECS, HTTP_TIMEOUT
+from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT, EXEC_TIMEOUT_SECS, HTTP_TIMEOUT
 from helpers.gateway import GatewayInstance, TcpHttpClient
 from helpers.service import ServiceInstance, wait_exec_ready, vm_name
 
@@ -40,7 +40,10 @@ class TestGatewayE2E:
         name = vm_name("gw-e2e")
         # Provision
         resp = e2e_client.post("/vms/create", {
-            "name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS,
+            "name": name,
+            "profile_id": CODE_PROFILE_ID,
+            "ram_mb": DEFAULT_RAM_MB,
+            "cpus": DEFAULT_CPUS,
         })
         assert resp is not None, "provision failed"
         vm_id = resp.get("id", name)
@@ -77,7 +80,10 @@ class TestGatewayE2E:
         """GET /status shows running VMs with resource summary."""
         name = vm_name("gw-st")
         resp = e2e_client.post("/vms/create", {
-            "name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS,
+            "name": name,
+            "profile_id": CODE_PROFILE_ID,
+            "ram_mb": DEFAULT_RAM_MB,
+            "cpus": DEFAULT_CPUS,
         })
         vm_id = resp.get("id", name)
         assert wait_exec_ready_tcp(e2e_client, vm_id, timeout=60)
@@ -107,7 +113,10 @@ class TestGatewayE2E:
         """
         name = vm_name("gw-race")
         resp = e2e_client.post("/vms/create", {
-            "name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS,
+            "name": name,
+            "profile_id": CODE_PROFILE_ID,
+            "ram_mb": DEFAULT_RAM_MB,
+            "cpus": DEFAULT_CPUS,
         })
         assert resp is not None, "provision failed"
         vm_id = resp.get("id", name)
@@ -149,7 +158,10 @@ class TestGatewayFileIO:
         """Write a file to guest, then read it back through gateway."""
         name = vm_name("gw-file")
         resp = e2e_client.post("/vms/create", {
-            "name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS,
+            "name": name,
+            "profile_id": CODE_PROFILE_ID,
+            "ram_mb": DEFAULT_RAM_MB,
+            "cpus": DEFAULT_CPUS,
         })
         vm_id = resp.get("id", name)
         assert wait_exec_ready_tcp(e2e_client, vm_id, timeout=60)
@@ -175,7 +187,10 @@ class TestGatewayFileIO:
         """Write a file with special characters."""
         name = vm_name("gw-bin")
         resp = e2e_client.post("/vms/create", {
-            "name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS,
+            "name": name,
+            "profile_id": CODE_PROFILE_ID,
+            "ram_mb": DEFAULT_RAM_MB,
+            "cpus": DEFAULT_CPUS,
         })
         vm_id = resp.get("id", name)
         assert wait_exec_ready_tcp(e2e_client, vm_id, timeout=60)
@@ -204,7 +219,10 @@ class TestGatewayPersistence:
         """Create ephemeral VM, persist it, stop, resume through gateway."""
         name = vm_name("gw-persist")
         resp = e2e_client.post("/vms/create", {
-            "name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS,
+            "name": name,
+            "profile_id": CODE_PROFILE_ID,
+            "ram_mb": DEFAULT_RAM_MB,
+            "cpus": DEFAULT_CPUS,
             "persistent": True,
         })
         assert resp is not None
@@ -244,7 +262,10 @@ class TestGatewayPersistence:
         """POST /purge kills ephemeral VMs through gateway."""
         name = vm_name("gw-purge")
         resp = e2e_client.post("/vms/create", {
-            "name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS,
+            "name": name,
+            "profile_id": CODE_PROFILE_ID,
+            "ram_mb": DEFAULT_RAM_MB,
+            "cpus": DEFAULT_CPUS,
         })
         assert resp is not None
 
@@ -265,7 +286,10 @@ class TestGatewayLogs:
         """GET /vms/{id}/logs returns boot logs for a running VM."""
         name = vm_name("gw-logs")
         resp = e2e_client.post("/vms/create", {
-            "name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS,
+            "name": name,
+            "profile_id": CODE_PROFILE_ID,
+            "ram_mb": DEFAULT_RAM_MB,
+            "cpus": DEFAULT_CPUS,
         })
         vm_id = resp.get("id", name)
         assert wait_exec_ready_tcp(e2e_client, vm_id, timeout=60)
@@ -285,7 +309,10 @@ class TestGatewayEnvVars:
         """Environment variables are passed through gateway to the guest."""
         name = vm_name("gw-env")
         resp = e2e_client.post("/vms/create", {
-            "name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS,
+            "name": name,
+            "profile_id": CODE_PROFILE_ID,
+            "ram_mb": DEFAULT_RAM_MB,
+            "cpus": DEFAULT_CPUS,
             "env": {"GW_TEST_VAR": "hello-from-gateway"},
         })
         assert resp is not None

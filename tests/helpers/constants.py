@@ -7,6 +7,7 @@ used across capsem-mcp and capsem-service test suites.
 # Default VM resources
 DEFAULT_RAM_MB = 2048
 DEFAULT_CPUS = 2
+CODE_PROFILE_ID = "code"
 
 # Timeouts (seconds)
 EXEC_READY_TIMEOUT = 30    # Max seconds to wait for a VM to become exec-ready

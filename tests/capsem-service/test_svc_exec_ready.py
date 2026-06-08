@@ -13,7 +13,7 @@ import uuid
 
 import pytest
 
-from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_TIMEOUT_SECS, HTTP_TIMEOUT
+from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_TIMEOUT_SECS, HTTP_TIMEOUT
 
 pytestmark = pytest.mark.integration
 
@@ -29,7 +29,15 @@ class TestExecImmediatelyAfterProvision:
         """POST /vms/{id}/exec must succeed right after POST /vms/create."""
         client = service_env.client()
         name = vm_name("ei")
-        resp = client.post("/vms/create", {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
+        resp = client.post(
+            "/vms/create",
+            {
+                "name": name,
+                "profile_id": CODE_PROFILE_ID,
+                "ram_mb": DEFAULT_RAM_MB,
+                "cpus": DEFAULT_CPUS,
+            },
+        )
         assert resp is not None, "provision failed"
         vm_id = resp.get("id", name)
 
@@ -52,7 +60,15 @@ class TestExecImmediatelyAfterProvision:
         """POST /vms/{id}/files/write must succeed right after POST /vms/create."""
         client = service_env.client()
         name = vm_name("wi")
-        resp = client.post("/vms/create", {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
+        resp = client.post(
+            "/vms/create",
+            {
+                "name": name,
+                "profile_id": CODE_PROFILE_ID,
+                "ram_mb": DEFAULT_RAM_MB,
+                "cpus": DEFAULT_CPUS,
+            },
+        )
         assert resp is not None
         vm_id = resp.get("id", name)
 
@@ -71,7 +87,15 @@ class TestExecImmediatelyAfterProvision:
         """POST /write_file + /read_file must succeed right after POST /vms/create."""
         client = service_env.client()
         name = vm_name("ri")
-        resp = client.post("/vms/create", {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
+        resp = client.post(
+            "/vms/create",
+            {
+                "name": name,
+                "profile_id": CODE_PROFILE_ID,
+                "ram_mb": DEFAULT_RAM_MB,
+                "cpus": DEFAULT_CPUS,
+            },
+        )
         assert resp is not None
         vm_id = resp.get("id", name)
 
@@ -105,7 +129,11 @@ class TestExecImmediatelyAfterResume:
         # 1. Provision a persistent VM. Server-side wait means this
         #    exec will block until VM is ready (no client poll needed).
         prov_resp = client.post("/vms/create", {
-            "name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS, "persistent": True,
+            "name": name,
+            "profile_id": CODE_PROFILE_ID,
+            "ram_mb": DEFAULT_RAM_MB,
+            "cpus": DEFAULT_CPUS,
+            "persistent": True,
         })
         assert prov_resp is not None and "error" not in prov_resp, (
             f"provision persistent VM failed: {prov_resp}"

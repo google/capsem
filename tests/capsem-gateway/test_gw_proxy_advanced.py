@@ -11,6 +11,8 @@ import os
 
 import pytest
 
+from helpers.constants import CODE_PROFILE_ID
+
 pytestmark = pytest.mark.gateway
 
 
@@ -83,7 +85,7 @@ class TestProxyEndpointCoverage:
 
     def test_post_run(self, gw_client):
         """POST /run one-shot command execution."""
-        resp = gw_client.post("/run", {"command": "echo test"})
+        resp = gw_client.post("/run", {"command": "echo test", "profile_id": CODE_PROFILE_ID})
         assert resp is not None
         assert "stdout" in resp
 

@@ -11,7 +11,7 @@ import time
 
 import pytest
 
-from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB
+from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB
 
 pytestmark = pytest.mark.gateway
 
@@ -64,7 +64,15 @@ class TestConcurrentRequests:
             threading.Thread(target=do_request, args=("status", "GET", "/status")),
             threading.Thread(target=do_request, args=("info", "GET", "/vms/vm-001/info")),
             threading.Thread(target=do_request, args=("images", "GET", "/images")),
-            threading.Thread(target=do_request, args=("provision", "POST", "/vms/create", {"ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})),
+            threading.Thread(
+                target=do_request,
+                args=(
+                    "provision",
+                    "POST",
+                    "/vms/create",
+                    {"profile_id": CODE_PROFILE_ID, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS},
+                ),
+            ),
         ]
         for t in threads:
             t.start()

@@ -4,7 +4,7 @@ import uuid
 
 import pytest
 
-from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
+from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
 from helpers.service import ServiceInstance, wait_exec_ready, vm_name
 
 pytestmark = pytest.mark.integration
@@ -34,7 +34,7 @@ def fresh_vm(client):
         name = vm_name(prefix)
         resp = client.post(
             "/vms/create",
-            {"name": name, "profile_id": "code", "ram_mb": ram_mb, "cpus": cpus},
+            {"name": name, "profile_id": CODE_PROFILE_ID, "ram_mb": ram_mb, "cpus": cpus},
         )
         created.append(name)
         return name, resp
@@ -55,7 +55,7 @@ def ready_vm(service_env):
     name = vm_name(service_env.__class__.__name__[:8])
     client.post(
         "/vms/create",
-        {"name": name, "profile_id": "code", "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS},
+        {"name": name, "profile_id": CODE_PROFILE_ID, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS},
     )
     assert wait_exec_ready(client, name, timeout=EXEC_READY_TIMEOUT), f"VM {name} never exec-ready"
     yield client, name

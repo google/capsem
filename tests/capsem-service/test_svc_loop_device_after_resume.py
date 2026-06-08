@@ -25,7 +25,7 @@ import uuid
 
 import pytest
 
-from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT, EXEC_TIMEOUT_SECS
+from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT, EXEC_TIMEOUT_SECS
 from helpers.service import wait_exec_ready, vm_name
 
 pytestmark = pytest.mark.integration
@@ -73,7 +73,13 @@ class TestLoopDeviceAfterResume:
         name = vm_name("loopio")
         client.post(
             "/vms/create",
-            {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS, "persistent": True},
+            {
+                "name": name,
+                "profile_id": CODE_PROFILE_ID,
+                "ram_mb": DEFAULT_RAM_MB,
+                "cpus": DEFAULT_CPUS,
+                "persistent": True,
+            },
         )
         try:
             assert wait_exec_ready(client, name, timeout=EXEC_READY_TIMEOUT)
