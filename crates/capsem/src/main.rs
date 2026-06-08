@@ -130,12 +130,18 @@ enum Commands {
 enum AssetsCommands {
     /// Show VM asset readiness
     Status {
+        /// Profile whose VM assets should be inspected
+        #[arg(long, default_value = "code")]
+        profile: String,
         /// Output JSON
         #[arg(long)]
         json: bool,
     },
     /// Download missing or corrupt VM assets, then show readiness
     Ensure {
+        /// Profile whose VM assets should be repaired
+        #[arg(long, default_value = "code")]
+        profile: String,
         /// Output JSON
         #[arg(long)]
         json: bool,
@@ -1192,9 +1198,12 @@ async fn main() -> Result<()> {
     let client = UdsClient::new(uds_path, auto_launch);
 
     match cli.command.as_ref().unwrap() {
-        Commands::Assets(AssetsCommands::Status { json }) => {
-            let resp: ApiResponse<AssetStatusResponse> =
-                client.get("/profiles/default/assets/status").await?;
+        Commands::Assets(AssetsCommands::Status { profile, json }) => {
+            client::validate_id(profile)?;
+            let encoded_profile = urlencoding::encode(profile);
+            let resp: ApiResponse<AssetStatusResponse> = client
+                .get(&format!("/profiles/{encoded_profile}/assets/status"))
+                .await?;
             let status = resp.into_result()?;
             if *json {
                 println!("{}", serde_json::to_string_pretty(&status)?);
@@ -1202,9 +1211,14 @@ async fn main() -> Result<()> {
                 print_asset_status(&status);
             }
         }
-        Commands::Assets(AssetsCommands::Ensure { json }) => {
+        Commands::Assets(AssetsCommands::Ensure { profile, json }) => {
+            client::validate_id(profile)?;
+            let encoded_profile = urlencoding::encode(profile);
             let resp: ApiResponse<AssetStatusResponse> = client
-                .post("/profiles/default/assets/ensure", serde_json::json!({}))
+                .post(
+                    &format!("/profiles/{encoded_profile}/assets/ensure"),
+                    serde_json::json!({}),
+                )
                 .await?;
             let status = resp.into_result()?;
             if *json {
@@ -2551,7 +2565,10 @@ mod tests {
     fn parse_assets_status() {
         let cli = Cli::parse_from(["capsem", "assets", "status"]);
         match cli.command.unwrap() {
-            Commands::Assets(AssetsCommands::Status { json }) => assert!(!json),
+            Commands::Assets(AssetsCommands::Status { profile, json }) => {
+                assert_eq!(profile, "code");
+                assert!(!json);
+            }
             _ => panic!("expected assets status"),
         }
     }
@@ -2560,8 +2577,23 @@ mod tests {
     fn parse_assets_ensure_json() {
         let cli = Cli::parse_from(["capsem", "assets", "ensure", "--json"]);
         match cli.command.unwrap() {
-            Commands::Assets(AssetsCommands::Ensure { json }) => assert!(json),
+            Commands::Assets(AssetsCommands::Ensure { profile, json }) => {
+                assert_eq!(profile, "code");
+                assert!(json);
+            }
             _ => panic!("expected assets ensure"),
+        }
+    }
+
+    #[test]
+    fn parse_assets_status_profile() {
+        let cli = Cli::parse_from(["capsem", "assets", "status", "--profile", "analysis"]);
+        match cli.command.unwrap() {
+            Commands::Assets(AssetsCommands::Status { profile, json }) => {
+                assert_eq!(profile, "analysis");
+                assert!(!json);
+            }
+            _ => panic!("expected assets status"),
         }
     }
 

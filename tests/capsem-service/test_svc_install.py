@@ -40,7 +40,7 @@ class TestAssets:
 
     def test_assets_lists_three_expected_artifacts(self, client):
         """Profile asset status enumerates vmlinuz, initrd.img, and rootfs."""
-        resp = client.get("/profiles/default/assets/status")
+        resp = client.get("/profiles/code/assets/status")
         assert resp is not None
         # Handler either returns {ready, downloading, asset_version, assets}
         # or {ready: false, downloading: false, error, assets: []}.
@@ -69,7 +69,7 @@ class TestAssets:
         If assets haven't been built yet, we accept ready=false but still
         verify the invariant.
         """
-        resp = client.get("/profiles/default/assets/status")
+        resp = client.get("/profiles/code/assets/status")
         assert resp is not None
         if resp.get("error"):
             # No asset manifest -- skip the invariant but keep shape assertion.
@@ -81,7 +81,7 @@ class TestAssets:
 
     def test_assets_ensure_returns_status_shape(self, client):
         """Profile asset ensure returns the same status shape after reconcile."""
-        resp = client.post("/profiles/default/assets/ensure", {})
+        resp = client.post("/profiles/code/assets/ensure", {})
         assert resp is not None
         assert "ready" in resp and "assets" in resp, f"missing keys: {resp}"
         assert resp.get("ensured") is True or resp.get("error") is not None

@@ -111,7 +111,7 @@ class TestProxyEndpointCoverage:
 
     def test_post_profile_reload(self, gw_client):
         """POST /profiles/{profile_id}/reload reloads profile config."""
-        resp = gw_client.post("/profiles/default/reload", {})
+        resp = gw_client.post("/profiles/code/reload", {})
         assert resp is not None
 
 

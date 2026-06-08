@@ -52,7 +52,7 @@ class TestReloadConfig:
         # Make sure no VMs are running first.
         client.post("/purge", {"all": True})
 
-        resp = client.post("/profiles/default/reload", {})
+        resp = client.post("/profiles/code/reload", {})
         assert resp is not None, "profile reload returned no body"
         assert resp.get("success") is True, f"profile reload failed: {resp}"
         assert resp.get("reloaded") == 0, (

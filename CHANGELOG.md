@@ -91,6 +91,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   selected profile's current-architecture kernel, initrd, and rootfs URLs into
   hash-prefixed asset files, verifies each file with the profile BLAKE3 hash,
   updates reconcile status, and skips already-verified profile assets.
+- Made `capsem assets status` and `capsem assets ensure` profile-aware. Both
+  commands now target the real `code` profile by default, accept `--profile`,
+  and call `/profiles/{profile_id}/assets/...` instead of the burned
+  `/profiles/default` path; gateway route coverage also forwards
+  `/profiles/status` and `/profiles/reload` explicitly.
 - Made startup asset cleanup preserve profile catalog assets and persistent VM
   boot asset pins. Hash-prefixed files referenced by active profile
   descriptors or saved VM pins are retained even when they are not listed in

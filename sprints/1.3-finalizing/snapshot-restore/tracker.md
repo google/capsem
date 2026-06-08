@@ -518,6 +518,11 @@ the guarantee or explicitly burn it.
 - [x] Make `/profiles/{profile_id}/assets/status` report the selected
   profile's current-arch kernel/initrd/rootfs contract, expected hashes, and
   present/missing state from the asset cache.
+- [x] Burn live `/profiles/default` asset callers from the CLI/gateway/test
+  contract. `capsem assets status|ensure` now defaults to the real `code`
+  profile, accepts `--profile`, and forwards through
+  `/profiles/{profile_id}/assets/...`; gateway coverage also forwards
+  `/profiles/status` and `/profiles/reload` explicitly.
 - [ ] Restore profile catalog/loader and remove all `default`-only profile code
   paths.
 - [ ] Represent default/built-in profiles as real catalog/profile entries using
@@ -542,6 +547,17 @@ the guarantee or explicitly burn it.
 - [ ] Expose profile id/revision/status/pins in service/gateway/client DTOs.
 - [ ] Add adversarial tests for fake profiles, two profiles with different
   assets, corrupt assets, missing pins, and revoked/deprecated profiles.
+- Coverage for profile-route burn slice:
+  `cargo test -p capsem parse_assets -- --nocapture`;
+  `cargo test -p capsem-gateway gateway_security_routes_are_explicitly_forwarded -- --nocapture`;
+  `cargo test -p capsem-gateway gateway_does_not_forward_retired_profile_credential_routes -- --nocapture`;
+  `cargo test -p capsem-service profile -- --nocapture`;
+  `cargo test -p capsem --no-run`;
+  `cargo test -p capsem-gateway --no-run`;
+  `cargo test -p capsem-service --no-run`;
+  `git diff --check`.
+  Python API checks were attempted with `pytest` and `python3 -m pytest`, but
+  this shell lacks the `pytest` module.
 - [ ] Commit S2.
 
 ## S3: TUI And Terminal Shell
