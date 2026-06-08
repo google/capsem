@@ -16,6 +16,7 @@ pub struct PersistentVmEntry {
     pub name: String,
     pub profile_id: String,
     pub profile_revision: String,
+    pub profile_payload_hash: String,
     pub asset_pins: BootAssetPins,
     pub ram_mb: u64,
     pub cpus: u32,
@@ -142,6 +143,8 @@ mod tests {
             name: name.into(),
             profile_id: "code".into(),
             profile_revision: "2026.06.07.1".into(),
+            profile_payload_hash:
+                "blake3:1111111111111111111111111111111111111111111111111111111111111111".into(),
             asset_pins: test_asset_pins(),
             ram_mb: 2048,
             cpus: 2,
@@ -285,14 +288,12 @@ mod tests {
     }
 
     #[test]
-    fn suspended_flag_defaults_to_false_when_missing() {
-        // Old registry entries won't have the suspended field
+    fn persistent_vm_entry_rejects_missing_profile_contract_fields() {
         let json = r#"{"name":"old","ram_mb":2048,"cpus":2,"base_version":"0.1.0","created_at":"0","session_dir":"/tmp/old"}"#;
-        let entry: PersistentVmEntry = serde_json::from_str(json).unwrap();
-        assert!(!entry.suspended, "suspended should default to false");
+        let err = serde_json::from_str::<PersistentVmEntry>(json).unwrap_err();
         assert!(
-            entry.checkpoint_path.is_none(),
-            "checkpoint_path should default to None"
+            err.to_string().contains("profile_id"),
+            "registry entries without profile contract fields must fail closed, got: {err}"
         );
     }
 

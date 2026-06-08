@@ -154,6 +154,7 @@ fn insert_fake_instance_with_session_dir(
             id: id.to_string(),
             profile_id: "code".into(),
             profile_revision: test_profile_revision(),
+            profile_payload_hash: test_profile_payload_hash(),
             asset_pins: test_asset_pins(),
             pid,
             uds_path: PathBuf::from(format!("/tmp/{}.sock", id)),
@@ -171,6 +172,10 @@ fn insert_fake_instance_with_session_dir(
 
 fn test_profile_revision() -> String {
     ProfileConfigFile::builtin_code().revision
+}
+
+fn test_profile_payload_hash() -> String {
+    profile_payload_hash(&ProfileConfigFile::builtin_code()).unwrap()
 }
 
 fn test_asset_pins() -> BootAssetPins {
@@ -1838,6 +1843,7 @@ fn provision_persistent_rejects_duplicate_name() {
                 name: "taken".into(),
                 profile_id: "code".into(),
                 profile_revision: test_profile_revision(),
+                profile_payload_hash: test_profile_payload_hash(),
                 asset_pins: test_asset_pins(),
                 ram_mb: 2048,
                 cpus: 2,
@@ -1940,6 +1946,7 @@ async fn handle_fork_creates_persistent_sandbox() {
             id: "fork-src".into(),
             profile_id: "code".into(),
             profile_revision: test_profile_revision(),
+            profile_payload_hash: test_profile_payload_hash(),
             asset_pins: test_asset_pins(),
             pid: std::process::id(),
             uds_path: PathBuf::from("/tmp/fork-src.sock"),
@@ -1970,6 +1977,7 @@ async fn handle_fork_creates_persistent_sandbox() {
     let entry = registry.get("my-fork").unwrap();
     assert_eq!(entry.profile_id, "code");
     assert_eq!(entry.profile_revision, test_profile_revision());
+    assert_eq!(entry.profile_payload_hash, test_profile_payload_hash());
     assert_eq!(entry.asset_pins, test_asset_pins());
     assert_eq!(entry.forked_from, Some("fork-src".into()));
     assert_eq!(entry.description, Some("test".into()));
@@ -2007,6 +2015,7 @@ async fn handle_fork_duplicate_returns_conflict() {
             id: "dup-src".into(),
             profile_id: "code".into(),
             profile_revision: test_profile_revision(),
+            profile_payload_hash: test_profile_payload_hash(),
             asset_pins: test_asset_pins(),
             pid: std::process::id(),
             uds_path: PathBuf::from("/tmp/dup-src.sock"),
@@ -2062,6 +2071,7 @@ async fn handle_fork_from_persistent_registry() {
                 name: "pers-vm".into(),
                 profile_id: "code".into(),
                 profile_revision: test_profile_revision(),
+                profile_payload_hash: test_profile_payload_hash(),
                 asset_pins: test_asset_pins(),
                 ram_mb: 2048,
                 cpus: 2,
@@ -2094,6 +2104,7 @@ async fn handle_fork_from_persistent_registry() {
     let entry = registry.get("from-pers").unwrap();
     assert_eq!(entry.profile_id, "code");
     assert_eq!(entry.profile_revision, test_profile_revision());
+    assert_eq!(entry.profile_payload_hash, test_profile_payload_hash());
     assert_eq!(entry.asset_pins, test_asset_pins());
 }
 
@@ -2109,6 +2120,7 @@ async fn handle_persist_preserves_profile_identity() {
             id: "persist-src".into(),
             profile_id: "code".into(),
             profile_revision: test_profile_revision(),
+            profile_payload_hash: test_profile_payload_hash(),
             asset_pins: test_asset_pins(),
             pid: std::process::id(),
             uds_path: PathBuf::from("/tmp/persist-src.sock"),
@@ -2137,6 +2149,7 @@ async fn handle_persist_preserves_profile_identity() {
     let entry = registry.get("persisted").unwrap();
     assert_eq!(entry.profile_id, "code");
     assert_eq!(entry.profile_revision, test_profile_revision());
+    assert_eq!(entry.profile_payload_hash, test_profile_payload_hash());
     assert_eq!(entry.asset_pins, test_asset_pins());
     drop(registry);
 
@@ -2144,6 +2157,7 @@ async fn handle_persist_preserves_profile_identity() {
     let info = instances.get("persisted").unwrap();
     assert_eq!(info.profile_id, "code");
     assert_eq!(info.profile_revision, test_profile_revision());
+    assert_eq!(info.profile_payload_hash, test_profile_payload_hash());
     assert_eq!(info.asset_pins, test_asset_pins());
     assert!(info.persistent);
 }
@@ -2162,6 +2176,7 @@ fn resume_rejects_profile_revision_drift() {
                 name: "revision-drift".into(),
                 profile_id: "code".into(),
                 profile_revision: "old-revision".into(),
+                profile_payload_hash: test_profile_payload_hash(),
                 asset_pins: test_asset_pins(),
                 ram_mb: 2048,
                 cpus: 2,
@@ -2188,6 +2203,49 @@ fn resume_rejects_profile_revision_drift() {
     );
 }
 
+#[test]
+fn resume_rejects_profile_payload_hash_drift() {
+    let (state, _dir) = make_test_state_with_tempdir();
+    install_test_profile_assets(&state);
+    let session_dir = state.run_dir.join("persistent/payload-hash-drift");
+    std::fs::create_dir_all(&session_dir).unwrap();
+    {
+        let mut reg = state.persistent_registry.lock().unwrap();
+        reg.data.vms.insert(
+            "payload-hash-drift".into(),
+            PersistentVmEntry {
+                name: "payload-hash-drift".into(),
+                profile_id: "code".into(),
+                profile_revision: test_profile_revision(),
+                profile_payload_hash:
+                    "blake3:0000000000000000000000000000000000000000000000000000000000000000"
+                        .into(),
+                asset_pins: test_asset_pins(),
+                ram_mb: 2048,
+                cpus: 2,
+                base_version: "0.0.0".into(),
+                created_at: "0".into(),
+                session_dir,
+                forked_from: None,
+                description: None,
+                suspended: false,
+                defunct: false,
+                last_error: None,
+                checkpoint_path: None,
+                env: None,
+            },
+        );
+    }
+
+    let err = state
+        .resume_sandbox("payload-hash-drift", None, None)
+        .unwrap_err();
+    assert!(
+        err.to_string().contains("payload hash mismatch"),
+        "resume must fail closed on profile payload hash drift, got: {err}"
+    );
+}
+
 #[tokio::test]
 async fn handle_fork_rejects_asset_pin_drift() {
     let (state, _dir) = make_test_state_with_tempdir();
@@ -2207,6 +2265,7 @@ async fn handle_fork_rejects_asset_pin_drift() {
                 name: "pin-drift".into(),
                 profile_id: "code".into(),
                 profile_revision: test_profile_revision(),
+                profile_payload_hash: test_profile_payload_hash(),
                 asset_pins: pins,
                 ram_mb: 2048,
                 cpus: 2,
@@ -2275,6 +2334,7 @@ fn provision_rejects_source_with_different_profile() {
                 name: "other-profile-source".into(),
                 profile_id: "other-profile".into(),
                 profile_revision: test_profile_revision(),
+                profile_payload_hash: test_profile_payload_hash(),
                 asset_pins: test_asset_pins(),
                 ram_mb: 2048,
                 cpus: 2,
@@ -2326,6 +2386,7 @@ async fn handle_list_shows_suspended_status() {
                 name: "susp-vm".into(),
                 profile_id: "code".into(),
                 profile_revision: test_profile_revision(),
+                profile_payload_hash: test_profile_payload_hash(),
                 asset_pins: test_asset_pins(),
                 ram_mb: 2048,
                 cpus: 2,
@@ -2352,6 +2413,7 @@ async fn handle_list_shows_suspended_status() {
                 name: "stop-vm".into(),
                 profile_id: "code".into(),
                 profile_revision: test_profile_revision(),
+                profile_payload_hash: test_profile_payload_hash(),
                 asset_pins: test_asset_pins(),
                 ram_mb: 1024,
                 cpus: 1,
@@ -2396,6 +2458,7 @@ async fn handle_info_shows_suspended_status() {
                 name: "info-susp".into(),
                 profile_id: "code".into(),
                 profile_revision: test_profile_revision(),
+                profile_payload_hash: test_profile_payload_hash(),
                 asset_pins: test_asset_pins(),
                 ram_mb: 2048,
                 cpus: 2,
@@ -2528,6 +2591,7 @@ async fn handle_suspend_rejects_ephemeral_vm() {
                 id: "eph-vm".into(),
                 profile_id: "code".into(),
                 profile_revision: test_profile_revision(),
+                profile_payload_hash: test_profile_payload_hash(),
                 asset_pins: test_asset_pins(),
                 pid: 0,
                 uds_path: state.run_dir.join("instances/eph-vm.sock"),
@@ -2573,6 +2637,7 @@ fn archive_failed_restore_checkpoint_moves_checkpoint_aside() {
                 name: "resume-vm".into(),
                 profile_id: "code".into(),
                 profile_revision: test_profile_revision(),
+                profile_payload_hash: test_profile_payload_hash(),
                 asset_pins: test_asset_pins(),
                 ram_mb: 2048,
                 cpus: 2,
@@ -2942,6 +3007,7 @@ fn resolve_rejects_symlink_escape() {
             id: "test-vm".into(),
             profile_id: "code".into(),
             profile_revision: test_profile_revision(),
+            profile_payload_hash: test_profile_payload_hash(),
             asset_pins: test_asset_pins(),
             pid: 1,
             uds_path: PathBuf::from("/tmp/test.sock"),
@@ -2975,6 +3041,7 @@ fn resolve_valid_path_inside_workspace() {
             id: "test-vm".into(),
             profile_id: "code".into(),
             profile_revision: test_profile_revision(),
+            profile_payload_hash: test_profile_payload_hash(),
             asset_pins: test_asset_pins(),
             pid: 1,
             uds_path: PathBuf::from("/tmp/test.sock"),
@@ -3097,6 +3164,7 @@ fn setup_vm_with_workspace_and_uds(
             id: vm_id.into(),
             profile_id: "code".into(),
             profile_revision: test_profile_revision(),
+            profile_payload_hash: test_profile_payload_hash(),
             asset_pins: test_asset_pins(),
             pid: 1,
             uds_path,
@@ -3340,6 +3408,7 @@ async fn write_file_logs_import_before_guest_write() {
             id: "write-ledger-vm".into(),
             profile_id: "code".into(),
             profile_revision: test_profile_revision(),
+            profile_payload_hash: test_profile_payload_hash(),
             asset_pins: test_asset_pins(),
             pid: 1,
             uds_path,

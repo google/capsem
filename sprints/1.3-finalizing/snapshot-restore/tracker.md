@@ -147,19 +147,23 @@ the guarantee or explicitly burn it.
   --nocapture`, `cargo test -p capsem-service --no-run`, and `cargo test -p
   capsem-service profile -- --nocapture`.
 - [x] Current-architecture slice: persistent VM rows and live runtime state now
-  carry the selected profile revision plus kernel/initrd/rootfs boot asset
-  pins. Create/save/fork/resume preserve those pins, while resume rejects
-  profile revision drift and fork/save reject current profile asset-pin drift
-  before booting or cloning stale state. Decision: conceptual_port of
-  persistent VM profile/base-asset pinning into the current profile catalog and
+  carry the selected profile revision, typed profile payload BLAKE3 hash, plus
+  kernel/initrd/rootfs boot asset pins. Create/save/fork/resume preserve those
+  pins, while resume rejects profile revision or payload hash drift and
+  fork/save reject current profile asset-pin drift before booting or cloning
+  stale state. Decision: conceptual_port of persistent VM profile
+  revision/payload/base-asset pinning into the current profile catalog and
   registry contract; byte-level asset verification remains owned by profile
   asset ensure/download. Tests: `cargo test -p capsem-service
   resume_rejects_profile_revision_drift -- --nocapture`, `cargo test -p
-  capsem-service handle_fork_rejects_asset_pin_drift -- --nocapture`,
-  `cargo test -p capsem-service handle_persist_preserves_profile_identity --
-  --nocapture`, `cargo test -p capsem-service handle_fork -- --nocapture`,
-  `cargo test -p capsem-service profile -- --nocapture`, and `cargo test -p
-  capsem-service --no-run`.
+  capsem-service resume_rejects_profile_payload_hash_drift -- --nocapture`,
+  `cargo test -p capsem-service
+  persistent_vm_entry_rejects_missing_profile_contract_fields -- --nocapture`,
+  `cargo test -p capsem-service handle_fork_rejects_asset_pin_drift --
+  --nocapture`, `cargo test -p capsem-service
+  handle_persist_preserves_profile_identity -- --nocapture`, `cargo test -p
+  capsem-service handle_fork -- --nocapture`, `cargo test -p capsem-service
+  profile -- --nocapture`, and `cargo test -p capsem-service --no-run`.
 - [ ] `b2fb7e33 feat: export session policy contexts`
 - [ ] `7a5afc9c test: prove process enforcement logs in real vm`
 - [ ] `f2a6247f docs: close s07 debt ledger`

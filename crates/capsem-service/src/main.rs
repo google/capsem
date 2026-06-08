@@ -158,6 +158,7 @@ struct InstanceInfo {
     id: String,
     profile_id: String,
     profile_revision: String,
+    profile_payload_hash: String,
     asset_pins: BootAssetPins,
     pid: u32,
     uds_path: PathBuf,
@@ -596,8 +597,14 @@ impl ServiceState {
 
         let profile = self.profile_config(&profile_id)?;
         let profile_revision = profile.revision.clone();
+        let profile_payload_hash = profile_payload_hash(&profile)?;
         let asset_pins = profile_asset_pins(&profile)?;
-        self.validate_profile_asset_pins(&profile, &profile_revision, &asset_pins)?;
+        self.validate_profile_pins(
+            &profile,
+            &profile_revision,
+            &profile_payload_hash,
+            &asset_pins,
+        )?;
         let resolved = self.resolve_profile_asset_paths(&profile)?;
 
         info!(process_binary = %self.process_binary.display(), exists = self.process_binary.exists(), "checking process_binary");
@@ -792,6 +799,7 @@ impl ServiceState {
                 name: id.to_string(),
                 profile_id: profile_id.clone(),
                 profile_revision: profile_revision.clone(),
+                profile_payload_hash: profile_payload_hash.clone(),
                 asset_pins: asset_pins.clone(),
                 ram_mb,
                 cpus,
@@ -821,6 +829,7 @@ impl ServiceState {
                 id: id.to_string(),
                 profile_id,
                 profile_revision,
+                profile_payload_hash,
                 asset_pins,
                 pid,
                 uds_path,
@@ -884,7 +893,12 @@ impl ServiceState {
         let _ = std::fs::remove_file(uds_path.with_extension("ready"));
 
         let profile = self.profile_config(&entry.profile_id)?;
-        self.validate_profile_asset_pins(&profile, &entry.profile_revision, &entry.asset_pins)?;
+        self.validate_profile_pins(
+            &profile,
+            &entry.profile_revision,
+            &entry.profile_payload_hash,
+            &entry.asset_pins,
+        )?;
         let resolved = self.resolve_profile_asset_paths(&profile)?;
 
         let process_log_path = entry.session_dir.join("process.log");
@@ -1011,6 +1025,7 @@ impl ServiceState {
                 id: name.to_string(),
                 profile_id: entry.profile_id.clone(),
                 profile_revision: entry.profile_revision.clone(),
+                profile_payload_hash: entry.profile_payload_hash.clone(),
                 asset_pins: entry.asset_pins.clone(),
                 pid,
                 uds_path,
@@ -1162,10 +1177,11 @@ impl ServiceState {
         })
     }
 
-    fn validate_profile_asset_pins(
+    fn validate_profile_pins(
         &self,
         profile: &ProfileConfigFile,
         profile_revision: &str,
+        pinned_profile_payload_hash: &str,
         pins: &BootAssetPins,
     ) -> Result<()> {
         if profile.revision != profile_revision {
@@ -1174,6 +1190,15 @@ impl ServiceState {
                 profile.id,
                 profile_revision,
                 profile.revision
+            ));
+        }
+        let current_payload_hash = profile_payload_hash(profile)?;
+        if current_payload_hash != pinned_profile_payload_hash {
+            return Err(anyhow!(
+                "profile '{}' payload hash mismatch: VM pinned '{}', current '{}'",
+                profile.id,
+                pinned_profile_payload_hash,
+                current_payload_hash
             ));
         }
         let current = profile_asset_pins(profile)?;
@@ -1206,6 +1231,11 @@ fn profile_asset_pins(profile: &ProfileConfigFile) -> Result<BootAssetPins> {
         initrd: descriptor_pin(&arch_assets.initrd),
         rootfs: descriptor_pin(&arch_assets.rootfs),
     })
+}
+
+fn profile_payload_hash(profile: &ProfileConfigFile) -> Result<String> {
+    let bytes = serde_json::to_vec(profile).context("serialize profile payload for hash")?;
+    Ok(format!("blake3:{}", blake3::hash(&bytes).to_hex()))
 }
 
 fn descriptor_pin(asset: &ProfileAssetDescriptor) -> BootAssetPin {
@@ -1825,6 +1855,7 @@ async fn handle_fork(
         session_dir,
         profile_id,
         profile_revision,
+        profile_payload_hash,
         asset_pins,
         ram_mb,
         cpus,
@@ -1837,6 +1868,7 @@ async fn handle_fork(
                 i.session_dir.clone(),
                 i.profile_id.clone(),
                 i.profile_revision.clone(),
+                i.profile_payload_hash.clone(),
                 i.asset_pins.clone(),
                 i.ram_mb,
                 i.cpus,
@@ -1851,6 +1883,7 @@ async fn handle_fork(
                     p.session_dir.clone(),
                     p.profile_id.clone(),
                     p.profile_revision.clone(),
+                    p.profile_payload_hash.clone(),
                     p.asset_pins.clone(),
                     p.ram_mb,
                     p.cpus,
@@ -1869,7 +1902,12 @@ async fn handle_fork(
         .profile_config(&profile_id)
         .map_err(|e| AppError(StatusCode::PRECONDITION_FAILED, e.to_string()))?;
     state
-        .validate_profile_asset_pins(&profile, &profile_revision, &asset_pins)
+        .validate_profile_pins(
+            &profile,
+            &profile_revision,
+            &profile_payload_hash,
+            &asset_pins,
+        )
         .map_err(|e| AppError(StatusCode::PRECONDITION_FAILED, e.to_string()))?;
 
     // Freeze + thaw the guest root filesystem so the ext4 system overlay
@@ -1927,6 +1965,7 @@ async fn handle_fork(
                 name: name.clone(),
                 profile_id,
                 profile_revision,
+                profile_payload_hash,
                 asset_pins,
                 ram_mb,
                 cpus,
@@ -6165,6 +6204,7 @@ async fn handle_persist(
         old_session_dir,
         profile_id,
         profile_revision,
+        profile_payload_hash,
         asset_pins,
         ram_mb,
         cpus,
@@ -6186,6 +6226,7 @@ async fn handle_persist(
             i.session_dir.clone(),
             i.profile_id.clone(),
             i.profile_revision.clone(),
+            i.profile_payload_hash.clone(),
             i.asset_pins.clone(),
             i.ram_mb,
             i.cpus,
@@ -6198,7 +6239,12 @@ async fn handle_persist(
         .profile_config(&profile_id)
         .map_err(|e| AppError(StatusCode::PRECONDITION_FAILED, e.to_string()))?;
     state
-        .validate_profile_asset_pins(&profile, &profile_revision, &asset_pins)
+        .validate_profile_pins(
+            &profile,
+            &profile_revision,
+            &profile_payload_hash,
+            &asset_pins,
+        )
         .map_err(|e| AppError(StatusCode::PRECONDITION_FAILED, e.to_string()))?;
 
     // Move session dir to persistent location
@@ -6219,6 +6265,7 @@ async fn handle_persist(
                 name: name.clone(),
                 profile_id: profile_id.clone(),
                 profile_revision: profile_revision.clone(),
+                profile_payload_hash: profile_payload_hash.clone(),
                 asset_pins: asset_pins.clone(),
                 ram_mb,
                 cpus,
@@ -6252,6 +6299,7 @@ async fn handle_persist(
                     id: name.clone(),
                     profile_id,
                     profile_revision,
+                    profile_payload_hash,
                     asset_pins,
                     pid: info.pid,
                     uds_path: info.uds_path,

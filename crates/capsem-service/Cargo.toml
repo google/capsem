@@ -34,6 +34,7 @@ magika = "1.0.1"
 ort = { version = "=2.0.0-rc.11", features = ["download-binaries", "ndarray"] }
 tokio-util = { version = "0.7", features = ["io"] }
 reqwest.workspace = true
+blake3 = "1"
 
 [lints]
 workspace = true
