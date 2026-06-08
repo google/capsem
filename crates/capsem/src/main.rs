@@ -21,6 +21,7 @@ use client::{
 };
 
 const DEFAULT_PROFILE_ID: &str = "code";
+const DOCTOR_DEBUG_UPSTREAM_ADDR: &str = "127.0.0.1:3713";
 
 const fn cli_styles() -> Styles {
     Styles::styled()
@@ -1601,24 +1602,18 @@ async fn main() -> Result<()> {
             println!("Running capsem-doctor...");
             println!("Log: {}", log_path.display());
 
-            let preferred_debug_addr = "127.0.0.1:11434"
+            let preferred_debug_addr = DOCTOR_DEBUG_UPSTREAM_ADDR
                 .parse()
                 .expect("valid doctor debug upstream bind address");
-            let debug_upstream = match capsem_debug_upstream::spawn_debug_upstream_on(
-                preferred_debug_addr,
-            )
-            .await
-            {
-                Ok(handle) => handle,
-                Err(err) => {
-                    eprintln!(
-                            "warning: local debug upstream could not bind 127.0.0.1:11434 ({err}); falling back to an ephemeral port"
-                        );
-                    capsem_debug_upstream::spawn_debug_upstream()
-                        .await
-                        .context("start local debug upstream for capsem-doctor")?
-                }
-            };
+            let debug_upstream =
+                capsem_debug_upstream::spawn_debug_upstream_on(preferred_debug_addr)
+                    .await
+                    .with_context(|| {
+                        format!(
+                            "start local debug upstream for capsem-doctor at {DOCTOR_DEBUG_UPSTREAM_ADDR}; \
+                             this address is required so guest traffic proves the iptables-nft redirect rail"
+                        )
+                    })?;
             let debug_base_url = debug_upstream.base_url();
             println!("Local debug upstream: {debug_base_url}");
 
@@ -2353,6 +2348,11 @@ mod tests {
                 bundle: true
             })
         ));
+    }
+
+    #[test]
+    fn doctor_debug_upstream_addr_is_iptables_redirect_target() {
+        assert_eq!(DOCTOR_DEBUG_UPSTREAM_ADDR, "127.0.0.1:3713");
     }
 
     #[test]

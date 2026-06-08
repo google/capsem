@@ -120,8 +120,8 @@ class TestGenManifestV2:
         assert release["arches"]["arm64"]["vmlinuz"]["hash"].startswith("aaa111")
         assert release["arches"]["x86_64"]["vmlinuz"]["hash"].startswith("ddd444")
 
-    def test_patch_auto_increment(self, tmp_path):
-        """Running gen_manifest twice on the same day increments the patch."""
+    def test_identical_assets_reuse_current_release(self, tmp_path):
+        """Running gen_manifest twice for identical assets does not mint a release."""
         (tmp_path / "vmlinuz").write_bytes(b"kernel")
         (tmp_path / "B3SUMS").write_text(
             "aaa111aaa111aaa111aaa111aaa111aaa111aaa111aaa111aaa111aaa111aaa1  vmlinuz\n"
@@ -144,4 +144,32 @@ class TestGenManifestV2:
         )
         m2 = json.loads((tmp_path / "manifest.json").read_text())
         v2 = m2["assets"]["current"]
+        assert v2 == v1
+
+    def test_changed_assets_increment_release(self, tmp_path):
+        """A changed asset map gets a new asset release."""
+        (tmp_path / "vmlinuz").write_bytes(b"kernel")
+        (tmp_path / "B3SUMS").write_text(
+            "aaa111aaa111aaa111aaa111aaa111aaa111aaa111aaa111aaa111aaa111aaa1  vmlinuz\n"
+        )
+        cargo = _make_cargo_toml(tmp_path)
+
+        subprocess.run(
+            [sys.executable, str(GEN_MANIFEST), str(tmp_path), str(cargo)],
+            capture_output=True, text=True, check=True,
+        )
+        m1 = json.loads((tmp_path / "manifest.json").read_text())
+        v1 = m1["assets"]["current"]
+
+        (tmp_path / "B3SUMS").write_text(
+            "bbb222bbb222bbb222bbb222bbb222bbb222bbb222bbb222bbb222bbb222bbb2  vmlinuz\n"
+        )
+        subprocess.run(
+            [sys.executable, str(GEN_MANIFEST), str(tmp_path), str(cargo)],
+            capture_output=True, text=True, check=True,
+        )
+        m2 = json.loads((tmp_path / "manifest.json").read_text())
+        v2 = m2["assets"]["current"]
+
+        assert v1.endswith(".1")
         assert v2.endswith(".2")

@@ -62,7 +62,7 @@ MAIN_DB = CAPSEM_HOME / "sessions" / "main.db"
 SERVICE_SOCKET = _run_dir() / "service.sock"
 SERVICE_PIDFILE = _run_dir() / "service.pid"
 DEBUG_UPSTREAM_BINARY = Path("target/debug/capsem-debug-upstream")
-DEBUG_UPSTREAM_ADDR = "127.0.0.1:11434"
+DEBUG_UPSTREAM_ADDR = "127.0.0.1:3713"
 
 def _gemini_api_key() -> Optional[str]:
     """Find a Gemini API key for the optional live model telemetry probe."""

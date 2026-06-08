@@ -110,3 +110,28 @@ def test_sync_dev_assets_materializes_hash_names_from_literal_build_output(
     assert not (dst / arch / "vmlinuz").exists()
     assert not (dst / arch / "initrd.img").exists()
     assert not (dst / arch / "rootfs.erofs").exists()
+
+
+def test_sync_dev_assets_removes_stale_hash_names(tmp_path: Path) -> None:
+    src = tmp_path / "src-assets"
+    dst = tmp_path / "installed-assets"
+    arch = _write_assets(src, literal=True)
+    stale_dir = dst / arch
+    stale_dir.mkdir(parents=True)
+    (stale_dir / "initrd-1111111111111111.img").write_text("old-initrd")
+    (stale_dir / "rootfs-2222222222222222.erofs").write_text("old-rootfs")
+    (stale_dir / "keep-me.txt").write_text("not a boot asset alias")
+
+    subprocess.run(
+        ["bash", str(SCRIPT), str(src), str(dst)],
+        cwd=PROJECT_ROOT,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=True,
+    )
+
+    assert (dst / arch / "initrd-cafebabecafebabe.img").exists()
+    assert not (dst / arch / "initrd-1111111111111111.img").exists()
+    assert not (dst / arch / "rootfs-2222222222222222.erofs").exists()
+    assert (dst / arch / "keep-me.txt").exists()

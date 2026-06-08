@@ -579,7 +579,7 @@ class TestWebServiceConfig:
 class TestWebSecurityConfig:
     def test_defaults(self):
         w = WebSecurityConfig()
-        assert w.http_upstream_ports == [80, 11434]
+        assert w.http_upstream_ports == [80, 3128, 3713, 8080, 11434]
         assert w.search == {}
         assert w.registry == {}
         assert w.repository == {}
@@ -735,7 +735,7 @@ class TestGuestImageConfig:
         assert g.ai_providers == {}
         assert g.package_sets == {}
         assert g.mcp_servers == {}
-        assert g.web_security.http_upstream_ports == [80, 11434]
+        assert g.web_security.http_upstream_ports == [80, 3128, 3713, 8080, 11434]
         assert g.vm_resources.cpu_count == 4
         assert g.vm_environment.shell.term == "xterm-256color"
 

@@ -411,54 +411,35 @@ def test_mcp_http_headers_allowed_domain():
 
 
 def test_claude_mcp_list_shows_capsem():
-    """claude mcp list must show the capsem server."""
+    """Claude config is not preseeded; the Capsem MCP bridge is first-party."""
     r = run("claude mcp list 2>&1", timeout=15)
     assert r.returncode == 0, f"claude mcp list failed: {r.stderr}"
-    assert "capsem" in r.stdout, f"capsem not in claude mcp list output: {r.stdout}"
+    assert "No MCP servers configured" in r.stdout, (
+        f"Claude MCP config should not be preseeded: {r.stdout}"
+    )
 
 
 def test_claude_state_json_has_capsem_mcp():
-    """Claude state file (.claude.json) has the capsem MCP server configured.
-
-    The injected server key is ``local`` (see config/defaults.json and the
-    host-side ``inject_capsem_mcp_server`` tests). The command path points
-    at the in-VM ``/run/capsem-mcp-server`` bridge.
-    """
-    r = run("cat /root/.claude.json")
-    assert r.returncode == 0, "~/.claude.json missing"
+    """Claude state must not carry a preseeded MCP authority."""
+    r = run("cat /root/.claude.json 2>/dev/null || true")
+    if not r.stdout.strip():
+        return
     settings = json.loads(r.stdout)
-    assert "mcpServers" in settings, "mcpServers key missing from .claude.json"
-    assert "local" in settings["mcpServers"], (
-        f"local not in mcpServers: {list(settings['mcpServers'].keys())}"
-    )
-    assert settings["mcpServers"]["local"]["command"] == "/run/capsem-mcp-server", (
-        f"wrong command: {settings['mcpServers']['local']}"
+    assert "mcpServers" not in settings or not settings["mcpServers"], (
+        f"Claude MCP state should not be preseeded: {settings.get('mcpServers')}"
     )
 
 
 def test_gemini_settings_has_capsem_mcp():
-    """Gemini settings.json has the capsem MCP server configured under the
-    canonical ``local`` key."""
-    r = run("cat /root/.gemini/settings.json")
-    assert r.returncode == 0, "~/.gemini/settings.json missing"
-    settings = json.loads(r.stdout)
-    assert "mcpServers" in settings, "mcpServers key missing from Gemini settings"
-    assert "local" in settings["mcpServers"], (
-        f"local not in mcpServers: {list(settings['mcpServers'].keys())}"
-    )
-    assert settings["mcpServers"]["local"]["command"] == "/run/capsem-mcp-server", (
-        f"wrong command: {settings['mcpServers']['local']}"
-    )
+    """Gemini settings must not be injected as a parallel MCP authority."""
+    r = run("test ! -e /root/.gemini/settings.json")
+    assert r.returncode == 0, "~/.gemini/settings.json should not be preseeded"
 
 
 def test_codex_config_has_capsem_mcp():
-    """Codex config.toml has capsem MCP server configured."""
-    r = run("cat /root/.codex/config.toml")
-    assert r.returncode == 0, f"~/.codex/config.toml missing: {r.stderr}"
-    assert "capsem" in r.stdout, f"capsem not in codex config: {r.stdout}"
-    assert "/run/capsem-mcp-server" in r.stdout, (
-        f"capsem-mcp-server path missing from codex config: {r.stdout}"
-    )
+    """Codex config must not be injected as a parallel MCP authority."""
+    r = run("test ! -e /root/.codex/config.toml")
+    assert r.returncode == 0, "~/.codex/config.toml should not be preseeded"
 
 
 def test_mcp_tools_list_has_descriptions():

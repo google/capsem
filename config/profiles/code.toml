@@ -8,7 +8,7 @@ id = "code"
 name = "Code"
 description = "Optimized for coding and long-running agents."
 icon_svg = "<svg viewBox=\"0 0 16 16\" aria-hidden=\"true\"><path d=\"M5.5 3 1.5 8l4 5 1.2-1-3.2-4 3.2-4L5.5 3Zm5 0-1.2 1 3.2 4-3.2 4 1.2 1 4-5-4-5Z\"/></svg>"
-revision = "2026.06.07.1"
+revision = "2026.06.08.7"
 refresh_policy = "24h"
 
 [availability]
@@ -27,21 +27,21 @@ refresh_policy = "on_profile_refresh"
 
 [assets.arch.arm64.kernel]
 name = "vmlinuz"
-url = "https://github.com/google/capsem/releases/download/v1.0.1780763638/arm64-vmlinuz"
-hash = "blake3:fa3b65bf6bb2b0adab0af8694338a793963f93d6218f5120219b14e9866d7561"
+url = "https://github.com/google/capsem/releases/download/v1.0.1780954707/arm64-vmlinuz"
+hash = "blake3:aa933a569fe27ed014ae76b58eb278d72fbde8a3cbd4c06a23da2987e70d0bd1"
 size = 8786432
 
 [assets.arch.arm64.initrd]
 name = "initrd.img"
-url = "https://github.com/google/capsem/releases/download/v1.0.1780763638/arm64-initrd.img"
-hash = "blake3:23fa4f6baf1d8a83d6f3ab76c20fd8608341ab8d6f8b60c9f1dc6a362d826782"
-size = 2841320
+url = "https://github.com/google/capsem/releases/download/v1.0.1780954707/arm64-initrd.img"
+hash = "blake3:ad31b76e82d487b207302109396b6dfa9bca97cb624c576dd3ccb6f59946cc96"
+size = 2841449
 
 [assets.arch.arm64.rootfs]
 name = "rootfs.erofs"
-url = "https://github.com/google/capsem/releases/download/v1.0.1780763638/arm64-rootfs.erofs"
-hash = "blake3:b0a8616d5dd179a6f2fd42d519120f34b4fad1470ea85b97a783fd8952d5d30f"
-size = 904286208
+url = "https://github.com/google/capsem/releases/download/v1.0.1780954707/arm64-rootfs.erofs"
+hash = "blake3:dd32949abf690412c611f1a558d1bb6462089f98e585009d70fb70e8ad6a6620"
+size = 910360576
 
 [assets.arch.x86_64.kernel]
 name = "vmlinuz"

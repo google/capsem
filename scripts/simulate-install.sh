@@ -50,6 +50,22 @@ for bin in capsem capsem-service capsem-process capsem-tui capsem-mcp capsem-mcp
     chmod 755 "$INSTALL_DIR/$bin"
 done
 
+# Codesign real macOS Mach-O binaries with Virtualization entitlements. Fake
+# shell-script binaries used by install tests are intentionally skipped.
+if [[ "$(uname -s)" == "Darwin" ]]; then
+    ENTITLEMENTS="$(cd "$SCRIPT_DIR/.." && pwd)/entitlements.plist"
+    for bin in "$INSTALL_DIR"/capsem*; do
+        [[ -f "$bin" ]] || continue
+        if file "$bin" | grep -q "Mach-O"; then
+            if [[ ! -r "$ENTITLEMENTS" ]]; then
+                echo "ERROR: entitlements.plist not found at $ENTITLEMENTS" >&2
+                exit 1
+            fi
+            codesign --sign - --entitlements "$ENTITLEMENTS" --force "$bin"
+        fi
+    done
+fi
+
 # Copy assets through the same manifest-driven path used by local packages.
 if [[ -f "$ASSETS_SRC/manifest.json" ]]; then
     bash "$SCRIPT_DIR/sync-dev-assets.sh" "$ASSETS_SRC" "$ASSETS_DST"

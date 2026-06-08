@@ -122,7 +122,7 @@ fn profile_config_rejects_static_tool_config_sources() {
 id = "developer"
 name = "Developer"
 description = "Developer profile"
-revision = "2026.06.07.1"
+revision = "2026.06.08.3"
 refresh_policy = "24h"
 
 [tool_config_sources.codex]

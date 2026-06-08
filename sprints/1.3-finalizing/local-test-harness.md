@@ -27,7 +27,7 @@ The discipline is:
 - Replace remote MCP manager tests with local proofs.
 - Replace builtin HTTP fetch/grep/header tests with local fixture proofs.
 - Make `capsem doctor` start a host-side local debug upstream on
-  `127.0.0.1:11434` and inject only `CAPSEM_BENCH_MITM_LOCAL_BASE_URL`; guest
+  `127.0.0.1:3713` and inject only `CAPSEM_BENCH_MITM_LOCAL_BASE_URL`; guest
   HTTP/WebSocket clients must reach it through normal iptables-nft redirection,
   not direct proxy environment variables or socket overrides.
 - Replace integration-test Google/CDN traffic with the local debug upstream
@@ -59,7 +59,7 @@ The discipline is:
   - Local in-process TCP server exercises real HTTP and rmcp transport without
     remote services.
   - `scripts/integration_test.py` starts `capsem-debug-upstream` on
-    `127.0.0.1:11434` and no longer curls Google or a public CDN for release
+    `127.0.0.1:3713` and no longer curls Google or a public CDN for release
     proof.
 - Telemetry/observability:
   - Fixture records outbound HTTP headers and MCP tool arguments for assertions.

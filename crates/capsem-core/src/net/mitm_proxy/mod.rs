@@ -1188,9 +1188,9 @@ async fn handle_request(
     // T2.2: enforce the HTTP upstream-port allowlist. The policy
     // hook ran above with `domain` already set; the port comes from
     // the inbound `Host` header (or default 80) and is not yet
-    // policy-checked. Default allowlist is `[80]`; tests / dev
-    // configs extend it (e.g. 11434 for Ollama in T2.3). The TLS
-    // path always uses 443, which is implicit and not gated here.
+    // policy-checked. The default allowlist mirrors guest iptables:
+    // 80, 3128, 3713, 8080, and 11434. The TLS path always uses
+    // 443, which is implicit and not gated here.
     if protocol == Protocol::Http && !policy.http_upstream_ports.contains(&upstream_port) {
         ::metrics::counter!(metrics::REQUESTS_TOTAL,
             "protocol" => protocol.label(), "decision" => "deny")

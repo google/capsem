@@ -972,6 +972,7 @@ class TestCreateErofs:
         cmd_str = " ".join(cmd)
         assert "debian:trixie-slim" in cmd
         assert "mkfs.erofs" in cmd_str
+        assert "-Enosbcrc" in cmd_str
         assert "-zzstd,level=15" in cmd_str
         assert "-C65536" in cmd_str
 
@@ -984,6 +985,7 @@ class TestCreateErofs:
         cmd = mock_run.call_args[0][0]
         cmd_str = " ".join(cmd)
         assert "debian:bookworm-slim" in cmd
+        assert "-Enosbcrc" in cmd_str
         assert "-zlz4hc,level=12" in cmd_str
         assert "-C65536" in cmd_str
 
@@ -1209,6 +1211,36 @@ class TestGenerateChecksums:
         assert "0.13.0" in manifest["binaries"]["releases"]
         asset_version = manifest["assets"]["current"]
         assert asset_version in manifest["assets"]["releases"]
+
+    def test_manifest_reuses_release_for_identical_assets(self, tmp_path):
+        arm64 = tmp_path / "arm64"
+        arm64.mkdir()
+        (arm64 / "vmlinuz").write_bytes(b"kernel")
+        (arm64 / "initrd.img").write_bytes(b"initrd")
+        (arm64 / "rootfs.erofs").write_bytes(b"rootfs")
+
+        generate_checksums(tmp_path, "0.13.0")
+        first = json.loads((tmp_path / "manifest.json").read_text())
+        generate_checksums(tmp_path, "0.13.0")
+        second = json.loads((tmp_path / "manifest.json").read_text())
+
+        assert second["assets"]["current"] == first["assets"]["current"]
+
+    def test_manifest_increments_release_for_changed_assets(self, tmp_path):
+        arm64 = tmp_path / "arm64"
+        arm64.mkdir()
+        (arm64 / "vmlinuz").write_bytes(b"kernel")
+        (arm64 / "initrd.img").write_bytes(b"initrd")
+        (arm64 / "rootfs.erofs").write_bytes(b"rootfs")
+
+        generate_checksums(tmp_path, "0.13.0")
+        first = json.loads((tmp_path / "manifest.json").read_text())
+        (arm64 / "initrd.img").write_bytes(b"changed-initrd")
+        generate_checksums(tmp_path, "0.13.0")
+        second = json.loads((tmp_path / "manifest.json").read_text())
+
+        assert first["assets"]["current"].endswith(".1")
+        assert second["assets"]["current"].endswith(".2")
 
     def test_manifest_per_arch_structure(self, tmp_path):
         """Per-arch layout produces releases[v].arches[arch][filename]={hash,size}."""

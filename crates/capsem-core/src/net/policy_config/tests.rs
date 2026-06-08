@@ -82,7 +82,7 @@ fn corp_override_bool() {
 fn corp_override_network_mechanics_ports() {
     let user = file_with(vec![(
         "security.web.http_upstream_ports",
-        SettingValue::IntList(vec![80, 11434]),
+        SettingValue::IntList(vec![80, 3128, 3713, 8080, 11434]),
     )]);
     let corp = file_with(vec![(
         "security.web.http_upstream_ports",
@@ -259,7 +259,7 @@ fn user_cannot_enable_blocked_provider() {
 fn user_cannot_change_corp_network_mechanics_ports() {
     let user = file_with(vec![(
         "security.web.http_upstream_ports",
-        SettingValue::IntList(vec![80, 11434]),
+        SettingValue::IntList(vec![80, 3128, 3713, 8080, 11434]),
     )]);
     let corp = file_with(vec![(
         "security.web.http_upstream_ports",
@@ -436,7 +436,7 @@ fn default_web_session_appearance() {
         .unwrap();
     assert_eq!(
         ports.effective_value,
-        SettingValue::IntList(vec![80, 11434])
+        SettingValue::IntList(vec![80, 3128, 3713, 8080, 11434])
     );
 
     let lb = resolved
@@ -771,7 +771,7 @@ fn parse_toml_mixed_value_types() {
 [settings]
 "vm.resources.log_bodies" = { value = true, modified = "2026-01-01T00:00:00Z" }
 "vm.resources.max_body_capture" = { value = 8192, modified = "2026-01-01T00:00:00Z" }
-"security.web.http_upstream_ports" = { value = [80, 11434], modified = "2026-01-01T00:00:00Z" }
+"security.web.http_upstream_ports" = { value = [80, 3128, 3713, 8080, 11434], modified = "2026-01-01T00:00:00Z" }
 "appearance.font_size" = { value = 16, modified = "2026-01-01T00:00:00Z" }
 "#;
     let file: SettingsFile = toml::from_str(toml_str).expect("should parse mixed types");
@@ -785,7 +785,7 @@ fn parse_toml_mixed_value_types() {
     );
     assert_eq!(
         file.settings["security.web.http_upstream_ports"].value,
-        SettingValue::IntList(vec![80, 11434])
+        SettingValue::IntList(vec![80, 3128, 3713, 8080, 11434])
     );
     assert_eq!(
         file.settings["appearance.font_size"].value,
@@ -2138,7 +2138,10 @@ fn default_http_allow_is_security_rule_not_network_policy() {
 #[test]
 fn default_http_upstream_ports_in_network_policy() {
     let m = MergedPolicies::from_files(&empty_file(), &empty_file());
-    assert_eq!(m.network.http_upstream_ports, vec![80, 11434]);
+    assert_eq!(
+        m.network.http_upstream_ports,
+        vec![80, 3128, 3713, 8080, 11434]
+    );
 }
 
 #[test]
@@ -2159,10 +2162,13 @@ fn corp_http_upstream_ports_override_user_network_policy() {
     )]);
     let corp = file_with(vec![(
         "security.web.http_upstream_ports",
-        SettingValue::IntList(vec![80, 11434]),
+        SettingValue::IntList(vec![80, 3128, 3713, 8080, 11434]),
     )]);
     let m = MergedPolicies::from_files(&user, &corp);
-    assert_eq!(m.network.http_upstream_ports, vec![80, 11434]);
+    assert_eq!(
+        m.network.http_upstream_ports,
+        vec![80, 3128, 3713, 8080, 11434]
+    );
 }
 
 #[test]

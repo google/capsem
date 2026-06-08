@@ -142,7 +142,7 @@ mod tests {
         PersistentVmEntry {
             name: name.into(),
             profile_id: "code".into(),
-            profile_revision: "2026.06.07.1".into(),
+            profile_revision: "2026.06.08.7".into(),
             profile_payload_hash:
                 "blake3:1111111111111111111111111111111111111111111111111111111111111111".into(),
             asset_pins: test_asset_pins(),
@@ -165,17 +165,17 @@ mod tests {
         BootAssetPins {
             kernel: BootAssetPin {
                 name: "vmlinuz".into(),
-                hash: "blake3:fa3b65bf6bb2b0adab0af8694338a793963f93d6218f5120219b14e9866d7561"
+                hash: "blake3:aa933a569fe27ed014ae76b58eb278d72fbde8a3cbd4c06a23da2987e70d0bd1"
                     .into(),
             },
             initrd: BootAssetPin {
                 name: "initrd.img".into(),
-                hash: "blake3:23fa4f6baf1d8a83d6f3ab76c20fd8608341ab8d6f8b60c9f1dc6a362d826782"
+                hash: "blake3:ad31b76e82d487b207302109396b6dfa9bca97cb624c576dd3ccb6f59946cc96"
                     .into(),
             },
             rootfs: BootAssetPin {
                 name: "rootfs.erofs".into(),
-                hash: "blake3:b0a8616d5dd179a6f2fd42d519120f34b4fad1470ea85b97a783fd8952d5d30f"
+                hash: "blake3:dd32949abf690412c611f1a558d1bb6462089f98e585009d70fb70e8ad6a6620"
                     .into(),
             },
         }

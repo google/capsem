@@ -98,3 +98,43 @@ def test_reinstall_updates_initrd_when_only_initrd_hash_changes(tmp_path: Path) 
     assert (capsem_home / "assets" / "manifest.json").exists()
     assert (capsem_home / "assets" / arch / initrd_v2).exists()
     assert not (capsem_home / "assets" / arch / arch).exists()
+
+
+def test_simulate_install_codesigns_macho_binaries_on_macos(tmp_path: Path) -> None:
+    bin_src = tmp_path / "bin"
+    capsem_home = tmp_path / "home"
+    assets = tmp_path / "assets"
+    fake_tools = tmp_path / "tools"
+    log_path = tmp_path / "codesign.log"
+    _write_fake_bins(bin_src)
+    _write_assets(assets, "1111111111111111")
+    fake_tools.mkdir()
+    (fake_tools / "uname").write_text(
+        "#!/bin/sh\n"
+        "case \"$1\" in\n"
+        "  -s) echo Darwin ;;\n"
+        "  -m) echo arm64 ;;\n"
+        "  *) echo Darwin ;;\n"
+        "esac\n"
+    )
+    (fake_tools / "file").write_text("#!/bin/sh\necho \"$1: Mach-O thin (arm64)\"\n")
+    (fake_tools / "codesign").write_text(
+        "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$CAPSEM_TEST_CODESIGN_LOG\"\n"
+    )
+    for tool in fake_tools.iterdir():
+        tool.chmod(0o755)
+
+    env = {
+        **os.environ,
+        "CAPSEM_HOME": str(capsem_home),
+        "CAPSEM_RUN_DIR": str(capsem_home / "run"),
+        "CAPSEM_TEST_CODESIGN_LOG": str(log_path),
+        "PATH": f"{fake_tools}:{os.environ['PATH']}",
+    }
+
+    subprocess.run(["bash", str(SCRIPT), str(bin_src), str(assets)], env=env, check=True)
+
+    log = log_path.read_text()
+    assert "--entitlements" in log
+    assert str(PROJECT_ROOT / "entitlements.plist") in log
+    assert str(capsem_home / "bin" / "capsem-process") in log

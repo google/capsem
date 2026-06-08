@@ -83,34 +83,16 @@ def test_gemini_api_key_no_duplicate():
         )
 
 
-def test_gemini_settings_exist():
-    """Gemini CLI settings.json must be seeded with valid config."""
-    result = run("cat /root/.gemini/settings.json 2>&1")
-    assert result.returncode == 0, "~/.gemini/settings.json missing"
-    assert "homeDirectoryWarningDismissed" in result.stdout
-    assert "sessionRetention" in result.stdout
-    assert "gemini-api-key" in result.stdout
-
-
-def test_gemini_projects_exist():
-    """Gemini CLI projects.json must register /root as a project."""
-    result = run("cat /root/.gemini/projects.json 2>&1")
-    assert result.returncode == 0, "~/.gemini/projects.json missing"
-    assert "/root" in result.stdout
-
-
-def test_gemini_trusted_folders_exist():
-    """Gemini CLI trustedFolders.json must trust /root."""
-    result = run("cat /root/.gemini/trustedFolders.json 2>&1")
-    assert result.returncode == 0, "~/.gemini/trustedFolders.json missing"
-    assert "TRUST_FOLDER" in result.stdout
-
-
-def test_gemini_installation_id_exist():
-    """Gemini CLI installation_id must be present."""
-    result = run("cat /root/.gemini/installation_id 2>&1")
-    assert result.returncode == 0, "~/.gemini/installation_id missing"
-    assert len(result.stdout.strip()) > 0, "installation_id is empty"
+@pytest.mark.parametrize("path", [
+    "/root/.gemini/settings.json",
+    "/root/.gemini/projects.json",
+    "/root/.gemini/trustedFolders.json",
+    "/root/.gemini/installation_id",
+])
+def test_gemini_config_not_preseeded(path):
+    """Tool-owned Gemini config must not be copied into the VM at boot."""
+    result = run(f"test ! -e {path}")
+    assert result.returncode == 0, f"stale Gemini config was preseeded: {path}"
 
 
 def test_google_ai_domain_allowed():

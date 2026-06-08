@@ -102,8 +102,8 @@ pub struct NetworkPolicy {
     pub max_body_capture: usize,
     /// Plain-HTTP upstream port allowlist (T2.2). Plain-HTTP requests
     /// whose Host header carries a port not on this list are denied
-    /// before the upstream dial. Default: `[80]`. Extend for Ollama
-    /// (11434) or other local-LLM servers via config / dev defaults.
+    /// before the upstream dial. Defaults include generic HTTP, common
+    /// local proxy/dev ports, the doctor fixture port, and Ollama.
     pub http_upstream_ports: Vec<u16>,
     /// DNS redirect rules (T3.d). Evaluated in order, first match wins after
     /// security-rule enforcement has allowed the query. Empty by default.
@@ -116,12 +116,12 @@ const DEFAULT_MAX_BODY_CAPTURE: usize = 4096;
 /// Default plain-HTTP upstream port allowlist. Pre-T2.2 behavior was
 /// "no plain HTTP at all". Post-T2.2 defaults match the guest-side
 /// iptables redirect list in `capsem-init`: port 80 (generic plain
-/// HTTP) plus 11434 (Ollama default; the canonical local-LLM
-/// workflow this protocol path was designed for). Adding a new port
-/// to this list and to the iptables redirects in tandem is the
-/// "configurable allowlist" promise from the T2.2 plan; a config
-/// plumb to `policy_config` is the final form (deferred follow-up).
-const DEFAULT_HTTP_UPSTREAM_PORTS: &[u16] = &[80, 11434];
+/// HTTP), common HTTP proxy/dev ports 3128 and 8080, the deterministic
+/// local debug-upstream fixture port 3713, and 11434 (Ollama default;
+/// the canonical local-LLM workflow this protocol path was designed
+/// for). Adding a new port to this list and to the iptables redirects
+/// in tandem is the configurable allowlist promise from the T2.2 plan.
+const DEFAULT_HTTP_UPSTREAM_PORTS: &[u16] = &[80, 3128, 3713, 8080, 11434];
 
 impl NetworkPolicy {
     /// Create network mechanics with default capture and upstream-port settings.

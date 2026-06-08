@@ -2,7 +2,7 @@
 //!
 //! The vsock:5002 listener accepts whatever the guest's `net_proxy`
 //! relays to it. Today that is TLS (port 443 redirect), plain HTTP/1.1
-//! (port 80 + allowlist redirect, e.g. Ollama on 11434), and the T0
+//! (port 80 + allowlist redirects such as 3128/3713/8080/11434), and the T0
 //! framed MCP wire-gate transport used to compare the future MITM MCP path.
 //!
 //! Distinguishing the two from the wire is a single-byte check

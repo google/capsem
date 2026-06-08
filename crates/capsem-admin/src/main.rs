@@ -1039,6 +1039,19 @@ fn verify_image_outputs(args: &ImageVerifyArgs) -> Result<ImageVerifyReport> {
                     descriptor.name
                 )
             })?;
+            let profile_hash = normalized_blake3(&descriptor.hash)?;
+            if profile_hash != entry.hash || descriptor.size != entry.size {
+                return Err(anyhow!(
+                    "profile asset pin drift for {arch}/{}: profile has blake3:{} size {}, \
+                     manifest current {} has blake3:{} size {}",
+                    descriptor.name,
+                    profile_hash,
+                    descriptor.size,
+                    manifest.assets.current,
+                    entry.hash,
+                    entry.size
+                ));
+            }
             asset_reports.push(check_local_asset(
                 &args.output,
                 &arch,
@@ -1744,7 +1757,7 @@ decision = "block"
 id = "code"
 name = "Code"
 description = "Optimized for coding and long-running agents."
-revision = "2026.06.07.1"
+revision = "2026.06.08.3"
 refresh_policy = "24h"
 
 [assets]
@@ -1946,6 +1959,91 @@ decision = "block"
             .assets
             .iter()
             .all(|asset| asset.blake3_ok == Some(true)));
+    }
+
+    #[test]
+    fn image_verify_rejects_profile_manifest_pin_drift() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let output = temp.path().join("assets");
+        let arch_dir = output.join("arm64");
+        fs::create_dir_all(&arch_dir).expect("asset dir");
+        let kernel = b"kernel";
+        let initrd = b"initrd";
+        let rootfs = b"rootfs";
+        fs::write(arch_dir.join("vmlinuz"), kernel).expect("kernel");
+        fs::write(arch_dir.join("initrd.img"), initrd).expect("initrd");
+        fs::write(arch_dir.join("rootfs.erofs"), rootfs).expect("rootfs");
+        let kernel_hash = blake3::hash(kernel).to_hex().to_string();
+        let initrd_hash = blake3::hash(initrd).to_hex().to_string();
+        let rootfs_hash = blake3::hash(rootfs).to_hex().to_string();
+        fs::write(
+            output.join("manifest.json"),
+            format!(
+                r#"{{
+  "format": 2,
+  "refresh_policy": "24h",
+  "assets": {{
+    "current": "2030.0101.1",
+    "releases": {{
+      "2030.0101.1": {{
+        "date": "2030-01-01",
+        "deprecated": false,
+        "min_binary": "1.0.0",
+        "arches": {{
+          "arm64": {{
+            "vmlinuz": {{"hash": "{kernel_hash}", "size": {kernel_size}}},
+            "initrd.img": {{"hash": "{initrd_hash}", "size": {initrd_size}}},
+            "rootfs.erofs": {{"hash": "{rootfs_hash}", "size": {rootfs_size}}}
+          }}
+        }}
+      }}
+    }}
+  }},
+  "binaries": {{
+    "current": "1.0.0",
+    "releases": {{"1.0.0": {{"date": "2030-01-01", "deprecated": false, "min_assets": "2030.0101.1"}}}}
+  }}
+}}"#,
+                kernel_size = kernel.len(),
+                initrd_size = initrd.len(),
+                rootfs_size = rootfs.len(),
+            ),
+        )
+        .expect("manifest");
+
+        let mut profile = ProfileConfigFile::builtin_code();
+        profile.rule_files.enforcement = None;
+        profile.rule_files.sigma = None;
+        profile.assets.arch.retain(|arch, _| arch == "arm64");
+        let assets = profile.assets.arch.get_mut("arm64").expect("arm64 assets");
+        assets.kernel.hash = format!("blake3:{kernel_hash}");
+        assets.kernel.size = kernel.len() as u64;
+        assets.initrd.hash =
+            "blake3:1111111111111111111111111111111111111111111111111111111111111111".into();
+        assets.initrd.size = initrd.len() as u64;
+        assets.rootfs.hash = format!("blake3:{rootfs_hash}");
+        assets.rootfs.size = rootfs.len() as u64;
+        let profile_path = temp.path().join("code.toml");
+        fs::write(
+            &profile_path,
+            toml::to_string(&profile).expect("serialize profile"),
+        )
+        .expect("profile");
+
+        let error = verify_image_outputs(&ImageVerifyArgs {
+            profile: profile_path,
+            config_root: temp.path().to_path_buf(),
+            output,
+            manifest: None,
+            arch: Some("arm64".to_string()),
+            json: true,
+        })
+        .expect_err("profile/manifest drift rejected");
+
+        assert!(
+            format!("{error:#}").contains("profile asset pin drift for arm64/initrd.img"),
+            "{error:#}"
+        );
     }
 
     #[test]

@@ -258,7 +258,7 @@ echo "force-unsafe-io" > /newroot/etc/dpkg/dpkg.cfg.d/force-unsafe-io
 #     blocked domains; T3).
 #   - port 443 (HTTPS) -> capsem-net-proxy 10443 -- TLS terminated by
 #     host MITM proxy.
-#   - port 80 + plain-HTTP allowlist (11434 for Ollama) ->
+#   - port 80 + plain-HTTP allowlist (3128/3713/8080/11434) ->
 #     capsem-net-proxy 10080 -- T2.2 first-byte sniff classifies on
 #     wire bytes.
 echo "[capsem-init] setting up network..."
@@ -277,10 +277,11 @@ mount --bind /newroot/run/resolv.conf /newroot/etc/resolv.conf
 # iptables-nft REDIRECT: use the nftables backend, not legacy xtables.
 # Port 53 (DNS, UDP+TCP) goes to capsem-dns-proxy on :1053 -- T3.4.
 # Port 443 (HTTPS) goes to the agent's TLS-target listener (10443).
-# Port 80 + the configurable plain-HTTP allowlist (currently 11434
-# for Ollama-shape local LLM servers) go to the plain-HTTP listener
-# (10080) -- T2.2. Both listeners forward to the same vsock port;
-# the host's first-byte sniff (T2.1) classifies on wire bytes.
+# Port 80 + the configurable plain-HTTP allowlist (common proxy/dev
+# ports 3128/8080, doctor fixture 3713, and Ollama 11434) go to the
+# plain-HTTP listener (10080) -- T2.2. Both listeners forward to the
+# same vsock port; the host's first-byte sniff (T2.1) classifies on
+# wire bytes.
 IPTABLES=iptables-nft
 if [ ! -x /newroot/usr/sbin/iptables-nft ]; then
     echo "[capsem-init] FATAL: iptables-nft missing from rootfs"
@@ -296,6 +297,9 @@ iptables_add -t nat -A OUTPUT -p udp --dport 53    -j REDIRECT --to-port 1053
 iptables_add -t nat -A OUTPUT -p tcp --dport 53    -j REDIRECT --to-port 1053
 iptables_add -t nat -A OUTPUT -p tcp --dport 443   -j REDIRECT --to-port 10443
 iptables_add -t nat -A OUTPUT -p tcp --dport 80    -j REDIRECT --to-port 10080
+iptables_add -t nat -A OUTPUT -p tcp --dport 3128  -j REDIRECT --to-port 10080
+iptables_add -t nat -A OUTPUT -p tcp --dport 3713  -j REDIRECT --to-port 10080
+iptables_add -t nat -A OUTPUT -p tcp --dport 8080  -j REDIRECT --to-port 10080
 iptables_add -t nat -A OUTPUT -p tcp --dport 11434 -j REDIRECT --to-port 10080
 iptables_add -t nat -S OUTPUT
 echo "[capsem-init] network ready"

@@ -136,7 +136,7 @@ profile/corp security rule files and evaluates through the single
 
 ```toml
 [web]
-http_upstream_ports = [80, 11434]
+http_upstream_ports = [80, 3128, 3713, 8080, 11434]
 ```
 
 ```toml
@@ -302,7 +302,7 @@ Example profile payload:
 ```toml
 id = "code"
 name = "Code"
-revision = "2026.06.07.1"
+revision = "2026.06.08.7"
 refresh_policy = "24h"
 
 [assets]

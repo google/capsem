@@ -493,7 +493,8 @@ def create_erofs(
         f"-o Acquire::Check-Valid-Until=false -o Acquire::Check-Date=false update && "
         f"DEBIAN_FRONTEND=noninteractive apt-get install -y erofs-utils && "
         f"mkdir /rootfs && {mkdir_output}tar xf /assets/{tar_rel} -C /rootfs && "
-        f"mkfs.erofs -z{compression}{level_flag}{cluster_flag} /assets/{out_rel} /rootfs",
+        f"mkfs.erofs -Enosbcrc -z{compression}{level_flag}{cluster_flag} "
+        f"/assets/{out_rel} /rootfs",
     ])
 
 
@@ -768,6 +769,34 @@ def _select_rootfs_asset(asset_dir: Path) -> str | None:
     return None
 
 
+def _next_or_existing_asset_version(
+    output_dir: Path,
+    date_prefix: str,
+    arch_assets: dict[str, dict[str, dict]],
+) -> str:
+    manifest_path = output_dir / "manifest.json"
+    patch = 1
+    if not manifest_path.is_file():
+        return f"{date_prefix}.{patch}"
+    try:
+        existing = json.loads(manifest_path.read_text())
+    except json.JSONDecodeError:
+        return f"{date_prefix}.{patch}"
+    assets = existing.get("assets", {})
+    releases = assets.get("releases", {})
+    current = assets.get("current")
+    if current in releases and releases[current].get("arches", {}) == arch_assets:
+        return current
+    for version in releases:
+        if not version.startswith(f"{date_prefix}."):
+            continue
+        try:
+            patch = max(patch, int(version.rsplit(".", 1)[1]) + 1)
+        except ValueError:
+            continue
+    return f"{date_prefix}.{patch}"
+
+
 def generate_checksums(output_dir: Path, version: str) -> Path:
     """Generate BLAKE3 checksums and manifest.json for all assets."""
     # Collect all asset files across arch subdirs
@@ -799,12 +828,6 @@ def generate_checksums(output_dir: Path, version: str) -> Path:
         b3sums_lines.append(f"{b3hash}  {filepath}")
     (output_dir / "B3SUMS").write_text("\n".join(b3sums_lines) + "\n")
 
-    # Build v2 manifest with separate assets/binaries sections
-    import datetime
-    today = datetime.date.today()
-    date_prefix = today.strftime("%Y.%m%d")
-    asset_version = f"{date_prefix}.1"
-
     arch_assets: dict[str, dict[str, dict]] = {}
     for filepath in all_files:
         full_path = output_dir / filepath
@@ -820,6 +843,18 @@ def generate_checksums(output_dir: Path, version: str) -> Path:
         arch_assets.setdefault(arch_name, {})[filename] = {
             "hash": b3hash, "size": size,
         }
+
+    # Build v2 manifest with separate assets/binaries sections. Reuse the
+    # current release for identical assets so dev initrd repacks do not mint
+    # endless no-op asset versions.
+    import datetime
+    today = datetime.date.today()
+    date_prefix = today.strftime("%Y.%m%d")
+    asset_version = _next_or_existing_asset_version(
+        output_dir,
+        date_prefix,
+        arch_assets,
+    )
 
     manifest = {
         "format": 2,

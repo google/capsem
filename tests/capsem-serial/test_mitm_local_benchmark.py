@@ -27,7 +27,7 @@ pytestmark = [pytest.mark.serial, pytest.mark.benchmark]
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 DEBUG_UPSTREAM_BINARY = PROJECT_ROOT / "target" / "debug" / "capsem-debug-upstream"
-DEBUG_UPSTREAM_ADDR = "127.0.0.1:11434"
+DEBUG_UPSTREAM_ADDR = "127.0.0.1:3713"
 
 
 def _project_version():
@@ -140,7 +140,7 @@ def _write_local_benchmark_policy(capsem_home, base_url):
     (capsem_home / "user.toml").write_text(
         f"""
 [settings."security.web.http_upstream_ports"]
-value = [80, 11434, {port}]
+value = [80, 3128, 3713, 8080, 11434, {port}]
 modified = "2026-06-06T00:00:00Z"
 """.lstrip()
     )
@@ -222,10 +222,10 @@ def test_mitm_local_benchmark_artifact():
         upstream_proc, ready = _start_debug_upstream()
         base_url = ready["base_url"]
     parsed_base = urlsplit(base_url)
-    if parsed_base.hostname != "127.0.0.1" or (parsed_base.port or 80) != 11434:
+    if parsed_base.hostname != "127.0.0.1" or (parsed_base.port or 80) != 3713:
         pytest.skip(
             "mitm-local benchmark release proof requires "
-            "CAPSEM_BENCH_MITM_LOCAL_BASE_URL=http://127.0.0.1:11434 "
+            "CAPSEM_BENCH_MITM_LOCAL_BASE_URL=http://127.0.0.1:3713 "
             "so guest traffic traverses iptables-nft redirection"
         )
 

@@ -83,6 +83,18 @@ for logical_name, meta in sorted(assets.items()):
     tmp = target.with_suffix(target.suffix + ".tmp")
     shutil.copy2(source, tmp)
     tmp.replace(target)
+
+expected = {hash_filename(name, meta["hash"]) for name, meta in assets.items()}
+for candidate in (dst / arch).iterdir():
+    if not candidate.is_file():
+        continue
+    name = candidate.name
+    if "-" not in name or name in expected:
+        continue
+    stem = name.split("-", 1)[0]
+    if stem not in {logical.split(".", 1)[0] for logical in assets}:
+        continue
+    candidate.unlink()
 PY
 
 # Drop legacy v1 layout directories that ManifestV2::resolve() no longer reads.

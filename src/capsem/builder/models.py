@@ -291,7 +291,9 @@ class WebSecurityConfig(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    http_upstream_ports: list[int] = Field(default_factory=lambda: [80, 11434])
+    http_upstream_ports: list[int] = Field(
+        default_factory=lambda: [80, 3128, 3713, 8080, 11434]
+    )
     search: dict[str, WebServiceConfig] = Field(default_factory=dict)
     registry: dict[str, WebServiceConfig] = Field(default_factory=dict)
     repository: dict[str, WebServiceConfig] = Field(default_factory=dict)

@@ -65,6 +65,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   manifest-driven hash-prefixed layout, and package/simulated installs now
   include the full host tool set including `capsem-admin`,
   `capsem-tui`, `capsem-mcp-aggregator`, and `capsem-mcp-builtin`.
+- Updated the built-in code profile's arm64 asset pins to the current
+  EROFS/LZ4HC release artifacts so profile-owned VM boot resolution and the
+  installed asset manifest agree.
+- Fixed EROFS asset generation to disable the internal superblock CRC feature;
+  BLAKE3 remains the release/boot integrity contract, and the repaired LZ4HC
+  rootfs now passes `fsck.erofs` before install.
 
 ### Changed (release proof)
 - Replaced public-service release proof with deterministic local fixtures:
@@ -76,6 +82,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   iptables-nft redirect rail. The local fixture is only the upstream target;
   doctor, integration, and benchmark paths no longer inject proxy environment
   variables or explicit WebSocket proxy sockets.
+- Expanded the shipped plain-HTTP redirect/allowlist mechanics to
+  `80`, `3128`, `3713`, `8080`, and `11434`, with doctor and local release
+  proof pinned to `127.0.0.1:3713` to avoid colliding with real Ollama.
 
 ### Changed (service/API)
 - Updated architecture docs and local development skills to match the 1.3
@@ -1333,13 +1342,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with `port=11434, conn_type=http-mitm, decision=allowed,
   status=200`. As part of the verification,
   `DEFAULT_HTTP_UPSTREAM_PORTS` is bumped from `[80]` to
-  `[80, 11434]` so the host policy default mirrors the iptables
+  `[80, 3128, 3713, 8080, 11434]` so the host policy default mirrors the iptables
   rules in `capsem-init` -- otherwise port 11434 traffic gets
   redirected to 10080, hits the host proxy, and is rejected by
   the policy gate, which is the wrong default for the canonical
   local-LLM workflow this protocol path was designed for. New
-  ports get added by editing both lists in tandem until the
-  policy_config plumb (deferred follow-up) lands.
+  ports get added by editing the shared policy config and guest redirect lists
+  in tandem.
 - **T2 (agent-side): plain-HTTP listener + iptables redirects.**
   `capsem-net-proxy` now listens on `127.0.0.1:10080` in addition to
   the original `:10443`; a `run_listener(port)` helper drives the

@@ -12,11 +12,17 @@ The diagnostic suite runs inside the guest VM via pytest. Tests live in `guest/a
 ### Running diagnostics
 
 ```bash
-just run "capsem-doctor"              # Full suite (~10s total)
-just run "capsem-doctor -k sandbox"   # Only sandbox tests
-just run "capsem-doctor -k network"   # Only network tests
-just run "capsem-doctor -x"           # Stop on first failure
+just exec "capsem-doctor"              # Full suite (~10s total)
+just exec "capsem-doctor -k sandbox"   # Only sandbox tests
+just exec "capsem-doctor -k network"   # Only network tests
+just exec "capsem-doctor -x"           # Stop on first failure
 ```
+
+Prefer this dev/runtime loop for doctor work. Do not use `just install` or
+`~/.capsem/bin/capsem doctor` to validate in-VM diagnostics unless the task is
+explicitly an installer/package proof. Package install replaces the developer's
+everyday Capsem; doctor changes should run through the worktree service/assets
+path, ideally with an isolated `CAPSEM_HOME`.
 
 ### Test categories
 
@@ -37,8 +43,8 @@ just run "capsem-doctor -x"           # Stop on first failure
 2. Use `from conftest import run` for shell commands, `output_dir` fixture for temp files
 3. Tests auto-skip outside the capsem VM (conftest checks for root + writable /root)
 4. Rebuild rootfs with `just build-assets` to bake new test files into the image
-5. For fast iteration during development, tests in `diagnostics/` are also repacked into the initrd by `just run`, so `just run "capsem-doctor"` picks up changes without a full rootfs rebuild
-6. Verify: `just run "capsem-doctor -k <your_test>"`
+5. For fast iteration during development, tests in `diagnostics/` are also repacked into the initrd by `just exec`, so `just exec "capsem-doctor"` picks up changes without a full rootfs rebuild
+6. Verify: `just exec "capsem-doctor -k <your_test>"`
 
 ## Session inspection
 
