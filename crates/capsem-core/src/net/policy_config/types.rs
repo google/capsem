@@ -482,6 +482,7 @@ pub fn is_brokered_credential_setting_id(id: &str) -> bool {
             | SETTING_OPENAI_API_KEY
             | SETTING_GOOGLE_API_KEY
             | SETTING_GITHUB_TOKEN
+            | SETTING_GITLAB_TOKEN
     )
 }
 

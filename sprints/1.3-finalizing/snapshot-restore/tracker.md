@@ -480,6 +480,17 @@ the guarantee or explicitly burn it.
 - [ ] Burn stale settings/defaults `settings.ai.*` and credential injection
   blocks that pretend to write host credentials into the VM. Credential
   brokering is plugin-owned and logs only brokered BLAKE3 references.
+  - [x] Burn settings-to-guest materialization for brokered provider API keys,
+    repository tokens, provider allow authority env vars, generated
+    `.git-credentials`/`.gitconfig`, and settings-owned AI CLI config files.
+    Proof:
+    `cargo test -p capsem-core --lib policy_config -- --nocapture` (390 passed),
+    `cargo test -p capsem-core --no-run`, and
+    `cargo test -p capsem-process --no-run`.
+  - [ ] Burn or reshape the remaining static `settings.ai.*` registry entries
+    so settings are UI/app preferences only and provider state comes from
+    profiles, rules, plugin runtime status, observed ledger evidence, and
+    routing config.
 - [x] Delete the dead `host_config` detector/writeback module and its frontend
   DTOs. This removes the setup-era path that scanned raw host API
   keys/OAuth/ADC/GitHub tokens and wrote them into settings; credential capture

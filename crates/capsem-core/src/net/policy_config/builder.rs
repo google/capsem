@@ -21,10 +21,8 @@ fn parse_http_upstream_ports(values: &[i64]) -> Vec<u16> {
 /// Extract guest config from resolved settings.
 ///
 /// Dynamic keys with prefix `guest.env.` become environment variables.
-/// AI provider API keys and boot files are always injected when the key/value
-/// is non-empty, regardless of the provider toggle. The toggle controls network
-/// access (domain policy), not whether credentials are available in the VM.
-/// This ensures the user can enable a provider at runtime without rebooting.
+/// Brokered credentials and AI/tool config files are deliberately excluded:
+/// profile/runtime plugin plumbing owns those paths, not settings.toml.
 pub fn settings_to_guest_config(resolved: &[ResolvedSetting]) -> GuestConfig {
     use capsem_proto::{validate_env_key, validate_env_value, validate_file_path};
 
@@ -34,28 +32,13 @@ pub fn settings_to_guest_config(resolved: &[ResolvedSetting]) -> GuestConfig {
     for s in resolved {
         let text_value = resolved_text_for_guest(s);
 
-        // Provider allow toggles: inject CAPSEM_<PROVIDER>_ALLOWED=1|0
-        // so the guest banner can show which AI tools are enabled.
-        if s.setting_type == SettingType::Bool {
-            let bool_env = match s.id.as_str() {
-                SETTING_ANTHROPIC_ALLOW => Some("CAPSEM_ANTHROPIC_ALLOWED"),
-                SETTING_OPENAI_ALLOW => Some("CAPSEM_OPENAI_ALLOWED"),
-                SETTING_GOOGLE_ALLOW => Some("CAPSEM_GOOGLE_ALLOWED"),
-                _ => None,
-            };
-            if let Some(var_name) = bool_env {
-                let val = if s.effective_value.as_bool().unwrap_or(false) {
-                    "1"
-                } else {
-                    "0"
-                };
-                env.insert(var_name.to_string(), val.to_string());
-            }
+        // Metadata-driven env var injection for non-credential settings. Brokered
+        // credential settings are opaque references and must never materialize
+        // into the VM as raw API keys.
+        if is_brokered_credential_setting_id(&s.id) {
+            continue;
         }
 
-        // Metadata-driven env var injection: if the setting declares env_vars
-        // and the effective value is non-empty text, inject each env var.
-        // For File values, the content is used as the env value.
         let env_text = match &s.effective_value {
             SettingValue::Text(_) => text_value.as_deref(),
             SettingValue::File { content, .. } => Some(content.as_str()),
@@ -77,47 +60,25 @@ pub fn settings_to_guest_config(resolved: &[ResolvedSetting]) -> GuestConfig {
             }
         }
 
-        // Boot files: File values with non-empty content.
-        // Always inject if non-empty -- the allow toggle controls network
-        // policy, not file availability.
+        // Boot files: non-AI File values with non-empty content. AI/tool config
+        // belongs to profile/runtime plugin machinery, not settings.toml.
         if let SettingValue::File {
             path: file_path,
             content: file_content,
         } = &s.effective_value
         {
+            if s.id.starts_with("ai.") {
+                continue;
+            }
             if !file_content.is_empty() {
                 if let Err(e) = validate_file_path(file_path) {
                     tracing::warn!("skipping boot file: {e}");
                     continue;
                 }
 
-                // Inject capsem MCP server into AI CLI config files:
-                // - settings.json: Claude Code + Gemini CLI (JSON mcpServers)
-                // - .claude.json: Claude Code state file (JSON mcpServers + API key approval)
-                // - config.toml: Codex CLI (TOML mcp_servers)
-                //
-                // Pattern-match on the guest path (not the setting ID) since
-                // the path is the source of truth for what the file represents.
-                let content = if file_path.ends_with("/settings.json") {
-                    inject_capsem_mcp_server(file_content)
-                } else if file_path == "/root/.claude.json" {
-                    let with_mcp = inject_capsem_mcp_server(file_content);
-                    if let Some(api_key) = env.get("ANTHROPIC_API_KEY") {
-                        inject_api_key_approval(&with_mcp, api_key)
-                    } else {
-                        with_mcp
-                    }
-                } else if file_path.ends_with("/config.toml") {
-                    inject_capsem_mcp_server_toml(file_content)
-                } else {
-                    file_content.clone()
-                };
-
-                // Settings files may contain API keys or sensitive config --
-                // restrict to owner-only (0o600) rather than world-readable.
                 files.push(GuestFile {
                     path: file_path.clone(),
-                    content,
+                    content: file_content.clone(),
                     mode: 0o600,
                 });
             }
@@ -137,61 +98,6 @@ pub fn settings_to_guest_config(resolved: &[ResolvedSetting]) -> GuestConfig {
                 env.insert(var_name.to_string(), text_value.to_string());
             }
         }
-    }
-
-    // .git-credentials generation: inject credentials for git push over HTTPS.
-    // Format: https://oauth2:TOKEN@github.com (one line per provider).
-    // Requires credential.helper=store in .gitconfig (generated below).
-    let token_providers = [
-        (SETTING_GITHUB_TOKEN, SETTING_GITHUB_ALLOW, "github.com"),
-        (SETTING_GITLAB_TOKEN, SETTING_GITLAB_ALLOW, "gitlab.com"),
-    ];
-
-    let mut credential_lines: Vec<String> = Vec::new();
-    for (token_id, allow_id, host) in &token_providers {
-        let allowed = resolved
-            .iter()
-            .find(|s| s.id == *allow_id)
-            .and_then(|s| s.effective_value.as_bool())
-            .unwrap_or(false);
-        if !allowed {
-            continue;
-        }
-        let token = resolved
-            .iter()
-            .find(|s| s.id == *token_id)
-            .and_then(resolved_text_for_guest)
-            .unwrap_or_default();
-        if token.is_empty() {
-            continue;
-        }
-        // Security: reject tokens with newlines, @, or : to prevent URL injection.
-        if token.contains('\n')
-            || token.contains('\r')
-            || token.contains('@')
-            || token.contains(':')
-        {
-            tracing::warn!(
-                "skipping git credential for {host}: token contains forbidden characters"
-            );
-            continue;
-        }
-        credential_lines.push(format!("https://oauth2:{token}@{host}"));
-    }
-
-    if !credential_lines.is_empty() {
-        files.push(GuestFile {
-            path: "/root/.git-credentials".to_string(),
-            content: credential_lines.join("\n") + "\n",
-            mode: 0o600,
-        });
-        // Generate .gitconfig with credential.helper = store so git reads .git-credentials.
-        // Also include safe.directory = * to avoid "dubious ownership" errors in the sandbox.
-        files.push(GuestFile {
-            path: "/root/.gitconfig".to_string(),
-            content: "[credential]\n\thelper = store\n[safe]\n\tdirectory = *\n".to_string(),
-            mode: 0o644,
-        });
     }
 
     // SSH public key: write to /root/.ssh/authorized_keys if set.
@@ -217,120 +123,6 @@ pub fn settings_to_guest_config(resolved: &[ResolvedSetting]) -> GuestConfig {
 fn resolved_text_for_guest(s: &ResolvedSetting) -> Option<String> {
     let text = s.effective_value.as_text()?;
     Some(text.to_string())
-}
-
-/// Inject MCP server entries into a JSON config string (Claude Code, Gemini CLI).
-///
-/// For each server with a stdio transport and command, inserts
-/// `mcpServers.{key}.command = "{command}"` preserving any user-provided entries.
-/// Returns the original string unchanged if parsing fails.
-pub(super) fn inject_mcp_servers_json(json_str: &str, servers: &[McpServerDef]) -> String {
-    let mut json: serde_json::Value = match serde_json::from_str(json_str) {
-        Ok(v) => v,
-        Err(_) => return json_str.to_string(),
-    };
-
-    let obj = match json.as_object_mut() {
-        Some(o) => o,
-        None => return json_str.to_string(),
-    };
-
-    let mcp_servers = obj
-        .entry("mcpServers")
-        .or_insert_with(|| serde_json::json!({}));
-
-    if let Some(server_map) = mcp_servers.as_object_mut() {
-        for s in servers {
-            if s.transport == McpTransport::Stdio {
-                if let Some(cmd) = &s.command {
-                    server_map.insert(s.key.clone(), serde_json::json!({"command": cmd}));
-                }
-            }
-        }
-    }
-
-    serde_json::to_string(&json).unwrap_or_else(|_| json_str.to_string())
-}
-
-/// Backward-compatible wrapper: inject capsem MCP server (delegates to generic version).
-pub(super) fn inject_capsem_mcp_server(json_str: &str) -> String {
-    let servers = super::loader::load_mcp_servers();
-    inject_mcp_servers_json(json_str, &servers)
-}
-
-/// Inject MCP server entries into a TOML config string (Codex CLI).
-///
-/// For each server with a stdio transport and command, inserts
-/// `[mcp_servers.{key}] command = "{command}"` preserving user-provided entries.
-/// Returns the original string unchanged if parsing fails.
-pub(super) fn inject_mcp_servers_toml(toml_str: &str, servers: &[McpServerDef]) -> String {
-    let mut doc: toml::Value = match toml::from_str(toml_str) {
-        Ok(v) => v,
-        Err(_) => return toml_str.to_string(),
-    };
-    let table = match doc.as_table_mut() {
-        Some(t) => t,
-        None => return toml_str.to_string(),
-    };
-    let mcp = table
-        .entry("mcp_servers")
-        .or_insert_with(|| toml::Value::Table(toml::map::Map::new()));
-    if let Some(server_map) = mcp.as_table_mut() {
-        for s in servers {
-            if s.transport == McpTransport::Stdio {
-                if let Some(cmd) = &s.command {
-                    let mut entry = toml::map::Map::new();
-                    entry.insert("command".into(), toml::Value::String(cmd.clone()));
-                    server_map.insert(s.key.clone(), toml::Value::Table(entry));
-                }
-            }
-        }
-    }
-    toml::to_string(&doc).unwrap_or_else(|_| toml_str.to_string())
-}
-
-/// Backward-compatible wrapper: inject capsem MCP server into TOML (delegates to generic version).
-pub(super) fn inject_capsem_mcp_server_toml(toml_str: &str) -> String {
-    let servers = super::loader::load_mcp_servers();
-    inject_mcp_servers_toml(toml_str, &servers)
-}
-
-/// Inject `customApiKeyResponses` into Claude state JSON.
-///
-/// Pre-approves the last 20 characters of the API key so Claude Code doesn't
-/// prompt the user to "trust" it on first use. Returns the original string
-/// unchanged if parsing fails.
-pub(super) fn inject_api_key_approval(json_str: &str, api_key: &str) -> String {
-    let mut json: serde_json::Value = match serde_json::from_str(json_str) {
-        Ok(v) => v,
-        Err(_) => return json_str.to_string(),
-    };
-
-    let obj = match json.as_object_mut() {
-        Some(o) => o,
-        None => return json_str.to_string(),
-    };
-
-    let key_suffix: String = if api_key.len() > 20 {
-        api_key[api_key.len() - 20..].to_string()
-    } else {
-        api_key.to_string()
-    };
-
-    let responses = obj
-        .entry("customApiKeyResponses")
-        .or_insert_with(|| serde_json::json!({}));
-    if let Some(r) = responses.as_object_mut() {
-        let approved = r.entry("approved").or_insert_with(|| serde_json::json!([]));
-        if let Some(arr) = approved.as_array_mut() {
-            if !arr.iter().any(|v| v.as_str() == Some(&key_suffix)) {
-                arr.push(serde_json::json!(key_suffix));
-            }
-        }
-        r.entry("rejected").or_insert_with(|| serde_json::json!([]));
-    }
-
-    serde_json::to_string(&json).unwrap_or_else(|_| json_str.to_string())
 }
 
 /// Extract VM settings from resolved settings.

@@ -41,13 +41,10 @@
         },
         "api_key": {
           "name": "Anthropic API Key",
-          "description": "API key for Anthropic. Injected as ANTHROPIC_API_KEY env var.",
+          "description": "Brokered credential reference for Anthropic API access.",
           "type": "apikey",
           "default": "",
           "meta": {
-            "env_vars": [
-              "ANTHROPIC_API_KEY"
-            ],
             "docs_url": "https://console.anthropic.com/settings/keys",
             "prefix": "sk-ant-"
           }
@@ -87,7 +84,7 @@
           },
           "credentials_json": {
             "name": "Claude Code OAuth credentials",
-            "description": "Content for /root/.claude/.credentials.json. OAuth tokens for subscription-based auth (Pro/Max). Injected from host when detected.",
+            "description": "Legacy placeholder for Claude Code OAuth credentials. Credential materialization is broker-owned.",
             "type": "file",
             "default": {
               "path": "/root/.claude/.credentials.json",
@@ -120,13 +117,10 @@
         },
         "api_key": {
           "name": "Google AI API Key",
-          "description": "API key for Google AI. Injected as GEMINI_API_KEY env var.",
+          "description": "Brokered credential reference for Google AI API access.",
           "type": "apikey",
           "default": "",
           "meta": {
-            "env_vars": [
-              "GEMINI_API_KEY"
-            ],
             "docs_url": "https://aistudio.google.com/apikey",
             "prefix": "AIza"
           }
@@ -187,7 +181,7 @@
           },
           "google_adc_json": {
             "name": "Google Cloud ADC",
-            "description": "Content for /root/.config/gcloud/application_default_credentials.json. OAuth credentials for Google Cloud auth. Injected from host when detected.",
+            "description": "Legacy placeholder for Google ADC credentials. Credential materialization is broker-owned.",
             "type": "file",
             "default": {
               "path": "/root/.config/gcloud/application_default_credentials.json",
@@ -220,13 +214,10 @@
         },
         "api_key": {
           "name": "OpenAI API Key",
-          "description": "API key for OpenAI. Injected as OPENAI_API_KEY env var.",
+          "description": "Brokered credential reference for OpenAI API access.",
           "type": "apikey",
           "default": "",
           "meta": {
-            "env_vars": [
-              "OPENAI_API_KEY"
-            ],
             "docs_url": "https://platform.openai.com/api-keys",
             "prefix": "sk-"
           }
@@ -326,14 +317,10 @@
           },
           "token": {
             "name": "GitHub Token",
-            "description": "Personal access token for git push over HTTPS. Injected into .git-credentials.",
+            "description": "Brokered credential reference for GitHub HTTPS access.",
             "type": "apikey",
             "default": "",
             "meta": {
-              "env_vars": [
-                "GH_TOKEN",
-                "GITHUB_TOKEN"
-              ],
               "docs_url": "https://github.com/settings/tokens",
               "prefix": "ghp_"
             }
@@ -372,13 +359,10 @@
           },
           "token": {
             "name": "GitLab Token",
-            "description": "Personal access token for git push over HTTPS. Injected into .git-credentials.",
+            "description": "Brokered credential reference for GitLab HTTPS access.",
             "type": "apikey",
             "default": "",
             "meta": {
-              "env_vars": [
-                "GITLAB_TOKEN"
-              ],
               "docs_url": "https://gitlab.com/-/user_settings/personal_access_tokens",
               "prefix": "glpat-"
             }

@@ -1,6 +1,3 @@
-use super::builder::{
-    inject_api_key_approval, inject_capsem_mcp_server, inject_capsem_mcp_server_toml,
-};
 use super::*;
 use std::collections::HashMap;
 
@@ -1140,11 +1137,11 @@ fn vm_settings_cpu_corp_overrides_user() {
 }
 
 // -----------------------------------------------------------------------
-// L: API key injection
+// L: API key materialization guards
 // -----------------------------------------------------------------------
 
 #[test]
-fn api_key_injected_when_toggle_on() {
+fn api_key_not_materialized_when_toggle_on() {
     let user = file_with(vec![
         ("ai.anthropic.allow", SettingValue::Bool(true)),
         (
@@ -1154,12 +1151,12 @@ fn api_key_injected_when_toggle_on() {
     ]);
     let resolved = resolve_settings(&user, &empty_file());
     let gc = settings_to_guest_config(&resolved);
-    let env = gc.env.unwrap();
-    assert_eq!(env.get("ANTHROPIC_API_KEY").unwrap(), "sk-test-123");
+    let env = gc.env.unwrap_or_default();
+    assert!(!env.contains_key("ANTHROPIC_API_KEY"));
 }
 
 #[test]
-fn brokered_api_key_ref_stays_reference_in_guest_env() {
+fn brokered_api_key_ref_stays_out_of_guest_env() {
     let _lock = crate::credential_broker::TEST_ENV_LOCK.blocking_lock();
     let dir = tempfile::tempdir().unwrap();
     let user_path = dir.path().join("user.toml");
@@ -1187,23 +1184,16 @@ fn brokered_api_key_ref_stays_reference_in_guest_env() {
     ]);
     let resolved = resolve_settings(&user, &empty_file());
     let gc = settings_to_guest_config(&resolved);
-    let env = gc.env.unwrap();
+    let env = gc.env.unwrap_or_default();
 
-    assert_eq!(
-        env.get("ANTHROPIC_API_KEY").unwrap(),
-        &brokered.credential_ref
-    );
-    assert!(!env
-        .get("ANTHROPIC_API_KEY")
-        .unwrap()
-        .contains("sk-ant-keychain-env"));
+    assert!(!env.contains_key("ANTHROPIC_API_KEY"));
     assert!(!std::fs::read_to_string(&user_path)
         .unwrap()
         .contains("sk-ant-keychain-env"));
 }
 
 #[test]
-fn brokered_google_api_key_ref_stays_reference_in_guest_env() {
+fn brokered_google_api_key_ref_stays_out_of_guest_env() {
     let _lock = crate::credential_broker::TEST_ENV_LOCK.blocking_lock();
     let dir = tempfile::tempdir().unwrap();
     let user_path = dir.path().join("user.toml");
@@ -1231,13 +1221,9 @@ fn brokered_google_api_key_ref_stays_reference_in_guest_env() {
     ]);
     let resolved = resolve_settings(&user, &empty_file());
     let gc = settings_to_guest_config(&resolved);
-    let env = gc.env.unwrap();
+    let env = gc.env.unwrap_or_default();
 
-    assert_eq!(env.get("GEMINI_API_KEY").unwrap(), &brokered.credential_ref);
-    assert!(!env
-        .get("GEMINI_API_KEY")
-        .unwrap()
-        .contains("AIza-keychain-env"));
+    assert!(!env.contains_key("GEMINI_API_KEY"));
     assert!(!env.contains_key("GOOGLE_API_KEY"));
     assert!(!std::fs::read_to_string(&user_path)
         .unwrap()
@@ -1341,9 +1327,7 @@ fn brokered_provider_discovery_is_atomic_with_corp_locked_credential_setting() {
 }
 
 #[test]
-fn api_key_injected_even_when_toggle_off() {
-    // API keys are always injected so user can enable the provider at
-    // runtime without rebooting the VM.
+fn api_key_not_materialized_when_toggle_off() {
     let user = file_with(vec![
         ("ai.anthropic.allow", SettingValue::Bool(false)),
         (
@@ -1353,8 +1337,8 @@ fn api_key_injected_even_when_toggle_off() {
     ]);
     let resolved = resolve_settings(&user, &empty_file());
     let gc = settings_to_guest_config(&resolved);
-    let env = gc.env.unwrap();
-    assert_eq!(env.get("ANTHROPIC_API_KEY").unwrap(), "sk-test-123");
+    let env = gc.env.unwrap_or_default();
+    assert!(!env.contains_key("ANTHROPIC_API_KEY"));
 }
 
 #[test]
@@ -1373,22 +1357,20 @@ fn api_key_not_injected_when_empty() {
 }
 
 #[test]
-fn google_api_key_sets_gemini_env_var() {
+fn google_api_key_does_not_set_gemini_env_var() {
     let user = file_with(vec![
         ("ai.google.allow", SettingValue::Bool(true)),
         ("ai.google.api_key", SettingValue::Text("AIza-test".into())),
     ]);
     let resolved = resolve_settings(&user, &empty_file());
     let gc = settings_to_guest_config(&resolved);
-    let env = gc.env.unwrap();
-    assert_eq!(env.get("GEMINI_API_KEY").unwrap(), "AIza-test");
-    // Only GEMINI_API_KEY is set (not GOOGLE_API_KEY) to avoid
-    // gemini CLI warning: "Both GOOGLE_API_KEY and GEMINI_API_KEY are set"
+    let env = gc.env.unwrap_or_default();
+    assert!(!env.contains_key("GEMINI_API_KEY"));
     assert!(!env.contains_key("GOOGLE_API_KEY"));
 }
 
 #[test]
-fn openai_api_key_injected_when_toggle_off() {
+fn openai_api_key_not_materialized_when_toggle_off() {
     let user = file_with(vec![
         ("ai.openai.allow", SettingValue::Bool(false)),
         (
@@ -1398,24 +1380,24 @@ fn openai_api_key_injected_when_toggle_off() {
     ]);
     let resolved = resolve_settings(&user, &empty_file());
     let gc = settings_to_guest_config(&resolved);
-    let env = gc.env.unwrap();
-    assert_eq!(env.get("OPENAI_API_KEY").unwrap(), "sk-oai-test");
+    let env = gc.env.unwrap_or_default();
+    assert!(!env.contains_key("OPENAI_API_KEY"));
 }
 
 #[test]
-fn google_api_key_injected_when_toggle_off() {
+fn google_api_key_not_materialized_when_toggle_off() {
     let user = file_with(vec![
         ("ai.google.allow", SettingValue::Bool(false)),
         ("ai.google.api_key", SettingValue::Text("AIza-off".into())),
     ]);
     let resolved = resolve_settings(&user, &empty_file());
     let gc = settings_to_guest_config(&resolved);
-    let env = gc.env.unwrap();
-    assert_eq!(env.get("GEMINI_API_KEY").unwrap(), "AIza-off");
+    let env = gc.env.unwrap_or_default();
+    assert!(!env.contains_key("GEMINI_API_KEY"));
 }
 
 #[test]
-fn all_three_providers_injected() {
+fn all_three_provider_keys_stay_out_of_guest_env() {
     let user = file_with(vec![
         ("ai.anthropic.allow", SettingValue::Bool(true)),
         ("ai.anthropic.api_key", SettingValue::Text("sk-ant".into())),
@@ -1426,57 +1408,56 @@ fn all_three_providers_injected() {
     ]);
     let resolved = resolve_settings(&user, &empty_file());
     let gc = settings_to_guest_config(&resolved);
-    let env = gc.env.unwrap();
-    assert_eq!(env.get("ANTHROPIC_API_KEY").unwrap(), "sk-ant");
-    assert_eq!(env.get("OPENAI_API_KEY").unwrap(), "sk-oai");
-    assert_eq!(env.get("GEMINI_API_KEY").unwrap(), "AIza");
-    // 3 API keys + 7 built-in env vars (TERM, HOME, PATH, LANG, 3x CA)
-    // + 3 CAPSEM_*_ALLOWED provider flags
-    assert_eq!(env.len(), 13);
+    let env = gc.env.unwrap_or_default();
+    assert!(!env.contains_key("ANTHROPIC_API_KEY"));
+    assert!(!env.contains_key("OPENAI_API_KEY"));
+    assert!(!env.contains_key("GEMINI_API_KEY"));
 }
 
 #[test]
-fn all_three_providers_injected_all_toggles_off() {
-    // All toggles off but keys set -- all should still be injected.
+fn brokered_provider_credentials_never_materialize_as_boot_env() {
     let user = file_with(vec![
-        // anthropic defaults to off
-        ("ai.anthropic.api_key", SettingValue::Text("sk-ant".into())),
-        // openai defaults to off
-        ("ai.openai.api_key", SettingValue::Text("sk-oai".into())),
-        // google: explicitly disable
+        (
+            "ai.anthropic.api_key",
+            SettingValue::Text("credential:blake3:1111111111111111111111111111111111111111111111111111111111111111".into()),
+        ),
+        (
+            "ai.openai.api_key",
+            SettingValue::Text("credential:blake3:2222222222222222222222222222222222222222222222222222222222222222".into()),
+        ),
         ("ai.google.allow", SettingValue::Bool(false)),
-        ("ai.google.api_key", SettingValue::Text("AIza".into())),
+        (
+            "ai.google.api_key",
+            SettingValue::Text("credential:blake3:3333333333333333333333333333333333333333333333333333333333333333".into()),
+        ),
     ]);
     let resolved = resolve_settings(&user, &empty_file());
     let gc = settings_to_guest_config(&resolved);
-    let env = gc.env.unwrap();
-    assert_eq!(env.get("ANTHROPIC_API_KEY").unwrap(), "sk-ant");
-    assert_eq!(env.get("OPENAI_API_KEY").unwrap(), "sk-oai");
-    assert_eq!(env.get("GEMINI_API_KEY").unwrap(), "AIza");
+    let env = gc.env.unwrap_or_default();
+    assert!(!env.contains_key("ANTHROPIC_API_KEY"));
+    assert!(!env.contains_key("OPENAI_API_KEY"));
+    assert!(!env.contains_key("GEMINI_API_KEY"));
 }
 
 #[test]
-fn mixed_toggles_all_keys_injected() {
-    // One provider on, two off -- all keys should be injected.
+fn raw_provider_credentials_do_not_materialize_as_boot_env_even_before_validation() {
     let user = file_with(vec![
         ("ai.anthropic.allow", SettingValue::Bool(true)),
         ("ai.anthropic.api_key", SettingValue::Text("sk-ant".into())),
-        // openai defaults to off
         ("ai.openai.api_key", SettingValue::Text("sk-oai".into())),
         ("ai.google.allow", SettingValue::Bool(false)),
         ("ai.google.api_key", SettingValue::Text("AIza".into())),
     ]);
     let resolved = resolve_settings(&user, &empty_file());
     let gc = settings_to_guest_config(&resolved);
-    let env = gc.env.unwrap();
-    assert_eq!(env.get("ANTHROPIC_API_KEY").unwrap(), "sk-ant");
-    assert_eq!(env.get("OPENAI_API_KEY").unwrap(), "sk-oai");
-    assert_eq!(env.get("GEMINI_API_KEY").unwrap(), "AIza");
+    let env = gc.env.unwrap_or_default();
+    assert!(!env.contains_key("ANTHROPIC_API_KEY"));
+    assert!(!env.contains_key("OPENAI_API_KEY"));
+    assert!(!env.contains_key("GEMINI_API_KEY"));
 }
 
 #[test]
-fn provider_allowed_env_vars_injected() {
-    // CAPSEM_*_ALLOWED env vars reflect the provider allow toggles.
+fn provider_allowed_toggles_are_not_guest_authority_env_vars() {
     let user = file_with(vec![
         ("ai.anthropic.allow", SettingValue::Bool(true)),
         ("ai.openai.allow", SettingValue::Bool(false)),
@@ -1484,21 +1465,20 @@ fn provider_allowed_env_vars_injected() {
     ]);
     let resolved = resolve_settings(&user, &empty_file());
     let gc = settings_to_guest_config(&resolved);
-    let env = gc.env.unwrap();
-    assert_eq!(env.get("CAPSEM_ANTHROPIC_ALLOWED").unwrap(), "1");
-    assert_eq!(env.get("CAPSEM_OPENAI_ALLOWED").unwrap(), "0");
-    assert_eq!(env.get("CAPSEM_GOOGLE_ALLOWED").unwrap(), "1");
+    let env = gc.env.unwrap_or_default();
+    assert!(!env.contains_key("CAPSEM_ANTHROPIC_ALLOWED"));
+    assert!(!env.contains_key("CAPSEM_OPENAI_ALLOWED"));
+    assert!(!env.contains_key("CAPSEM_GOOGLE_ALLOWED"));
 }
 
 #[test]
-fn provider_allowed_defaults_to_one() {
-    // Default allow values: all providers enabled.
+fn provider_allowed_defaults_are_not_guest_authority_env_vars() {
     let resolved = resolve_settings(&empty_file(), &empty_file());
     let gc = settings_to_guest_config(&resolved);
-    let env = gc.env.unwrap();
-    assert_eq!(env.get("CAPSEM_ANTHROPIC_ALLOWED").unwrap(), "1");
-    assert_eq!(env.get("CAPSEM_OPENAI_ALLOWED").unwrap(), "1");
-    assert_eq!(env.get("CAPSEM_GOOGLE_ALLOWED").unwrap(), "1");
+    let env = gc.env.unwrap_or_default();
+    assert!(!env.contains_key("CAPSEM_ANTHROPIC_ALLOWED"));
+    assert!(!env.contains_key("CAPSEM_OPENAI_ALLOWED"));
+    assert!(!env.contains_key("CAPSEM_GOOGLE_ALLOWED"));
 }
 
 #[test]
@@ -1522,8 +1502,8 @@ fn web_default_toggles_not_exposed_as_guest_authority() {
 
 #[test]
 fn empty_keys_skipped_regardless_of_toggle() {
-    // Toggle on but key empty -- should NOT be injected.
-    // Toggle off and key empty -- should NOT be injected.
+    // Toggle on/off must not matter; credential settings never materialize
+    // into guest env.
     let user = file_with(vec![
         ("ai.anthropic.allow", SettingValue::Bool(true)),
         ("ai.anthropic.api_key", SettingValue::Text("".into())),
@@ -1545,179 +1525,71 @@ fn empty_keys_skipped_regardless_of_toggle() {
 }
 
 // -----------------------------------------------------------------------
-// M: Gemini CLI boot files
+// M: AI CLI boot file burn guards
 // -----------------------------------------------------------------------
 
 #[test]
-fn gemini_boot_files_injected_when_google_enabled() {
-    // Google AI is enabled by default, so gemini files should be injected
+fn ai_cli_boot_files_are_not_materialized_from_settings_defaults() {
     let resolved = resolve_settings(&empty_file(), &empty_file());
     let gc = settings_to_guest_config(&resolved);
-    let files = gc.files.unwrap();
+    let files = gc.files.unwrap_or_default();
     let paths: Vec<&str> = files.iter().map(|f| f.path.as_str()).collect();
-    assert!(paths.contains(&"/root/.gemini/settings.json"));
-    assert!(paths.contains(&"/root/.gemini/projects.json"));
-    assert!(paths.contains(&"/root/.gemini/trustedFolders.json"));
-    assert!(paths.contains(&"/root/.gemini/installation_id"));
-}
-
-#[test]
-fn gemini_boot_files_injected_even_when_google_disabled() {
-    // Boot files are always injected so user can enable the provider at
-    // runtime without rebooting the VM.
-    let user = file_with(vec![("ai.google.allow", SettingValue::Bool(false))]);
-    let resolved = resolve_settings(&user, &empty_file());
-    let gc = settings_to_guest_config(&resolved);
-    let files = gc.files.unwrap();
-    let paths: Vec<&str> = files.iter().map(|f| f.path.as_str()).collect();
-    assert!(paths.contains(&"/root/.gemini/settings.json"));
-    assert!(paths.contains(&"/root/.gemini/projects.json"));
-    assert!(paths.contains(&"/root/.gemini/trustedFolders.json"));
-    assert!(paths.contains(&"/root/.gemini/installation_id"));
-}
-
-#[test]
-fn gemini_settings_json_user_override() {
-    let custom = r#"{"homeDirectoryWarningDismissed":true,"mcpServers":{"myserver":{}}}"#;
-    let user = file_with(vec![(
-        "ai.google.gemini.settings_json",
-        SettingValue::File {
-            path: "/root/.gemini/settings.json".into(),
-            content: custom.into(),
-        },
-    )]);
-    let resolved = resolve_settings(&user, &empty_file());
-    let gc = settings_to_guest_config(&resolved);
-    let files = gc.files.unwrap();
-    let gemini_settings = files
-        .iter()
-        .find(|f| f.path == "/root/.gemini/settings.json")
-        .unwrap();
-    assert!(gemini_settings.content.contains("mcpServers"));
-}
-
-#[test]
-fn gemini_boot_files_have_correct_paths() {
-    let resolved = resolve_settings(&empty_file(), &empty_file());
-    let gc = settings_to_guest_config(&resolved);
-    let files = gc.files.unwrap();
-    let paths: Vec<&str> = files.iter().map(|f| f.path.as_str()).collect();
-    assert!(paths.contains(&"/root/.gemini/settings.json"));
-    assert!(paths.contains(&"/root/.gemini/projects.json"));
-    assert!(paths.contains(&"/root/.gemini/trustedFolders.json"));
-    assert!(paths.contains(&"/root/.gemini/installation_id"));
-}
-
-#[test]
-fn gemini_boot_files_user_override_with_toggle_off() {
-    // Custom file content should be injected even when google is disabled.
-    let custom = r#"{"mcpServers":{"custom":{}}}"#;
-    let user = file_with(vec![
-        ("ai.google.allow", SettingValue::Bool(false)),
-        (
-            "ai.google.gemini.settings_json",
-            SettingValue::File {
-                path: "/root/.gemini/settings.json".into(),
-                content: custom.into(),
-            },
-        ),
-    ]);
-    let resolved = resolve_settings(&user, &empty_file());
-    let gc = settings_to_guest_config(&resolved);
-    let files = gc.files.unwrap();
-    let gemini_settings = files
-        .iter()
-        .find(|f| f.path == "/root/.gemini/settings.json")
-        .unwrap();
-    assert!(
-        gemini_settings.content.contains("mcpServers"),
-        "custom content should be present"
-    );
-}
-
-#[test]
-fn gemini_boot_files_empty_value_skipped() {
-    // If a file setting is explicitly set to empty content, it should not be injected.
-    let user = file_with(vec![
-        (
-            "ai.google.gemini.settings_json",
-            SettingValue::File {
-                path: "/root/.gemini/settings.json".into(),
-                content: "".into(),
-            },
-        ),
-        (
-            "ai.google.gemini.projects_json",
-            SettingValue::File {
-                path: "/root/.gemini/projects.json".into(),
-                content: "".into(),
-            },
-        ),
-        (
-            "ai.google.gemini.trusted_folders_json",
-            SettingValue::File {
-                path: "/root/.gemini/trustedFolders.json".into(),
-                content: "".into(),
-            },
-        ),
-        (
-            "ai.google.gemini.installation_id",
-            SettingValue::File {
-                path: "/root/.gemini/installation_id".into(),
-                content: "".into(),
-            },
-        ),
-        (
-            "ai.anthropic.claude.settings_json",
-            SettingValue::File {
-                path: "/root/.claude/settings.json".into(),
-                content: "".into(),
-            },
-        ),
-    ]);
-    let resolved = resolve_settings(&user, &empty_file());
-    let gc = settings_to_guest_config(&resolved);
-    let file_paths: Vec<&str> = gc
-        .files
-        .as_ref()
-        .map_or(vec![], |f| f.iter().map(|x| x.path.as_str()).collect());
-    assert!(!file_paths.contains(&"/root/.gemini/settings.json"));
-    assert!(!file_paths.contains(&"/root/.claude/settings.json"));
-}
-
-#[test]
-fn gemini_boot_files_have_correct_mode() {
-    let resolved = resolve_settings(&empty_file(), &empty_file());
-    let gc = settings_to_guest_config(&resolved);
-    let files = gc.files.unwrap();
-    for f in &files {
-        assert_eq!(
-            f.mode, 0o600,
-            "boot file {} should have mode 0600 (owner-only)",
-            f.path
-        );
+    for path in [
+        "/root/.gemini/settings.json",
+        "/root/.gemini/projects.json",
+        "/root/.gemini/trustedFolders.json",
+        "/root/.gemini/installation_id",
+        "/root/.claude/settings.json",
+        "/root/.claude.json",
+        "/root/.codex/config.toml",
+    ] {
+        assert!(!paths.contains(&path), "{path} must not come from settings");
     }
 }
 
 #[test]
-fn api_keys_and_boot_files_both_injected_toggle_off() {
-    // End-to-end: toggle off, but key + files should all be present.
+fn ai_cli_boot_file_user_overrides_are_not_materialized_from_settings() {
+    let user = file_with(vec![
+        (
+            "ai.google.gemini.settings_json",
+            SettingValue::File {
+                path: "/root/.gemini/settings.json".into(),
+                content: r#"{"mcpServers":{"custom":{}}}"#.into(),
+            },
+        ),
+        (
+            "ai.openai.codex.config_toml",
+            SettingValue::File {
+                path: "/root/.codex/config.toml".into(),
+                content: "[mcp_servers.custom]\ncommand = \"custom\"".into(),
+            },
+        ),
+    ]);
+    let resolved = resolve_settings(&user, &empty_file());
+    let gc = settings_to_guest_config(&resolved);
+    let files = gc.files.unwrap_or_default();
+    assert!(!files
+        .iter()
+        .any(|f| f.path == "/root/.gemini/settings.json"));
+    assert!(!files.iter().any(|f| f.path == "/root/.codex/config.toml"));
+}
+
+#[test]
+fn ai_keys_and_boot_files_both_stay_out_when_toggle_off() {
     let user = file_with(vec![
         ("ai.google.allow", SettingValue::Bool(false)),
         ("ai.google.api_key", SettingValue::Text("AIza-key".into())),
     ]);
     let resolved = resolve_settings(&user, &empty_file());
     let gc = settings_to_guest_config(&resolved);
-    // API key should be injected
-    let env = gc.env.unwrap();
-    assert_eq!(env.get("GEMINI_API_KEY").unwrap(), "AIza-key");
-    // Boot files (from defaults) should also be injected
-    let files = gc.files.unwrap();
+    let env = gc.env.unwrap_or_default();
+    assert!(!env.contains_key("GEMINI_API_KEY"));
+    let files = gc.files.unwrap_or_default();
     let paths: Vec<&str> = files.iter().map(|f| f.path.as_str()).collect();
-    assert!(paths.contains(&"/root/.gemini/settings.json"));
-    assert!(paths.contains(&"/root/.gemini/projects.json"));
-    assert!(paths.contains(&"/root/.gemini/trustedFolders.json"));
-    assert!(paths.contains(&"/root/.gemini/installation_id"));
+    assert!(!paths.contains(&"/root/.gemini/settings.json"));
+    assert!(!paths.contains(&"/root/.gemini/projects.json"));
+    assert!(!paths.contains(&"/root/.gemini/trustedFolders.json"));
+    assert!(!paths.contains(&"/root/.gemini/installation_id"));
 }
 
 // -----------------------------------------------------------------------
@@ -1869,17 +1741,18 @@ fn file_settings_have_path_in_default_value() {
 }
 
 #[test]
-fn guest_config_collects_file_type_settings() {
-    // settings_to_guest_config should pick up File values directly.
+fn guest_config_does_not_materialize_ai_file_settings() {
     let resolved = resolve_settings(&empty_file(), &empty_file());
     let gc = settings_to_guest_config(&resolved);
-    let files = gc.files.unwrap();
+    let files = gc.files.unwrap_or_default();
     let paths: Vec<&str> = files.iter().map(|f| f.path.as_str()).collect();
-    // All file settings come from SettingValue::File
-    assert!(paths.contains(&"/root/.gemini/settings.json"));
-    assert!(paths.contains(&"/root/.gemini/projects.json"));
-    assert!(paths.contains(&"/root/.gemini/trustedFolders.json"));
-    assert!(paths.contains(&"/root/.gemini/installation_id"));
+    assert!(!paths.contains(&"/root/.gemini/settings.json"));
+    assert!(!paths.contains(&"/root/.gemini/projects.json"));
+    assert!(!paths.contains(&"/root/.gemini/trustedFolders.json"));
+    assert!(!paths.contains(&"/root/.gemini/installation_id"));
+    assert!(!paths.contains(&"/root/.claude/settings.json"));
+    assert!(!paths.contains(&"/root/.claude.json"));
+    assert!(!paths.contains(&"/root/.codex/config.toml"));
 }
 
 // -----------------------------------------------------------------------
@@ -1962,24 +1835,20 @@ fn file_type_resolved_setting_has_file_value() {
 // -----------------------------------------------------------------------
 
 #[test]
-fn api_key_settings_have_env_vars_metadata() {
-    // API key settings must declare their env var name in metadata.env_vars
-    // instead of relying on a hardcoded API_KEY_MAP.
+fn api_key_settings_do_not_drive_guest_env_vars() {
     let defs = setting_definitions();
-    let cases = [
-        ("ai.anthropic.api_key", "ANTHROPIC_API_KEY"),
-        ("ai.openai.api_key", "OPENAI_API_KEY"),
-        ("ai.google.api_key", "GEMINI_API_KEY"),
-    ];
-    for (id, expected_var) in &cases {
+    for id in [
+        "ai.anthropic.api_key",
+        "ai.openai.api_key",
+        "ai.google.api_key",
+    ] {
         let def = defs
             .iter()
-            .find(|d| d.id == *id)
+            .find(|d| d.id == id)
             .unwrap_or_else(|| panic!("missing setting {id}"));
         assert!(
-            def.metadata.env_vars.contains(&expected_var.to_string()),
-            "{id} should have env_vars containing {expected_var}, got {:?}",
-            def.metadata.env_vars,
+            def.metadata.env_vars.is_empty(),
+            "{id} must not expose guest env vars; credential broker owns materialization"
         );
     }
 }
@@ -2013,17 +1882,18 @@ fn ca_bundle_setting_injects_three_env_vars() {
 }
 
 #[test]
-fn guest_config_env_from_metadata_env_vars() {
-    // settings_to_guest_config should inject env vars based on
-    // metadata.env_vars, not hardcoded API_KEY_MAP.
+fn brokered_credential_setting_metadata_does_not_materialize_guest_env() {
     let user = file_with(vec![(
         "ai.anthropic.api_key",
-        SettingValue::Text("sk-test".into()),
+        SettingValue::Text(
+            "credential:blake3:1111111111111111111111111111111111111111111111111111111111111111"
+                .into(),
+        ),
     )]);
     let resolved = resolve_settings(&user, &empty_file());
     let gc = settings_to_guest_config(&resolved);
-    let env = gc.env.unwrap();
-    assert_eq!(env.get("ANTHROPIC_API_KEY").unwrap(), "sk-test");
+    let env = gc.env.unwrap_or_default();
+    assert!(!env.contains_key("ANTHROPIC_API_KEY"));
 }
 
 #[test]
@@ -2286,193 +2156,27 @@ fn corp_http_upstream_ports_override_user_network_policy() {
     assert_eq!(m.network.http_upstream_ports, vec![80, 11434]);
 }
 
-// -----------------------------------------------------------------------
-// MCP server injection into settings.json
-// -----------------------------------------------------------------------
-
 #[test]
-fn inject_capsem_mcp_server_into_empty_json() {
-    let result = inject_capsem_mcp_server(r#"{}"#);
-    let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
-    assert_eq!(
-        parsed["mcpServers"]["local"]["command"],
-        "/run/capsem-mcp-server"
-    );
-}
-
-#[test]
-fn inject_capsem_mcp_server_preserves_existing_servers() {
-    let input = r#"{"mcpServers":{"github":{"command":"npx","args":["-y","@github/mcp"]}}}"#;
-    let result = inject_capsem_mcp_server(input);
-    let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
-    assert_eq!(parsed["mcpServers"]["github"]["command"], "npx");
-    assert_eq!(
-        parsed["mcpServers"]["local"]["command"],
-        "/run/capsem-mcp-server"
-    );
-}
-
-#[test]
-fn inject_capsem_mcp_server_preserves_other_keys() {
-    let input = r#"{"permissions":{"defaultMode":"bypassPermissions"}}"#;
-    let result = inject_capsem_mcp_server(input);
-    let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
-    assert_eq!(parsed["permissions"]["defaultMode"], "bypassPermissions");
-    assert_eq!(
-        parsed["mcpServers"]["local"]["command"],
-        "/run/capsem-mcp-server"
-    );
-}
-
-#[test]
-fn inject_capsem_mcp_server_invalid_json_passthrough() {
-    let input = "not json at all";
-    let result = inject_capsem_mcp_server(input);
-    assert_eq!(result, input);
-}
-
-#[test]
-fn claude_default_settings_has_capsem_mcp_server() {
-    let resolved = resolve_settings(&empty_file(), &empty_file());
-    let gc = settings_to_guest_config(&resolved);
-    let files = gc.files.unwrap();
-    let claude = files
-        .iter()
-        .find(|f| f.path == "/root/.claude/settings.json")
-        .unwrap();
-    let parsed: serde_json::Value = serde_json::from_str(&claude.content).unwrap();
-    assert_eq!(
-        parsed["mcpServers"]["local"]["command"], "/run/capsem-mcp-server",
-        "capsem MCP server should be injected into Claude settings.json"
-    );
-    // Original permissions should still be there
-    assert_eq!(parsed["permissions"]["defaultMode"], "bypassPermissions");
-}
-
-#[test]
-fn gemini_default_settings_has_capsem_mcp_server() {
-    let resolved = resolve_settings(&empty_file(), &empty_file());
-    let gc = settings_to_guest_config(&resolved);
-    let files = gc.files.unwrap();
-    let gemini = files
-        .iter()
-        .find(|f| f.path == "/root/.gemini/settings.json")
-        .unwrap();
-    let parsed: serde_json::Value = serde_json::from_str(&gemini.content).unwrap();
-    assert_eq!(
-        parsed["mcpServers"]["local"]["command"], "/run/capsem-mcp-server",
-        "capsem MCP server should be injected into Gemini settings.json"
-    );
-}
-
-#[test]
-fn user_mcp_servers_preserved_alongside_capsem() {
-    let custom = r#"{"mcpServers":{"myserver":{"command":"my-tool"}}}"#;
+fn settings_guest_config_does_not_inject_mcp_into_ai_cli_files() {
     let user = file_with(vec![(
         "ai.google.gemini.settings_json",
         SettingValue::File {
             path: "/root/.gemini/settings.json".into(),
-            content: custom.into(),
+            content: r#"{"mcpServers":{"myserver":{"command":"my-tool"}}}"#.into(),
         },
     )]);
     let resolved = resolve_settings(&user, &empty_file());
     let gc = settings_to_guest_config(&resolved);
-    let files = gc.files.unwrap();
-    let gemini = files
-        .iter()
-        .find(|f| f.path == "/root/.gemini/settings.json")
-        .unwrap();
-    let parsed: serde_json::Value = serde_json::from_str(&gemini.content).unwrap();
-    assert_eq!(parsed["mcpServers"]["myserver"]["command"], "my-tool");
-    assert_eq!(
-        parsed["mcpServers"]["local"]["command"],
-        "/run/capsem-mcp-server"
-    );
-}
-
-#[test]
-fn capsem_mcp_not_in_non_settings_json_files() {
-    // Other boot files (projects.json, etc.) should NOT get mcpServers injected
-    let resolved = resolve_settings(&empty_file(), &empty_file());
-    let gc = settings_to_guest_config(&resolved);
-    let files = gc.files.unwrap();
-    let projects = files
-        .iter()
-        .find(|f| f.path == "/root/.gemini/projects.json")
-        .unwrap();
-    assert!(
-        !projects.content.contains("mcpServers"),
-        "projects.json should not have mcpServers injected"
-    );
-}
-
-#[test]
-fn claude_state_json_has_capsem_mcp_server() {
-    let resolved = resolve_settings(&empty_file(), &empty_file());
-    let gc = settings_to_guest_config(&resolved);
-    let files = gc.files.unwrap();
-    let claude = files
-        .iter()
-        .find(|f| f.path == "/root/.claude.json")
-        .unwrap();
-    let parsed: serde_json::Value = serde_json::from_str(&claude.content).unwrap();
-    assert_eq!(
-        parsed["mcpServers"]["local"]["command"], "/run/capsem-mcp-server",
-        "capsem MCP server should be injected into .claude.json"
-    );
-}
-
-#[test]
-fn codex_default_config_has_capsem_mcp_server() {
-    let resolved = resolve_settings(&empty_file(), &empty_file());
-    let gc = settings_to_guest_config(&resolved);
-    let files = gc.files.unwrap();
-    let codex = files
-        .iter()
-        .find(|f| f.path == "/root/.codex/config.toml")
-        .unwrap();
-    assert!(
-        codex.content.contains("[mcp_servers.local]"),
-        "codex config.toml should declare [mcp_servers.local]"
-    );
-    assert!(
-        codex.content.contains("/run/capsem-mcp-server"),
-        "codex config.toml should reference /run/capsem-mcp-server"
-    );
-}
-
-// -----------------------------------------------------------------------
-// TOML MCP server injection
-// -----------------------------------------------------------------------
-
-#[test]
-fn inject_capsem_mcp_server_toml_empty() {
-    let result = inject_capsem_mcp_server_toml("");
-    let parsed: toml::Value = toml::from_str(&result).unwrap();
-    let cmd = parsed["mcp_servers"]["local"]["command"].as_str().unwrap();
-    assert_eq!(cmd, "/run/capsem-mcp-server");
-}
-
-#[test]
-fn inject_capsem_mcp_server_toml_preserves_existing() {
-    let input = "[mcp_servers.github]\ncommand = \"npx\"\nargs = [\"-y\", \"@github/mcp\"]\n";
-    let result = inject_capsem_mcp_server_toml(input);
-    let parsed: toml::Value = toml::from_str(&result).unwrap();
-    assert_eq!(
-        parsed["mcp_servers"]["github"]["command"].as_str().unwrap(),
-        "npx"
-    );
-    assert_eq!(
-        parsed["mcp_servers"]["local"]["command"].as_str().unwrap(),
-        "/run/capsem-mcp-server"
-    );
-}
-
-#[test]
-fn inject_capsem_mcp_server_toml_invalid_passthrough() {
-    let input = "not valid toml [[[";
-    let result = inject_capsem_mcp_server_toml(input);
-    assert_eq!(result, input);
+    let files = gc.files.unwrap_or_default();
+    for path in [
+        "/root/.claude/settings.json",
+        "/root/.gemini/settings.json",
+        "/root/.gemini/projects.json",
+        "/root/.claude.json",
+        "/root/.codex/config.toml",
+    ] {
+        assert!(!files.iter().any(|f| f.path == path));
+    }
 }
 
 // -----------------------------------------------------------------------
@@ -2570,14 +2274,14 @@ fn toml_registry_meta_fields() {
         "http_upstream_ports should be an int list"
     );
 
-    // API key settings should have env_vars
+    // API key settings are brokered credential references, not boot env vars.
     let key = defs
         .iter()
         .find(|d| d.id == "ai.anthropic.api_key")
         .unwrap();
     assert!(
-        !key.metadata.env_vars.is_empty(),
-        "api_key settings should have env_vars metadata",
+        key.metadata.env_vars.is_empty(),
+        "api_key settings must not have env_vars metadata",
     );
 }
 
@@ -3736,41 +3440,34 @@ fn load_settings_response_returns_all_fields() {
 // -----------------------------------------------------------------------
 
 #[test]
-fn git_credentials_generated_with_github_token() {
+fn git_credentials_not_generated_from_github_token_settings() {
     let user = file_with(vec![
         (SETTING_GITHUB_ALLOW, SettingValue::Bool(true)),
         (
             SETTING_GITHUB_TOKEN,
-            SettingValue::Text("ghp_test123".into()),
+            SettingValue::Text(
+                "credential:blake3:1111111111111111111111111111111111111111111111111111111111111111"
+                    .into(),
+            ),
         ),
     ]);
     let resolved = resolve_settings(&user, &empty_file());
     let gc = settings_to_guest_config(&resolved);
-    let files = gc.files.unwrap();
-    let creds = files
-        .iter()
-        .find(|f| f.path == "/root/.git-credentials")
-        .expect(".git-credentials should be generated");
-    assert_eq!(creds.mode, 0o600);
-    assert!(creds
-        .content
-        .contains("https://oauth2:ghp_test123@github.com"));
-    // .gitconfig must also be generated with credential.helper = store
-    let gitconfig = files
-        .iter()
-        .find(|f| f.path == "/root/.gitconfig")
-        .expect(".gitconfig should be generated");
-    assert_eq!(gitconfig.mode, 0o644);
-    assert!(gitconfig.content.contains("helper = store"));
+    let files = gc.files.unwrap_or_default();
+    assert!(!files.iter().any(|f| f.path == "/root/.git-credentials"));
+    assert!(!files.iter().any(|f| f.path == "/root/.gitconfig"));
 }
 
 #[test]
-fn git_credentials_generated_with_multiple_providers() {
+fn git_credentials_not_generated_from_multiple_provider_settings() {
     let user = file_with(vec![
         (SETTING_GITHUB_ALLOW, SettingValue::Bool(true)),
         (
             SETTING_GITHUB_TOKEN,
-            SettingValue::Text("ghp_test123".into()),
+            SettingValue::Text(
+                "credential:blake3:1111111111111111111111111111111111111111111111111111111111111111"
+                    .into(),
+            ),
         ),
         (SETTING_GITLAB_ALLOW, SettingValue::Bool(true)),
         (
@@ -3780,17 +3477,9 @@ fn git_credentials_generated_with_multiple_providers() {
     ]);
     let resolved = resolve_settings(&user, &empty_file());
     let gc = settings_to_guest_config(&resolved);
-    let files = gc.files.unwrap();
-    let creds = files
-        .iter()
-        .find(|f| f.path == "/root/.git-credentials")
-        .expect(".git-credentials should be generated");
-    assert!(creds
-        .content
-        .contains("https://oauth2:ghp_test123@github.com"));
-    assert!(creds
-        .content
-        .contains("https://oauth2:glpat-test456@gitlab.com"));
+    let files = gc.files.unwrap_or_default();
+    assert!(!files.iter().any(|f| f.path == "/root/.git-credentials"));
+    assert!(!files.iter().any(|f| f.path == "/root/.gitconfig"));
 }
 
 #[test]
@@ -4041,38 +3730,44 @@ fn setting_id_constants_exist_in_registry() {
 }
 
 // -----------------------------------------------------------------------
-// GH_TOKEN / GITLAB_TOKEN env var injection tests
+// GH_TOKEN / GITLAB_TOKEN materialization guards
 // -----------------------------------------------------------------------
 
 #[test]
-fn gh_token_injected_when_github_enabled() {
+fn gh_token_not_materialized_when_github_enabled() {
     let user = file_with(vec![
         (SETTING_GITHUB_ALLOW, SettingValue::Bool(true)),
         (
             SETTING_GITHUB_TOKEN,
-            SettingValue::Text("ghp_test123".into()),
+            SettingValue::Text(
+                "credential:blake3:1111111111111111111111111111111111111111111111111111111111111111"
+                    .into(),
+            ),
         ),
     ]);
     let resolved = resolve_settings(&user, &empty_file());
     let gc = settings_to_guest_config(&resolved);
-    let env = gc.env.unwrap();
-    assert_eq!(env.get("GH_TOKEN").unwrap(), "ghp_test123");
-    assert_eq!(env.get("GITHUB_TOKEN").unwrap(), "ghp_test123");
+    let env = gc.env.unwrap_or_default();
+    assert!(!env.contains_key("GH_TOKEN"));
+    assert!(!env.contains_key("GITHUB_TOKEN"));
 }
 
 #[test]
-fn gitlab_token_injected_when_gitlab_enabled() {
+fn gitlab_token_not_materialized_when_gitlab_enabled() {
     let user = file_with(vec![
         (SETTING_GITLAB_ALLOW, SettingValue::Bool(true)),
         (
             SETTING_GITLAB_TOKEN,
-            SettingValue::Text("glpat-test456".into()),
+            SettingValue::Text(
+                "credential:blake3:2222222222222222222222222222222222222222222222222222222222222222"
+                    .into(),
+            ),
         ),
     ]);
     let resolved = resolve_settings(&user, &empty_file());
     let gc = settings_to_guest_config(&resolved);
-    let env = gc.env.unwrap();
-    assert_eq!(env.get("GITLAB_TOKEN").unwrap(), "glpat-test456");
+    let env = gc.env.unwrap_or_default();
+    assert!(!env.contains_key("GITLAB_TOKEN"));
 }
 
 #[test]
@@ -4417,7 +4112,7 @@ fn merged_all_policies_populated() {
     let user = file_with(vec![("ai.anthropic.allow", SettingValue::Bool(true))]);
     let m = MergedPolicies::from_files(&user, &empty_file());
     assert!(!m.security_rules.rules().is_empty());
-    // Guest config has env vars (provider toggle injects CAPSEM_ANTHROPIC_ALLOWED)
+    // Guest config still carries non-secret built-in shell env defaults.
     assert!(m.guest.env.is_some());
     // VM settings have defaults
     assert!(m.vm.cpu_count.is_some());
@@ -4536,18 +4231,21 @@ fn corp_forces_provider_off() {
 fn corp_sets_api_key() {
     let user = file_with(vec![(
         "ai.openai.api_key",
-        SettingValue::Text("user-key".into()),
+        SettingValue::Text(
+            "credential:blake3:1111111111111111111111111111111111111111111111111111111111111111"
+                .into(),
+        ),
     )]);
     let corp = file_with(vec![(
         "ai.openai.api_key",
-        SettingValue::Text("corp-key".into()),
+        SettingValue::Text(
+            "credential:blake3:2222222222222222222222222222222222222222222222222222222222222222"
+                .into(),
+        ),
     )]);
     let m = MergedPolicies::from_files(&user, &corp);
-    let env = m.guest.env.unwrap();
-    assert_eq!(
-        env.get("OPENAI_API_KEY").map(|s| s.as_str()),
-        Some("corp-key")
-    );
+    let env = m.guest.env.unwrap_or_default();
+    assert!(!env.contains_key("OPENAI_API_KEY"));
 }
 
 #[test]

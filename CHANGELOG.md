@@ -45,6 +45,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   API keys/OAuth files and write them into settings. Credential capture now
   stays behind the credential broker/plugin path, and the retired settings key
   validation surface remains fail-closed at the gateway.
+- Stopped settings-derived guest config from materializing brokered provider
+  credentials, repository tokens, generated `.git-credentials`, provider allow
+  env vars, or AI CLI config files into VM boot env/files. Settings can still
+  provide UI/app preferences and explicit non-secret `guest.env.*`; credential
+  materialization is broker/plugin-owned.
 
 ### Changed (service/API)
 - Moved VM APIs under the explicit `/vms/...` contract. VM creation, listing,
