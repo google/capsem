@@ -43,6 +43,27 @@ If a category is genuinely impossible or deliberately deferred, record it as mis
 
 For policy, MITM, MCP, telemetry, networking, filesystem, process lifecycle, or sandbox-boundary work, the functional slice matrix is mandatory. The tests should prove not only that the happy path succeeds, but also that enforcement happens at the intended boundary: a blocked MCP tool does not dispatch, a blocked return does not leak, a denied URL does not reach the network, a malformed frame does not poison the stream, and telemetry records the truth.
 
+## Generated config proof
+
+VM, profile, asset, install, smoke, and release tests must distinguish source
+configuration from generated runtime configuration:
+
+- `config/` is checked-in source material: templates, support files, sample
+  corp/profile/settings files, and rule files.
+- `target/config/` is the generated runtime config for the current build.
+  Current asset hashes from `assets/manifest.json` belong there, not in
+  hand-edited checked-in profile files.
+- The generated runtime config must be produced by the same `capsem-admin` and
+  `just` path used by CI/release. Do not add a local-only script or test helper
+  that patches profiles differently from `just build-kernel`,
+  `just build-rootfs`, `just build-assets`, `_pack-initrd`, `smoke`, or `test`.
+- Tests that claim a current VM image boots must validate the generated profile
+  under `target/config`, run the service with that profile directory, and boot
+  through the normal profile-selected asset chain.
+- If a test mutates `config/profiles/*.toml`, `config/settings.toml`, or
+  `config/corp.toml` to match local build outputs, the test is proving the wrong
+  contract.
+
 ## Parallel tests as dogfooding (n=4 is non-negotiable)
 
 `just test` runs the python suite under `pytest -n 4 --dist=loadfile`. Four real VMs boot simultaneously. **This is the canary, not just a speed-up.** We ship Capsem as a multi-VM sandbox for AI agents -- if our own test suite cannot safely boot 4 concurrent VMs, real users running an agent farm will hit the exact same bug. Treat any concurrency flake as a Capsem-side bug, not a test-tuning problem:

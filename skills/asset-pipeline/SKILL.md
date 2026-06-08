@@ -19,7 +19,7 @@ The manifest tracks both with compatibility ranges (`min_binary`, `min_assets`).
 
 | Command | When to use |
 |---------|-------------|
-| `just build-assets` | Full rebuild: kernel + rootfs + checksums (slow, needs docker) |
+| `just build-assets code [arch]` | Full profile-derived rebuild: kernel + rootfs + checksums (slow, needs docker) |
 | `just shell` | Daily driver: repack initrd, build, sign, boot (~10s) |
 | `just shell "capsem-doctor"` | Verify VM boots correctly after changes |
 
@@ -29,6 +29,8 @@ The manifest tracks both with compatibility ranges (`min_binary`, `min_assets`).
 |------|-------|
 | Guest config (TOML) | `guest/config/` |
 | Guest artifacts | `guest/artifacts/` |
+| Config source/templates/support | `config/` |
+| Generated runtime config | `target/config/` |
 | Built assets (dev) | `assets/{arch}/vmlinuz, initrd.img, rootfs.erofs` |
 | Installed assets | `~/.capsem/assets/{name}-{hash16}.{ext}` (flat, hash-based) |
 | Manifest | `assets/manifest.json` |
@@ -98,9 +100,19 @@ only a legacy read fallback when an older manifest lacks `rootfs.erofs`.
 
 ## Boot-Time Resolution
 
-1. **Dev mode**: Service detects arch subdirs, passes `--kernel assets/{arch}/vmlinuz` etc. to capsem-process
-2. **Installed mode**: Service reads v2 manifest, resolves `ManifestV2::resolve(binary_version, arch, base_dir)` to get hash-based file paths, passes `--kernel`, `--initrd`, `--rootfs` individually to capsem-process
-3. **Hash check at boot**: `VmConfig::builder().build()` verifies BLAKE3 against compile-time hashes if available
+1. **Config bake**: the same `capsem-admin`/`just` rail used by CI/release
+   materializes current runtime config into `target/config/` from checked-in
+   `config/` source files plus `assets/manifest.json`. Do not hand-patch
+   checked-in profile files after repacking assets.
+2. **Dev mode**: Service loads profiles from generated `target/config/profiles`
+   when proving the current build, resolves the selected profile assets, then
+   passes `--kernel assets/{arch}/vmlinuz` etc. to capsem-process
+3. **Installed mode**: Service reads v2 manifest, resolves `ManifestV2::resolve(binary_version, arch, base_dir)` to get hash-based file paths, passes `--kernel`, `--initrd`, `--rootfs` individually to capsem-process
+4. **Hash check at boot**: `VmConfig::builder().build()` verifies BLAKE3 against compile-time hashes if available
+
+The dev and CI/release paths must share the same code path. If a local test
+uses `target/config`, CI must use the same admin/just generation step. A
+separate local-only generator is a contract bug.
 
 ## Cleanup
 

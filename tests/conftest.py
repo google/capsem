@@ -195,7 +195,7 @@ def pytest_sessionstart(session):
     if missing:
         pytest.exit(
             "CAPSEM_REQUIRE_ARTIFACTS=1 but the following artifacts are "
-            f"missing: {missing}. Run `just build-assets` (for assets/) "
+            f"missing: {missing}. Run `just build-assets code` (for assets/) "
             "and `uv run capsem-builder agent` (for target/linux-agent/) "
             "before invoking pytest. Locally, unset the env var to let "
             "tests skip on missing artifacts.",

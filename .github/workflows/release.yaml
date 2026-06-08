@@ -253,6 +253,17 @@ jobs:
         with:
           key: build-app-macos
 
+      - name: Materialize runtime config
+        run: |
+          cargo run -p capsem-admin -- profile materialize \
+            --profile config/profiles/code.toml \
+            --config-root config \
+            --manifest assets/manifest.json \
+            --assets-dir assets \
+            --output-root target/config \
+            --arch arm64 \
+            --clean
+
       - uses: pnpm/action-setup@v5
         with:
           version: 10
@@ -443,6 +454,17 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: build-app-linux-${{ matrix.arch }}
+
+      - name: Materialize runtime config
+        run: |
+          cargo run -p capsem-admin -- profile materialize \
+            --profile config/profiles/code.toml \
+            --config-root config \
+            --manifest assets/manifest.json \
+            --assets-dir assets \
+            --output-root target/config \
+            --arch ${{ matrix.arch }} \
+            --clean
 
       - name: Install Tauri system deps
         run: |

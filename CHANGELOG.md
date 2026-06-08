@@ -73,6 +73,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rootfs now passes `fsck.erofs` before install.
 
 ### Changed (release proof)
+- Added shared runtime config materialization through
+  `capsem-admin profile materialize`: local dev, smoke/test/install recipes,
+  and release package jobs now generate `target/config` from checked-in
+  `config/` plus `assets/manifest.json` instead of hand-editing source
+  profiles. Service test helpers and `just _ensure-service` load
+  `target/config/profiles` fail-closed.
+- Restored the Linux-team KVM/FUSE performance work and storage benchmark
+  harness into the current EROFS/LZ4HC rail, including bounded VM proof for
+  `capsem-bench storage` from the generated profile-selected asset chain.
 - Replaced public-service release proof with deterministic local fixtures:
   `capsem doctor` now starts/passes a local `capsem-debug-upstream`, doctor MCP
   content checks use local text/HTML fixtures, integration tests use local

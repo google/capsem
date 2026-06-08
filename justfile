@@ -3,36 +3,36 @@
 # Internal helpers:
 #   _ensure-setup   checks for .dev-setup sentinel, runs doctor if missing (auto first-run)
 #   _install-tools  auto-installs rust targets, components, cargo tools
-#   _check-assets   verifies VM assets exist, runs build-assets if not
+#   _check-assets   verifies VM assets exist, runs build-assets code if not
 #   _pack-initrd    cross-compiles guest binaries + repacks initrd
 #   _sign           builds host binaries + codesigns (macOS only, required for VZ)
 #   _ensure-service kills any running service, launches a fresh one, waits for socket
 #
 # User-facing recipe chains:
-#   shell            -> _check-assets + _pack-initrd + _ensure-service (daily dev entry point)
+#   shell            -> _check-assets + _pack-initrd + _materialize-config + _ensure-service (daily dev entry point)
 #   ui               -> _ensure-setup + _pnpm-install + run-service (service + Tauri dev hot-reload)
-#   run-service      -> _check-assets + _pack-initrd + _ensure-service (start daemon, idempotent)
+#   run-service      -> _check-assets + _pack-initrd + _materialize-config + _ensure-service (start daemon, idempotent)
 #   exec +CMD        -> run-service (one-shot command in a fresh temp VM)
-#   build-assets     -> _install-tools + _clean-stale + inline doctor (kernel + rootfs via capsem-builder)
+#   build-assets     -> _install-tools + _clean-stale + inline doctor (kernel + rootfs via capsem-admin)
 #   build-ui         -> _pnpm-install (pnpm build + cargo build -p capsem-app, in lockstep)
 #   run-ui *ARGS     -> build-ui (launch ./target/debug/capsem-app)
-#   smoke            -> _install-tools + _pnpm-install + _check-assets + _pack-initrd + _ensure-service
+#   smoke            -> _install-tools + _pnpm-install + _check-assets + _pack-initrd + _materialize-config + _ensure-service
 #                       (audit, doctor --fast, injection, integration, parallel pytest groups)
 #   test             -> _install-tools + _clean-stale + _pnpm-install + _generate-settings
-#                       + _check-assets + _pack-initrd (everything: audit, cov, cross-compile,
+#                       + _check-assets + _pack-initrd + _materialize-config (everything: audit, cov, cross-compile,
 #                       frontend, python, injection, integration, bench, test-install)
-#   bench            -> _ensure-setup + _check-assets + _pack-initrd + _ensure-service
+#   bench            -> _ensure-setup + _check-assets + _pack-initrd + _materialize-config + _ensure-service
 #   test-gateway     -> (no deps; unit + mock UDS tests)
-#   test-gateway-e2e -> _check-assets + _pack-initrd + _sign (real service + VMs)
+#   test-gateway-e2e -> _check-assets + _pack-initrd + _materialize-config + _sign (real service + VMs)
 #   test-install     -> _build-host (Docker e2e: build .deb, dpkg -i, pytest)
-#   install          -> _pnpm-install + _stamp-version + _check-assets + _pack-initrd
+#   install          -> _pnpm-install + _stamp-version + _check-assets + _pack-initrd + _materialize-config
 #                       (release build + frontend + Tauri bundle + .pkg/.deb installer)
 #   cut-release      -> test + _stamp-version (commits changelog, tags, pushes, waits for CI)
 #   release [tag]    -> (waits for CI on a pushed tag)
 #
 # First-time setup:
 #   just doctor       (shows what's missing; `just doctor fix` auto-installs)
-#   just build-assets (builds kernel + rootfs via capsem-builder -- needs docker via Colima on macOS)
+#   just build-assets code (builds profile-owned kernel + rootfs via capsem-admin -- needs docker via Colima on macOS)
 #
 # Daily dev:          just shell         (service daemon + temp VM + shell, ~10s)
 #                     just ui            (service + Tauri GUI with hot-reload)
@@ -96,8 +96,15 @@ _sign: _build-host
 _ensure-service: _sign
     #!/bin/bash
     set -euo pipefail
+    ROOT="{{justfile_directory()}}"
     arch=$(uname -m)
     [[ "$arch" == "arm64" ]] || arch="x86_64"
+    GENERATED_PROFILES="$ROOT/target/config/profiles"
+    if [ ! -d "$GENERATED_PROFILES" ]; then
+        echo "ERROR: generated profiles missing at $GENERATED_PROFILES"
+        echo "       Run just _materialize-config or a recipe that depends on it."
+        exit 1
+    fi
     # Resolve capsem home + run dir from env, matching the Rust helpers.
     CAPSEM_HOME_DIR="${CAPSEM_HOME:-$HOME/.capsem}"
     RUN_DIR="${CAPSEM_RUN_DIR:-$CAPSEM_HOME_DIR/run}"
@@ -150,7 +157,7 @@ _ensure-service: _sign
     # Close fd 3 on the service; otherwise the backgrounded service inherits
     # the execution-lock fd from `just smoke` / `just test` and keeps the
     # flock held after the outer shell exits, blocking subsequent runs.
-    RUST_LOG=capsem=debug {{service_binary}} \
+    CAPSEM_PROFILES_DIR="$GENERATED_PROFILES" RUST_LOG=capsem=debug {{service_binary}} \
         --assets-dir {{assets_dir}}/$arch \
         --process-binary {{process_binary}} \
         --foreground 3>&- &
@@ -215,7 +222,7 @@ run-ui *ARGS: build-ui
     ./target/debug/capsem-app {{ARGS}}
 
 # Start service daemon + boot temporary VM + shell (~10s after first build)
-shell: _check-assets _pack-initrd _ensure-service
+shell: _check-assets _pack-initrd _materialize-config _ensure-service
     #!/bin/bash
     set -euo pipefail
     source {{justfile_directory()}}/scripts/lib/exec_lock.sh
@@ -223,7 +230,7 @@ shell: _check-assets _pack-initrd _ensure-service
     {{cli_binary}} shell
 
 # Start capsem-service daemon (builds, signs, launches or reuses running instance)
-run-service: _check-assets _pack-initrd _ensure-service
+run-service: _check-assets _pack-initrd _materialize-config _ensure-service
 
 # Execute a command in a fresh temporary VM (auto-provisioned and destroyed)
 # Usage: just exec "echo hello"   or   just exec "ls -la"
@@ -366,7 +373,7 @@ test-artifacts:
     echo "  cat $DIR/.../service.log | less"
     echo "  cat $DIR/.../sessions/<vm>/process.log | less"
 
-test: _install-tools _clean-stale _pnpm-install _generate-settings _check-assets _pack-initrd
+test: _install-tools _clean-stale _pnpm-install _generate-settings _check-assets _pack-initrd _materialize-config
     #!/bin/bash
     set -euo pipefail
     export CAPSEM_HOME="{{justfile_directory()}}/target/test-home/.capsem"
@@ -644,7 +651,7 @@ _generate-settings:
     uv run python scripts/generate_schema.py >> "$LOG" 2>&1
 
 # Fast path: audit, doctor, injection, integration tests (no Docker, no cross-compile)
-smoke: _install-tools _pnpm-install _check-assets _pack-initrd
+smoke: _install-tools _pnpm-install _check-assets _pack-initrd _materialize-config
     #!/bin/bash
     set -euo pipefail
     # Smoke runs against an isolated CAPSEM_HOME so it doesn't stomp on a
@@ -753,7 +760,7 @@ test-gateway:
     echo "Gateway tests passed"
 
 # Gateway E2E tests (requires capsem-service + VM assets)
-test-gateway-e2e: _check-assets _pack-initrd _sign
+test-gateway-e2e: _check-assets _pack-initrd _materialize-config _sign
     #!/bin/bash
     set -euo pipefail
     source {{justfile_directory()}}/scripts/lib/exec_lock.sh
@@ -771,7 +778,7 @@ coverage:
     open target/llvm-cov/html/index.html 2>/dev/null || true
 
 # Run in-VM benchmarks (disk I/O, rootfs read, CLI startup, HTTP latency)
-bench: _ensure-setup _check-assets _pack-initrd _ensure-service
+bench: _ensure-setup _check-assets _pack-initrd _materialize-config _ensure-service
     #!/bin/bash
     set -euo pipefail
     source {{justfile_directory()}}/scripts/lib/exec_lock.sh
@@ -785,7 +792,7 @@ bench: _ensure-setup _check-assets _pack-initrd _ensure-service
 # Build the platform package (.pkg on macOS, .deb on Linux) and install it.
 # Builds release binaries, frontend, and Tauri app. Asks for sudo to install.
 # The postinstall script handles codesign, PATH, service registration, and service readiness.
-install: _pnpm-install _stamp-version _check-assets _pack-initrd
+install: _pnpm-install _stamp-version _check-assets _pack-initrd _materialize-config
     #!/bin/bash
     set -euo pipefail
     # Strip test-isolation env vars so the installer never bakes a transient
@@ -1434,3 +1441,19 @@ _pack-initrd:
     # Force cargo to re-run build.rs so it picks up new manifest hashes
     touch "$ROOT/crates/capsem-app/build.rs"
     echo "initrd repacked (with agent + net-proxy + mcp-server + sysutil + doctor)"
+
+_materialize-config:
+    #!/bin/bash
+    set -euo pipefail
+    ROOT="{{justfile_directory()}}"
+    arch=$(uname -m)
+    [[ "$arch" == "arm64" ]] || arch="x86_64"
+    echo "=== Materialize runtime config ==="
+    cargo run -p capsem-admin -- profile materialize \
+        --profile "$ROOT/config/profiles/code.toml" \
+        --config-root "$ROOT/config" \
+        --manifest "$ROOT/{{assets_dir}}/manifest.json" \
+        --assets-dir "$ROOT/{{assets_dir}}" \
+        --output-root "$ROOT/target/config" \
+        --arch "$arch" \
+        --clean

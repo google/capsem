@@ -9,7 +9,7 @@ description: Setting up a Capsem development environment from scratch. Use when 
 
 - **macOS 13+** (Ventura or later) -- required for Virtualization.framework
 - **Apple Silicon** (arm64) -- primary target. Intel Macs are not supported for VM features.
-- **Docker (via Colima on macOS)** -- needed for `just build-assets` (kernel + rootfs builds)
+- **Docker (via Colima on macOS)** -- needed for `just build-assets code` (kernel + rootfs builds)
 
 ## Required tools
 
@@ -80,7 +80,7 @@ git clone <repo> && cd capsem
 just run "echo hello from capsem"
 ```
 
-`bootstrap.sh` lives at the **repo root** (not under `scripts/`). It runs `just build-assets` as part of doctor's auto-fix, so step 3 just confirms the VM boots.
+`bootstrap.sh` lives at the **repo root** (not under `scripts/`). It runs the profile-derived asset build as part of doctor's auto-fix, so step 3 just confirms the VM boots.
 
 ### What bootstrap installs
 
@@ -108,7 +108,7 @@ Or step by step:
 ```bash
 just doctor          # Check tools (colored output, structured recap)
 just doctor-fix      # Auto-fix missing targets, cargo tools, config files
-just build-assets    # Build kernel + rootfs (~10 min)
+just build-assets code    # Build kernel + rootfs (~10 min)
 just run "echo hi"   # Verify VM boots
 ```
 
@@ -183,7 +183,7 @@ the entitlements, and verifies the operation succeeds. Run `just doctor` after i
 confirm signing works.
 
 **Linux developers**: codesign is not available and not needed on Linux. VM features (`just run`,
-`just dev`, `just bench`) require macOS. You can use `just test`, `just build-assets`, and
+`just dev`, `just bench`) require macOS. You can use `just test`, `just build-assets code`, and
 `just audit` on Linux.
 
 ## Troubleshooting
@@ -214,7 +214,7 @@ The container VM's clock has drifted. The builder uses `Acquire::Check-Valid-Unt
 - On first run, Docker image pulls can be slow
 
 ### `just run` fails with "assets not found"
-Run `just build-assets` first. Assets are gitignored and must be built locally.
+Run `just build-assets code` first. Assets are gitignored and must be built locally.
 
 ### `cargo run` or `cargo test` crashes with signing error
 - `.cargo/config.toml` must exist and be tracked in git -- it configures the custom runner (`scripts/run_signed.sh`) that signs binaries with Virtualization.framework entitlements before execution

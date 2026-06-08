@@ -20,7 +20,7 @@ All workflows use `just` (not make). The justfile is the single entry point.
 | `just dev-frontend` | Frontend-only dev server on :5173 (no Tauri, no VM, mock data) |
 | `just build-ui [release]` | **Frontend build + `cargo build -p capsem-app` in lockstep.** Use after any frontend change when running the Tauri binary directly. |
 | `just run-ui -- [args]` | `build-ui` then launch `./target/debug/capsem-app` with args (e.g. `--connect <id>`) |
-| `just build-assets [arch]` | Full VM asset rebuild via capsem-builder (kernel + rootfs). Default: both arches. |
+| `just build-assets <profile> [arch]` | Full profile-derived VM asset rebuild via `capsem-admin image build` (kernel + rootfs). Example: `just build-assets code arm64`. |
 | `just smoke` | Fast path: audit + doctor --fast + injection + integration + parallel pytest groups (~30s) |
 | `just test` | ALL tests: unit (warnings-as-errors) + cov + cross-compile + frontend + python + injection + integration + bench + install e2e |
 | `just test-gateway` | Gateway unit + Python mock-UDS tests (no VM needed) |
@@ -52,7 +52,7 @@ All workflows use `just` (not make). The justfile is the single entry point.
 | Guest binary (agent, net-proxy, mcp-server) | `just smoke` (auto-repacks initrd) |
 | `capsem-init` | `just smoke` (auto-repacks) |
 | In-VM diagnostics (`guest/artifacts/diagnostics/`) | `just smoke` |
-| Guest config (`guest/config/`) or rootfs packages | `just build-assets` then `just shell` |
+| Guest config (`guest/config/`) or rootfs packages | `just build-assets code [arch]` then `just shell` |
 | Frontend components | `just ui` (iterate) then `just test` (validate) |
 | Frontend standalone (no VM) | `just dev-frontend` |
 | Tauri binary (not dev) | `just build-ui` then `just run-ui` |
@@ -66,23 +66,39 @@ All workflows use `just` (not make). The justfile is the single entry point.
 ## Dependency chains
 
 ```
-shell            -> _check-assets + _pack-initrd + _ensure-service (_sign + build)
+shell            -> _check-assets + _pack-initrd + _materialize-config + _ensure-service (_sign + build)
 ui               -> _ensure-setup + _pnpm-install + run-service
-run-service      -> _check-assets + _pack-initrd + _ensure-service
+run-service      -> _check-assets + _pack-initrd + _materialize-config + _ensure-service
 exec             -> run-service
-build-assets     -> _install-tools + _clean-stale (inline: doctor, capsem-builder kernel + rootfs)
+build-assets     -> _install-tools + _clean-stale (inline: doctor, capsem-admin image build -> capsem-builder kernel + rootfs)
 build-ui         -> _pnpm-install (pnpm build + cargo build -p capsem-app)
-smoke            -> _install-tools + _pnpm-install + _check-assets + _pack-initrd + _ensure-service
+smoke            -> _install-tools + _pnpm-install + _check-assets + _pack-initrd + _materialize-config + _ensure-service
 test             -> _install-tools + _clean-stale + _pnpm-install + _generate-settings
-                    + _check-assets + _pack-initrd
-bench            -> _ensure-setup + _check-assets + _pack-initrd + _ensure-service
-test-gateway-e2e -> _check-assets + _pack-initrd + _sign
+                    + _check-assets + _pack-initrd + _materialize-config
+bench            -> _ensure-setup + _check-assets + _pack-initrd + _materialize-config + _ensure-service
+test-gateway-e2e -> _check-assets + _pack-initrd + _materialize-config + _sign
 test-install     -> _build-host
-install          -> _pnpm-install + _stamp-version + _check-assets + _pack-initrd
+install          -> _pnpm-install + _stamp-version + _check-assets + _pack-initrd + _materialize-config
 cut-release      -> test + _stamp-version
 ```
 
 `_`-prefixed recipes are internal (hidden from `just --list`).
+
+## Config source vs generated runtime config
+
+The justfile must preserve the same config generation path in local dev, tests,
+CI, and release:
+
+- Checked-in `config/` is source/templates/support: profile, corp, settings,
+  rule files, and examples.
+- Generated current-build runtime config lives in `target/config/`.
+- Current asset hashes from `assets/manifest.json` must be materialized into
+  `target/config` by the same `capsem-admin`/just rail that CI runs. Do not
+  add a local-only patcher and do not hand-edit `config/profiles/*.toml` to
+  match a repacked local initrd.
+- Recipes that prove bootability (`shell`, `run-service`, `smoke`, `test`,
+  `bench`, and install/package checks) must either run the shared materialize
+  step first or depend on a recipe that does.
 
 ## Docker disk management
 
@@ -119,7 +135,7 @@ When debugging build issues, check `target/build.log` first. When writing new bu
 ```bash
 just doctor        # Check tools (colored output, shows fixable issues)
 just doctor fix    # Auto-fix missing targets, cargo tools, config files
-just build-assets  # Build kernel + rootfs (~10 min, needs docker)
+just build-assets code  # Build kernel + rootfs (~10 min, needs docker)
 just shell         # Boot a temp VM and drop into a shell
 ```
 

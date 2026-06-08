@@ -42,7 +42,7 @@ path, ideally with an isolated `CAPSEM_HOME`.
 1. Add test functions to the appropriate `guest/artifacts/diagnostics/test_*.py` or create `test_<category>.py`
 2. Use `from conftest import run` for shell commands, `output_dir` fixture for temp files
 3. Tests auto-skip outside the capsem VM (conftest checks for root + writable /root)
-4. Rebuild rootfs with `just build-assets` to bake new test files into the image
+4. Rebuild rootfs with `just build-assets code` to bake new test files into the image
 5. For fast iteration during development, tests in `diagnostics/` are also repacked into the initrd by `just exec`, so `just exec "capsem-doctor"` picks up changes without a full rootfs rebuild
 6. Verify: `just exec "capsem-doctor -k <your_test>"`
 

@@ -65,6 +65,7 @@ metrics = "0.24"
 
 # Linux-only: KVM hypervisor backend
 [target.'cfg(target_os = "linux")'.dependencies]
+io-uring = "0.7"
 vm-fdt = "0.3"
 
 # macOS-only: Apple Virtualization.framework bindings

@@ -20,7 +20,7 @@ PROCESS_BINARY = PROJECT_ROOT / "target/debug/capsem-process"
 GATEWAY_BINARY = PROJECT_ROOT / "target/debug/capsem-gateway"
 TRAY_BINARY = PROJECT_ROOT / "target/debug/capsem-tray"
 ASSETS_DIR = PROJECT_ROOT / "assets"
-PROFILES_DIR = PROJECT_ROOT / "config" / "profiles"
+PROFILES_DIR = PROJECT_ROOT / "target" / "config" / "profiles"
 
 
 ARTIFACT_MAX_FILE_BYTES = 25 * 1024 * 1024  # 25 MB hard cap per file
@@ -188,6 +188,11 @@ class ServiceInstance:
 
         arch = "arm64" if os.uname().machine == "arm64" else "x86_64"
         assets_dir = ASSETS_DIR / arch
+        if not PROFILES_DIR.exists():
+            raise RuntimeError(
+                f"generated profile directory missing: {PROFILES_DIR}. "
+                "Run `just _materialize-config` or a just recipe that depends on it."
+            )
 
         env = os.environ.copy()
         env["RUST_LOG"] = "debug"

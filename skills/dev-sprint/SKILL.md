@@ -67,6 +67,31 @@ Write code. Follow the project skills:
 - `/dev-rust-patterns` for async/cross-compile patterns
 - `/dev-mitm-proxy`, `/dev-mcp` for subsystem-specific guidance
 
+### Config source vs generated runtime config
+
+Keep configuration ownership crisp during every sprint:
+
+- `config/` is checked-in source material: templates, support files, sample
+  corp/profile/settings files, and rule files that define the product contract.
+- `target/config/` is generated runtime config for the current local build. It
+  may include current asset hashes from `assets/manifest.json`, materialized
+  profile files, copied rule files, and other build outputs.
+- Do not hand-edit checked-in `config/profiles/*.toml`, `config/settings.toml`,
+  or `config/corp.toml` just to match a local repacked initrd/rootfs/kernel.
+  Bake or instantiate those values into `target/config/`, then validate and boot
+  against `target/config`.
+- Tests and VM smoke that claim "the current build boots" must point the
+  service/profile loader at `target/config` (for example via
+  `CAPSEM_PROFILES_DIR=target/config/profiles`) after the instantiate step.
+- The instantiate step must be implemented in the same admin/just path used by
+  CI and release, normally `capsem-admin image build|verify|workspace` and the
+  `just build-kernel`, `just build-rootfs`, `just build-assets`,
+  `_pack-initrd`, `smoke`, and `test` chains. Do not create a dev-only config
+  patcher that CI does not run.
+- Commit source templates/support and the code that generates runtime config.
+  Do not commit ad hoc generated `target/config` output unless a specific test
+  fixture intentionally lives in the repository.
+
 ## 4. Commit at functional milestones
 
 Do NOT commit after every file edit. Do NOT batch everything into one giant commit at the end. Commit when:

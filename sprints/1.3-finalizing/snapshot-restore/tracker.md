@@ -1197,16 +1197,51 @@ the guarantee or explicitly burn it.
 ## S4: Linux/KVM/EROFS/LZ4HC And Benchmarks
 
 - [ ] Inventory Linux-team scoped commits/files.
-- [ ] Restore/port Linux-team KVM/filesystem changes in scoped files.
+- [x] Restore/port Linux-team KVM/filesystem changes in scoped files.
+  Proof: scoped KVM/FUSE files were ported into the current tree and
+  `cargo test -p capsem-core hypervisor -- --nocapture` passed 107 focused
+  hypervisor/FUSE tests on macOS. Linux runtime execution remains a separate
+  handoff item below.
 - [ ] Preserve modern `iptables-nft` path; do not restore legacy path.
 - [ ] Restore/verify EROFS/LZ4HC as accepted 1.3 runtime asset format on every
   supported architecture.
-- [ ] Ensure profile/admin asset generation emits EROFS/LZ4HC for every
+- [x] Ensure profile/admin asset generation emits EROFS/LZ4HC for every
   supported architecture.
+  Proof: `capsem-admin image build` plans force `CAPSEM_BUILD_EXPERIMENTAL_EROFS=1`,
+  `CAPSEM_BUILD_EROFS_COMPRESSION=lz4hc`, and
+  `CAPSEM_BUILD_EROFS_COMPRESSION_LEVEL=12`; `uv run pytest
+  tests/test_docker.py::TestCreateErofs tests/test_docker.py::TestKernelConfig
+  tests/test_docker.py::TestGenerateChecksums -q` passed 25 tests, and admin
+  tests include `image_plan_is_profile_derived_and_uses_erofs_lz4hc`.
+- [x] Materialize generated runtime config under `target/config/` through the
+  same `capsem-admin`/just path used by CI/release. No dev-only generator and
+  no hand-editing checked-in `config/profiles/*.toml` to match local assets.
+  Proof: `capsem-admin profile materialize` copies source config to
+  `target/config`, rewrites selected profile asset descriptors from
+  `assets/manifest.json` to verified `file://` local assets, and validates the
+  generated profile through the normal rule compiler. `just` runtime recipes
+  now run `_pack-initrd -> _materialize-config -> _ensure-service`, and
+  `_ensure-service` sets `CAPSEM_PROFILES_DIR=target/config/profiles` with a
+  hard missing-dir failure. Release macOS/Linux package jobs call the same
+  admin materializer after manifest generation. Tests:
+  `cargo test -p capsem-admin profile_materialize -- --nocapture`,
+  `cargo test -p capsem-admin -- --nocapture`, `uv run pytest
+  tests/test_build_assets_profile.py -q`, `just _materialize-config`,
+  `cargo run -p capsem-admin -- profile validate
+  target/config/profiles/code.toml --config-root target/config --json`, and
+  `cargo run -p capsem-admin -- image verify --profile
+  target/config/profiles/code.toml --config-root target/config --output assets
+  --manifest assets/manifest.json --arch arm64 --json`.
 - [ ] Verify the built boot assets are EROFS/LZ4HC level 12 from the
-  profile-selected asset chain, not from a stale benchmark artifact.
+  generated `target/config` profile-selected asset chain, not from a stale
+  benchmark artifact or a manually patched checked-in profile.
 - [ ] Restore/verify multi-arch asset proof.
-- [ ] Restore advanced benchmark harness/artifacts for EROFS/LZ4HC.
+- [x] Restore advanced benchmark harness/artifacts for EROFS/LZ4HC.
+  Proof: `capsem-bench storage` mode and focused storage gate tests are back;
+  `uv run pytest tests/test_capsem_bench_storage.py
+  tests/test_capsem_bench_gates.py tests/test_capsem_bench_mitm_local.py
+  tests/test_build_assets_profile.py -q` passed 38 tests, and a bounded VM
+  `capsem-bench storage` run exited 0 from generated `target/config`.
 - [ ] Record zstd comparison evidence and decision.
 - [ ] Record benchmark numbers with image format, compression, compression
   level, architecture, kernel, host OS, command line, event/workload counts,
@@ -1216,6 +1251,22 @@ the guarantee or explicitly burn it.
 - [ ] Mark Linux-only execution proof as passed or owner-accepted handoff
   blocker.
 - [ ] Commit S4.
+
+S4 progress note:
+
+- Scoped Linux/KVM/FUSE changes have been ported into the current tree and
+  focused macOS hypervisor tests passed locally.
+- `capsem-bench storage` guest harness has been restored and a bounded isolated
+  arm64 VM storage run succeeded from generated `target/config/profiles` after
+  `_pack-initrd` and `_materialize-config`, proving the restored guest code
+  works through the profile-selected EROFS/LZ4HC asset chain. Bounded proof
+  command used `CAPSEM_STORAGE_BENCH_SIZE_MB=8`,
+  `CAPSEM_STORAGE_IO_PROFILE_SIZE_MB=8`, and
+  `CAPSEM_STORAGE_IO_PROFILE_RANDOM_OPS=64`; `/root` 1 MiB cached read was
+  ~3.8 GB/s and the command exited 0.
+- Linux cross-target checking is locally blocked by missing musl linker tooling;
+  Linux runtime/KVM proof remains a Linux-team handoff unless CI provides it in
+  this sprint.
 
 ## S5: Security Corpus And Bench Gates
 

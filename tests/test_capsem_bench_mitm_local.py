@@ -100,6 +100,7 @@ class _DebugHandler(BaseHTTPRequestHandler):
 
 def test_mitm_local_is_explicit_mode_not_all():
     assert "mitm-local" in bench_main.VALID_MODES
+    assert "storage" in bench_main.VALID_MODES
     assert "all" in bench_main.VALID_MODES
 
 

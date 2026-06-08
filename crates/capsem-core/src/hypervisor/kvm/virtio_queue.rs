@@ -5,6 +5,8 @@
 
 use std::sync::atomic::{fence, Ordering};
 
+use tracing::debug;
+
 use super::memory::GuestMemoryRef;
 
 // ---------------------------------------------------------------------------
@@ -15,6 +17,10 @@ use super::memory::GuestMemoryRef;
 pub(super) const VRING_DESC_F_NEXT: u16 = 1;
 /// Descriptor buffer is device-writable (host writes, guest reads).
 pub(super) const VRING_DESC_F_WRITE: u16 = 2;
+/// Driver requests that the device avoid used-buffer interrupts.
+const VRING_AVAIL_F_NO_INTERRUPT: u16 = 1;
+/// Virtio ring event-index feature bit.
+pub(super) const VIRTIO_RING_F_EVENT_IDX: u64 = 1 << 29;
 
 // ---------------------------------------------------------------------------
 // Virtqueue descriptor (16 bytes in guest memory)
@@ -34,10 +40,16 @@ impl VirtqDesc {
         let offset = desc_table_gpa + (index as u64) * 16;
         let host = mem.gpa_to_host(offset)?;
         unsafe {
-            let addr = u64::from_le(*(host as *const u64));
-            let len = u32::from_le(*((host as *const u8).add(8) as *const u32));
-            let flags = u16::from_le(*((host as *const u8).add(12) as *const u16));
-            let next = u16::from_le(*((host as *const u8).add(14) as *const u16));
+            let addr = u64::from_le(std::ptr::read_unaligned(host as *const u64));
+            let len = u32::from_le(std::ptr::read_unaligned(
+                (host as *const u8).add(8) as *const u32
+            ));
+            let flags = u16::from_le(std::ptr::read_unaligned(
+                (host as *const u8).add(12) as *const u16
+            ));
+            let next = u16::from_le(std::ptr::read_unaligned(
+                (host as *const u8).add(14) as *const u16
+            ));
             Some(VirtqDesc {
                 addr,
                 len,
@@ -79,6 +91,8 @@ pub(super) struct VirtQueue {
     size: u16,
     next_avail: u16,
     next_used: u16,
+    num_added: u16,
+    event_idx: bool,
     mem: GuestMemoryRef,
 }
 
@@ -91,13 +105,135 @@ impl VirtQueue {
         used_ring_gpa: u64,
         size: u16,
     ) -> Self {
+        let next_used = read_u16(&mem, used_ring_gpa + 2);
+        Self::from_indices(
+            mem,
+            desc_table_gpa,
+            avail_ring_gpa,
+            used_ring_gpa,
+            size,
+            next_used,
+            next_used,
+            false,
+        )
+    }
+
+    /// Create a new virtqueue and enable event-index notification suppression
+    /// when the driver negotiated `VIRTIO_RING_F_EVENT_IDX`.
+    pub fn new_with_event_idx(
+        mem: GuestMemoryRef,
+        desc_table_gpa: u64,
+        avail_ring_gpa: u64,
+        used_ring_gpa: u64,
+        size: u16,
+        event_idx: bool,
+    ) -> Self {
+        let next_used = read_u16(&mem, used_ring_gpa + 2);
+        Self::from_indices(
+            mem,
+            desc_table_gpa,
+            avail_ring_gpa,
+            used_ring_gpa,
+            size,
+            next_used,
+            next_used,
+            event_idx,
+        )
+    }
+
+    /// Recreate a queue after warm restore.
+    ///
+    /// KVM checkpoints are taken after device quiescence. Descriptor heads that
+    /// were visible before suspend have either already been completed by the
+    /// pre-suspend device instance or belong to backend-specific standing
+    /// buffers. Replaying them through a fresh userspace device can wedge
+    /// VirtioFS after resume, so restored queues wait for the next driver
+    /// submission while preserving the used-ring index for future completions.
+    pub fn new_restored(
+        mem: GuestMemoryRef,
+        desc_table_gpa: u64,
+        avail_ring_gpa: u64,
+        used_ring_gpa: u64,
+        size: u16,
+    ) -> Self {
+        let next_avail = read_u16(&mem, avail_ring_gpa + 2);
+        let next_used = read_u16(&mem, used_ring_gpa + 2);
+        debug!(
+            event_name = "virtio.queue.restore",
+            desc_table_gpa,
+            avail_ring_gpa,
+            used_ring_gpa,
+            size,
+            next_avail,
+            next_used,
+            "virtqueue restored"
+        );
+        Self::from_indices(
+            mem,
+            desc_table_gpa,
+            avail_ring_gpa,
+            used_ring_gpa,
+            size,
+            next_avail,
+            next_used,
+            false,
+        )
+    }
+
+    /// Recreate a queue after warm restore with event-index enabled when it
+    /// was negotiated before activation.
+    pub fn new_restored_with_event_idx(
+        mem: GuestMemoryRef,
+        desc_table_gpa: u64,
+        avail_ring_gpa: u64,
+        used_ring_gpa: u64,
+        size: u16,
+        event_idx: bool,
+    ) -> Self {
+        let next_avail = read_u16(&mem, avail_ring_gpa + 2);
+        let next_used = read_u16(&mem, used_ring_gpa + 2);
+        debug!(
+            event_name = "virtio.queue.restore",
+            desc_table_gpa,
+            avail_ring_gpa,
+            used_ring_gpa,
+            size,
+            next_avail,
+            next_used,
+            event_idx,
+            "virtqueue restored"
+        );
+        Self::from_indices(
+            mem,
+            desc_table_gpa,
+            avail_ring_gpa,
+            used_ring_gpa,
+            size,
+            next_avail,
+            next_used,
+            event_idx,
+        )
+    }
+
+    fn from_indices(
+        mem: GuestMemoryRef,
+        desc_table_gpa: u64,
+        avail_ring_gpa: u64,
+        used_ring_gpa: u64,
+        size: u16,
+        next_avail: u16,
+        next_used: u16,
+        event_idx: bool,
+    ) -> Self {
         Self {
             desc_table_gpa,
             avail_ring_gpa,
             used_ring_gpa,
             size,
-            next_avail: 0,
-            next_used: 0,
+            next_avail,
+            next_used,
+            num_added: 0,
+            event_idx,
             mem,
         }
     }
@@ -144,16 +280,78 @@ impl VirtQueue {
         Some(DescriptorChain { head, descriptors })
     }
 
+    /// Pop a descriptor chain, or arm driver notifications if the queue is empty.
+    ///
+    /// With event-index negotiated, this follows the Firecracker/Linux pattern:
+    /// when the queue looks empty, write `avail_event = next_avail`, fence, and
+    /// recheck `avail.idx`. If the driver raced by publishing a descriptor
+    /// before seeing the armed event index, the second read catches it and the
+    /// worker keeps draining instead of sleeping forever.
+    pub fn pop_or_enable_notification(&mut self) -> Option<DescriptorChain> {
+        if !self.event_idx {
+            return self.pop();
+        }
+
+        if let Some(chain) = self.pop() {
+            return Some(chain);
+        }
+
+        self.write_avail_event(self.next_avail);
+        fence(Ordering::SeqCst);
+
+        self.pop()
+    }
+
     /// Push a used descriptor chain back to the used ring.
     pub fn push_used(&mut self, head: u16, len: u32) {
+        self.push_used_deferred(head, len);
+        self.flush_used();
+    }
+
+    /// Push a used descriptor without publishing the used index yet.
+    ///
+    /// Devices that complete multiple descriptor chains from one notification
+    /// can call this repeatedly and publish them with one `flush_used()`.
+    pub fn push_used_deferred(&mut self, head: u16, len: u32) {
         let used_index = self.next_used % self.size;
         self.write_used_ring(used_index, head, len);
+        self.next_used = self.next_used.wrapping_add(1);
+        self.num_added = self.num_added.wrapping_add(1);
+    }
+
+    /// Publish all deferred used ring entries to the driver.
+    pub fn flush_used(&mut self) {
         // Release: ensure used ring entry writes are visible to the driver
         // before the used index update. Required by virtio spec when
         // device and driver run on different threads.
         fence(Ordering::Release);
-        self.next_used = self.next_used.wrapping_add(1);
         self.write_used_idx(self.next_used);
+    }
+
+    /// Decide whether the driver should be interrupted after used entries were published.
+    ///
+    /// This is the split-ring `prepare_kick` step. Without event-index, the
+    /// legacy `NO_INTERRUPT` flag controls suppression. With event-index, the
+    /// driver-owned `used_event` field tells the device which used index should
+    /// trigger the next interrupt.
+    pub fn prepare_kick(&mut self) -> bool {
+        if self.num_added == 0 {
+            return false;
+        }
+
+        if !self.event_idx {
+            self.num_added = 0;
+            return self.read_avail_flags() & VRING_AVAIL_F_NO_INTERRUPT == 0;
+        }
+
+        fence(Ordering::SeqCst);
+
+        let new = self.next_used;
+        let old = self.next_used.wrapping_sub(self.num_added);
+        let used_event = self.read_used_event();
+        self.num_added = 0;
+
+        new.wrapping_sub(used_event).wrapping_sub(1) < new.wrapping_sub(old)
     }
 
     /// Read the `idx` field from the available ring.
@@ -161,10 +359,15 @@ impl VirtQueue {
         // avail ring layout: flags (u16), idx (u16), ring[size] (u16 each)
         let idx_gpa = self.avail_ring_gpa + 2; // skip flags
         if let Some(ptr) = self.mem.gpa_to_host(idx_gpa) {
-            unsafe { u16::from_le(*(ptr as *const u16)) }
+            unsafe { u16::from_le(std::ptr::read_unaligned(ptr as *const u16)) }
         } else {
             0
         }
+    }
+
+    /// Read the `flags` field from the available ring.
+    fn read_avail_flags(&self) -> u16 {
+        read_u16(&self.mem, self.avail_ring_gpa)
     }
 
     /// Read a ring entry from the available ring.
@@ -172,9 +375,24 @@ impl VirtQueue {
         // ring entries start at offset 4 (after flags + idx)
         let entry_gpa = self.avail_ring_gpa + 4 + (ring_index as u64) * 2;
         if let Some(ptr) = self.mem.gpa_to_host(entry_gpa) {
-            unsafe { u16::from_le(*(ptr as *const u16)) }
+            unsafe { u16::from_le(std::ptr::read_unaligned(ptr as *const u16)) }
         } else {
             0
+        }
+    }
+
+    /// Read `used_event` from the end of the available ring.
+    fn read_used_event(&self) -> u16 {
+        read_u16(&self.mem, self.avail_ring_gpa + 4 + (self.size as u64) * 2)
+    }
+
+    /// Write `avail_event` at the end of the used ring.
+    fn write_avail_event(&self, idx: u16) {
+        let event_gpa = self.used_ring_gpa + 4 + (self.size as u64) * 8;
+        if let Some(ptr) = self.mem.gpa_to_host(event_gpa) {
+            unsafe {
+                std::ptr::write_unaligned(ptr as *mut u16, idx.to_le());
+            }
         }
     }
 
@@ -184,8 +402,8 @@ impl VirtQueue {
         let entry_gpa = self.used_ring_gpa + 4 + (ring_index as u64) * 8;
         if let Some(ptr) = self.mem.gpa_to_host(entry_gpa) {
             unsafe {
-                *(ptr as *mut u32) = (id as u32).to_le();
-                *((ptr as *mut u32).add(1)) = len.to_le();
+                std::ptr::write_unaligned(ptr as *mut u32, (id as u32).to_le());
+                std::ptr::write_unaligned(ptr.add(4) as *mut u32, len.to_le());
             }
         }
     }
@@ -195,10 +413,16 @@ impl VirtQueue {
         let idx_gpa = self.used_ring_gpa + 2; // skip flags
         if let Some(ptr) = self.mem.gpa_to_host(idx_gpa) {
             unsafe {
-                *(ptr as *mut u16) = idx.to_le();
+                std::ptr::write_unaligned(ptr as *mut u16, idx.to_le());
             }
         }
     }
+}
+
+fn read_u16(mem: &GuestMemoryRef, gpa: u64) -> u16 {
+    mem.gpa_to_host(gpa).map_or(0, |ptr| unsafe {
+        u16::from_le(std::ptr::read_unaligned(ptr as *const u16))
+    })
 }
 
 #[cfg(test)]
@@ -237,6 +461,23 @@ mod tests {
         mem.write_at(offset, &idx.to_le_bytes()).unwrap();
     }
 
+    fn write_avail_flags(mem: &GuestMemory, avail_ring_gpa: u64, flags: u16) {
+        let offset = avail_ring_gpa - RAM_BASE;
+        mem.write_at(offset, &flags.to_le_bytes()).unwrap();
+    }
+
+    fn write_used_event(mem: &GuestMemory, avail_ring_gpa: u64, size: u16, idx: u16) {
+        let offset = (avail_ring_gpa - RAM_BASE) + 4 + (size as u64) * 2;
+        mem.write_at(offset, &idx.to_le_bytes()).unwrap();
+    }
+
+    fn read_avail_event(mem: &GuestMemory, used_ring_gpa: u64, size: u16) -> u16 {
+        let offset = (used_ring_gpa - RAM_BASE) + 4 + (size as u64) * 8;
+        let mut buf = [0u8; 2];
+        mem.read_at(offset, &mut buf).unwrap();
+        u16::from_le_bytes(buf)
+    }
+
     // Helper: write avail ring entry
     fn write_avail_ring_entry(
         mem: &GuestMemory,
@@ -254,6 +495,11 @@ mod tests {
         let mut buf = [0u8; 2];
         mem.read_at(offset, &mut buf).unwrap();
         u16::from_le_bytes(buf)
+    }
+
+    fn write_used_idx(mem: &GuestMemory, used_ring_gpa: u64, idx: u16) {
+        let offset = (used_ring_gpa - RAM_BASE) + 2;
+        mem.write_at(offset, &idx.to_le_bytes()).unwrap();
     }
 
     // Helper: read used ring entry
@@ -276,6 +522,84 @@ mod tests {
         // avail_idx = 0 (no descriptors available)
         let memref = mem.clone_ref(RAM_BASE);
         let mut q = VirtQueue::new(memref, desc_gpa, avail_gpa, used_gpa, 16);
+
+        assert!(q.pop().is_none());
+    }
+
+    #[test]
+    fn restored_queue_starts_after_used_entries() {
+        let (mem, desc_gpa, avail_gpa, used_gpa) = setup_queue(16);
+
+        write_desc(
+            &mem,
+            desc_gpa,
+            0,
+            &VirtqDesc {
+                addr: RAM_BASE + 0x1000,
+                len: 256,
+                flags: 0,
+                next: 0,
+            },
+        );
+        write_avail_ring_entry(&mem, avail_gpa, 0, 0);
+        write_avail_idx(&mem, avail_gpa, 1);
+        write_used_idx(&mem, used_gpa, 1);
+
+        let memref = mem.clone_ref(RAM_BASE);
+        let mut q = VirtQueue::new(memref, desc_gpa, avail_gpa, used_gpa, 16);
+
+        assert!(q.pop().is_none());
+    }
+
+    #[test]
+    fn restored_queue_preserves_unprocessed_entries() {
+        let (mem, desc_gpa, avail_gpa, used_gpa) = setup_queue(16);
+
+        write_desc(
+            &mem,
+            desc_gpa,
+            1,
+            &VirtqDesc {
+                addr: RAM_BASE + 0x2000,
+                len: 128,
+                flags: 0,
+                next: 0,
+            },
+        );
+        write_avail_ring_entry(&mem, avail_gpa, 1, 1);
+        write_avail_idx(&mem, avail_gpa, 2);
+        write_used_idx(&mem, used_gpa, 1);
+
+        let memref = mem.clone_ref(RAM_BASE);
+        let mut q = VirtQueue::new(memref, desc_gpa, avail_gpa, used_gpa, 16);
+
+        let chain = q.pop().unwrap();
+        assert_eq!(chain.head, 1);
+        assert_eq!(chain.descriptors[0].addr, RAM_BASE + 0x2000);
+        assert!(q.pop().is_none());
+    }
+
+    #[test]
+    fn restored_queue_skips_pre_checkpoint_available_entries() {
+        let (mem, desc_gpa, avail_gpa, used_gpa) = setup_queue(16);
+
+        write_desc(
+            &mem,
+            desc_gpa,
+            1,
+            &VirtqDesc {
+                addr: RAM_BASE + 0x2000,
+                len: 128,
+                flags: 0,
+                next: 0,
+            },
+        );
+        write_avail_ring_entry(&mem, avail_gpa, 1, 1);
+        write_avail_idx(&mem, avail_gpa, 2);
+        write_used_idx(&mem, used_gpa, 1);
+
+        let memref = mem.clone_ref(RAM_BASE);
+        let mut q = VirtQueue::new_restored(memref, desc_gpa, avail_gpa, used_gpa, 16);
 
         assert!(q.pop().is_none());
     }
@@ -451,6 +775,96 @@ mod tests {
         assert_eq!((id, len), (3, 200));
         let (id, len) = read_used_entry(&mem, used_gpa, 2);
         assert_eq!((id, len), (7, 300));
+    }
+
+    #[test]
+    fn push_used_deferred_publishes_idx_only_on_flush() {
+        let (mem, desc_gpa, avail_gpa, used_gpa) = setup_queue(16);
+        let memref = mem.clone_ref(RAM_BASE);
+        let mut q = VirtQueue::new(memref, desc_gpa, avail_gpa, used_gpa, 16);
+
+        q.push_used_deferred(0, 100);
+        q.push_used_deferred(3, 200);
+
+        assert_eq!(read_used_idx(&mem, used_gpa), 0);
+        assert_eq!(read_used_entry(&mem, used_gpa, 0), (0, 100));
+        assert_eq!(read_used_entry(&mem, used_gpa, 1), (3, 200));
+
+        q.flush_used();
+
+        assert_eq!(read_used_idx(&mem, used_gpa), 2);
+    }
+
+    #[test]
+    fn prepare_kick_obeys_legacy_no_interrupt_flag() {
+        let (mem, desc_gpa, avail_gpa, used_gpa) = setup_queue(16);
+        let memref = mem.clone_ref(RAM_BASE);
+        let mut q = VirtQueue::new(memref, desc_gpa, avail_gpa, used_gpa, 16);
+
+        q.push_used_deferred(1, 64);
+        q.flush_used();
+        assert!(q.prepare_kick());
+
+        write_avail_flags(&mem, avail_gpa, VRING_AVAIL_F_NO_INTERRUPT);
+        q.push_used_deferred(2, 64);
+        q.flush_used();
+        assert!(!q.prepare_kick());
+    }
+
+    #[test]
+    fn prepare_kick_obeys_event_idx_used_event() {
+        let (mem, desc_gpa, avail_gpa, used_gpa) = setup_queue(16);
+        let memref = mem.clone_ref(RAM_BASE);
+        let mut q = VirtQueue::new_with_event_idx(memref, desc_gpa, avail_gpa, used_gpa, 16, true);
+
+        write_used_event(&mem, avail_gpa, 16, 4);
+        q.push_used_deferred(1, 64);
+        q.flush_used();
+        assert!(!q.prepare_kick());
+
+        q.push_used_deferred(2, 64);
+        q.push_used_deferred(3, 64);
+        q.push_used_deferred(4, 64);
+        q.push_used_deferred(5, 64);
+        q.flush_used();
+        assert!(q.prepare_kick());
+    }
+
+    #[test]
+    fn pop_or_enable_notification_arms_avail_event_when_empty() {
+        let (mem, desc_gpa, avail_gpa, used_gpa) = setup_queue(16);
+        let memref = mem.clone_ref(RAM_BASE);
+        let mut q = VirtQueue::new_with_event_idx(memref, desc_gpa, avail_gpa, used_gpa, 16, true);
+
+        assert!(q.pop_or_enable_notification().is_none());
+
+        assert_eq!(read_avail_event(&mem, used_gpa, 16), 0);
+    }
+
+    #[test]
+    fn pop_or_enable_notification_drains_before_arming_avail_event() {
+        let (mem, desc_gpa, avail_gpa, used_gpa) = setup_queue(16);
+        write_desc(
+            &mem,
+            desc_gpa,
+            0,
+            &VirtqDesc {
+                addr: RAM_BASE + 0x1000,
+                len: 64,
+                flags: 0,
+                next: 0,
+            },
+        );
+        write_avail_ring_entry(&mem, avail_gpa, 0, 0);
+        write_avail_idx(&mem, avail_gpa, 1);
+
+        let memref = mem.clone_ref(RAM_BASE);
+        let mut q = VirtQueue::new_with_event_idx(memref, desc_gpa, avail_gpa, used_gpa, 16, true);
+
+        assert_eq!(q.pop_or_enable_notification().unwrap().head, 0);
+        assert_eq!(read_avail_event(&mem, used_gpa, 16), 0);
+        assert!(q.pop_or_enable_notification().is_none());
+        assert_eq!(read_avail_event(&mem, used_gpa, 16), 1);
     }
 
     // -----------------------------------------------------------------------

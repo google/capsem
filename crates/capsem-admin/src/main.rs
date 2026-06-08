@@ -47,6 +47,7 @@ enum ProfileSubcommand {
     Init(InitArgs),
     Validate(ProfileValidateArgs),
     Check(ProfileCheckArgs),
+    Materialize(ProfileMaterializeArgs),
 }
 
 #[derive(Debug, Parser)]
@@ -123,6 +124,34 @@ struct ProfileCheckArgs {
     #[arg(long)]
     arch: Option<String>,
     /// Emit a machine-readable check report.
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Parser)]
+struct ProfileMaterializeArgs {
+    /// Source profile TOML to materialize.
+    #[arg(long)]
+    profile: PathBuf,
+    /// Source config root containing settings, corp, profiles, and rule files.
+    #[arg(long, default_value = "config")]
+    config_root: PathBuf,
+    /// Generated asset manifest to use for current build hashes.
+    #[arg(long, default_value = "assets/manifest.json")]
+    manifest: PathBuf,
+    /// Built asset root containing per-arch logical asset files.
+    #[arg(long, default_value = "assets")]
+    assets_dir: PathBuf,
+    /// Generated runtime config output root.
+    #[arg(long, default_value = "target/config")]
+    output_root: PathBuf,
+    /// Restrict materialization to one architecture.
+    #[arg(long)]
+    arch: Option<String>,
+    /// Remove output root before materializing.
+    #[arg(long)]
+    clean: bool,
+    /// Emit a machine-readable materialization report.
     #[arg(long)]
     json: bool,
 }
@@ -307,6 +336,29 @@ struct ProfileCheckReport {
     ok: bool,
     validation: ProfileValidationReport,
     assets: Vec<LocalAssetCheckReport>,
+}
+
+#[derive(Debug, Serialize)]
+struct ProfileMaterializeReport {
+    schema: &'static str,
+    ok: bool,
+    profile_id: String,
+    profile_revision: String,
+    source_config_root: String,
+    output_config_root: String,
+    profile_path: String,
+    manifest: String,
+    current_assets: String,
+    materialized_assets: Vec<ProfileMaterializedAssetReport>,
+}
+
+#[derive(Debug, Serialize)]
+struct ProfileMaterializedAssetReport {
+    arch: String,
+    logical_name: String,
+    url: String,
+    hash: String,
+    size: u64,
 }
 
 #[derive(Debug, Serialize)]
@@ -501,6 +553,7 @@ fn main() -> Result<()> {
             ProfileSubcommand::Init(args) => init_file_command(args, CODE_PROFILE_TEMPLATE),
             ProfileSubcommand::Validate(args) => validate_profile_command(args),
             ProfileSubcommand::Check(args) => profile_check_command(args),
+            ProfileSubcommand::Materialize(args) => profile_materialize_command(args),
         },
         Commands::Settings(command) => match command.command {
             SettingsSubcommand::Init(args) => init_file_command(args, SETTINGS_TEMPLATE),
@@ -573,6 +626,19 @@ fn profile_check_command(args: ProfileCheckArgs) -> Result<()> {
                 report.assets.len()
             );
         }
+    }
+    Ok(())
+}
+
+fn profile_materialize_command(args: ProfileMaterializeArgs) -> Result<()> {
+    let report = materialize_profile_config(&args)?;
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else {
+        println!(
+            "materialized: profile {} at {}",
+            report.profile_id, report.output_config_root
+        );
     }
     Ok(())
 }
@@ -796,6 +862,190 @@ fn check_profile(args: &ProfileCheckArgs) -> Result<ProfileCheckReport> {
         validation,
         assets,
     })
+}
+
+fn materialize_profile_config(args: &ProfileMaterializeArgs) -> Result<ProfileMaterializeReport> {
+    if args.output_root == args.config_root {
+        return Err(anyhow!(
+            "output root {} must differ from source config root {}",
+            args.output_root.display(),
+            args.config_root.display()
+        ));
+    }
+    if args.clean && args.output_root.exists() {
+        fs::remove_dir_all(&args.output_root)
+            .with_context(|| format!("remove {}", args.output_root.display()))?;
+    }
+    copy_dir_recursive(&args.config_root, &args.output_root)?;
+
+    let manifest = load_manifest(&args.manifest)?;
+    let current_release = manifest
+        .assets
+        .releases
+        .get(&manifest.assets.current)
+        .ok_or_else(|| {
+            anyhow!(
+                "manifest {} current asset release {} is missing",
+                args.manifest.display(),
+                manifest.assets.current
+            )
+        })?;
+
+    let mut profile = load_profile(&args.profile)?;
+    profile
+        .validate()
+        .map_err(|error| anyhow!("validate profile {}: {error}", args.profile.display()))?;
+
+    let selected_arches = selected_profile_arches(&profile, args.arch.as_deref())?;
+    let mut materialized_assets = Vec::new();
+    for arch in selected_arches {
+        let manifest_assets = current_release.arches.get(&arch).ok_or_else(|| {
+            anyhow!(
+                "manifest {} current release {} does not contain profile arch {arch}",
+                args.manifest.display(),
+                manifest.assets.current
+            )
+        })?;
+        let profile_assets = profile
+            .assets
+            .arch
+            .get_mut(&arch)
+            .expect("arch came from selected_profile_arches");
+        materialize_profile_asset_descriptor(
+            &args.assets_dir,
+            &arch,
+            &mut profile_assets.kernel,
+            manifest_assets,
+            &mut materialized_assets,
+        )?;
+        materialize_profile_asset_descriptor(
+            &args.assets_dir,
+            &arch,
+            &mut profile_assets.initrd,
+            manifest_assets,
+            &mut materialized_assets,
+        )?;
+        materialize_profile_asset_descriptor(
+            &args.assets_dir,
+            &arch,
+            &mut profile_assets.rootfs,
+            manifest_assets,
+            &mut materialized_assets,
+        )?;
+    }
+
+    let output_profile_path = args
+        .output_root
+        .join("profiles")
+        .join(format!("{}.toml", profile.id));
+    fs::create_dir_all(
+        output_profile_path
+            .parent()
+            .ok_or_else(|| anyhow!("materialized profile path has no parent"))?,
+    )
+    .with_context(|| format!("create parent for {}", output_profile_path.display()))?;
+    fs::write(
+        &output_profile_path,
+        toml::to_string_pretty(&profile).context("serialize materialized profile")?,
+    )
+    .with_context(|| format!("write {}", output_profile_path.display()))?;
+
+    let manifest_output = args.output_root.join("assets/manifest.json");
+    fs::create_dir_all(
+        manifest_output
+            .parent()
+            .ok_or_else(|| anyhow!("materialized manifest path has no parent"))?,
+    )
+    .with_context(|| format!("create parent for {}", manifest_output.display()))?;
+    fs::copy(&args.manifest, &manifest_output).with_context(|| {
+        format!(
+            "copy manifest {} to {}",
+            args.manifest.display(),
+            manifest_output.display()
+        )
+    })?;
+
+    let copied_validation = validate_profile(&output_profile_path, Some(&args.output_root))?;
+    if copied_validation.profile_id != profile.id {
+        return Err(anyhow!(
+            "materialized profile id drifted: expected {}, got {}",
+            profile.id,
+            copied_validation.profile_id
+        ));
+    }
+
+    Ok(ProfileMaterializeReport {
+        schema: "capsem.admin.profile_materialize.v1",
+        ok: true,
+        profile_id: profile.id,
+        profile_revision: profile.revision,
+        source_config_root: args.config_root.display().to_string(),
+        output_config_root: args.output_root.display().to_string(),
+        profile_path: output_profile_path.display().to_string(),
+        manifest: manifest_output.display().to_string(),
+        current_assets: manifest.assets.current,
+        materialized_assets,
+    })
+}
+
+fn materialize_profile_asset_descriptor(
+    assets_dir: &Path,
+    arch: &str,
+    descriptor: &mut capsem_core::net::policy_config::ProfileAssetDescriptor,
+    manifest_assets: &std::collections::HashMap<String, capsem_core::asset_manager::AssetEntry>,
+    reports: &mut Vec<ProfileMaterializedAssetReport>,
+) -> Result<()> {
+    let entry = manifest_assets.get(&descriptor.name).ok_or_else(|| {
+        anyhow!(
+            "manifest current release arch {arch} is missing {}",
+            descriptor.name
+        )
+    })?;
+    let check = check_local_asset(assets_dir, arch, &descriptor.name, &entry.hash, entry.size)?;
+    fail_if_local_asset_checks_failed("profile materialize asset check", &[check])?;
+    let asset_path = assets_dir.join(arch).join(&descriptor.name);
+    let asset_path = asset_path
+        .canonicalize()
+        .with_context(|| format!("canonicalize {}", asset_path.display()))?;
+    descriptor.url = format!("file://{}", asset_path.display());
+    descriptor.hash = format!("blake3:{}", entry.hash);
+    descriptor.size = entry.size;
+    reports.push(ProfileMaterializedAssetReport {
+        arch: arch.to_string(),
+        logical_name: descriptor.name.clone(),
+        url: descriptor.url.clone(),
+        hash: descriptor.hash.clone(),
+        size: descriptor.size,
+    });
+    Ok(())
+}
+
+fn copy_dir_recursive(source: &Path, destination: &Path) -> Result<()> {
+    fs::create_dir_all(destination).with_context(|| format!("create {}", destination.display()))?;
+    for entry in fs::read_dir(source).with_context(|| format!("read {}", source.display()))? {
+        let entry = entry.with_context(|| format!("read entry in {}", source.display()))?;
+        let source_path = entry.path();
+        let destination_path = destination.join(entry.file_name());
+        let file_type = entry
+            .file_type()
+            .with_context(|| format!("stat {}", source_path.display()))?;
+        if file_type.is_dir() {
+            copy_dir_recursive(&source_path, &destination_path)?;
+        } else if file_type.is_file() {
+            if let Some(parent) = destination_path.parent() {
+                fs::create_dir_all(parent)
+                    .with_context(|| format!("create {}", parent.display()))?;
+            }
+            fs::copy(&source_path, &destination_path).with_context(|| {
+                format!(
+                    "copy {} to {}",
+                    source_path.display(),
+                    destination_path.display()
+                )
+            })?;
+        }
+    }
+    Ok(())
 }
 
 fn load_profile(path: &Path) -> Result<ProfileConfigFile> {
@@ -2165,6 +2415,93 @@ decision = "block"
         assert_eq!(copied.profile_id, "code");
     }
 
+    #[test]
+    fn profile_materialize_writes_generated_config_from_manifest() {
+        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let repo_root = manifest_dir
+            .parent()
+            .and_then(Path::parent)
+            .expect("repo root");
+        let temp = tempfile::tempdir().expect("tempdir");
+        let assets_dir = temp.path().join("assets");
+        let manifest_path = write_test_assets_manifest(temp.path(), "arm64");
+        let output_root = temp.path().join("target/config");
+        let source_profile = repo_root.join("config/profiles/code.toml");
+        let original_source = fs::read_to_string(&source_profile).expect("read source profile");
+
+        let report = materialize_profile_config(&ProfileMaterializeArgs {
+            profile: source_profile.clone(),
+            config_root: repo_root.join("config"),
+            manifest: manifest_path,
+            assets_dir: assets_dir.clone(),
+            output_root: output_root.clone(),
+            arch: Some("arm64".to_string()),
+            clean: true,
+            json: true,
+        })
+        .expect("materialize profile config");
+
+        assert_eq!(report.profile_id, "code");
+        assert_eq!(report.materialized_assets.len(), 3);
+        assert!(output_root.join("settings.toml").is_file());
+        assert!(output_root.join("corp.toml").is_file());
+        assert!(output_root.join("assets/manifest.json").is_file());
+        assert!(output_root.join("profiles/code/enforcement.toml").is_file());
+        assert!(output_root.join("profiles/code/detection.yaml").is_file());
+
+        let generated_profile_path = output_root.join("profiles/code.toml");
+        let generated: ProfileConfigFile =
+            toml::from_str(&fs::read_to_string(&generated_profile_path).expect("read generated"))
+                .expect("parse generated profile");
+        let arm64 = generated.assets.arch.get("arm64").expect("arm64 assets");
+        assert!(arm64.kernel.url.starts_with("file://"));
+        assert!(arm64.initrd.url.starts_with("file://"));
+        assert!(arm64.rootfs.url.starts_with("file://"));
+        assert_eq!(
+            arm64.kernel.hash,
+            format!("blake3:{}", blake3::hash(b"kernel-arm64").to_hex())
+        );
+        assert_eq!(arm64.initrd.size, b"initrd-arm64".len() as u64);
+        assert_eq!(arm64.rootfs.name, "rootfs.erofs");
+
+        let validation =
+            validate_profile(&generated_profile_path, Some(&output_root)).expect("valid output");
+        assert_eq!(validation.profile_id, "code");
+        assert_eq!(
+            fs::read_to_string(source_profile).expect("read source profile after"),
+            original_source,
+            "materialization must not mutate checked-in source profile"
+        );
+    }
+
+    #[test]
+    fn profile_materialize_rejects_arch_missing_from_manifest() {
+        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let repo_root = manifest_dir
+            .parent()
+            .and_then(Path::parent)
+            .expect("repo root");
+        let temp = tempfile::tempdir().expect("tempdir");
+        let manifest_path = write_test_assets_manifest(temp.path(), "arm64");
+
+        let error = materialize_profile_config(&ProfileMaterializeArgs {
+            profile: repo_root.join("config/profiles/code.toml"),
+            config_root: repo_root.join("config"),
+            manifest: manifest_path,
+            assets_dir: temp.path().join("assets"),
+            output_root: temp.path().join("target/config"),
+            arch: Some("x86_64".to_string()),
+            clean: true,
+            json: false,
+        })
+        .expect_err("missing manifest arch rejected");
+
+        assert!(
+            format!("{error:#}").contains("does not contain profile arch x86_64"),
+            "{error:#}"
+        );
+    }
+
     fn minimal_manifest_json(hash: Option<&str>, include_refresh_policy: bool) -> String {
         let hash =
             hash.unwrap_or("1111111111111111111111111111111111111111111111111111111111111111");
@@ -2203,5 +2540,56 @@ decision = "block"
             },
             hash = hash,
         )
+    }
+
+    fn write_test_assets_manifest(root: &Path, arch: &str) -> PathBuf {
+        let assets_dir = root.join("assets").join(arch);
+        fs::create_dir_all(&assets_dir).expect("assets dir");
+        let kernel = format!("kernel-{arch}");
+        let initrd = format!("initrd-{arch}");
+        let rootfs = format!("rootfs-{arch}");
+        fs::write(assets_dir.join("vmlinuz"), kernel.as_bytes()).expect("kernel");
+        fs::write(assets_dir.join("initrd.img"), initrd.as_bytes()).expect("initrd");
+        fs::write(assets_dir.join("rootfs.erofs"), rootfs.as_bytes()).expect("rootfs");
+        let manifest_path = root.join("assets/manifest.json");
+        fs::write(
+            &manifest_path,
+            format!(
+                r#"{{
+  "format": 2,
+  "refresh_policy": "24h",
+  "assets": {{
+    "current": "2030.0101.1",
+    "releases": {{
+      "2030.0101.1": {{
+        "date": "2030-01-01",
+        "deprecated": false,
+        "min_binary": "1.0.0",
+        "arches": {{
+          "{arch}": {{
+            "vmlinuz": {{"hash": "{kernel_hash}", "size": {kernel_size}}},
+            "initrd.img": {{"hash": "{initrd_hash}", "size": {initrd_size}}},
+            "rootfs.erofs": {{"hash": "{rootfs_hash}", "size": {rootfs_size}}}
+          }}
+        }}
+      }}
+    }}
+  }},
+  "binaries": {{
+    "current": "1.0.0",
+    "releases": {{"1.0.0": {{"date": "2030-01-01", "deprecated": false, "min_assets": "2030.0101.1"}}}}
+  }}
+}}"#,
+                arch = arch,
+                kernel_hash = blake3::hash(kernel.as_bytes()).to_hex(),
+                kernel_size = kernel.len(),
+                initrd_hash = blake3::hash(initrd.as_bytes()).to_hex(),
+                initrd_size = initrd.len(),
+                rootfs_hash = blake3::hash(rootfs.as_bytes()).to_hex(),
+                rootfs_size = rootfs.len(),
+            ),
+        )
+        .expect("manifest");
+        manifest_path
     }
 }

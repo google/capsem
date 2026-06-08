@@ -1,6 +1,6 @@
 ---
 name: dev-benchmark
-description: Capsem benchmarking with capsem-bench. Use when running benchmarks, adding new benchmark categories, interpreting results, or investigating performance regressions. Covers all 7 benchmark categories (disk, rootfs, startup, http, throughput, snapshot, all), the JSON output format, and how to add new benchmarks.
+description: Capsem benchmarking with capsem-bench. Use when running benchmarks, adding new benchmark categories, interpreting results, or investigating performance regressions. Covers benchmark categories (disk, rootfs, storage, startup, http, throughput, snapshot, load tests, all), the JSON output format, and how to add new benchmarks.
 ---
 
 # Benchmarking
@@ -11,6 +11,7 @@ description: Capsem benchmarking with capsem-bench. Use when running benchmarks,
 just bench                          # Run all benchmarks in VM (~2 min)
 just run "capsem-bench snapshot"    # Snapshot benchmarks only
 just run "capsem-bench disk"        # Disk I/O only
+just run "capsem-bench storage"     # Storage split diagnostics
 just test                           # Full validation including benchmarks
 ```
 
@@ -25,7 +26,8 @@ Python tool that runs inside the VM. Rich tables to stderr (human), structured J
 | Category | Command | What it measures |
 |----------|---------|-----------------|
 | disk | `capsem-bench disk` | Sequential/random I/O on scratch disk (write/read throughput, IOPS) |
-| rootfs | `capsem-bench rootfs` | Read-only rootfs performance (sequential + random 4K reads) |
+| rootfs | `capsem-bench rootfs` | Read-only rootfs performance (large/small/metadata/sequential/random reads) |
+| storage | `capsem-bench storage` | Rootfs/workspace/tmpfs/overlay split, mount context, block/FUSE queue diagnostics |
 | startup | `capsem-bench startup` | Cold-start latency for python3, node, claude, gemini, codex |
 | http | `capsem-bench http [URL] [N] [C]` | HTTP throughput through MITM proxy (requests/sec, latency percentiles). Defaults to the local debug upstream when `CAPSEM_BENCH_MITM_LOCAL_BASE_URL` is set. |
 | throughput | `capsem-bench throughput` | Deterministic 10MB local fixture download through MITM proxy (end-to-end MB/s) when `CAPSEM_BENCH_MITM_LOCAL_BASE_URL` is set; public throughput is explicit opt-in only. |
@@ -72,6 +74,10 @@ Key metrics: per-operation latency in ms. Regressions in `create` usually mean t
   base URL for deterministic HTTP/throughput/MITM benchmarks.
 - `CAPSEM_BENCH_ALLOW_PUBLIC_NETWORK=1`: Explicit public-network smoke opt-in.
   Do not use public mode as release proof.
+- `CAPSEM_STORAGE_BENCH_PATHS`: Colon-separated storage paths to profile.
+- `CAPSEM_STORAGE_BENCH_SIZE_MB`: Storage split write size.
+- `CAPSEM_STORAGE_IO_PROFILE_SIZE_MB`: Storage IOPS profile file size.
+- `CAPSEM_STORAGE_IO_PROFILE_RANDOM_OPS`: Storage random I/O operation count.
 
 ## Investigating slowness
 
@@ -92,6 +98,15 @@ Common causes:
 1. Run: `just run "capsem-bench disk"`
 2. Compare sequential write/read throughput against baseline
 3. Check if VirtioFS mode changed (block mode has different I/O characteristics)
+
+### Storage split regression
+
+1. Run: `just run "capsem-bench storage"` inside a VM.
+2. Check `storage.kernel.block_queues`, `storage.kernel.fuse_connections`, and
+   `storage.rootfs.backing` to confirm the expected EROFS/LZ4HC rootfs and
+   KVM/VirtioFS queue knobs.
+3. Compare writable path `io_profile` numbers for `/root`, `/tmp`, and
+   `/var/tmp` before changing rootfs, overlay, DAX, or KVM block behavior.
 
 ### Adding a new benchmark
 
@@ -172,6 +187,7 @@ uv run pytest tests/capsem-serial/test_lifecycle_benchmark.py::test_fork_benchma
 ## Tests
 
 - In-VM benchmark test: `just run "capsem-bench all"`
+- In-VM storage diagnostics: `just run "capsem-bench storage"`
 - In-VM availability: `test_utilities.py::test_utility_available[capsem-bench]`
 - Host-side lifecycle: `uv run pytest tests/capsem-serial/test_lifecycle_benchmark.py::test_lifecycle_benchmark -xvs`
 - Host-side fork: `uv run pytest tests/capsem-serial/test_lifecycle_benchmark.py::test_fork_benchmark -xvs`

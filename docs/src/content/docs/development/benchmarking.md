@@ -13,6 +13,7 @@ Capsem includes `capsem-bench`, a Python benchmarking tool that runs inside the 
 just bench                          # All benchmarks in VM (~2 min)
 just run "capsem-bench disk"        # Disk I/O only
 just run "capsem-bench rootfs"      # Rootfs reads only
+just run "capsem-bench storage"     # Rootfs/workspace/tmpfs/overlay split
 just run "capsem-bench startup"     # CLI cold-start only
 just run "capsem-bench http"        # HTTP through proxy
 just run "capsem-bench throughput"  # 100MB download
@@ -31,7 +32,7 @@ Boot timing is measured independently from `capsem-bench`. The guest init script
 
 | Stage | What happens |
 |-------|-------------|
-| `squashfs` | Mount the compressed read-only rootfs from the virtio block device |
+| `rootfs` | Mount the compressed read-only rootfs from the virtio block device |
 | `virtiofs` | Mount the VirtioFS shared directory from the host |
 | `overlayfs` | Create the overlay filesystem (ext4 loopback upper + squashfs lower) |
 | `workspace` | Bind-mount `/root` from the VirtioFS workspace |
@@ -63,12 +64,35 @@ Write test size is configurable via `CAPSEM_BENCH_SIZE_MB` (default: 256).
 
 ### Rootfs reads (`rootfs`)
 
-Measures read performance on the compressed squashfs rootfs where binaries and libraries live.
+Measures read performance on the compressed rootfs where binaries and libraries live.
 
 | Test | Method | Metric |
 |------|--------|--------|
 | Sequential read | Read the largest file in `/usr/bin`, `/usr/lib`, `/opt/ai-clis` in 1MB blocks | Throughput (MB/s) |
 | Random 4K read | 5,000 random `pread` calls across all rootfs files (>4KB) | IOPS, throughput |
+| Large binary reads | Cold/warm reads of the largest binaries | Throughput (MB/s), duration |
+| Small package reads | Whole-file reads of small JS/package files | Duration, throughput |
+| Metadata scan | Repeated `stat` calls over rootfs files | Stat/sec, latency |
+
+### Storage split (`storage`)
+
+Records where storage time goes across rootfs, workspace, tmpfs, overlay, and
+kernel queues. This is the release diagnostic for EROFS/LZ4HC and Linux KVM
+storage tuning.
+
+| Area | What it records |
+|------|-----------------|
+| Kernel context | cmdline, block queue knobs, FUSE backpressure knobs, known host queue sizes |
+| Mounts | Parsed `/proc/self/mountinfo` with filesystem type/source/options |
+| Rootfs backing | overlay lower/upper/workdir and read-only image metadata |
+| Writable paths | sequential/random I/O profiles for `/root`, `/tmp`, `/var/tmp`, `/var/log`, `/run` |
+
+Useful environment overrides:
+
+- `CAPSEM_STORAGE_BENCH_PATHS`: colon-separated writable paths to profile.
+- `CAPSEM_STORAGE_BENCH_SIZE_MB`: storage split write size.
+- `CAPSEM_STORAGE_IO_PROFILE_SIZE_MB`: sequential profile file size.
+- `CAPSEM_STORAGE_IO_PROFILE_RANDOM_OPS`: random I/O operation count.
 
 ### CLI cold-start (`startup`)
 
@@ -86,17 +110,22 @@ Measures wall-clock time to run `<cli> --version` with page cache dropped betwee
 
 Measures HTTP throughput through the MITM proxy using concurrent GET requests.
 
-- **Default**: 50 requests to `https://www.google.com/` with concurrency 5
+- **Default**: skipped unless `CAPSEM_BENCH_MITM_LOCAL_BASE_URL` is set.
+- **Local release proof**: set `CAPSEM_BENCH_MITM_LOCAL_BASE_URL` to the
+  host-side `capsem-debug-upstream` base URL; `http` targets `/tiny`.
 - **Custom**: `capsem-bench http <URL> <N> <C>`
 - **Reports**: successful/failed count, requests/sec, latency percentiles (p50, p95, p99, min, max)
 
-Each worker thread uses a persistent `requests.Session`. Latency includes the full round-trip: guest -> net-proxy -> vsock -> host MITM proxy -> internet -> response back.
+Each worker thread uses a persistent `requests.Session`. Latency includes the
+full round-trip: guest -> net-proxy -> vsock -> host MITM proxy -> local debug
+upstream -> response back.
 
 ### Proxy throughput (`throughput`)
 
-Downloads a ~10 MB PDF through the MITM proxy and reports end-to-end throughput.
-
-Uses `curl -L` to download `https://cdn.elie.net/static/files/i-am-a-legend/i-am-a-legend-slides.pdf` (301-redirects to `elie.net`, so both hosts must be allowed by the active HTTP/DNS security rules). This measures the maximum sustained bandwidth the proxy pipeline can deliver, including TLS termination, body inspection, and re-encryption.
+Downloads a deterministic 10 MB local fixture through the MITM proxy and
+reports end-to-end throughput when `CAPSEM_BENCH_MITM_LOCAL_BASE_URL` is set.
+Public throughput is explicit opt-in only via
+`CAPSEM_BENCH_ALLOW_PUBLIC_NETWORK=1`; it is not release proof.
 
 ### Load tests (`mitm-load`, `mcp-load`, `dns-load`)
 
@@ -137,6 +166,7 @@ All benchmarks save structured JSON to `/tmp/capsem-benchmark.json` inside the V
   "http": { "requests_per_sec": 58, "latency_ms": { "p50": 67, ... } },
   "throughput": { "throughput_mbps": 34.3, ... },
   "snapshot": { "10_files": { "create_ms": 879, ... }, ... },
+  "storage": { "kernel": { ... }, "rootfs": { ... }, "writable": { ... } },
   "dns_load": { "qname": "api.openai.com", "levels": [...] }
 }
 ```

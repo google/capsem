@@ -39,3 +39,37 @@ def test_check_assets_recovers_with_code_profile() -> None:
     block = _recipe_block("_check-assets:")
 
     assert "just build-assets code" in block
+
+
+def test_runtime_recipes_materialize_generated_config_before_service() -> None:
+    for recipe in ["shell:", "run-service:", "smoke:", "bench:", "install:"]:
+        block = _recipe_block(recipe)
+        assert "_pack-initrd" in block
+        assert "_materialize-config" in block
+        assert block.index("_pack-initrd") < block.index("_materialize-config")
+
+
+def test_materialize_config_uses_admin_profile_command() -> None:
+    block = _recipe_block("_materialize-config:")
+
+    assert "cargo run -p capsem-admin -- profile materialize" in block
+    assert "--config-root" in block
+    assert "--manifest" in block
+    assert "--output-root" in block
+    assert "target/config" in block
+
+
+def test_ensure_service_uses_generated_profiles() -> None:
+    block = _recipe_block("_ensure-service:")
+
+    assert 'GENERATED_PROFILES="$ROOT/target/config/profiles"' in block
+    assert 'CAPSEM_PROFILES_DIR="$GENERATED_PROFILES"' in block
+    assert "generated profiles missing" in block
+
+
+def test_release_workflow_uses_same_config_materializer() -> None:
+    workflow = (PROJECT_ROOT / ".github/workflows/release.yaml").read_text()
+
+    assert workflow.count("cargo run -p capsem-admin -- profile materialize") >= 2
+    assert "--output-root target/config" in workflow
+    assert "--manifest assets/manifest.json" in workflow

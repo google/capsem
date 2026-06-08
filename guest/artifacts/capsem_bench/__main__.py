@@ -8,7 +8,7 @@ import time
 from .helpers import console
 
 VALID_MODES = (
-    "disk", "rootfs", "startup", "http", "throughput", "snapshot",
+    "disk", "rootfs", "storage", "startup", "http", "throughput", "snapshot",
     "mitm-local", "mitm-load", "mcp-load", "dns-load", "all",
 )
 
@@ -20,13 +20,14 @@ def main():
     if mode in ("-h", "--help"):
         console.print(
             "Usage: capsem-bench "
-            "[disk|rootfs|startup|http|throughput|snapshot|mitm-local|all] "
+            "[disk|rootfs|storage|startup|http|throughput|snapshot|mitm-local|all] "
             "[OPTIONS]"
         )
         console.print()
         console.print("Commands:")
         console.print("  disk                Scratch disk I/O benchmarks")
         console.print("  rootfs              Rootfs read I/O benchmarks")
+        console.print("  storage             Rootfs/workspace/tmpfs/overlay storage split")
         console.print("  startup             CLI cold-start latency")
         console.print("  http [URL] [N] [C]  HTTP benchmarks (ab-style)")
         console.print("  throughput          100 MB download through MITM proxy")
@@ -41,6 +42,10 @@ def main():
         console.print("  CAPSEM_BENCH_DIR      Test directory (default: /root)")
         console.print("  CAPSEM_BENCH_SIZE_MB  Write test size in MB (default: 256)")
         console.print("  CAPSEM_BENCH_MITM_LOCAL_BASE_URL  Base URL for mitm-local")
+        console.print("  CAPSEM_STORAGE_BENCH_PATHS      Storage paths for split diagnostics")
+        console.print("  CAPSEM_STORAGE_BENCH_SIZE_MB    Storage split write size in MB")
+        console.print("  CAPSEM_STORAGE_IO_PROFILE_SIZE_MB    Storage IOPS profile size")
+        console.print("  CAPSEM_STORAGE_IO_PROFILE_RANDOM_OPS Storage random I/O operations")
         sys.exit(0)
 
     if mode not in VALID_MODES:
@@ -61,6 +66,10 @@ def main():
     if mode in ("rootfs", "all"):
         from .rootfs import rootfs_bench
         output["rootfs"] = rootfs_bench()
+
+    if mode in ("storage", "all"):
+        from .storage import storage_bench
+        output["storage"] = storage_bench()
 
     if mode in ("startup", "all"):
         from .startup import startup_bench

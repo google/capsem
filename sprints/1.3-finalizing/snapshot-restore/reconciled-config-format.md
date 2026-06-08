@@ -69,7 +69,7 @@ Not allowed in settings:
 - `[assets]`
 - VM/resource defaults
 
-Current file targets:
+Current source file targets:
 
 - `config/settings.toml`
 - `config/profiles/code.toml`
@@ -77,6 +77,26 @@ Current file targets:
 
 `config/user.toml.default` was removed because it documented profile-owned AI,
 repository, VM, guest-env, and plugin behavior as user settings.
+
+Generated runtime config target:
+
+- `target/config/`
+
+`config/` is checked-in source material and support files. It may contain
+templates, sample/default source profiles, corp/settings source files, and rule
+files. It must not be hand-mutated to match a local repacked initrd, rootfs, or
+kernel.
+
+`target/config/` is the instantiated runtime config for the current build. It
+is where the current asset manifest hashes, materialized profile files, copied
+rule files, and generated runtime manifests belong. VM smoke, doctor, install,
+and benchmark proof for the current build must validate and boot from
+`target/config`, not from a manually edited checked-in profile.
+
+Generation rule: `target/config` must be produced by the same `capsem-admin`
+and `just` rail used by CI/release. Do not add a local-only patcher. The
+accepted rail is the profile-derived admin path behind `just build-kernel`,
+`just build-rootfs`, `just build-assets`, `_pack-initrd`, `smoke`, and `test`.
 
 ## Profile
 

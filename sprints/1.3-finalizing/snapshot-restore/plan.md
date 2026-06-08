@@ -164,13 +164,17 @@ Required capabilities:
 - Capsem boots from EROFS/LZ4HC assets on every supported architecture.
 - Profile/admin asset generation emits EROFS/LZ4HC as the accepted 1.3 runtime
   format for every supported architecture.
+- The same `capsem-admin`/just rail used by CI/release materializes generated
+  runtime config under `target/config/`. Checked-in `config/` is source/support
+  only; no hand-edited source profile may stand in for current build output.
 - Modern `iptables-nft` path stays; legacy iptables paths do not return.
 - Multi-arch asset proof remains.
 - EROFS/LZ4HC benchmark harness and artifacts are restored.
 - zstd comparison evidence is recorded as "not worth it for 1.3" with numbers
   if available.
-- EROFS/LZ4HC build output is verified from the profile asset chain, not just
-  from benchmark artifacts.
+- EROFS/LZ4HC build output is verified from the generated `target/config`
+  profile asset chain, not just from benchmark artifacts or a manually patched
+  checked-in profile.
 - Benchmark output records the exact image format, compression, compression
   level, architecture, kernel, host OS, and command line. Numbers must be
   compared against the accepted 1.3 baseline and called out if they are

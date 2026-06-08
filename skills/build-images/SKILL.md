@@ -43,13 +43,13 @@ uv run capsem-builder audit                  # Parse trivy/grype vulnerability o
 
 Full rebuild (kernel + rootfs):
 ```bash
-just build-assets    # Runs doctor + validate + build for host arch
+just build-assets code    # Runs doctor + profile-derived admin build
 ```
 
 Individual templates:
 ```bash
-just build-kernel arm64
-just build-rootfs arm64
+just build-kernel arm64 code
+just build-rootfs arm64 code
 ```
 
 ## Per-arch asset layout
@@ -68,7 +68,7 @@ assets/
 
 1. Edit the appropriate config in `guest/config/packages/` (apt or python TOML)
 2. Run `uv run capsem-builder validate guest/` to check
-3. Run `just build-assets` to rebuild the rootfs
+3. Run `just build-assets code` to rebuild the rootfs
 4. Verify: `just run "capsem-doctor"`
 
 Do not edit Dockerfiles directly -- they are rendered from Jinja2 templates in `src/capsem/builder/templates/`.
@@ -78,7 +78,7 @@ Do not edit Dockerfiles directly -- they are rendered from Jinja2 templates in `
 1. Create `guest/config/ai/<provider>.toml` with provider config
 2. Add domain entries to `guest/config/security/web.toml` if needed
 3. Validate: `uv run capsem-builder validate guest/`
-4. Rebuild: `just build-assets`
+4. Rebuild: `just build-assets code`
 
 ## Dockerfile templates
 
@@ -213,14 +213,14 @@ packages = ["https://example.com/install.sh"]
 2. If changing install manager type, may need to update `_rootfs_context()` in `docker.py`
 3. Check `extract_tool_versions()` in `docker.py` -- it hardcodes version-check paths
 4. Update tests in `test_docker.py` and `test_cli.py`
-5. Rebuild: `just build-assets && just run "capsem-doctor"`
+5. Rebuild: `just build-assets code && just run "capsem-doctor"`
 
 ## How to: Add a new package to an existing set
 
 1. Edit `guest/config/packages/apt.toml` or `guest/config/packages/python.toml`
 2. Add the package name to the `packages` list
 3. Validate: `uv run capsem-builder validate guest/`
-4. Rebuild: `just build-assets`
+4. Rebuild: `just build-assets code`
 
 ## How to: Add a new guest binary
 

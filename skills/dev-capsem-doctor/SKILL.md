@@ -63,7 +63,7 @@ def output_dir():
    VM and expects `CAPSEM_BENCH_MITM_LOCAL_BASE_URL` if local network tests
    should run.
 5. `just run "capsem-doctor"` picks up changes immediately (diagnostics repacked into initrd)
-6. For rootfs-baked changes: `just build-assets` then `capsem doctor`
+6. For rootfs-baked changes: `just build-assets code` then `capsem doctor`
 
 ## Where tests live on disk
 
