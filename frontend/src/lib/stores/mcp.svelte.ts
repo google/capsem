@@ -10,7 +10,7 @@ import {
 } from '../api';
 import type { McpServerInfo, McpToolInfo } from '../types';
 
-const PROFILE_ID = 'default';
+const PROFILE_ID = 'code';
 
 class McpStore {
   servers = $state<McpServerInfo[]>([]);

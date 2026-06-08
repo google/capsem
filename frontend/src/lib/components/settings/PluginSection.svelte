@@ -23,7 +23,7 @@
     { value: 'high', label: 'High' },
     { value: 'critical', label: 'Critical' },
   ];
-  const PROFILE_ID = 'default';
+  const PROFILE_ID = 'code';
 
   let response = $state<PluginListResponse | null>(null);
   let loading = $state(true);

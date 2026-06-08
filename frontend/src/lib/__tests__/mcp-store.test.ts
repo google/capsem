@@ -111,22 +111,22 @@ describe('mcpStore', () => {
     await mcpStore.load();
     await mcpStore.approveTool('builtin__http_get');
     const { approveMcpTool } = await import('../api');
-    expect(approveMcpTool).toHaveBeenCalledWith('default', 'builtin', 'http_get');
+    expect(approveMcpTool).toHaveBeenCalledWith('code', 'builtin', 'http_get');
   });
 
   it('refresh with server calls API', async () => {
     await mcpStore.load();
     await mcpStore.refresh('builtin');
     const { refreshMcpTools } = await import('../api');
-    expect(refreshMcpTools).toHaveBeenCalledWith('default', 'builtin');
+    expect(refreshMcpTools).toHaveBeenCalledWith('code', 'builtin');
   });
 
   it('refresh without server refreshes each loaded server', async () => {
     await mcpStore.load();
     await mcpStore.refresh();
     const { refreshMcpTools } = await import('../api');
-    expect(refreshMcpTools).toHaveBeenCalledWith('default', 'builtin');
-    expect(refreshMcpTools).toHaveBeenCalledWith('default', 'external');
+    expect(refreshMcpTools).toHaveBeenCalledWith('code', 'builtin');
+    expect(refreshMcpTools).toHaveBeenCalledWith('code', 'external');
   });
 
   it('handles load error', async () => {

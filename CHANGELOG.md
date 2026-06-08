@@ -117,6 +117,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and call `/profiles/{profile_id}/assets/...` instead of the burned
   `/profiles/default` path; gateway route coverage also forwards
   `/profiles/status` and `/profiles/reload` explicitly.
+- Updated the frontend MCP and plugin settings surfaces to target the real
+  `code` profile instead of the burned `default` profile id.
 - Made startup asset cleanup preserve profile catalog assets and persistent VM
   boot asset pins. Hash-prefixed files referenced by active profile
   descriptors or saved VM pins are retained even when they are not listed in
