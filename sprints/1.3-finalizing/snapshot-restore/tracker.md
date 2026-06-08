@@ -928,7 +928,7 @@ the guarantee or explicitly burn it.
   validate`, and temp `settings init` + `settings validate`. Schema and doctor
   are not restored as separate admin commands in S1; their proof is covered by
   Rust contract validation plus the later VM doctor gate.
-- [ ] Restore image `plan|verify|workspace|build` commands.
+- [x] Restore image `plan|verify|workspace|build` commands.
 - [x] Restore profile-derived `capsem-admin image plan|build` for the current
   `code` profile asset contract. `image build` requires `--profile`, validates
   the profile and referenced enforcement/Sigma rules, emits/executes
@@ -938,8 +938,20 @@ the guarantee or explicitly burn it.
   proof path. `image verify` validates the profile, compiles profile rule
   files, reads the regenerated manifest, and verifies the literal
   `assets/<arch>/{vmlinuz,initrd.img,rootfs.erofs}` files by size and BLAKE3.
-  Remaining image work: workspace materialization plus SBOM/provenance/doctor
-  inventory.
+  `image workspace` materializes a self-contained admin workspace under the
+  requested output directory: copied `config/profiles/<id>.toml`, copied
+  referenced enforcement/Sigma rule files, `build-plan.json`, `workspace.json`,
+  profile/rule-file BLAKE3 evidence, and a profile-derived asset build plan.
+  The copied profile validates with the workspace config root. Release SBOM
+  attestation and real in-VM `capsem-doctor` execution remain in S6 because
+  those are final release/VM gates, not local admin command shape. Proof:
+  `cargo test -p capsem-admin -- --nocapture`,
+  `cargo run -p capsem-admin -- image workspace --profile
+  config/profiles/code.toml --config-root config --guest-dir guest --output
+  target/capsem-admin-workspace-test --arch arm64 --json`, and
+  `cargo run -p capsem-admin -- profile validate
+  target/capsem-admin-workspace-test/config/profiles/code.toml --config-root
+  target/capsem-admin-workspace-test/config --json`.
 - [x] Restore manifest `check|generate|verify` commands only for BLAKE3 hash
   checks, asset inventory, and build provenance. Do not restore manifest
   signing, profile payload signing, minisign pubkeys, URL+pubkey catalog fetch,

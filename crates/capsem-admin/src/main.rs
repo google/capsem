@@ -9,8 +9,8 @@ use std::{
 use anyhow::{anyhow, Context, Result};
 use capsem_core::asset_manager::ManifestV2;
 use capsem_core::net::policy_config::{
-    CompiledSecurityRule, ProfileConfigFile, SecurityRuleProfile, SecurityRuleSet,
-    SecurityRuleSource,
+    resolve_profile_rule_file_path, CompiledSecurityRule, ProfileConfigFile, SecurityRuleProfile,
+    SecurityRuleSet, SecurityRuleSource,
 };
 use clap::{Parser, Subcommand};
 use serde::{Deserialize, Serialize};
@@ -96,6 +96,7 @@ struct ImageCommand {
 enum ImageSubcommand {
     Plan(ImageBuildArgs),
     Build(ImageBuildArgs),
+    Workspace(ImageWorkspaceArgs),
     Verify(ImageVerifyArgs),
 }
 
@@ -240,6 +241,28 @@ struct ImageVerifyArgs {
     #[arg(long)]
     arch: Option<String>,
     /// Emit a machine-readable verification report.
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Parser)]
+struct ImageWorkspaceArgs {
+    /// Profile TOML that owns the image workspace.
+    #[arg(long)]
+    profile: PathBuf,
+    /// Config root used to resolve profile rule files.
+    #[arg(long, default_value = "config")]
+    config_root: PathBuf,
+    /// Guest image source directory consumed by capsem-builder.
+    #[arg(long, default_value = "guest")]
+    guest_dir: PathBuf,
+    /// Directory to materialize the image workspace into.
+    #[arg(long)]
+    output: PathBuf,
+    /// Restrict the workspace build plan to one profile architecture.
+    #[arg(long)]
+    arch: Option<String>,
+    /// Emit a machine-readable workspace report.
     #[arg(long)]
     json: bool,
 }
@@ -414,6 +437,30 @@ struct ImageVerifyReport {
 }
 
 #[derive(Debug, Serialize)]
+struct ImageWorkspaceReport {
+    schema: &'static str,
+    ok: bool,
+    profile_id: String,
+    profile_revision: String,
+    workspace: String,
+    config_root: String,
+    profile_path: String,
+    profile_blake3: String,
+    build_plan_path: String,
+    rule_files: Vec<ImageWorkspaceRuleFileReport>,
+    arches: Vec<ImageBuildArchPlan>,
+}
+
+#[derive(Debug, Serialize)]
+struct ImageWorkspaceRuleFileReport {
+    kind: &'static str,
+    source: String,
+    path: String,
+    blake3: String,
+    size: u64,
+}
+
+#[derive(Debug, Serialize)]
 struct ImageVerifyArchReport {
     arch: String,
     assets: Vec<LocalAssetCheckReport>,
@@ -475,6 +522,7 @@ fn main() -> Result<()> {
         Commands::Image(command) => match command.command {
             ImageSubcommand::Plan(args) => image_plan_command(args),
             ImageSubcommand::Build(args) => image_build_command(args),
+            ImageSubcommand::Workspace(args) => image_workspace_command(args),
             ImageSubcommand::Verify(args) => image_verify_command(args),
         },
     }
@@ -647,6 +695,19 @@ fn image_build_command(args: ImageBuildArgs) -> Result<()> {
         run_command(command)?;
     }
     print_image_build_plan(&plan, args.json)?;
+    Ok(())
+}
+
+fn image_workspace_command(args: ImageWorkspaceArgs) -> Result<()> {
+    let report = materialize_image_workspace(&args)?;
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else {
+        println!(
+            "materialized: image workspace for profile {} at {}",
+            report.profile_id, report.workspace
+        );
+    }
     Ok(())
 }
 
@@ -1002,6 +1063,145 @@ fn verify_image_outputs(args: &ImageVerifyArgs) -> Result<ImageVerifyReport> {
         manifest: manifest_path.display().to_string(),
         arches,
     })
+}
+
+fn materialize_image_workspace(args: &ImageWorkspaceArgs) -> Result<ImageWorkspaceReport> {
+    let profile = load_profile(&args.profile)?;
+    profile
+        .validate()
+        .map_err(|error| anyhow!("validate profile {}: {error}", args.profile.display()))?;
+    profile
+        .compile_security_rule_set_from_files(&args.config_root, SecurityRuleSource::User)
+        .map_err(|error| {
+            anyhow!(
+                "compile profile rule files for {} with config root {}: {error}",
+                args.profile.display(),
+                args.config_root.display()
+            )
+        })?;
+    let arches = selected_profile_arches(&profile, args.arch.as_deref())?;
+
+    let workspace = &args.output;
+    let workspace_config_root = workspace.join("config");
+    let workspace_profile_path = workspace_config_root
+        .join("profiles")
+        .join(format!("{}.toml", profile.id));
+    let workspace_rules_root = workspace_config_root.join("profiles").join(&profile.id);
+    fs::create_dir_all(
+        workspace_profile_path
+            .parent()
+            .expect("workspace profile path has parent"),
+    )
+    .with_context(|| format!("create {}", workspace_profile_path.display()))?;
+    fs::create_dir_all(&workspace_rules_root)
+        .with_context(|| format!("create {}", workspace_rules_root.display()))?;
+
+    let profile_toml =
+        fs::read(&args.profile).with_context(|| format!("read {}", args.profile.display()))?;
+    fs::write(&workspace_profile_path, &profile_toml)
+        .with_context(|| format!("write {}", workspace_profile_path.display()))?;
+
+    let mut rule_files = Vec::new();
+    copy_profile_rule_file(
+        &args.config_root,
+        &workspace_config_root,
+        profile.rule_files.enforcement.as_deref(),
+        "enforcement",
+        &mut rule_files,
+    )?;
+    copy_profile_rule_file(
+        &args.config_root,
+        &workspace_config_root,
+        profile.rule_files.sigma.as_deref(),
+        "sigma",
+        &mut rule_files,
+    )?;
+
+    let copied_validation =
+        validate_profile(&workspace_profile_path, Some(&workspace_config_root))?;
+    if copied_validation.profile_id != profile.id {
+        return Err(anyhow!(
+            "workspace profile id drifted: expected {}, got {}",
+            profile.id,
+            copied_validation.profile_id
+        ));
+    }
+
+    let plan = image_build_plan(&ImageBuildArgs {
+        profile: workspace_profile_path.clone(),
+        config_root: workspace_config_root.clone(),
+        guest_dir: args.guest_dir.clone(),
+        output: workspace.join("assets"),
+        arch: args.arch.clone(),
+        template: ImageBuildTemplate::All,
+        clean: false,
+        dry_run: true,
+        json: true,
+    })?;
+    let build_plan_path = workspace.join("build-plan.json");
+    fs::write(&build_plan_path, serde_json::to_vec_pretty(&plan)?)
+        .with_context(|| format!("write {}", build_plan_path.display()))?;
+
+    let report = ImageWorkspaceReport {
+        schema: "capsem.admin.image_workspace.v1",
+        ok: true,
+        profile_id: profile.id,
+        profile_revision: profile.revision,
+        workspace: workspace.display().to_string(),
+        config_root: workspace_config_root.display().to_string(),
+        profile_path: workspace_profile_path.display().to_string(),
+        profile_blake3: blake3::hash(&profile_toml).to_hex().to_string(),
+        build_plan_path: build_plan_path.display().to_string(),
+        rule_files,
+        arches: plan
+            .arches
+            .into_iter()
+            .filter(|arch| arches.iter().any(|selected| selected == &arch.arch))
+            .collect(),
+    };
+    fs::write(
+        workspace.join("workspace.json"),
+        serde_json::to_vec_pretty(&report)?,
+    )
+    .with_context(|| format!("write {}", workspace.join("workspace.json").display()))?;
+    Ok(report)
+}
+
+fn copy_profile_rule_file(
+    config_root: &Path,
+    workspace_config_root: &Path,
+    rule_file: Option<&str>,
+    kind: &'static str,
+    reports: &mut Vec<ImageWorkspaceRuleFileReport>,
+) -> Result<()> {
+    let Some(rule_file) = rule_file else {
+        return Ok(());
+    };
+    if Path::new(rule_file).is_absolute() {
+        return Err(anyhow!(
+            "image workspace requires profile rule files to be relative, got {rule_file}"
+        ));
+    }
+    let source_path = resolve_profile_rule_file_path(config_root, rule_file);
+    let destination_path = workspace_config_root.join(rule_file);
+    fs::create_dir_all(
+        destination_path
+            .parent()
+            .ok_or_else(|| anyhow!("rule file destination has no parent"))?,
+    )
+    .with_context(|| format!("create parent for {}", destination_path.display()))?;
+    let bytes = fs::read(&source_path)
+        .with_context(|| format!("read rule file {}", source_path.display()))?;
+    fs::write(&destination_path, &bytes)
+        .with_context(|| format!("write rule file {}", destination_path.display()))?;
+    reports.push(ImageWorkspaceRuleFileReport {
+        kind,
+        source: source_path.display().to_string(),
+        path: destination_path.display().to_string(),
+        blake3: blake3::hash(&bytes).to_hex().to_string(),
+        size: bytes.len() as u64,
+    });
+    Ok(())
 }
 
 fn manifest_generate_command_report(args: &ManifestGenerateArgs) -> CommandReport {
@@ -1824,6 +2024,47 @@ decision = "block"
                 .contains("does not define assets for arch riscv64"),
             "{error:#}"
         );
+    }
+
+    #[test]
+    fn image_workspace_materializes_self_contained_profile_config() {
+        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let repo_root = manifest_dir
+            .parent()
+            .and_then(Path::parent)
+            .expect("repo root");
+        let temp = tempfile::tempdir().expect("tempdir");
+        let args = ImageWorkspaceArgs {
+            profile: repo_root.join("config/profiles/code.toml"),
+            config_root: repo_root.join("config"),
+            guest_dir: repo_root.join("guest"),
+            output: temp.path().join("workspace"),
+            arch: Some("arm64".to_string()),
+            json: true,
+        };
+
+        let report = materialize_image_workspace(&args).expect("workspace");
+
+        assert_eq!(report.profile_id, "code");
+        assert_eq!(report.arches.len(), 1);
+        assert_eq!(report.arches[0].arch, "arm64");
+        assert_eq!(report.rule_files.len(), 2);
+        let workspace_profile = args.output.join("config/profiles/code.toml");
+        assert!(workspace_profile.is_file());
+        assert!(args
+            .output
+            .join("config/profiles/code/enforcement.toml")
+            .is_file());
+        assert!(args
+            .output
+            .join("config/profiles/code/detection.yaml")
+            .is_file());
+        assert!(args.output.join("build-plan.json").is_file());
+        assert!(args.output.join("workspace.json").is_file());
+
+        let copied = validate_profile(&workspace_profile, Some(&args.output.join("config")))
+            .expect("copied workspace profile validates");
+        assert_eq!(copied.profile_id, "code");
     }
 
     fn minimal_manifest_json(hash: Option<&str>, include_refresh_policy: bool) -> String {

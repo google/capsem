@@ -133,6 +133,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   profile, validate the profile and rule files first, preserve the Code profile
   defaults, build EROFS `lz4hc` level 12 rootfs assets, and reject raw
   no-profile build attempts.
+- Added `capsem-admin image workspace`, which materializes a self-contained
+  profile image workspace with copied profile/rule files, BLAKE3 evidence, and
+  a profile-derived build plan that validates through the copied config root.
 - Updated the release workflow to call the profile-derived asset build rail
   explicitly (`code` profile) and to package/sign the full restored host binary
   set, including `capsem-admin`.
