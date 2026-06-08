@@ -118,10 +118,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `capsem-admin detection validate|compile` so administrators can validate the
   current enforcement TOML and Sigma YAML files directly through the runtime
   rule compiler without restoring old policy-pack schemas.
-- Added `capsem-admin manifest check` and `manifest download-check` for the
-  current format-2 asset manifest. The commands validate top-level
-  `refresh_policy`, report asset releases/arches, and verify downloaded
-  hash-prefixed assets by size and BLAKE3 without restoring manifest signing.
+- Added `capsem-admin manifest check|generate|verify` for the current
+  format-2 asset manifest. The commands validate top-level `refresh_policy`,
+  report asset releases/arches, regenerate the canonical `assets/manifest.json`
+  from built assets, and verify literal sibling build outputs by size and
+  BLAKE3 without restoring manifest signing or a second `--assets-dir` path.
 - Added profile-derived `capsem-admin image plan|build` and moved
   `just build-assets` onto that rail. Asset builds now require an explicit
   profile, validate the profile and rule files first, preserve the Code profile

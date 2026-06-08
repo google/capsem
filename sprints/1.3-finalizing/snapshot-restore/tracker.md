@@ -118,7 +118,7 @@ the guarantee or explicitly burn it.
   directories are never treated as installable profile sources.
 - [x] `b8ca8589 fix: ignore manifest aliases in install profiles` decision:
   conceptual_port. Notes: same asset-alias invariant as above, but through the
-  modern BLAKE3 asset inventory/download-check commands. Do not reintroduce
+  modern BLAKE3 asset inventory/verify commands. Do not reintroduce
   manifest alias directories as profile truth.
 - [x] `6daf264a fix: point package profiles at release assets` decision:
   conceptual_port. Notes: current profile descriptors carry release URLs and
@@ -206,9 +206,9 @@ the guarantee or explicitly burn it.
   conceptual_port. Notes: preserve fail-closed inventory proof in
   image/manifest admin commands.
 - [x] `33c83bd0 feat: verify per-arch image inventories` decision:
-  conceptual_port. Notes: current manifest check/download-check reports each
-  asset version/arch/logical asset; full image inventory extraction remains
-  open.
+  conceptual_port. Notes: current manifest check/verify reports each asset
+  version/arch/logical asset and verifies sibling built files literally; full
+  image inventory extraction remains open.
 - [x] `a1dab24f feat: extract image inventory from rootfs` decision:
   conceptual_port. Notes: useful for SBOM/provenance; restore under image
   verify later.
@@ -229,7 +229,7 @@ the guarantee or explicitly burn it.
   must reflect real profile config.
 - [x] `a02537ad feat: add profile-derived image build command` decision:
   conceptual_port. Notes: restore as current `capsem-admin image ...` commands
-  after manifest check/download-check.
+  after manifest check/verify.
 - [x] `31425d04 feat: materialize profile image workspaces` decision:
   conceptual_port. Notes: `src/capsem/builder/image_workspace.py` is absent;
   restore profile-derived workspaces later without old profile schema baggage.
@@ -245,14 +245,16 @@ the guarantee or explicitly burn it.
   inventory, SBOM/provenance references, and no signatures.
 - [x] `3e5bb3cb feat: add capsem-admin manifest download check` decision:
   conceptual_port. Notes: restored current-contract `capsem-admin manifest
-  download-check`, verifying hash-prefixed local files by size and BLAKE3.
+  verify`, verifying literal sibling built files by size and BLAKE3 from the
+  manifest parent directory. There is no admin `--assets-dir` split path.
 - [x] `e2946acd feat: add capsem-admin manifest fast check` decision:
   conceptual_port. Notes: restored current-contract `capsem-admin manifest
   check`, parsing `ManifestV2` and reporting releases/arches/assets without
   touching signing.
 - [x] `2cc49f7a feat: add capsem-admin image verify` decision:
-  conceptual_port. Notes: image verify remains open; should build on manifest
-  check/download-check plus inventory/SBOM/doctor bundle probes.
+  conceptual_port. Notes: restored `capsem-admin image verify` for the current
+  profile-derived build output. Remaining inventory/SBOM/doctor bundle probes
+  stay open under the release evidence gate.
 - [x] `2fb45076 feat: add capsem-admin image plan` decision:
   conceptual_port. Notes: image plan remains open; must be profile-derived.
 - [x] `0e9442e4 test: pin admin init json toml parity` decision:
@@ -912,16 +914,20 @@ the guarantee or explicitly burn it.
   config/profiles/code/enforcement.toml --json`, and
   `cargo run -p capsem-admin -- detection compile
   config/profiles/code/detection.yaml --json`.
-- [ ] Restore profile/settings `init|schema|validate|doctor` commands.
-- [x] Restore current-contract `capsem-admin profile init|validate` and
+- [x] Restore current-contract `capsem-admin profile init|validate|check` and
   `settings init|validate`. Profile init writes the checked-in `code` profile
-  template and profile validate compiles referenced enforcement/Sigma rules.
-  Settings init writes the checked-in UI settings template and settings
-  validate rejects runtime/profile fields. Proof:
+  template, profile validate compiles referenced enforcement/Sigma rules, and
+  profile check additionally verifies declared `file://` assets by exact path
+  when a profile uses local assets. HTTPS release assets are not treated as
+  local dev files. Settings init writes the checked-in UI settings template and
+  settings validate rejects runtime/profile fields. Proof:
   `cargo test -p capsem-admin -- --nocapture`,
   `cargo run -p capsem-admin -- settings validate config/settings.toml --json`,
-  temp `profile init` + `profile validate`, and temp `settings init` +
-  `settings validate`.
+  `cargo run -p capsem-admin -- profile check config/profiles/code.toml
+  --config-root config --arch arm64 --json`, temp `profile init` + `profile
+  validate`, and temp `settings init` + `settings validate`. Schema and doctor
+  are not restored as separate admin commands in S1; their proof is covered by
+  Rust contract validation plus the later VM doctor gate.
 - [ ] Restore image `plan|verify|workspace|build` commands.
 - [x] Restore profile-derived `capsem-admin image plan|build` for the current
   `code` profile asset contract. `image build` requires `--profile`, validates
@@ -929,21 +935,26 @@ the guarantee or explicitly burn it.
   kernel/rootfs builder commands for profile-owned arches, forces EROFS
   `lz4hc` level 12 for rootfs, and regenerates the manifest through the current
   BLAKE3 `generate_checksums` writer. `--dry-run --json` is the non-Docker
-  proof path. Remaining image work: workspace materialization and image verify
-  with SBOM/provenance/doctor inventory.
-- [ ] Restore manifest `check|download-check|generate|verify` commands only
-  for BLAKE3 hash checks, asset inventory, SBOM, and build provenance. Do not
-  restore manifest signing, profile payload signing, minisign pubkeys,
-  URL+pubkey catalog fetch, or `sign|verify` semantics that recreate the burned
-  signing authority rail.
-- [x] Restore `capsem-admin manifest check` and `manifest download-check` for
-  current `ManifestV2` JSON. `check` validates the manifest schema and reports
-  asset versions/arches/logical asset hashes; `download-check` verifies
-  hash-prefixed downloaded files by size and BLAKE3. Proof:
+  proof path. `image verify` validates the profile, compiles profile rule
+  files, reads the regenerated manifest, and verifies the literal
+  `assets/<arch>/{vmlinuz,initrd.img,rootfs.erofs}` files by size and BLAKE3.
+  Remaining image work: workspace materialization plus SBOM/provenance/doctor
+  inventory.
+- [x] Restore manifest `check|generate|verify` commands only for BLAKE3 hash
+  checks, asset inventory, and build provenance. Do not restore manifest
+  signing, profile payload signing, minisign pubkeys, URL+pubkey catalog fetch,
+  or `sign|verify` semantics that recreate the burned signing authority rail.
+- [x] Restore `capsem-admin manifest check|generate|verify` for current
+  `ManifestV2` JSON. `check` validates the manifest schema and reports asset
+  versions/arches/logical asset hashes; `generate [assets]` rewrites
+  `assets/manifest.json` from built files; `verify <manifest.json>` derives the
+  asset root from the manifest parent and verifies literal sibling files by size
+  and BLAKE3. There is no admin `--assets-dir` path. Proof:
   `cargo test -p capsem-admin -- --nocapture`,
-  `cargo run -p capsem-admin -- manifest check assets/manifest.json --json`,
-  and `cargo run -p capsem-admin -- manifest download-check
-  assets/manifest.json --assets-dir assets --arch arm64 --json`.
+  `cargo run -p capsem-admin -- manifest verify assets/manifest.json --arch
+  arm64 --json`, and `cargo run -p capsem-admin -- image verify --profile
+  config/profiles/code.toml --config-root config --output assets --manifest
+  assets/manifest.json --arch arm64 --json`.
 - [x] Restore `scripts/build-assets.sh --profile <profile>` or equivalent
   `just build-assets profile=...` typed rail. Current rail is
   `just build-assets code [arm64|x86_64]` and accepts `profile=code`/

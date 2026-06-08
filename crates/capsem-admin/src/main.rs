@@ -7,7 +7,7 @@ use std::{
 };
 
 use anyhow::{anyhow, Context, Result};
-use capsem_core::asset_manager::{hash_filename, ManifestV2};
+use capsem_core::asset_manager::ManifestV2;
 use capsem_core::net::policy_config::{
     CompiledSecurityRule, ProfileConfigFile, SecurityRuleProfile, SecurityRuleSet,
     SecurityRuleSource,
@@ -46,6 +46,7 @@ struct ProfileCommand {
 enum ProfileSubcommand {
     Init(InitArgs),
     Validate(ProfileValidateArgs),
+    Check(ProfileCheckArgs),
 }
 
 #[derive(Debug, Parser)]
@@ -81,7 +82,8 @@ struct ManifestCommand {
 #[derive(Debug, Subcommand)]
 enum ManifestSubcommand {
     Check(ManifestCheckArgs),
-    DownloadCheck(ManifestDownloadCheckArgs),
+    Generate(ManifestGenerateArgs),
+    Verify(ManifestVerifyArgs),
 }
 
 #[derive(Debug, Parser)]
@@ -94,6 +96,7 @@ struct ImageCommand {
 enum ImageSubcommand {
     Plan(ImageBuildArgs),
     Build(ImageBuildArgs),
+    Verify(ImageVerifyArgs),
 }
 
 #[derive(Debug, Parser)]
@@ -104,6 +107,21 @@ struct ProfileValidateArgs {
     #[arg(long)]
     config_root: Option<PathBuf>,
     /// Emit a machine-readable validation report.
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Parser)]
+struct ProfileCheckArgs {
+    /// Profile TOML to check.
+    path: PathBuf,
+    /// Config root used to resolve profile rule files.
+    #[arg(long)]
+    config_root: Option<PathBuf>,
+    /// Restrict file:// asset verification to one profile arch.
+    #[arg(long)]
+    arch: Option<String>,
+    /// Emit a machine-readable check report.
     #[arg(long)]
     json: bool,
 }
@@ -149,12 +167,22 @@ struct ManifestCheckArgs {
 }
 
 #[derive(Debug, Parser)]
-struct ManifestDownloadCheckArgs {
-    /// Manifest JSON file to validate against downloaded assets.
-    path: PathBuf,
-    /// Asset directory containing hash-prefixed downloaded files.
-    #[arg(long)]
+struct ManifestGenerateArgs {
+    /// Asset directory containing built per-arch assets.
+    #[arg(default_value = "assets")]
     assets_dir: PathBuf,
+    /// Binary version to record. Defaults to capsem-builder's project version.
+    #[arg(long)]
+    version: Option<String>,
+    /// Emit the generated manifest after writing it.
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Parser)]
+struct ManifestVerifyArgs {
+    /// Manifest JSON file to validate against sibling built assets.
+    path: PathBuf,
     /// Restrict verification to one manifest arch.
     #[arg(long)]
     arch: Option<String>,
@@ -194,6 +222,28 @@ struct ImageBuildArgs {
     json: bool,
 }
 
+#[derive(Debug, Parser)]
+struct ImageVerifyArgs {
+    /// Profile TOML that owns the image build.
+    #[arg(long)]
+    profile: PathBuf,
+    /// Config root used to validate profile rule files.
+    #[arg(long, default_value = "config")]
+    config_root: PathBuf,
+    /// Output directory containing built assets.
+    #[arg(long, default_value = "assets")]
+    output: PathBuf,
+    /// Manifest JSON generated for the built assets.
+    #[arg(long)]
+    manifest: Option<PathBuf>,
+    /// Restrict verification to one profile architecture.
+    #[arg(long)]
+    arch: Option<String>,
+    /// Emit a machine-readable verification report.
+    #[arg(long)]
+    json: bool,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 enum ImageBuildTemplate {
     All,
@@ -226,6 +276,14 @@ struct ProfileValidationReport {
     path: String,
     config_root: String,
     compiled_rules: usize,
+}
+
+#[derive(Debug, Serialize)]
+struct ProfileCheckReport {
+    schema: &'static str,
+    ok: bool,
+    validation: ProfileValidationReport,
+    assets: Vec<LocalAssetCheckReport>,
 }
 
 #[derive(Debug, Serialize)]
@@ -325,7 +383,7 @@ struct ManifestAssetReport {
     logical_name: String,
     hash: String,
     size: u64,
-    downloaded_name: String,
+    path: Option<String>,
     present: bool,
     size_ok: Option<bool>,
     blake3_ok: Option<bool>,
@@ -342,6 +400,35 @@ struct ImageBuildPlan {
     template: &'static str,
     arches: Vec<ImageBuildArchPlan>,
     commands: Vec<CommandReport>,
+}
+
+#[derive(Debug, Serialize)]
+struct ImageVerifyReport {
+    schema: &'static str,
+    ok: bool,
+    profile_id: String,
+    profile_revision: String,
+    output: String,
+    manifest: String,
+    arches: Vec<ImageVerifyArchReport>,
+}
+
+#[derive(Debug, Serialize)]
+struct ImageVerifyArchReport {
+    arch: String,
+    assets: Vec<LocalAssetCheckReport>,
+}
+
+#[derive(Debug, Serialize)]
+struct LocalAssetCheckReport {
+    arch: String,
+    logical_name: String,
+    expected_hash: String,
+    expected_size: u64,
+    path: Option<String>,
+    present: bool,
+    size_ok: Option<bool>,
+    blake3_ok: Option<bool>,
 }
 
 #[derive(Debug, Serialize)]
@@ -366,6 +453,7 @@ fn main() -> Result<()> {
         Commands::Profile(command) => match command.command {
             ProfileSubcommand::Init(args) => init_file_command(args, CODE_PROFILE_TEMPLATE),
             ProfileSubcommand::Validate(args) => validate_profile_command(args),
+            ProfileSubcommand::Check(args) => profile_check_command(args),
         },
         Commands::Settings(command) => match command.command {
             SettingsSubcommand::Init(args) => init_file_command(args, SETTINGS_TEMPLATE),
@@ -381,11 +469,13 @@ fn main() -> Result<()> {
         },
         Commands::Manifest(command) => match command.command {
             ManifestSubcommand::Check(args) => manifest_check_command(args),
-            ManifestSubcommand::DownloadCheck(args) => manifest_download_check_command(args),
+            ManifestSubcommand::Generate(args) => manifest_generate_command(args),
+            ManifestSubcommand::Verify(args) => manifest_verify_command(args),
         },
         Commands::Image(command) => match command.command {
             ImageSubcommand::Plan(args) => image_plan_command(args),
             ImageSubcommand::Build(args) => image_build_command(args),
+            ImageSubcommand::Verify(args) => image_verify_command(args),
         },
     }
 }
@@ -416,6 +506,25 @@ fn validate_profile_command(args: ProfileValidateArgs) -> Result<()> {
             "valid: profile {} ({} compiled rules)",
             report.profile_id, report.compiled_rules
         );
+    }
+    Ok(())
+}
+
+fn profile_check_command(args: ProfileCheckArgs) -> Result<()> {
+    let report = check_profile(&args)?;
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else {
+        println!(
+            "valid: profile {} ({} compiled rules)",
+            report.validation.profile_id, report.validation.compiled_rules
+        );
+        if !report.assets.is_empty() {
+            println!(
+                "valid: profile file assets ({} assets)",
+                report.assets.len()
+            );
+        }
     }
     Ok(())
 }
@@ -465,12 +574,18 @@ fn manifest_check_command(args: ManifestCheckArgs) -> Result<()> {
     Ok(())
 }
 
-fn manifest_download_check_command(args: ManifestDownloadCheckArgs) -> Result<()> {
+fn manifest_verify_command(args: ManifestVerifyArgs) -> Result<()> {
     let manifest = load_manifest(&args.path)?;
+    let assets_dir = args.path.parent().ok_or_else(|| {
+        anyhow!(
+            "manifest {} has no parent asset directory",
+            args.path.display()
+        )
+    })?;
     let report = manifest_report(
         &args.path,
         &manifest,
-        Some(&args.assets_dir),
+        Some(assets_dir),
         args.arch.as_deref(),
     )?;
     let failed = report
@@ -484,25 +599,31 @@ fn manifest_download_check_command(args: ManifestDownloadCheckArgs) -> Result<()
         });
     if args.json {
         println!("{}", serde_json::to_string_pretty(&report)?);
-    } else if failed {
-        return Err(anyhow!(
-            "download check failed for manifest {} in {}",
-            args.path.display(),
-            args.assets_dir.display()
-        ));
-    } else {
-        println!(
-            "valid: downloaded assets for manifest {} in {}",
-            args.path.display(),
-            args.assets_dir.display()
-        );
+    } else if !failed {
+        println!("valid: manifest assets {}", args.path.display());
     }
     if failed {
         return Err(anyhow!(
-            "download check failed for manifest {} in {}",
-            args.path.display(),
-            args.assets_dir.display()
+            "manifest asset verify failed for {}",
+            args.path.display()
         ));
+    }
+    Ok(())
+}
+
+fn manifest_generate_command(args: ManifestGenerateArgs) -> Result<()> {
+    let command = manifest_generate_command_report(&args);
+    run_command(&command)?;
+    if args.json {
+        let manifest_path = args.assets_dir.join("manifest.json");
+        let manifest = load_manifest(&manifest_path)?;
+        let report = manifest_report(&manifest_path, &manifest, None, None)?;
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else {
+        println!(
+            "generated manifest {}",
+            args.assets_dir.join("manifest.json").display()
+        );
     }
     Ok(())
 }
@@ -526,6 +647,24 @@ fn image_build_command(args: ImageBuildArgs) -> Result<()> {
         run_command(command)?;
     }
     print_image_build_plan(&plan, args.json)?;
+    Ok(())
+}
+
+fn image_verify_command(args: ImageVerifyArgs) -> Result<()> {
+    let report = verify_image_outputs(&args)?;
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else {
+        let count = report
+            .arches
+            .iter()
+            .map(|arch| arch.assets.len())
+            .sum::<usize>();
+        println!(
+            "valid: image outputs for profile {} ({} assets)",
+            report.profile_id, count
+        );
+    }
     Ok(())
 }
 
@@ -559,6 +698,42 @@ fn validate_profile(path: &Path, config_root: Option<&Path>) -> Result<ProfileVa
         path: path.display().to_string(),
         config_root: config_root.display().to_string(),
         compiled_rules: rules.rules().len(),
+    })
+}
+
+fn check_profile(args: &ProfileCheckArgs) -> Result<ProfileCheckReport> {
+    let validation = validate_profile(&args.path, args.config_root.as_deref())?;
+    let profile = load_profile(&args.path)?;
+    let mut assets = Vec::new();
+    let arches = selected_profile_arches(&profile, args.arch.as_deref())?;
+    for arch in arches {
+        let arch_assets = profile
+            .assets
+            .arch
+            .get(&arch)
+            .expect("arch came from selected_profile_arches");
+        for descriptor in [
+            &arch_assets.kernel,
+            &arch_assets.initrd,
+            &arch_assets.rootfs,
+        ] {
+            if let Some(path) = descriptor.url.strip_prefix("file://") {
+                assets.push(check_exact_local_asset(
+                    Path::new(path),
+                    &arch,
+                    &descriptor.name,
+                    normalized_blake3(&descriptor.hash)?,
+                    descriptor.size,
+                )?);
+            }
+        }
+    }
+    fail_if_local_asset_checks_failed("profile file:// asset pin check", &assets)?;
+    Ok(ProfileCheckReport {
+        schema: "capsem.admin.profile_check.v1",
+        ok: true,
+        validation,
+        assets,
     })
 }
 
@@ -720,21 +895,11 @@ fn image_build_plan(args: &ImageBuildArgs) -> Result<ImageBuildPlan> {
             });
         }
     }
-    commands.push(CommandReport {
-        step: "manifest".to_string(),
-        arch: None,
-        env: BTreeMap::new(),
-        argv: vec![
-            "uv".to_string(),
-            "run".to_string(),
-            "python3".to_string(),
-            "-c".to_string(),
-            format!(
-                "from pathlib import Path; from capsem.builder.docker import generate_checksums, get_project_version; v = get_project_version(Path('.')); generate_checksums(Path({:?}), v); print(f'manifest.json generated (v{{v}})')",
-                args.output.display().to_string()
-            ),
-        ],
-    });
+    commands.push(manifest_generate_command_report(&ManifestGenerateArgs {
+        assets_dir: args.output.clone(),
+        version: None,
+        json: false,
+    }));
 
     Ok(ImageBuildPlan {
         schema: "capsem.admin.image_build_plan.v1",
@@ -751,6 +916,204 @@ fn image_build_plan(args: &ImageBuildArgs) -> Result<ImageBuildPlan> {
         arches: arch_plans,
         commands,
     })
+}
+
+fn verify_image_outputs(args: &ImageVerifyArgs) -> Result<ImageVerifyReport> {
+    let profile = load_profile(&args.profile)?;
+    profile
+        .validate()
+        .map_err(|error| anyhow!("validate profile {}: {error}", args.profile.display()))?;
+    profile
+        .compile_security_rule_set_from_files(&args.config_root, SecurityRuleSource::User)
+        .map_err(|error| {
+            anyhow!(
+                "compile profile rule files for {} with config root {}: {error}",
+                args.profile.display(),
+                args.config_root.display()
+            )
+        })?;
+
+    let manifest_path = args
+        .manifest
+        .clone()
+        .unwrap_or_else(|| args.output.join("manifest.json"));
+    let manifest = load_manifest(&manifest_path)?;
+    let current_release = manifest
+        .assets
+        .releases
+        .get(&manifest.assets.current)
+        .ok_or_else(|| {
+            anyhow!(
+                "manifest {} current asset release {} is missing",
+                manifest_path.display(),
+                manifest.assets.current
+            )
+        })?;
+
+    let mut arches = Vec::new();
+    for arch in selected_profile_arches(&profile, args.arch.as_deref())? {
+        let manifest_assets = current_release.arches.get(&arch).ok_or_else(|| {
+            anyhow!(
+                "manifest {} current release {} does not contain profile arch {arch}",
+                manifest_path.display(),
+                manifest.assets.current
+            )
+        })?;
+        let profile_assets = profile
+            .assets
+            .arch
+            .get(&arch)
+            .expect("arch came from selected_profile_arches");
+        let mut asset_reports = Vec::new();
+        for descriptor in [
+            &profile_assets.kernel,
+            &profile_assets.initrd,
+            &profile_assets.rootfs,
+        ] {
+            let entry = manifest_assets.get(&descriptor.name).ok_or_else(|| {
+                anyhow!(
+                    "manifest {} current release {} arch {arch} is missing {}",
+                    manifest_path.display(),
+                    manifest.assets.current,
+                    descriptor.name
+                )
+            })?;
+            asset_reports.push(check_local_asset(
+                &args.output,
+                &arch,
+                &descriptor.name,
+                &entry.hash,
+                entry.size,
+            )?);
+        }
+        fail_if_local_asset_checks_failed("image output verify", &asset_reports)?;
+        arches.push(ImageVerifyArchReport {
+            arch,
+            assets: asset_reports,
+        });
+    }
+
+    Ok(ImageVerifyReport {
+        schema: "capsem.admin.image_verify.v1",
+        ok: true,
+        profile_id: profile.id,
+        profile_revision: profile.revision,
+        output: args.output.display().to_string(),
+        manifest: manifest_path.display().to_string(),
+        arches,
+    })
+}
+
+fn manifest_generate_command_report(args: &ManifestGenerateArgs) -> CommandReport {
+    let version_expr = match &args.version {
+        Some(version) => format!("{version:?}"),
+        None => "get_project_version(Path('.'))".to_string(),
+    };
+    CommandReport {
+        step: "manifest".to_string(),
+        arch: None,
+        env: BTreeMap::new(),
+        argv: vec![
+            "uv".to_string(),
+            "run".to_string(),
+            "python3".to_string(),
+            "-c".to_string(),
+            format!(
+                "from pathlib import Path; from capsem.builder.docker import generate_checksums, get_project_version; v = {version_expr}; generate_checksums(Path({:?}), v); print(f'manifest.json generated (v{{v}})')",
+                args.assets_dir.display().to_string()
+            ),
+        ],
+    }
+}
+
+fn selected_profile_arches(
+    profile: &ProfileConfigFile,
+    only_arch: Option<&str>,
+) -> Result<Vec<String>> {
+    let mut arches = profile.assets.arch.keys().cloned().collect::<Vec<_>>();
+    arches.sort();
+    if let Some(arch) = only_arch {
+        if !profile.assets.arch.contains_key(arch) {
+            return Err(anyhow!(
+                "profile {} does not define assets for arch {arch}",
+                profile.id
+            ));
+        }
+        arches = vec![arch.to_string()];
+    }
+    if arches.is_empty() {
+        return Err(anyhow!(
+            "profile {} defines no asset architectures",
+            profile.id
+        ));
+    }
+    Ok(arches)
+}
+
+fn check_local_asset(
+    assets_dir: &Path,
+    arch: &str,
+    logical_name: &str,
+    expected_hash: &str,
+    expected_size: u64,
+) -> Result<LocalAssetCheckReport> {
+    let path = assets_dir.join(arch).join(logical_name);
+    check_exact_local_asset(&path, arch, logical_name, expected_hash, expected_size)
+}
+
+fn check_exact_local_asset(
+    path: &Path,
+    arch: &str,
+    logical_name: &str,
+    expected_hash: &str,
+    expected_size: u64,
+) -> Result<LocalAssetCheckReport> {
+    if !path.is_file() {
+        return Ok(LocalAssetCheckReport {
+            arch: arch.to_string(),
+            logical_name: logical_name.to_string(),
+            expected_hash: expected_hash.to_string(),
+            expected_size,
+            path: Some(path.display().to_string()),
+            present: false,
+            size_ok: None,
+            blake3_ok: None,
+        });
+    }
+    let metadata =
+        fs::metadata(path).with_context(|| format!("stat local asset {}", path.display()))?;
+    let digest = hash_file(path)?;
+    Ok(LocalAssetCheckReport {
+        arch: arch.to_string(),
+        logical_name: logical_name.to_string(),
+        expected_hash: expected_hash.to_string(),
+        expected_size,
+        path: Some(path.display().to_string()),
+        present: true,
+        size_ok: Some(metadata.len() == expected_size),
+        blake3_ok: Some(digest == expected_hash),
+    })
+}
+
+fn fail_if_local_asset_checks_failed(
+    context: &str,
+    assets: &[LocalAssetCheckReport],
+) -> Result<()> {
+    let failed = assets.iter().any(|asset| {
+        !asset.present
+            || asset.size_ok.is_some_and(|ok| !ok)
+            || asset.blake3_ok.is_some_and(|ok| !ok)
+    });
+    if failed {
+        return Err(anyhow!("{context} failed"));
+    }
+    Ok(())
+}
+
+fn normalized_blake3(value: &str) -> Result<&str> {
+    value
+        .strip_prefix("blake3:")
+        .ok_or_else(|| anyhow!("expected blake3:<hash>, got {value}"))
 }
 
 fn print_image_build_plan(plan: &ImageBuildPlan, json: bool) -> Result<()> {
@@ -903,37 +1266,31 @@ fn manifest_report(
             names.sort();
             for name in names {
                 let entry = assets.get(name).expect("asset name from keys");
-                let downloaded_name = hash_filename(name, &entry.hash);
-                let (present, size_ok, blake3_ok) = match assets_dir {
+                let (path, present, size_ok, blake3_ok) = match assets_dir {
                     Some(dir) => {
-                        let file_path = dir.join(arch).join(&downloaded_name);
-                        let fallback_path = dir.join(&downloaded_name);
-                        let file_path = if file_path.exists() {
-                            file_path
-                        } else {
-                            fallback_path
-                        };
+                        let file_path = dir.join(arch).join(name);
                         if !file_path.is_file() {
-                            (false, None, None)
+                            (Some(file_path.display().to_string()), false, None, None)
                         } else {
                             let metadata = fs::metadata(&file_path).with_context(|| {
-                                format!("stat downloaded asset {}", file_path.display())
+                                format!("stat manifest asset {}", file_path.display())
                             })?;
                             let digest = hash_file(&file_path)?;
                             (
+                                Some(file_path.display().to_string()),
                                 true,
                                 Some(metadata.len() == entry.size),
                                 Some(digest == entry.hash),
                             )
                         }
                     }
-                    None => (false, None, None),
+                    None => (None, false, None, None),
                 };
                 asset_reports.push(ManifestAssetReport {
                     logical_name: name.clone(),
                     hash: entry.hash.clone(),
                     size: entry.size,
-                    downloaded_name,
+                    path,
                     present,
                     size_ok,
                     blake3_ok,
@@ -1323,30 +1680,72 @@ decision = "block"
     }
 
     #[test]
-    fn download_check_verifies_hash_prefixed_assets() {
+    fn manifest_verify_checks_literal_sibling_assets() {
         let temp = tempfile::tempdir().expect("tempdir");
         let payload = b"capsem test asset";
         let hash = blake3::hash(payload).to_hex().to_string();
         let manifest_path = temp.path().join("manifest.json");
         fs::write(&manifest_path, minimal_manifest_json(Some(&hash), true)).expect("manifest");
-        let assets_dir = temp.path().join("assets/arm64");
+        let assets_root = temp.path().join("assets");
+        let assets_dir = assets_root.join("arm64");
         fs::create_dir_all(&assets_dir).expect("assets dir");
-        let downloaded = hash_filename("rootfs.erofs", &hash);
-        fs::write(assets_dir.join(downloaded), payload).expect("asset");
+        fs::write(assets_dir.join("rootfs.erofs"), payload).expect("asset");
 
         let manifest = load_manifest(&manifest_path).expect("manifest");
-        let report = manifest_report(
-            &manifest_path,
-            &manifest,
-            Some(&temp.path().join("assets")),
-            Some("arm64"),
-        )
-        .expect("download check");
+        let report = manifest_report(&manifest_path, &manifest, Some(&assets_root), Some("arm64"))
+            .expect("manifest verify");
 
         let asset = &report.arches[0].assets[0];
         assert!(asset.present);
         assert_eq!(asset.size_ok, Some(true));
         assert_eq!(asset.blake3_ok, Some(true));
+    }
+
+    #[test]
+    fn profile_check_verifies_only_declared_file_urls() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let mut profile = ProfileConfigFile::builtin_code();
+        profile.rule_files.enforcement = None;
+        profile.rule_files.sigma = None;
+        profile.assets.arch.retain(|arch, _| arch == "arm64");
+        let arch_assets = profile.assets.arch.get_mut("arm64").expect("arm64 assets");
+        for descriptor in [
+            &mut arch_assets.kernel,
+            &mut arch_assets.initrd,
+            &mut arch_assets.rootfs,
+        ] {
+            let payload = format!("{} bytes", descriptor.name);
+            let path = temp.path().join(&descriptor.name);
+            fs::write(&path, payload.as_bytes()).expect("asset");
+            descriptor.url = format!("file://{}", path.display());
+            descriptor.hash = format!("blake3:{}", blake3::hash(payload.as_bytes()).to_hex());
+            descriptor.size = payload.len() as u64;
+        }
+        let profile_path = temp.path().join("code.toml");
+        fs::write(
+            &profile_path,
+            toml::to_string(&profile).expect("serialize profile"),
+        )
+        .expect("profile");
+
+        let report = check_profile(&ProfileCheckArgs {
+            path: profile_path,
+            config_root: Some(temp.path().to_path_buf()),
+            arch: Some("arm64".to_string()),
+            json: true,
+        })
+        .expect("profile check");
+
+        assert_eq!(report.assets.len(), 3);
+        assert!(report.assets.iter().all(|asset| asset.present));
+        assert!(report
+            .assets
+            .iter()
+            .all(|asset| asset.size_ok == Some(true)));
+        assert!(report
+            .assets
+            .iter()
+            .all(|asset| asset.blake3_ok == Some(true)));
     }
 
     #[test]
