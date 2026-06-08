@@ -180,15 +180,18 @@ Capsem runs VMs from profiles. Keep the ownership split sharp:
 - **Everything is ephemeral unless asked otherwise.** VMs are temporary by default (destroyed on exit). Only named VMs (`capsem create -n <name>`) are persistent -- their workspace and rootfs overlay survive stops and can be resumed. `capsem create` is always detached; `capsem shell` is the interactive entry point (bare `capsem shell` = temp VM + auto-destroy).
 - The binary must be codesigned with `com.apple.security.virtualization`.
 - `capsem-core` owns all business logic. App crate and agent crate are thin shells.
-- **Fork images are first-class objects.** `capsem fork <vm> <image-name>` snapshots a VM into a reusable template. `capsem create --image <name>` boots from it. Images depend only on a base squashfs version (flat genealogy -- no image-to-image deps). Asset cleanup protects squashfs versions referenced by any image. Images live in `~/.capsem/images/`.
+- **Fork images are first-class objects.** `capsem fork <vm> <image-name>` snapshots a VM into a reusable template. `capsem create --image <name>` boots from it. Images depend only on a base profile rootfs asset (flat genealogy -- no image-to-image deps). Asset cleanup protects rootfs assets referenced by any image. Images live in `~/.capsem/images/`.
 
 ## Installation
 
-`capsem setup` is the primary install path. On first use, auto-runs non-interactively (detects credentials, installs service, downloads assets). Users can re-run `capsem setup --force` to reconfigure.
+Installation is service-first. Packages install the binaries and service unit,
+then the app/CLI waits for `capsem-service` readiness and reports
+profile-owned asset status. Credentials are not collected during install; the
+credential-broker plugin observes and brokers them at runtime.
 
 **Install layout** (`~/.capsem/`):
 - `bin/` -- capsem, capsem-service, capsem-process, capsem-mcp, capsem-mcp-aggregator, capsem-mcp-builtin, capsem-gateway, capsem-tray
-- `assets/` -- manifest.json, v{VERSION}/{vmlinuz, initrd.img, rootfs.squashfs}
+- `assets/` -- manifest.json plus hash-named kernel, initrd, and rootfs assets
 - `run/` -- service.sock, service.pid, gateway.token, gateway.port, gateway.pid, instances/
 
 **Service registration**: LaunchAgent (macOS: `com.capsem.service`) / systemd user unit (Linux: `capsem.service`). Auto-restarts on crash. See `/dev-installation` for the full wizard flow.

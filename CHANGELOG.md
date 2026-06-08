@@ -57,6 +57,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   remains plugin-owned.
 
 ### Changed (service/API)
+- Updated architecture docs and local development skills to match the 1.3
+  contract: settings endpoints are `/settings/info|edit` and expose only
+  `tree`/`issues`, install is service/profile-asset readiness rather than a
+  setup wizard, and EROFS lz4hc is the primary rootfs with squashfs only as a
+  legacy fallback.
 - Moved VM APIs under the explicit `/vms/...` contract. VM creation, listing,
   info, stop, pause, delete, resume, save, fork, exec, logs, inspect, history,
   timeline, and file read/write/list/content routes now live under

@@ -425,6 +425,10 @@ commit.
 ## T6: Documentation, Changelog, Skills
 
 - [ ] Update architecture docs for profile/settings/corp ownership.
+  Slice complete: `docs/src/content/docs/architecture/settings.md` now
+  documents `/settings/info|edit`, `tree`/`issues` only, and excludes
+  provider/security/plugin/VM truth from settings. `pnpm -C docs build`
+  passed.
 - [ ] Update endpoint/API docs from `api-contract.md`.
 - [ ] Update security/rules docs for single CEL/security-rule rail and defaults.
 - [ ] Update plugin docs and plugin pages.
@@ -432,11 +436,18 @@ commit.
 - [ ] Update credential broker docs, including BLAKE3 hash logging and no secret
   exposure.
 - [ ] Update install docs and release notes.
+  Slice complete: local install/developer skills now describe service-first
+  install readiness instead of `capsem setup`/setup-state.
 - [ ] Update benchmark docs/page with current 1.3 numbers and EROFS/LZ4HC/zstd
   notes.
 - [ ] Update all relevant skills that still describe old settings/profile/API
   behavior.
+  Slice complete: `dev-installation`, `asset-pipeline`, `dev-capsem`, and
+  `site-architecture` were corrected for setup burn and EROFS/rootfs asset
+  ownership. `pnpm -C docs build` passed for public docs touched in this slice.
 - [ ] Update changelog only for behavior that is actually implemented and tested.
+  Slice complete: changelog records this docs/skills alignment only for
+  already-implemented behavior.
 - [ ] Commit T6 docs/changelog.
 
 ## T6.5: Full Invariant Review Before Verification
@@ -607,7 +618,10 @@ invariant sweep before release verification.
 - [x] Audit MCP assumptions for global tool/resource/prompt lists.
 - [x] Audit credential/provider assumptions for remaining provider API objects.
 - [x] Audit VM lifecycle assumptions for immutable profile id, pause/resume/save/fork/status.
-- [ ] Audit docs/skills for old endpoint/config mental model.
+- [ ] Audit docs/skills for old endpoint/config mental model. Partial sweep
+  removed stale settings provider payloads, magic settings endpoints,
+  setup-wizard install guidance, squashfs-first rootfs guidance, and
+  iptables-legacy hardening guidance from the highest-impact docs/skills.
 - [x] Capture initial findings in `model-breakage-audit.md`.
 
 ## Release Holds

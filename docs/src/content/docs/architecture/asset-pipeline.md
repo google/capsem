@@ -20,7 +20,7 @@ Two build templates exist:
 | Template | Output | What it does |
 |----------|--------|-------------|
 | `kernel` | `vmlinuz`, `initrd.img` | Builds a minimal Linux kernel from `defconfig` |
-| `rootfs` | `rootfs.squashfs` | Builds the full guest filesystem with packages, runtimes, and tools |
+| `rootfs` | `rootfs.erofs` | Builds the full guest filesystem with packages, runtimes, and tools |
 
 The build process also cross-compiles guest agent binaries (`capsem-pty-agent`, `capsem-net-proxy`, `capsem-mcp-server`) for the target architecture and injects them into the rootfs.
 
@@ -31,11 +31,11 @@ assets/
   arm64/
     vmlinuz
     initrd.img
-    rootfs.squashfs
+    rootfs.erofs
   x86_64/
     vmlinuz
     initrd.img
-    rootfs.squashfs
+    rootfs.erofs
   manifest.json
   B3SUMS
 ```
@@ -66,7 +66,7 @@ The manifest (`assets/manifest.json`, format 2) is a single top-level file cover
           "arm64": {
             "vmlinuz":         {"hash": "<64-char blake3>", "size": 7797248},
             "initrd.img":      {"hash": "<blake3>",         "size": 2314963},
-            "rootfs.squashfs": {"hash": "<blake3>",         "size": 454230016}
+            "rootfs.erofs":    {"hash": "<blake3>",         "size": 720896000}
           },
           "x86_64": { "...": "..." }
         }
@@ -136,9 +136,9 @@ For each candidate, it checks **per-arch first** (`candidate/{arch}/vmlinuz`), t
 
 `resolve_rootfs()` checks in order:
 
-1. **Bundled**: `{assets_dir}/rootfs.squashfs`
-2. **Downloaded (versioned)**: `~/.capsem/assets/v{version}/rootfs.squashfs`
-3. **Downloaded (legacy)**: `~/.capsem/assets/rootfs.squashfs`
+1. **Profile/dev logical asset**: `{assets_dir}/{arch}/rootfs.erofs`
+2. **Installed hash asset**: `~/.capsem/assets/rootfs-{hash16}.erofs`
+3. **Legacy fallback**: matching `rootfs.squashfs` when an older manifest has no EROFS rootfs
 
 ### Step 3: Download if missing
 

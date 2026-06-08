@@ -55,7 +55,7 @@ Every disabled subsystem removes code from the kernel binary. No runtime flag ca
 | Magic SysRq | `MAGIC_SYSRQ=n` | No emergency keyboard commands |
 | IPv6 | `IPV6=n` | Unnecessary in air-gapped VM; reduces IP stack surface |
 | Multicast | `IP_MULTICAST=n` | No multicast traffic |
-| nftables | `NF_TABLES=n` | Use iptables-legacy only (simpler, smaller) |
+| nftables | `NF_TABLES=y` | Guest NAT uses `iptables-nft`; legacy iptables frontends are stripped |
 | USB | `USB_SUPPORT=n` | No USB devices in VM |
 | Sound | `SOUND=n` | No audio hardware |
 | DRM/GPU | `DRM=n` | No graphics hardware |
@@ -132,7 +132,7 @@ Every hardening property is verified at runtime by `capsem-doctor` tests. If any
 | Slab isolation | `test_slab_nomerge` | `slab_nomerge` in `/proc/cmdline` |
 | Page shuffle | `test_page_alloc_shuffle` | `page_alloc.shuffle=1` in `/proc/cmdline` |
 | Seccomp available | `test_seccomp_available` | `Seccomp:` line in `/proc/self/status` |
-| Squashfs rootfs | `test_squashfs_is_immutable` | `/dev/vda` filesystem type is `squashfs` |
+| Read-only rootfs | `test_sandbox_filesystem_type` | `/dev/vda` filesystem type is `erofs` on 1.3 assets, with squashfs accepted only for legacy fallback images |
 | Overlay configured | `test_overlay_configured` | Root mount is `overlay` with `lowerdir` and `upperdir` |
 | No real NICs | `test_no_real_nics` | Only `lo` and `dummy0` in `/sys/class/net/` |
 | No setuid binaries | `test_no_setuid_binaries` | `find / -perm -4000` returns empty |

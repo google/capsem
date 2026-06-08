@@ -29,7 +29,7 @@ The manifest tracks both with compatibility ranges (`min_binary`, `min_assets`).
 |------|-------|
 | Guest config (TOML) | `guest/config/` |
 | Guest artifacts | `guest/artifacts/` |
-| Built assets (dev) | `assets/{arch}/vmlinuz, initrd.img, rootfs.squashfs` |
+| Built assets (dev) | `assets/{arch}/vmlinuz, initrd.img, rootfs.erofs` |
 | Installed assets | `~/.capsem/assets/{name}-{hash16}.{ext}` (flat, hash-based) |
 | Manifest | `assets/manifest.json` |
 | Checksums | `assets/B3SUMS` |
@@ -53,7 +53,7 @@ The manifest tracks both with compatibility ranges (`min_binary`, `min_assets`).
           "arm64": {
             "vmlinuz": { "hash": "<64-char blake3>", "size": 7797248 },
             "initrd.img": { "hash": "...", "size": 2270154 },
-            "rootfs.squashfs": { "hash": "...", "size": 454230016 }
+            "rootfs.erofs": { "hash": "...", "size": 720896000 }
           }
         }
       }
@@ -80,7 +80,7 @@ Two producers: `docker.py:generate_checksums()` (full build) and `scripts/gen_ma
 ```
 assets/arm64/vmlinuz
 assets/arm64/initrd.img
-assets/arm64/rootfs.squashfs
+assets/arm64/rootfs.erofs
 assets/manifest.json
 ```
 
@@ -89,10 +89,12 @@ assets/manifest.json
 manifest.json
 vmlinuz-2c0bd752db929642
 initrd-e5e910e9ab38b873.img
-rootfs-89eb92b83534d9d0.squashfs
+rootfs-89eb92b83534d9d0.erofs
 ```
 
-Hash-based naming: `{stem}-{hash[..16]}{ext}`. Same hash = same file across versions = natural dedup.
+Hash-based naming: `{stem}-{hash[..16]}{ext}`. Same hash = same file across
+versions = natural dedup. EROFS lz4hc level 12 is the 1.3 default; squashfs is
+only a legacy read fallback when an older manifest lacks `rootfs.erofs`.
 
 ## Boot-Time Resolution
 

@@ -167,7 +167,9 @@ sequenceDiagram
   BE-->>UI: List of skipped setting IDs
 ```
 
-After preset application, resolution re-runs: `corp > user (with preset values) > defaults`. The UI detects the active preset by comparing effective values against all preset definitions.
+After settings edits, resolution re-runs across the current settings file and
+corp locks. Security presets and policy maps are no longer settings-owned
+objects.
 
 ## IPC Protocol
 
@@ -181,11 +183,11 @@ sequenceDiagram
   participant SVC as capsem-service
 
   Note over UI: Page load
-  UI->>GW: GET /settings
-  GW->>SVC: GET /settings (UDS)
-  SVC->>SVC: resolve + build tree + lint + presets
+  UI->>GW: GET /settings/info
+  GW->>SVC: GET /settings/info (UDS)
+  SVC->>SVC: resolve + build tree + lint
   SVC-->>GW: SettingsResponse
-  GW-->>UI: {tree, issues, presets}
+  GW-->>UI: {tree, issues}
   UI->>M: new SettingsModel(response)
 
   Note over UI: User edits a text field
@@ -193,9 +195,9 @@ sequenceDiagram
   Note over M: Accumulated locally
 
   Note over UI: User clicks Save
-  UI->>GW: POST /settings {id: value, ...}
-  GW->>SVC: POST /settings (UDS)
-  SVC->>SVC: validate ALL then write user.toml then reload policies
+  UI->>GW: PATCH /settings/edit {id: value, ...}
+  GW->>SVC: PATCH /settings/edit (UDS)
+  SVC->>SVC: validate ALL then write user.toml
   SVC-->>GW: SettingsResponse (fresh state)
   GW-->>UI: response
   UI->>M: new SettingsModel(response)
@@ -209,8 +211,10 @@ Returns the full `SettingsResponse` in one call:
 |---|---|---|
 | `tree` | `SettingsNode[]` | Hierarchical tree: groups, leaves, actions, MCP servers |
 | `issues` | `ConfigIssue[]` | Validation warnings (invalid JSON, invalid paths, blocked setting writes, etc.) |
-| `presets` | `SecurityPreset[]` | Available security presets with their setting values |
-| `providers` | `ProviderStatus[]` | Runtime/provider discovery breadcrumbs and rule-derived status, not static credential inventory |
+
+`SettingsResponse` intentionally does not include presets, provider status, MCP
+policy, security rules, plugins, credentials, or VM behavior. Those belong to
+profile/corp contracts, runtime plugin status, or service/VM runtime endpoints.
 
 ### save_settings
 
@@ -219,8 +223,7 @@ Accepts a batch of changes as `{ setting_id: value, ... }`. Behavior:
 1. **Validate ALL changes upfront** (atomic -- all or nothing)
 2. **Reject entire batch** if any change targets a corp-locked setting, uses an unknown ID, or fails validation
 3. **Write to user.toml** in a single file operation
-4. **Hot-reload policies** so the running MITM proxy picks up changes immediately
-5. **Return fresh `SettingsResponse`** reflecting the new state
+4. **Return fresh `SettingsResponse`** reflecting the new state
 
 Bool toggles use `save_settings` immediately (instant policy reload). Text, number, file, and list changes accumulate locally and are sent as a batch when the user clicks Save.
 
@@ -375,7 +378,5 @@ The desktop frontend talks to `capsem-gateway`, which proxies HTTP requests to
 
 | Endpoint | Purpose |
 |---|---|
-| `GET /settings` | Returns `SettingsResponse` with tree, issues, presets, and policy. |
-| `POST /settings` | Accepts a batch of setting and policy changes. |
-| `POST /settings/presets/{id}` | Applies a security preset. |
-| `POST /reload-config` | Hot-reloads runtime policy after saves. |
+| `GET /settings/info` | Returns `SettingsResponse` with `tree` and `issues`. |
+| `PATCH /settings/edit` | Accepts a batch of settings-only changes and returns fresh `SettingsResponse`. |

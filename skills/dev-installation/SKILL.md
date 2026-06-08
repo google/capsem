@@ -1,6 +1,6 @@
 ---
 name: dev-installation
-description: Capsem native CLI installer -- setup wizard, service registration, self-update, background asset download, corp config provisioning, and the Docker-based install test harness. Use when working on capsem setup/update/uninstall commands, service install/uninstall, asset management, corp config, install test infrastructure, or the installed layout (~/.capsem/).
+description: Capsem native CLI installer -- service registration, self-update, profile-owned asset readiness, corp config provisioning, and the Docker-based install test harness. Use when working on install/update/uninstall commands, service install/uninstall, asset management, corp config, install test infrastructure, package UI readiness, or the installed layout (~/.capsem/).
 ---
 
 # Native CLI Installer
@@ -12,7 +12,6 @@ description: Capsem native CLI installer -- setup wizard, service registration, 
   bin/capsem, capsem-service, capsem-process, capsem-mcp, capsem-gateway, capsem-tray
   assets/manifest.json, v{ver}/
   run/service.sock, service.pid, instances/, persistent/
-  setup-state.json
   update-check.json
   user.toml
   corp.toml               (CLI-provisioned corp config)
@@ -26,9 +25,9 @@ These commands dispatch before UdsClient creation -- they work without the servi
 | Command | Module | What |
 |---------|--------|------|
 | `capsem version` | main.rs | Print version + build hash |
-| `capsem setup` | setup.rs | First-time setup wizard |
 | `capsem update` | update.rs | Self-update from GitHub |
 | `capsem service install\|uninstall\|status` | service_install.rs | Service registration |
+| `capsem assets status\|ensure` | main.rs/service API | Profile-owned asset readiness |
 | `capsem completions bash\|zsh\|fish` | completions.rs | Shell completions |
 | `capsem uninstall --yes` | uninstall.rs | Full removal |
 
@@ -61,19 +60,19 @@ Side-effecting:
 - `uninstall_service()` -> `launchctl bootout` / `systemctl --user disable --now` + delete
 - `service_status()` -> installed + running + pid + unit_path
 
-## Setup wizard (setup.rs)
+## Install Readiness
 
-6 steps, corp-aware, state persisted to `setup-state.json`:
+The setup wizard is gone. Installation is service-first:
 
-0. Corp config provisioning (if `--corp-config`)
-1. Welcome
-2. (Doctor -- deferred)
-3. Security preset (skips corp-locked)
-4. AI providers (auto-detect credentials)
-5. Repositories (detect git/SSH/GitHub)
-6. Summary + PATH check + service install
+1. Install binaries and LaunchAgent/systemd user unit.
+2. Start or connect to `capsem-service`.
+3. Resolve the selected profile, usually `code`.
+4. Report profile-owned asset status for kernel, initrd, and rootfs.
+5. Download/verify missing profile assets through `/profiles/{profile_id}/assets/ensure`.
+6. Surface package/service failures visibly instead of opening UI against a dead daemon.
 
-Flags: `--non-interactive`, `--preset`, `--force`, `--accept-detected`, `--corp-config`
+Credentials are not collected during install. They are observed and brokered at
+runtime by the credential-broker plugin and logged as BLAKE3 credential refs.
 
 ## Self-update (update.rs)
 

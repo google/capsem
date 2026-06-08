@@ -229,17 +229,18 @@ The guest is air-gapped. No real NIC, no real DNS, no direct internet access.
 
 **Everything is ephemeral unless asked otherwise.** VMs are temporary by default. Named VMs (`capsem create -n <name>`) are persistent -- their workspace and rootfs overlay survive stops and can be resumed. Persistent VM data lives in `~/.capsem/run/persistent/`. Never make the overlay upper layer persistent for ephemeral VMs. To add packages: edit guest config and `just build-assets`.
 
-**Fork images** extend the ephemeral model with reusable templates. `capsem fork <vm> <image-name>` snapshots a VM (running or stopped) via APFS clonefile. `capsem create --image <name>` boots from the template. Images have flat genealogy: each depends only on a base squashfs version, never on other images. Deleting any image is always safe; asset cleanup protects referenced squashfs versions.
+**Fork images** extend the ephemeral model with reusable templates. `capsem fork <vm> <image-name>` snapshots a VM (running or stopped) via APFS clonefile. `capsem create --image <name>` boots from the template. Images have flat genealogy: each depends only on a base profile rootfs asset, never on other images. Deleting any image is always safe; asset cleanup protects referenced rootfs assets.
 
 ## Installation and service lifecycle
 
-`capsem setup` is the primary install entry point. On first CLI use, auto-runs non-interactively if `~/.capsem/setup-state.json` is missing.
-
-**Setup wizard** (6 steps): corp config provisioning, background asset download, security preset, AI provider detection, repository access, service installation.
+Installation is service-first. Native packages install binaries and the
+LaunchAgent/systemd user unit, then the UI/CLI waits for `capsem-service`
+readiness and profile-owned asset status. The setup wizard and provider
+credential collection path are gone.
 
 **Install layout** (`~/.capsem/`):
 - `bin/` -- capsem, capsem-service, capsem-process, capsem-mcp, capsem-gateway, capsem-tray
-- `assets/` -- manifest.json, v{VERSION}/{vmlinuz, initrd.img, rootfs.squashfs}
+- `assets/` -- manifest.json plus hash-named kernel, initrd, and rootfs assets
 - `run/` -- service.sock, service.pid, gateway.token, gateway.port, gateway.pid, instances/{id}.sock
 
 **Service registration**: LaunchAgent `com.capsem.service` (macOS) or systemd user unit `capsem.service` (Linux). KeepAlive/Restart=always. Service auto-launches gateway and tray as companion processes, passing `--parent-pid` so companions self-exit when the service dies (see capsem-guard, `/dev-rust-patterns` lesson 18).
@@ -248,7 +249,8 @@ The guest is air-gapped. No real NIC, no real DNS, no direct internet access.
 
 **Self-update**: `capsem update` checks GitHub for new manifest, downloads assets in background. Binary swap deferred. Background update-check cache (`update-check.json`, 24h TTL) refreshes on every CLI command.
 
-Key source files: `crates/capsem/src/setup.rs`, `paths.rs`, `service_install.rs`, `update.rs`, `uninstall.rs`.
+Key source files: `paths.rs`, `service_install.rs`, `update.rs`, `uninstall.rs`,
+and the profile asset/status handlers in `capsem-service`.
 
 ## Key source files
 
@@ -280,7 +282,7 @@ capsem-process is a **low-privilege** per-VM process. Security invariants:
 3. **Session directory 0700**: created by the service via `create_virtiofs_session`. Contains workspace/, system/, serial.log (0600), session.db.
 4. **No guest-triggered process exit**: control channel read errors cause `break` (loop exit), not `process::exit()`. Guest cannot DoS the host process.
 5. **Gateway auth layer**: external access goes through capsem-gateway (Bearer token, rate limiting, localhost CORS). Per-VM sockets are not exposed to the network.
-6. **Rootfs read-only**: squashfs mounted read-only by Apple VZ. Guest binaries deployed chmod 555.
+6. **Rootfs read-only**: EROFS lz4hc is the default read-only rootfs, with squashfs kept only as a legacy fallback. Guest binaries deployed chmod 555.
 7. **Guest binary security**: all injected binaries are read-only. Guest cannot modify its own agent.
 8. **VirtioFS boundary**: only `session_dir/guest/` is shared via VirtioFS (contains `system/` and `workspace/`). Host-only files (`session.db`, `serial.log`, `auto_snapshots/`, `checkpoint.vzsave`) are outside the share. Compat symlinks at `session_dir/{system,workspace}` point into `guest/` so existing code paths work unchanged.
 
