@@ -721,7 +721,11 @@ the guarantee or explicitly burn it.
 - [ ] Restore `capsem-admin` CLI package and entry point.
 - [ ] Restore profile/settings `init|schema|validate|doctor` commands.
 - [ ] Restore image `plan|verify|workspace|build` commands.
-- [ ] Restore manifest `check|download-check|generate|sign|verify` commands.
+- [ ] Restore manifest `check|download-check|generate|verify` commands only
+  for BLAKE3 hash checks, asset inventory, SBOM, and build provenance. Do not
+  restore manifest signing, profile payload signing, minisign pubkeys,
+  URL+pubkey catalog fetch, or `sign|verify` semantics that recreate the burned
+  signing authority rail.
 - [ ] Restore `scripts/build-assets.sh --profile <profile>` or equivalent
   `just build-assets profile=...` typed rail.
 - [ ] Restore package/bootstrap proof that `capsem-admin` is installed and

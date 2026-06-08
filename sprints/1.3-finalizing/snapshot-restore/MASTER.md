@@ -107,7 +107,13 @@ These are not optional:
   refresh policy, default rules, the modern rules system, optional AI
   provider control rules, MCP, and plugin config.
 - Profile-derived image plan/verify/workspace/build commands.
-- Manifest check/download-check/generate/sign/verify commands.
+- Manifest/check/download-check/generate/verify commands only where they mean
+  BLAKE3 hash checks, asset inventory, SBOM, and build provenance.
+- Warning for S1: do not restore manifest signing, profile payload signing,
+  minisign pubkeys, URL+pubkey catalog fetch, or `sign|verify` commands that
+  recreate the burned signing authority rail. If old `capsem-admin manifest
+  sign|verify` commits are inspected, port only non-signing validation and
+  provenance concepts.
 - `just`/CI/release using the typed admin rail instead of shell-only ad hoc
   asset builds.
 - Profile catalog/loader/revision trust.

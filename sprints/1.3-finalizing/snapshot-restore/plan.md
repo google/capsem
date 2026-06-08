@@ -51,10 +51,11 @@ Required capabilities:
 - Profile syntax supports per-architecture asset declarations, top-level
   `refresh_policy`, and `[assets].refresh_policy`. Channel, manifest URL, and
   trust keys are catalog/manifest-owned, not self-referential profile fields.
-- Manifest signing chain is explicit: release/root manifest signs corp and
-  profile manifests; corp manifest signs corp config/rule/detection files;
-  profile manifest signs profile/rule/detection/MCP metadata; profile asset
-  manifest signs profile-selected assets.
+- S1 warning: do not restore manifest signing, profile payload signing,
+  minisign pubkeys, URL+pubkey catalog fetch, or `sign|verify` command
+  semantics that recreate the burned signing authority rail. Admin manifest
+  work may restore only non-signing validation concepts: BLAKE3 hash checks,
+  asset inventory, SBOM, and build provenance.
 - Profile syntax carries the modern security rule system, including default
   rules, detection levels, provider control rules, MCP, credential broker plugin
   config, and plugin-owned HTTP materialization behavior.
@@ -90,7 +91,8 @@ Required capabilities:
   compatibility rail.
 - `capsem-admin` exposes typed profile/settings validation.
 - `capsem-admin` exposes image plan/verify/workspace/build commands.
-- `capsem-admin` exposes manifest check/download-check/generate/sign/verify.
+- `capsem-admin` exposes manifest check/download-check/generate/verify only for
+  BLAKE3, asset inventory, SBOM, and provenance validation; no signing rail.
 - Package/bootstrap tests prove `capsem-admin` is installed and runnable.
 - `just` and CI call the typed admin rail instead of re-implementing it in
   shell.
