@@ -22,7 +22,7 @@ use capsem_proto::ipc::{FileBoundaryAction, ProcessToService, ServiceToProcess};
 use clap::Parser;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path as StdPath, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -1286,6 +1286,33 @@ fn profile_asset_hash_hex(asset: &ProfileAssetDescriptor) -> &str {
 
 fn profile_asset_hash_name(asset: &ProfileAssetDescriptor) -> String {
     capsem_core::asset_manager::hash_filename(&asset.name, profile_asset_hash_hex(asset))
+}
+
+fn boot_asset_pin_hash_name(pin: &BootAssetPin) -> String {
+    let hash = pin.hash.strip_prefix("blake3:").unwrap_or(&pin.hash);
+    capsem_core::asset_manager::hash_filename(&pin.name, hash)
+}
+
+fn profile_catalog_asset_filenames(catalog: &ProfileCatalog) -> HashSet<String> {
+    let mut filenames = HashSet::new();
+    for profile in catalog.profiles() {
+        for assets in profile.assets.arch.values() {
+            filenames.insert(profile_asset_hash_name(&assets.kernel));
+            filenames.insert(profile_asset_hash_name(&assets.initrd));
+            filenames.insert(profile_asset_hash_name(&assets.rootfs));
+        }
+    }
+    filenames
+}
+
+fn persistent_registry_asset_filenames(registry: &PersistentRegistry) -> HashSet<String> {
+    let mut filenames = HashSet::new();
+    for entry in registry.list() {
+        filenames.insert(boot_asset_pin_hash_name(&entry.asset_pins.kernel));
+        filenames.insert(boot_asset_pin_hash_name(&entry.asset_pins.initrd));
+        filenames.insert(boot_asset_pin_hash_name(&entry.asset_pins.rootfs));
+    }
+    filenames
 }
 
 fn profile_asset_download_target(
@@ -6777,23 +6804,41 @@ async fn main() -> Result<()> {
         }
     });
 
-    // Clean up stale assets (legacy v*/ dirs, unreferenced hash-named files)
-    if let Some(ref m) = manifest {
-        match capsem_core::asset_manager::cleanup_unused_assets(&assets_base_dir, m) {
-            Ok(removed) if !removed.is_empty() => {
-                info!(count = removed.len(), "cleaned up stale assets");
-            }
-            Err(e) => warn!(error = %e, "asset cleanup failed"),
-            _ => {}
-        }
-    }
-
     let registry_path = run_dir.join("persistent_registry.json");
     let persistent_registry = PersistentRegistry::load(registry_path);
     info!(
         persistent_vms = persistent_registry.data.vms.len(),
         "loaded persistent VM registry"
     );
+
+    // Clean up stale assets (legacy v*/ dirs, unreferenced hash-named files).
+    // Preserve every filename referenced by the profile catalog or by saved VM
+    // boot pins so cleanup cannot strand a valid profile or persistent VM.
+    if let Some(ref m) = manifest {
+        match ProfileCatalog::load_default() {
+            Ok(catalog) => {
+                let mut preserve = profile_catalog_asset_filenames(&catalog);
+                preserve.extend(persistent_registry_asset_filenames(&persistent_registry));
+                match capsem_core::asset_manager::cleanup_unused_assets_preserving(
+                    &assets_base_dir,
+                    m,
+                    preserve,
+                ) {
+                    Ok(removed) if !removed.is_empty() => {
+                        info!(count = removed.len(), "cleaned up stale assets");
+                    }
+                    Err(e) => warn!(error = %e, "asset cleanup failed"),
+                    _ => {}
+                }
+            }
+            Err(error) => {
+                warn!(
+                    error = %error,
+                    "profile catalog unavailable; skipping asset cleanup"
+                );
+            }
+        }
+    }
 
     let magika_session = magika::Session::builder()
         .with_inter_threads(1)

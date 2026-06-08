@@ -551,6 +551,24 @@ pub fn asset_download_url(binary_version: &str, arch: &str, logical_name: &str) 
 ///
 /// Returns paths that were removed.
 pub fn cleanup_unused_assets(base_dir: &Path, manifest: &ManifestV2) -> Result<Vec<PathBuf>> {
+    cleanup_unused_assets_preserving(base_dir, manifest, std::iter::empty::<String>())
+}
+
+/// Remove hash-named asset files not referenced by any non-deprecated release
+/// or explicitly listed in `preserve_filenames`.
+///
+/// `preserve_filenames` is intentionally filename-only. Callers that own
+/// higher-level contracts, such as profiles or saved VMs, translate those
+/// contracts into hash-prefixed asset basenames before cleanup.
+pub fn cleanup_unused_assets_preserving<I, S>(
+    base_dir: &Path,
+    manifest: &ManifestV2,
+    preserve_filenames: I,
+) -> Result<Vec<PathBuf>>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
     let mut referenced: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     for release in manifest.assets.releases.values() {
@@ -563,6 +581,11 @@ pub fn cleanup_unused_assets(base_dir: &Path, manifest: &ManifestV2) -> Result<V
             }
         }
     }
+    referenced.extend(
+        preserve_filenames
+            .into_iter()
+            .map(|filename| filename.as_ref().to_string()),
+    );
 
     let mut removed = Vec::new();
     if !base_dir.exists() {
@@ -1330,6 +1353,32 @@ mod tests {
         assert!(base.join("vmlinuz-a65f925ebe0b0cc7").exists());
         assert!(!base.join("vmlinuz-deadbeef12345678").exists());
         assert!(base.join("manifest.json").exists());
+    }
+
+    #[test]
+    fn cleanup_preserves_explicit_retention_filenames() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path();
+
+        std::fs::write(base.join("vmlinuz-deadbeef12345678"), b"profile kernel").unwrap();
+        std::fs::write(
+            base.join("rootfs-feedface87654321.erofs"),
+            b"profile rootfs",
+        )
+        .unwrap();
+        std::fs::write(base.join("rootfs-1111111111111111.erofs"), b"old rootfs").unwrap();
+
+        let m = ManifestV2::from_json(SAMPLE_V2_MANIFEST).unwrap();
+        let removed = cleanup_unused_assets_preserving(
+            base,
+            &m,
+            ["vmlinuz-deadbeef12345678", "rootfs-feedface87654321.erofs"],
+        )
+        .unwrap();
+
+        assert_eq!(removed, vec![base.join("rootfs-1111111111111111.erofs")]);
+        assert!(base.join("vmlinuz-deadbeef12345678").exists());
+        assert!(base.join("rootfs-feedface87654321.erofs").exists());
     }
 
     #[test]

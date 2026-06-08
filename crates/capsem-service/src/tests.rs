@@ -1099,6 +1099,77 @@ fn profile_asset_status_uses_profile_current_arch_contract() {
 }
 
 #[test]
+fn asset_cleanup_preserves_profile_catalog_and_persistent_vm_pins() {
+    let dir = tempfile::tempdir().unwrap();
+    let base = dir.path();
+    let profile = ProfileConfigFile::builtin_code();
+    let catalog = ProfileCatalog::builtin();
+    let catalog_rootfs = profile_asset_hash_name(
+        &profile
+            .assets
+            .current_arch_assets()
+            .expect("built-in profile has current arch assets")
+            .rootfs,
+    );
+    let pinned_rootfs = "rootfs-dddddddddddddddd.erofs";
+    let disposable_rootfs = "rootfs-1111111111111111.erofs";
+    for filename in [&catalog_rootfs, pinned_rootfs, disposable_rootfs] {
+        std::fs::write(base.join(filename), filename.as_bytes()).unwrap();
+    }
+
+    let mut pins = test_asset_pins();
+    pins.rootfs.hash =
+        "blake3:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd".into();
+    let registry_path = base.join("persistent_registry.json");
+    let mut registry = PersistentRegistry::load(registry_path);
+    registry.data.vms.insert(
+        "saved-vm".into(),
+        PersistentVmEntry {
+            name: "saved-vm".into(),
+            profile_id: "code".into(),
+            profile_revision: test_profile_revision(),
+            profile_payload_hash: test_profile_payload_hash(),
+            asset_pins: pins,
+            ram_mb: 2048,
+            cpus: 2,
+            base_version: "0.0.0".into(),
+            created_at: "0".into(),
+            session_dir: base.join("persistent/saved-vm"),
+            forked_from: None,
+            description: None,
+            suspended: false,
+            defunct: false,
+            last_error: None,
+            checkpoint_path: None,
+            env: None,
+        },
+    );
+
+    let manifest = capsem_core::asset_manager::ManifestV2 {
+        format: 2,
+        assets: capsem_core::asset_manager::AssetsSection {
+            current: "empty".into(),
+            releases: HashMap::new(),
+        },
+        binaries: capsem_core::asset_manager::BinariesSection {
+            current: "1.0.0".into(),
+            releases: HashMap::new(),
+        },
+    };
+    let mut preserve = profile_catalog_asset_filenames(&catalog);
+    preserve.extend(persistent_registry_asset_filenames(&registry));
+
+    let removed =
+        capsem_core::asset_manager::cleanup_unused_assets_preserving(base, &manifest, preserve)
+            .unwrap();
+
+    assert_eq!(removed, vec![base.join(disposable_rootfs)]);
+    assert!(base.join(catalog_rootfs).exists());
+    assert!(base.join(pinned_rootfs).exists());
+    assert!(!base.join(disposable_rootfs).exists());
+}
+
+#[test]
 fn resolve_profile_asset_paths_uses_profile_hash_prefixed_assets() {
     let dir = tempfile::tempdir().unwrap();
     let profile = ProfileConfigFile::builtin_code();

@@ -188,7 +188,17 @@ the guarantee or explicitly burn it.
 - [ ] `0a87e26a test: harden profile asset reconcile races`
 - [ ] `deb1b083 refactor: remove legacy asset manifest runtime`
 - [ ] `d069710f feat: trigger profile asset reconcile from update`
-- [ ] `2d7e1470 feat: derive profile asset retention roots`
+- [x] `2d7e1470 feat: derive profile asset retention roots` decision:
+  conceptual_port. The current tree no longer has the old `saved_vm_assets.rs`
+  shape, so cleanup now accepts an explicit preserve set and service startup
+  derives that set from the active profile catalog plus persistent VM boot
+  asset pins before deleting stale hash-prefixed files. Tests: `cargo test -p
+  capsem-core cleanup_preserves_explicit_retention_filenames -- --nocapture`,
+  `cargo test -p capsem-service
+  asset_cleanup_preserves_profile_catalog_and_persistent_vm_pins --
+  --nocapture`, `cargo test -p capsem-core cleanup -- --nocapture`, `cargo
+  test -p capsem-service profile -- --nocapture`, and `cargo test -p
+  capsem-service --no-run`.
 - [ ] `911d6a67 feat: fetch signed profile payloads`
 - [ ] `dd42a2d4 feat: verify profile payload signatures`
 - [ ] `237d2bbc feat: materialize verified profile payloads`

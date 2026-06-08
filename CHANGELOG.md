@@ -89,6 +89,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   selected profile's current-architecture kernel, initrd, and rootfs URLs into
   hash-prefixed asset files, verifies each file with the profile BLAKE3 hash,
   updates reconcile status, and skips already-verified profile assets.
+- Made startup asset cleanup preserve profile catalog assets and persistent VM
+  boot asset pins. Hash-prefixed files referenced by active profile
+  descriptors or saved VM pins are retained even when they are not listed in
+  the release manifest.
 - Made persistent VM lifecycle state pin the selected profile revision, profile
   payload hash, and boot asset descriptors. Create/save/fork/resume preserve
   the pinned profile revision, typed profile payload BLAKE3 hash, and
