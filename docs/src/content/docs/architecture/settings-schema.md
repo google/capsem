@@ -68,7 +68,7 @@ graph TD
 | `metadata` | SettingMetadata | no | Extra fields (defaults to empty) |
 | `history` | HistoryEntry[] | no | Audit trail of value changes |
 
-Actions (`check_update`, `preset_select`) and MCP tools are SettingNode variants. They use `setting_type="action"` or `setting_type="mcp_tool"` with the relevant metadata fields. Consumers check `setting_type`, not `kind`.
+Actions (`check_update`) and MCP tools are SettingNode variants. They use `setting_type="action"` or `setting_type="mcp_tool"` with the relevant metadata fields. Consumers check `setting_type`, not `kind`.
 
 ## SettingType Enum
 
@@ -120,7 +120,7 @@ All metadata lives in a single `SettingMetadata` object. Most fields are optiona
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `action` | ActionKind | `null` | Action identifier (`check_update`, `preset_select`) |
+| `action` | ActionKind | `null` | Action identifier (`check_update`) |
 
 ### MCP tool-specific
 

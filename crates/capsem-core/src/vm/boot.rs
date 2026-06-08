@@ -28,8 +28,8 @@ use capsem_proto::{VSOCK_PORT_AUDIT, VSOCK_PORT_DNS_PROXY};
 use super::registry::SandboxNetworkState;
 
 /// Static CA keypair embedded at compile time.
-pub const CA_KEY_PEM: &str = include_str!("../../../../config/capsem-ca.key");
-pub const CA_CERT_PEM: &str = include_str!("../../../../config/capsem-ca.crt");
+pub const CA_KEY_PEM: &str = include_str!("../../../../security/keys/capsem-ca.key");
+pub const CA_CERT_PEM: &str = include_str!("../../../../security/keys/capsem-ca.crt");
 
 /// Create per-sandbox network state (CA + policy for MITM proxy).
 pub fn create_net_state(vm_id: &str, db: Arc<DbWriter>) -> Result<SandboxNetworkState> {

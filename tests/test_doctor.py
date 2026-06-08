@@ -298,8 +298,8 @@ def _create_all_source_files(tmp_path, *, skip=None):
     )
     artifacts = tmp_path / "guest" / "artifacts"
     artifacts.mkdir(parents=True, exist_ok=True)
-    config = tmp_path / "config"
-    config.mkdir(exist_ok=True)
+    security_keys = tmp_path / "security" / "keys"
+    security_keys.mkdir(parents=True, exist_ok=True)
     # Individual files
     all_files = ["capsem-init"] + list(ROOTFS_SUPPORT_FILES) + list(ROOTFS_SCRIPTS)
     for name in all_files:
@@ -315,15 +315,15 @@ def _create_all_source_files(tmp_path, *, skip=None):
         (bench_pkg / "__main__.py").write_text("stub")
     # CA cert
     if skip != "capsem-ca.crt":
-        (config / "capsem-ca.crt").write_text("stub cert")
+        (security_keys / "capsem-ca.crt").write_text("stub cert")
 
 
 class TestCheckSourceFiles:
     def test_all_present(self, tmp_path):
         artifacts = tmp_path / "guest" / "artifacts"
         artifacts.mkdir(parents=True)
-        config = tmp_path / "config"
-        config.mkdir()
+        security_keys = tmp_path / "security" / "keys"
+        security_keys.mkdir(parents=True)
         # Create all required files
         for name in [
             "capsem-init", "capsem-bashrc", "banner.txt", "tips.txt",
@@ -334,15 +334,15 @@ class TestCheckSourceFiles:
         bench_pkg = artifacts / "capsem_bench"
         bench_pkg.mkdir()
         (bench_pkg / "__main__.py").write_text("stub")
-        (config / "capsem-ca.crt").write_text("stub cert")
+        (security_keys / "capsem-ca.crt").write_text("stub cert")
         result = check_source_files(tmp_path)
         assert result.passed is True
 
     def test_missing_capsem_init(self, tmp_path):
         artifacts = tmp_path / "guest" / "artifacts"
         artifacts.mkdir(parents=True)
-        config = tmp_path / "config"
-        config.mkdir()
+        security_keys = tmp_path / "security" / "keys"
+        security_keys.mkdir(parents=True)
         for name in [
             "capsem-bashrc", "banner.txt", "tips.txt",
             "capsem-doctor", "capsem-bench", "snapshots",
@@ -352,7 +352,7 @@ class TestCheckSourceFiles:
         bench_pkg = artifacts / "capsem_bench"
         bench_pkg.mkdir()
         (bench_pkg / "__main__.py").write_text("stub")
-        (config / "capsem-ca.crt").write_text("stub cert")
+        (security_keys / "capsem-ca.crt").write_text("stub cert")
         result = check_source_files(tmp_path)
         assert result.passed is False
         assert "capsem-init" in result.detail
@@ -360,8 +360,8 @@ class TestCheckSourceFiles:
     def test_missing_snapshots(self, tmp_path):
         artifacts = tmp_path / "guest" / "artifacts"
         artifacts.mkdir(parents=True)
-        config = tmp_path / "config"
-        config.mkdir()
+        security_keys = tmp_path / "security" / "keys"
+        security_keys.mkdir(parents=True)
         for name in [
             "capsem-init", "capsem-bashrc", "banner.txt", "tips.txt",
             "capsem-doctor", "capsem-bench",
@@ -371,7 +371,7 @@ class TestCheckSourceFiles:
         bench_pkg = artifacts / "capsem_bench"
         bench_pkg.mkdir()
         (bench_pkg / "__main__.py").write_text("stub")
-        (config / "capsem-ca.crt").write_text("stub cert")
+        (security_keys / "capsem-ca.crt").write_text("stub cert")
         result = check_source_files(tmp_path)
         assert result.passed is False
         assert "snapshots" in result.detail
@@ -379,8 +379,8 @@ class TestCheckSourceFiles:
     def test_missing_diagnostics_dir(self, tmp_path):
         artifacts = tmp_path / "guest" / "artifacts"
         artifacts.mkdir(parents=True)
-        config = tmp_path / "config"
-        config.mkdir()
+        security_keys = tmp_path / "security" / "keys"
+        security_keys.mkdir(parents=True)
         for name in [
             "capsem-init", "capsem-bashrc", "banner.txt", "tips.txt",
             "capsem-doctor", "capsem-bench", "snapshots",
@@ -390,7 +390,7 @@ class TestCheckSourceFiles:
         bench_pkg = artifacts / "capsem_bench"
         bench_pkg.mkdir()
         (bench_pkg / "__main__.py").write_text("stub")
-        (config / "capsem-ca.crt").write_text("stub cert")
+        (security_keys / "capsem-ca.crt").write_text("stub cert")
         result = check_source_files(tmp_path)
         assert result.passed is False
         assert "diagnostics" in result.detail
@@ -398,8 +398,8 @@ class TestCheckSourceFiles:
     def test_missing_bench_pkg_dir(self, tmp_path):
         artifacts = tmp_path / "guest" / "artifacts"
         artifacts.mkdir(parents=True)
-        config = tmp_path / "config"
-        config.mkdir()
+        security_keys = tmp_path / "security" / "keys"
+        security_keys.mkdir(parents=True)
         for name in [
             "capsem-init", "capsem-bashrc", "banner.txt", "tips.txt",
             "capsem-doctor", "capsem-bench", "snapshots",
@@ -407,7 +407,7 @@ class TestCheckSourceFiles:
             (artifacts / name).write_text("stub")
         (artifacts / "diagnostics").mkdir()
         # No capsem_bench/ dir
-        (config / "capsem-ca.crt").write_text("stub cert")
+        (security_keys / "capsem-ca.crt").write_text("stub cert")
         result = check_source_files(tmp_path)
         assert result.passed is False
         assert "capsem_bench" in result.detail
@@ -435,7 +435,7 @@ class TestCheckSourceFiles:
         bench_pkg = artifacts / "capsem_bench"
         bench_pkg.mkdir()
         (bench_pkg / "__main__.py").write_text("stub")
-        # No config/capsem-ca.crt
+        # No security/keys/capsem-ca.crt
         result = check_source_files(tmp_path)
         assert result.passed is False
         assert "capsem-ca.crt" in result.detail

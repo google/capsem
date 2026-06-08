@@ -69,7 +69,6 @@ class ActionKind(str, Enum):
     """Action identifier for action-type settings."""
 
     CHECK_UPDATE = "check_update"
-    PRESET_SELECT = "preset_select"
 
 
 class McpTransport(str, Enum):

@@ -98,7 +98,7 @@ class TestSideEffect:
 
 
 class TestActionKind:
-    EXPECTED = ["check_update", "preset_select"]
+    EXPECTED = ["check_update"]
 
     def test_all_values_present(self):
         actual = sorted(e.value for e in ActionKind)
@@ -303,7 +303,7 @@ class TestSettingMetadata:
             domains=["x.com"],
             env_vars=["KEY"],
             widget=Widget.TOGGLE,
-            action=ActionKind.PRESET_SELECT,
+            action=ActionKind.CHECK_UPDATE,
         )
         data = meta.model_dump()
         meta2 = SettingMetadata.model_validate(data)

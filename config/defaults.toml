@@ -150,13 +150,8 @@ prefix = "glpat-"
 
 [settings.security]
 name = "Security"
-description = "Network access control, web services, and security presets"
+description = "Network mechanics and service access controls"
 collapsed = false
-
-[settings.security.preset]
-name = "Security Preset"
-description = "Predefined security configurations"
-action = "preset_select"
 
 # -- Security > Services -----------------------------------------------------
 

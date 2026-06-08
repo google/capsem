@@ -1,5 +1,5 @@
 {
-  "total_settings": 22,
+  "total_settings": 21,
   "by_type": {
     "bool": 3,
     "number": 1,
@@ -11,7 +11,7 @@
     "string_list": 1,
     "int_list": 1,
     "float_list": 1,
-    "action": 2,
+    "action": 1,
     "mcp_tool": 1,
     "kv_map": 2
   },
@@ -105,12 +105,6 @@
       "key": "test_security.dark_mode",
       "name": "Dark Mode",
       "setting_type": "bool",
-      "enabled_by": null
-    },
-    {
-      "key": "test_security.preset",
-      "name": "Security Preset",
-      "setting_type": "action",
       "enabled_by": null
     },
     {

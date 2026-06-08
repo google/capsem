@@ -104,7 +104,7 @@ Both emit the same format-2 schema. `scripts/create_hash_assets.py` then creates
 
 ## Runtime Hash Verification
 
-Asset hashes are **not** baked into the binary at compile time -- that would tie every binary release to a specific asset release and defeat the `min_binary`/`min_assets` compatibility model. Instead, the binary is hash-agnostic; the manifest on disk is authoritative, and its authenticity is established by a minisign signature verified against a pubkey baked into the binary (`config/manifest-sign.pub`, key id `93A070CBB288AC9B`).
+Asset hashes are **not** baked into the binary at compile time -- that would tie every binary release to a specific asset release and defeat the `min_binary`/`min_assets` compatibility model. Instead, the binary is hash-agnostic; the manifest on disk is authoritative, and its authenticity is established by a minisign signature verified against a pubkey baked into the binary (`release/keys/manifest-sign.pub`, key id `93A070CBB288AC9B`).
 
 At boot (`crates/capsem-core/src/vm/boot.rs`):
 
@@ -118,7 +118,7 @@ Failure modes:
 - **Manifest present, no `.minisig`**: debug builds log a warning and proceed (local dev loops with unsigned manifests). Release builds (`cfg!(debug_assertions) == false`) hard-fail -- an untrusted manifest must not drive hash verification.
 - **Manifest present, `.minisig` invalid**: always hard-fail, regardless of build profile. A signature mismatch is a loud signal.
 
-Manifests are signed during the release workflow (`scripts/check-release-workflow.sh` uses `minisign -Sm assets/manifest.json`). The corresponding pubkey in `config/manifest-sign.pub` is included via `include_str!` at compile time, so the signing/verification loop is self-contained and does not depend on any TLS or external trust root.
+Manifests are signed during the release workflow (`scripts/check-release-workflow.sh` uses `minisign -Sm assets/manifest.json`). The corresponding pubkey in `release/keys/manifest-sign.pub` is included via `include_str!` at compile time, so the signing/verification loop is self-contained and does not depend on any TLS or external trust root.
 
 ## Runtime Asset Resolution
 

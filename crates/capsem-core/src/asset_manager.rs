@@ -183,9 +183,9 @@ fn canonical_rootfs_asset_name(assets: &HashMap<String, AssetEntry>) -> Option<&
 }
 
 /// Minisign public key baked into the binary. Used to verify signatures on
-/// downloaded manifests in release builds. Stored in `config/manifest-sign.pub`
-/// (key id 93A070CBB288AC9B).
-const MANIFEST_SIGN_PUBKEY_FILE: &str = include_str!("../../../config/manifest-sign.pub");
+/// downloaded manifests in release builds. Stored in
+/// `release/keys/manifest-sign.pub` (key id 93A070CBB288AC9B).
+const MANIFEST_SIGN_PUBKEY_FILE: &str = include_str!("../../../release/keys/manifest-sign.pub");
 
 /// Verify a manifest's minisign signature against a given pubkey.
 ///
@@ -1190,7 +1190,7 @@ mod tests {
 
     #[test]
     fn baked_pubkey_file_is_parseable_minisign_format() {
-        // Regression guard: if config/manifest-sign.pub ever gets replaced
+        // Regression guard: if release/keys/manifest-sign.pub ever gets replaced
         // with a malformed file, this fires before the binary starts
         // rejecting every signed manifest.
         minisign_verify::PublicKey::decode(MANIFEST_SIGN_PUBKEY_FILE.trim())

@@ -25,7 +25,7 @@ flowchart LR
   RS --> TB[Tree Builder]
   RS --> P2["Policy Rules"]
   RS --> PB[Policy Builder]
-  TB --> SR["Settings Response\n{tree, issues, presets, policy}"]
+  TB --> SR["Settings Response\n{tree, issues}"]
   P2 --> SR
   PB --> NP["Network Policy\n(MITM proxy rules)"]
   PB --> GC["Guest Config\n(env vars + files)"]
@@ -67,14 +67,9 @@ A fourth node type, **MCP Server**, lives in a separate `[mcp]` section.
 
 ### Action nodes
 
-Action nodes declare UI elements (buttons, preset selectors) directly in the TOML grammar instead of hardcoding them in the frontend:
+Action nodes declare UI elements directly in the TOML grammar instead of hardcoding them in the frontend:
 
 ```toml
-[settings.security.preset]
-name = "Security Preset"
-description = "Predefined security configurations"
-action = "preset_select"
-
 [settings.app.check_update]
 name = "Check for updates"
 action = "check_update"
@@ -113,7 +108,7 @@ flowchart TD
   style D fill:#6b7280,color:#fff
 ```
 
-**Corp override is final.** When corp.toml sets a value, it becomes `corp_locked: true`. The user cannot change it via the UI or presets.
+**Corp override is final.** When corp.toml sets a value, it becomes `corp_locked: true`. The user cannot change it via the UI.
 
 ### Enabled resolution
 
@@ -141,34 +136,8 @@ effective_hidden = corp_hidden OR user_hidden OR defaults_hidden
 
 Hidden settings are filtered from the tree sent to the frontend but still participate in policy building.
 
-## Presets
-
-Security presets (Medium, High) are batch writes to `user.toml`. They are **not** a separate resolution layer.
-
-```mermaid
-sequenceDiagram
-  participant UI as Frontend
-  participant BE as Backend
-  participant UF as user.toml
-  participant CF as corp.toml
-
-  UI->>BE: apply_preset("medium")
-  BE->>CF: Load corp settings
-  BE->>UF: Load user settings
-  loop Each preset setting
-    BE->>CF: Is key corp-locked?
-    alt Corp-locked
-      BE-->>BE: Skip (add to skipped list)
-    else Not locked
-      BE->>UF: Write { value, modified }
-    end
-  end
-  BE->>BE: Reload network policies
-  BE-->>UI: List of skipped setting IDs
-```
-
 After settings edits, resolution re-runs across the current settings file and
-corp locks. Security presets and policy maps are no longer settings-owned
+corp locks. Retired behavior bundles and policy maps are no longer settings-owned
 objects.
 
 ## IPC Protocol
@@ -212,7 +181,7 @@ Returns the full `SettingsResponse` in one call:
 | `tree` | `SettingsNode[]` | Hierarchical tree: groups, leaves, actions, MCP servers |
 | `issues` | `ConfigIssue[]` | Validation warnings (invalid JSON, invalid paths, blocked setting writes, etc.) |
 
-`SettingsResponse` intentionally does not include presets, provider status, MCP
+`SettingsResponse` intentionally does not include behavior bundles, provider status, MCP
 policy, security rules, plugins, credentials, or VM behavior. Those belong to
 profile/corp contracts, runtime plugin status, or service/VM runtime endpoints.
 
@@ -365,7 +334,6 @@ Enterprise administrators distribute `corp.toml` via MDM. It controls:
 | **Force a value** | Set the key in corp.toml -- user cannot override |
 | **Disable provider traffic** | Add a corp/profile enforcement rule that matches the provider boundary and uses `action = "block"` |
 | **Hide a setting** | Set `hidden = true` on the override entry |
-| **Block preset application** | Corp-locked settings are skipped during preset apply |
 | **Add MCP servers** | Add entries to `[mcp]` section -- user cannot remove |
 | **Disable MCP servers** | Set `enabled = false` on a server definition |
 

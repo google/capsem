@@ -207,6 +207,24 @@ the guarantee or explicitly burn it.
   handle_persist_preserves_profile_identity -- --nocapture`, `cargo test -p
   capsem-service handle_fork -- --nocapture`, `cargo test -p capsem-service
   profile -- --nocapture`, and `cargo test -p capsem-service --no-run`.
+- [x] Current-architecture cleanup slice: root `config/` now contains only
+  real configuration/generator outputs. Manifest verification key material
+  lives under `release/keys/manifest-sign.pub`; MITM CA key material lives
+  under `security/keys/`; retired settings presets and their Rust/Python/
+  frontend schema hooks are burned. Decision: intentional_burn for the preset
+  subsystem, conceptual cleanup for key placement so profile/corp/config
+  ownership is not confused by signing or CA artifacts. Tests:
+  `cargo test -p capsem-core --lib policy_config -- --nocapture`, `cargo test
+  -p capsem-core --lib manifest -- --nocapture`, `cargo test -p capsem-core
+  --lib cert_authority -- --nocapture`, `uv run pytest
+  tests/test_settings_spec.py tests/test_config.py
+  tests/test_docker.py::TestGenerateChecksums
+  tests/test_docker.py::TestPrepareBuildContextArtifacts tests/test_doctor.py
+  tests/capsem-rootfs-artifacts/test_rootfs_artifacts.py -q`, `pnpm -C
+  frontend test src/lib/models/__tests__/settings-model.test.ts
+  src/lib/__tests__/settings-store.test.ts`, `git diff --check`, and a
+  targeted `rg` sweep for the old root-config signing/CA/preset paths and
+  preset action symbols.
 - [ ] `b2fb7e33 feat: export session policy contexts`
 - [ ] `7a5afc9c test: prove process enforcement logs in real vm`
 - [ ] `f2a6247f docs: close s07 debt ledger`

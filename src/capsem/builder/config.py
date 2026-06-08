@@ -282,7 +282,7 @@ def generate_defaults_json(config: GuestImageConfig) -> dict:
         "providers": repo_provs,
     }
 
-    # -- security (preset action + web defaults + services from web.toml) --
+    # -- security (network mechanics + services from web.toml) --
     search_section: dict[str, Any] = {
         "name": "Search Engines",
         "description": "Web search engine access",
@@ -304,13 +304,8 @@ def generate_defaults_json(config: GuestImageConfig) -> dict:
     ws = config.web_security
     settings["security"] = {
         "name": "Security",
-        "description": "Network access control, web services, and security presets",
+        "description": "Network mechanics and service access controls",
         "collapsed": False,
-        "preset": {
-            "name": "Security Preset",
-            "description": "Predefined security configurations",
-            "action": "preset_select",
-        },
         "web": {
             "name": "Network Mechanics",
             "description": "Network engine mechanics. HTTP/DNS decisions are profile security rules.",

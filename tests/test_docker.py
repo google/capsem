@@ -1493,9 +1493,9 @@ class TestPrepareBuildContextArtifacts:
         repo = tmp_path / "repo"
         artifacts = repo / "guest" / "artifacts"
         artifacts.mkdir(parents=True)
-        config = repo / "config"
-        config.mkdir()
-        (config / "capsem-ca.crt").write_text("fake cert")
+        security_keys = repo / "security" / "keys"
+        security_keys.mkdir(parents=True)
+        (security_keys / "capsem-ca.crt").write_text("fake cert")
         for name in ("capsem-bashrc", "banner.txt", "tips.txt"):
             (artifacts / name).write_text(f"content of {name}")
         for name in ROOTFS_SCRIPTS:

@@ -22,8 +22,8 @@ use rustls::pki_types::ServerName;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_rustls::TlsConnector;
 
-const CA_KEY: &str = include_str!("../../../config/capsem-ca.key");
-const CA_CERT: &str = include_str!("../../../config/capsem-ca.crt");
+const CA_KEY: &str = include_str!("../../../security/keys/capsem-ca.key");
+const CA_CERT: &str = include_str!("../../../security/keys/capsem-ca.crt");
 
 /// Build a proxy config from allow/block lists for integration tests.
 ///

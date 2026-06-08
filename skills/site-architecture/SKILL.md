@@ -217,7 +217,7 @@ The guest is air-gapped. No real NIC, no real DNS, no direct internet access.
 
 ### MITM CA
 
-- Static CA: `config/capsem-ca.key` + `config/capsem-ca.crt` (ECDSA P-256)
+- Static CA: `security/keys/capsem-ca.key` + `security/keys/capsem-ca.crt` (ECDSA P-256)
 - Baked into rootfs via `update-ca-certificates` + certifi patch
 - Guest trusts it via system store + env vars (`REQUESTS_CA_BUNDLE`, `NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE`)
 
@@ -300,4 +300,4 @@ capsem-process is a **low-privilege** per-VM process. Security invariants:
 - The user's environment variables (cleared at spawn)
 
 ### MITM CA key transparency
-The MITM proxy CA private key (`config/capsem-ca.key`) is committed to the repo and embedded at compile time. This is intentional -- capsem's network interception exists for user visibility into what AI agents do, not for secrecy. The CA is only trusted inside capsem's own air-gapped VMs and has zero trust outside them. A public key lets anyone verify there is no hidden interception. Per-installation key generation would reduce transparency.
+The MITM proxy CA private key (`security/keys/capsem-ca.key`) is committed to the repo and embedded at compile time. This is intentional -- capsem's network interception exists for user visibility into what AI agents do, not for secrecy. The CA is only trusted inside capsem's own air-gapped VMs and has zero trust outside them. A public key lets anyone verify there is no hidden interception. Per-installation key generation would reduce transparency.

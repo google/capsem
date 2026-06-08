@@ -149,13 +149,8 @@
     },
     "security": {
       "name": "Security",
-      "description": "Network access control, web services, and security presets",
+      "description": "Network mechanics and service access controls",
       "collapsed": false,
-      "preset": {
-        "name": "Security Preset",
-        "description": "Predefined security configurations",
-        "action": "preset_select"
-      },
       "web": {
         "name": "Network Mechanics",
         "description": "Network engine mechanics. HTTP/DNS decisions are profile security rules.",

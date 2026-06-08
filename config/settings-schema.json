@@ -3,8 +3,7 @@
     "ActionKind": {
       "description": "Action identifier for action-type settings.",
       "enum": [
-        "check_update",
-        "preset_select"
+        "check_update"
       ],
       "title": "ActionKind",
       "type": "string"

@@ -365,21 +365,6 @@
         },
         {
           "kind": "setting",
-          "key": "test_security.preset",
-          "name": "Security Preset",
-          "description": "Apply a security preset",
-          "setting_type": "action",
-          "metadata": {
-            "domains": [],
-            "choices": [],
-            "rules": {},
-            "action": "preset_select",
-            "hidden": false,
-            "builtin": false
-          }
-        },
-        {
-          "kind": "setting",
           "key": "test_security.env_vars",
           "name": "Environment Variables",
           "description": "Key-value environment variables",

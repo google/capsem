@@ -885,7 +885,7 @@ def prepare_build_context(
     if "rootfs" in template_name:
         # CA cert
         shutil.copy2(
-            str(repo_root / "config" / "capsem-ca.crt"),
+            str(repo_root / "security" / "keys" / "capsem-ca.crt"),
             str(context_dir / "capsem-ca.crt"),
         )
         artifacts = repo_root / "guest" / "artifacts"

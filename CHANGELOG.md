@@ -55,6 +55,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   validation for both settings file loads and inline corp config installs;
   provider control remains profile/corp rule-owned and credential handling
   remains plugin-owned.
+- Removed the retired settings preset subsystem and cleaned root `config/` so
+  release signing and MITM CA key material live under `release/keys/` and
+  `security/keys/` instead of looking like editable runtime configuration.
 
 ### Changed (service/API)
 - Updated architecture docs and local development skills to match the 1.3
@@ -2615,7 +2618,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `manifest.json`, but an attacker with write access to `assets/` could
   swap both the rootfs and the manifest to match. Closed the gap with
   minisign signature verification: the release pubkey
-  (`config/manifest-sign.pub`, key id `93A070CBB288AC9B`) is now baked
+  (`release/keys/manifest-sign.pub`, key id `93A070CBB288AC9B`) is now baked
   into `capsem-core` via `include_str!`, and
   `asset_manager::load_verified_manifest_for_assets` rejects any
   manifest whose sibling `.minisig` is missing or invalid. Release

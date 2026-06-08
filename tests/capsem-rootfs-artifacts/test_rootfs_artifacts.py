@@ -9,7 +9,7 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 ARTIFACTS_DIR = PROJECT_ROOT / "guest" / "artifacts"
-CONFIG_DIR = PROJECT_ROOT / "config"
+SECURITY_KEYS_DIR = PROJECT_ROOT / "security" / "keys"
 
 pytestmark = pytest.mark.rootfs
 
@@ -45,8 +45,8 @@ class TestArtifactsExist:
         assert path.is_dir(), f"Missing artifact directory: {path}"
 
     def test_ca_cert_exists(self):
-        """CA certificate exists in config/."""
-        ca = CONFIG_DIR / "capsem-ca.crt"
+        """CA certificate exists with other security key material."""
+        ca = SECURITY_KEYS_DIR / "capsem-ca.crt"
         assert ca.is_file(), f"Missing CA certificate: {ca}"
 
 
