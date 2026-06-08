@@ -22,27 +22,6 @@ export type SettingValue = boolean | number | string | { path: string; content: 
 /** Where a setting's effective value came from (serde rename_all = "lowercase"). */
 export type PolicySource = 'default' | 'user' | 'corp';
 
-export interface ProviderDiscovery {
-  observed_at: string;
-  source: string;
-  event_type?: string | null;
-  confidence: number;
-  credential_ref?: string | null;
-  trace_id?: string | null;
-}
-
-export interface ProviderStatus {
-  id: string;
-  name: string;
-  protocol?: string | null;
-  url?: string | null;
-  aliases: string[];
-  listen_ports: number[];
-  allowed_remote_targets: string[];
-  discovery?: ProviderDiscovery | null;
-  corp_blocked: boolean;
-}
-
 export type SettingsChangeValue = SettingValue | null;
 
 /** Per-rule HTTP method permissions. */
@@ -166,7 +145,6 @@ export type SettingsNode = SettingsGroup | SettingsLeaf | SettingsAction | McpSe
 export interface SettingsResponse {
   tree: SettingsNode[];
   issues: ConfigIssue[];
-  providers?: ProviderStatus[];
 }
 
 /** Info about an available update. */

@@ -2248,10 +2248,7 @@ fn toml_registry_enabled_by_inherited() {
         allow.enabled_by.is_none(),
         "the toggle itself should not have enabled_by",
     );
-    let api_key = defs
-        .iter()
-        .find(|d| d.id == SETTING_GITHUB_TOKEN)
-        .unwrap();
+    let api_key = defs.iter().find(|d| d.id == SETTING_GITHUB_TOKEN).unwrap();
     assert_eq!(
         api_key.enabled_by.as_deref(),
         Some(SETTING_GITHUB_ALLOW),
@@ -3116,7 +3113,10 @@ fn settings_tree_enabled_by_on_groups() {
     }
 
     let github = find_group(&tree, "repository.providers.github");
-    assert!(github.is_some(), "should find repository.providers.github group");
+    assert!(
+        github.is_some(),
+        "should find repository.providers.github group"
+    );
     if let Some(SettingsNode::Group { enabled_by, .. }) = github {
         assert_eq!(enabled_by, Some(SETTING_GITHUB_ALLOW.to_string()));
     }
@@ -3309,10 +3309,7 @@ fn batch_update_rejects_corp_locked() {
         vec![(SETTING_GITHUB_ALLOW, SettingValue::Bool(false))],
         |_, _| {
             let mut changes = HashMap::new();
-            changes.insert(
-                SETTING_GITHUB_ALLOW.to_string(),
-                SettingValue::Bool(true),
-            );
+            changes.insert(SETTING_GITHUB_ALLOW.to_string(), SettingValue::Bool(true));
             let result = loader::batch_update_profile_settings(&changes);
             assert!(result.is_err());
             assert!(result.unwrap_err().contains("corp-locked"));
@@ -3336,10 +3333,7 @@ fn batch_update_rejects_mixed_batch_atomically() {
                 ),
             );
             // One corp-locked change
-            changes.insert(
-                SETTING_GITHUB_ALLOW.to_string(),
-                SettingValue::Bool(true),
-            );
+            changes.insert(SETTING_GITHUB_ALLOW.to_string(), SettingValue::Bool(true));
             let result = loader::batch_update_profile_settings(&changes);
             assert!(result.is_err(), "mixed batch should be rejected");
 
@@ -5039,7 +5033,7 @@ match = 'http.host.matches("(^|.*\.)openai\.com$")'
 }
 
 #[test]
-fn load_settings_response_exposes_provider_status_without_static_runtime_evidence() {
+fn load_settings_response_does_not_expose_provider_status() {
     let _guard = crate::credential_broker::TEST_ENV_LOCK.blocking_lock();
 
     let dir = tempfile::tempdir().unwrap();
@@ -5073,41 +5067,24 @@ match = 'http.host.matches("(^|.*\.)openai\.com$")'
     let _user_config = EnvVarGuard::set("CAPSEM_USER_CONFIG", &user_path);
     let _corp_config = EnvVarGuard::set("CAPSEM_CORP_CONFIG", &corp_path);
 
-    let response = load_settings_response();
-    let openai = response
-        .providers
-        .iter()
-        .find(|provider| provider.id == "openai")
-        .expect("OpenAI provider status should be present");
-    assert_eq!(openai.name, "OpenAI");
-    assert_eq!(openai.protocol.as_deref(), Some("openai"));
-    assert_eq!(openai.aliases, vec!["api.openai.com"]);
-    assert_eq!(openai.listen_ports, vec![443]);
-    assert_eq!(openai.allowed_remote_targets, vec!["api.openai.com:443"]);
-    assert!(openai.discovery.is_some());
-    assert!(openai.corp_blocked);
-
-    let serialized = serde_json::to_value(&response).expect("settings response serializes");
+    let serialized =
+        serde_json::to_value(load_settings_response()).expect("settings response serializes");
+    assert!(
+        serialized.get("providers").is_none(),
+        "settings response must not expose provider status"
+    );
     assert!(
         serialized.get("tool_config_sources").is_none(),
         "settings response must not expose runtime tool config observations"
     );
-    let provider = serialized["providers"]
-        .as_array()
-        .and_then(|providers| providers.iter().find(|provider| provider["id"] == "openai"))
-        .expect("serialized OpenAI provider");
     assert!(
-        provider.get("credential_setting_id").is_none(),
-        "provider status must not expose static credential setting ids"
-    );
-    assert!(
-        provider.get("brokered_credential_ref").is_none(),
-        "credential broker refs belong to discovery/plugin status, not provider cards"
+        serialized.get("policy").is_none(),
+        "settings response must not expose retired policy payloads"
     );
 }
 
 #[test]
-fn load_settings_response_exposes_provider_rules_without_policy_payload() {
+fn load_settings_response_exposes_settings_tree_only() {
     let _guard = crate::credential_broker::TEST_ENV_LOCK.blocking_lock();
 
     let dir = tempfile::tempdir().unwrap();
@@ -5118,13 +5095,23 @@ fn load_settings_response_exposes_provider_rules_without_policy_payload() {
     let _user_config = EnvVarGuard::set("CAPSEM_USER_CONFIG", &user_path);
     let _corp_config = EnvVarGuard::set("CAPSEM_CORP_CONFIG", &corp_path);
 
-    let response = load_settings_response();
+    let serialized =
+        serde_json::to_value(load_settings_response()).expect("settings response serializes");
     assert!(
-        response
-            .providers
-            .iter()
-            .any(|provider| provider.id == "openai"),
-        "settings response should expose provider status, not a retired policy map"
+        serialized.get("tree").is_some(),
+        "settings response must expose the settings tree"
+    );
+    assert!(
+        serialized.get("issues").is_some(),
+        "settings response must expose config issues"
+    );
+    assert!(
+        serialized.get("providers").is_none(),
+        "provider state belongs to profile rules and plugin/runtime status, not settings"
+    );
+    assert!(
+        serialized.get("policy").is_none(),
+        "retired policy maps must stay out of settings response"
     );
 }
 

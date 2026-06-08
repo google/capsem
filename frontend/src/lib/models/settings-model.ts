@@ -10,7 +10,6 @@ import {
   type SettingsChangeValue,
   type ConfigIssue,
   type SettingsResponse,
-  type ProviderStatus,
 } from '../types/settings';
 import {
   SettingType,
@@ -22,7 +21,6 @@ import {
 export class SettingsModel {
   private _tree: SettingsNode[];
   private _issues: ConfigIssue[];
-  private _providers: ProviderStatus[];
   private _leafIndex: Map<string, SettingsLeaf>;
   private _mcpIndex: Map<string, McpServerNode>;
   private _pendingChanges: Map<string, SettingsChangeValue>;
@@ -30,7 +28,6 @@ export class SettingsModel {
   constructor(response: SettingsResponse) {
     this._tree = response.tree;
     this._issues = response.issues;
-    this._providers = response.providers ?? [];
     this._leafIndex = new Map();
     this._mcpIndex = new Map();
     this._pendingChanges = new Map();
@@ -105,10 +102,6 @@ export class SettingsModel {
 
   issuesFor(id: string): ConfigIssue[] {
     return this._issues.filter((i) => i.id === id);
-  }
-
-  get providers(): ProviderStatus[] {
-    return this._providers;
   }
 
   // --- Enabled / visibility ---

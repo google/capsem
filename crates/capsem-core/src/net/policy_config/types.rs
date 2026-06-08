@@ -467,10 +467,7 @@ pub fn validate_stored_setting_contract(id: &str, value: &SettingValue) -> Resul
 }
 
 pub fn is_brokered_credential_setting_id(id: &str) -> bool {
-    matches!(
-        id,
-        SETTING_GITHUB_TOKEN | SETTING_GITLAB_TOKEN
-    )
+    matches!(id, SETTING_GITHUB_TOKEN | SETTING_GITLAB_TOKEN)
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]
@@ -623,27 +620,6 @@ pub struct McpServerDef {
 pub struct SettingsResponse {
     pub tree: Vec<crate::net::policy_config::tree::SettingsNode>,
     pub issues: Vec<crate::net::policy_config::lint::ConfigIssue>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub providers: Vec<ProviderStatus>,
-}
-
-#[derive(Serialize, Debug, Clone, PartialEq)]
-pub struct ProviderStatus {
-    pub id: String,
-    pub name: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub protocol: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub url: Option<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub aliases: Vec<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub listen_ports: Vec<u16>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub allowed_remote_targets: Vec<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub discovery: Option<super::security_rule_profile::ProviderDiscovery>,
-    pub corp_blocked: bool,
 }
 
 // ---------------------------------------------------------------------------

@@ -66,20 +66,6 @@ describe('SettingsModel', () => {
     });
   });
 
-  describe('provider status', () => {
-    it('exposes provider discovery and routing from the response', () => {
-      const model = loadModel();
-      const openai = model.providers.find((provider) => provider.id === 'openai');
-
-      expect(openai?.discovery?.event_type).toBe('file.event');
-      expect(openai?.aliases).toContain('api.openai.com');
-      expect(openai?.listen_ports).toEqual([443]);
-      expect(openai?.allowed_remote_targets).toContain('api.openai.com:443');
-      expect(openai?.corp_blocked).toBe(false);
-    });
-
-  });
-
   describe('getWidget', () => {
     it('returns Toggle for bool type', () => {
       const model = loadModel();
@@ -322,6 +308,7 @@ describe('SettingsModel', () => {
       expect(model.section('AI Providers')).toBeUndefined();
       expect(model.getLeaf('ai.anthropic.allow')).toBeUndefined();
       expect(model.getLeaf('ai.openai.api_key')).toBeUndefined();
+      expect('providers' in model).toBe(false);
     });
   });
 });

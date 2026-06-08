@@ -330,7 +330,14 @@ commit.
 - [ ] Credential UI reads only credential-broker plugin runtime status/stats and
   lists brokered refs/BLAKE3 hashes from that plugin-owned state.
 - [ ] Skill UI can add/edit/remove profile skills through profile endpoints.
-- [ ] Ensure no provider API object remains in UI for 1.3.
+- [x] Ensure no provider API object remains in UI for 1.3. `/settings/info`
+  now serializes only `tree` and `issues`, the frontend settings model/store
+  have no provider-status accessor, and runtime `top_providers` analytics stay
+  separate from configuration. Coverage: `cargo test -p capsem-core --lib
+  load_settings_response -- --nocapture`, `cargo test -p capsem-service
+  handle_get_settings_returns_tree -- --nocapture`, `pnpm -C frontend test
+  src/lib/models/__tests__/settings-model.test.ts
+  src/lib/__tests__/settings-store.test.ts`, and `pnpm -C frontend check`.
 - [ ] Add adversarial tests for plugin disable/enable invalid modes, invalid
   detection levels, cross-profile MCP tool mutation, and credential secret
   leakage attempts.
@@ -505,7 +512,7 @@ invariant sweep before release verification.
 - [ ] No generic `rule-files` API exists.
 - [ ] Enforcement source refs are exposed through enforcement `info`.
 - [ ] Detection source refs are exposed through detection `info`.
-- [ ] Provider is not a 1.3 profile API object.
+- [x] Provider is not a 1.3 profile/settings API object.
 - [ ] Credential brokerage plus rules own provider-like behavior.
 
 ### UI Invariants

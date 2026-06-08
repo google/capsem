@@ -4,8 +4,7 @@ use std::path::Path;
 use super::provider_profile::ProviderDiscoveryPatch;
 use super::types::{McpServerDef, McpTransport, PolicySource};
 use super::{
-    setting_id_owner, validate_stored_setting_contract, ConfigOwner, ProviderRuleProfile,
-    ProviderStatus, SecurityRuleAction, SettingValue, SettingsFile,
+    setting_id_owner, validate_stored_setting_contract, ConfigOwner, SettingValue, SettingsFile,
 };
 
 // ---------------------------------------------------------------------------
@@ -108,8 +107,8 @@ pub(super) fn reject_retired_ai_setting_ids_in_content(
     label: &str,
     content: &str,
 ) -> Result<(), String> {
-    let root: toml::Value = toml::from_str(content)
-        .map_err(|e| format!("failed to parse {label}: {e}"))?;
+    let root: toml::Value =
+        toml::from_str(content).map_err(|e| format!("failed to parse {label}: {e}"))?;
     let Some(settings) = root.get("settings").and_then(|value| value.as_table()) else {
         return Ok(());
     };
@@ -533,47 +532,7 @@ pub fn load_settings_response() -> super::types::SettingsResponse {
     super::types::SettingsResponse {
         tree: super::tree::build_settings_tree_with_mcp(&resolved, &mcp_servers),
         issues: super::lint::config_lint(&resolved),
-        providers: build_provider_statuses(&user, &corp),
     }
-}
-
-fn build_provider_statuses(user: &SettingsFile, corp: &SettingsFile) -> Vec<ProviderStatus> {
-    let merged = ProviderRuleProfile::merge_defaults_user_and_corp(
-        &ProviderRuleProfile {
-            ai: user.ai.clone(),
-        },
-        &ProviderRuleProfile {
-            ai: corp.ai.clone(),
-        },
-    )
-    .unwrap_or_else(|error| {
-        tracing::warn!("provider status ignored invalid provider profile: {error}");
-        ProviderRuleProfile::default()
-    });
-
-    merged
-        .ai
-        .iter()
-        .map(|(id, provider)| {
-            let corp_blocked = corp.ai.get(id).is_some_and(|provider| {
-                provider
-                    .rules
-                    .values()
-                    .any(|rule| rule.action == SecurityRuleAction::Block)
-            });
-            ProviderStatus {
-                id: id.clone(),
-                name: provider.name.clone().unwrap_or_else(|| id.clone()),
-                protocol: provider.protocol.clone(),
-                url: provider.url.clone(),
-                aliases: provider.aliases.clone(),
-                listen_ports: provider.listen_ports.clone(),
-                allowed_remote_targets: provider.allowed_remote_targets.clone(),
-                discovery: provider.discovery.clone(),
-                corp_blocked,
-            }
-        })
-        .collect()
 }
 
 // ---------------------------------------------------------------------------

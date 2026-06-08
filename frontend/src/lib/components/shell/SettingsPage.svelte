@@ -6,7 +6,6 @@
   import SettingsSection from '../settings/SettingsSection.svelte';
   import McpSection from '../settings/McpSection.svelte';
   import PluginSection from '../settings/PluginSection.svelte';
-  import ProviderStatusSection from '../settings/ProviderStatusSection.svelte';
   import Palette from 'phosphor-svelte/lib/Palette';
   import GearSix from 'phosphor-svelte/lib/GearSix';
   import Brain from 'phosphor-svelte/lib/Brain';
@@ -405,11 +404,6 @@
 
       {:else if activeDynamicGroup}
         <!-- ===== Dynamic section from settings tree ===== -->
-        {#if activeDynamicGroup.key === 'ai'}
-          <ProviderStatusSection
-            providers={settingsStore.model?.providers ?? []}
-          />
-        {/if}
         <SettingsSection group={activeDynamicGroup} />
       {/if}
     </div>

@@ -3119,12 +3119,11 @@ async fn handle_get_settings_returns_tree() {
         "retired policy compatibility payload must not be emitted"
     );
     assert!(
-        val.get("providers").is_some(),
-        "response must have provider status"
+        val.get("providers").is_none(),
+        "settings response must not expose provider status"
     );
     assert!(val["tree"].is_array());
     assert!(val["issues"].is_array());
-    assert!(val["providers"].is_array());
 }
 
 #[tokio::test]

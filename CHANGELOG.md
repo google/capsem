@@ -216,6 +216,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   information only; `credential_setting_id`, provider-level `credential_ref`,
   and provider `files` fail closed, and settings provider cards no longer expose
   brokered credential refs.
+- Removed provider status from `/settings/info` and the settings UI/model.
+  Provider-like behavior is no longer a settings object: profile/corp rules own
+  enforcement and credential/plugin runtime status owns credential evidence.
 - Stopped the credential broker from writing brokered references into settings.
   Observed credentials are stored in the credential store/keychain, emitted to
   the substitution/security ledger, and can record provider discovery; settings
