@@ -462,11 +462,17 @@ the guarantee or explicitly burn it.
 - [x] Burn `snapshot` as a first-party CEL/security-event root unless a real
   snapshot parser/rule contract is deliberately designed later. Workspace
   snapshot operations remain MCP/tool/runtime mechanics for 1.3.
-- [ ] Remove `Credential` and `Snapshot` from `RuntimeSecurityEventFamily`,
+- [x] Remove `Credential` and `Snapshot` from `RuntimeSecurityEventFamily`,
   `RuntimeSecurityEventType`, logger DB event-type checks, or keep them
   explicitly documented as ledger-only emitted types. `SecurityEvent`,
   `SerializableSecurityEvent`, `SECURITY_EVENT_CEL_ROOTS`, CEL coverage tests,
   and default rules no longer expose fake credential/snapshot object roots.
+  Decision: keep `credential.substitution` and `snapshot.event` as typed
+  ledger-only event families because substitution and snapshot lifecycle rows
+  are real forensic rows, but they are not CEL object roots. Proof:
+  `cargo test -p capsem-core --lib runtime_security_event_families_mark_credential_and_snapshot_as_ledger_only -- --nocapture`;
+  `cargo test -p capsem-core --lib runtime_security_event_types_keep_credential_and_snapshot_ledger_only -- --nocapture`;
+  `cargo test -p capsem-core --lib security_event_cel_rejects_credential_and_snapshot_roots -- --nocapture`.
   Programmatic hunt locations:
   `crates/capsem-core/src/security_engine/mod.rs`,
   `crates/capsem-core/src/security_engine/tests.rs`,

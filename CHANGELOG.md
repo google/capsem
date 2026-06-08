@@ -184,6 +184,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`http`, `dns`, `mcp`, `model`, `file`, `process`, and `security`) so stale
   callback-local fields fail before rules persist. Credential substitution and
   snapshot lifecycle writes remain ledger event types, not fake CEL roots.
+- Added typed runtime-family markers for first-party CEL roots versus
+  ledger-only `credential.substitution`/`snapshot.event` rows, with regression
+  tests tying the markers to `SECURITY_EVENT_CEL_ROOTS`.
 - Added a security-event engine that runs configured preprocess plugins before
   detection/enforcement, evaluates CEL once against the canonical event, then
   runs configured postprocess plugins only after the decision allows

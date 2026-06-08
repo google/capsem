@@ -56,6 +56,26 @@ impl RuntimeSecurityEventFamily {
             RuntimeSecurityEventFamily::Security => "security",
         }
     }
+
+    pub const fn is_first_party_cel_root(self) -> bool {
+        matches!(
+            self,
+            RuntimeSecurityEventFamily::Http
+                | RuntimeSecurityEventFamily::Model
+                | RuntimeSecurityEventFamily::Mcp
+                | RuntimeSecurityEventFamily::Dns
+                | RuntimeSecurityEventFamily::File
+                | RuntimeSecurityEventFamily::Process
+                | RuntimeSecurityEventFamily::Security
+        )
+    }
+
+    pub const fn is_ledger_only(self) -> bool {
+        matches!(
+            self,
+            RuntimeSecurityEventFamily::Credential | RuntimeSecurityEventFamily::Snapshot
+        )
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -142,6 +162,10 @@ impl RuntimeSecurityEventType {
             RuntimeSecurityEventType::SecurityRule => RuntimeSecurityEventFamily::Security,
             RuntimeSecurityEventType::SecurityAsk => RuntimeSecurityEventFamily::Security,
         }
+    }
+
+    pub const fn uses_ledger_only_family(self) -> bool {
+        self.family().is_ledger_only()
     }
 
     pub fn parse_str(value: &str) -> Result<Self, SecurityEventTypeParseError> {

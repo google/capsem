@@ -853,6 +853,50 @@ fn runtime_security_event_type_roundtrips_and_maps_family() {
 }
 
 #[test]
+fn runtime_security_event_families_mark_credential_and_snapshot_as_ledger_only() {
+    use RuntimeSecurityEventFamily::*;
+
+    let cel_roots = crate::net::policy_config::SECURITY_EVENT_CEL_ROOTS
+        .iter()
+        .copied()
+        .collect::<std::collections::BTreeSet<_>>();
+    let families = [
+        Http, Model, Mcp, Dns, File, Process, Credential, Snapshot, Security,
+    ];
+
+    for family in families {
+        assert_eq!(
+            family.is_first_party_cel_root(),
+            cel_roots.contains(family.as_str()),
+            "{} family CEL-root marker must match SECURITY_EVENT_CEL_ROOTS",
+            family.as_str()
+        );
+        assert_eq!(
+            family.is_ledger_only(),
+            matches!(family, Credential | Snapshot),
+            "{} ledger-only marker drifted",
+            family.as_str()
+        );
+    }
+}
+
+#[test]
+fn runtime_security_event_types_keep_credential_and_snapshot_ledger_only() {
+    for event_type in RuntimeSecurityEventType::ALL {
+        assert_eq!(
+            event_type.uses_ledger_only_family(),
+            matches!(
+                event_type,
+                RuntimeSecurityEventType::CredentialSubstitution
+                    | RuntimeSecurityEventType::SnapshotEvent
+            ),
+            "{} ledger-only classification drifted",
+            event_type.as_str()
+        );
+    }
+}
+
+#[test]
 fn runtime_security_event_from_logger_write_maps_all_write_ops() {
     let credential_ref =
         "credential:blake3:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
