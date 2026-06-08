@@ -11,7 +11,10 @@ use capsem_core::net::policy_config::{
     SecurityRuleSource,
 };
 use clap::{Parser, Subcommand};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+
+const CODE_PROFILE_TEMPLATE: &str = include_str!("../../../config/profiles/code.toml");
+const SETTINGS_TEMPLATE: &str = include_str!("../../../config/settings.toml");
 
 #[derive(Debug, Parser)]
 #[command(name = "capsem-admin")]
@@ -24,6 +27,7 @@ struct Cli {
 #[derive(Debug, Subcommand)]
 enum Commands {
     Profile(ProfileCommand),
+    Settings(SettingsCommand),
     Enforcement(RuleFileCommand),
     Detection(RuleFileCommand),
     Manifest(ManifestCommand),
@@ -37,7 +41,20 @@ struct ProfileCommand {
 
 #[derive(Debug, Subcommand)]
 enum ProfileSubcommand {
+    Init(InitArgs),
     Validate(ProfileValidateArgs),
+}
+
+#[derive(Debug, Parser)]
+struct SettingsCommand {
+    #[command(subcommand)]
+    command: SettingsSubcommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum SettingsSubcommand {
+    Init(InitArgs),
+    Validate(SettingsValidateArgs),
 }
 
 #[derive(Debug, Parser)]
@@ -74,6 +91,25 @@ struct ProfileValidateArgs {
     /// Emit a machine-readable validation report.
     #[arg(long)]
     json: bool,
+}
+
+#[derive(Debug, Parser)]
+struct SettingsValidateArgs {
+    /// Settings TOML to validate.
+    path: PathBuf,
+    /// Emit a machine-readable validation report.
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Parser)]
+struct InitArgs {
+    /// Destination file to create.
+    #[arg(long)]
+    output: PathBuf,
+    /// Replace an existing destination file.
+    #[arg(long)]
+    force: bool,
 }
 
 #[derive(Debug, Parser)]
@@ -140,6 +176,52 @@ struct ProfileValidationReport {
 }
 
 #[derive(Debug, Serialize)]
+struct SettingsValidationReport {
+    schema: &'static str,
+    ok: bool,
+    path: String,
+    app: SettingsAppReport,
+    appearance: SettingsAppearanceReport,
+}
+
+#[derive(Debug, Serialize)]
+struct SettingsAppReport {
+    auto_update: bool,
+    notifications: bool,
+    start_service_at_login: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct SettingsAppearanceReport {
+    theme: String,
+    font_size: u32,
+    reduced_motion: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SettingsConfigFile {
+    app: SettingsApp,
+    appearance: SettingsAppearance,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SettingsApp {
+    auto_update: bool,
+    notifications: bool,
+    start_service_at_login: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SettingsAppearance {
+    theme: String,
+    font_size: u32,
+    reduced_motion: bool,
+}
+
+#[derive(Debug, Serialize)]
 struct RuleFileReport {
     schema: &'static str,
     ok: bool,
@@ -200,7 +282,12 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Commands::Profile(command) => match command.command {
+            ProfileSubcommand::Init(args) => init_file_command(args, CODE_PROFILE_TEMPLATE),
             ProfileSubcommand::Validate(args) => validate_profile_command(args),
+        },
+        Commands::Settings(command) => match command.command {
+            SettingsSubcommand::Init(args) => init_file_command(args, SETTINGS_TEMPLATE),
+            SettingsSubcommand::Validate(args) => validate_settings_command(args),
         },
         Commands::Enforcement(command) => match command.command {
             RuleFileSubcommand::Validate(args) => validate_rule_file_command("enforcement", args),
@@ -217,6 +304,23 @@ fn main() -> Result<()> {
     }
 }
 
+fn init_file_command(args: InitArgs, template: &str) -> Result<()> {
+    if args.output.exists() && !args.force {
+        return Err(anyhow!(
+            "refusing to overwrite existing file {}; pass --force to replace it",
+            args.output.display()
+        ));
+    }
+    if let Some(parent) = args.output.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("create parent directory {}", parent.display()))?;
+    }
+    fs::write(&args.output, template)
+        .with_context(|| format!("write {}", args.output.display()))?;
+    println!("wrote {}", args.output.display());
+    Ok(())
+}
+
 fn validate_profile_command(args: ProfileValidateArgs) -> Result<()> {
     let report = validate_profile(&args.path, args.config_root.as_deref())?;
     if args.json {
@@ -226,6 +330,16 @@ fn validate_profile_command(args: ProfileValidateArgs) -> Result<()> {
             "valid: profile {} ({} compiled rules)",
             report.profile_id, report.compiled_rules
         );
+    }
+    Ok(())
+}
+
+fn validate_settings_command(args: SettingsValidateArgs) -> Result<()> {
+    let report = validate_settings(&args.path)?;
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else {
+        println!("valid: settings {}", args.path.display());
     }
     Ok(())
 }
@@ -338,6 +452,51 @@ fn validate_profile(path: &Path, config_root: Option<&Path>) -> Result<ProfileVa
         config_root: config_root.display().to_string(),
         compiled_rules: rules.rules().len(),
     })
+}
+
+fn validate_settings(path: &Path) -> Result<SettingsValidationReport> {
+    let content =
+        fs::read_to_string(path).with_context(|| format!("read settings {}", path.display()))?;
+    let settings: SettingsConfigFile =
+        toml::from_str(&content).with_context(|| format!("parse settings {}", path.display()))?;
+    settings
+        .validate()
+        .map_err(|error| anyhow!("validate settings {}: {error}", path.display()))?;
+    Ok(SettingsValidationReport {
+        schema: "capsem.admin.settings_validation.v1",
+        ok: true,
+        path: path.display().to_string(),
+        app: SettingsAppReport {
+            auto_update: settings.app.auto_update,
+            notifications: settings.app.notifications,
+            start_service_at_login: settings.app.start_service_at_login,
+        },
+        appearance: SettingsAppearanceReport {
+            theme: settings.appearance.theme,
+            font_size: settings.appearance.font_size,
+            reduced_motion: settings.appearance.reduced_motion,
+        },
+    })
+}
+
+impl SettingsConfigFile {
+    fn validate(&self) -> Result<(), String> {
+        match self.appearance.theme.as_str() {
+            "system" | "light" | "dark" => {}
+            other => {
+                return Err(format!(
+                    "appearance.theme must be system, light, or dark, got {other}"
+                ));
+            }
+        }
+        if !(8..=32).contains(&self.appearance.font_size) {
+            return Err(format!(
+                "appearance.font_size must be between 8 and 32, got {}",
+                self.appearance.font_size
+            ));
+        }
+        Ok(())
+    }
 }
 
 fn compile_rule_file(
@@ -540,6 +699,84 @@ mod tests {
         assert!(report.ok);
         assert_eq!(report.profile_id, "code");
         assert!(report.compiled_rules >= 7);
+    }
+
+    #[test]
+    fn validates_checked_in_settings_file() {
+        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let repo_root = manifest_dir
+            .parent()
+            .and_then(Path::parent)
+            .expect("repo root");
+        let path = repo_root.join("config/settings.toml");
+
+        let report = validate_settings(&path).expect("settings validates");
+
+        assert!(report.ok);
+        assert_eq!(report.app.auto_update, true);
+        assert_eq!(report.appearance.theme, "system");
+    }
+
+    #[test]
+    fn settings_validation_rejects_runtime_profile_fields() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("settings.toml");
+        fs::write(
+            &path,
+            r#"
+[app]
+auto_update = true
+notifications = true
+start_service_at_login = true
+
+[appearance]
+theme = "system"
+font_size = 14
+reduced_motion = false
+
+[profiles]
+code = true
+"#,
+        )
+        .expect("settings");
+
+        let error = validate_settings(&path).expect_err("profile fields rejected");
+
+        assert!(
+            format!("{error:#}").contains("unknown field `profiles`"),
+            "{error:#}"
+        );
+    }
+
+    #[test]
+    fn init_writes_templates_and_refuses_overwrite_without_force() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let profile_path = temp.path().join("profiles/code.toml");
+        init_file_command(
+            InitArgs {
+                output: profile_path.clone(),
+                force: false,
+            },
+            CODE_PROFILE_TEMPLATE,
+        )
+        .expect("profile init");
+        let profile: ProfileConfigFile =
+            toml::from_str(&fs::read_to_string(&profile_path).expect("read profile"))
+                .expect("profile template parses");
+        assert_eq!(profile.id, "code");
+
+        let error = init_file_command(
+            InitArgs {
+                output: profile_path,
+                force: false,
+            },
+            CODE_PROFILE_TEMPLATE,
+        )
+        .expect_err("overwrite rejected");
+        assert!(
+            error.to_string().contains("refusing to overwrite"),
+            "{error:#}"
+        );
     }
 
     #[test]

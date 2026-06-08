@@ -110,6 +110,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   command, `capsem-admin profile validate`, parses the current profile TOML and
   compiles referenced enforcement/Sigma rule files through the same
   `SecurityRuleSet`/CEL contract used at runtime.
+- Added current-contract `capsem-admin profile init|validate` and
+  `settings init|validate`. Profile init emits the checked-in `code` profile
+  template, while settings validation is limited to UI/application preferences
+  and rejects runtime/profile ownership drift.
 - Added `capsem-admin enforcement validate|compile` and
   `capsem-admin detection validate|compile` so administrators can validate the
   current enforcement TOML and Sigma YAML files directly through the runtime

@@ -255,25 +255,74 @@ the guarantee or explicitly burn it.
   check/download-check plus inventory/SBOM/doctor bundle probes.
 - [x] `2fb45076 feat: add capsem-admin image plan` decision:
   conceptual_port. Notes: image plan remains open; must be profile-derived.
-- [ ] `0e9442e4 test: pin admin init json toml parity`
-- [ ] `53065265 test: pin profile toml json round trip`
-- [ ] `c9e227c1 test: pin service settings toml json round trip`
-- [ ] `839c1114 feat: add capsem-admin settings init`
-- [ ] `d2834490 feat: add capsem-admin profile init`
-- [ ] `be6909a0 feat: add profile section editability gates`
-- [ ] `634b9730 feat: add capsem-admin profile validation`
-- [ ] `810b417a test: pin service settings default parity`
-- [ ] `d0c1c988 feat: wire capsem-admin settings commands`
-- [ ] `d39756f3 feat: add service settings admin contract`
-- [ ] `be0741e1 feat: verify admin profile payload installs`
-- [ ] `25eb08d9 feat: align admin profile lifecycle gates`
-- [ ] `f3fdbf0a chore: make profile manifest canonical`
-- [ ] `b04cb88c feat: add pydantic profile contracts`
-- [ ] `a8f712d5 feat: add profile v2 schema artifact`
-- [ ] `4cdba35f refactor install asset prep into scripts`
-- [ ] `d4d2bb3a fix: harden release package verification`
-- [ ] `5d7e58ce fix: harden installer downloads and release package checks`
-- [ ] `22096b7f fix: harden release install deb repack`
+- [x] `0e9442e4 test: pin admin init json toml parity` decision:
+  conceptual_port. Notes: current admin init writes TOML templates directly
+  from checked-in `config/settings.toml` and `config/profiles/code.toml`.
+  JSON/TOML parity for old schemas is burned unless rebuilt from current Rust
+  contracts.
+- [x] `53065265 test: pin profile toml json round trip` decision:
+  conceptual_port. Notes: current profile validation uses Rust
+  `ProfileConfigFile`; schema/round-trip artifacts remain open if needed for
+  docs/UI, but old profile-v2 payload/signature schema stays burned.
+- [x] `c9e227c1 test: pin service settings toml json round trip` decision:
+  intentional_burn/conceptual_port. Notes: old service settings owned runtime
+  behavior. Current settings are UI/application preferences only; admin
+  validates that shape and rejects runtime/profile fields.
+- [x] `839c1114 feat: add capsem-admin settings init` decision:
+  conceptual_port. Notes: restored as `capsem-admin settings init`, writing the
+  current UI settings template. No AI/provider/profile/runtime fields.
+- [x] `d2834490 feat: add capsem-admin profile init` decision:
+  conceptual_port. Notes: restored as `capsem-admin profile init`, writing the
+  checked-in `code` profile template with current assets/rules/plugins/MCP
+  shape.
+- [x] `be6909a0 feat: add profile section editability gates` decision:
+  conceptual_port. Notes: UI/service editability remains governed by endpoint
+  contracts and profile ownership; old schema gates are not restored directly.
+- [x] `634b9730 feat: add capsem-admin profile validation` decision:
+  conceptual_port. Notes: restored through Rust `ProfileConfigFile::validate`
+  plus rule-file compilation.
+- [x] `810b417a test: pin service settings default parity` decision:
+  intentional_burn/conceptual_port. Notes: old service-settings defaults are
+  burned. Current default truth is `config/settings.toml` for UI and
+  `config/profiles/code.toml`/rule files for runtime.
+- [x] `d0c1c988 feat: wire capsem-admin settings commands` decision:
+  conceptual_port. Notes: restored the command surface in Rust, not old Python
+  admin settings schema.
+- [x] `d39756f3 feat: add service settings admin contract` decision:
+  intentional_burn/conceptual_port. Notes: old service settings contract
+  violated the settings/profile split. Current admin settings validation is
+  strict UI settings only.
+- [x] `be0741e1 feat: verify admin profile payload installs` decision:
+  conceptual_port. Notes: profile install/package proof remains open under the
+  package/bootstrap slice; do not restore signed profile payloads.
+- [x] `25eb08d9 feat: align admin profile lifecycle gates` decision:
+  conceptual_port. Notes: lifecycle gates must use current profile catalog,
+  asset status, and VM profile pins. Old payload lifecycle is burned.
+- [x] `f3fdbf0a chore: make profile manifest canonical` decision:
+  intentional_burn/conceptual_port. Notes: old profile manifest canonicalization
+  included the signing/payload rail. Current canonical profile is TOML plus
+  BLAKE3 asset descriptors and runtime profile payload hash.
+- [x] `b04cb88c feat: add pydantic profile contracts` decision:
+  intentional_burn/conceptual_port. Notes: do not restore Python profile
+  schemas that can drift from Rust. Admin profile validation now calls Rust
+  contract code.
+- [x] `a8f712d5 feat: add profile v2 schema artifact` decision:
+  intentional_burn/conceptual_port. Notes: old schema fixtures and minisig
+  artifacts are burned. A current schema artifact may be regenerated later only
+  from the current profile contract and without signatures.
+- [x] `4cdba35f refactor install asset prep into scripts` decision:
+  conceptual_port. Notes: `scripts/build-assets.sh` and install asset prep are
+  absent; restore as profile-required build/install prep later.
+- [x] `d4d2bb3a fix: harden release package verification` decision:
+  conceptual_port. Notes: package verification hardening remains relevant and
+  belongs in the release/package slice.
+- [x] `5d7e58ce fix: harden installer downloads and release package checks`
+  decision: conceptual_port. Notes: release install download verification
+  remains relevant; ensure the current install path verifies assets/packages
+  without setup wizard fallback.
+- [x] `22096b7f fix: harden release install deb repack` decision:
+  conceptual_port. Notes: Linux package repack hardening remains in release
+  handoff/package slice.
 
 ### S2 Runtime Profile Assets/Pins Commits
 
@@ -864,6 +913,15 @@ the guarantee or explicitly burn it.
   `cargo run -p capsem-admin -- detection compile
   config/profiles/code/detection.yaml --json`.
 - [ ] Restore profile/settings `init|schema|validate|doctor` commands.
+- [x] Restore current-contract `capsem-admin profile init|validate` and
+  `settings init|validate`. Profile init writes the checked-in `code` profile
+  template and profile validate compiles referenced enforcement/Sigma rules.
+  Settings init writes the checked-in UI settings template and settings
+  validate rejects runtime/profile fields. Proof:
+  `cargo test -p capsem-admin -- --nocapture`,
+  `cargo run -p capsem-admin -- settings validate config/settings.toml --json`,
+  temp `profile init` + `profile validate`, and temp `settings init` +
+  `settings validate`.
 - [ ] Restore image `plan|verify|workspace|build` commands.
 - [ ] Restore manifest `check|download-check|generate|verify` commands only
   for BLAKE3 hash checks, asset inventory, SBOM, and build provenance. Do not
