@@ -68,7 +68,9 @@
   tests/capsem-service/test_svc_loop_device_after_resume.py -q`, `uv run pytest
   tests/capsem-gateway/test_mitm_policy.py -q`, and `uv run pytest
   tests/capsem-e2e/test_framed_mcp_mitm.py --collect-only -q`.
-- [ ] Commit S0.
+- [x] Commit S0. Evidence and S0 cleanup slices are committed through
+  `25b8b326 docs: align 1.3 contracts`; worktree was clean before entering
+  the S1 commit ledger.
 
 ## Commit Inspection Ledger
 
