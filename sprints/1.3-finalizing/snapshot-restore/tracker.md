@@ -1087,7 +1087,35 @@ the guarantee or explicitly burn it.
   `cargo test -p capsem-core --no-run`;
   `cargo test -p capsem-gateway gateway_does_not_forward_retired_settings_utility_routes -- --nocapture`;
   `pnpm -C frontend check`.
-- [ ] Commit S2.
+- [x] Commit S2. Runtime profile assets/pins were already implemented and
+  committed before S1 closure; this bookkeeping closure records that S2 is
+  complete against the current contract. Key implementation commits:
+  `ce971d83 feat: restore code profile catalog contract`,
+  `cc4c42f2 fix: make profile asset status contract-backed`,
+  `1710578f fix: require profile identity for vm lifecycle`,
+  `bd9eeeb6 fix: boot vms from profile assets`,
+  `ce139ad8 feat: ensure profile assets from profile contract`,
+  `e6dcd5f6 fix: pin persistent vm profile assets`,
+  `048b0a7b fix: pin persistent vm profile payloads`,
+  `6bdb95b1 fix: expose profile asset provenance`,
+  `a7a1e9f0 fix: preserve profile assets during cleanup`,
+  `7818da85 feat: expose profile catalog status reload`,
+  `eefa94a0 fix: route asset commands through real profiles`,
+  `507bf40c chore: remove default profile compatibility alias`,
+  `d062bb04 chore: slim profile asset contract`, and
+  `07808d9a fix: close profile asset restore slice`. Remaining work is not S2:
+  TUI/shell restore is S3, Linux/KVM/bench proof is S4, security corpus is S5,
+  and VM boot/doctor/file-snapshot/release verification is S6.
+  Closure proof rerun: `cargo test -p capsem-core --lib profile_contract --
+  --nocapture`, `cargo test -p capsem-service profile -- --nocapture`,
+  `cargo test -p capsem parse_assets -- --nocapture`, `cargo test -p
+  capsem-mcp profile_id -- --nocapture`, `cargo test -p capsem-gateway
+  gateway_security_routes_are_explicitly_forwarded -- --nocapture`, `cargo
+  test -p capsem-gateway
+  gateway_does_not_forward_retired_profile_credential_routes -- --nocapture`,
+  `rg` sweep proving no live `ProfileConfigFile::builtin_default`,
+  `builtin_default(`, or `/profiles/default` remains under
+  `crates config scripts tests`, and `git diff --check`.
 
 ## S3: TUI And Terminal Shell
 

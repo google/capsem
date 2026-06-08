@@ -377,7 +377,7 @@ batch unrelated fixes into one giant release commit.
   `sprints/1.3-finalizing/snapshot-restore/`.
 - [ ] Ensure VM assigned profile id is immutable.
 - [ ] Implement/verify `pause`, `resume`, `save`, `fork`, and operation status.
-- [ ] Restore profile catalog/loader and remove the current `default`-only
+- [x] Restore profile catalog/loader and remove the current `default`-only
   route validator.
 - [x] Add the first catalog-backed profile route slice: core parses
   `config/profiles/code.toml` with per-arch EROFS/LZ4HC assets, and service
@@ -386,13 +386,14 @@ batch unrelated fixes into one giant release commit.
 - [x] Make profile asset status profile-aware: status reports the selected
   profile's current-arch asset metadata and present/missing state instead of a
   service-global asset guess.
-- [ ] Ensure profile asset selection is profile-backed:
+- [x] Ensure profile asset selection is profile-backed:
   `vm.profile_id -> profile assets -> asset manifest/cache -> resolved boot paths`.
-- [ ] Restore per-arch profile asset declarations with URL/hash/signature/size
-  metadata.
-- [ ] Restore profile-aware asset reconciliation/status/ensure.
-- [ ] Restore persistent VM profile/base-asset pins and fail-closed resume/fork/save.
-- [ ] Restore VM/profile DTOs for profile id, revision, status, pin, and base assets.
+- [x] Restore per-arch profile asset declarations with URL/hash/size metadata.
+  Per-asset signatures are intentionally rejected; release authenticity evidence
+  is SBOM/provenance plus BLAKE3 byte verification.
+- [x] Restore profile-aware asset reconciliation/status/ensure.
+- [x] Restore persistent VM profile/base-asset pins and fail-closed resume/fork/save.
+- [x] Restore VM/profile DTOs for profile id, revision, status, pin, and base assets.
 - [ ] Restore TUI crate and terminal shell behavior; `capsem shell` must work
   through the TUI again.
 - [ ] Restore launchable-profile filtering for UI/TUI/gateway.
