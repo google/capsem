@@ -84,6 +84,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   approved hash-prefixed downloaded layout and logical-name dev layout, but
   both are derived from profile asset descriptors instead of the old
   service-global file guess.
+- Made `/profiles/{profile_id}/assets/ensure` profile-owned. It downloads the
+  selected profile's current-architecture kernel, initrd, and rootfs URLs into
+  hash-prefixed asset files, verifies each file with the profile BLAKE3 hash,
+  updates reconcile status, and skips already-verified profile assets.
 - Added profile management route gates:
   `POST /profiles/create`, `PATCH /profiles/{profile_id}/edit`,
   `DELETE /profiles/{profile_id}/delete`, `POST /profiles/{profile_id}/clone`,

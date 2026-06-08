@@ -1089,6 +1089,69 @@ fn resolve_profile_asset_paths_uses_profile_hash_prefixed_assets() {
     assert_ne!(resolved.rootfs.file_name().unwrap(), "rootfs.erofs");
 }
 
+#[tokio::test]
+async fn ensure_profile_assets_downloads_profile_descriptors() {
+    let dir = tempfile::tempdir().unwrap();
+    let source_dir = dir.path().join("sources");
+    let assets_dir = dir.path().join("assets");
+    std::fs::create_dir_all(&source_dir).unwrap();
+
+    let mut profile = ProfileConfigFile::builtin_code();
+    let arch = capsem_core::net::policy_config::current_profile_arch();
+    let replacements = [
+        ("kernel", "kernel-bytes".as_bytes()),
+        ("initrd", "initrd-bytes".as_bytes()),
+        ("rootfs", "rootfs-bytes".as_bytes()),
+    ];
+    {
+        let arch_assets = profile.assets.arch.get_mut(arch).unwrap();
+        for (kind, bytes) in replacements {
+            let descriptor = match kind {
+                "kernel" => &mut arch_assets.kernel,
+                "initrd" => &mut arch_assets.initrd,
+                "rootfs" => &mut arch_assets.rootfs,
+                _ => unreachable!(),
+            };
+            let source = source_dir.join(&descriptor.name);
+            std::fs::write(&source, bytes).unwrap();
+            descriptor.url = format!("file://{}", source.display());
+            descriptor.hash = format!(
+                "blake3:{}",
+                capsem_core::asset_manager::hash_file(&source).unwrap()
+            );
+            descriptor.size = bytes.len() as u64;
+        }
+    }
+    let state = make_asset_state(assets_dir.clone());
+
+    let downloaded = ensure_profile_assets_for_state(Arc::clone(&state), &profile)
+        .await
+        .expect("profile ensure should download file fixtures");
+
+    assert_eq!(downloaded, 3);
+    let resolved = state.resolve_profile_asset_paths(&profile).unwrap();
+    assert!(resolved.kernel.exists());
+    assert!(resolved.initrd.exists());
+    assert!(resolved.rootfs.exists());
+    assert!(
+        resolved
+            .rootfs
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .starts_with("rootfs-"),
+        "profile ensure stores hash-prefixed assets"
+    );
+    let reconcile = state.asset_reconcile.lock().unwrap().clone();
+    assert_eq!(reconcile.last_downloaded, Some(3));
+    assert!(reconcile.last_error.is_none());
+
+    let downloaded = ensure_profile_assets_for_state(state, &profile)
+        .await
+        .expect("already verified profile assets should skip download");
+    assert_eq!(downloaded, 0);
+}
+
 #[test]
 fn vm_asset_block_reason_reports_missing_assets() {
     let dir = tempfile::tempdir().unwrap();

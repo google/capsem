@@ -1168,8 +1168,7 @@ fn profile_asset_descriptor_path(
     arch: &str,
     asset: &ProfileAssetDescriptor,
 ) -> PathBuf {
-    let hash = asset.hash.strip_prefix("blake3:").unwrap_or(&asset.hash);
-    let hash_name = capsem_core::asset_manager::hash_filename(&asset.name, hash);
+    let hash_name = profile_asset_hash_name(asset);
     let bases = [assets_dir.join(arch), assets_dir.to_path_buf()];
 
     for base in &bases {
@@ -1186,6 +1185,22 @@ fn profile_asset_descriptor_path(
     }
 
     bases[0].join(&asset.name)
+}
+
+fn profile_asset_hash_hex(asset: &ProfileAssetDescriptor) -> &str {
+    asset.hash.strip_prefix("blake3:").unwrap_or(&asset.hash)
+}
+
+fn profile_asset_hash_name(asset: &ProfileAssetDescriptor) -> String {
+    capsem_core::asset_manager::hash_filename(&asset.name, profile_asset_hash_hex(asset))
+}
+
+fn profile_asset_download_target(
+    assets_dir: &StdPath,
+    arch: &str,
+    asset: &ProfileAssetDescriptor,
+) -> PathBuf {
+    assets_dir.join(arch).join(profile_asset_hash_name(asset))
 }
 
 /// Identify the launchd-cleanup-saturation transient that masquerades
@@ -3554,6 +3569,221 @@ async fn ensure_assets_for_state(state: Arc<ServiceState>) -> Result<usize, Stri
     result
 }
 
+async fn ensure_profile_assets_for_state(
+    state: Arc<ServiceState>,
+    profile: &ProfileConfigFile,
+) -> Result<usize, String> {
+    if state
+        .asset_reconcile_inflight
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .is_err()
+    {
+        return Err("asset reconciliation already in progress".to_string());
+    }
+
+    let result: Result<usize, String> = async {
+        let arch = capsem_core::net::policy_config::current_profile_arch();
+        let arch_assets = profile.assets.current_arch_assets().ok_or_else(|| {
+            format!(
+                "profile {} has no assets for architecture {arch}",
+                profile.id
+            )
+        })?;
+        let assets = [
+            &arch_assets.kernel,
+            &arch_assets.initrd,
+            &arch_assets.rootfs,
+        ];
+        update_asset_reconcile_state(&state, |status| {
+            *status = AssetReconcileState {
+                in_progress: true,
+                ..Default::default()
+            };
+        })?;
+
+        let mut downloaded = 0usize;
+        for asset in assets {
+            let resolved = profile_asset_descriptor_path(&state.assets_dir, arch, asset);
+            if resolved.exists() {
+                match capsem_core::asset_manager::hash_file(&resolved) {
+                    Ok(hash) if hash == profile_asset_hash_hex(asset) => {
+                        update_asset_reconcile_state(&state, |status| {
+                            status.in_progress = true;
+                            status.current_asset = Some(asset.name.clone());
+                            status.bytes_done = asset.size;
+                            status.bytes_total = Some(asset.size);
+                        })?;
+                        continue;
+                    }
+                    Ok(_) | Err(_) => {
+                        if resolved == profile_asset_download_target(&state.assets_dir, arch, asset)
+                        {
+                            let _ = std::fs::remove_file(&resolved);
+                        }
+                    }
+                }
+            }
+
+            let target = profile_asset_download_target(&state.assets_dir, arch, asset);
+            download_profile_asset(asset, &target, {
+                let state = Arc::clone(&state);
+                move |bytes_done, bytes_total, done| {
+                    if let Ok(mut status) = state.asset_reconcile.lock() {
+                        status.in_progress = true;
+                        status.current_asset = Some(asset.name.clone());
+                        status.bytes_done = bytes_done;
+                        status.bytes_total = bytes_total;
+                    }
+                    if done {
+                        let snapshot = state
+                            .asset_reconcile
+                            .lock()
+                            .map(|status| status.clone())
+                            .ok();
+                        if let Some(snapshot) = snapshot {
+                            if let Err(error) =
+                                persist_asset_reconcile_state(&state.asset_status_path, &snapshot)
+                            {
+                                warn!(error = %error, "failed to persist profile asset progress");
+                            }
+                        }
+                    }
+                }
+            })
+            .await
+            .map_err(|e| e.to_string())?;
+            downloaded += 1;
+        }
+        Ok(downloaded)
+    }
+    .await;
+
+    let final_status = update_asset_reconcile_state(&state, |status| {
+        status.in_progress = false;
+        status.current_asset = None;
+        status.bytes_done = 0;
+        status.bytes_total = None;
+        match &result {
+            Ok(downloaded) => {
+                status.last_downloaded = Some(*downloaded);
+                status.last_error = None;
+            }
+            Err(error) => {
+                status.last_downloaded = Some(0);
+                status.last_error = Some(error.clone());
+            }
+        }
+    });
+    if let Err(error) = final_status {
+        warn!(error = %error, "failed to persist final profile asset status");
+    }
+    state
+        .asset_reconcile_inflight
+        .store(false, Ordering::Release);
+    result
+}
+
+async fn download_profile_asset<F>(
+    asset: &ProfileAssetDescriptor,
+    target: &StdPath,
+    mut on_progress: F,
+) -> Result<()>
+where
+    F: FnMut(u64, Option<u64>, bool),
+{
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    if let Some(parent) = target.parent() {
+        std::fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
+    }
+    let tmp = target.with_file_name(format!(
+        "{}.tmp",
+        target
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("asset")
+    ));
+    let _ = std::fs::remove_file(&tmp);
+    let mut output = tokio::fs::File::create(&tmp)
+        .await
+        .with_context(|| format!("create {}", tmp.display()))?;
+    let mut bytes_done = 0u64;
+    let total = Some(asset.size);
+
+    if let Some(path) = asset.url.strip_prefix("file://") {
+        let mut input = tokio::fs::File::open(path)
+            .await
+            .with_context(|| format!("open profile asset source {path}"))?;
+        let mut buf = vec![0u8; 256 * 1024];
+        loop {
+            let n = input
+                .read(&mut buf)
+                .await
+                .with_context(|| format!("read profile asset source {path}"))?;
+            if n == 0 {
+                break;
+            }
+            output
+                .write_all(&buf[..n])
+                .await
+                .with_context(|| format!("write {}", tmp.display()))?;
+            bytes_done += n as u64;
+            on_progress(bytes_done, total, false);
+        }
+    } else {
+        use futures::StreamExt;
+        let client = reqwest::Client::builder()
+            .user_agent(concat!("capsem/", env!("CARGO_PKG_VERSION")))
+            .build()
+            .context("build reqwest client")?;
+        let resp = client
+            .get(&asset.url)
+            .send()
+            .await
+            .with_context(|| format!("GET {}", asset.url))?;
+        if !resp.status().is_success() {
+            anyhow::bail!("GET {} returned {}", asset.url, resp.status());
+        }
+        let total = resp.content_length().or(total);
+        let mut stream = resp.bytes_stream();
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.with_context(|| format!("stream {}", asset.url))?;
+            output
+                .write_all(&chunk)
+                .await
+                .with_context(|| format!("write {}", tmp.display()))?;
+            bytes_done += chunk.len() as u64;
+            on_progress(bytes_done, total, false);
+        }
+    }
+
+    output
+        .flush()
+        .await
+        .with_context(|| format!("flush {}", tmp.display()))?;
+    drop(output);
+
+    let actual = capsem_core::asset_manager::hash_file(&tmp)?;
+    if actual != profile_asset_hash_hex(asset) {
+        let _ = std::fs::remove_file(&tmp);
+        anyhow::bail!(
+            "{}: hash mismatch (expected {}, got {})",
+            asset.name,
+            profile_asset_hash_hex(asset),
+            actual
+        );
+    }
+    std::fs::rename(&tmp, target)
+        .with_context(|| format!("rename {} -> {}", tmp.display(), target.display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(target, std::fs::Permissions::from_mode(0o444));
+    }
+    on_progress(bytes_done, total, true);
+    Ok(())
+}
+
 /// GET /profiles/{profile_id}/assets/status -- query profile VM asset readiness.
 async fn handle_profile_assets_status(
     Path(profile_id): Path<String>,
@@ -3571,7 +3801,7 @@ async fn handle_profile_assets_ensure(
     State(state): State<Arc<ServiceState>>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let profile = profile_manifest_for_route(profile_id)?;
-    let ensure_result = ensure_assets_for_state(Arc::clone(&state)).await;
+    let ensure_result = ensure_profile_assets_for_state(Arc::clone(&state), &profile).await;
     let mut status = profile_asset_status_value(&state, &profile);
     if let Some(obj) = status.as_object_mut() {
         match ensure_result {

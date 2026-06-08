@@ -194,7 +194,7 @@ These are not optional:
 | --- | --- | --- |
 | S0 Inventory | Not Started | Every deleted cluster is classified as exact restore, conceptual port, intentional burn, or Linux handoff. |
 | S1 Profile/Admin | Not Started | Profiles, schemas, `capsem-admin`, profile-derived image/manifest commands, and package proof are back. |
-| S2 Runtime Assets/Pins | In Progress | `vm.profile_id` is now required and persisted through create/run/fork/save/resume/list/info, and boot preflight/spawn resolves assets from the selected profile; remaining work is profile revision/base-asset pins, active profile asset reconcile/download, and fail-closed pin checks. |
+| S2 Runtime Assets/Pins | In Progress | `vm.profile_id` is now required and persisted through create/run/fork/save/resume/list/info; boot preflight/spawn resolves assets from the selected profile; profile asset ensure downloads/verifies current-arch descriptors. Remaining work is profile revision/base-asset pins and fail-closed pin checks. |
 | S3 TUI/Shell | Not Started | `capsem shell` works through the TUI again; profile/session readiness is visible in terminal. |
 | S4 Linux/KVM/Bench | Not Started | Linux-team KVM/filesystem/EROFS/LZ4HC work and benchmark harness/proof are restored or handed off explicitly. |
 | S5 Security Corpus | Not Started | Detection/enforcement corpus, Sigma/pack/backtest, and benchmark gates exist on the new `SecurityRuleSet`/CEL rail. |

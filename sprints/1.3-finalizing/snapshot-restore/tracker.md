@@ -137,6 +137,15 @@ the guarantee or explicitly burn it.
   `cargo test -p capsem-service vm_asset_block_reason -- --nocapture`,
   `cargo test -p capsem-service --no-run`, and `cargo test -p capsem-service
   profile -- --nocapture`.
+- [x] Current-architecture slice: `/profiles/{profile_id}/assets/ensure` now
+  downloads and verifies the selected profile's current-arch asset descriptors
+  directly, writes hash-prefixed targets, updates reconcile status, and skips
+  already-verified files. Decision: conceptual_port of profile-owned asset
+  reconcile/download into current profile contract; old manifest-global ensure
+  no longer drives the profile ensure route. Tests: `cargo test -p
+  capsem-service ensure_profile_assets_downloads_profile_descriptors --
+  --nocapture`, `cargo test -p capsem-service --no-run`, and `cargo test -p
+  capsem-service profile -- --nocapture`.
 - [ ] `b2fb7e33 feat: export session policy contexts`
 - [ ] `7a5afc9c test: prove process enforcement logs in real vm`
 - [ ] `f2a6247f docs: close s07 debt ledger`
