@@ -7,7 +7,10 @@ use std::{
 use serde::{Deserialize, Serialize};
 
 use super::provider_profile::AiProviderProfile;
-use super::security_rule_profile::{SecurityPluginConfig, SecurityRuleGroup, SecurityRuleProfile};
+use super::security_rule_profile::{
+    SecurityPluginConfig, SecurityRuleGroup, SecurityRuleProfile, SecurityRuleSet,
+    SecurityRuleSource,
+};
 use super::types::RuleFileReferences;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -156,6 +159,132 @@ impl ProfileConfigFile {
         rule_profile.validate()?;
         Ok(())
     }
+
+    pub fn inline_security_rule_profile(&self) -> SecurityRuleProfile {
+        SecurityRuleProfile {
+            default: self.default.clone(),
+            profiles: self.profiles.clone(),
+            ai: self.ai.clone(),
+            plugins: self.plugins.clone(),
+            ..SecurityRuleProfile::default()
+        }
+    }
+
+    pub fn security_rule_profile_from_files(
+        &self,
+        base_dir: &Path,
+    ) -> Result<SecurityRuleProfile, String> {
+        let mut profile = self.inline_security_rule_profile();
+        if let Some(enforcement) = self.rule_files.enforcement.as_deref() {
+            let path = resolve_profile_rule_file_path(base_dir, enforcement);
+            let content = fs::read_to_string(&path).map_err(|error| {
+                format!("read profile enforcement rules {}: {error}", path.display())
+            })?;
+            let rules = SecurityRuleProfile::parse_toml(&content).map_err(|error| {
+                format!(
+                    "parse profile enforcement rules {}: {error}",
+                    path.display()
+                )
+            })?;
+            merge_profile_rule_file(&mut profile, rules, &path)?;
+        }
+        if let Some(sigma) = self.rule_files.sigma.as_deref() {
+            let path = resolve_profile_rule_file_path(base_dir, sigma);
+            let content = fs::read_to_string(&path)
+                .map_err(|error| format!("read profile Sigma rules {}: {error}", path.display()))?;
+            let rules = SecurityRuleProfile::parse_sigma_yaml(&content).map_err(|error| {
+                format!("parse profile Sigma rules {}: {error}", path.display())
+            })?;
+            merge_profile_rule_file(&mut profile, rules, &path)?;
+        }
+        profile.validate()?;
+        Ok(profile)
+    }
+
+    pub fn compile_security_rule_set_from_files(
+        &self,
+        base_dir: &Path,
+        source: SecurityRuleSource,
+    ) -> Result<SecurityRuleSet, String> {
+        SecurityRuleSet::compile_profile(&self.security_rule_profile_from_files(base_dir)?, source)
+    }
+}
+
+pub fn resolve_profile_rule_file_path(base_dir: &Path, rule_file: &str) -> PathBuf {
+    let path = PathBuf::from(rule_file);
+    if path.is_absolute() {
+        path
+    } else {
+        base_dir.join(path)
+    }
+}
+
+fn merge_profile_rule_file(
+    target: &mut SecurityRuleProfile,
+    source: SecurityRuleProfile,
+    path: &Path,
+) -> Result<(), String> {
+    let path = path.display();
+    if !source.corp.is_empty() {
+        return Err(format!(
+            "profile rule file {path} must not define corp.rules"
+        ));
+    }
+    merge_rule_map(
+        "default",
+        &mut target.default,
+        source.default,
+        &path.to_string(),
+    )?;
+    merge_security_rule_group(
+        "profiles",
+        &mut target.profiles,
+        source.profiles,
+        &path.to_string(),
+    )?;
+    merge_map("ai", &mut target.ai, source.ai, &path.to_string())?;
+    merge_map(
+        "plugins",
+        &mut target.plugins,
+        source.plugins,
+        &path.to_string(),
+    )?;
+    Ok(())
+}
+
+fn merge_security_rule_group(
+    namespace: &str,
+    target: &mut SecurityRuleGroup,
+    source: SecurityRuleGroup,
+    path: &str,
+) -> Result<(), String> {
+    merge_rule_map(namespace, &mut target.rules, source.rules, path)
+}
+
+fn merge_rule_map(
+    namespace: &str,
+    target: &mut BTreeMap<String, super::security_rule_profile::SecurityRule>,
+    source: BTreeMap<String, super::security_rule_profile::SecurityRule>,
+    path: &str,
+) -> Result<(), String> {
+    merge_map(namespace, target, source, path)
+}
+
+fn merge_map<T>(
+    namespace: &str,
+    target: &mut BTreeMap<String, T>,
+    source: BTreeMap<String, T>,
+    path: &str,
+) -> Result<(), String> {
+    for (key, value) in source {
+        if target.contains_key(&key) {
+            return Err(format!(
+                "duplicate profile rule file entry {namespace}.{key} from {path}"
+            ));
+        }
+        target.insert(key, value);
+    }
+    Ok(())
 }
 
 impl ProfileAssetConfig {

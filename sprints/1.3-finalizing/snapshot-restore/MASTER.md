@@ -198,8 +198,8 @@ These are not optional:
 
 | Stream | Status | Required Outcome |
 | --- | --- | --- |
-| S0 Inventory | Not Started | Every deleted cluster is classified as exact restore, conceptual port, intentional burn, or Linux handoff. |
-| S1 Profile/Admin | Not Started | Profiles, schemas, `capsem-admin`, profile-derived image/manifest commands, and package proof are back. |
+| S0 Inventory | Done | Every deleted cluster is classified as exact restore, conceptual port, intentional burn, or Linux handoff. |
+| S1 Profile/Admin | In Progress | Profiles, schemas, `capsem-admin`, profile-derived image/manifest commands, and package proof are back. First guardrail is closed: profile rule files compile only through `SecurityRuleSet`/CEL and reject old policy syntax/signing authority drift. |
 | S2 Runtime Assets/Pins | Done | `vm.profile_id` is now required and persisted through create/run/fork/save/resume/list/info; boot preflight/spawn resolves assets from the selected profile; profile asset ensure downloads/verifies current-arch descriptors; persistent VM rows and live runtime state pin profile revision, typed profile payload hash, and kernel/initrd/rootfs asset descriptors and fail closed on revision/payload/pin drift; profile asset status exposes provenance through the boot resolver; startup cleanup preserves profile catalog assets and persistent VM boot pins; catalog status/reload routes validate the active catalog and report readiness; CLI/gateway/`capsem-mcp` live callers now use real profile routes instead of `/profiles/default`; signed profile payload and URL+pubkey catalog fetch rails are intentionally burned. |
 | S3 TUI/Shell | Not Started | `capsem shell` works through the TUI again; profile/session readiness is visible in terminal. |
 | S4 Linux/KVM/Bench | Not Started | Linux-team KVM/filesystem/EROFS/LZ4HC work and benchmark harness/proof are restored or handed off explicitly. |

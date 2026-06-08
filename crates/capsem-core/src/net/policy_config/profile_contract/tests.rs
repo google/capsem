@@ -246,6 +246,75 @@ fn checked_in_code_profile_parses_and_validates() {
 }
 
 #[test]
+fn checked_in_code_profile_rule_files_compile_into_security_rule_set() {
+    let profile = ProfileConfigFile::builtin_code();
+    let config_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../config");
+    let rules = profile
+        .compile_security_rule_set_from_files(&config_root, SecurityRuleSource::User)
+        .expect("profile rule files compile through SecurityRuleSet");
+    let rule_ids = rules
+        .rules()
+        .iter()
+        .map(|rule| rule.rule_id.as_str())
+        .collect::<Vec<_>>();
+
+    assert!(
+        rule_ids.contains(&"profiles.rules.default_http"),
+        "default HTTP rule from profile enforcement file must compile"
+    );
+    assert!(
+        rule_ids.contains(&"profiles.rules.skill_loaded"),
+        "Sigma detection file must compile into profile security rules"
+    );
+    assert!(
+        rule_ids
+            .iter()
+            .all(|rule_id| !rule_id.starts_with("policy.")),
+        "profile rule files must not mirror into old policy rails"
+    );
+    assert!(rules
+        .rules()
+        .iter()
+        .all(|rule| !rule.condition.contains("credential.")));
+}
+
+#[test]
+fn profile_rule_files_reject_old_policy_syntax_and_corp_rules() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("old.toml"),
+        r#"
+[policy.http]
+domains = ["example.com"]
+"#,
+    )
+    .unwrap();
+    let mut profile = ProfileConfigFile::builtin_code();
+    profile.rule_files.enforcement = Some("old.toml".to_string());
+    profile.rule_files.sigma = None;
+    let error = profile
+        .security_rule_profile_from_files(dir.path())
+        .expect_err("old policy syntax must not load through profile rule files");
+    assert!(error.contains("policy"), "{error}");
+
+    std::fs::write(
+        dir.path().join("corp.toml"),
+        r#"
+[corp.rules.block_example]
+name = "block_example"
+action = "block"
+match = 'http.host == "example.com"'
+"#,
+    )
+    .unwrap();
+    profile.rule_files.enforcement = Some("corp.toml".to_string());
+    let error = profile
+        .security_rule_profile_from_files(dir.path())
+        .expect_err("profile rule files cannot smuggle corp ownership");
+    assert!(error.contains("must not define corp.rules"), "{error}");
+}
+
+#[test]
 fn profile_assets_reject_release_manifest_theater_and_build_knobs() {
     let profile = include_str!("../../../../../../config/profiles/code.toml");
     let bad_top_level = profile.replace(

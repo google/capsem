@@ -716,8 +716,14 @@ the guarantee or explicitly burn it.
   `cargo test -p capsem-core --lib policy_config -- --nocapture` passed 392
   tests; `cargo test -p capsem-core --no-run`, `pnpm -C frontend check`, and
   `git diff --check` passed.
-- [ ] Validate profile parsing compiles into the new `SecurityRuleSet`/CEL rail;
-  no second policy syntax or compatibility rail.
+- [x] Validate profile parsing compiles into the new `SecurityRuleSet`/CEL rail;
+  no second policy syntax or compatibility rail. Current guardrail:
+  `ProfileConfigFile::security_rule_profile_from_files` materializes profile
+  enforcement TOML and Sigma YAML into `SecurityRuleProfile`, and
+  `compile_security_rule_set_from_files` compiles that into the single
+  `SecurityRuleSet` path. Profile rule files reject old `policy.*` syntax and
+  profile-file attempts to smuggle `corp.rules`. Proof:
+  `cargo test -p capsem-core --lib profile_contract -- --nocapture`.
 - [ ] Restore `capsem-admin` CLI package and entry point.
 - [ ] Restore profile/settings `init|schema|validate|doctor` commands.
 - [ ] Restore image `plan|verify|workspace|build` commands.

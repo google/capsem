@@ -102,6 +102,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   profile instead of the retired `default` profile when listing servers/tools,
   refreshing tools, calling profile-scoped MCP tools, or creating one-shot VMs.
   “Default” now refers only to visible default rules, not a hidden profile id.
+- Added a profile-owned rule-file compilation guard: profile enforcement TOML
+  and Sigma detection YAML now materialize as `SecurityRuleProfile` and compile
+  only through the unified `SecurityRuleSet`/CEL rail, rejecting old policy
+  syntax and profile-file attempts to smuggle `corp.rules`.
 - Replaced the temporary flat profile asset triplet with per-architecture
   profile asset declarations. `config/profiles/code.toml` now parses as the
   checked-in contract for EROFS/LZ4HC kernel, initrd, and rootfs assets with

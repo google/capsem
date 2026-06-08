@@ -260,7 +260,9 @@ mod tests {
         let result = validate_corp_toml(content);
         assert!(result.is_ok());
         let file = result.unwrap();
-        assert!(file.settings.contains_key("repository.providers.github.allow"));
+        assert!(file
+            .settings
+            .contains_key("repository.providers.github.allow"));
     }
 
     #[test]
