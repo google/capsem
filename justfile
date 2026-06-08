@@ -53,10 +53,11 @@ service_binary := "target/debug/capsem-service"
 process_binary := "target/debug/capsem-process"
 mcp_binary := "target/debug/capsem-mcp"
 gateway_binary := "target/debug/capsem-gateway"
-host_binaries := "target/debug/capsem target/debug/capsem-service target/debug/capsem-process target/debug/capsem-mcp target/debug/capsem-mcp-aggregator target/debug/capsem-mcp-builtin target/debug/capsem-gateway target/debug/capsem-tray"
+admin_binary := "target/debug/capsem-admin"
+host_binaries := "target/debug/capsem target/debug/capsem-service target/debug/capsem-process target/debug/capsem-mcp target/debug/capsem-mcp-aggregator target/debug/capsem-mcp-builtin target/debug/capsem-gateway target/debug/capsem-tray target/debug/capsem-admin"
 assets_dir := "assets"
 entitlements := "entitlements.plist"
-host_crates := "-p capsem-service -p capsem-process -p capsem -p capsem-mcp -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-gateway -p capsem-tray"
+host_crates := "-p capsem-service -p capsem-process -p capsem -p capsem-mcp -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-gateway -p capsem-tray -p capsem-admin"
 
 # Stamp version as 1.0.{unix_timestamp} in Cargo.toml, tauri.conf.json, and pyproject.toml.
 _stamp-version:
@@ -229,39 +230,78 @@ exec +CMD: run-service
     {{cli_binary}} run "{{CMD}}"
 
 
-# Build kernel only for one arch (CI-facing primitive).
-build-kernel arch: _install-tools
-    uv run capsem-builder build guest/ --arch {{arch}} --template kernel --output {{assets_dir}}/
-
-# Build rootfs only for one arch (CI-facing primitive).
-build-rootfs arch: _install-tools
-    CAPSEM_BUILD_EXPERIMENTAL_EROFS=1 CAPSEM_BUILD_EROFS_COMPRESSION=lz4hc CAPSEM_BUILD_EROFS_COMPRESSION_LEVEL=12 uv run capsem-builder build guest/ --arch {{arch}} --template rootfs --output {{assets_dir}}/
-
-# VM asset rebuild (kernel + rootfs). Default: both arches. Pass arch to build one.
-build-assets arch="": _install-tools _clean-stale
+# Build kernel only for one profile/arch (CI-facing primitive).
+build-kernel arch profile="":
     #!/bin/bash
     set -euo pipefail
-    CAPSEM_SKIP_ASSET_CHECK=1 just doctor
-    if [[ -n "{{arch}}" ]]; then
-        arches=("{{arch}}")
-        echo "=== Cleaning assets for {{arch}} ==="
-        rm -rf "{{assets_dir}}/{{arch}}"
-    else
-        arches=(arm64 x86_64)
-        echo "=== Cleaning all assets ==="
-        rm -rf "{{assets_dir}}/arm64" "{{assets_dir}}/x86_64"
-        rm -f "{{assets_dir}}/manifest.json" "{{assets_dir}}/B3SUMS"
+    PROFILE_ARG="{{profile}}"
+    PROFILE_ARG="${PROFILE_ARG#profile=}"
+    if [[ -z "$PROFILE_ARG" ]]; then
+        echo "ERROR: profile id required. Use: just build-kernel {{arch}} code"
+        exit 2
     fi
-    for a in "${arches[@]}"; do
-        echo "=== Building kernel for $a ==="
-        uv run capsem-builder build guest/ --arch "$a" --template kernel --output "{{assets_dir}}/"
-        echo ""
-        echo "=== Building rootfs for $a ==="
-        CAPSEM_BUILD_EXPERIMENTAL_EROFS=1 CAPSEM_BUILD_EROFS_COMPRESSION=lz4hc CAPSEM_BUILD_EROFS_COMPRESSION_LEVEL=12 uv run capsem-builder build guest/ --arch "$a" --template rootfs --output "{{assets_dir}}/"
-        echo ""
-    done
-    echo "=== Generating checksums ==="
-    uv run python3 -c 'from pathlib import Path; from capsem.builder.docker import generate_checksums, get_project_version; v = get_project_version(Path(".")); generate_checksums(Path("{{assets_dir}}"), v); print(f"manifest.json generated (v{v})")'
+    just _install-tools
+    CAPSEM_SKIP_ASSET_CHECK=1 just doctor
+    cargo run -p capsem-admin -- image build \
+        --profile "config/profiles/${PROFILE_ARG}.toml" \
+        --config-root config \
+        --guest-dir guest \
+        --output "{{assets_dir}}" \
+        --arch "{{arch}}" \
+        --template kernel \
+        --clean
+    just _docker-gc
+
+# Build rootfs only for one profile/arch (CI-facing primitive).
+build-rootfs arch profile="":
+    #!/bin/bash
+    set -euo pipefail
+    PROFILE_ARG="{{profile}}"
+    PROFILE_ARG="${PROFILE_ARG#profile=}"
+    if [[ -z "$PROFILE_ARG" ]]; then
+        echo "ERROR: profile id required. Use: just build-rootfs {{arch}} code"
+        exit 2
+    fi
+    just _install-tools
+    CAPSEM_SKIP_ASSET_CHECK=1 just doctor
+    cargo run -p capsem-admin -- image build \
+        --profile "config/profiles/${PROFILE_ARG}.toml" \
+        --config-root config \
+        --guest-dir guest \
+        --output "{{assets_dir}}" \
+        --arch "{{arch}}" \
+        --template rootfs \
+        --clean
+    just _docker-gc
+
+# VM asset rebuild (kernel + rootfs). Profile is mandatory. Optional second arg
+# restricts to one arch. Accepts either `code` or `profile=code` for compatibility
+# with older notes.
+build-assets profile="" arch="":
+    #!/bin/bash
+    set -euo pipefail
+    PROFILE_ARG="{{profile}}"
+    PROFILE_ARG="${PROFILE_ARG#profile=}"
+    ARCH_ARG="{{arch}}"
+    ARCH_ARG="${ARCH_ARG#arch=}"
+    if [[ -z "$PROFILE_ARG" ]]; then
+        echo "ERROR: profile id required. Use: just build-assets code [arm64|x86_64]"
+        exit 2
+    fi
+    just _install-tools
+    just _clean-stale
+    CAPSEM_SKIP_ASSET_CHECK=1 just doctor
+    ARGS=(
+        --profile "config/profiles/${PROFILE_ARG}.toml"
+        --config-root config
+        --guest-dir guest
+        --output "{{assets_dir}}"
+        --clean
+    )
+    if [[ -n "$ARCH_ARG" ]]; then
+        ARGS+=(--arch "$ARCH_ARG")
+    fi
+    cargo run -p capsem-admin -- image build "${ARGS[@]}"
     just _docker-gc
 
 # Run vulnerability audits (cargo audit + pnpm audit). Fast standalone gate.
@@ -1252,8 +1292,8 @@ _check-assets:
     fi
     if [ ${#missing[@]} -gt 0 ]; then
         echo "Missing VM assets in $dir/: ${missing[*]}"
-        echo "Building assets (requires docker)..."
-        just build-assets
+        echo "Building code profile assets (requires docker)..."
+        just build-assets code
     fi
 
 _pnpm-install:

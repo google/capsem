@@ -1,7 +1,9 @@
 use std::{
+    collections::BTreeMap,
     fs,
     io::Read,
     path::{Path, PathBuf},
+    process::{Command, Stdio},
 };
 
 use anyhow::{anyhow, Context, Result};
@@ -31,6 +33,7 @@ enum Commands {
     Enforcement(RuleFileCommand),
     Detection(RuleFileCommand),
     Manifest(ManifestCommand),
+    Image(ImageCommand),
 }
 
 #[derive(Debug, Parser)]
@@ -79,6 +82,18 @@ struct ManifestCommand {
 enum ManifestSubcommand {
     Check(ManifestCheckArgs),
     DownloadCheck(ManifestDownloadCheckArgs),
+}
+
+#[derive(Debug, Parser)]
+struct ImageCommand {
+    #[command(subcommand)]
+    command: ImageSubcommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum ImageSubcommand {
+    Plan(ImageBuildArgs),
+    Build(ImageBuildArgs),
 }
 
 #[derive(Debug, Parser)]
@@ -146,6 +161,44 @@ struct ManifestDownloadCheckArgs {
     /// Emit a machine-readable manifest report.
     #[arg(long)]
     json: bool,
+}
+
+#[derive(Debug, Parser)]
+struct ImageBuildArgs {
+    /// Profile TOML that owns the asset build.
+    #[arg(long)]
+    profile: PathBuf,
+    /// Config root used to validate profile rule files.
+    #[arg(long, default_value = "config")]
+    config_root: PathBuf,
+    /// Guest image source directory consumed by capsem-builder.
+    #[arg(long, default_value = "guest")]
+    guest_dir: PathBuf,
+    /// Output directory for built assets.
+    #[arg(long, default_value = "assets")]
+    output: PathBuf,
+    /// Restrict the build to one profile architecture.
+    #[arg(long)]
+    arch: Option<String>,
+    /// Build only kernel, only rootfs, or both.
+    #[arg(long, value_enum, default_value_t = ImageBuildTemplate::All)]
+    template: ImageBuildTemplate,
+    /// Remove selected output assets before building.
+    #[arg(long)]
+    clean: bool,
+    /// Print the plan without executing Docker/capsem-builder.
+    #[arg(long)]
+    dry_run: bool,
+    /// Emit a machine-readable build plan/report.
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+enum ImageBuildTemplate {
+    All,
+    Kernel,
+    Rootfs,
 }
 
 #[derive(Debug, Clone, Copy, clap::ValueEnum)]
@@ -278,6 +331,35 @@ struct ManifestAssetReport {
     blake3_ok: Option<bool>,
 }
 
+#[derive(Debug, Serialize)]
+struct ImageBuildPlan {
+    schema: &'static str,
+    profile_id: String,
+    profile_revision: String,
+    guest_dir: String,
+    output: String,
+    clean: bool,
+    template: &'static str,
+    arches: Vec<ImageBuildArchPlan>,
+    commands: Vec<CommandReport>,
+}
+
+#[derive(Debug, Serialize)]
+struct ImageBuildArchPlan {
+    arch: String,
+    kernel: String,
+    initrd: String,
+    rootfs: String,
+}
+
+#[derive(Debug, Serialize, Clone)]
+struct CommandReport {
+    step: String,
+    arch: Option<String>,
+    env: BTreeMap<String, String>,
+    argv: Vec<String>,
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
@@ -300,6 +382,10 @@ fn main() -> Result<()> {
         Commands::Manifest(command) => match command.command {
             ManifestSubcommand::Check(args) => manifest_check_command(args),
             ManifestSubcommand::DownloadCheck(args) => manifest_download_check_command(args),
+        },
+        Commands::Image(command) => match command.command {
+            ImageSubcommand::Plan(args) => image_plan_command(args),
+            ImageSubcommand::Build(args) => image_build_command(args),
         },
     }
 }
@@ -421,6 +507,28 @@ fn manifest_download_check_command(args: ManifestDownloadCheckArgs) -> Result<()
     Ok(())
 }
 
+fn image_plan_command(args: ImageBuildArgs) -> Result<()> {
+    let plan = image_build_plan(&args)?;
+    print_image_build_plan(&plan, args.json)?;
+    Ok(())
+}
+
+fn image_build_command(args: ImageBuildArgs) -> Result<()> {
+    let plan = image_build_plan(&args)?;
+    if args.dry_run {
+        print_image_build_plan(&plan, args.json)?;
+        return Ok(());
+    }
+    if plan.clean {
+        clean_image_outputs(&plan)?;
+    }
+    for command in &plan.commands {
+        run_command(command)?;
+    }
+    print_image_build_plan(&plan, args.json)?;
+    Ok(())
+}
+
 fn validate_profile(path: &Path, config_root: Option<&Path>) -> Result<ProfileValidationReport> {
     let content =
         fs::read_to_string(path).with_context(|| format!("read profile {}", path.display()))?;
@@ -452,6 +560,12 @@ fn validate_profile(path: &Path, config_root: Option<&Path>) -> Result<ProfileVa
         config_root: config_root.display().to_string(),
         compiled_rules: rules.rules().len(),
     })
+}
+
+fn load_profile(path: &Path) -> Result<ProfileConfigFile> {
+    let content =
+        fs::read_to_string(path).with_context(|| format!("read profile {}", path.display()))?;
+    toml::from_str(&content).with_context(|| format!("parse profile {}", path.display()))
 }
 
 fn validate_settings(path: &Path) -> Result<SettingsValidationReport> {
@@ -497,6 +611,219 @@ impl SettingsConfigFile {
         }
         Ok(())
     }
+}
+
+fn image_build_plan(args: &ImageBuildArgs) -> Result<ImageBuildPlan> {
+    let profile = load_profile(&args.profile)?;
+    profile
+        .validate()
+        .map_err(|error| anyhow!("validate profile {}: {error}", args.profile.display()))?;
+    profile
+        .compile_security_rule_set_from_files(&args.config_root, SecurityRuleSource::User)
+        .map_err(|error| {
+            anyhow!(
+                "compile profile rule files for {} with config root {}: {error}",
+                args.profile.display(),
+                args.config_root.display()
+            )
+        })?;
+
+    let mut arches = profile.assets.arch.keys().cloned().collect::<Vec<_>>();
+    arches.sort();
+    if let Some(arch) = &args.arch {
+        if !profile.assets.arch.contains_key(arch) {
+            return Err(anyhow!(
+                "profile {} does not define assets for arch {arch}",
+                profile.id
+            ));
+        }
+        arches = vec![arch.clone()];
+    }
+    if arches.is_empty() {
+        return Err(anyhow!(
+            "profile {} defines no asset architectures",
+            profile.id
+        ));
+    }
+
+    let mut arch_plans = Vec::new();
+    let mut commands = Vec::new();
+    for arch in &arches {
+        let assets = profile
+            .assets
+            .arch
+            .get(arch)
+            .expect("arch came from profile asset map");
+        arch_plans.push(ImageBuildArchPlan {
+            arch: arch.clone(),
+            kernel: assets.kernel.name.clone(),
+            initrd: assets.initrd.name.clone(),
+            rootfs: assets.rootfs.name.clone(),
+        });
+        if matches!(
+            args.template,
+            ImageBuildTemplate::All | ImageBuildTemplate::Kernel
+        ) {
+            commands.push(CommandReport {
+                step: "kernel".to_string(),
+                arch: Some(arch.clone()),
+                env: BTreeMap::new(),
+                argv: vec![
+                    "uv".to_string(),
+                    "run".to_string(),
+                    "capsem-builder".to_string(),
+                    "build".to_string(),
+                    args.guest_dir.display().to_string(),
+                    "--arch".to_string(),
+                    arch.clone(),
+                    "--template".to_string(),
+                    "kernel".to_string(),
+                    "--output".to_string(),
+                    format!("{}/", args.output.display()),
+                ],
+            });
+        }
+        if matches!(
+            args.template,
+            ImageBuildTemplate::All | ImageBuildTemplate::Rootfs
+        ) {
+            let mut env = BTreeMap::new();
+            env.insert(
+                "CAPSEM_BUILD_EXPERIMENTAL_EROFS".to_string(),
+                "1".to_string(),
+            );
+            env.insert(
+                "CAPSEM_BUILD_EROFS_COMPRESSION".to_string(),
+                "lz4hc".to_string(),
+            );
+            env.insert(
+                "CAPSEM_BUILD_EROFS_COMPRESSION_LEVEL".to_string(),
+                "12".to_string(),
+            );
+            commands.push(CommandReport {
+                step: "rootfs".to_string(),
+                arch: Some(arch.clone()),
+                env,
+                argv: vec![
+                    "uv".to_string(),
+                    "run".to_string(),
+                    "capsem-builder".to_string(),
+                    "build".to_string(),
+                    args.guest_dir.display().to_string(),
+                    "--arch".to_string(),
+                    arch.clone(),
+                    "--template".to_string(),
+                    "rootfs".to_string(),
+                    "--output".to_string(),
+                    format!("{}/", args.output.display()),
+                ],
+            });
+        }
+    }
+    commands.push(CommandReport {
+        step: "manifest".to_string(),
+        arch: None,
+        env: BTreeMap::new(),
+        argv: vec![
+            "uv".to_string(),
+            "run".to_string(),
+            "python3".to_string(),
+            "-c".to_string(),
+            format!(
+                "from pathlib import Path; from capsem.builder.docker import generate_checksums, get_project_version; v = get_project_version(Path('.')); generate_checksums(Path({:?}), v); print(f'manifest.json generated (v{{v}})')",
+                args.output.display().to_string()
+            ),
+        ],
+    });
+
+    Ok(ImageBuildPlan {
+        schema: "capsem.admin.image_build_plan.v1",
+        profile_id: profile.id,
+        profile_revision: profile.revision,
+        guest_dir: args.guest_dir.display().to_string(),
+        output: args.output.display().to_string(),
+        clean: args.clean,
+        template: match args.template {
+            ImageBuildTemplate::All => "all",
+            ImageBuildTemplate::Kernel => "kernel",
+            ImageBuildTemplate::Rootfs => "rootfs",
+        },
+        arches: arch_plans,
+        commands,
+    })
+}
+
+fn print_image_build_plan(plan: &ImageBuildPlan, json: bool) -> Result<()> {
+    if json {
+        println!("{}", serde_json::to_string_pretty(plan)?);
+        return Ok(());
+    }
+    println!(
+        "profile {} rev {} -> {}",
+        plan.profile_id, plan.profile_revision, plan.output
+    );
+    for arch in &plan.arches {
+        println!(
+            "  {}: {}, {}, {}",
+            arch.arch, arch.kernel, arch.initrd, arch.rootfs
+        );
+    }
+    for command in &plan.commands {
+        let env = if command.env.is_empty() {
+            String::new()
+        } else {
+            format!(
+                "{} ",
+                command
+                    .env
+                    .iter()
+                    .map(|(key, value)| format!("{key}={value}"))
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            )
+        };
+        println!("  {}{}", env, command.argv.join(" "));
+    }
+    Ok(())
+}
+
+fn clean_image_outputs(plan: &ImageBuildPlan) -> Result<()> {
+    let output = PathBuf::from(&plan.output);
+    for arch in &plan.arches {
+        let path = output.join(&arch.arch);
+        if path.exists() {
+            fs::remove_dir_all(&path).with_context(|| format!("remove {}", path.display()))?;
+        }
+    }
+    if plan.arches.len() > 1 {
+        for name in ["manifest.json", "B3SUMS"] {
+            let path = output.join(name);
+            if path.exists() {
+                fs::remove_file(&path).with_context(|| format!("remove {}", path.display()))?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn run_command(command: &CommandReport) -> Result<()> {
+    let (program, args) = command
+        .argv
+        .split_first()
+        .ok_or_else(|| anyhow!("empty command for step {}", command.step))?;
+    let status = Command::new(program)
+        .args(args)
+        .envs(&command.env)
+        .stdin(Stdio::null())
+        .status()
+        .with_context(|| format!("run image build step {}", command.step))?;
+    if !status.success() {
+        return Err(anyhow!(
+            "image build step {} failed with status {status}",
+            command.step
+        ));
+    }
+    Ok(())
 }
 
 fn compile_rule_file(
@@ -780,6 +1107,66 @@ code = true
     }
 
     #[test]
+    fn profile_init_template_carries_release_ready_defaults() {
+        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let repo_root = manifest_dir
+            .parent()
+            .and_then(Path::parent)
+            .expect("repo root");
+        let temp = tempfile::tempdir().expect("tempdir");
+        let profile_path = temp.path().join("code.toml");
+        init_file_command(
+            InitArgs {
+                output: profile_path.clone(),
+                force: false,
+            },
+            CODE_PROFILE_TEMPLATE,
+        )
+        .expect("profile init");
+
+        let profile: ProfileConfigFile =
+            toml::from_str(&fs::read_to_string(&profile_path).expect("read profile"))
+                .expect("profile template parses");
+        assert_eq!(profile.id, "code");
+        assert_eq!(profile.refresh_policy, "24h");
+        assert!(profile.availability.web);
+        assert!(profile.availability.shell);
+        assert!(profile.availability.mobile);
+        assert_eq!(profile.vm.cpu_count, 4);
+        assert_eq!(profile.vm.ram_gb, 12);
+        assert_eq!(profile.vm.scratch_disk_size_gb, 64);
+        for arch in ["arm64", "x86_64"] {
+            let assets = profile.assets.arch.get(arch).expect("arch assets");
+            assert_eq!(assets.kernel.name, "vmlinuz");
+            assert_eq!(assets.initrd.name, "initrd.img");
+            assert_eq!(assets.rootfs.name, "rootfs.erofs");
+            assert!(assets.rootfs.hash.starts_with("blake3:"));
+        }
+        let broker = profile
+            .plugins
+            .get("credential_broker")
+            .expect("credential broker plugin");
+        assert_eq!(broker.mode.as_str(), "rewrite");
+        assert_eq!(broker.detection_level.as_str(), "informational");
+        assert!(profile.mcp.is_some());
+
+        let rules = profile
+            .compile_security_rule_set_from_files(
+                &repo_root.join("config"),
+                SecurityRuleSource::User,
+            )
+            .expect("profile rules compile");
+        assert!(
+            rules
+                .rules()
+                .iter()
+                .any(|rule| rule.rule_id == "profiles.rules.default_http"
+                    && rule.action.as_str() == "allow"),
+            "profile default HTTP allow rule must compile"
+        );
+    }
+
+    #[test]
     fn rejects_profile_rule_files_with_old_policy_syntax() {
         let temp = tempfile::tempdir().expect("tempdir");
         let config_root = temp.path();
@@ -960,6 +1347,84 @@ decision = "block"
         assert!(asset.present);
         assert_eq!(asset.size_ok, Some(true));
         assert_eq!(asset.blake3_ok, Some(true));
+    }
+
+    #[test]
+    fn image_build_requires_profile_argument() {
+        let error = Cli::try_parse_from(["capsem-admin", "image", "build", "--dry-run"])
+            .expect_err("profile is required");
+
+        assert!(error.to_string().contains("--profile"), "{error}");
+    }
+
+    #[test]
+    fn image_plan_is_profile_derived_and_uses_erofs_lz4hc() {
+        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let repo_root = manifest_dir
+            .parent()
+            .and_then(Path::parent)
+            .expect("repo root");
+        let args = ImageBuildArgs {
+            profile: repo_root.join("config/profiles/code.toml"),
+            config_root: repo_root.join("config"),
+            guest_dir: repo_root.join("guest"),
+            output: repo_root.join("assets"),
+            arch: Some("arm64".to_string()),
+            template: ImageBuildTemplate::All,
+            clean: true,
+            dry_run: true,
+            json: true,
+        };
+
+        let plan = image_build_plan(&args).expect("image plan");
+
+        assert_eq!(plan.profile_id, "code");
+        assert_eq!(plan.arches.len(), 1);
+        assert_eq!(plan.arches[0].arch, "arm64");
+        assert_eq!(plan.arches[0].rootfs, "rootfs.erofs");
+        assert_eq!(plan.commands.len(), 3);
+        assert_eq!(plan.commands[0].step, "kernel");
+        assert_eq!(plan.commands[1].step, "rootfs");
+        assert_eq!(
+            plan.commands[1].env.get("CAPSEM_BUILD_EROFS_COMPRESSION"),
+            Some(&"lz4hc".to_string())
+        );
+        assert_eq!(
+            plan.commands[1]
+                .env
+                .get("CAPSEM_BUILD_EROFS_COMPRESSION_LEVEL"),
+            Some(&"12".to_string())
+        );
+        assert_eq!(plan.commands[2].step, "manifest");
+    }
+
+    #[test]
+    fn image_plan_rejects_arch_missing_from_profile() {
+        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let repo_root = manifest_dir
+            .parent()
+            .and_then(Path::parent)
+            .expect("repo root");
+        let args = ImageBuildArgs {
+            profile: repo_root.join("config/profiles/code.toml"),
+            config_root: repo_root.join("config"),
+            guest_dir: repo_root.join("guest"),
+            output: repo_root.join("assets"),
+            arch: Some("riscv64".to_string()),
+            template: ImageBuildTemplate::All,
+            clean: false,
+            dry_run: true,
+            json: false,
+        };
+
+        let error = image_build_plan(&args).expect_err("unknown arch rejected");
+
+        assert!(
+            error
+                .to_string()
+                .contains("does not define assets for arch riscv64"),
+            "{error:#}"
+        );
     }
 
     fn minimal_manifest_json(hash: Option<&str>, include_refresh_policy: bool) -> String {

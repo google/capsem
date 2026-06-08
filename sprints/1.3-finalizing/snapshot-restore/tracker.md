@@ -923,6 +923,14 @@ the guarantee or explicitly burn it.
   temp `profile init` + `profile validate`, and temp `settings init` +
   `settings validate`.
 - [ ] Restore image `plan|verify|workspace|build` commands.
+- [x] Restore profile-derived `capsem-admin image plan|build` for the current
+  `code` profile asset contract. `image build` requires `--profile`, validates
+  the profile and referenced enforcement/Sigma rules, emits/executes
+  kernel/rootfs builder commands for profile-owned arches, forces EROFS
+  `lz4hc` level 12 for rootfs, and regenerates the manifest through the current
+  BLAKE3 `generate_checksums` writer. `--dry-run --json` is the non-Docker
+  proof path. Remaining image work: workspace materialization and image verify
+  with SBOM/provenance/doctor inventory.
 - [ ] Restore manifest `check|download-check|generate|verify` commands only
   for BLAKE3 hash checks, asset inventory, SBOM, and build provenance. Do not
   restore manifest signing, profile payload signing, minisign pubkeys,
@@ -936,12 +944,24 @@ the guarantee or explicitly burn it.
   `cargo run -p capsem-admin -- manifest check assets/manifest.json --json`,
   and `cargo run -p capsem-admin -- manifest download-check
   assets/manifest.json --assets-dir assets --arch arm64 --json`.
-- [ ] Restore `scripts/build-assets.sh --profile <profile>` or equivalent
-  `just build-assets profile=...` typed rail.
+- [x] Restore `scripts/build-assets.sh --profile <profile>` or equivalent
+  `just build-assets profile=...` typed rail. Current rail is
+  `just build-assets code [arm64|x86_64]` and accepts `profile=code`/
+  `arch=arm64` argument spelling for compatibility with sprint notes.
+  `_check-assets` now recovers missing assets via `just build-assets code`.
 - [ ] Restore package/bootstrap proof that `capsem-admin` is installed and
   runnable.
 - [ ] Restore CI/release calls to `capsem-admin` for profile-derived assets.
-- [ ] Add tests proving raw asset builds without a profile fail closed.
+- [x] Add tests proving raw asset builds without a profile fail closed.
+  Coverage: `cargo test -p capsem-admin -- --nocapture` includes
+  `image_build_requires_profile_argument`,
+  `image_plan_is_profile_derived_and_uses_erofs_lz4hc`,
+  `image_plan_rejects_arch_missing_from_profile`, and
+  `profile_init_template_carries_release_ready_defaults`; `uv run pytest
+  tests/test_build_assets_profile.py -q` proves the justfile build rail is
+  profile-gated and no longer directly invokes `capsem-builder`;
+  `just build-assets` exits immediately with code 2 and the profile-required
+  message before setup, cleanup, Docker, or builder work can run.
 - [ ] Commit S1.
 
 ## S2: Runtime Profile Assets And Pins
