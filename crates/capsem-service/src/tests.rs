@@ -637,6 +637,18 @@ async fn t1_adversarial_route_inputs_fail_closed() {
         "mode": "teleport",
     }));
     assert!(invalid_enum.is_err());
+    let invalid_detection_level = serde_json::from_value::<PluginUpdate>(json!({
+        "detection_level": "panic",
+    }));
+    assert!(invalid_detection_level.is_err());
+    let smuggled_credential_ref = serde_json::from_value::<PluginUpdate>(json!({
+        "mode": "rewrite",
+        "credential_ref": "sk-leak"
+    }));
+    assert!(
+        smuggled_credential_ref.is_err(),
+        "plugin edit payloads must reject credential/provider theater fields"
+    );
 
     let immutable_profile = handle_vm_edit(
         State(make_test_state()),
@@ -985,6 +997,28 @@ async fn profile_plugin_endpoint_matrix_dynamically_controls_enforcement_evaluat
     assert!(!after_disable_detections.iter().any(|detection| {
         detection["source"] == "plugin" && detection["plugin_id"] == "dummy_pre_eicar"
     }));
+
+    let unknown_plugin_info = handle_profile_plugin_info(
+        State(Arc::clone(&state)),
+        Path(("code".to_string(), "credential_ref".to_string())),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(unknown_plugin_info.0, StatusCode::NOT_FOUND);
+    assert!(unknown_plugin_info.1.contains("unknown plugin"));
+
+    let unknown_plugin_update = handle_profile_plugin_update(
+        State(Arc::clone(&state)),
+        Path(("code".to_string(), "credential_ref".to_string())),
+        Json(PluginUpdate {
+            mode: Some(capsem_core::net::policy_config::SecurityPluginMode::Rewrite),
+            detection_level: None,
+        }),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(unknown_plugin_update.0, StatusCode::NOT_FOUND);
+    assert!(unknown_plugin_update.1.contains("unknown plugin"));
 
     let unknown_profile = handle_profile_plugin_update(
         State(Arc::clone(&state)),

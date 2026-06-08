@@ -344,9 +344,14 @@ commit.
   handle_get_settings_returns_tree -- --nocapture`, `pnpm -C frontend test
   src/lib/models/__tests__/settings-model.test.ts
   src/lib/__tests__/settings-store.test.ts`, and `pnpm -C frontend check`.
-- [ ] Add adversarial tests for plugin disable/enable invalid modes, invalid
+- [x] Add adversarial tests for plugin disable/enable invalid modes, invalid
   detection levels, cross-profile MCP tool mutation, and credential secret
-  leakage attempts.
+  leakage attempts. Coverage: `cargo test -p capsem-service
+  t1_adversarial_route_inputs_fail_closed -- --nocapture`, `cargo test -p
+  capsem-service
+  profile_plugin_endpoint_matrix_dynamically_controls_enforcement_evaluation
+  -- --nocapture`, and `cargo test -p capsem-gateway gateway_ --
+  --nocapture`.
 - [ ] Commit T4 with tests.
 
 ## T5: VM Lifecycle, Assets, Install

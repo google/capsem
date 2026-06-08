@@ -237,6 +237,7 @@ struct PluginInfo {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct PluginUpdate {
     #[serde(default)]
     mode: Option<SecurityPluginMode>,

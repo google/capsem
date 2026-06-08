@@ -240,6 +240,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   runtime status: stage, version, counters, errors, and brokered credential
   references. The settings UI now reads brokered credential refs only from the
   credential-broker plugin runtime status shape.
+- Hardened plugin edit requests so unknown fields are rejected instead of
+  ignored. Invalid modes, invalid detection levels, unknown plugins/profiles,
+  and credential-reference smuggling attempts fail closed.
 - Added the plugin/detection/enforcement endpoint taxonomy:
   `/profiles/{profile_id}/plugins/list`,
   `/profiles/{profile_id}/plugins/{plugin_id}/info`, and
