@@ -110,6 +110,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   command, `capsem-admin profile validate`, parses the current profile TOML and
   compiles referenced enforcement/Sigma rule files through the same
   `SecurityRuleSet`/CEL contract used at runtime.
+- Added `capsem-admin enforcement validate|compile` and
+  `capsem-admin detection validate|compile` so administrators can validate the
+  current enforcement TOML and Sigma YAML files directly through the runtime
+  rule compiler without restoring old policy-pack schemas.
 - Replaced the temporary flat profile asset triplet with per-architecture
   profile asset declarations. `config/profiles/code.toml` now parses as the
   checked-in contract for EROFS/LZ4HC kernel, initrd, and rootfs assets with

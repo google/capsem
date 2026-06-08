@@ -92,31 +92,109 @@ the guarantee or explicitly burn it.
 
 ### S1 Profile/Admin/Asset Pipeline Commits
 
-- [ ] `9ca1bbed release: v1.2.1779658398`
-- [ ] `1bdd27cb bench: record macos arm64 benchmark results`
-- [ ] `89b04f87 perf: tune rootfs squashfs block size`
-- [ ] `6823cf1f feat: package capsem tui binary`
-- [ ] `03fcce34 fix: skip asset alias directories in install profiles`
-- [ ] `b8ca8589 fix: ignore manifest aliases in install profiles`
-- [ ] `6daf264a fix: point package profiles at release assets`
-- [ ] `a841716f fix: sign packaged admin python extensions`
-- [ ] `718981b1 docs: record admin release gate proof`
-- [ ] `24c846e8 refactor: rename admin policy packs to enforcement`
-- [ ] `923d603f test: add session process policy corpus`
-- [ ] `63eccc3f feat: support admin model tool policy paths`
-- [ ] `9944c7ba feat: expand admin policy context parity`
-- [ ] `391eaece fix: compile-check policy backtests before replay`
-- [ ] `b07101ed test: tighten admin policy path compile`
-- [ ] `2f9b0fd0 test: expand s08c policy corpus diversity`
-- [ ] `80a416be feat: add admin policy compile`
-- [ ] `2db1259a test: pin s08c detection ir parity`
-- [ ] `099152a4 feat: add admin policy backtest corpus`
-- [ ] `7b14ccb4 feat: add admin detection backtest corpus`
-- [ ] `2bedce99 feat: seed policy context rule corpus`
-- [ ] `b0eecdd7 feat: add admin doctor closeout`
-- [ ] `0e1e6b1b feat: add detection ir parity`
-- [ ] `66141eee feat: compile detection packs`
-- [ ] `d773481f feat: validate security packs`
+- [x] `9ca1bbed release: v1.2.1779658398` decision: conceptual_port.
+  Notes: release bundle marker containing many subsystems already split across
+  S0/S1/S2/S3/S4/S5. Do not replay wholesale. Useful commitments are the
+  benchmark evidence, profile/admin packaging, TUI package inclusion, and
+  release-status docs/tests tracked as separate ledger entries below.
+- [x] `1bdd27cb bench: record macos arm64 benchmark results` decision:
+  conceptual_port. Notes: benchmark artifacts and docs must be restored through
+  the current EROFS/LZ4HC benchmark gate and docs-site benchmark page, not by
+  copying stale 1.2 numbers. Keep as release proof debt until the 1.3 benchmark
+  gate records current numbers.
+- [x] `89b04f87 perf: tune rootfs squashfs block size` decision:
+  superseded. Notes: current 1.3 build contract in `guest/config/build.toml`
+  runs EROFS/LZ4HC level 12 as the primary rootfs on kernel 7.0. Squashfs is
+  legacy fallback only; do not restore squashfs tuning as a release target.
+- [x] `6823cf1f feat: package capsem tui binary` decision:
+  conceptual_port. Notes: current tree has no `capsem-tui`/TUI package rail, so
+  the capability remains active under the TUI restore slice. Restore the modern
+  multi-VM TUI and package it with current profile/status contracts, not the old
+  package script shape blindly.
+- [x] `03fcce34 fix: skip asset alias directories in install profiles`
+  decision: conceptual_port. Notes: old `materialize-install-profiles.py` is
+  absent; profile asset packaging must be rebuilt through `capsem-admin` and
+  hash-prefixed profile assets. Preserve the invariant that generated/hash alias
+  directories are never treated as installable profile sources.
+- [x] `b8ca8589 fix: ignore manifest aliases in install profiles` decision:
+  conceptual_port. Notes: same asset-alias invariant as above, but through the
+  modern BLAKE3 asset inventory/download-check commands. Do not reintroduce
+  manifest alias directories as profile truth.
+- [x] `6daf264a fix: point package profiles at release assets` decision:
+  conceptual_port. Notes: current profile descriptors carry release URLs and
+  BLAKE3/size metadata directly. Package/install proof still needs an admin
+  package slice ensuring bundled profiles point at release assets and never
+  local dev paths.
+- [x] `a841716f fix: sign packaged admin python extensions` decision:
+  intentional_burn/conceptual_port. Notes: old Python-extension signing is
+  stale because `capsem-admin` is now restored as a Rust binary. Preserve the
+  release invariant that packaged executables are signed/notarized by the
+  normal package pipeline; do not restore Python admin extension signing.
+- [x] `718981b1 docs: record admin release gate proof` decision:
+  conceptual_port. Notes: release gate proof remains required, but docs/tests
+  must target current `capsem-admin`, profile-owned rule files, and the single
+  `SecurityRuleSet` rail.
+- [x] `24c846e8 refactor: rename admin policy packs to enforcement` decision:
+  conceptual_port. Notes: keep the vocabulary (`enforcement`, not `policy`
+  packs) and burned old policy strings. Current docs and endpoints already use
+  `/enforcement`; admin commands should validate current enforcement TOML
+  directly.
+- [x] `923d603f test: add session process policy corpus` decision:
+  conceptual_port. Notes: useful corpus target, but old `policy-context`
+  fixtures are superseded by typed `SecurityEvent`/session DB ledger events.
+  Rebuild process coverage against current `file/process/http/dns/mcp/model`
+  event roots.
+- [x] `63eccc3f feat: support admin model tool policy paths` decision:
+  conceptual_port. Notes: current CEL roots include model tool-call fields;
+  admin validation must compile those paths through `SecurityRuleProfile`, not
+  through old policy-pack path lists.
+- [x] `9944c7ba feat: expand admin policy context parity` decision:
+  conceptual_port. Notes: old context parity becomes current
+  `SecurityEvent` fixture parity. Do not restore policy-context JSONL as a
+  second abstraction.
+- [x] `391eaece fix: compile-check policy backtests before replay` decision:
+  conceptual_port. Notes: preserve the invariant that replay/backtest files are
+  compile-checked first. Port as current enforcement/Sigma compile commands
+  before any backtest runner.
+- [x] `b07101ed test: tighten admin policy path compile` decision:
+  conceptual_port. Notes: path compilation is still mandatory, but through
+  current CEL roots (`http`, `dns`, `mcp`, `model`, `file`, `process`) and
+  without `credential`/`snapshot` roots.
+- [x] `2f9b0fd0 test: expand s08c policy corpus diversity` decision:
+  conceptual_port. Notes: rebuild as fresh current-rule corpus coverage after
+  admin compile/validate exists.
+- [x] `80a416be feat: add admin policy compile` decision:
+  conceptual_port. Notes: port as `capsem-admin enforcement compile` (current
+  TOML) and `capsem-admin detection compile` (Sigma YAML) over
+  `SecurityRuleProfile`, not old policy-pack compile.
+- [x] `2db1259a test: pin s08c detection ir parity` decision:
+  conceptual_port. Notes: the old detection IR schema is absent and should not
+  be restored as a standalone contract unless it is derived from
+  `SecurityRuleProfile::parse_sigma_yaml`. Current port should prove Sigma YAML
+  compiles into the same rule rail.
+- [x] `099152a4 feat: add admin policy backtest corpus` decision:
+  conceptual_port. Notes: backtest corpus remains valuable but must use current
+  `SecurityEvent` fixtures and compiled rule sets. Rebuild after compile
+  commands land.
+- [x] `7b14ccb4 feat: add admin detection backtest corpus` decision:
+  conceptual_port. Notes: same as above for Sigma detection YAML; no old
+  detection-pack schema restore.
+- [x] `2bedce99 feat: seed policy context rule corpus` decision:
+  conceptual_port. Notes: seed a fresh current-rule corpus later; old
+  `policy-context` abstraction stays burned.
+- [x] `b0eecdd7 feat: add admin doctor closeout` decision: conceptual_port.
+  Notes: admin doctor remains required, but must report current prerequisites:
+  profile rule compile, profile assets, BLAKE3 inventory, EROFS/LZ4HC build
+  shape, and absence of burned rails.
+- [x] `0e1e6b1b feat: add detection ir parity` decision: conceptual_port.
+  Notes: old IR files/schema absent; current parity proof should be
+  Sigma-to-`SecurityRuleProfile` compile output.
+- [x] `66141eee feat: compile detection packs` decision: conceptual_port.
+  Notes: port as direct Sigma YAML compile in `capsem-admin`, not detection-pack
+  schemas.
+- [x] `d773481f feat: validate security packs` decision: conceptual_port.
+  Notes: validate current enforcement TOML and Sigma YAML files directly.
+  Burn old `policy-pack`/`detection-pack` schemas and Python pack compiler.
 - [ ] `7277c17b feat: generate guest image sboms`
 - [ ] `3a37d704 feat: verify doctor bundle probes`
 - [ ] `2d02b6e0 fix: require image inventory proof`
@@ -732,6 +810,17 @@ the guarantee or explicitly burn it.
   Proof: `cargo test -p capsem-admin -- --nocapture` and
   `cargo run -p capsem-admin -- profile validate config/profiles/code.toml
   --config-root config --json`.
+- [x] Restore current-contract enforcement/Sigma rule compile validation in
+  `capsem-admin` without policy-pack/detection-pack schemas. Commands:
+  `capsem-admin enforcement validate|compile <rules.toml>` and
+  `capsem-admin detection validate|compile <rules.yaml>`. Reports are derived
+  from compiled `CompiledSecurityRule` fields, including rule id, source,
+  priority, action, detection level, condition, reason, and corp lock state.
+  Proof: `cargo test -p capsem-admin -- --nocapture`,
+  `cargo run -p capsem-admin -- enforcement compile
+  config/profiles/code/enforcement.toml --json`, and
+  `cargo run -p capsem-admin -- detection compile
+  config/profiles/code/detection.yaml --json`.
 - [ ] Restore profile/settings `init|schema|validate|doctor` commands.
 - [ ] Restore image `plan|verify|workspace|build` commands.
 - [ ] Restore manifest `check|download-check|generate|verify` commands only
