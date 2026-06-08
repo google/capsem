@@ -40,7 +40,7 @@ fi
 mkdir -p "$ASSETS_DST"
 
 # Copy binaries
-for bin in capsem capsem-service capsem-process capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-gateway capsem-tray capsem-admin; do
+for bin in capsem capsem-service capsem-process capsem-tui capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-gateway capsem-tray capsem-admin; do
     src="$BIN_SRC/$bin"
     if [[ ! -f "$src" ]]; then
         echo "ERROR: binary not found: $src" >&2

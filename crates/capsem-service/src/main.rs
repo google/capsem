@@ -4212,6 +4212,11 @@ fn build_profile_summary(
         id: manifest.id.clone(),
         name: manifest.name.clone(),
         description: manifest.description.clone(),
+        availability: api::ProfileAvailabilitySummary {
+            web: manifest.availability.web,
+            shell: manifest.availability.shell,
+            mobile: manifest.availability.mobile,
+        },
         source: profile_catalog_source_label(source),
         rule_count: profile_rule_count,
         default_rule_count,

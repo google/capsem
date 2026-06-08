@@ -566,40 +566,86 @@ the guarantee or explicitly burn it.
 
 ### S3 TUI/Shell And Lower-Priority Debug Commits
 
-- [ ] `0a425541 chore: merge main into tui control`
-- [ ] `a476d7a7 chore: merge main into tui control branch`
-- [ ] `9ca1bbed release: v1.2.1779658398`
-- [ ] `32102d6d fix: purge broken persistent tui sessions`
-- [ ] `2b6a2edc fix: offer tui recovery create and purge`
-- [ ] `0cf0a9a0 fix: keep tui create focus pending`
-- [ ] `6902dc4b fix: show full-screen tui suspend progress`
-- [ ] `b50c811d fix: reconnect tui terminal after resume`
-- [ ] `9b168fd5 fix: focus tui create and hide corrupt tabs`
-- [ ] `860cc8ea feat: make capsem shell launch tui`
-- [ ] `f3068301 fix: prompt tui service start when offline`
-- [ ] `53862ec2 fix: block tui create without profiles`
-- [ ] `92143119 fix: open tui new session on empty state`
-- [ ] `c2fb4b77 fix: move tui help hint to session stats`
-- [ ] `e3d0312f fix: polish tui controls and overlays`
-- [ ] `fb98b2d1 fix: add tui fork flow`
-- [ ] `f5a73773 fix: make tui create profile aware`
-- [ ] `d47a889a fix: pin tui suspend hint left`
-- [ ] `f60bb671 fix: surface tui suspend shortcut`
-- [ ] `1299bd5c fix: render stopped tui sessions`
-- [ ] `6138c0b9 fix: gate endpoint latency hot paths`
-- [ ] `a21e269c fix: stabilize tui latency display`
-- [ ] `161e40f4 fix: simplify tui tab colors and modal input`
-- [ ] `43716abb fix: harden tui modal and resize behavior`
-- [ ] `91a9cf93 fix: make tui shell controls alt-only`
-- [ ] `f54d94a0 fix: stabilize tui session navigation`
-- [ ] `ec0c7152 fix: use vt parser for tui terminal`
-- [ ] `c93351ee fix: finish tui live terminal proof`
-- [ ] `6823cf1f feat: package capsem tui binary`
-- [ ] `ec473982 feat: add confirmed capsem tui service actions`
-- [ ] `92a9992f feat: add capsem mcp terminal snapshot`
-- [ ] `921b941f feat: add capsem tui gateway terminal shell`
-- [ ] `2e79056b style: simplify capsem tui chrome`
-- [ ] `c6a70081 feat: add standalone capsem tui shell`
+- [x] `0a425541 chore: merge main into tui control` decision:
+  conceptual_port. Notes: do not replay merge noise; restore the latest useful
+  TUI state and port routes to current profile/VM endpoints.
+- [x] `a476d7a7 chore: merge main into tui control branch` decision:
+  conceptual_port. Notes: same merge-noise handling as above.
+- [x] `9ca1bbed release: v1.2.1779658398` decision: conceptual_port. Notes:
+  TUI package inclusion and release proof are restored through current package
+  scripts/workflows and payload tests.
+- [x] `32102d6d fix: purge broken persistent tui sessions` decision:
+  conceptual_port. Notes: restored purge flow and broken persistent-session
+  messaging in the TUI action/provider tests.
+- [x] `2b6a2edc fix: offer tui recovery create and purge` decision:
+  conceptual_port. Notes: restored empty/recovery create and purge affordances.
+- [x] `0cf0a9a0 fix: keep tui create focus pending` decision:
+  conceptual_port. Notes: restored pending-create focus behavior.
+- [x] `6902dc4b fix: show full-screen tui suspend progress` decision:
+  conceptual_port. Notes: restored full-surface suspend progress rendering.
+- [x] `b50c811d fix: reconnect tui terminal after resume` decision:
+  conceptual_port. Notes: restored terminal manager reconnect coverage.
+- [x] `9b168fd5 fix: focus tui create and hide corrupt tabs` decision:
+  conceptual_port. Notes: restored corrupt profile tab filtering plus create
+  replacement prompt.
+- [x] `860cc8ea feat: make capsem shell launch tui` decision:
+  conceptual_port. Notes: current `capsem shell` now launches `capsem-tui`
+  and maps an optional session to `--session`.
+- [x] `f3068301 fix: prompt tui service start when offline` decision:
+  conceptual_port. Notes: restored offline/degraded start-service screens.
+- [x] `53862ec2 fix: block tui create without profiles` decision:
+  conceptual_port. Notes: restored profile-unavailable create guard.
+- [x] `92143119 fix: open tui new session on empty state` decision:
+  conceptual_port. Notes: restored empty-state create flow.
+- [x] `c2fb4b77 fix: move tui help hint to session stats` decision:
+  conceptual_port. Notes: restored status bar help hint behavior.
+- [x] `e3d0312f fix: polish tui controls and overlays` decision:
+  conceptual_port. Notes: restored modal/overlay polish.
+- [x] `fb98b2d1 fix: add tui fork flow` decision: conceptual_port. Notes:
+  restored fork overlay and `/vms/{id}/fork` provider action.
+- [x] `f5a73773 fix: make tui create profile aware` decision:
+  conceptual_port. Notes: restored profile selection in create flow against
+  `/profiles/list`.
+- [x] `d47a889a fix: pin tui suspend hint left` decision: conceptual_port.
+  Notes: restored suspend hint behavior through existing snapshot tests.
+- [x] `f60bb671 fix: surface tui suspend shortcut` decision:
+  conceptual_port. Notes: restored Alt+s/Alt+c help and action ownership.
+- [x] `1299bd5c fix: render stopped tui sessions` decision:
+  conceptual_port. Notes: restored stopped-session render and resume prompt.
+- [x] `6138c0b9 fix: gate endpoint latency hot paths` decision:
+  conceptual_port. Notes: restored TUI via gateway `/status` cache and
+  profile routes; TUI provider tests use HTTP mocks and never read session DB.
+- [x] `a21e269c fix: stabilize tui latency display` decision:
+  conceptual_port. Notes: restored fresh service latency preservation.
+- [x] `161e40f4 fix: simplify tui tab colors and modal input` decision:
+  conceptual_port. Notes: restored tab color and active-input tests.
+- [x] `43716abb fix: harden tui modal and resize behavior` decision:
+  conceptual_port. Notes: restored modal escape/focus behavior.
+- [x] `91a9cf93 fix: make tui shell controls alt-only` decision:
+  conceptual_port. Notes: restored Alt-only shell shortcuts and plain-key
+  forwarding coverage.
+- [x] `f54d94a0 fix: stabilize tui session navigation` decision:
+  conceptual_port. Notes: restored session navigation tests.
+- [x] `ec0c7152 fix: use vt parser for tui terminal` decision:
+  conceptual_port. Notes: restored vt100-backed terminal surface tests.
+- [x] `c93351ee fix: finish tui live terminal proof` decision:
+  conceptual_port. Notes: restored gateway terminal bridge and reconnect
+  coverage.
+- [x] `6823cf1f feat: package capsem tui binary` decision:
+  conceptual_port. Notes: restored workspace/package/CI/release inclusion for
+  `capsem-tui`.
+- [x] `ec473982 feat: add confirmed capsem tui service actions` decision:
+  conceptual_port. Notes: restored confirmation modal before service actions.
+- [x] `92a9992f feat: add capsem mcp terminal snapshot` decision:
+  conceptual_port. Notes: restored deterministic text/SVG TUI snapshot harness;
+  MCP-specific fixture remains current TUI fixture-driven.
+- [x] `921b941f feat: add capsem tui gateway terminal shell` decision:
+  conceptual_port. Notes: restored gateway terminal bridge and TUI route usage.
+- [x] `2e79056b style: simplify capsem tui chrome` decision:
+  conceptual_port. Notes: restored simplified TUI chrome snapshot.
+- [x] `c6a70081 feat: add standalone capsem tui shell` decision:
+  conceptual_port. Notes: restored standalone `capsem-tui` binary with
+  `--fixture`, `--snapshot`, and `--snapshot-svg`.
 - [ ] `1845ec83 fix: stop install harness service before error tests`
 - [ ] `33684fcd fix: compile debug report disk stats on macos`
 - [ ] `2322fbf2 feat: surface security health in status`
@@ -1119,21 +1165,34 @@ the guarantee or explicitly burn it.
 
 ## S3: TUI And Terminal Shell
 
-- [ ] Restore `crates/capsem-tui` or accepted replacement.
-- [ ] Restore workspace/package references for TUI.
-- [ ] Restore `capsem shell` TUI launch path.
-- [ ] Ensure TUI reads backend profile/session/asset contracts directly.
-- [ ] Restore multi-VM/session navigation and keyboard shortcuts.
-- [ ] Restore TUI VM manipulation flows: create, start, pause, resume, stop,
+- [x] Restore `crates/capsem-tui` or accepted replacement.
+- [x] Restore workspace/package references for TUI.
+- [x] Restore `capsem shell` TUI launch path.
+- [x] Ensure TUI reads backend profile/session/asset contracts directly.
+- [x] Restore multi-VM/session navigation and keyboard shortcuts.
+- [x] Restore TUI VM manipulation flows: create, start, pause, resume, stop,
   save, fork, delete, and recovery where supported.
-- [ ] Restore terminal attach/reconnect behavior.
-- [ ] Restore profile selection/readiness/status display.
-- [ ] Add regression coverage that status/readiness hotpaths do not query the
+- [x] Restore terminal attach/reconnect behavior.
+- [x] Restore profile selection/readiness/status display.
+- [x] Add regression coverage that status/readiness hotpaths do not query the
   session DB on every frame.
-- [ ] Add tests for terminal shell launch, profile readiness display,
+- [x] Add tests for terminal shell launch, profile readiness display,
   multi-VM/session navigation, lifecycle actions, shortcuts, and corrupt/stopped
   session recovery.
-- [ ] Commit S3.
+- [x] Restore deterministic TUI render inspection:
+  `capsem-tui --fixture --snapshot` and `--snapshot-svg`.
+- [x] Coverage:
+  `cargo test -p capsem-tui -- --nocapture`,
+  `cargo test -p capsem shell -- --nocapture`,
+  `cargo test -p capsem-gateway -p capsem-service profiles -- --nocapture`,
+  `cargo run -p capsem-tui -- --fixture --snapshot --width 100 --height 24`,
+  `cargo run -p capsem-tui -- --fixture --snapshot-svg --width 100 --height 24`,
+  and `uv run python -m pytest
+  tests/capsem-build-chain/test_install_asset_payload.py
+  tests/capsem-build-chain/test_simulate_install_assets.py
+  tests/test_repack_deb.py::test_happy_path_adds_every_companion_binary
+  tests/test_repack_deb.py::test_missing_companion_binary_fails_loudly -q`.
+- [x] Commit S3.
 
 ## S4: Linux/KVM/EROFS/LZ4HC And Benchmarks
 

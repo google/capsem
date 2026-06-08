@@ -55,6 +55,7 @@ pub struct VmSummary {
     pub name: Option<String>,
     pub status: String,
     pub persistent: bool,
+    pub profile_id: String,
     // Telemetry (present for running VMs, absent for stopped)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub uptime_secs: Option<u64>,
@@ -184,6 +185,7 @@ struct ListResponse {
 #[derive(Deserialize)]
 struct SessionInfo {
     id: String,
+    profile_id: String,
     #[serde(default)]
     name: Option<String>,
     #[serde(default)]
@@ -266,6 +268,7 @@ async fn fetch_status(state: &AppState) -> StatusResponse {
             name: sess.name.clone(),
             status: sess.status.clone(),
             persistent: sess.persistent,
+            profile_id: sess.profile_id.clone(),
             uptime_secs: sess.uptime_secs,
             total_input_tokens: sess.total_input_tokens,
             total_output_tokens: sess.total_output_tokens,

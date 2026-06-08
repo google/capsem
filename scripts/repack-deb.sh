@@ -14,6 +14,7 @@
 #   /usr/bin/capsem
 #   /usr/bin/capsem-service
 #   /usr/bin/capsem-process
+#   /usr/bin/capsem-tui
 #   /usr/bin/capsem-mcp
 #   /usr/bin/capsem-gateway
 #   /usr/bin/capsem-tray
@@ -35,7 +36,7 @@ dpkg-deb -R "$INPUT_DEB" "$WORK_DIR/deb"
 
 echo "=== Adding companion binaries ==="
 mkdir -p "$WORK_DIR/deb/usr/bin"
-for bin in capsem capsem-service capsem-process capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-gateway capsem-tray capsem-admin; do
+for bin in capsem capsem-service capsem-process capsem-tui capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-gateway capsem-tray capsem-admin; do
     src="$BIN_DIR/$bin"
     if [ -f "$src" ]; then
         cp "$src" "$WORK_DIR/deb/usr/bin/$bin"

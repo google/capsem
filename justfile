@@ -54,10 +54,10 @@ process_binary := "target/debug/capsem-process"
 mcp_binary := "target/debug/capsem-mcp"
 gateway_binary := "target/debug/capsem-gateway"
 admin_binary := "target/debug/capsem-admin"
-host_binaries := "target/debug/capsem target/debug/capsem-service target/debug/capsem-process target/debug/capsem-mcp target/debug/capsem-mcp-aggregator target/debug/capsem-mcp-builtin target/debug/capsem-gateway target/debug/capsem-tray target/debug/capsem-admin"
+host_binaries := "target/debug/capsem target/debug/capsem-service target/debug/capsem-process target/debug/capsem-mcp target/debug/capsem-mcp-aggregator target/debug/capsem-mcp-builtin target/debug/capsem-gateway target/debug/capsem-tray target/debug/capsem-admin target/debug/capsem-tui"
 assets_dir := "assets"
 entitlements := "entitlements.plist"
-host_crates := "-p capsem-service -p capsem-process -p capsem -p capsem-mcp -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-gateway -p capsem-tray -p capsem-admin"
+host_crates := "-p capsem-service -p capsem-process -p capsem -p capsem-tui -p capsem-mcp -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-gateway -p capsem-tray -p capsem-admin"
 
 # Stamp version as 1.0.{unix_timestamp} in Cargo.toml, tauri.conf.json, and pyproject.toml.
 _stamp-version:
@@ -73,6 +73,11 @@ _stamp-version:
 # Compile all host binaries
 _build-host:
     cargo build {{host_crates}}
+
+# Run the terminal control UI against the installed gateway, or with
+# `--fixture --snapshot` for deterministic render inspection.
+dev-tui *ARGS:
+    cargo run -p capsem-tui -- {{ARGS}}
 
 # Codesign all host binaries (macOS only, needed for Virtualization.framework)
 _sign: _build-host

@@ -171,6 +171,7 @@ fn test_vm(id: &str, name: Option<&str>, status: &str, persistent: bool) -> VmSu
         name: name.map(|s| s.into()),
         status: status.into(),
         persistent,
+        profile_id: "code".into(),
         uptime_secs: None,
         total_input_tokens: None,
         total_output_tokens: None,

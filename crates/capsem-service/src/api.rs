@@ -202,11 +202,19 @@ pub struct ProfileSummary {
     pub id: String,
     pub name: String,
     pub description: String,
+    pub availability: ProfileAvailabilitySummary,
     pub source: String,
     pub rule_count: usize,
     pub default_rule_count: usize,
     pub plugin_count: usize,
     pub mcp_server_count: usize,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct ProfileAvailabilitySummary {
+    pub web: bool,
+    pub shell: bool,
+    pub mobile: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]

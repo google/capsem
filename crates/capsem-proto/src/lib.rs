@@ -537,8 +537,6 @@ pub enum GuestToHost {
 /// MessagePack bytes appearing in the middle of legitimate file content
 /// (e.g. `cat msgpack-blob.bin`) are not a leak.
 ///
-/// Tested in `crates/capsem/src/shell_exit/tests.rs` against every variant
-/// of both envelopes.
 pub fn looks_like_ipc_frame(data: &[u8]) -> bool {
     data.len() >= 4
         && (data[0] == 0x81 || data[0] == 0x82)

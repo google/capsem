@@ -331,6 +331,7 @@ jobs:
             -p capsem \
             -p capsem-service \
             -p capsem-process \
+            -p capsem-tui \
             -p capsem-mcp \
             -p capsem-mcp-aggregator \
             -p capsem-mcp-builtin \
@@ -342,7 +343,7 @@ jobs:
         env:
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
         run: |
-          for bin in capsem capsem-service capsem-process capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-gateway capsem-tray capsem-admin; do
+          for bin in capsem capsem-service capsem-process capsem-tui capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-gateway capsem-tray capsem-admin; do
             codesign --sign "$APPLE_SIGNING_IDENTITY" \
               --options runtime \
               --timestamp \
@@ -516,7 +517,7 @@ jobs:
 
       - name: Build companion binaries
         run: |
-          cargo build --release -p capsem -p capsem-service -p capsem-process -p capsem-mcp -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-gateway -p capsem-tray -p capsem-admin
+          cargo build --release -p capsem -p capsem-service -p capsem-process -p capsem-tui -p capsem-mcp -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-gateway -p capsem-tray -p capsem-admin
 
       - name: Repack .deb with companion binaries
         run: |
@@ -528,7 +529,7 @@ jobs:
           echo "=== Validate deb ==="
           dpkg-deb --info target/release/bundle/deb/*.deb
           echo "=== Verify companion binaries in deb ==="
-          dpkg-deb --contents target/release/bundle/deb/*.deb | grep -E "capsem-service|capsem-mcp-aggregator|capsem-mcp-builtin|capsem-gateway|capsem-tray|capsem-admin"
+          dpkg-deb --contents target/release/bundle/deb/*.deb | grep -E "capsem-service|capsem-tui|capsem-mcp-aggregator|capsem-mcp-builtin|capsem-gateway|capsem-tray|capsem-admin"
 
       - name: Boot test (x86_64)
         if: matrix.arch == 'x86_64'

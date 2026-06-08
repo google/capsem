@@ -64,7 +64,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and already hash-prefixed assets both install through the same
   manifest-driven hash-prefixed layout, and package/simulated installs now
   include the full host tool set including `capsem-admin`,
-  `capsem-mcp-aggregator`, and `capsem-mcp-builtin`.
+  `capsem-tui`, `capsem-mcp-aggregator`, and `capsem-mcp-builtin`.
 
 ### Changed (service/API)
 - Updated architecture docs and local development skills to match the 1.3
@@ -107,6 +107,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   profile instead of the retired `default` profile when listing servers/tools,
   refreshing tools, calling profile-scoped MCP tools, or creating one-shot VMs.
   “Default” now refers only to visible default rules, not a hidden profile id.
+- Restored the terminal control UI as the `capsem-tui` host binary and made
+  `capsem shell` launch it. The TUI is wired to the current `/profiles/list`,
+  `/status`, and `/vms/...` contracts, restores Alt-owned shortcuts,
+  create/fork/pause/resume/stop/delete/recovery flows, vt-backed terminal
+  reconnect behavior, and deterministic text/SVG snapshot inspection.
 - Added a profile-owned rule-file compilation guard: profile enforcement TOML
   and Sigma detection YAML now materialize as `SecurityRuleProfile` and compile
   only through the unified `SecurityRuleSet`/CEL rail, rejecting old policy

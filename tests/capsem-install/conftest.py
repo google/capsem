@@ -90,6 +90,7 @@ BINARIES = [
     "capsem",
     "capsem-service",
     "capsem-process",
+    "capsem-tui",
     "capsem-mcp",
     "capsem-mcp-aggregator",
     "capsem-mcp-builtin",

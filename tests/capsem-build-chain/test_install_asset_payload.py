@@ -25,12 +25,15 @@ def test_package_builders_support_current_arch_asset_payloads() -> None:
     assert 'current-arch)' in build_pkg
     assert 'bash "$SCRIPT_DIR/sync-dev-assets.sh" "$ASSETS_DIR" "$SHARE_DIR/assets"' in build_pkg
     assert "capsem-admin" in build_pkg
+    assert "capsem-tui" in build_pkg
 
     assert "CAPSEM_DEB_ASSET_MODE" in repack_deb
     assert 'bash "$SCRIPT_DIR/sync-dev-assets.sh" "$ASSETS_DIR"' in repack_deb
     assert "capsem-admin" in repack_deb
+    assert "capsem-tui" in repack_deb
     assert "/usr/share/capsem/assets" in deb_postinst
     assert "capsem-admin" in deb_postinst
+    assert "capsem-tui" in deb_postinst
 
 
 def test_macos_postinstall_adds_capsem_bin_to_fish_path() -> None:
@@ -47,9 +50,11 @@ def test_release_workflow_uses_profile_asset_rail_and_full_host_binary_set() -> 
     assert "just build-kernel ${{ matrix.arch }} code" in workflow
     assert "just build-rootfs ${{ matrix.arch }} code" in workflow
     assert "-p capsem-admin" in workflow
+    assert "-p capsem-tui" in workflow
     assert "-p capsem-mcp-aggregator" in workflow
     assert "-p capsem-mcp-builtin" in workflow
     assert "capsem-admin" in workflow
+    assert "capsem-tui" in workflow
     assert "capsem-mcp-aggregator" in workflow
     assert "capsem-mcp-builtin" in workflow
 
