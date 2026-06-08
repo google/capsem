@@ -9,6 +9,7 @@
 # fixtures swap the fixture -- same tests, real script.
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 BIN_SRC="${1:?usage: simulate-install.sh <bin_dir> <assets_dir>}"
 ASSETS_SRC="${2:?usage: simulate-install.sh <bin_dir> <assets_dir>}"
 
@@ -27,7 +28,7 @@ RUN_DIR="${CAPSEM_RUN_DIR:-$CAPSEM_HOME_DIR/run}"
 # ``target/debug/capsem-*`` are not caught in the blast. A bare
 # ``pkill -x capsem-service`` matches every capsem-service on the box, which
 # poisoned the full test suite whenever any install fixture fired this script.
-for name in capsem-service capsem-tray capsem-gateway capsem-process; do
+for name in capsem-service capsem-tray capsem-gateway capsem-process capsem-mcp-aggregator capsem-mcp-builtin; do
     pkill -9 -f "$INSTALL_DIR/$name" 2>/dev/null || true
 done
 
@@ -39,7 +40,7 @@ fi
 mkdir -p "$ASSETS_DST"
 
 # Copy binaries
-for bin in capsem capsem-service capsem-process capsem-mcp capsem-gateway capsem-tray; do
+for bin in capsem capsem-service capsem-process capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-gateway capsem-tray capsem-admin; do
     src="$BIN_SRC/$bin"
     if [[ ! -f "$src" ]]; then
         echo "ERROR: binary not found: $src" >&2
@@ -49,21 +50,9 @@ for bin in capsem capsem-service capsem-process capsem-mcp capsem-gateway capsem
     chmod 755 "$INSTALL_DIR/$bin"
 done
 
-# Copy assets: manifest + the per-arch hash-named files. Matches the layout
-# ManifestV2::resolve() actually reads: $ASSETS_DST/$ARCH/{hash_filename}.
+# Copy assets through the same manifest-driven path used by local packages.
 if [[ -f "$ASSETS_SRC/manifest.json" ]]; then
-    cp "$ASSETS_SRC/manifest.json" "$ASSETS_DST/"
-fi
-
-ARCH=$(uname -m)
-[[ "$ARCH" == "aarch64" ]] && ARCH="arm64"
-
-if [[ -d "$ASSETS_SRC/$ARCH" ]]; then
-    mkdir -p "$ASSETS_DST/$ARCH"
-    for src_file in "$ASSETS_SRC/$ARCH"/*; do
-        [[ -f "$src_file" ]] || continue
-        cp -f "$src_file" "$ASSETS_DST/$ARCH/"
-    done
+    bash "$SCRIPT_DIR/sync-dev-assets.sh" "$ASSETS_SRC" "$ASSETS_DST"
 fi
 
 # Drop legacy v1 layout directories that ManifestV2::resolve() no longer reads.

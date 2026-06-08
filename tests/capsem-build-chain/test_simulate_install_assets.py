@@ -11,7 +11,17 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = PROJECT_ROOT / "scripts" / "simulate-install.sh"
-BINARIES = ["capsem", "capsem-service", "capsem-process", "capsem-mcp", "capsem-gateway", "capsem-tray"]
+BINARIES = [
+    "capsem",
+    "capsem-service",
+    "capsem-process",
+    "capsem-mcp",
+    "capsem-mcp-aggregator",
+    "capsem-mcp-builtin",
+    "capsem-gateway",
+    "capsem-tray",
+    "capsem-admin",
+]
 
 
 def _host_arch() -> str:

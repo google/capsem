@@ -60,6 +60,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   editable runtime configuration. Profile assets are selected by URL and
   verified by BLAKE3 hash/size, while release evidence stays in SBOM and
   provenance attestations.
+- Fixed local install/package asset materialization so literal build outputs
+  and already hash-prefixed assets both install through the same
+  manifest-driven hash-prefixed layout, and package/simulated installs now
+  include the full host tool set including `capsem-admin`,
+  `capsem-mcp-aggregator`, and `capsem-mcp-builtin`.
 
 ### Changed (service/API)
 - Updated architecture docs and local development skills to match the 1.3
@@ -128,6 +133,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   profile, validate the profile and rule files first, preserve the Code profile
   defaults, build EROFS `lz4hc` level 12 rootfs assets, and reject raw
   no-profile build attempts.
+- Updated the release workflow to call the profile-derived asset build rail
+  explicitly (`code` profile) and to package/sign the full restored host binary
+  set, including `capsem-admin`.
 - Replaced the temporary flat profile asset triplet with per-architecture
   profile asset declarations. `config/profiles/code.toml` now parses as the
   checked-in contract for EROFS/LZ4HC kernel, initrd, and rootfs assets with

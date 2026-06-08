@@ -6,7 +6,7 @@ service startup expect. Works with both installation paths:
   - simulate-install.sh (standalone pytest): fallback
 
 Layout contract:
-  ~/.capsem/bin/capsem{,-service,-process,-mcp,-gateway,-tray}  (executables or symlinks)
+  ~/.capsem/bin/capsem* host tools                           (executables or symlinks)
   ~/.capsem/assets/manifest.json                                (service reads this)
   ~/.capsem/assets/{arch}/{logical}-{hash16}.{ext}              (resolver target)
   ~/.capsem/run/                                                (created at runtime)
@@ -42,7 +42,7 @@ class TestInstalledLayoutContract:
     # -- Binaries --
 
     def test_all_binaries_exist(self, installed_layout):
-        """All 6 binaries present in ~/.capsem/bin/."""
+        """All host binaries are present in ~/.capsem/bin/."""
         for name in BINARIES:
             binary = INSTALL_DIR / name
             assert binary.exists(), f"missing: {binary}"
@@ -65,6 +65,17 @@ class TestInstalledLayoutContract:
         result = run_capsem("version", timeout=5)
         assert result.returncode == 0
         assert "build" in result.stdout, f"no build hash: {result.stdout}"
+
+    def test_capsem_admin_help_works(self, installed_layout):
+        """capsem-admin is installed and runnable without a service."""
+        result = subprocess.run(
+            [str(INSTALL_DIR / "capsem-admin"), "--help"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        assert result.returncode == 0
+        assert "capsem-admin" in result.stdout
 
     # -- Assets --
 

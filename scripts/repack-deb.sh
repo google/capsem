@@ -17,6 +17,7 @@
 #   /usr/bin/capsem-mcp
 #   /usr/bin/capsem-gateway
 #   /usr/bin/capsem-tray
+#   /usr/bin/capsem-admin
 #   DEBIAN/postinst script
 set -euo pipefail
 
@@ -34,7 +35,7 @@ dpkg-deb -R "$INPUT_DEB" "$WORK_DIR/deb"
 
 echo "=== Adding companion binaries ==="
 mkdir -p "$WORK_DIR/deb/usr/bin"
-for bin in capsem capsem-service capsem-process capsem-mcp capsem-gateway capsem-tray; do
+for bin in capsem capsem-service capsem-process capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-gateway capsem-tray capsem-admin; do
     src="$BIN_DIR/$bin"
     if [ -f "$src" ]; then
         cp "$src" "$WORK_DIR/deb/usr/bin/$bin"

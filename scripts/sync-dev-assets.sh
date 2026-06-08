@@ -45,17 +45,45 @@ mkdir -p "$DST/$ARCH"
 cp "$SRC/manifest.json" "$DST/manifest.json.tmp"
 mv "$DST/manifest.json.tmp" "$DST/manifest.json"
 
-# Per-file copy so one "identical" pair doesn't kill the loop. Same-inode
-# pairs happen when individual files are hardlinked (APFS clonefile from a
-# prior `just install` run) or when the src/dst arch dir is symlinked.
-for src_file in "$SRC/$ARCH"/*; do
-    [[ -f "$src_file" ]] || continue
-    dst_file="$DST/$ARCH/$(basename "$src_file")"
-    if [[ "$src_file" -ef "$dst_file" ]]; then
+# Materialize the installed layout from the manifest. Local build output may
+# be literal (`rootfs.erofs`) while downloaded/reconciled output is
+# hash-prefixed (`rootfs-<hash16>.erofs`); the installed tree is always
+# hash-prefixed so ManifestV2::resolve and profile boot pins use one shape.
+python3 - "$SRC" "$DST" "$ARCH" <<'PY'
+import json
+import shutil
+import sys
+from pathlib import Path
+
+src = Path(sys.argv[1])
+dst = Path(sys.argv[2])
+arch = sys.argv[3]
+
+manifest = json.loads((src / "manifest.json").read_text())
+asset_version = manifest["assets"]["current"]
+assets = manifest["assets"]["releases"][asset_version]["arches"][arch]
+
+def hash_filename(logical_name: str, digest: str) -> str:
+    prefix = digest[:16]
+    if "." in logical_name:
+        stem, ext = logical_name.split(".", 1)
+        return f"{stem}-{prefix}.{ext}"
+    return f"{logical_name}-{prefix}"
+
+for logical_name, meta in sorted(assets.items()):
+    hashed_name = hash_filename(logical_name, meta["hash"])
+    candidates = [src / arch / hashed_name, src / arch / logical_name]
+    source = next((p for p in candidates if p.is_file()), None)
+    if source is None:
+        searched = ", ".join(str(p) for p in candidates)
+        raise SystemExit(f"ERROR: missing source asset for {logical_name}; checked {searched}")
+    target = dst / arch / hashed_name
+    if target.exists() and source.samefile(target):
         continue
-    fi
-    cp -f "$src_file" "$dst_file"
-done
+    tmp = target.with_suffix(target.suffix + ".tmp")
+    shutil.copy2(source, tmp)
+    tmp.replace(target)
+PY
 
 # Drop legacy v1 layout directories that ManifestV2::resolve() no longer reads.
 # They would otherwise keep occupying ~450MB/install.

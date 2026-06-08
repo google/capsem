@@ -17,13 +17,18 @@ def _host_arch() -> str:
     return "arm64" if machine in {"arm64", "aarch64"} else "x86_64"
 
 
-def _write_assets(root: Path) -> str:
+def _write_assets(root: Path, *, literal: bool = False) -> str:
     arch = _host_arch()
     arch_dir = root / arch
     arch_dir.mkdir(parents=True)
-    (arch_dir / "vmlinuz-deadbeefdeadbeef").write_text("kernel")
-    (arch_dir / "initrd-cafebabecafebabe.img").write_text("initrd")
-    (arch_dir / "rootfs-feedfacefeedface.erofs").write_text("rootfs")
+    if literal:
+        (arch_dir / "vmlinuz").write_text("kernel")
+        (arch_dir / "initrd.img").write_text("initrd")
+        (arch_dir / "rootfs.erofs").write_text("rootfs")
+    else:
+        (arch_dir / "vmlinuz-deadbeefdeadbeef").write_text("kernel")
+        (arch_dir / "initrd-cafebabecafebabe.img").write_text("initrd")
+        (arch_dir / "rootfs-feedfacefeedface.erofs").write_text("rootfs")
     (arch_dir / arch).mkdir()
     manifest = {
         "format": 2,
@@ -80,3 +85,28 @@ def test_sync_dev_assets_replaces_stale_assets_symlink(tmp_path: Path) -> None:
     assert (dst / arch / "rootfs-feedfacefeedface.erofs").exists()
     assert not (dst / arch / arch).exists()
     assert not (stale_target / "manifest.json").exists()
+
+
+def test_sync_dev_assets_materializes_hash_names_from_literal_build_output(
+    tmp_path: Path,
+) -> None:
+    src = tmp_path / "src-assets"
+    dst = tmp_path / "installed-assets"
+    arch = _write_assets(src, literal=True)
+
+    subprocess.run(
+        ["bash", str(SCRIPT), str(src), str(dst)],
+        cwd=PROJECT_ROOT,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=True,
+    )
+
+    assert (dst / "manifest.json").exists()
+    assert (dst / arch / "vmlinuz-deadbeefdeadbeef").exists()
+    assert (dst / arch / "initrd-cafebabecafebabe.img").exists()
+    assert (dst / arch / "rootfs-feedfacefeedface.erofs").exists()
+    assert not (dst / arch / "vmlinuz").exists()
+    assert not (dst / arch / "initrd.img").exists()
+    assert not (dst / arch / "rootfs.erofs").exists()

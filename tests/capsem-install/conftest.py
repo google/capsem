@@ -86,7 +86,17 @@ INSTALL_DIR = CAPSEM_DIR / "bin"
 ASSETS_DIR = CAPSEM_DIR / "assets"
 RUN_DIR = CAPSEM_DIR / "run"
 
-BINARIES = ["capsem", "capsem-service", "capsem-process", "capsem-mcp", "capsem-gateway", "capsem-tray"]
+BINARIES = [
+    "capsem",
+    "capsem-service",
+    "capsem-process",
+    "capsem-mcp",
+    "capsem-mcp-aggregator",
+    "capsem-mcp-builtin",
+    "capsem-gateway",
+    "capsem-tray",
+    "capsem-admin",
+]
 DEFAULT_TIMEOUT = 30
 
 
@@ -145,7 +155,14 @@ def _kill_service() -> None:
     # installed prefix. We build the pattern from INSTALL_DIR so HOME expansion
     # is consistent and we never match target/debug binaries.
     install_prefix = str(INSTALL_DIR) + "/"
-    for proc_name in ["capsem-service", "capsem-gateway", "capsem-tray", "capsem-process"]:
+    for proc_name in [
+        "capsem-service",
+        "capsem-gateway",
+        "capsem-tray",
+        "capsem-process",
+        "capsem-mcp-aggregator",
+        "capsem-mcp-builtin",
+    ]:
         subprocess.run(
             ["pkill", "-f", f"{install_prefix}{proc_name}"],
             capture_output=True,

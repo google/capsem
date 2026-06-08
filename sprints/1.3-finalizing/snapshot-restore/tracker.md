@@ -960,9 +960,27 @@ the guarantee or explicitly burn it.
   `just build-assets code [arm64|x86_64]` and accepts `profile=code`/
   `arch=arm64` argument spelling for compatibility with sprint notes.
   `_check-assets` now recovers missing assets via `just build-assets code`.
-- [ ] Restore package/bootstrap proof that `capsem-admin` is installed and
-  runnable.
-- [ ] Restore CI/release calls to `capsem-admin` for profile-derived assets.
+- [x] Restore package/bootstrap proof that `capsem-admin` is installed and
+  runnable. Package and simulated-install binary lists now include the full
+  restored host set: `capsem`, service/process/MCP gateway binaries,
+  `capsem-mcp-aggregator`, `capsem-mcp-builtin`, `capsem-tray`, and
+  `capsem-admin`. The local package asset sync now materializes the
+  manifest-driven hash-prefixed installed layout from either literal build
+  outputs or already hash-prefixed assets. Proof: `uv run pytest
+  tests/capsem-build-chain/test_install_asset_payload.py
+  tests/capsem-build-chain/test_simulate_install_assets.py
+  tests/capsem-build-chain/test_sync_dev_assets.py
+  tests/capsem-install/test_installed_layout.py
+  tests/capsem-install/test_smoke.py tests/test_repack_deb.py -q`, including
+  `capsem-admin --help` from the installed prefix.
+- [x] Restore CI/release calls to `capsem-admin` for profile-derived assets.
+  `.github/workflows/release.yaml` now calls `just build-kernel <arch> code`
+  and `just build-rootfs <arch> code`, so the release asset build uses the
+  profile-required `capsem-admin image build` rail. macOS and Linux release
+  package jobs also build/sign/repack the restored host binary set including
+  `capsem-admin`, `capsem-mcp-aggregator`, and `capsem-mcp-builtin`. Proof:
+  `uv run pytest tests/capsem-build-chain/test_install_asset_payload.py
+  tests/test_build_assets_profile.py -q`.
 - [x] Add tests proving raw asset builds without a profile fail closed.
   Coverage: `cargo test -p capsem-admin -- --nocapture` includes
   `image_build_requires_profile_argument`,

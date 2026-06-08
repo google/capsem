@@ -37,7 +37,7 @@ if [ -d "/usr/share/capsem/assets" ]; then
 fi
 
 # Symlink system binaries into user dir
-for bin in capsem capsem-service capsem-process capsem-mcp capsem-gateway capsem-tray; do
+for bin in capsem capsem-service capsem-process capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-gateway capsem-tray capsem-admin; do
     if [ -f "/usr/bin/$bin" ]; then
         ln -sf "/usr/bin/$bin" "$CAPSEM_DIR/bin/$bin"
     fi
