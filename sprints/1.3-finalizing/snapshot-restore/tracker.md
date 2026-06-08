@@ -195,24 +195,66 @@ the guarantee or explicitly burn it.
 - [x] `d773481f feat: validate security packs` decision: conceptual_port.
   Notes: validate current enforcement TOML and Sigma YAML files directly.
   Burn old `policy-pack`/`detection-pack` schemas and Python pack compiler.
-- [ ] `7277c17b feat: generate guest image sboms`
-- [ ] `3a37d704 feat: verify doctor bundle probes`
-- [ ] `2d02b6e0 fix: require image inventory proof`
-- [ ] `33c83bd0 feat: verify per-arch image inventories`
-- [ ] `a1dab24f feat: extract image inventory from rootfs`
-- [ ] `0ffb816a feat: verify image package inventory`
-- [ ] `c9fd7b4b feat: require profiles for asset builds`
-- [ ] `fd86e8ed feat: derive built-in profiles from guest config`
-- [ ] `5b4e4274 feat: generate profile ui base profiles`
-- [ ] `a02537ad feat: add profile-derived image build command`
-- [ ] `31425d04 feat: materialize profile image workspaces`
-- [ ] `879c9d59 test: prove packages include capsem-admin`
-- [ ] `22016426 feat: add capsem-admin manifest crypto`
-- [ ] `6559bf3b feat: add capsem-admin manifest generate`
-- [ ] `3e5bb3cb feat: add capsem-admin manifest download check`
-- [ ] `e2946acd feat: add capsem-admin manifest fast check`
-- [ ] `2cc49f7a feat: add capsem-admin image verify`
-- [ ] `2fb45076 feat: add capsem-admin image plan`
+- [x] `7277c17b feat: generate guest image sboms` decision:
+  conceptual_port. Notes: SBOM/provenance remains required for release
+  evidence, but not as manifest signing. Restore under admin image/manifest
+  provenance commands after BLAKE3 checks.
+- [x] `3a37d704 feat: verify doctor bundle probes` decision:
+  conceptual_port. Notes: doctor bundle verification remains required and must
+  target current `capsem-doctor`/profile VM boot proof.
+- [x] `2d02b6e0 fix: require image inventory proof` decision:
+  conceptual_port. Notes: preserve fail-closed inventory proof in
+  image/manifest admin commands.
+- [x] `33c83bd0 feat: verify per-arch image inventories` decision:
+  conceptual_port. Notes: current manifest check/download-check reports each
+  asset version/arch/logical asset; full image inventory extraction remains
+  open.
+- [x] `a1dab24f feat: extract image inventory from rootfs` decision:
+  conceptual_port. Notes: useful for SBOM/provenance; restore under image
+  verify later.
+- [x] `0ffb816a feat: verify image package inventory` decision:
+  conceptual_port. Notes: package inventory verification remains open under
+  image verify/SBOM, not manifest signing.
+- [x] `c9fd7b4b feat: require profiles for asset builds` decision:
+  conceptual_port. Notes: still mandatory. `scripts/build-assets.sh` is absent
+  in the cleanup tree, so restore a profile-required build rail later and add a
+  fail-closed raw-build test.
+- [x] `fd86e8ed feat: derive built-in profiles from guest config` decision:
+  conceptual_port. Notes: old generated base profiles carried stale schema
+  baggage; current `config/profiles/code.toml` is the real profile. Any derived
+  build workspace must merge with that modern profile shape.
+- [x] `5b4e4274 feat: generate profile ui base profiles` decision:
+  conceptual_port/intentional_burn. Notes: useful UI profile generation idea,
+  but old schema fixtures/signatures/minisig payloads are burned. Current UI
+  must reflect real profile config.
+- [x] `a02537ad feat: add profile-derived image build command` decision:
+  conceptual_port. Notes: restore as current `capsem-admin image ...` commands
+  after manifest check/download-check.
+- [x] `31425d04 feat: materialize profile image workspaces` decision:
+  conceptual_port. Notes: `src/capsem/builder/image_workspace.py` is absent;
+  restore profile-derived workspaces later without old profile schema baggage.
+- [x] `879c9d59 test: prove packages include capsem-admin` decision:
+  conceptual_port. Notes: Rust `capsem-admin` now exists; package/install proof
+  still must ensure the binary is included and runnable.
+- [x] `22016426 feat: add capsem-admin manifest crypto` decision:
+  intentional_burn/conceptual_port. Notes: burn manifest signing/crypto
+  authority. Port only non-signing hash/provenance validation.
+- [x] `6559bf3b feat: add capsem-admin manifest generate` decision:
+  conceptual_port. Notes: manifest generation remains open, but must generate
+  current format-2 JSON with top-level `refresh_policy`, BLAKE3 hashes, asset
+  inventory, SBOM/provenance references, and no signatures.
+- [x] `3e5bb3cb feat: add capsem-admin manifest download check` decision:
+  conceptual_port. Notes: restored current-contract `capsem-admin manifest
+  download-check`, verifying hash-prefixed local files by size and BLAKE3.
+- [x] `e2946acd feat: add capsem-admin manifest fast check` decision:
+  conceptual_port. Notes: restored current-contract `capsem-admin manifest
+  check`, parsing `ManifestV2` and reporting releases/arches/assets without
+  touching signing.
+- [x] `2cc49f7a feat: add capsem-admin image verify` decision:
+  conceptual_port. Notes: image verify remains open; should build on manifest
+  check/download-check plus inventory/SBOM/doctor bundle probes.
+- [x] `2fb45076 feat: add capsem-admin image plan` decision:
+  conceptual_port. Notes: image plan remains open; must be profile-derived.
 - [ ] `0e9442e4 test: pin admin init json toml parity`
 - [ ] `53065265 test: pin profile toml json round trip`
 - [ ] `c9e227c1 test: pin service settings toml json round trip`
@@ -828,6 +870,14 @@ the guarantee or explicitly burn it.
   restore manifest signing, profile payload signing, minisign pubkeys,
   URL+pubkey catalog fetch, or `sign|verify` semantics that recreate the burned
   signing authority rail.
+- [x] Restore `capsem-admin manifest check` and `manifest download-check` for
+  current `ManifestV2` JSON. `check` validates the manifest schema and reports
+  asset versions/arches/logical asset hashes; `download-check` verifies
+  hash-prefixed downloaded files by size and BLAKE3. Proof:
+  `cargo test -p capsem-admin -- --nocapture`,
+  `cargo run -p capsem-admin -- manifest check assets/manifest.json --json`,
+  and `cargo run -p capsem-admin -- manifest download-check
+  assets/manifest.json --assets-dir assets --arch arm64 --json`.
 - [ ] Restore `scripts/build-assets.sh --profile <profile>` or equivalent
   `just build-assets profile=...` typed rail.
 - [ ] Restore package/bootstrap proof that `capsem-admin` is installed and

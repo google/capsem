@@ -1,9 +1,11 @@
 use std::{
     fs,
+    io::Read,
     path::{Path, PathBuf},
 };
 
 use anyhow::{anyhow, Context, Result};
+use capsem_core::asset_manager::{hash_filename, ManifestV2};
 use capsem_core::net::policy_config::{
     CompiledSecurityRule, ProfileConfigFile, SecurityRuleProfile, SecurityRuleSet,
     SecurityRuleSource,
@@ -24,6 +26,7 @@ enum Commands {
     Profile(ProfileCommand),
     Enforcement(RuleFileCommand),
     Detection(RuleFileCommand),
+    Manifest(ManifestCommand),
 }
 
 #[derive(Debug, Parser)]
@@ -50,6 +53,18 @@ enum RuleFileSubcommand {
 }
 
 #[derive(Debug, Parser)]
+struct ManifestCommand {
+    #[command(subcommand)]
+    command: ManifestSubcommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum ManifestSubcommand {
+    Check(ManifestCheckArgs),
+    DownloadCheck(ManifestDownloadCheckArgs),
+}
+
+#[derive(Debug, Parser)]
 struct ProfileValidateArgs {
     /// Profile TOML to validate.
     path: PathBuf,
@@ -69,6 +84,30 @@ struct RuleFileArgs {
     #[arg(long, value_enum, default_value_t = RuleFileSourceArg::User)]
     source: RuleFileSourceArg,
     /// Emit a machine-readable validation or compile report.
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Parser)]
+struct ManifestCheckArgs {
+    /// Manifest JSON file to validate.
+    path: PathBuf,
+    /// Emit a machine-readable manifest report.
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Parser)]
+struct ManifestDownloadCheckArgs {
+    /// Manifest JSON file to validate against downloaded assets.
+    path: PathBuf,
+    /// Asset directory containing hash-prefixed downloaded files.
+    #[arg(long)]
+    assets_dir: PathBuf,
+    /// Restrict verification to one manifest arch.
+    #[arg(long)]
+    arch: Option<String>,
+    /// Emit a machine-readable manifest report.
     #[arg(long)]
     json: bool,
 }
@@ -127,6 +166,36 @@ struct CompiledRuleReport {
     corp_locked: bool,
 }
 
+#[derive(Debug, Serialize)]
+struct ManifestReport {
+    schema: &'static str,
+    ok: bool,
+    path: String,
+    refresh_policy: String,
+    current_assets: String,
+    current_binary: String,
+    releases: usize,
+    arches: Vec<ManifestArchReport>,
+}
+
+#[derive(Debug, Serialize)]
+struct ManifestArchReport {
+    asset_version: String,
+    arch: String,
+    assets: Vec<ManifestAssetReport>,
+}
+
+#[derive(Debug, Serialize)]
+struct ManifestAssetReport {
+    logical_name: String,
+    hash: String,
+    size: u64,
+    downloaded_name: String,
+    present: bool,
+    size_ok: Option<bool>,
+    blake3_ok: Option<bool>,
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
@@ -140,6 +209,10 @@ fn main() -> Result<()> {
         Commands::Detection(command) => match command.command {
             RuleFileSubcommand::Validate(args) => validate_rule_file_command("detection", args),
             RuleFileSubcommand::Compile(args) => compile_rule_file_command("detection", args),
+        },
+        Commands::Manifest(command) => match command.command {
+            ManifestSubcommand::Check(args) => manifest_check_command(args),
+            ManifestSubcommand::DownloadCheck(args) => manifest_download_check_command(args),
         },
     }
 }
@@ -174,6 +247,63 @@ fn validate_rule_file_command(kind: &'static str, args: RuleFileArgs) -> Result<
 fn compile_rule_file_command(kind: &'static str, args: RuleFileArgs) -> Result<()> {
     let report = compile_rule_file(kind, &args.path, args.source)?;
     println!("{}", serde_json::to_string_pretty(&report)?);
+    Ok(())
+}
+
+fn manifest_check_command(args: ManifestCheckArgs) -> Result<()> {
+    let manifest = load_manifest(&args.path)?;
+    let report = manifest_report(&args.path, &manifest, None, None)?;
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else {
+        println!(
+            "valid: manifest {} ({} asset releases)",
+            args.path.display(),
+            report.releases
+        );
+    }
+    Ok(())
+}
+
+fn manifest_download_check_command(args: ManifestDownloadCheckArgs) -> Result<()> {
+    let manifest = load_manifest(&args.path)?;
+    let report = manifest_report(
+        &args.path,
+        &manifest,
+        Some(&args.assets_dir),
+        args.arch.as_deref(),
+    )?;
+    let failed = report
+        .arches
+        .iter()
+        .flat_map(|arch| arch.assets.iter())
+        .any(|asset| {
+            !asset.present
+                || asset.size_ok.is_some_and(|ok| !ok)
+                || asset.blake3_ok.is_some_and(|ok| !ok)
+        });
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else if failed {
+        return Err(anyhow!(
+            "download check failed for manifest {} in {}",
+            args.path.display(),
+            args.assets_dir.display()
+        ));
+    } else {
+        println!(
+            "valid: downloaded assets for manifest {} in {}",
+            args.path.display(),
+            args.assets_dir.display()
+        );
+    }
+    if failed {
+        return Err(anyhow!(
+            "download check failed for manifest {} in {}",
+            args.path.display(),
+            args.assets_dir.display()
+        ));
+    }
     Ok(())
 }
 
@@ -262,6 +392,113 @@ fn compiled_rule_report(rule: &CompiledSecurityRule) -> CompiledRuleReport {
         reason: rule.reason.clone(),
         corp_locked: rule.corp_locked,
     }
+}
+
+fn load_manifest(path: &Path) -> Result<ManifestV2> {
+    let content =
+        fs::read_to_string(path).with_context(|| format!("read manifest {}", path.display()))?;
+    ManifestV2::from_json(&content).with_context(|| format!("parse manifest {}", path.display()))
+}
+
+fn manifest_report(
+    path: &Path,
+    manifest: &ManifestV2,
+    assets_dir: Option<&Path>,
+    only_arch: Option<&str>,
+) -> Result<ManifestReport> {
+    let mut arches = Vec::new();
+    for (asset_version, release) in &manifest.assets.releases {
+        for (arch, assets) in &release.arches {
+            if only_arch.is_some_and(|only| only != arch) {
+                continue;
+            }
+            let mut asset_reports = Vec::new();
+            let mut names = assets.keys().collect::<Vec<_>>();
+            names.sort();
+            for name in names {
+                let entry = assets.get(name).expect("asset name from keys");
+                let downloaded_name = hash_filename(name, &entry.hash);
+                let (present, size_ok, blake3_ok) = match assets_dir {
+                    Some(dir) => {
+                        let file_path = dir.join(arch).join(&downloaded_name);
+                        let fallback_path = dir.join(&downloaded_name);
+                        let file_path = if file_path.exists() {
+                            file_path
+                        } else {
+                            fallback_path
+                        };
+                        if !file_path.is_file() {
+                            (false, None, None)
+                        } else {
+                            let metadata = fs::metadata(&file_path).with_context(|| {
+                                format!("stat downloaded asset {}", file_path.display())
+                            })?;
+                            let digest = hash_file(&file_path)?;
+                            (
+                                true,
+                                Some(metadata.len() == entry.size),
+                                Some(digest == entry.hash),
+                            )
+                        }
+                    }
+                    None => (false, None, None),
+                };
+                asset_reports.push(ManifestAssetReport {
+                    logical_name: name.clone(),
+                    hash: entry.hash.clone(),
+                    size: entry.size,
+                    downloaded_name,
+                    present,
+                    size_ok,
+                    blake3_ok,
+                });
+            }
+            arches.push(ManifestArchReport {
+                asset_version: asset_version.clone(),
+                arch: arch.clone(),
+                assets: asset_reports,
+            });
+        }
+    }
+    arches.sort_by(|left, right| {
+        left.asset_version
+            .cmp(&right.asset_version)
+            .then_with(|| left.arch.cmp(&right.arch))
+    });
+    if let Some(only_arch) = only_arch {
+        if arches.is_empty() {
+            return Err(anyhow!(
+                "manifest {} does not contain arch {only_arch}",
+                path.display()
+            ));
+        }
+    }
+    Ok(ManifestReport {
+        schema: "capsem.admin.manifest_report.v1",
+        ok: true,
+        path: path.display().to_string(),
+        refresh_policy: manifest.refresh_policy.clone(),
+        current_assets: manifest.assets.current.clone(),
+        current_binary: manifest.binaries.current.clone(),
+        releases: manifest.assets.releases.len(),
+        arches,
+    })
+}
+
+fn hash_file(path: &Path) -> Result<String> {
+    let mut file = fs::File::open(path).with_context(|| format!("open {}", path.display()))?;
+    let mut hasher = blake3::Hasher::new();
+    let mut buffer = [0_u8; 128 * 1024];
+    loop {
+        let read = file
+            .read(&mut buffer)
+            .with_context(|| format!("read {}", path.display()))?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    Ok(hasher.finalize().to_hex().to_string())
 }
 
 fn infer_config_root(profile_path: &Path) -> Result<PathBuf> {
@@ -434,5 +671,97 @@ decision = "block"
         let root = PathBuf::from("/tmp/capsem-config");
         let path = root.join("profiles/code.toml");
         assert_eq!(infer_config_root(&path).unwrap(), root);
+    }
+
+    #[test]
+    fn checks_manifest_contract() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("manifest.json");
+        fs::write(&path, minimal_manifest_json(None, true)).expect("manifest");
+
+        let manifest = load_manifest(&path).expect("manifest parses");
+        let report = manifest_report(&path, &manifest, None, None).expect("report");
+
+        assert_eq!(report.refresh_policy, "24h");
+        assert_eq!(report.current_assets, "2026.0607.1");
+        assert!(report.arches.iter().any(|arch| arch.arch == "arm64"));
+    }
+
+    #[test]
+    fn manifest_check_rejects_missing_refresh_policy() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("manifest.json");
+        fs::write(&path, minimal_manifest_json(None, false)).expect("manifest");
+
+        let error = load_manifest(&path).expect_err("refresh policy required");
+
+        assert!(format!("{error:#}").contains("refresh_policy"), "{error:#}");
+    }
+
+    #[test]
+    fn download_check_verifies_hash_prefixed_assets() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let payload = b"capsem test asset";
+        let hash = blake3::hash(payload).to_hex().to_string();
+        let manifest_path = temp.path().join("manifest.json");
+        fs::write(&manifest_path, minimal_manifest_json(Some(&hash), true)).expect("manifest");
+        let assets_dir = temp.path().join("assets/arm64");
+        fs::create_dir_all(&assets_dir).expect("assets dir");
+        let downloaded = hash_filename("rootfs.erofs", &hash);
+        fs::write(assets_dir.join(downloaded), payload).expect("asset");
+
+        let manifest = load_manifest(&manifest_path).expect("manifest");
+        let report = manifest_report(
+            &manifest_path,
+            &manifest,
+            Some(&temp.path().join("assets")),
+            Some("arm64"),
+        )
+        .expect("download check");
+
+        let asset = &report.arches[0].assets[0];
+        assert!(asset.present);
+        assert_eq!(asset.size_ok, Some(true));
+        assert_eq!(asset.blake3_ok, Some(true));
+    }
+
+    fn minimal_manifest_json(hash: Option<&str>, include_refresh_policy: bool) -> String {
+        let hash =
+            hash.unwrap_or("1111111111111111111111111111111111111111111111111111111111111111");
+        format!(
+            r#"{{
+  "format": 2,
+  {refresh}
+  "assets": {{
+    "current": "2026.0607.1",
+    "releases": {{
+      "2026.0607.1": {{
+        "arches": {{
+          "arm64": {{
+            "rootfs.erofs": {{
+              "hash": "{hash}",
+              "size": 17
+            }}
+          }}
+        }}
+      }}
+    }}
+  }},
+  "binaries": {{
+    "current": "1.0.0",
+    "releases": {{
+      "1.0.0": {{
+        "min_assets": "2026.0607.1"
+      }}
+    }}
+  }}
+}}"#,
+            refresh = if include_refresh_policy {
+                r#""refresh_policy": "24h","#
+            } else {
+                ""
+            },
+            hash = hash,
+        )
     }
 }
