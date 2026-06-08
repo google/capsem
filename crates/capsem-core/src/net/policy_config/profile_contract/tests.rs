@@ -96,10 +96,8 @@ detection_level = "critical"
 [mcp]
 health_check_interval_secs = 60
 
-[[mcp.servers]]
-name = "filesystem"
-url = "http://127.0.0.1:9000"
-enabled = true
+[mcp.server_enabled]
+local = true
 
 [skills]
 paths = ["/root/.codex/skills/security/SKILL.md"]
@@ -123,7 +121,10 @@ paths = ["/root/.codex/skills/security/SKILL.md"]
     assert!(profile.profiles.rules.contains_key("skill_loaded"));
     assert!(profile.ai.contains_key("openai"));
     assert!(profile.plugins.contains_key("dummy_pre_eicar"));
-    assert_eq!(profile.mcp.unwrap().servers[0].name, "filesystem");
+    assert_eq!(
+        profile.mcp.unwrap().server_enabled.get("local").copied(),
+        Some(true)
+    );
 }
 
 #[test]
@@ -249,6 +250,14 @@ fn checked_in_code_profile_parses_and_validates() {
     assert!(profile.assets.arch.contains_key("arm64"));
     assert!(profile.assets.arch.contains_key("x86_64"));
     assert!(profile.plugins.contains_key("credential_broker"));
+    assert_eq!(
+        profile
+            .mcp
+            .as_ref()
+            .and_then(|mcp| mcp.server_enabled.get("local"))
+            .copied(),
+        Some(true)
+    );
 }
 
 #[test]

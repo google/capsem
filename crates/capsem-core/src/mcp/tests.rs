@@ -481,6 +481,46 @@ fn build_server_list_enabled_override() {
     assert!(!s.enabled);
 }
 
+#[test]
+fn build_profile_server_list_uses_profile_manual_servers_only() {
+    let profile = McpUserConfig {
+        servers: vec![McpManualServer {
+            name: "profile-api".into(),
+            url: "https://profile.example/mcp".into(),
+            headers: HashMap::new(),
+            bearer_token: None,
+            enabled: true,
+        }],
+        ..Default::default()
+    };
+
+    let list = build_profile_server_list(&profile, None, HashMap::new());
+
+    assert_eq!(list.len(), 1);
+    assert_eq!(list[0].name, "profile-api");
+    assert_eq!(list[0].source, "profile");
+}
+
+#[test]
+fn build_profile_server_list_respects_local_builtin_enablement() {
+    let dir = tempfile::tempdir().unwrap();
+    let builtin = dir.path().join("capsem-mcp-builtin");
+    std::fs::write(&builtin, "#!/bin/sh\n").unwrap();
+
+    let mut enabled = HashMap::new();
+    enabled.insert("local".to_string(), false);
+    let profile = McpUserConfig {
+        server_enabled: enabled,
+        ..Default::default()
+    };
+
+    let list = build_profile_server_list(&profile, Some(&builtin), HashMap::new());
+
+    let local = list.iter().find(|server| server.name == "local").unwrap();
+    assert_eq!(local.source, "builtin");
+    assert!(!local.enabled);
+}
+
 // ── original parse tests ────────────────────────────────────────
 
 #[test]

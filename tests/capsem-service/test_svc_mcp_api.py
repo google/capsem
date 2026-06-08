@@ -1,9 +1,9 @@
 """MCP API endpoints under /profiles/{profile_id}/mcp/servers/{server_id}.
 
-These endpoints read from CAPSEM_HOME (user.toml, corp.toml,
-mcp_tool_cache.json) and tool calls route through a running capsem-process over
-IPC. Without a running VM, tool calls hit the "no running sessions" path -- the
-fixture tests that error branch; full happy-path coverage would need a
+These endpoints read MCP server configuration from the selected profile and
+tool cache from CAPSEM_HOME. Tool calls route through a running capsem-process
+over IPC. Without a running VM, tool calls hit the "no running sessions" path
+-- the fixture tests that error branch; full happy-path coverage would need a
 downstream MCP aggregator in the guest (tracked as a follow-up, same as
 test_mcp_call.py in tests/capsem-mcp/).
 """
@@ -59,6 +59,13 @@ class TestMcpTools:
             assert tool["server_name"] == "local"
             assert isinstance(tool["approved"], bool)
             assert isinstance(tool["pin_changed"], bool)
+
+    def test_tools_unknown_profile_server_rejected(self, client):
+        """Profile/server tool listing must reject servers absent from the profile."""
+        resp = client.get(f"/profiles/{PROFILE}/mcp/servers/settings-only/tools/list")
+        assert resp is None or "error" in resp or "not found" in str(resp).lower(), (
+            f"unknown profile server should reject: {resp}"
+        )
 
 
 class TestMcpPolicy:

@@ -525,11 +525,13 @@ async fn profile_mcp_info_summarizes_profile_mcp_config() {
 
     let dir = tempfile::tempdir().unwrap();
     let (_env_guard, user_path, _) = install_empty_settings_env(&dir);
+    // This settings-owned MCP server must not contribute to
+    // /profiles/{id}/mcp. Profile MCP routes reflect profile.toml only.
     let settings = capsem_core::net::policy_config::SettingsFile {
         mcp: Some(capsem_core::mcp::policy::McpUserConfig {
             servers: vec![capsem_core::mcp::policy::McpManualServer {
-                name: "local".to_string(),
-                url: "https://mcp.local".to_string(),
+                name: "settings-only".to_string(),
+                url: "https://settings.invalid/mcp".to_string(),
                 headers: Default::default(),
                 bearer_token: None,
                 enabled: true,
@@ -546,7 +548,19 @@ async fn profile_mcp_info_summarizes_profile_mcp_config() {
 
     assert_eq!(info["profile_id"], "code");
     assert_eq!(info["server_count"], 1);
-    assert_eq!(info["user_server_count"], 1);
+    assert_eq!(info["manual_server_count"], 0);
+    assert_eq!(info["builtin_local_enabled"], true);
+}
+
+#[tokio::test]
+async fn profile_mcp_tools_reject_unknown_profile_server() {
+    let err =
+        handle_profile_mcp_server_tools(Path(("code".to_string(), "settings-only".to_string())))
+            .await
+            .expect_err("profile MCP tools must reject servers not configured in the profile");
+
+    assert_eq!(err.0, StatusCode::NOT_FOUND);
+    assert!(err.1.contains("MCP server not found in profile code"));
 }
 
 #[tokio::test]

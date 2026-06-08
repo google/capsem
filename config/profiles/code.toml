@@ -89,3 +89,9 @@ sigma = "profiles/code/detection.yaml"
 [plugins.credential_broker]
 mode = "rewrite"
 detection_level = "informational"
+
+[mcp]
+health_check_interval_secs = 60
+
+[mcp.server_enabled]
+local = true

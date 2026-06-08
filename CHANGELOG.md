@@ -166,6 +166,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added profile-scoped assets `info|edit`, plugins `info`, and MCP `info`
   routes. Info routes summarize existing profile/config state; asset edits
   fail explicitly until profile persistence lands.
+- Made profile MCP inventory profile-owned. `/profiles/{profile_id}/mcp/...`
+  now reads the selected profile's MCP section instead of settings/corp MCP
+  sections, `config/profiles/code.toml` explicitly enables the real built-in
+  `local` MCP server, and unknown profile server ids fail closed.
 - Added service-wide runtime ledger routes `/security/latest|status`,
   `/enforcement/latest|status`, and `/detection/latest|status`. These aggregate
   per-VM `session.db` security-rule ledger rows through `DbReader`; detection

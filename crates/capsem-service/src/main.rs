@@ -4174,8 +4174,9 @@ fn build_profile_summary(
             .values()
             .map(|provider| provider.rules.len())
             .sum::<usize>();
-    let mcp_server_count = user.mcp.as_ref().map_or(0, |mcp| mcp.servers.len())
-        + corp.mcp.as_ref().map_or(0, |mcp| mcp.servers.len());
+    let mcp_server_count = manifest.mcp.as_ref().map_or(0, |mcp| {
+        mcp.servers.len() + usize::from(mcp.server_enabled.get("local").copied().unwrap_or(false))
+    });
 
     api::ProfileSummary {
         id: manifest.id.clone(),
@@ -4393,36 +4394,62 @@ fn resolve_mcp_tool_id(server_id: &str, tool_id: &str) -> Result<String, AppErro
 async fn handle_profile_mcp_info(
     Path(profile_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let profile_id = validate_profile_route_id(profile_id)?;
-    let (user, corp) = capsem_core::net::policy_config::load_settings_files();
-    let user_server_count = user.mcp.as_ref().map_or(0, |mcp| mcp.servers.len());
-    let corp_server_count = corp.mcp.as_ref().map_or(0, |mcp| mcp.servers.len());
+    let profile = profile_manifest_for_route(profile_id)?;
+    let mcp = profile.mcp.as_ref();
+    let builtin_local_enabled = mcp
+        .and_then(|mcp| mcp.server_enabled.get("local").copied())
+        .unwrap_or(false);
+    let manual_server_count = mcp.map_or(0, |mcp| mcp.servers.len());
     Ok(Json(json!({
-        "profile_id": profile_id,
-        "server_count": user_server_count + corp_server_count,
-        "user_server_count": user_server_count,
-        "corp_server_count": corp_server_count,
+        "profile_id": profile.id,
+        "server_count": manual_server_count + usize::from(builtin_local_enabled),
+        "manual_server_count": manual_server_count,
+        "builtin_local_enabled": builtin_local_enabled,
     })))
+}
+
+fn profile_mcp_server_configured(profile: &ProfileConfigFile, server_id: &str) -> bool {
+    let Some(mcp) = profile.mcp.as_ref() else {
+        return false;
+    };
+    if server_id == "local" {
+        return mcp.server_enabled.get("local").copied().unwrap_or(false);
+    }
+    mcp.servers.iter().any(|server| server.name == server_id)
+}
+
+fn ensure_profile_mcp_server(
+    profile_id: String,
+    server_id: &str,
+) -> Result<ProfileConfigFile, AppError> {
+    let profile = profile_manifest_for_route(profile_id)?;
+    if profile_mcp_server_configured(&profile, server_id) {
+        Ok(profile)
+    } else {
+        Err(AppError(
+            StatusCode::NOT_FOUND,
+            format!(
+                "MCP server not found in profile {}: {server_id}",
+                profile.id
+            ),
+        ))
+    }
 }
 
 async fn handle_profile_mcp_servers(
     Path(profile_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let _profile_id = validate_profile_route_id(profile_id)?;
-    use capsem_core::mcp::policy::McpUserConfig;
-    use capsem_core::mcp::{build_server_list_with_builtin, load_tool_cache};
+    let profile = profile_manifest_for_route(profile_id)?;
+    use capsem_core::mcp::{build_profile_server_list, load_tool_cache};
 
-    let (user_sf, corp_sf) = capsem_core::net::policy_config::load_settings_files();
-    let user_mcp = user_sf.mcp.unwrap_or_default();
-    let corp_mcp = corp_sf.mcp.unwrap_or(McpUserConfig::default());
+    let profile_mcp = profile.mcp.clone().unwrap_or_default();
 
     // Include the "local" builtin server if the binary exists.
     let builtin_bin = std::env::current_exe()
         .ok()
         .and_then(|p| p.parent().map(|d| d.join("capsem-mcp-builtin")));
-    let servers = build_server_list_with_builtin(
-        &user_mcp,
-        &corp_mcp,
+    let servers = build_profile_server_list(
+        &profile_mcp,
         builtin_bin.as_deref(),
         std::collections::HashMap::new(),
     );
@@ -4452,13 +4479,13 @@ async fn handle_profile_mcp_servers(
 async fn handle_profile_mcp_server_tools(
     Path((profile_id, server_id)): Path<(String, String)>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let _profile_id = validate_profile_route_id(profile_id)?;
     if server_id.is_empty() {
         return Err(AppError(
             StatusCode::BAD_REQUEST,
             "MCP server id must not be empty".to_string(),
         ));
     }
+    ensure_profile_mcp_server(profile_id, &server_id)?;
     use capsem_core::mcp::load_tool_cache;
 
     let cache = load_tool_cache();
@@ -4486,13 +4513,13 @@ async fn handle_profile_mcp_server_refresh(
     State(state): State<Arc<ServiceState>>,
     Path((profile_id, server_id)): Path<(String, String)>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let _profile_id = validate_profile_route_id(profile_id)?;
     if server_id.is_empty() {
         return Err(AppError(
             StatusCode::BAD_REQUEST,
             "MCP server id must not be empty".to_string(),
         ));
     }
+    ensure_profile_mcp_server(profile_id, &server_id)?;
     // Send McpRefreshTools to all running instances.
     let uds_paths = {
         let instances = state.instances.lock().unwrap();
@@ -4516,7 +4543,7 @@ async fn handle_profile_mcp_tool_edit(
     Path((profile_id, server_id, tool_id)): Path<(String, String, String)>,
     Json(update): Json<McpToolEditRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let _profile_id = validate_profile_route_id(profile_id)?;
+    ensure_profile_mcp_server(profile_id, &server_id)?;
     let namespaced_name = resolve_mcp_tool_id(&server_id, &tool_id)?;
     use capsem_core::mcp::{load_tool_cache, save_tool_cache};
 
@@ -4551,7 +4578,7 @@ async fn handle_profile_mcp_tool_call(
     Path((profile_id, server_id, tool_id)): Path<(String, String, String)>,
     Json(arguments): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let _profile_id = validate_profile_route_id(profile_id)?;
+    ensure_profile_mcp_server(profile_id, &server_id)?;
     let namespaced_name = resolve_mcp_tool_id(&server_id, &tool_id)?;
     // Find any running instance to route the call through.
     let uds_path = {

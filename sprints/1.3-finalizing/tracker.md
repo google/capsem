@@ -316,6 +316,15 @@ commit.
 - [x] Replace global MCP tools/policy UI with profile -> server -> tools for
   the current 1.3 surface. Resources/prompts remain a follow-up endpoint/UI
   gap.
+- [x] Make profile MCP service routes read the selected `ProfileConfigFile.mcp`
+  instead of settings/corp MCP sections. The `code` profile explicitly enables
+  the real built-in `local` MCP server, the profile-only MCP builder avoids
+  host AI config auto-detection, and unknown profile server ids fail closed.
+  Coverage: `cargo test -p capsem-core mcp::tests::build_profile_server_list --
+  --nocapture`, `cargo test -p capsem-core --lib profile_contract --
+  --nocapture`, `cargo test -p capsem-service profile_mcp -- --nocapture`,
+  `cargo test -p capsem-service --no-run`, `cargo build -p capsem-service`,
+  and `uv run pytest tests/capsem-service/test_svc_mcp_api.py -q`.
 - [x] Plugin UI reads profile plugin metadata and edits enable/disable, mode,
   and detection logging level through profile endpoints.
 - [ ] Credential UI reads only credential-broker plugin runtime status/stats and

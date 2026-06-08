@@ -78,6 +78,108 @@ pub fn build_server_list(
     build_server_list_with_builtin(user_config, corp_config, None, HashMap::new())
 }
 
+fn local_builtin_server_def(
+    bin: &Path,
+    builtin_env: HashMap<String, String>,
+    enabled: bool,
+) -> McpServerDef {
+    // Stateless builtin tools that are safe to round-robin across pool
+    // peers. Snapshot tools (`snapshots_*`) mutate per-process state and
+    // therefore pin to peers[0].
+    let pool_safe_tools: Vec<String> = ["echo", "fetch_http", "grep_http", "http_headers"]
+        .iter()
+        .map(|s| (*s).to_string())
+        .collect();
+
+    let default_pool = std::thread::available_parallelism()
+        .ok()
+        .map(|n| (n.get() as u32).clamp(1, 4));
+    let pool_size = std::env::var("CAPSEM_MCP_BUILTIN_POOL")
+        .ok()
+        .and_then(|s| s.parse::<u32>().ok())
+        .map(|n| n.clamp(1, 16))
+        .or(default_pool);
+
+    McpServerDef {
+        name: "local".to_string(),
+        url: String::new(),
+        command: Some(bin.to_string_lossy().to_string()),
+        args: vec![],
+        env: builtin_env,
+        headers: std::collections::HashMap::new(),
+        bearer_token: None,
+        enabled,
+        source: "builtin".to_string(),
+        pool_size,
+        pool_safe_tools,
+    }
+}
+
+/// Build the profile-owned MCP server list.
+///
+/// This does not auto-detect host AI CLI MCP configs and does not merge
+/// settings/corp MCP sections. Profile routes use this helper so
+/// `/profiles/{profile_id}/mcp/...` reflects the selected profile contract.
+pub fn build_profile_server_list(
+    profile_config: &McpUserConfig,
+    builtin_binary: Option<&Path>,
+    builtin_env: HashMap<String, String>,
+) -> Vec<McpServerDef> {
+    let mut servers = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+
+    if let Some(bin) = builtin_binary {
+        if bin.exists() {
+            let enabled = profile_config
+                .server_enabled
+                .get("local")
+                .copied()
+                .unwrap_or(true);
+            servers.push(local_builtin_server_def(bin, builtin_env, enabled));
+            seen.insert("local".to_string());
+            info!(bin = %bin.display(), "added profile local builtin MCP server");
+        } else {
+            warn!(bin = %bin.display(), "builtin MCP server binary not found, skipping");
+        }
+    }
+
+    for manual in &profile_config.servers {
+        if manual.name.is_empty() {
+            warn!("profile MCP server has empty name, skipping");
+            continue;
+        }
+        if manual.name == "builtin" {
+            warn!("profile MCP server uses reserved name 'builtin', skipping");
+            continue;
+        }
+        if manual.name.contains(crate::mcp::types::NS_SEP) {
+            warn!(name = %manual.name, "profile MCP server name contains namespace separator '{}', skipping to prevent ambiguity", crate::mcp::types::NS_SEP);
+            continue;
+        }
+        if seen.insert(manual.name.clone()) {
+            let mut def = McpServerDef {
+                name: manual.name.clone(),
+                url: manual.url.clone(),
+                command: None,
+                args: vec![],
+                env: HashMap::new(),
+                headers: manual.headers.clone(),
+                bearer_token: manual.bearer_token.clone(),
+                enabled: manual.enabled,
+                source: "profile".to_string(),
+                pool_size: None,
+                pool_safe_tools: Vec::new(),
+            };
+            if let Some(&enabled) = profile_config.server_enabled.get(&def.name) {
+                def.enabled = enabled;
+            }
+            servers.push(def);
+        }
+    }
+
+    servers
+}
+
 /// Build the server list, optionally including the local builtin server.
 ///
 /// When `builtin_binary` is Some, a "local" server entry is prepended that
@@ -97,46 +199,13 @@ pub fn build_server_list_with_builtin(
     // 0. Local builtin server (stdio subprocess)
     if let Some(bin) = builtin_binary {
         if bin.exists() {
-            // Stateless builtin tools that are safe to round-robin across
-            // pool peers. Snapshot tools (`snapshots_*`) are NOT listed
-            // here — they mutate the per-process AutoSnapshotScheduler so
-            // N peers would diverge. Snapshot tools pin to peers[0] (no
-            // fan-out).
-            let pool_safe_tools: Vec<String> = ["echo", "fetch_http", "grep_http", "http_headers"]
-                .iter()
-                .map(|s| (*s).to_string())
-                .collect();
-
-            // Pool size: scales with host CPUs by default, capped at 4
-            // to match the inflight-cap rule from d88a714 (more peers
-            // than that just oversubscribe the rmcp-aggregator + builtin
-            // + capsem-process tokio runtimes against the same cores).
-            // CAPSEM_MCP_BUILTIN_POOL overrides for tuning / debugging:
-            // set to 1 to force the pre-pool behavior (single peer, no
-            // round-robin), or higher for stress testing. Override is
-            // clamped to [1, 16].
-            let default_pool = std::thread::available_parallelism()
-                .ok()
-                .map(|n| (n.get() as u32).clamp(1, 4));
-            let pool_size = std::env::var("CAPSEM_MCP_BUILTIN_POOL")
-                .ok()
-                .and_then(|s| s.parse::<u32>().ok())
-                .map(|n| n.clamp(1, 16))
-                .or(default_pool);
-
-            servers.push(McpServerDef {
-                name: "local".to_string(),
-                url: String::new(),
-                command: Some(bin.to_string_lossy().to_string()),
-                args: vec![],
-                env: builtin_env,
-                headers: std::collections::HashMap::new(),
-                bearer_token: None,
-                enabled: true,
-                source: "builtin".to_string(),
-                pool_size,
-                pool_safe_tools,
-            });
+            let enabled = corp_config
+                .server_enabled
+                .get("local")
+                .or_else(|| user_config.server_enabled.get("local"))
+                .copied()
+                .unwrap_or(true);
+            servers.push(local_builtin_server_def(bin, builtin_env, enabled));
             seen.insert("local".to_string());
             info!(bin = %bin.display(), "added local builtin MCP server");
         } else {
