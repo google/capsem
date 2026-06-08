@@ -153,6 +153,8 @@ fn insert_fake_instance_with_session_dir(
         InstanceInfo {
             id: id.to_string(),
             profile_id: "code".into(),
+            profile_revision: test_profile_revision(),
+            asset_pins: test_asset_pins(),
             pid,
             uds_path: PathBuf::from(format!("/tmp/{}.sock", id)),
             session_dir,
@@ -165,6 +167,25 @@ fn insert_fake_instance_with_session_dir(
             forked_from: None,
         },
     );
+}
+
+fn test_profile_revision() -> String {
+    ProfileConfigFile::builtin_code().revision
+}
+
+fn test_asset_pins() -> BootAssetPins {
+    profile_asset_pins(&ProfileConfigFile::builtin_code()).unwrap()
+}
+
+fn install_test_profile_assets(state: &ServiceState) {
+    let profile = ProfileConfigFile::builtin_code();
+    let arch = capsem_core::net::policy_config::current_profile_arch();
+    let arch_dir = state.assets_dir.join(arch);
+    std::fs::create_dir_all(&arch_dir).unwrap();
+    let assets = profile.assets.current_arch_assets().unwrap();
+    for asset in [&assets.kernel, &assets.initrd, &assets.rootfs] {
+        std::fs::write(arch_dir.join(&asset.name), b"test-asset").unwrap();
+    }
 }
 
 #[tokio::test]
@@ -1816,6 +1837,8 @@ fn provision_persistent_rejects_duplicate_name() {
             PersistentVmEntry {
                 name: "taken".into(),
                 profile_id: "code".into(),
+                profile_revision: test_profile_revision(),
+                asset_pins: test_asset_pins(),
                 ram_mb: 2048,
                 cpus: 2,
                 base_version: "0.0.0".into(),
@@ -1905,6 +1928,7 @@ fn make_test_state_with_tempdir() -> (Arc<ServiceState>, tempfile::TempDir) {
 #[tokio::test]
 async fn handle_fork_creates_persistent_sandbox() {
     let (state, _dir) = make_test_state_with_tempdir();
+    install_test_profile_assets(&state);
     // Create a real session dir for the fake instance
     let session_dir = state.run_dir.join("sessions/fork-src");
     std::fs::create_dir_all(session_dir.join("system")).unwrap();
@@ -1915,6 +1939,8 @@ async fn handle_fork_creates_persistent_sandbox() {
         InstanceInfo {
             id: "fork-src".into(),
             profile_id: "code".into(),
+            profile_revision: test_profile_revision(),
+            asset_pins: test_asset_pins(),
             pid: std::process::id(),
             uds_path: PathBuf::from("/tmp/fork-src.sock"),
             session_dir: session_dir.clone(),
@@ -1943,6 +1969,8 @@ async fn handle_fork_creates_persistent_sandbox() {
     let registry = state.persistent_registry.lock().unwrap();
     let entry = registry.get("my-fork").unwrap();
     assert_eq!(entry.profile_id, "code");
+    assert_eq!(entry.profile_revision, test_profile_revision());
+    assert_eq!(entry.asset_pins, test_asset_pins());
     assert_eq!(entry.forked_from, Some("fork-src".into()));
     assert_eq!(entry.description, Some("test".into()));
     assert_eq!(entry.base_version, "0.0.0");
@@ -1968,6 +1996,7 @@ async fn handle_fork_not_found() {
 #[tokio::test]
 async fn handle_fork_duplicate_returns_conflict() {
     let (state, _dir) = make_test_state_with_tempdir();
+    install_test_profile_assets(&state);
     let session_dir = state.run_dir.join("sessions/dup-src");
     std::fs::create_dir_all(session_dir.join("system")).unwrap();
     std::fs::create_dir_all(session_dir.join("workspace")).unwrap();
@@ -1977,6 +2006,8 @@ async fn handle_fork_duplicate_returns_conflict() {
         InstanceInfo {
             id: "dup-src".into(),
             profile_id: "code".into(),
+            profile_revision: test_profile_revision(),
+            asset_pins: test_asset_pins(),
             pid: std::process::id(),
             uds_path: PathBuf::from("/tmp/dup-src.sock"),
             session_dir,
@@ -2018,6 +2049,7 @@ async fn handle_fork_duplicate_returns_conflict() {
 #[tokio::test]
 async fn handle_fork_from_persistent_registry() {
     let (state, _dir) = make_test_state_with_tempdir();
+    install_test_profile_assets(&state);
     let session_dir = state.run_dir.join("persistent/pers-vm");
     std::fs::create_dir_all(session_dir.join("system")).unwrap();
     std::fs::create_dir_all(session_dir.join("workspace")).unwrap();
@@ -2029,6 +2061,8 @@ async fn handle_fork_from_persistent_registry() {
             PersistentVmEntry {
                 name: "pers-vm".into(),
                 profile_id: "code".into(),
+                profile_revision: test_profile_revision(),
+                asset_pins: test_asset_pins(),
                 ram_mb: 2048,
                 cpus: 2,
                 base_version: "0.0.0".into(),
@@ -2059,11 +2093,14 @@ async fn handle_fork_from_persistent_registry() {
     let registry = state.persistent_registry.lock().unwrap();
     let entry = registry.get("from-pers").unwrap();
     assert_eq!(entry.profile_id, "code");
+    assert_eq!(entry.profile_revision, test_profile_revision());
+    assert_eq!(entry.asset_pins, test_asset_pins());
 }
 
 #[tokio::test]
 async fn handle_persist_preserves_profile_identity() {
     let (state, _dir) = make_test_state_with_tempdir();
+    install_test_profile_assets(&state);
     let session_dir = state.run_dir.join("sessions/persist-src");
     std::fs::create_dir_all(&session_dir).unwrap();
     state.instances.lock().unwrap().insert(
@@ -2071,6 +2108,8 @@ async fn handle_persist_preserves_profile_identity() {
         InstanceInfo {
             id: "persist-src".into(),
             profile_id: "code".into(),
+            profile_revision: test_profile_revision(),
+            asset_pins: test_asset_pins(),
             pid: std::process::id(),
             uds_path: PathBuf::from("/tmp/persist-src.sock"),
             session_dir: session_dir.clone(),
@@ -2097,12 +2136,110 @@ async fn handle_persist_preserves_profile_identity() {
     let registry = state.persistent_registry.lock().unwrap();
     let entry = registry.get("persisted").unwrap();
     assert_eq!(entry.profile_id, "code");
+    assert_eq!(entry.profile_revision, test_profile_revision());
+    assert_eq!(entry.asset_pins, test_asset_pins());
     drop(registry);
 
     let instances = state.instances.lock().unwrap();
     let info = instances.get("persisted").unwrap();
     assert_eq!(info.profile_id, "code");
+    assert_eq!(info.profile_revision, test_profile_revision());
+    assert_eq!(info.asset_pins, test_asset_pins());
     assert!(info.persistent);
+}
+
+#[test]
+fn resume_rejects_profile_revision_drift() {
+    let (state, _dir) = make_test_state_with_tempdir();
+    install_test_profile_assets(&state);
+    let session_dir = state.run_dir.join("persistent/revision-drift");
+    std::fs::create_dir_all(&session_dir).unwrap();
+    {
+        let mut reg = state.persistent_registry.lock().unwrap();
+        reg.data.vms.insert(
+            "revision-drift".into(),
+            PersistentVmEntry {
+                name: "revision-drift".into(),
+                profile_id: "code".into(),
+                profile_revision: "old-revision".into(),
+                asset_pins: test_asset_pins(),
+                ram_mb: 2048,
+                cpus: 2,
+                base_version: "0.0.0".into(),
+                created_at: "0".into(),
+                session_dir,
+                forked_from: None,
+                description: None,
+                suspended: false,
+                defunct: false,
+                last_error: None,
+                checkpoint_path: None,
+                env: None,
+            },
+        );
+    }
+
+    let err = state
+        .resume_sandbox("revision-drift", None, None)
+        .unwrap_err();
+    assert!(
+        err.to_string().contains("revision mismatch"),
+        "resume must fail closed on profile revision drift, got: {err}"
+    );
+}
+
+#[tokio::test]
+async fn handle_fork_rejects_asset_pin_drift() {
+    let (state, _dir) = make_test_state_with_tempdir();
+    install_test_profile_assets(&state);
+    let session_dir = state.run_dir.join("persistent/pin-drift");
+    std::fs::create_dir_all(session_dir.join("system")).unwrap();
+    std::fs::create_dir_all(session_dir.join("workspace")).unwrap();
+    std::fs::write(session_dir.join("system/rootfs.img"), b"data").unwrap();
+    let mut pins = test_asset_pins();
+    pins.rootfs.hash =
+        "blake3:0000000000000000000000000000000000000000000000000000000000000000".into();
+    {
+        let mut reg = state.persistent_registry.lock().unwrap();
+        reg.data.vms.insert(
+            "pin-drift".into(),
+            PersistentVmEntry {
+                name: "pin-drift".into(),
+                profile_id: "code".into(),
+                profile_revision: test_profile_revision(),
+                asset_pins: pins,
+                ram_mb: 2048,
+                cpus: 2,
+                base_version: "0.0.0".into(),
+                created_at: "0".into(),
+                session_dir,
+                forked_from: None,
+                description: None,
+                suspended: false,
+                defunct: false,
+                last_error: None,
+                checkpoint_path: None,
+                env: None,
+            },
+        );
+    }
+
+    let err = handle_fork(
+        State(state),
+        Path("pin-drift".into()),
+        Json(ForkRequest {
+            name: "blocked-fork".into(),
+            description: None,
+        }),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(err.0, StatusCode::PRECONDITION_FAILED);
+    assert!(
+        err.1.contains("asset pins changed"),
+        "fork must fail closed on asset pin drift, got: {}",
+        err.1
+    );
 }
 
 #[test]
@@ -2137,6 +2274,8 @@ fn provision_rejects_source_with_different_profile() {
             PersistentVmEntry {
                 name: "other-profile-source".into(),
                 profile_id: "other-profile".into(),
+                profile_revision: test_profile_revision(),
+                asset_pins: test_asset_pins(),
                 ram_mb: 2048,
                 cpus: 2,
                 base_version: "0.0.0".into(),
@@ -2186,6 +2325,8 @@ async fn handle_list_shows_suspended_status() {
             PersistentVmEntry {
                 name: "susp-vm".into(),
                 profile_id: "code".into(),
+                profile_revision: test_profile_revision(),
+                asset_pins: test_asset_pins(),
                 ram_mb: 2048,
                 cpus: 2,
                 base_version: "0.0.0".into(),
@@ -2210,6 +2351,8 @@ async fn handle_list_shows_suspended_status() {
             PersistentVmEntry {
                 name: "stop-vm".into(),
                 profile_id: "code".into(),
+                profile_revision: test_profile_revision(),
+                asset_pins: test_asset_pins(),
                 ram_mb: 1024,
                 cpus: 1,
                 base_version: "0.0.0".into(),
@@ -2252,6 +2395,8 @@ async fn handle_info_shows_suspended_status() {
             PersistentVmEntry {
                 name: "info-susp".into(),
                 profile_id: "code".into(),
+                profile_revision: test_profile_revision(),
+                asset_pins: test_asset_pins(),
                 ram_mb: 2048,
                 cpus: 2,
                 base_version: "0.0.0".into(),
@@ -2382,6 +2527,8 @@ async fn handle_suspend_rejects_ephemeral_vm() {
             InstanceInfo {
                 id: "eph-vm".into(),
                 profile_id: "code".into(),
+                profile_revision: test_profile_revision(),
+                asset_pins: test_asset_pins(),
                 pid: 0,
                 uds_path: state.run_dir.join("instances/eph-vm.sock"),
                 session_dir: state.run_dir.join("sessions/eph-vm"),
@@ -2425,6 +2572,8 @@ fn archive_failed_restore_checkpoint_moves_checkpoint_aside() {
             PersistentVmEntry {
                 name: "resume-vm".into(),
                 profile_id: "code".into(),
+                profile_revision: test_profile_revision(),
+                asset_pins: test_asset_pins(),
                 ram_mb: 2048,
                 cpus: 2,
                 base_version: "0.0.0".into(),
@@ -2792,6 +2941,8 @@ fn resolve_rejects_symlink_escape() {
         InstanceInfo {
             id: "test-vm".into(),
             profile_id: "code".into(),
+            profile_revision: test_profile_revision(),
+            asset_pins: test_asset_pins(),
             pid: 1,
             uds_path: PathBuf::from("/tmp/test.sock"),
             session_dir,
@@ -2823,6 +2974,8 @@ fn resolve_valid_path_inside_workspace() {
         InstanceInfo {
             id: "test-vm".into(),
             profile_id: "code".into(),
+            profile_revision: test_profile_revision(),
+            asset_pins: test_asset_pins(),
             pid: 1,
             uds_path: PathBuf::from("/tmp/test.sock"),
             session_dir,
@@ -2943,6 +3096,8 @@ fn setup_vm_with_workspace_and_uds(
         InstanceInfo {
             id: vm_id.into(),
             profile_id: "code".into(),
+            profile_revision: test_profile_revision(),
+            asset_pins: test_asset_pins(),
             pid: 1,
             uds_path,
             session_dir,
@@ -3184,6 +3339,8 @@ async fn write_file_logs_import_before_guest_write() {
         InstanceInfo {
             id: "write-ledger-vm".into(),
             profile_id: "code".into(),
+            profile_revision: test_profile_revision(),
+            asset_pins: test_asset_pins(),
             pid: 1,
             uds_path,
             session_dir: state.run_dir.join("sessions/write-ledger-vm"),

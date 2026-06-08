@@ -36,7 +36,9 @@ mod startup;
 use capsem_service::api;
 use capsem_service::api::*;
 use capsem_service::naming::{generate_tmp_name, validate_vm_name};
-use capsem_service::registry::{PersistentRegistry, PersistentVmEntry};
+use capsem_service::registry::{
+    BootAssetPin, BootAssetPins, PersistentRegistry, PersistentVmEntry,
+};
 use capsem_service::triage;
 
 #[derive(Parser, Debug)]
@@ -155,6 +157,8 @@ struct AssetReconcileState {
 struct InstanceInfo {
     id: String,
     profile_id: String,
+    profile_revision: String,
+    asset_pins: BootAssetPins,
     pid: u32,
     uds_path: PathBuf,
     session_dir: PathBuf,
@@ -591,18 +595,10 @@ impl ServiceState {
         }
 
         let profile = self.profile_config(&profile_id)?;
+        let profile_revision = profile.revision.clone();
+        let asset_pins = profile_asset_pins(&profile)?;
+        self.validate_profile_asset_pins(&profile, &profile_revision, &asset_pins)?;
         let resolved = self.resolve_profile_asset_paths(&profile)?;
-        if !resolved.rootfs.exists() {
-            let entries = std::fs::read_dir(&self.assets_dir)
-                .map(|d| d.map(|e| e.unwrap().file_name()).collect::<Vec<_>>())
-                .unwrap_or_default();
-            error!(rootfs = %resolved.rootfs.display(), ?entries, "rootfs NOT FOUND");
-            return Err(anyhow!(
-                "rootfs not found at {}. Dir entries: {:?}",
-                resolved.rootfs.display(),
-                entries
-            ));
-        }
 
         info!(process_binary = %self.process_binary.display(), exists = self.process_binary.exists(), "checking process_binary");
 
@@ -795,6 +791,8 @@ impl ServiceState {
             registry.register(PersistentVmEntry {
                 name: id.to_string(),
                 profile_id: profile_id.clone(),
+                profile_revision: profile_revision.clone(),
+                asset_pins: asset_pins.clone(),
                 ram_mb,
                 cpus,
                 base_version: version.clone(),
@@ -822,6 +820,8 @@ impl ServiceState {
             InstanceInfo {
                 id: id.to_string(),
                 profile_id,
+                profile_revision,
+                asset_pins,
                 pid,
                 uds_path,
                 session_dir: session_dir.clone(),
@@ -884,10 +884,8 @@ impl ServiceState {
         let _ = std::fs::remove_file(uds_path.with_extension("ready"));
 
         let profile = self.profile_config(&entry.profile_id)?;
+        self.validate_profile_asset_pins(&profile, &entry.profile_revision, &entry.asset_pins)?;
         let resolved = self.resolve_profile_asset_paths(&profile)?;
-        if !resolved.rootfs.exists() {
-            return Err(anyhow!("rootfs not found at {}", resolved.rootfs.display()));
-        }
 
         let process_log_path = entry.session_dir.join("process.log");
         let process_log_file = std::fs::OpenOptions::new()
@@ -1012,6 +1010,8 @@ impl ServiceState {
             InstanceInfo {
                 id: name.to_string(),
                 profile_id: entry.profile_id.clone(),
+                profile_revision: entry.profile_revision.clone(),
+                asset_pins: entry.asset_pins.clone(),
                 pid,
                 uds_path,
                 session_dir: entry.session_dir.clone(),
@@ -1161,6 +1161,69 @@ impl ServiceState {
             asset_version: format!("profile:{}@{}", profile.id, profile.revision),
         })
     }
+
+    fn validate_profile_asset_pins(
+        &self,
+        profile: &ProfileConfigFile,
+        profile_revision: &str,
+        pins: &BootAssetPins,
+    ) -> Result<()> {
+        if profile.revision != profile_revision {
+            return Err(anyhow!(
+                "profile '{}' revision mismatch: VM pinned '{}', current '{}'",
+                profile.id,
+                profile_revision,
+                profile.revision
+            ));
+        }
+        let current = profile_asset_pins(profile)?;
+        if &current != pins {
+            return Err(anyhow!(
+                "profile '{}' asset pins changed: VM pinned {:?}, current {:?}",
+                profile.id,
+                pins,
+                current
+            ));
+        }
+        let resolved = self.resolve_profile_asset_paths(profile)?;
+        validate_asset_file_pin("kernel", &resolved.kernel, &pins.kernel)?;
+        validate_asset_file_pin("initrd", &resolved.initrd, &pins.initrd)?;
+        validate_asset_file_pin("rootfs", &resolved.rootfs, &pins.rootfs)?;
+        Ok(())
+    }
+}
+
+fn profile_asset_pins(profile: &ProfileConfigFile) -> Result<BootAssetPins> {
+    let arch = capsem_core::net::policy_config::current_profile_arch();
+    let arch_assets = profile.assets.current_arch_assets().ok_or_else(|| {
+        anyhow!(
+            "profile {} has no assets for architecture {arch}",
+            profile.id
+        )
+    })?;
+    Ok(BootAssetPins {
+        kernel: descriptor_pin(&arch_assets.kernel),
+        initrd: descriptor_pin(&arch_assets.initrd),
+        rootfs: descriptor_pin(&arch_assets.rootfs),
+    })
+}
+
+fn descriptor_pin(asset: &ProfileAssetDescriptor) -> BootAssetPin {
+    BootAssetPin {
+        name: asset.name.clone(),
+        hash: asset.hash.clone(),
+    }
+}
+
+fn validate_asset_file_pin(kind: &str, path: &StdPath, pin: &BootAssetPin) -> Result<()> {
+    if !path.exists() {
+        return Err(anyhow!(
+            "{kind} asset '{}' is missing at {}",
+            pin.name,
+            path.display()
+        ));
+    }
+    Ok(())
 }
 
 fn profile_asset_descriptor_path(
@@ -1758,12 +1821,23 @@ async fn handle_fork(
     }
 
     // Find source: running instance or stopped persistent VM
-    let (session_dir, profile_id, ram_mb, cpus, base_version, uds_path) = {
+    let (
+        session_dir,
+        profile_id,
+        profile_revision,
+        asset_pins,
+        ram_mb,
+        cpus,
+        base_version,
+        uds_path,
+    ) = {
         let instances = state.instances.lock().unwrap();
         if let Some(i) = instances.get(&id) {
             (
                 i.session_dir.clone(),
                 i.profile_id.clone(),
+                i.profile_revision.clone(),
+                i.asset_pins.clone(),
                 i.ram_mb,
                 i.cpus,
                 i.base_version.clone(),
@@ -1776,6 +1850,8 @@ async fn handle_fork(
                 (
                     p.session_dir.clone(),
                     p.profile_id.clone(),
+                    p.profile_revision.clone(),
+                    p.asset_pins.clone(),
                     p.ram_mb,
                     p.cpus,
                     p.base_version.clone(),
@@ -1789,6 +1865,12 @@ async fn handle_fork(
             }
         }
     };
+    let profile = state
+        .profile_config(&profile_id)
+        .map_err(|e| AppError(StatusCode::PRECONDITION_FAILED, e.to_string()))?;
+    state
+        .validate_profile_asset_pins(&profile, &profile_revision, &asset_pins)
+        .map_err(|e| AppError(StatusCode::PRECONDITION_FAILED, e.to_string()))?;
 
     // Freeze + thaw the guest root filesystem so the ext4 system overlay
     // (/dev/vdb backed by rootfs.img) is fully flushed before fork clone.
@@ -1844,6 +1926,8 @@ async fn handle_fork(
             .register(PersistentVmEntry {
                 name: name.clone(),
                 profile_id,
+                profile_revision,
+                asset_pins,
                 ram_mb,
                 cpus,
                 base_version,
@@ -6077,7 +6161,17 @@ async fn handle_persist(
     }
 
     // Find the running ephemeral instance
-    let (old_session_dir, profile_id, ram_mb, cpus, base_version, forked_from, env) = {
+    let (
+        old_session_dir,
+        profile_id,
+        profile_revision,
+        asset_pins,
+        ram_mb,
+        cpus,
+        base_version,
+        forked_from,
+        env,
+    ) = {
         let instances = state.instances.lock().unwrap();
         let i = instances
             .get(&id)
@@ -6091,6 +6185,8 @@ async fn handle_persist(
         (
             i.session_dir.clone(),
             i.profile_id.clone(),
+            i.profile_revision.clone(),
+            i.asset_pins.clone(),
             i.ram_mb,
             i.cpus,
             i.base_version.clone(),
@@ -6098,6 +6194,12 @@ async fn handle_persist(
             i.env.clone(),
         )
     };
+    let profile = state
+        .profile_config(&profile_id)
+        .map_err(|e| AppError(StatusCode::PRECONDITION_FAILED, e.to_string()))?;
+    state
+        .validate_profile_asset_pins(&profile, &profile_revision, &asset_pins)
+        .map_err(|e| AppError(StatusCode::PRECONDITION_FAILED, e.to_string()))?;
 
     // Move session dir to persistent location
     let new_session_dir = state.run_dir.join("persistent").join(name);
@@ -6116,6 +6218,8 @@ async fn handle_persist(
             .register(PersistentVmEntry {
                 name: name.clone(),
                 profile_id: profile_id.clone(),
+                profile_revision: profile_revision.clone(),
+                asset_pins: asset_pins.clone(),
                 ram_mb,
                 cpus,
                 base_version: base_version.clone(),
@@ -6147,6 +6251,8 @@ async fn handle_persist(
                 InstanceInfo {
                     id: name.clone(),
                     profile_id,
+                    profile_revision,
+                    asset_pins,
                     pid: info.pid,
                     uds_path: info.uds_path,
                     session_dir: new_session_dir,

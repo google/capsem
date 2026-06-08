@@ -88,6 +88,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   selected profile's current-architecture kernel, initrd, and rootfs URLs into
   hash-prefixed asset files, verifies each file with the profile BLAKE3 hash,
   updates reconcile status, and skips already-verified profile assets.
+- Made persistent VM lifecycle state pin the selected profile revision and boot
+  asset descriptors. Create/save/fork/resume preserve the pinned profile
+  revision plus kernel/initrd/rootfs name+hash pins, and save/fork/resume fail
+  closed when the current profile revision or boot asset pins drift.
 - Added profile management route gates:
   `POST /profiles/create`, `PATCH /profiles/{profile_id}/edit`,
   `DELETE /profiles/{profile_id}/delete`, `POST /profiles/{profile_id}/clone`,

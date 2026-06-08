@@ -15,6 +15,8 @@ use serde::{Deserialize, Serialize};
 pub struct PersistentVmEntry {
     pub name: String,
     pub profile_id: String,
+    pub profile_revision: String,
+    pub asset_pins: BootAssetPins,
     pub ram_mb: u64,
     pub cpus: u32,
     pub base_version: String,
@@ -51,6 +53,19 @@ pub struct PersistentVmEntry {
     /// guest sees the same environment after stop+resume cycles.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub env: Option<HashMap<String, String>>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct BootAssetPins {
+    pub kernel: BootAssetPin,
+    pub initrd: BootAssetPin,
+    pub rootfs: BootAssetPin,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct BootAssetPin {
+    pub name: String,
+    pub hash: String,
 }
 
 #[derive(Serialize, Deserialize, Debug, Default)]
@@ -126,6 +141,8 @@ mod tests {
         PersistentVmEntry {
             name: name.into(),
             profile_id: "code".into(),
+            profile_revision: "2026.06.07.1".into(),
+            asset_pins: test_asset_pins(),
             ram_mb: 2048,
             cpus: 2,
             base_version: "0.1.0".into(),
@@ -138,6 +155,26 @@ mod tests {
             last_error: None,
             checkpoint_path: None,
             env: None,
+        }
+    }
+
+    fn test_asset_pins() -> BootAssetPins {
+        BootAssetPins {
+            kernel: BootAssetPin {
+                name: "vmlinuz".into(),
+                hash: "blake3:fa3b65bf6bb2b0adab0af8694338a793963f93d6218f5120219b14e9866d7561"
+                    .into(),
+            },
+            initrd: BootAssetPin {
+                name: "initrd.img".into(),
+                hash: "blake3:23fa4f6baf1d8a83d6f3ab76c20fd8608341ab8d6f8b60c9f1dc6a362d826782"
+                    .into(),
+            },
+            rootfs: BootAssetPin {
+                name: "rootfs.erofs".into(),
+                hash: "blake3:b0a8616d5dd179a6f2fd42d519120f34b4fad1470ea85b97a783fd8952d5d30f"
+                    .into(),
+            },
         }
     }
 
