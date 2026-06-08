@@ -1139,6 +1139,73 @@ mod tests {
             .expect("reqwest client")
     }
 
+    async fn spawn_builtin_http_fixture() -> crate::test_support::http::LocalHttpRecorder {
+        crate::test_support::http::spawn_static_http_recorder(vec![
+            (
+                "/",
+                crate::test_support::http::RecordedHttpResponse::html(
+                    r#"
+                    <!doctype html>
+                    <html>
+                      <head><title>Local Capsem HTTP Fixture</title></head>
+                      <body>
+                        <h1>Local Elie Test Page</h1>
+                        <p>elie local deterministic page for builtin HTTP tests.</p>
+                        <p>aaaaab proves regex safety without remote dependencies.</p>
+                      </body>
+                    </html>
+                    "#,
+                )
+                .with_header("x-capsem-fixture", "home"),
+            ),
+            (
+                "/about",
+                crate::test_support::http::RecordedHttpResponse::html(about_fixture_html()),
+            ),
+            (
+                "/wiki/Alan_Turing",
+                crate::test_support::http::RecordedHttpResponse::html(
+                    "<html><body><h1>Alan Turing</h1><p>Turing proved useful local content.</p></body></html>",
+                ),
+            ),
+            (
+                "/wiki/Rust_(programming_language)",
+                crate::test_support::http::RecordedHttpResponse::html(
+                    "<html><body><h1>Rust</h1><p>Mozilla sponsored early Rust work.</p></body></html>",
+                ),
+            ),
+            (
+                "/wiki/Unicode",
+                crate::test_support::http::RecordedHttpResponse::html(
+                    "<html><body><h1>Unicode</h1><p>Unicode keeps café, 東京, and emoji safe.</p></body></html>",
+                ),
+            ),
+        ])
+        .await
+        .expect("local HTTP fixture should start")
+    }
+
+    fn about_fixture_html() -> String {
+        let repeated = "<p>Elie Bursztein works on Google security research, AI safety, and abuse prevention. <a href=\"/papers\">Read more</a>.</p>\n".repeat(80);
+        format!(
+            r#"<!doctype html>
+            <html>
+              <head>
+                <title>Elie Bursztein - Local Fixture</title>
+                <script>window.secret = "not content";</script>
+              </head>
+              <body>
+                <main>
+                  <h1>Elie Bursztein</h1>
+                  <h2>About</h2>
+                  {repeated}
+                  <div>Google DeepMind AI Cybersecurity local fixture.</div>
+                </main>
+              </body>
+            </html>"#
+        )
+    }
+
     fn default_dev_security_rules() -> SecurityRuleSet {
         crate::net::policy_config::SecurityRuleProfile::parse_toml(
             r#"
@@ -1787,12 +1854,14 @@ mod tests {
     #[tokio::test]
     async fn fetch_http_start_index_negative_defaults_to_zero() {
         // as_u64() returns None for -1, so it should default to 0
+        let fixture = spawn_builtin_http_fixture().await;
         let client = test_client();
         let rules = default_dev_security_rules();
+        let url = format!("{}/", fixture.base_url);
         let resp = call_builtin_tool(
             "fetch_http",
             &serde_json::json!({
-                "url": "https://elie.net",
+                "url": url,
                 "start_index": -1
             }),
             &client,
@@ -1808,7 +1877,10 @@ mod tests {
             "should succeed with default start_index=0"
         );
         let text = extract_tool_text(&resp);
-        assert!(text.contains("URL: https://elie.net"), "got: {text}");
+        assert!(
+            text.contains(&format!("URL: {}/", fixture.base_url)),
+            "got: {text}"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -1895,12 +1967,13 @@ mod tests {
     async fn grep_http_regex_catastrophic_backtracking_safe() {
         // Rust regex crate uses finite automaton, no catastrophic backtracking.
         // This test ensures (a+)+$ doesn't hang on an allowed domain.
+        let fixture = spawn_builtin_http_fixture().await;
         let client = test_client();
         let rules = default_dev_security_rules();
         let resp = call_builtin_tool(
             "grep_http",
             &serde_json::json!({
-                "url": "https://elie.net",
+                "url": format!("{}/", fixture.base_url),
                 "pattern": "(a+)+$"
             }),
             &client,
@@ -1963,11 +2036,12 @@ mod tests {
     #[tokio::test]
     async fn http_headers_invalid_method_falls_back_to_head() {
         // Any method other than "GET" falls through to HEAD
+        let fixture = spawn_builtin_http_fixture().await;
         let client = test_client();
         let rules = default_dev_security_rules();
         let resp = call_builtin_tool(
             "http_headers",
-            &serde_json::json!({"url": "https://elie.net", "method": "POST"}),
+            &serde_json::json!({"url": format!("{}/", fixture.base_url), "method": "POST"}),
             &client,
             &rules,
             &BTreeMap::new(),
@@ -1979,16 +2053,18 @@ mod tests {
         assert!(!is_tool_error(&resp), "should succeed with HEAD fallback");
         let text = extract_tool_text(&resp);
         assert!(text.contains("Status:"), "got: {text}");
+        assert_eq!(fixture.state.requests()[0].method, http::Method::HEAD);
     }
 
     #[tokio::test]
     async fn http_headers_method_case_sensitive() {
         // "get" (lowercase) is not "GET", so falls through to HEAD
+        let fixture = spawn_builtin_http_fixture().await;
         let client = test_client();
         let rules = default_dev_security_rules();
         let resp = call_builtin_tool(
             "http_headers",
-            &serde_json::json!({"url": "https://elie.net", "method": "get"}),
+            &serde_json::json!({"url": format!("{}/", fixture.base_url), "method": "get"}),
             &client,
             &rules,
             &BTreeMap::new(),
@@ -1997,6 +2073,7 @@ mod tests {
         )
         .await;
         assert!(!is_tool_error(&resp), "should succeed with HEAD fallback");
+        assert_eq!(fixture.state.requests()[0].method, http::Method::HEAD);
     }
 
     // -----------------------------------------------------------------------
@@ -2107,7 +2184,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Integration tests -- require network access
+    // Integration tests -- use local HTTP fixtures only
     // -----------------------------------------------------------------------
 
     /// Helper to extract the text content from a tool response.
@@ -2125,12 +2202,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn integration_fetch_http_elie_net() {
+    async fn integration_fetch_http_local_fixture() {
+        let fixture = spawn_builtin_http_fixture().await;
         let client = test_client();
         let rules = default_dev_security_rules();
+        let url = format!("{}/", fixture.base_url);
         let resp = call_builtin_tool(
             "fetch_http",
-            &serde_json::json!({"url": "https://elie.net"}),
+            &serde_json::json!({"url": url}),
             &client,
             &rules,
             &BTreeMap::new(),
@@ -2141,7 +2220,7 @@ mod tests {
         assert!(!is_tool_error(&resp), "fetch should succeed");
         let text = extract_tool_text(&resp);
         assert!(
-            text.contains("elie.net"),
+            text.contains(&fixture.base_url),
             "response must reference the domain"
         );
         // The extracted content must contain real text from the page
@@ -2152,12 +2231,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn integration_grep_http_elie_net_finds_matches() {
+    async fn integration_grep_http_local_fixture_finds_matches() {
+        let fixture = spawn_builtin_http_fixture().await;
         let client = test_client();
         let rules = default_dev_security_rules();
         let resp = call_builtin_tool(
             "grep_http",
-            &serde_json::json!({"url": "https://elie.net", "pattern": "elie"}),
+            &serde_json::json!({"url": format!("{}/", fixture.base_url), "pattern": "elie"}),
             &client,
             &rules,
             &BTreeMap::new(),
@@ -2170,7 +2250,7 @@ mod tests {
         // Must NOT say "Matches found: 0"
         assert!(
             !text.contains("Matches found: 0"),
-            "grep_http must find 'elie' on elie.net but got 0 matches: {text}"
+            "grep_http must find 'elie' on the local fixture but got 0 matches: {text}"
         );
         assert!(
             text.contains("Match 1"),
@@ -2204,12 +2284,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn integration_http_headers_elie_net() {
+    async fn integration_http_headers_local_fixture() {
+        let fixture = spawn_builtin_http_fixture().await;
         let client = test_client();
         let rules = default_dev_security_rules();
         let resp = call_builtin_tool(
             "http_headers",
-            &serde_json::json!({"url": "https://elie.net"}),
+            &serde_json::json!({"url": format!("{}/", fixture.base_url)}),
             &client,
             &rules,
             &BTreeMap::new(),
@@ -2220,15 +2301,14 @@ mod tests {
         assert!(!is_tool_error(&resp), "http_headers should succeed");
         let text = extract_tool_text(&resp);
         assert!(
-            text.contains("Status: 200")
-                || text.contains("Status: 301")
-                || text.contains("Status: 302"),
+            text.contains("Status: 200"),
             "must return a valid HTTP status: {text}"
         );
         assert!(
             text.to_lowercase().contains("content-type"),
             "must include content-type header: {text}"
         );
+        assert_eq!(fixture.state.requests()[0].method, http::Method::HEAD);
     }
 
     #[tokio::test]
@@ -2660,17 +2740,18 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Integration tests -- elie.net/about (network)
+    // Integration tests -- local /about fixture
     // -----------------------------------------------------------------------
 
     #[tokio::test]
-    async fn integration_fetch_http_elie_net_about() {
+    async fn integration_fetch_http_local_about() {
         // Default format is markdown
+        let fixture = spawn_builtin_http_fixture().await;
         let client = test_client();
         let rules = default_dev_security_rules();
         let resp = call_builtin_tool(
             "fetch_http",
-            &serde_json::json!({"url": "https://elie.net/about"}),
+            &serde_json::json!({"url": format!("{}/about", fixture.base_url)}),
             &client,
             &rules,
             &BTreeMap::new(),
@@ -2703,12 +2784,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn integration_fetch_http_elie_net_about_content_mode() {
+    async fn integration_fetch_http_local_about_content_mode() {
+        let fixture = spawn_builtin_http_fixture().await;
         let client = test_client();
         let rules = default_dev_security_rules();
         let resp = call_builtin_tool(
             "fetch_http",
-            &serde_json::json!({"url": "https://elie.net/about", "format": "content"}),
+            &serde_json::json!({"url": format!("{}/about", fixture.base_url), "format": "content"}),
             &client,
             &rules,
             &BTreeMap::new(),
@@ -2731,12 +2813,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn integration_fetch_http_elie_net_about_raw() {
+    async fn integration_fetch_http_local_about_raw() {
+        let fixture = spawn_builtin_http_fixture().await;
         let client = test_client();
         let rules = default_dev_security_rules();
         let resp = call_builtin_tool(
             "fetch_http",
-            &serde_json::json!({"url": "https://elie.net/about", "format": "raw", "max_length": 50000}),
+            &serde_json::json!({"url": format!("{}/about", fixture.base_url), "format": "raw", "max_length": 50000}),
             &client,
             &rules,
             &BTreeMap::new(),
@@ -2754,12 +2837,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn integration_grep_http_elie_net_about() {
+    async fn integration_grep_http_local_about() {
+        let fixture = spawn_builtin_http_fixture().await;
         let client = test_client();
         let rules = default_dev_security_rules();
         let resp = call_builtin_tool(
             "grep_http",
-            &serde_json::json!({"url": "https://elie.net/about", "pattern": "Bursztein"}),
+            &serde_json::json!({"url": format!("{}/about", fixture.base_url), "pattern": "Bursztein"}),
             &client,
             &rules,
             &BTreeMap::new(),
@@ -2780,12 +2864,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn integration_fetch_http_elie_net_about_pagination() {
+    async fn integration_fetch_http_local_about_pagination() {
+        let fixture = spawn_builtin_http_fixture().await;
         let client = test_client();
         let rules = default_dev_security_rules();
         let resp = call_builtin_tool(
             "fetch_http",
-            &serde_json::json!({"url": "https://elie.net/about", "max_length": 500}),
+            &serde_json::json!({"url": format!("{}/about", fixture.base_url), "max_length": 500}),
             &client,
             &rules,
             &BTreeMap::new(),
@@ -2802,12 +2887,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn integration_http_headers_elie_net_about() {
+    async fn integration_http_headers_local_about() {
+        let fixture = spawn_builtin_http_fixture().await;
         let client = test_client();
         let rules = default_dev_security_rules();
         let resp = call_builtin_tool(
             "http_headers",
-            &serde_json::json!({"url": "https://elie.net/about"}),
+            &serde_json::json!({"url": format!("{}/about", fixture.base_url)}),
             &client,
             &rules,
             &BTreeMap::new(),
@@ -2822,20 +2908,22 @@ mod tests {
             text.to_lowercase().contains("content-type"),
             "must include content-type"
         );
+        assert_eq!(fixture.state.requests()[0].method, http::Method::HEAD);
     }
 
     // -----------------------------------------------------------------------
-    // Integration tests -- Wikipedia (network)
+    // Integration tests -- local wiki-shaped fixtures
     // -----------------------------------------------------------------------
 
     #[tokio::test]
-    async fn integration_fetch_http_wiki_turing() {
+    async fn integration_fetch_http_local_wiki_turing() {
+        let fixture = spawn_builtin_http_fixture().await;
         let client = test_client();
         let rules = default_dev_security_rules();
         let resp = call_builtin_tool(
             "fetch_http",
             &serde_json::json!({
-                "url": "https://en.wikipedia.org/wiki/Alan_Turing",
+                "url": format!("{}/wiki/Alan_Turing", fixture.base_url),
                 "max_length": 5000
             }),
             &client,
@@ -2851,13 +2939,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn integration_grep_http_wiki_rust_finds_mozilla() {
+    async fn integration_grep_http_local_wiki_rust_finds_mozilla() {
+        let fixture = spawn_builtin_http_fixture().await;
         let client = test_client();
         let rules = default_dev_security_rules();
         let resp = call_builtin_tool(
             "grep_http",
             &serde_json::json!({
-                "url": "https://en.wikipedia.org/wiki/Rust_(programming_language)",
+                "url": format!("{}/wiki/Rust_(programming_language)", fixture.base_url),
                 "pattern": "Mozilla"
             }),
             &client,
@@ -2876,13 +2965,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn integration_fetch_http_wiki_unicode_multibyte() {
+    async fn integration_fetch_http_local_wiki_unicode_multibyte() {
+        let fixture = spawn_builtin_http_fixture().await;
         let client = test_client();
         let rules = default_dev_security_rules();
         let resp = call_builtin_tool(
             "fetch_http",
             &serde_json::json!({
-                "url": "https://en.wikipedia.org/wiki/Unicode",
+                "url": format!("{}/wiki/Unicode", fixture.base_url),
                 "max_length": 5000
             }),
             &client,

@@ -130,6 +130,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   HTTP MCP server and HTTP recorder to prove broker-owned auth resolution,
   tool discovery, tool dispatch, and fail-closed missing credentials without
   contacting public services.
+- Replaced builtin MCP HTTP tool tests that fetched `elie.net` and Wikipedia
+  with local static HTTP fixture responses. `fetch_http`, `grep_http`, and
+  `http_headers` still exercise the real reqwest/tool/security path, but
+  normal tests no longer require public network availability.
 - Added a profile-owned rule-file compilation guard: profile enforcement TOML
   and Sigma detection YAML now materialize as `SecurityRuleProfile` and compile
   only through the unified `SecurityRuleSet`/CEL rail, rejecting old policy

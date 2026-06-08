@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 
 use axum::body::{Body, Bytes};
 use axum::extract::State;
-use axum::http::{HeaderMap, Method, StatusCode, Uri};
+use axum::http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode, Uri};
 use axum::response::IntoResponse;
 use axum::routing::any;
 use axum::Router;
@@ -29,11 +29,20 @@ impl RecordedHttpRequest {
 #[derive(Clone, Default)]
 pub(crate) struct RecordingHttpState {
     requests: Arc<Mutex<Vec<RecordedHttpRequest>>>,
+    responses: Arc<HashMap<String, RecordedHttpResponse>>,
+    default_response: RecordedHttpResponse,
 }
 
 impl RecordingHttpState {
     pub(crate) fn requests(&self) -> Vec<RecordedHttpRequest> {
         self.requests.lock().expect("recorder poisoned").clone()
+    }
+
+    fn response_for(&self, path: &str) -> RecordedHttpResponse {
+        self.responses
+            .get(path)
+            .cloned()
+            .unwrap_or_else(|| self.default_response.clone())
     }
 }
 
@@ -44,6 +53,53 @@ pub(crate) struct LocalHttpRecorder {
     handle: JoinHandle<()>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RecordedHttpResponse {
+    pub status: StatusCode,
+    pub headers: HashMap<String, String>,
+    pub body: Vec<u8>,
+}
+
+impl RecordedHttpResponse {
+    pub(crate) fn text(body: impl Into<String>) -> Self {
+        let mut headers = HashMap::new();
+        headers.insert(
+            "content-type".to_string(),
+            "text/plain; charset=utf-8".to_string(),
+        );
+        Self {
+            status: StatusCode::OK,
+            headers,
+            body: body.into().into_bytes(),
+        }
+    }
+
+    pub(crate) fn html(body: impl Into<String>) -> Self {
+        let mut headers = HashMap::new();
+        headers.insert(
+            "content-type".to_string(),
+            "text/html; charset=utf-8".to_string(),
+        );
+        Self {
+            status: StatusCode::OK,
+            headers,
+            body: body.into().into_bytes(),
+        }
+    }
+
+    pub(crate) fn with_header(mut self, key: &str, value: &str) -> Self {
+        self.headers
+            .insert(key.to_ascii_lowercase(), value.to_string());
+        self
+    }
+}
+
+impl Default for RecordedHttpResponse {
+    fn default() -> Self {
+        Self::text("ok")
+    }
+}
+
 impl Drop for LocalHttpRecorder {
     fn drop(&mut self) {
         self.shutdown.cancel();
@@ -52,7 +108,24 @@ impl Drop for LocalHttpRecorder {
 }
 
 pub(crate) async fn spawn_http_recorder() -> anyhow::Result<LocalHttpRecorder> {
+    spawn_static_http_recorder(std::iter::empty::<(String, RecordedHttpResponse)>()).await
+}
+
+pub(crate) async fn spawn_static_http_recorder<I, S>(routes: I) -> anyhow::Result<LocalHttpRecorder>
+where
+    I: IntoIterator<Item = (S, RecordedHttpResponse)>,
+    S: Into<String>,
+{
     let state = RecordingHttpState::default();
+    let state = RecordingHttpState {
+        responses: Arc::new(
+            routes
+                .into_iter()
+                .map(|(path, response)| (path.into(), response))
+                .collect(),
+        ),
+        ..state
+    };
     let router = Router::new()
         .fallback(any(record_request))
         .with_state(state.clone());
@@ -84,6 +157,7 @@ async fn record_request(
     headers: HeaderMap,
     body: Bytes,
 ) -> impl IntoResponse {
+    let response = state.response_for(uri.path());
     state
         .requests
         .lock()
@@ -94,7 +168,17 @@ async fn record_request(
             headers: lower_headers(&headers),
             body: body.to_vec(),
         });
-    (StatusCode::OK, Body::from("ok"))
+
+    let mut out = (response.status, Body::from(response.body)).into_response();
+    for (key, value) in response.headers {
+        if let (Ok(name), Ok(value)) = (
+            HeaderName::from_bytes(key.as_bytes()),
+            HeaderValue::from_str(&value),
+        ) {
+            out.headers_mut().insert(name, value);
+        }
+    }
+    out
 }
 
 pub(crate) fn lower_headers(headers: &HeaderMap) -> HashMap<String, String> {

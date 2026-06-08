@@ -110,6 +110,9 @@ batch unrelated fixes into one giant release commit.
   remote MCP manager proof with a local recording Streamable HTTP MCP server,
   add reusable local HTTP recording support, and prove broker-owned MCP auth
   without contacting public services.
+- [x] Replace builtin HTTP remote fetch/grep/header tests with local static
+  HTTP fixture proofs using the same recorder system; normal builtin HTTP
+  tests no longer depend on `elie.net` or Wikipedia.
 
 - [x] Add approved service routes:
   - `[x] /profiles/list`
