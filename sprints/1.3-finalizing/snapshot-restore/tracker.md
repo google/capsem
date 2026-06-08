@@ -208,12 +208,11 @@ the guarantee or explicitly burn it.
   capsem-service handle_fork -- --nocapture`, `cargo test -p capsem-service
   profile -- --nocapture`, and `cargo test -p capsem-service --no-run`.
 - [x] Current-architecture cleanup slice: root `config/` now contains only
-  real configuration/generator outputs. Manifest verification key material
-  lives under `release/keys/manifest-sign.pub`; MITM CA key material lives
-  under `security/keys/`; retired settings presets and their Rust/Python/
+  real configuration/generator outputs. MITM CA key material lives under
+  `security/keys/`; retired settings presets and their Rust/Python/
   frontend schema hooks are burned. Decision: intentional_burn for the preset
   subsystem, conceptual cleanup for key placement so profile/corp/config
-  ownership is not confused by signing or CA artifacts. Tests:
+  ownership is not confused by CA artifacts. Tests:
   `cargo test -p capsem-core --lib policy_config -- --nocapture`, `cargo test
   -p capsem-core --lib manifest -- --nocapture`, `cargo test -p capsem-core
   --lib cert_authority -- --nocapture`, `uv run pytest
@@ -225,6 +224,24 @@ the guarantee or explicitly burn it.
   src/lib/__tests__/settings-store.test.ts`, `git diff --check`, and a
   targeted `rg` sweep for the old root-config signing/CA/preset paths and
   preset action symbols.
+- [x] Current-architecture cleanup slice: profile asset descriptors are now
+  only role/name/url/hash/size. Removed fake per-asset signature/content-type
+  metadata and removed filesystem/compression/compression-level build knobs
+  from profile payloads and profile asset status responses. Also burned the
+  release-manifest signing rail: runtime reads manifest metadata only for
+  BLAKE3 hash lookup, release workflow no longer signs/uploads a manifest
+  signature artifact, dev asset sync no longer generates local manifest
+  signing keys, and release evidence is SBOM/provenance plus profile/corp URL
+  selection and BLAKE3 byte verification. Tests: `cargo test -p capsem-core
+  --lib profile_contract -- --nocapture`, `cargo test -p capsem-core --lib
+  manifest -- --nocapture`, `cargo test -p capsem-core --lib policy_config --
+  --nocapture`, `cargo test -p capsem-service
+  profile_assets_info_reflects_manifest_and_edit_is_gated -- --nocapture`,
+  `cargo test -p capsem-service
+  profile_asset_status_uses_profile_current_arch_contract -- --nocapture`,
+  `cargo test -p capsem-service profile -- --nocapture`, `git diff --check`,
+  and targeted `rg` sweeps for manifest signing and removed profile asset
+  fields.
 - [ ] `b2fb7e33 feat: export session policy contexts`
 - [ ] `7a5afc9c test: prove process enforcement logs in real vm`
 - [ ] `f2a6247f docs: close s07 debt ledger`
@@ -445,11 +462,9 @@ the guarantee or explicitly burn it.
   `refresh_policy`, and `[assets].refresh_policy` in profile syntax. Channel,
   manifest URL, and trust keys are catalog/manifest fields, not profile payload
   fields.
-- [ ] Restore signed manifest chain: release/root manifest signs corp and
-  profile manifests; corp manifest signs corp config/rule/detection files;
-  profile manifest signs profile/rule/detection/MCP metadata; profile asset
-  manifest signs profile-selected assets. Each signed layer carries its own
-  `refresh_policy`.
+- [ ] Restore release/profile evidence chain: release artifacts carry SBOM and
+  provenance, corp/profile config owns asset URLs and refresh policy, and
+  profile-selected assets are verified by BLAKE3 hash.
 - [ ] Ensure profile syntax carries modern default rules, enforcement rules,
   detection levels, provider control rules, MCP, and plugin config.
 - [x] Do not add a credential broker invocation rule. `[plugins.credential_broker]`
@@ -652,18 +667,18 @@ the guarantee or explicitly burn it.
 - [ ] Restore profile list/info/status/reload/reconcile/assets-ensure routes
   needed by UI, TUI, CLI, and install checks.
 - [ ] Restore profile asset download/check/refresh management in the service.
-- [ ] Ensure profile asset management verifies hashes/signatures and reports
+- [ ] Ensure profile asset management verifies BLAKE3 hashes and reports
   progress/errors per profile.
-- [x] Enforce refresh policy at every signed layer: corp manifest, profile
-  manifest, and profile asset manifest. Current contract evidence:
+- [x] Enforce refresh policy at every profile/corp/asset metadata layer.
+  Current contract evidence:
   `config/corp.toml` has top-level `refresh_policy`, `ProfileConfigFile`
   requires top-level profile `refresh_policy`,
   `ProfileAssetConfig` requires `assets.refresh_policy`, and `ManifestV2`
   now requires top-level `refresh_policy` with generator/docs/tests updated.
-  Signature/hash enforcement remains tracked by the adjacent asset verification
-  and signed manifest chain items.
+  BLAKE3 hash enforcement remains tracked by the adjacent asset verification
+  items.
 - [ ] Ensure VM launch fails closed on missing/corrupt profile-selected assets.
-- [ ] Restore per-arch profile asset declarations with URL/hash/signature/size.
+- [ ] Restore per-arch profile asset declarations with URL/hash/size.
 - [ ] Restore profile-aware asset supervisor/reconcile/status/ensure.
 - [ ] Ensure VM create requires and persists immutable `profile_id`.
 - [ ] Restore VM profile revision/payload hash/base-asset pins.

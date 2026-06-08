@@ -17,7 +17,7 @@ graph LR
     D --> E["Notarize<br/>(Apple)"]
     E --> F["SBOM<br/>(SPDX 2.3)"]
     F --> G["Attest<br/>(SLSA + SBOM)"]
-    G --> H["Sign manifest<br/>(minisign)"]
+    G --> H["Publish manifest<br/>(BLAKE3 metadata)"]
     H --> I["Publish<br/>(GitHub release)"]
 ```
 
@@ -101,8 +101,8 @@ VM assets (kernel, initrd, rootfs) are verified via BLAKE3 hashes at every stage
 ```mermaid
 graph TD
     A["Build<br/>generate_checksums()"] --> B["manifest.json<br/>(BLAKE3 hashes + sizes)"]
-    B --> C["Release<br/>sign with minisign"]
-    C --> D["Download<br/>asset service"]
+    B --> C["Release<br/>SBOM + provenance attestations"]
+    C --> D["Download<br/>profile/corp selected URL"]
     D --> E["Verify hashes<br/>BLAKE3 per-file check"]
     E --> F["Boot<br/>assets loaded from verified dir"]
 ```
@@ -162,20 +162,12 @@ The manifest accumulates entries across releases. Each release merges its new
 version entry with the previous manifest from the latest GitHub release. This
 allows the asset service to download assets for any supported version.
 
-## Manifest signing
+## Manifest Role
 
-Release manifests are signed with [minisign](https://jedisct1.github.io/minisign/):
-
-```
-minisign -S -s /tmp/manifest-sign.key -m release-artifacts/manifest.json
-```
-
-| Artifact | Purpose |
-|----------|---------|
-| `manifest.json` | Asset hashes and version index |
-| `manifest.json.minisig` | minisign signature |
-
-Both files are published in every GitHub release.
+`manifest.json` is release metadata: asset hashes, sizes, and version index.
+It is published with the release alongside SBOM and provenance attestations.
+Runtime trust comes from profile/corp-selected URLs plus BLAKE3 verification of
+the downloaded bytes; Capsem does not maintain a second manifest authority rail.
 
 ## Supply chain controls
 

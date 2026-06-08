@@ -50,7 +50,7 @@ preflight (30s) ──> build-assets (arm64 + x86_64, 10 min) ──> build-app-
 | `test` | macos-14 | preflight | Unit tests + coverage, frontend, audit |
 | `build-app-macos` | macos-14 | preflight, build-assets | Tauri `.app` build, companion binaries, `scripts/build-pkg.sh`, notarize + staple `.pkg` |
 | `build-app-linux` | ubuntu arm64 + x86_64 | preflight, build-assets | Tauri build, deb (+ AppImage on x86_64) |
-| `create-release` | ubuntu-latest | test, build-app-macos, build-app-linux | Merge latest.json, sign manifest, GitHub release |
+| `create-release` | ubuntu-latest | test, build-app-macos, build-app-linux | Merge latest.json, publish manifest, GitHub release |
 
 Test runs in parallel with builds. A test failure blocks `create-release` but doesn't delay compilation.
 

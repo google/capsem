@@ -49,7 +49,7 @@ shape.
 
 | Capability | Representative Lost Paths | Decision |
 |---|---|---|
-| Profile-owned assets/catalogs | `config/profiles/base/*.profile.toml`, `crates/capsem-core/src/profile_manifest.rs`, `crates/capsem-core/src/profile_payload_schema.rs`, `schemas/capsem.profile.v2.schema.json`, `docs/src/content/docs/configuration/profile-*` | conceptual port into `profile.toml` + signed manifest/profile asset chain |
+| Profile-owned assets/catalogs | `config/profiles/base/*.profile.toml`, `crates/capsem-core/src/profile_manifest.rs`, `crates/capsem-core/src/profile_payload_schema.rs`, `schemas/capsem.profile.v2.schema.json`, `docs/src/content/docs/configuration/profile-*` | conceptual port into `profile.toml` + profile-selected URL/hash asset chain |
 | Asset supervisor and saved VM pins | `crates/capsem-service/src/asset_supervisor.rs`, `crates/capsem-service/src/saved_vm_assets.rs` | exact restore where compatible, then adapt to profile-first contract |
 | `capsem-admin` / admin pipeline | `docs/src/content/docs/configuration/capsem-admin.md`, `docs/src/content/docs/development/capsem-admin.md`, `scripts/prepare-admin-cli.sh`, `scripts/build-assets.sh`, `scripts/prepare-install-assets.sh`, `scripts/materialize-install-profiles.py` | restore typed admin command surface; avoid shell-only release logic |
 | TUI-backed shell | `crates/capsem-tui/src/*`, `crates/capsem/src/status.rs`, `crates/capsem/src/status/tests.rs` | restore functionally, preserving memory-only status hot paths |

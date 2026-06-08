@@ -3494,13 +3494,8 @@ fn profile_asset_status_value(
             "path": path.display().to_string(),
             "status": if path.exists() { "present" } else { "missing" },
             "hash": asset.hash,
-            "signature": asset.signature,
             "size": asset.size,
-            "content_type": asset.content_type,
             "url": asset.url,
-            "filesystem": asset.filesystem,
-            "compression": asset.compression,
-            "compression_level": asset.compression_level,
         })
     })
     .collect::<Vec<_>>();
@@ -3512,9 +3507,6 @@ fn profile_asset_status_value(
         "ready": all_ready,
         "downloading": reconcile.in_progress,
         "current_arch": current_arch,
-        "filesystem": profile.assets.filesystem,
-        "compression": profile.assets.compression,
-        "compression_level": profile.assets.compression_level,
         "assets": assets,
     });
     append_asset_reconcile_status(&mut value, &reconcile);
@@ -3990,9 +3982,6 @@ async fn handle_profile_assets_info(
         "profile_id": manifest.id,
         "format": manifest.assets.format,
         "refresh_policy": manifest.assets.refresh_policy,
-        "filesystem": manifest.assets.filesystem,
-        "compression": manifest.assets.compression,
-        "compression_level": manifest.assets.compression_level,
         "current_arch": current_arch,
         "current_arch_ready": current_assets.is_some(),
         "current_assets": current_assets,
@@ -4149,9 +4138,6 @@ fn profile_catalog_status_value(
                 "current_arch": status["current_arch"].clone(),
                 "missing_assets": missing,
                 "asset_count": status["assets"].as_array().map_or(0, Vec::len),
-                "filesystem": profile.assets.filesystem,
-                "compression": profile.assets.compression,
-                "compression_level": profile.assets.compression_level,
             })
         })
         .collect::<Vec<_>>();

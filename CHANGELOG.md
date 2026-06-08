@@ -56,8 +56,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   provider control remains profile/corp rule-owned and credential handling
   remains plugin-owned.
 - Removed the retired settings preset subsystem and cleaned root `config/` so
-  release signing and MITM CA key material live under `release/keys/` and
-  `security/keys/` instead of looking like editable runtime configuration.
+  MITM CA key material lives under `security/keys/` instead of looking like
+  editable runtime configuration. The retired release-manifest authority rail was removed;
+  profile assets are selected by URL and verified by BLAKE3 hash/size, while
+  release evidence stays in SBOM and provenance attestations.
 
 ### Changed (service/API)
 - Updated architecture docs and local development skills to match the 1.3
@@ -100,12 +102,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Replaced the temporary flat profile asset triplet with per-architecture
   profile asset declarations. `config/profiles/code.toml` now parses as the
   checked-in contract for EROFS/LZ4HC kernel, initrd, and rootfs assets with
-  URL/hash/signature/size/content-type metadata.
+  URL/hash/size metadata.
 - Made `/profiles/{profile_id}/assets/status` report the selected profile's
   current-architecture asset contract instead of a service-global asset guess,
   including profile id, revision, profile payload hash, expected hashes,
-  signatures, sizes, source URLs, filesystem/compression metadata, and
-  present/missing state from the same hash-prefixed resolver used by boot.
+  sizes, source URLs, and present/missing state from the same hash-prefixed
+  resolver used by boot.
 - Made VM creation profile-explicit. `POST /vms/create`/provision and
   one-shot `run` payloads now require `profile_id`; unknown profiles fail
   before boot state is created, persistent registry rows store `profile_id`,
@@ -2613,25 +2615,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.0.1776980020] - 2026-04-23
 
 ### Security
-- **Verify manifest signatures at boot before trusting asset hashes.**
-  The previous commit wired asset hash verification to the on-disk
-  `manifest.json`, but an attacker with write access to `assets/` could
-  swap both the rootfs and the manifest to match. Closed the gap with
-  minisign signature verification: the release pubkey
-  (`release/keys/manifest-sign.pub`, key id `93A070CBB288AC9B`) is now baked
-  into `capsem-core` via `include_str!`, and
-  `asset_manager::load_verified_manifest_for_assets` rejects any
-  manifest whose sibling `.minisig` is missing or invalid. Release
-  builds (`cfg!(debug_assertions) == false`) hard-fail on a manifest
-  without a valid signature; debug builds allow unsigned manifests so
-  local dev loops with locally built assets keep working. Added the
-  `minisign-verify = "0.2"` crate; covered by 9 new unit tests
-  including verify-accepts/rejects-tampered-manifest/rejects-mangled-
-  signature/rejects-wrong-pubkey/bails-when-sig-required-but-missing/
-  accepts-unsigned-when-allowed/bails-on-bad-signature and a regression
-  guard that the baked pubkey file parses as valid minisign. Updated
-  `docs/src/content/docs/architecture/asset-pipeline.md` to describe
-  the full tamper-resistance chain.
+- **Retired the release-manifest authority rail.** Asset authorization now follows the
+  profile/corp contract: URLs are profile/corp-selected, downloaded bytes are
+  verified by BLAKE3 hash/size, and release evidence is SBOM plus provenance
+  attestations. The old release-manifest signature paragraph was removed because it
+  described a second authority path we no longer maintain.
 
 - **Asset hash verification at boot was silently disabled on every release.**
   `crates/capsem-core/src/vm/boot.rs` read three expected hashes via

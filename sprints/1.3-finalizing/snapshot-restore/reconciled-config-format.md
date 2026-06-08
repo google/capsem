@@ -28,20 +28,18 @@ constrain profile behavior, but it does not become UI settings.
 
 ## Trust Chain
 
-The signed manifest rail owns authenticity and refresh:
+Runtime asset trust is deliberately small:
 
-- the release/root manifest signs corp manifests and profile manifests;
-- the corp manifest signs `corp.toml`, corp enforcement files, corp Sigma files,
-  endpoint metadata, and its `refresh_policy`;
-- the profile manifest signs `profile.toml`, profile enforcement files, profile
-  Sigma files, MCP/profile metadata, and its `refresh_policy`;
-- the profile asset manifest signs the profile-selected assets and carries the
-  asset `refresh_policy`;
-- the runtime verifies signatures, hashes, and refresh policy before exposing a
-  profile as launchable.
+- corp/profile configuration chooses the asset URL;
+- the profile asset descriptor carries the expected BLAKE3 hash and size;
+- runtime download/ensure verifies the actual bytes against that hash;
+- release evidence is SBOM and build provenance, not a second manifest
+  authority rail.
 
-Do not put fake signing keys in profile/corp payloads. Keys, manifest URLs, and
-catalog channels belong to the signed manifest/catalog rail.
+Do not put fake signing keys, content types, filesystem formats, compression
+levels, kernel flags, or build knobs in profile/corp payloads. Those belong to
+build, benchmark, release, or SBOM artifacts. Profiles select assets; they do
+not describe how those assets were manufactured.
 
 ## Settings
 
@@ -108,71 +106,49 @@ scratch_disk_size_gb = 32
 [assets]
 format = "profile-assets.v1"
 refresh_policy = "on_profile_refresh"
-filesystem = "erofs"
-compression = "lz4hc"
-compression_level = 12
 
 [assets.arch.arm64.kernel]
 name = "vmlinuz"
 url = "https://releases.capsem.dev/assets/arm64/vmlinuz"
 hash = "blake3:..."
-signature = "minisig:..."
 size = 12345678
-content_type = "application/octet-stream"
 
 [assets.arch.arm64.initrd]
 name = "initrd.img"
 url = "https://releases.capsem.dev/assets/arm64/initrd.img"
 hash = "blake3:..."
-signature = "minisig:..."
 size = 12345678
-content_type = "application/octet-stream"
 
 [assets.arch.arm64.rootfs]
 name = "rootfs.erofs"
 url = "https://releases.capsem.dev/assets/arm64/rootfs.erofs"
 hash = "blake3:..."
-signature = "minisig:..."
 size = 12345678
-content_type = "application/vnd.capsem.erofs"
-filesystem = "erofs"
-compression = "lz4hc"
-compression_level = 12
 
 [assets.arch.x86_64.kernel]
 name = "vmlinuz"
 url = "https://releases.capsem.dev/assets/x86_64/vmlinuz"
 hash = "blake3:..."
-signature = "minisig:..."
 size = 12345678
-content_type = "application/octet-stream"
 
 [assets.arch.x86_64.initrd]
 name = "initrd.img"
 url = "https://releases.capsem.dev/assets/x86_64/initrd.img"
 hash = "blake3:..."
-signature = "minisig:..."
 size = 12345678
-content_type = "application/octet-stream"
 
 [assets.arch.x86_64.rootfs]
 name = "rootfs.erofs"
 url = "https://releases.capsem.dev/assets/x86_64/rootfs.erofs"
 hash = "blake3:..."
-signature = "minisig:..."
 size = 12345678
-content_type = "application/vnd.capsem.erofs"
-filesystem = "erofs"
-compression = "lz4hc"
-compression_level = 12
 ```
 
 Implementation note: `ProfileAssetConfig` now parses this per-architecture
-shape, including URL/hash/signature/size/content-type asset metadata for
-kernel, initrd, and EROFS/LZ4HC rootfs artifacts. `refresh_policy` is a
-top-level profile field, and asset refresh is owned by
-`[assets].refresh_policy`. Catalog channel, manifest URL, and signing keys
-belong to the signed catalog/manifest rail where real key material exists.
+shape, including only URL/hash/size asset metadata for kernel, initrd, and
+rootfs artifacts. `refresh_policy` is a top-level profile field, and asset
+refresh is owned by `[assets].refresh_policy`. Build format, compression,
+content-type, and signing claims stay out of the profile contract.
 
 ## Rule Files
 

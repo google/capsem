@@ -524,10 +524,15 @@ async fn profile_assets_info_reflects_manifest_and_edit_is_gated() {
         .expect("assets info should reflect profile manifest");
     assert_eq!(info["profile_id"], "code");
     assert_eq!(info["format"], "profile-assets.v1");
-    assert_eq!(info["filesystem"], "erofs");
-    assert_eq!(info["compression"], "lz4hc");
-    assert_eq!(info["compression_level"], 12);
     assert_eq!(info["current_assets"]["rootfs"]["name"], "rootfs.erofs");
+    assert!(
+        info.get("filesystem").is_none(),
+        "profile assets info must not expose build filesystem metadata"
+    );
+    assert!(
+        info.get("compression").is_none(),
+        "profile assets info must not expose build compression metadata"
+    );
 
     let edit = handle_profile_assets_edit(Path("code".to_string()))
         .await
@@ -1274,8 +1279,14 @@ fn profile_asset_status_uses_profile_current_arch_contract() {
     assert_eq!(status["profile_payload_hash"], test_profile_payload_hash());
     assert_eq!(status["current_arch"], arch);
     assert_eq!(status["ready"], false, "initrd is intentionally missing");
-    assert_eq!(status["filesystem"], "erofs");
-    assert_eq!(status["compression"], "lz4hc");
+    assert!(
+        status.get("filesystem").is_none(),
+        "asset status must not expose build filesystem metadata"
+    );
+    assert!(
+        status.get("compression").is_none(),
+        "asset status must not expose build compression metadata"
+    );
     let assets = status["assets"].as_array().unwrap();
     assert_eq!(assets.len(), 3);
     assert!(assets.iter().any(|asset| {
@@ -1299,8 +1310,8 @@ fn profile_asset_status_uses_profile_current_arch_contract() {
                 .as_str()
                 .is_some_and(|name| name.starts_with("rootfs-"))
             && asset["status"] == "present"
-            && asset["compression"] == "lz4hc"
-            && asset["compression_level"] == 12
+            && asset.get("compression").is_none()
+            && asset.get("compression_level").is_none()
     }));
 }
 

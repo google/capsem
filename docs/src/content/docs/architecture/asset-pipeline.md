@@ -104,21 +104,22 @@ Both emit the same format-2 schema. `scripts/create_hash_assets.py` then creates
 
 ## Runtime Hash Verification
 
-Asset hashes are **not** baked into the binary at compile time -- that would tie every binary release to a specific asset release and defeat the `min_binary`/`min_assets` compatibility model. Instead, the binary is hash-agnostic; the manifest on disk is authoritative, and its authenticity is established by a minisign signature verified against a pubkey baked into the binary (`release/keys/manifest-sign.pub`, key id `93A070CBB288AC9B`).
+Asset hashes are **not** baked into the binary at compile time -- that would tie every binary release to a specific asset release and defeat the `min_binary`/`min_assets` compatibility model. Instead, the binary is hash-agnostic. Profile/corp configuration selects asset URLs, and BLAKE3 hashes verify the downloaded bytes before boot.
 
 At boot (`crates/capsem-core/src/vm/boot.rs`):
 
-1. `asset_manager::load_verified_manifest_for_assets(assets, require_signature)` reads `manifest.json` from the assets dir or its parent, and verifies the sibling `manifest.json.minisig` against the baked release pubkey.
+1. `asset_manager::load_manifest_for_assets(assets)` reads `manifest.json` from the assets dir or its parent.
 2. `ManifestV2::expected_hashes_current(host_manifest_arch())` looks up the kernel/initrd/rootfs hashes for the current release on the host arch (`aarch64` -> `arm64` mapped).
 3. The hashes are passed to `VmConfig::builder()` via `expected_kernel_hash` / `expected_initrd_hash` / `expected_disk_hash`; `VmConfig::build()` hashes the files and refuses to boot on mismatch.
 
 Failure modes:
 
 - **No manifest at all**: hash verification is skipped (`[boot-audit] asset hash verification disabled`), both in debug and release. This handles fresh checkouts without any assets built yet.
-- **Manifest present, no `.minisig`**: debug builds log a warning and proceed (local dev loops with unsigned manifests). Release builds (`cfg!(debug_assertions) == false`) hard-fail -- an untrusted manifest must not drive hash verification.
-- **Manifest present, `.minisig` invalid**: always hard-fail, regardless of build profile. A signature mismatch is a loud signal.
+- **Manifest present but malformed**: hash lookup is skipped. Profile-selected assets still verify by BLAKE3 at download/ensure time.
 
-Manifests are signed during the release workflow (`scripts/check-release-workflow.sh` uses `minisign -Sm assets/manifest.json`). The corresponding pubkey in `release/keys/manifest-sign.pub` is included via `include_str!` at compile time, so the signing/verification loop is self-contained and does not depend on any TLS or external trust root.
+Release authenticity evidence is handled by SBOM and build provenance
+attestations. Runtime asset authorization is profile/corp URL selection plus
+BLAKE3 byte verification, not a separate manifest signature rail.
 
 ## Runtime Asset Resolution
 

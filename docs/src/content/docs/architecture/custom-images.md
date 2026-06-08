@@ -284,18 +284,18 @@ Corporate provisioning is manifest-driven. Do not put signing keys, manifest
 URLs, or catalog channels inside `corp.toml` or `profile.toml`; those payloads
 are signed by manifests and should only describe runtime behavior.
 
-The signed chain is:
+The release and runtime evidence chain is:
 
-| Layer | Signs | Owns refresh |
-|-------|-------|---------------|
-| Release/root manifest | Corp manifests and profile manifests | Release/catalog refresh policy |
-| Corp manifest | `corp.toml`, corp enforcement files, corp Sigma files, endpoint metadata | Corp `refresh_policy` |
-| Profile manifest | `profile.toml`, profile enforcement files, profile Sigma files, MCP/profile metadata | Profile `refresh_policy` |
-| Profile asset manifest | Profile-selected kernel, initrd, and rootfs assets | Asset `refresh_policy` |
+| Layer | Owns |
+|-------|------|
+| Release artifacts | SBOM and provenance attestations |
+| Corp config | Corp locks, endpoints, enforcement files, detection files, and `refresh_policy` |
+| Profile config | VM defaults, rule files, MCP/profile metadata, asset URLs/hashes, and `refresh_policy` |
+| Profile assets | Kernel, initrd, and rootfs bytes verified by BLAKE3 |
 
-At runtime Capsem verifies signatures, BLAKE3 hashes, and refresh policy before
-marking a profile launchable. A missing, stale, unsigned, or mismatched corp,
-profile, or asset manifest must fail closed for release builds.
+At runtime Capsem verifies BLAKE3 hashes and refresh policy before marking a
+profile launchable. A missing, stale, or mismatched profile/asset contract must
+fail closed.
 
 Example profile payload:
 
@@ -308,9 +308,12 @@ refresh_policy = "24h"
 [assets]
 format = "profile-assets.v1"
 refresh_policy = "on_profile_refresh"
-filesystem = "erofs"
-compression = "lz4hc"
-compression_level = 12
+
+[assets.arch.arm64.rootfs]
+name = "rootfs.erofs"
+url = "https://releases.capsem.dev/assets/arm64/rootfs.erofs"
+hash = "blake3:..."
+size = 12345678
 ```
 
 Example corp payload:

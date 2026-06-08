@@ -691,15 +691,6 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Sign manifest
-        run: |
-          sudo apt-get update && sudo apt-get install -y minisign
-          echo "$MINISIGN_SECRET_KEY" > /tmp/manifest-sign.key
-          minisign -S -s /tmp/manifest-sign.key -m release-artifacts/manifest.json
-          rm /tmp/manifest-sign.key
-        env:
-          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
-
       - name: Attest build provenance (pkg + deb + rootfs per arch)
         uses: actions/attest-build-provenance@v4
         with:
@@ -749,7 +740,7 @@ jobs:
           | $PKG_NAME | $PKG_SIZE |
           ${LINUX_ROWS}| rootfs.erofs (arm64) | $ARM64_ROOTFS |
           | rootfs.erofs (x86_64) | $X86_ROOTFS |
-          | manifest.json | signed (minisign) |
+          | manifest.json | BLAKE3 asset metadata |
           | capsem-sbom.spdx.json | $SBOM_PKGS packages |
 
           ### Security
@@ -757,7 +748,6 @@ jobs:
           - Apple codesigned (Developer ID), notarized + stapled (.pkg)
           - SLSA build provenance attested (pkg + deb + rootfs)
           - SBOM attested (SPDX 2.3, pkg)
-          - Manifest signed (minisign)
           EOF
 
       - name: Create GitHub release
@@ -785,7 +775,7 @@ jobs:
           # files if Linux build succeeded (best-effort until sprints/linux lands).
           gh release create ${{ github.ref_name }} \
             release-artifacts/*.pkg \
-            release-artifacts/manifest.json release-artifacts/manifest.json.minisig \
+            release-artifacts/manifest.json \
             release-artifacts/capsem-sbom.spdx.json \
             --title "Capsem ${{ github.ref_name }}" \
             --notes "$NOTES"

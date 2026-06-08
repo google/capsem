@@ -71,9 +71,6 @@ impl Default for ProfileAvailability {
 pub struct ProfileAssetConfig {
     pub format: String,
     pub refresh_policy: String,
-    pub filesystem: String,
-    pub compression: String,
-    pub compression_level: u8,
     pub arch: BTreeMap<String, ProfileArchAssets>,
 }
 
@@ -97,15 +94,7 @@ pub struct ProfileAssetDescriptor {
     pub name: String,
     pub url: String,
     pub hash: String,
-    pub signature: String,
     pub size: u64,
-    pub content_type: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub filesystem: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub compression: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub compression_level: Option<u8>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -176,8 +165,6 @@ impl ProfileAssetConfig {
             return Err("profile.assets.format must be profile-assets.v1".to_string());
         }
         validate_non_empty("profile.assets.refresh_policy", &self.refresh_policy)?;
-        validate_non_empty("profile.assets.filesystem", &self.filesystem)?;
-        validate_non_empty("profile.assets.compression", &self.compression)?;
         if self.arch.is_empty() {
             return Err("profile.assets.arch must define at least one architecture".to_string());
         }
@@ -216,16 +203,8 @@ impl ProfileAssetDescriptor {
             return Err(format!("{field}.url must not contain path traversal"));
         }
         validate_blake3_hash(&format!("{field}.hash"), &self.hash)?;
-        validate_non_empty(&format!("{field}.signature"), &self.signature)?;
         if self.size == 0 {
             return Err(format!("{field}.size must be greater than 0"));
-        }
-        validate_non_empty(&format!("{field}.content_type"), &self.content_type)?;
-        if let Some(filesystem) = &self.filesystem {
-            validate_non_empty(&format!("{field}.filesystem"), filesystem)?;
-        }
-        if let Some(compression) = &self.compression {
-            validate_non_empty(&format!("{field}.compression"), compression)?;
         }
         Ok(())
     }

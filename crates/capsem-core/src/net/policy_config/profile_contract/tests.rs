@@ -23,36 +23,24 @@ mobile = false
 [assets]
 format = "profile-assets.v1"
 refresh_policy = "on_profile_refresh"
-filesystem = "erofs"
-compression = "lz4hc"
-compression_level = 12
 
 [assets.arch.arm64.kernel]
 name = "vmlinuz"
 url = "https://example.invalid/arm64-vmlinuz"
 hash = "blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-signature = "minisig:test"
 size = 1
-content_type = "application/octet-stream"
 
 [assets.arch.arm64.initrd]
 name = "initrd.img"
 url = "https://example.invalid/arm64-initrd.img"
 hash = "blake3:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-signature = "minisig:test"
 size = 1
-content_type = "application/octet-stream"
 
 [assets.arch.arm64.rootfs]
 name = "rootfs.erofs"
 url = "https://example.invalid/arm64-rootfs.erofs"
 hash = "blake3:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
-signature = "minisig:test"
 size = 1
-content_type = "application/vnd.capsem.erofs"
-filesystem = "erofs"
-compression = "lz4hc"
-compression_level = 12
 
 [vm]
 cpu_count = 6
@@ -244,9 +232,6 @@ fn checked_in_code_profile_parses_and_validates() {
         .validate()
         .expect("checked-in code profile validates");
     assert_eq!(profile.id, "code");
-    assert_eq!(profile.assets.filesystem, "erofs");
-    assert_eq!(profile.assets.compression, "lz4hc");
-    assert_eq!(profile.assets.compression_level, 12);
     assert!(profile.assets.arch.contains_key("arm64"));
     assert!(profile.assets.arch.contains_key("x86_64"));
     assert!(profile.plugins.contains_key("credential_broker"));
@@ -258,6 +243,34 @@ fn checked_in_code_profile_parses_and_validates() {
             .copied(),
         Some(true)
     );
+}
+
+#[test]
+fn profile_assets_reject_release_manifest_theater_and_build_knobs() {
+    let profile = include_str!("../../../../../../config/profiles/code.toml");
+    let bad_top_level = profile.replace(
+        "refresh_policy = \"on_profile_refresh\"\n",
+        "refresh_policy = \"on_profile_refresh\"\nfilesystem = \"erofs\"\n",
+    );
+    let error = toml::from_str::<ProfileConfigFile>(&bad_top_level)
+        .expect_err("profile assets must not expose build filesystem metadata");
+    assert!(error.to_string().contains("filesystem"), "{error}");
+
+    let bad_asset = profile.replace(
+        "size = 8786432\n",
+        "size = 8786432\nsignature = \"minisig:release-manifest\"\n",
+    );
+    let error = toml::from_str::<ProfileConfigFile>(&bad_asset)
+        .expect_err("profile assets must not pretend to carry per-asset signatures");
+    assert!(error.to_string().contains("signature"), "{error}");
+
+    let bad_content_type = profile.replace(
+        "size = 8786432\n",
+        "size = 8786432\ncontent_type = \"application/octet-stream\"\n",
+    );
+    let error = toml::from_str::<ProfileConfigFile>(&bad_content_type)
+        .expect_err("profile assets must not expose downloader content types");
+    assert!(error.to_string().contains("content_type"), "{error}");
 }
 
 #[test]

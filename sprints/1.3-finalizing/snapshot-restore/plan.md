@@ -120,10 +120,10 @@ Required capabilities:
 - Profile routes support list/info/status/reload/reconcile/asset ensure flows
   needed by UI, TUI, CLI, and install checks.
 - Profile asset management is active service behavior: download missing assets,
-  verify hashes/signatures, check existing assets, refresh stale or updated
+  verify BLAKE3 hashes, check existing assets, refresh stale or updated
   assets, surface progress/errors, and never launch a VM on missing/corrupt
   profile-selected assets.
-- Per-arch profile asset declarations include URL/hash/signature/size metadata.
+- Per-arch profile asset declarations include URL/hash/size metadata.
 - Profile-aware asset reconcile/status/ensure returns profile-specific truth.
 - VM creation stores immutable profile id.
 - Persistent VMs store profile revision/payload hash and base-asset pins.
