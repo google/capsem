@@ -57,9 +57,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   remains plugin-owned.
 - Removed the retired settings preset subsystem and cleaned root `config/` so
   MITM CA key material lives under `security/keys/` instead of looking like
-  editable runtime configuration. The retired release-manifest authority rail was removed;
-  profile assets are selected by URL and verified by BLAKE3 hash/size, while
-  release evidence stays in SBOM and provenance attestations.
+  editable runtime configuration. Profile assets are selected by URL and
+  verified by BLAKE3 hash/size, while release evidence stays in SBOM and
+  provenance attestations.
 
 ### Changed (service/API)
 - Updated architecture docs and local development skills to match the 1.3
@@ -2615,11 +2615,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.0.1776980020] - 2026-04-23
 
 ### Security
-- **Retired the release-manifest authority rail.** Asset authorization now follows the
-  profile/corp contract: URLs are profile/corp-selected, downloaded bytes are
-  verified by BLAKE3 hash/size, and release evidence is SBOM plus provenance
-  attestations. The old release-manifest signature paragraph was removed because it
-  described a second authority path we no longer maintain.
+- **Simplified asset authorization to the profile/corp contract.** URLs are
+  profile/corp-selected, downloaded bytes are verified by BLAKE3 hash/size, and
+  release evidence is SBOM plus provenance attestations.
 
 - **Asset hash verification at boot was silently disabled on every release.**
   `crates/capsem-core/src/vm/boot.rs` read three expected hashes via
@@ -2644,9 +2642,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a manifest. Missing or malformed manifest falls back to disabled
   verification with an explicit `[boot-audit] asset hash verification
   disabled` log line, keeping dev loops without a manifest working.
-  Tamper resistance for release environments now depends on manifest
-  signature verification in the asset-download path; that path is a
-  separate, tracked gap.
   Updated `docs/src/content/docs/architecture/asset-pipeline.md` to
   describe the runtime-lookup flow (replacing the old "Compile-Time
   Hash Embedding" section) and fixed the mermaid diagram to match.
@@ -5215,7 +5210,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Wizard validates API keys in real-time against provider endpoints (spinner, check/X inline)
 - API key detection now checks `~/.config/openai/api_key` and `~/.anthropic/api_key`
-- Build verification documentation (SBOM, attestation, manifest signatures)
+- Build verification documentation (SBOM and attestation)
 
 ### Fixed
 - `svelte-check` failing on `dist/` build artifacts (excluded from tsconfig)
@@ -5233,7 +5228,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Rootfs removed from DMG bundle (was 463 MB, now ~15 MB) -- rootfs is downloaded on first launch
 - Build attestation (SBOM + provenance) restored after CI refactor
-- Manifest.json now signed with minisign (same key as updater artifacts)
+- Manifest metadata published with asset hashes and release attestations
 
 ## [0.9.3] - 2026-03-18
 

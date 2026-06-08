@@ -86,7 +86,6 @@ Accidental or at least not consciously approved as a removal:
 - `scripts/materialize-install-profiles.py`
 - `scripts/prepare-admin-cli.sh`
 - `scripts/prepare-install-assets.sh`
-- `scripts/verify-local-manifest-signature.sh`
 - `scripts/verify_deb_payload.py`
 
 Impact:

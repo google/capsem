@@ -227,12 +227,10 @@ the guarantee or explicitly burn it.
 - [x] Current-architecture cleanup slice: profile asset descriptors are now
   only role/name/url/hash/size. Removed fake per-asset signature/content-type
   metadata and removed filesystem/compression/compression-level build knobs
-  from profile payloads and profile asset status responses. Also burned the
-  release-manifest signing rail: runtime reads manifest metadata only for
-  BLAKE3 hash lookup, release workflow no longer signs/uploads a manifest
-  signature artifact, dev asset sync no longer generates local manifest
-  signing keys, and release evidence is SBOM/provenance plus profile/corp URL
-  selection and BLAKE3 byte verification. Tests: `cargo test -p capsem-core
+  from profile payloads and profile asset status responses. Runtime reads
+  manifest metadata only for BLAKE3 hash lookup; release evidence is
+  SBOM/provenance plus profile/corp URL selection and BLAKE3 byte
+  verification. Tests: `cargo test -p capsem-core
   --lib profile_contract -- --nocapture`, `cargo test -p capsem-core --lib
   manifest -- --nocapture`, `cargo test -p capsem-core --lib policy_config --
   --nocapture`, `cargo test -p capsem-service

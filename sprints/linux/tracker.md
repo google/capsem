@@ -48,7 +48,7 @@ Get the Linux `.deb` release path working end-to-end. Deferred out of the next-g
 
 ## L5: Signing / provenance
 
-- [ ] `.deb` is not currently signed (no `dpkg-sig` step in release.yaml) — decide: sign with minisign (already used for manifest), GPG, or ship unsigned
+- [ ] `.deb` is not currently signed (no `dpkg-sig` step in release.yaml) — decide: sign with GPG, platform package signing, or ship unsigned
 - [ ] SLSA attestation already covers `.deb` (release.yaml line 615-625) — verify
 
 ## Out of scope

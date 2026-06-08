@@ -125,7 +125,7 @@ Propagation can lag 1-5 min after accepting. `notarytool history` must return a 
 | `APPLE_API_ISSUER` | App Store Connect issuer UUID |
 | `APPLE_API_KEY` | App Store Connect key ID |
 | `APPLE_API_KEY_PATH` | Contents of `.p8` private key |
-| `TAURI_SIGNING_PRIVATE_KEY` | Tauri updater minisign key |
+| `TAURI_SIGNING_PRIVATE_KEY` | Tauri updater private key |
 | `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | Password for Tauri key |
 | `CODECOV_TOKEN` | Codecov upload token |
 

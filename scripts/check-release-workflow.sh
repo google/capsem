@@ -13,7 +13,6 @@ echo "=== Release workflow preflight ==="
 echo ""
 echo "Tools:"
 command -v cargo >/dev/null && pass "cargo" || fail "cargo not found"
-command -v minisign >/dev/null && pass "minisign" || fail "minisign not found (brew install minisign)"
 cargo tauri --version >/dev/null 2>&1 && pass "cargo-tauri" || fail "cargo-tauri not found (cargo install tauri-cli)"
 cargo sbom --help >/dev/null 2>&1 && pass "cargo-sbom" || fail "cargo-sbom not found (cargo install cargo-sbom)"
 
@@ -26,9 +25,9 @@ if [ -f "$KEY_FILE" ]; then
     KEY_B64=$(cat "$KEY_FILE")
     DECODED=$(echo "$KEY_B64" | base64 -d 2>/dev/null || true)
     if echo "$DECODED" | grep -q "rsign encrypted secret key"; then
-        pass "key decodes to valid minisign format"
+        pass "key decodes to valid Tauri updater key format"
     else
-        fail "key does not decode to minisign format -- check $KEY_FILE"
+        fail "key does not decode to valid Tauri updater key format -- check $KEY_FILE"
     fi
 else
     fail "$KEY_FILE not found"

@@ -167,7 +167,7 @@ allows the asset service to download assets for any supported version.
 `manifest.json` is release metadata: asset hashes, sizes, and version index.
 It is published with the release alongside SBOM and provenance attestations.
 Runtime trust comes from profile/corp-selected URLs plus BLAKE3 verification of
-the downloaded bytes; Capsem does not maintain a second manifest authority rail.
+the downloaded bytes.
 
 ## Supply chain controls
 

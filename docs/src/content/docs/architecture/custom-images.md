@@ -280,9 +280,9 @@ The runtime boots only when the asset hashes match. `min_binary`/`min_assets` ga
 
 ### Admin Provisioning Trust Chain
 
-Corporate provisioning is manifest-driven. Do not put signing keys, manifest
-URLs, or catalog channels inside `corp.toml` or `profile.toml`; those payloads
-are signed by manifests and should only describe runtime behavior.
+Corporate provisioning is profile/corp driven. Do not put signing keys,
+catalog channels, build knobs, or release-process metadata inside `corp.toml`
+or `profile.toml`; those payloads should only describe runtime behavior.
 
 The release and runtime evidence chain is:
 

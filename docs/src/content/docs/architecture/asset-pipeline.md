@@ -119,7 +119,7 @@ Failure modes:
 
 Release authenticity evidence is handled by SBOM and build provenance
 attestations. Runtime asset authorization is profile/corp URL selection plus
-BLAKE3 byte verification, not a separate manifest signature rail.
+BLAKE3 byte verification.
 
 ## Runtime Asset Resolution
 

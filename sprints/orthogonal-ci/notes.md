@@ -7,7 +7,7 @@ Running log of implementation details and decisions. Append dated entries.
 v1.0 shipping today with the **combined** release workflow. Rationale:
 
 1. **First release needs both.** There is no prior asset release on GitHub for a binary-only workflow to reference (it would have nothing to download + merge into `binaries.releases`). The first release has to seed the manifest with both sections.
-2. **Combined workflow already works** end-to-end -- notary flow, squashfs rootfs gate, manifest v2 merge, minisign signing, SBOM, SLSA attestation. Proven path.
+2. **Combined workflow already works** end-to-end -- notary flow, squashfs rootfs gate, manifest v2 merge, SBOM, SLSA attestation. Proven path.
 3. **Split is additive, not destructive.** After v1.0 publishes a manifest with both `assets.releases` and `binaries.releases` populated, the split workflows can:
    - Binary-only: download latest manifest, read `assets.current`, reuse those asset URLs, add new `binaries.releases[version]` entry.
    - Asset-only: download latest manifest, keep `binaries.releases` untouched, add new `assets.releases[version]` entry.

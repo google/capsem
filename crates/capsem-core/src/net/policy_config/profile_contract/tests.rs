@@ -258,7 +258,7 @@ fn profile_assets_reject_release_manifest_theater_and_build_knobs() {
 
     let bad_asset = profile.replace(
         "size = 8786432\n",
-        "size = 8786432\nsignature = \"minisig:release-manifest\"\n",
+        "size = 8786432\nsignature = \"not-supported\"\n",
     );
     let error = toml::from_str::<ProfileConfigFile>(&bad_asset)
         .expect_err("profile assets must not pretend to carry per-asset signatures");
