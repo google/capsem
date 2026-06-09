@@ -773,7 +773,8 @@ the guarantee or explicitly burn it.
 - [ ] `48104328 refactor: move inline test modules to sibling tests.rs files`
 - [ ] `e7a80751 feat(tests): archive in-VM capsem-bench baseline on every just test`
 - [ ] `2d94b0a9 chore(bench): record 1.0.1776445634 lifecycle and fork bench data`
-- [ ] `ae888779 feat: wire real .pkg/.deb install paths, harden installer pipeline`
+- [x] `ae888779 feat: wire real .pkg/.deb install paths, harden installer pipeline`
+  decision: duplicate covered by S3 install-port audit above.
 - [ ] `2e4a7a50 docs: update benchmark data for 0.16.1`
 - [ ] `662edecc fix: cold boot 6x faster (6.2s -> 1.0s), deduplicate backoff`
 - [ ] `9b110812 docs: fork benchmark data, results page, and release process updates`
