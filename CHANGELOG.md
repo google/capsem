@@ -29,6 +29,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `just build-assets code [arch]`, manifests, service resolution, setup status,
   release attestation, and installer download tests now use `rootfs.erofs` as
   the 1.3 runtime rootfs.
+- Removed squashfs as a runtime/build fallback for 1.3 assets: the builder emits
+  only `rootfs.erofs`, manifests require EROFS rootfs entries, service/core
+  asset resolution no longer selects `rootfs.squashfs`, and in-VM doctor checks
+  require `/dev/vda` to be EROFS.
 
 ### Fixed (install/setup)
 - macOS package postinstall now adds `~/.capsem/bin` to fish shell startup via

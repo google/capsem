@@ -62,9 +62,7 @@ def _rootfs_filename():
     entries = _arch_manifest(arch)
     if "rootfs.erofs" in entries:
         return "rootfs.erofs"
-    if "rootfs.squashfs" in entries:
-        return "rootfs.squashfs"
-    pytest.fail(f"manifest has no known rootfs entry for {arch}: {sorted(entries)}")
+    pytest.fail(f"manifest has no rootfs.erofs entry for {arch}: {sorted(entries)}")
 
 
 def test_manifest_hash_matches_kernel():

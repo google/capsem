@@ -1210,8 +1210,22 @@ the guarantee or explicitly burn it.
   tests/test_docker.py::TestRootfsSecurityInvariants::test_rootfs_strips_iptables_legacy_frontend
   tests/test_docker.py::TestKernelConfig::test_iptables_nft_nat_redirect_enabled
   tests/test_docker.py::TestKernelConfig::test_init_uses_iptables_nft_only -q`.
-- [ ] Restore/verify EROFS/LZ4HC as accepted 1.3 runtime asset format on every
+- [x] Restore/verify EROFS/LZ4HC as accepted 1.3 runtime asset format on every
   supported architecture.
+  Proof: builder emits only `rootfs.erofs`, manifest generation requires
+  `rootfs.erofs`, service/core asset resolution no longer selects
+  `rootfs.squashfs`, `capsem-init` mounts EROFS by default, and
+  `capsem-doctor` now requires `/dev/vda` to report `erofs`. Focused tests:
+  `uv run pytest tests/test_docker.py::TestCreateErofs
+  tests/test_docker.py::TestKernelConfig
+  tests/test_docker.py::TestGenerateChecksums -q`,
+  `cargo test -p capsem-core asset_manager -- --nocapture`,
+  `cargo test -p capsem-core manifest_compat -- --nocapture`,
+  `cargo test -p capsem-core --lib vm::config -- --nocapture`,
+  `cargo test -p capsem-service resolve_asset_paths -- --nocapture`, and
+  `uv run pytest tests/capsem-security/test_asset_integrity.py
+  tests/capsem-bootstrap/test_assets.py
+  tests/capsem-service/test_svc_install.py -q`.
 - [x] Ensure profile/admin asset generation emits EROFS/LZ4HC for every
   supported architecture.
   Proof: `capsem-admin image build` plans force `CAPSEM_BUILD_EXPERIMENTAL_EROFS=1`,

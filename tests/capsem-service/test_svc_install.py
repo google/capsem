@@ -54,7 +54,7 @@ class TestAssets:
             rootfs_names = names - {"vmlinuz", "initrd.img"}
             assert len(rootfs_names) == 1, f"unexpected asset names: {names}"
             rootfs_name = next(iter(rootfs_names))
-            assert rootfs_name == "rootfs.squashfs" or re.fullmatch(
+            assert re.fullmatch(
                 r"rootfs(?:-[a-f0-9]{16})?\.erofs",
                 rootfs_name,
             ), f"unexpected rootfs asset name: {rootfs_name}"

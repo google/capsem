@@ -1170,20 +1170,14 @@ impl ServiceState {
             return manifest.resolve(&self.current_version, arch, &self.assets_dir);
         }
 
-        // No manifest: use logical names as fallback. Prefer the release
-        // rootfs format when both modern and legacy dev assets exist.
-        let base = if self.assets_dir.join(arch).join("rootfs.erofs").exists()
-            || self.assets_dir.join(arch).join("rootfs.squashfs").exists()
-        {
+        // No manifest: use logical EROFS names so callers report missing
+        // assets rather than accepting an obsolete rootfs format.
+        let base = if self.assets_dir.join(arch).join("rootfs.erofs").exists() {
             self.assets_dir.join(arch)
         } else {
             self.assets_dir.clone()
         };
-        let rootfs = if base.join("rootfs.erofs").exists() {
-            base.join("rootfs.erofs")
-        } else {
-            base.join("rootfs.squashfs")
-        };
+        let rootfs = base.join("rootfs.erofs");
         Ok(capsem_core::asset_manager::ResolvedAssets {
             kernel: base.join("vmlinuz"),
             initrd: base.join("initrd.img"),

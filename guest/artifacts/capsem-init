@@ -1,7 +1,7 @@
 #!/bin/sh
 # Capsem sandbox init script.
 # Replaces /init in the initramfs.
-# Mounts squashfs/EROFS rootfs from /dev/vda, stacks overlayfs (immutable lower
+# Mounts EROFS rootfs from /dev/vda, stacks overlayfs (immutable lower
 # + ephemeral tmpfs upper), then chroot into the real root.
 
 # Mount essential filesystems
@@ -53,16 +53,12 @@ echo "[capsem-init] listing block devices..."
 ls /dev/vda* 2>&1 || echo "[capsem-init] no /dev/vda found"
 
 # Mount immutable lower rootfs.
-ROOTFS_TYPE=squashfs
-ROOTFS_LABEL=squashfs
+ROOTFS_TYPE=erofs
+ROOTFS_LABEL=erofs
 ROOTFS_MOUNT_OPTS=ro
 if grep -qw 'capsem.rootfs=erofs-dax' /proc/cmdline; then
-    ROOTFS_TYPE=erofs
     ROOTFS_LABEL=erofs-dax
     ROOTFS_MOUNT_OPTS=ro,dax
-elif grep -qw 'capsem.rootfs=erofs' /proc/cmdline; then
-    ROOTFS_TYPE=erofs
-    ROOTFS_LABEL=erofs
 fi
 mkdir -p /mnt/a
 echo "[capsem-init] mounting /dev/vda ($ROOTFS_LABEL, opts=$ROOTFS_MOUNT_OPTS)..."
@@ -147,7 +143,7 @@ if [ "$STORAGE_MODE" = "virtiofs" ]; then
     }
     mkdir -p /mnt/system/upper /mnt/system/work
 
-    # Stack overlayfs: squashfs (lower) + ext4 virtio-blk (upper).
+    # Stack overlayfs: EROFS (lower) + ext4 virtio-blk (upper).
     mount -t overlay overlay \
       -o lowerdir=/mnt/a,upperdir=/mnt/system/upper,workdir=/mnt/system/work,redirect_dir=on,metacopy=on \
       /newroot || \

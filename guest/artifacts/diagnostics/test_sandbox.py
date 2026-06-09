@@ -38,8 +38,8 @@ def test_rootfs_block_device_is_immutable():
     # independent of mount visibility from inside the chroot.
     result = run("blkid -o value -s TYPE /dev/vda 2>&1")
     assert result.returncode == 0, f"/dev/vda not found or blkid failed: {result.stdout}"
-    assert result.stdout.strip() in ("erofs", "squashfs"), \
-        f"/dev/vda is not an immutable rootfs: {result.stdout}"
+    assert result.stdout.strip() == "erofs", \
+        f"/dev/vda is not EROFS: {result.stdout}"
 
 
 def test_overlay_configured():
@@ -55,7 +55,7 @@ def test_overlay_configured():
 
 
 def test_overlay_writes_are_ephemeral():
-    """Writes to system paths succeed through overlay (goes to tmpfs upper, not squashfs)."""
+    """Writes to system paths succeed through overlay (goes to tmpfs upper, not EROFS)."""
     test_file = "/usr/bin/.capsem_overlay_test"
     result = run(f'echo "overlay-ok" > {test_file} && cat {test_file}')
     assert result.returncode == 0, "write to /usr/bin through overlay failed"

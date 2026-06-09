@@ -505,7 +505,6 @@ class TestEdgeCases:
 from capsem.builder.docker import (
     FALLBACK_KERNEL_VERSION,
     create_erofs,
-    create_squashfs,
     detect_runtime,
     docker_build,
     experimental_erofs_build_config,
@@ -752,7 +751,7 @@ class TestExportContainerFs:
 
 
 # ---------------------------------------------------------------------------
-# Build execution: squashfs
+# Build execution: rootfs assets
 # ---------------------------------------------------------------------------
 
 
@@ -908,19 +907,6 @@ class TestAptClockSkewOptions:
             )
 
     @patch("capsem.builder.docker.run_cmd")
-    def test_create_squashfs_has_both_options(self, mock_run):
-        create_squashfs(
-            "docker", Path("/tmp/rootfs.tar"), Path("/tmp/rootfs.squashfs"),
-            "zstd", 15,
-        )
-        cmd_str = " ".join(mock_run.call_args[0][0])
-        for opt in self.APT_CLOCK_SKEW_OPTIONS:
-            assert opt in cmd_str, (
-                f"create_squashfs() missing apt option '{opt}' -- "
-                "squashfs builds will fail when container clock drifts"
-            )
-
-    @patch("capsem.builder.docker.run_cmd")
     def test_create_erofs_has_both_options(self, mock_run):
         create_erofs(
             "docker", Path("/tmp/rootfs.tar"), Path("/tmp/rootfs.erofs"),
@@ -932,33 +918,6 @@ class TestAptClockSkewOptions:
                 f"create_erofs() missing apt option '{opt}' -- "
                 "erofs builds will fail when container clock drifts"
             )
-
-
-class TestCreateSquashfs:
-    @patch("capsem.builder.docker.run_cmd")
-    def test_zstd_compression(self, mock_run):
-        create_squashfs(
-            "docker", Path("/tmp/rootfs.tar"), Path("/tmp/rootfs.squashfs"),
-            "zstd", 15,
-        )
-        cmd = mock_run.call_args[0][0]
-        cmd_str = " ".join(cmd)
-        assert "mksquashfs" in cmd_str
-        assert "-comp zstd" in cmd_str
-        assert "-Xcompression-level 15" in cmd_str
-
-    @patch("capsem.builder.docker.run_cmd")
-    def test_gzip_no_level_flag(self, mock_run):
-        create_squashfs(
-            "docker", Path("/tmp/rootfs.tar"), Path("/tmp/rootfs.squashfs"),
-            "gzip", 9,
-        )
-        cmd = mock_run.call_args[0][0]
-        cmd_str = " ".join(cmd)
-        assert "mksquashfs" in cmd_str
-        assert "-comp gzip" in cmd_str
-        # gzip doesn't support -Xcompression-level in mksquashfs
-        assert "-Xcompression-level" not in cmd_str
 
 
 class TestCreateErofs:
@@ -1010,11 +969,12 @@ class TestCreateErofs:
             True, "lz4hc", None, "12",
         )
 
-    def test_env_can_disable_config_default(self):
-        assert experimental_erofs_build_config(
-            {"CAPSEM_BUILD_EXPERIMENTAL_EROFS": "0"},
-            ErofsConfig(),
-        ) == (False, "lz4hc", None, "12")
+    def test_env_cannot_disable_release_erofs(self):
+        with pytest.raises(ValueError, match="EROFS build cannot be disabled"):
+            experimental_erofs_build_config(
+                {"CAPSEM_BUILD_EXPERIMENTAL_EROFS": "0"},
+                ErofsConfig(),
+            )
 
     def test_env_config_parses_enabled_zstd(self):
         assert experimental_erofs_build_config({
@@ -1090,9 +1050,10 @@ class TestKernelConfig:
         for symbol in forbidden:
             assert symbol not in content
 
-    def test_init_mounts_erofs_when_cmdline_requests_it(self):
+    def test_init_mounts_erofs_by_default(self):
         content = (PROJECT_ROOT / "guest" / "artifacts" / "capsem-init").read_text()
-        assert "capsem.rootfs=erofs" in content
+        assert "ROOTFS_TYPE=erofs" in content
+        assert "ROOTFS_LABEL=erofs" in content
         assert "capsem.rootfs=erofs-dax" in content
         assert "ROOTFS_MOUNT_OPTS=ro,dax" in content
         assert 'mount -t "$ROOTFS_TYPE" -o "$ROOTFS_MOUNT_OPTS" /dev/vda /mnt/a' in content
@@ -1316,20 +1277,16 @@ class TestGenerateChecksums:
         assert "rootfs.erofs" in entries
         assert "rootfs.squashfs" not in entries
 
-    def test_manifest_falls_back_to_squashfs_when_erofs_is_absent(self, tmp_path):
-        """Old local asset directories can still generate a manifest."""
+    def test_manifest_rejects_squashfs_when_erofs_is_absent(self, tmp_path):
+        """A squashfs-only asset directory must not mint a release manifest."""
         arm64 = tmp_path / "arm64"
         arm64.mkdir()
         (arm64 / "vmlinuz").write_bytes(b"kernel")
         (arm64 / "initrd.img").write_bytes(b"initrd")
         (arm64 / "rootfs.squashfs").write_bytes(b"rootfs")
 
-        generate_checksums(tmp_path, "0.13.0")
-
-        manifest = json.loads((tmp_path / "manifest.json").read_text())
-        asset_version = manifest["assets"]["current"]
-        entries = manifest["assets"]["releases"][asset_version]["arches"]["arm64"]
-        assert set(entries) == {"vmlinuz", "initrd.img", "rootfs.squashfs"}
+        with pytest.raises(FileNotFoundError, match="rootfs.erofs"):
+            generate_checksums(tmp_path, "0.13.0")
 
 
 # ---------------------------------------------------------------------------

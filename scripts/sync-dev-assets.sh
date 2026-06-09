@@ -107,7 +107,7 @@ done
 
 # Surface any hash drift between the manifest and the file on disk.
 if command -v b3sum >/dev/null 2>&1; then
-    ROOTFS=$(python3 -c "import json,sys;m=json.load(open('$SRC/manifest.json'));v=m['assets']['current'];a=m['assets']['releases'][v]['arches']['$ARCH'];print('rootfs.erofs' if 'rootfs.erofs' in a else 'rootfs.squashfs')" 2>/dev/null || true)
+    ROOTFS=$(python3 -c "import json,sys;m=json.load(open('$SRC/manifest.json'));v=m['assets']['current'];a=m['assets']['releases'][v]['arches']['$ARCH'];print('rootfs.erofs' if 'rootfs.erofs' in a else '')" 2>/dev/null || true)
     EXPECTED=$(python3 -c "import json,sys;m=json.load(open('$SRC/manifest.json'));v=m['assets']['current'];a=m['assets']['releases'][v]['arches']['$ARCH'];r='$ROOTFS';print(a[r]['hash'])" 2>/dev/null || true)
     HASHED=""
     if [[ -n "$ROOTFS" && -n "$EXPECTED" ]]; then

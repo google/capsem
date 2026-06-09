@@ -173,7 +173,7 @@ pub fn host_manifest_arch() -> &'static str {
     map_rustc_arch_to_manifest(std::env::consts::ARCH)
 }
 
-const ROOTFS_ASSET_NAMES: [&str; 2] = ["rootfs.erofs", "rootfs.squashfs"];
+const ROOTFS_ASSET_NAMES: [&str; 1] = ["rootfs.erofs"];
 
 fn canonical_rootfs_asset_name(assets: &HashMap<String, AssetEntry>) -> Option<&'static str> {
     ROOTFS_ASSET_NAMES
@@ -808,13 +808,6 @@ mod tests {
         );
         assert_eq!(
             hash_filename(
-                "rootfs.squashfs",
-                "b8199dc4a83069b99f41e1eb3829992d12777d09e2ce8295276f9d3a1abb1eee"
-            ),
-            "rootfs-b8199dc4a83069b9.squashfs"
-        );
-        assert_eq!(
-            hash_filename(
                 "rootfs.erofs",
                 "b8199dc4a83069b99f41e1eb3829992d12777d09e2ce8295276f9d3a1abb1eee"
             ),
@@ -864,13 +857,10 @@ mod tests {
     }
 
     #[test]
-    fn expected_hashes_current_accepts_legacy_squashfs_manifest() {
+    fn expected_hashes_current_rejects_squashfs_manifest() {
         let json = SAMPLE_V2_MANIFEST.replace("rootfs.erofs", "rootfs.squashfs");
         let m = ManifestV2::from_json(&json).unwrap();
-        assert_eq!(
-            m.expected_hashes_current("arm64").unwrap().rootfs,
-            "b8199dc4a83069b99f41e1eb3829992d12777d09e2ce8295276f9d3a1abb1eee"
-        );
+        assert!(m.expected_hashes_current("arm64").is_none());
     }
 
     #[test]
@@ -1056,8 +1046,8 @@ mod tests {
             "https://github.com/google/capsem/releases/download/v1.0.1777065213/arm64-vmlinuz",
         );
         assert_eq!(
-            asset_download_url("1.0.1777065213", "x86_64", "rootfs.squashfs"),
-            "https://github.com/google/capsem/releases/download/v1.0.1777065213/x86_64-rootfs.squashfs",
+            asset_download_url("1.0.1777065213", "x86_64", "rootfs.erofs"),
+            "https://github.com/google/capsem/releases/download/v1.0.1777065213/x86_64-rootfs.erofs",
         );
         // Asset version (YYYY.MMDD.N) must NEVER appear in the URL -- it is
         // not a release tag.

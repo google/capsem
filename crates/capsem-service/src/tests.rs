@@ -1966,7 +1966,6 @@ fn resolve_asset_paths_prefers_erofs_when_present() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("vmlinuz"), b"kernel").unwrap();
     std::fs::write(dir.path().join("initrd.img"), b"initrd").unwrap();
-    std::fs::write(dir.path().join("rootfs.squashfs"), b"squashfs").unwrap();
     std::fs::write(dir.path().join("rootfs.erofs"), b"erofs").unwrap();
     let state = make_asset_state(dir.path().to_path_buf());
 
@@ -1975,7 +1974,7 @@ fn resolve_asset_paths_prefers_erofs_when_present() {
 }
 
 #[test]
-fn resolve_asset_paths_falls_back_to_squashfs() {
+fn resolve_asset_paths_does_not_accept_squashfs() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("vmlinuz"), b"kernel").unwrap();
     std::fs::write(dir.path().join("initrd.img"), b"initrd").unwrap();
@@ -1983,7 +1982,8 @@ fn resolve_asset_paths_falls_back_to_squashfs() {
     let state = make_asset_state(dir.path().to_path_buf());
 
     let resolved = state.resolve_asset_paths().unwrap();
-    assert_eq!(resolved.rootfs, dir.path().join("rootfs.squashfs"));
+    assert_eq!(resolved.rootfs, dir.path().join("rootfs.erofs"));
+    assert!(!resolved.rootfs.exists());
 }
 
 #[test]

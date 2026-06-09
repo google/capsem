@@ -268,7 +268,7 @@ fn rejects_nonexistent_disk() {
     let kernel = temp_file("vmlinuz-disk-bad");
     let err = VmConfig::builder()
         .kernel_path(&kernel)
-        .disk_path("/nonexistent/rootfs.squashfs")
+        .disk_path("/nonexistent/rootfs.erofs")
         .build();
     assert!(matches!(err, Err(ConfigError::MissingDisk(_))));
 }
@@ -509,7 +509,7 @@ fn hash_verification_succeeds_with_correct_blake3() {
     let dir = tempfile::tempdir().unwrap();
     let kernel = dir.path().join("vmlinuz");
     let initrd = dir.path().join("initrd.img");
-    let rootfs = dir.path().join("rootfs.squashfs");
+    let rootfs = dir.path().join("rootfs.erofs");
     std::fs::write(&kernel, b"test kernel data").unwrap();
     std::fs::write(&initrd, b"test initrd data").unwrap();
     std::fs::write(&rootfs, b"test rootfs data").unwrap();

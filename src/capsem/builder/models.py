@@ -19,7 +19,7 @@ from capsem.builder.schema import McpTransport
 
 
 class Compression(str, Enum):
-    """Compression algorithm for squashfs rootfs."""
+    """Historical non-EROFS compression values retained for config parsing."""
 
     ZSTD = "zstd"
     GZIP = "gzip"
@@ -68,8 +68,8 @@ class ArchConfig(BaseModel):
 class ErofsConfig(BaseModel):
     """EROFS rootfs asset settings.
 
-    Squashfs remains as a legacy fallback asset. EROFS is the primary 1.3
-    asset path and defaults to lz4hc level 12 based on macOS/Linux benchmarks.
+    EROFS is the 1.3 rootfs asset path and defaults to lz4hc level 12 based on
+    macOS/Linux benchmarks.
     """
 
     model_config = ConfigDict(frozen=True)

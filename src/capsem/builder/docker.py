@@ -27,7 +27,7 @@ FALLBACK_KERNEL_VERSION = "7.0.11"
 DEFAULT_EROFS_UTILS_IMAGE = "debian:bookworm-slim"
 ZSTD_EROFS_UTILS_IMAGE = "debian:trixie-slim"
 BOOT_ASSETS = ("vmlinuz", "initrd.img")
-ROOTFS_ASSET_PREFERENCE = ("rootfs.erofs", "rootfs.squashfs")
+ROOTFS_ASSET_PREFERENCE = ("rootfs.erofs",)
 
 # Guest binaries COPY'd into the rootfs (cross-compiled Rust binaries).
 GUEST_BINARIES = [
@@ -423,34 +423,6 @@ def export_container_fs(
         run_cmd([runtime, "rm", cid])
 
 
-def create_squashfs(
-    runtime: str,
-    tar_path: Path,
-    output_path: Path,
-    compression: str,
-    compression_level: int,
-    block_size: str = "64K",
-) -> None:
-    """Create a squashfs image from a tar archive using a container."""
-    abs_dir = str(tar_path.parent.resolve())
-    tar_name = tar_path.name
-    out_name = output_path.name
-
-    # -Xcompression-level is only valid for zstd and xz
-    level_flag = ""
-    if compression in ("zstd", "xz"):
-        level_flag = f" -Xcompression-level {compression_level}"
-
-    run_cmd([
-        runtime, "run", "--rm",
-        "-v", f"{abs_dir}:/assets",
-        "debian:bookworm-slim", "bash", "-c",
-        f"apt-get -o Acquire::Check-Valid-Until=false -o Acquire::Check-Date=false update && apt-get install -y squashfs-tools zstd && "
-        f"mkdir /rootfs && tar xf /assets/{tar_name} -C /rootfs && "
-        f"mksquashfs /rootfs /assets/{out_name} -comp {compression}{level_flag} -b {block_size} -noappend",
-    ])
-
-
 def create_erofs(
     runtime: str,
     tar_path: Path,
@@ -507,6 +479,8 @@ def experimental_erofs_build_config(
     enabled = defaults.enabled if defaults is not None else False
     if "CAPSEM_BUILD_EXPERIMENTAL_EROFS" in source:
         enabled = source.get("CAPSEM_BUILD_EXPERIMENTAL_EROFS") == "1"
+    if not enabled:
+        raise ValueError("EROFS build cannot be disabled for the 1.3 asset contract")
     compression = (
         source.get("CAPSEM_BUILD_EROFS_COMPRESSION")
         or (defaults.compression.value if defaults is not None else "lz4hc")
@@ -809,6 +783,8 @@ def generate_checksums(output_dir: Path, version: str) -> Path:
                 all_files.append(f"{arch_name}/{filename}")
         if rootfs_name := _select_rootfs_asset(arch_dir):
             all_files.append(f"{arch_name}/{rootfs_name}")
+        elif any((arch_dir / filename).is_file() for filename in BOOT_ASSETS):
+            raise FileNotFoundError(f"{arch_dir / 'rootfs.erofs'}")
 
     if not all_files:
         # Flat layout fallback
@@ -817,6 +793,8 @@ def generate_checksums(output_dir: Path, version: str) -> Path:
                 all_files.append(f)
         if rootfs_name := _select_rootfs_asset(output_dir):
             all_files.append(rootfs_name)
+        elif all_files:
+            raise FileNotFoundError(f"{output_dir / 'rootfs.erofs'}")
 
     # Compute BLAKE3 hashes using Python blake3 library.
     b3sums_lines = []
@@ -1063,39 +1041,30 @@ def build_image(
             print("Exporting rootfs filesystem...")
             export_container_fs(runtime, tag, arch.docker_platform, tar_path)
 
-            print(f"Creating squashfs ({config.build.compression.value} compression)...")
-            squashfs_path = arch_output / "rootfs.squashfs"
-            create_squashfs(
-                runtime, tar_path, squashfs_path,
-                config.build.compression.value,
-                config.build.compression_level,
-            )
-
             erofs_enabled, erofs_compression, erofs_cluster_size, erofs_level = (
                 experimental_erofs_build_config(defaults=config.build.erofs)
             )
+            if not erofs_enabled:
+                raise ValueError("EROFS build cannot be disabled for the 1.3 asset contract")
             erofs_path = arch_output / "rootfs.erofs"
-            if erofs_enabled:
-                print(
-                    f"Creating EROFS ({erofs_compression} compression"
-                    f"{', level ' + erofs_level if erofs_level else ''}"
-                    f"{', cluster ' + erofs_cluster_size if erofs_cluster_size else ''})..."
-                )
-                create_erofs(
-                    runtime, tar_path, erofs_path,
-                    erofs_compression,
-                    erofs_cluster_size,
-                    erofs_level,
-                )
+            print(
+                f"Creating EROFS ({erofs_compression} compression"
+                f"{', level ' + erofs_level if erofs_level else ''}"
+                f"{', cluster ' + erofs_cluster_size if erofs_cluster_size else ''})..."
+            )
+            create_erofs(
+                runtime, tar_path, erofs_path,
+                erofs_compression,
+                erofs_cluster_size,
+                erofs_level,
+            )
             tar_path.unlink(missing_ok=True)
 
             print("Extracting tool versions...")
             extract_tool_versions(runtime, tag, arch.docker_platform, arch_output, config)
             remove_image(runtime, tag)
 
-            print(f"  rootfs.squashfs: {squashfs_path}")
-            if erofs_enabled:
-                print(f"  rootfs.erofs:    {erofs_path}")
+            print(f"  rootfs.erofs:    {erofs_path}")
 
 
 def build_all_architectures(

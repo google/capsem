@@ -193,11 +193,10 @@ pub fn boot_vm(
         }
 
         // Use explicit rootfs override if provided (e.g. from ~/.capsem/assets/),
-        // otherwise prefer the release EROFS rootfs and fall back to squashfs.
+        // otherwise use the release EROFS rootfs contract.
         let rootfs_path = rootfs_override
             .map(|p| p.to_path_buf())
-            .or_else(|| Some(assets.join("rootfs.erofs")).filter(|p| p.exists()))
-            .or_else(|| Some(assets.join("rootfs.squashfs")).filter(|p| p.exists()));
+            .or_else(|| Some(assets.join("rootfs.erofs")).filter(|p| p.exists()));
 
         if let Some(ref rootfs) = rootfs_path {
             info!(
