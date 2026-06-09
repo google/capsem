@@ -532,7 +532,7 @@ pub struct TranscriptResponse {
 }
 
 // ---------------------------------------------------------------------------
-// Setup / Onboarding types
+// Corporate configuration request types
 // ---------------------------------------------------------------------------
 
 #[derive(Deserialize, Debug)]

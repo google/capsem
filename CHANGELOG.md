@@ -75,6 +75,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed EROFS asset generation to disable the internal superblock CRC feature;
   BLAKE3 remains the release/boot integrity contract, and the repaired LZ4HC
   rootfs now passes `fsck.erofs` before install.
+- Hardened the install test harness so the Linux package/systemd user unit is
+  stopped before scoped process cleanup, and renamed the internal dev-readiness
+  just helper away from setup wording while keeping `capsem setup` removed.
 
 ### Changed (release proof)
 - Added shared runtime config materialization through

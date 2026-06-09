@@ -1,7 +1,7 @@
 # Capsem Justfile
 #
 # Internal helpers:
-#   _ensure-setup   checks for .dev-setup sentinel, runs doctor if missing (auto first-run)
+#   _ensure-dev-ready checks for .dev-setup sentinel, runs doctor if missing (auto first-run)
 #   _install-tools  auto-installs rust targets, components, cargo tools
 #   _check-assets   verifies VM assets exist, runs build-assets code if not
 #   _pack-initrd    cross-compiles guest binaries + repacks initrd
@@ -10,7 +10,7 @@
 #
 # User-facing recipe chains:
 #   shell            -> _check-assets + _pack-initrd + _materialize-config + _ensure-service (daily dev entry point)
-#   ui               -> _ensure-setup + _pnpm-install + run-service (service + Tauri dev hot-reload)
+#   ui               -> _ensure-dev-ready + _pnpm-install + run-service (service + Tauri dev hot-reload)
 #   run-service      -> _check-assets + _pack-initrd + _materialize-config + _ensure-service (start daemon, idempotent)
 #   exec +CMD        -> run-service (one-shot command in a fresh temp VM)
 #   build-assets     -> _install-tools + _clean-stale + inline doctor (kernel + rootfs via capsem-admin)
@@ -21,7 +21,7 @@
 #   test             -> _install-tools + _clean-stale + _pnpm-install + _generate-settings
 #                       + _check-assets + _pack-initrd + _materialize-config (everything: audit, cov, cross-compile,
 #                       frontend, python, injection, integration, bench, test-install)
-#   bench            -> _ensure-setup + _check-assets + _pack-initrd + _materialize-config + _ensure-service
+#   bench            -> _ensure-dev-ready + _check-assets + _pack-initrd + _materialize-config + _ensure-service
 #   test-gateway     -> (no deps; unit + mock UDS tests)
 #   test-gateway-e2e -> _check-assets + _pack-initrd + _materialize-config + _sign (real service + VMs)
 #   test-install     -> _build-host (Docker e2e: build .deb, dpkg -i, pytest)
@@ -30,7 +30,7 @@
 #   cut-release      -> test + _stamp-version (commits changelog, tags, pushes, waits for CI)
 #   release [tag]    -> (waits for CI on a pushed tag)
 #
-# First-time setup:
+# First-time dev readiness:
 #   just doctor       (shows what's missing; `just doctor fix` auto-installs)
 #   just build-assets code (builds profile-owned kernel + rootfs via capsem-admin -- needs docker via Colima on macOS)
 #
@@ -176,7 +176,7 @@ _ensure-service: _sign
     exit 1
 
 # Start service daemon + Tauri GUI with hot-reloading
-ui: _ensure-setup _pnpm-install run-service
+ui: _ensure-dev-ready _pnpm-install run-service
     #!/bin/bash
     set -euo pipefail
     source {{justfile_directory()}}/scripts/lib/exec_lock.sh
@@ -778,7 +778,7 @@ coverage:
     open target/llvm-cov/html/index.html 2>/dev/null || true
 
 # Run in-VM benchmarks (disk I/O, rootfs read, CLI startup, HTTP latency)
-bench: _ensure-setup _check-assets _pack-initrd _materialize-config _ensure-service
+bench: _ensure-dev-ready _check-assets _pack-initrd _materialize-config _ensure-service
     #!/bin/bash
     set -euo pipefail
     source {{justfile_directory()}}/scripts/lib/exec_lock.sh
@@ -1228,7 +1228,7 @@ _docker-gc:
 # --- Internal helpers (hidden from `just --list`) ---
 
 # Run doctor automatically on first use (creates .dev-setup sentinel)
-_ensure-setup:
+_ensure-dev-ready:
     #!/bin/bash
     if [ ! -f .dev-setup ]; then
         echo "First run detected -- running doctor..."

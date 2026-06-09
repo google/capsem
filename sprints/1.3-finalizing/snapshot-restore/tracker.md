@@ -646,19 +646,64 @@ the guarantee or explicitly burn it.
 - [x] `c6a70081 feat: add standalone capsem tui shell` decision:
   conceptual_port. Notes: restored standalone `capsem-tui` binary with
   `--fixture`, `--snapshot`, and `--snapshot-svg`.
-- [ ] `1845ec83 fix: stop install harness service before error tests`
-- [ ] `33684fcd fix: compile debug report disk stats on macos`
-- [ ] `2322fbf2 feat: surface security health in status`
-- [ ] `27e985d8 feat: expose runtime security debug health`
-- [ ] `ddaf358c test: extend s08 gateway diagnostics coverage`
-- [ ] `be5f902b feat(settings-profiles): add debug provenance`
-- [ ] `77ec3abf feat: add structured debug report`
-- [ ] `fe7a4071 fix: harden local install diagnostics`
-- [ ] `9713a49e fix(setup): split install vs. onboarding flags so reinstall stops re-showing wizard`
-- [ ] `0dd1d8ed test(install): self-heal layout fixture, gate intrusive auto-launch tests`
-- [ ] `5c897436 fix: switch pytest to importlib mode + package-relative conftest imports`
-- [ ] `ae888779 feat: wire real .pkg/.deb install paths, harden installer pipeline`
-- [ ] `6c1a639e feat: capsem setup interactive wizard`
+- [x] `1845ec83 fix: stop install harness service before error tests`
+  decision: adapted. Current install fixture now imports `time`, stops the
+  dpkg/systemd user unit before scoped process cleanup when
+  `CAPSEM_DEB_INSTALLED=1`, and has a regression test proving stop-before-pkill
+  ordering.
+- [x] `33684fcd fix: compile debug report disk stats on macos` decision:
+  not ported. The structured debug-report subsystem is not present in the 1.3
+  contract, so the macOS disk-stats compile patch has no target file to port.
+- [x] `2322fbf2 feat: surface security health in status` decision:
+  not ported as a CLI-status graft. Security/detection health now belongs to
+  the ledger-backed `/security/status`, `/enforcement/status`, and
+  `/detection/status` service routes; `capsem status` stays service/gateway,
+  asset, and VM boot-health focused.
+- [x] `27e985d8 feat: expose runtime security debug health` decision:
+  not ported. Runtime security health is exposed through the current
+  security-engine ledger/status routes rather than resurrecting the old debug
+  report endpoint path.
+- [x] `ddaf358c test: extend s08 gateway diagnostics coverage` decision:
+  not ported. The old S08 gateway diagnostics/debug-report surface is not part
+  of the current explicit gateway/API contract; current gateway diagnostics are
+  covered by the profile/VM/security route tests.
+- [x] `be5f902b feat(settings-profiles): add debug provenance` decision:
+  not ported. Profile/config provenance is now enforced by profile materialize,
+  validation, and asset status routes; no legacy settings-profile debug
+  provenance endpoint is restored.
+- [x] `77ec3abf feat: add structured debug report` decision:
+  not ported. The old structured debug-report subsystem mixed install,
+  settings, profile, and gateway concerns before the profile/security contract
+  reset; 1.3 uses explicit status/info/latest routes plus `capsem doctor`
+  artifacts instead.
+- [x] `fe7a4071 fix: harden local install diagnostics` decision:
+  adapted. Current package scripts already wait for service/gateway readiness,
+  use the normal install command, include the full host tool set, and expose
+  install failures. This pass additionally removed setup wording from the
+  internal just helper name.
+- [x] `9713a49e fix(setup): split install vs. onboarding flags so reinstall stops re-showing wizard`
+  decision: intentional_burn. `capsem setup`, onboarding flags, setup state,
+  and provider wizard state are removed; install tests now assert the command is
+  invalid and writes no setup/user state.
+- [x] `0dd1d8ed test(install): self-heal layout fixture, gate intrusive auto-launch tests`
+  decision: conceptual_port plus adapted. Current install tests are
+  function-scoped/self-healing, package-relative under pytest importlib mode,
+  gate intrusive LaunchAgent/systemd tests, and keep setup burned. This S3 pass
+  repaired the remaining missing `time` import/systemd cleanup gap.
+- [x] `5c897436 fix: switch pytest to importlib mode + package-relative conftest imports`
+  decision: already_ported. `pyproject.toml` uses
+  `--import-mode=importlib`, and install tests import their local conftest via
+  package-relative imports.
+- [x] `ae888779 feat: wire real .pkg/.deb install paths, harden installer pipeline`
+  decision: conceptual_port. Current `.pkg`/`.deb` scripts exercise real
+  package install paths, hard-fail repack on missing companion binaries,
+  include `capsem-admin`, `capsem-tui`, MCP aggregator/builtin binaries, copy
+  current-arch assets through the manifest rail, and use service/gateway
+  readiness rather than setup wizard success.
+- [x] `6c1a639e feat: capsem setup interactive wizard` decision:
+  intentional_burn. The interactive setup wizard is not part of the 1.3
+  architecture; credential/provider work is plugin/profile/security-event
+  owned.
 
 ### S4 Linux/KVM/EROFS/LZ4HC/Benchmark Commits
 
