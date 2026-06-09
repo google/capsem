@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -173,7 +174,48 @@ class TestInstalledLayoutContract:
         assert CAPSEM_DIR.exists()
         assert (CAPSEM_DIR / "bin").is_dir()
         assert (CAPSEM_DIR / "assets").is_dir()
+        assert (CAPSEM_DIR / "profiles").is_dir()
         assert (CAPSEM_DIR / "run").is_dir()
+
+    def test_installed_profile_catalog_exists(self, installed_layout):
+        """Installed service must load materialized profiles, not compiled source fallback."""
+        profile = CAPSEM_DIR / "profiles" / "code.toml"
+        assert profile.exists(), (
+            f"materialized profile missing: {profile}\n"
+            "without this, installed service falls back to compiled source profile pins"
+        )
+        assert (CAPSEM_DIR / "profiles" / "code" / "enforcement.toml").exists()
+
+    def test_installed_profile_asset_pins_match_manifest(self, installed_layout):
+        """Profile-owned asset pins must match the installed asset manifest."""
+        import platform
+
+        profile_path = CAPSEM_DIR / "profiles" / "code.toml"
+        manifest_path = ASSETS_DIR / "manifest.json"
+        if not manifest_path.exists():
+            pytest.skip("no manifest.json")
+        assert profile_path.exists(), f"profile missing: {profile_path}"
+
+        machine = platform.machine().lower()
+        arch = "arm64" if machine in ("arm64", "aarch64") else "x86_64"
+        manifest = json.loads(manifest_path.read_text())
+        current = manifest["assets"]["current"]
+        manifest_assets = manifest["assets"]["releases"][current]["arches"].get(arch)
+        if manifest_assets is None:
+            pytest.skip(f"no {arch} entry in manifest")
+
+        profile = tomllib.loads(profile_path.read_text())
+        profile_assets = profile["assets"]["arch"][arch]
+        for kind, logical in [
+            ("kernel", "vmlinuz"),
+            ("initrd", "initrd.img"),
+            ("rootfs", "rootfs.erofs"),
+        ]:
+            expected = manifest_assets[logical]["hash"]
+            actual = profile_assets[kind]["hash"].removeprefix("blake3:")
+            assert actual == expected, (
+                f"profile {kind} pin drift: profile={actual} manifest={expected}"
+            )
 
     # -- Service spawn contract --
     # When CLI auto-launches, it runs:

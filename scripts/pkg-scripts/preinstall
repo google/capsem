@@ -1,0 +1,35 @@
+#!/bin/bash
+# preinstall -- Removes the previous package-owned Capsem payload before
+# installing the new one. Downgrades and same-version reinstalls are valid:
+# PackageKit version ordering must not decide whether the app is replaced.
+set -euo pipefail
+
+if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != "root" ]; then
+    USER="$SUDO_USER"
+fi
+if [ "${USER:-root}" = "root" ] || [ -z "${USER:-}" ]; then
+    USER=$(stat -f '%Su' /dev/console 2>/dev/null || echo "")
+fi
+
+if [ -n "${USER:-}" ] && [ "$USER" != "root" ]; then
+    USER_HOME=$(eval echo "~$USER")
+    CAPSEM_DIR="$USER_HOME/.capsem"
+    PLIST="$USER_HOME/Library/LaunchAgents/com.capsem.service.plist"
+    if [ -x "$CAPSEM_DIR/bin/capsem" ]; then
+        su "$USER" -c "$CAPSEM_DIR/bin/capsem stop" 2>/dev/null || true
+    fi
+    if [ -f "$PLIST" ]; then
+        launchctl bootout "gui/$(id -u "$USER")" "$PLIST" 2>/dev/null || \
+            launchctl unload "$PLIST" 2>/dev/null || true
+    fi
+    for name in capsem-service capsem-gateway capsem-tray capsem-process capsem-mcp-aggregator capsem-mcp-builtin; do
+        pkill -9 -f "$CAPSEM_DIR/bin/$name" 2>/dev/null || true
+    done
+fi
+
+pkill -9 -x capsem-app 2>/dev/null || true
+
+rm -rf /Applications/Capsem.app
+rm -rf /usr/local/share/capsem
+
+exit 0

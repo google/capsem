@@ -8,6 +8,10 @@
 - [x] T0: Decide local dev asset policy: bundled current-arch assets vs local release URL.
 - [x] T1: Remove post-installer mutation from `just install`.
 - [x] T1: Make package payload mode explicit and testable.
+- [x] T1: Make package install own previous-version removal, including stale
+  GUI/service processes and package-owned app/share payload.
+- [x] T1: Add explicit package-builder `--manifest` input for local, CI, and
+  corp package rails without post-install asset patching.
 - [x] T1: Add reinstall test where only `initrd` hash changes.
 - [x] T1: Add stale asset symlink regression test.
 - [x] T2: Extract asset reconciliation from `capsem setup`.
@@ -154,6 +158,27 @@
   the `.pkg`/`.deb` before the installer runs. Release packages may remain
   manifest-only. `just install` must not copy assets into `~/.capsem` after
   Installer.app or `dpkg` returns.
+- Decision: package install is allowed to replace or downgrade. The package
+  itself removes the previous app/share payload before installing; PackageKit
+  version ordering is not a safety mechanism.
+- Decision: package builders accept `--manifest <path>`. CI, local dev, and
+  corp package builds use the same package rail while selecting the manifest
+  explicitly; current-arch local packages still copy local assets before
+  Installer.app runs.
+- Completed slice: macOS package builds now include `pkg-scripts/preinstall`.
+  It stops old Capsem service processes, kills stale `capsem-app`, removes the
+  old `/Applications/Capsem.app`, and removes package-owned
+  `/usr/local/share/capsem` before payload install. Package replacement and
+  downgrade no longer depend on PackageKit version ordering.
+- Completed slice: `scripts/build-pkg.sh` and `scripts/repack-deb.sh` accept
+  `--manifest <path>` and preserve package versions instead of appending build
+  timestamps. Local install, Docker install, and CI release workflows now pass
+  the manifest explicitly.
+- Verification: package-only macOS build succeeded for
+  `packages/Capsem-1.3.1781035201.pkg`; expanded payload contains
+  `Scripts/preinstall`, `Scripts/postinstall`, `assets/manifest.json`,
+  `profiles/code.toml`, `profiles/code/enforcement.toml`, and companion
+  binaries.
 - Completed slice: `capsem-logger` now owns canonical
   `credential:blake3:<hex>` reference generation, shared `credential_ref`
   fields on event tables/structs, and `substitution_events` logging. Current

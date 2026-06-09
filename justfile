@@ -59,12 +59,12 @@ assets_dir := "assets"
 entitlements := "entitlements.plist"
 host_crates := "-p capsem-service -p capsem-process -p capsem -p capsem-tui -p capsem-mcp -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-gateway -p capsem-tray -p capsem-admin"
 
-# Stamp version as 1.0.{unix_timestamp} in Cargo.toml, tauri.conf.json, and pyproject.toml.
+# Stamp version as 1.3.{unix_timestamp} in Cargo.toml, tauri.conf.json, and pyproject.toml.
 _stamp-version:
     #!/bin/bash
     set -euo pipefail
     CURRENT=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
-    NEW="1.0.$(date +%s)"
+    NEW="1.3.$(date +%s)"
     echo "Stamping version: ${CURRENT} -> ${NEW}"
     sed -i '' "s/^version = \"${CURRENT}\"/version = \"${NEW}\"/" Cargo.toml
     sed -i '' "s/\"version\": \"${CURRENT}\"/\"version\": \"${NEW}\"/" crates/capsem-app/tauri.conf.json
@@ -830,6 +830,7 @@ install: _pnpm-install _stamp-version _check-assets _pack-initrd _materialize-co
     pkill -9 -x capsem-gateway 2>/dev/null || true
     pkill -9 -x capsem-tray 2>/dev/null || true
     pkill -9 -x capsem-process 2>/dev/null || true
+    pkill -9 -x capsem-app 2>/dev/null || true
     sleep 0.5
     rm -f "$HOME/.capsem/run/service.sock"
     rm -f "$HOME/.capsem/run/gateway.token"
@@ -840,9 +841,11 @@ install: _pnpm-install _stamp-version _check-assets _pack-initrd _materialize-co
         eval cargo tauri build --bundles app $TAURI_FLAGS
         echo "=== Assembling .pkg (v$VERSION) ==="
         CAPSEM_PKG_ASSET_MODE=current-arch bash scripts/build-pkg.sh \
+            --manifest "{{assets_dir}}/manifest.json" \
             "target/release/bundle/macos/Capsem.app" \
             "target/release" \
             "{{assets_dir}}" \
+            "target/config" \
             "$VERSION"
         PKG="packages/Capsem-$VERSION.pkg"
         echo "=== Opening installer ==="
@@ -853,7 +856,7 @@ install: _pnpm-install _stamp-version _check-assets _pack-initrd _materialize-co
         echo "=== Building .deb ==="
         eval cargo tauri build --bundles deb $TAURI_FLAGS
         DEB=$(ls target/release/bundle/deb/*.deb)
-        CAPSEM_DEB_ASSET_MODE=current-arch bash scripts/repack-deb.sh "$DEB" "target/release" "{{assets_dir}}"
+        CAPSEM_DEB_ASSET_MODE=current-arch bash scripts/repack-deb.sh --manifest "{{assets_dir}}/manifest.json" "$DEB" "target/release" "target/config" "{{assets_dir}}"
         echo "=== Installing .deb ==="
         sudo dpkg -i "$DEB" 2>&1 || sudo apt-get install -f -y
     fi
@@ -983,7 +986,7 @@ test-install:
         "cd /src && cargo tauri build --debug --bundles deb --config '{\"bundle\":{\"createUpdaterArtifacts\":false}}'"
     echo "Repacking .deb with companion binaries..."
     docker exec -u capsem "$CONTAINER" bash -c \
-        'cd /src && DEB=$(ls -t /cargo-target/debug/bundle/deb/*.deb | head -1) && bash scripts/repack-deb.sh "$DEB" /cargo-target/debug'
+        'cd /src && DEB=$(ls -t /cargo-target/debug/bundle/deb/*.deb | head -1) && bash scripts/repack-deb.sh --manifest assets/manifest.json "$DEB" /cargo-target/debug target/config assets'
     echo "Installing .deb via dpkg..."
     docker exec "$CONTAINER" bash -c \
         "dpkg -i /cargo-target/debug/bundle/deb/*.deb 2>&1 || apt-get install -f -y"

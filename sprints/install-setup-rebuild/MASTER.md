@@ -17,6 +17,13 @@
 Active. Do not call install/setup done until:
 
 - Full interactive `just install` must pass on macOS before release sign-off.
+- The package owns previous-version replacement. It must stop old Capsem
+  processes and remove the old `/Applications/Capsem.app` and package-owned
+  share payload before installing the new payload, so downgrade/reinstall works
+  without PackageKit version tricks.
+- Package builders accept an explicit manifest input. Local dev, CI, and corp
+  package builds use the same package rail and choose the manifest with
+  `--manifest`; no post-install local asset patching is allowed.
 - The service can start without `capsem setup`.
 - Assets are independently reconciled and visible through `/assets/status`;
   richer slow-download fixture proof remains part of final install gates.

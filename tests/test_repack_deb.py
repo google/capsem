@@ -78,10 +78,24 @@ def _seed_binaries(bin_dir: Path, which: list[str] = None):
         path.chmod(0o755)
 
 
-def _run_repack(input_deb: Path, bin_dir: Path, output_deb: Path = None,
-                 timeout: int = 30) -> subprocess.CompletedProcess:
-    args = [str(SCRIPT), str(input_deb), str(bin_dir)]
+def _seed_config(config_dir: Path):
+    """Drop a minimal materialized profile catalog."""
+    profiles = config_dir / "profiles"
+    (profiles / "code").mkdir(parents=True, exist_ok=True)
+    (profiles / "code.toml").write_text("id = \"code\"\n")
+    (profiles / "code" / "enforcement.toml").write_text("# enforcement\n")
+
+
+def _run_repack(
+    input_deb: Path,
+    bin_dir: Path,
+    config_dir: Path,
+    output_deb: Path = None,
+    timeout: int = 30,
+) -> subprocess.CompletedProcess:
+    args = [str(SCRIPT), str(input_deb), str(bin_dir), str(config_dir)]
     if output_deb is not None:
+        args.append("")
         args.append(str(output_deb))
     return subprocess.run(args, capture_output=True, text=True, timeout=timeout)
 
@@ -99,10 +113,12 @@ def test_happy_path_adds_every_companion_binary(tmp_path):
     """All host companion binaries land in /usr/bin with mode 755."""
     fixture = _build_fixture_deb(tmp_path)
     bin_dir = tmp_path / "bin"
+    config_dir = tmp_path / "target-config"
     _seed_binaries(bin_dir)
+    _seed_config(config_dir)
     output = tmp_path / "out.deb"
 
-    res = _run_repack(fixture, bin_dir, output)
+    res = _run_repack(fixture, bin_dir, config_dir, output)
     assert res.returncode == 0, (
         f"repack-deb.sh failed: stdout={res.stdout!r} stderr={res.stderr!r}"
     )
@@ -115,16 +131,19 @@ def test_happy_path_adds_every_companion_binary(tmp_path):
         assert binary.stat().st_mode & 0o777 == 0o755, (
             f"{name} installed with mode {oct(binary.stat().st_mode & 0o777)}, expected 0o755"
         )
+    assert (extracted / "usr" / "share" / "capsem" / "profiles" / "code.toml").exists()
 
 
 def test_postinst_script_is_included(tmp_path):
     """DEBIAN/postinst is copied from scripts/deb-postinst.sh and is executable."""
     fixture = _build_fixture_deb(tmp_path)
     bin_dir = tmp_path / "bin"
+    config_dir = tmp_path / "target-config"
     _seed_binaries(bin_dir)
+    _seed_config(config_dir)
     output = tmp_path / "out.deb"
 
-    res = _run_repack(fixture, bin_dir, output)
+    res = _run_repack(fixture, bin_dir, config_dir, output)
     assert res.returncode == 0
 
     extracted = _deb_contents(output, tmp_path / "extracted")
@@ -148,10 +167,12 @@ def test_missing_companion_binary_fails_loudly(tmp_path):
     """
     fixture = _build_fixture_deb(tmp_path)
     bin_dir = tmp_path / "bin"
+    config_dir = tmp_path / "target-config"
     # Omit capsem-tray on purpose.
     _seed_binaries(bin_dir, which=[b for b in REQUIRED_BINARIES if b != "capsem-tray"])
+    _seed_config(config_dir)
 
-    res = _run_repack(fixture, bin_dir)
+    res = _run_repack(fixture, bin_dir, config_dir)
     assert res.returncode != 0, (
         "repack should have failed with capsem-tray missing; "
         f"stdout={res.stdout!r} stderr={res.stderr!r}"
@@ -174,11 +195,13 @@ def test_path_with_embedded_newline_fails(tmp_path):
     """
     fixture = _build_fixture_deb(tmp_path)
     bin_dir = tmp_path / "bin"
+    config_dir = tmp_path / "target-config"
     _seed_binaries(bin_dir)
+    _seed_config(config_dir)
 
     mangled = f"{fixture}\n{fixture}"
     res = subprocess.run(
-        [str(SCRIPT), mangled, str(bin_dir)],
+        [str(SCRIPT), mangled, str(bin_dir), str(config_dir)],
         capture_output=True, text=True, timeout=30,
     )
     assert res.returncode != 0, (
@@ -187,14 +210,16 @@ def test_path_with_embedded_newline_fails(tmp_path):
     )
 
 
-def test_version_gets_build_timestamp_stamped(tmp_path):
-    """DEBIAN/control's Version field gains a numeric suffix so repeat installs see a newer package."""
+def test_version_is_preserved_for_downgrade_and_same_version_reinstall(tmp_path):
+    """DEBIAN/control's Version field is not inflated to trick the package manager."""
     fixture = _build_fixture_deb(tmp_path, version="0.0.1")
     bin_dir = tmp_path / "bin"
+    config_dir = tmp_path / "target-config"
     _seed_binaries(bin_dir)
+    _seed_config(config_dir)
     output = tmp_path / "out.deb"
 
-    res = _run_repack(fixture, bin_dir, output)
+    res = _run_repack(fixture, bin_dir, config_dir, output)
     assert res.returncode == 0
 
     extracted = _deb_contents(output, tmp_path / "extracted")
@@ -204,24 +229,54 @@ def test_version_gets_build_timestamp_stamped(tmp_path):
         None,
     )
     assert version_line is not None, f"no Version: line in control: {control!r}"
-    # Expect the original "0.0.1" plus a dotted numeric build stamp.
-    assert version_line.startswith("Version: 0.0.1."), (
-        f"Version should be 0.0.1.<ts>, got: {version_line!r}"
+    assert version_line == "Version: 0.0.1"
+
+
+def test_explicit_manifest_is_packaged_without_current_arch_assets(tmp_path):
+    """Manifest-only packages can use a local, CI, or corp-provided manifest explicitly."""
+    fixture = _build_fixture_deb(tmp_path)
+    bin_dir = tmp_path / "bin"
+    config_dir = tmp_path / "target-config"
+    manifest = tmp_path / "corp-manifest.json"
+    _seed_binaries(bin_dir)
+    _seed_config(config_dir)
+    manifest.write_text('{"format":2,"assets":{"current":"corp"},"binaries":{"current":"test"}}\n')
+    output = tmp_path / "out.deb"
+
+    res = subprocess.run(
+        [
+            str(SCRIPT),
+            "--manifest",
+            str(manifest),
+            str(fixture),
+            str(bin_dir),
+            str(config_dir),
+            "",
+            str(output),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
     )
-    suffix = version_line[len("Version: 0.0.1."):]
-    assert suffix.isdigit() and len(suffix) >= 9, (
-        f"expected unix-ish timestamp suffix, got: {suffix!r}"
+    assert res.returncode == 0, (
+        f"repack-deb.sh failed: stdout={res.stdout!r} stderr={res.stderr!r}"
     )
+
+    extracted = _deb_contents(output, tmp_path / "extracted")
+    packaged_manifest = extracted / "usr" / "share" / "capsem" / "assets" / "manifest.json"
+    assert packaged_manifest.read_text() == manifest.read_text()
 
 
 def test_output_defaults_to_overwriting_input(tmp_path):
     """Omitting the output argument overwrites the input .deb in place."""
     fixture = _build_fixture_deb(tmp_path)
     bin_dir = tmp_path / "bin"
+    config_dir = tmp_path / "target-config"
     _seed_binaries(bin_dir)
+    _seed_config(config_dir)
     original_size = fixture.stat().st_size
 
-    res = _run_repack(fixture, bin_dir)  # no output arg
+    res = _run_repack(fixture, bin_dir, config_dir)  # no output arg
     assert res.returncode == 0
 
     # Original .deb path still exists and is now larger (companion binaries added).

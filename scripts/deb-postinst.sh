@@ -36,6 +36,12 @@ if [ -d "/usr/share/capsem/assets" ]; then
     cp -R /usr/share/capsem/assets/. "$CAPSEM_DIR/assets/" 2>/dev/null || true
 fi
 
+if [ -d "/usr/share/capsem/profiles" ]; then
+    rm -rf "$CAPSEM_DIR/profiles"
+    mkdir -p "$CAPSEM_DIR/profiles"
+    cp -R /usr/share/capsem/profiles/. "$CAPSEM_DIR/profiles/" 2>/dev/null || true
+fi
+
 # Symlink system binaries into user dir
 for bin in capsem capsem-service capsem-process capsem-tui capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-gateway capsem-tray capsem-admin; do
     if [ -f "/usr/bin/$bin" ]; then

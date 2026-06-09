@@ -1,14 +1,16 @@
 #!/bin/bash
 # build-pkg.sh -- Build a macOS .pkg installer from Tauri output + companion binaries.
 #
-# Usage: build-pkg.sh <app_path> <bin_dir> <assets_dir> <version> [signing_identity]
+# Usage: build-pkg.sh [--manifest manifest.json] <app_path> <bin_dir> <assets_dir> <config_root> <version> [signing_identity]
 #
 # Arguments:
 #   app_path          Path to signed Capsem.app (from Tauri build)
 #   bin_dir           Directory containing companion binaries (capsem, capsem-service, etc.)
 #   assets_dir        Directory containing VM assets (manifest.json, arch dirs, etc.)
+#   config_root       Materialized runtime config root (usually target/config)
 #   version           Version string (e.g. "0.16.1")
 #   signing_identity  Optional: Developer ID Installer identity for productsign
+#   --manifest        Optional manifest to package instead of <assets_dir>/manifest.json.
 #
 # Output: Capsem-<version>.pkg in the current directory
 #
@@ -17,17 +19,66 @@
 #   /usr/local/share/capsem/bin/       -- 6 companion binaries
 #   /usr/local/share/capsem/assets/    -- manifest.json, or current-arch assets when
 #                                         CAPSEM_PKG_ASSET_MODE=current-arch
+#   /usr/local/share/capsem/profiles/  -- materialized profile catalog + rule files
 #   /usr/local/share/capsem/entitlements.plist
 #
 # A postinstall script copies binaries to ~/.capsem/bin/, codesigns them,
 # registers the LaunchAgent, and waits for service readiness.
 set -euo pipefail
 
-APP_PATH="${1:?usage: build-pkg.sh <app_path> <bin_dir> <assets_dir> <version> [signing_identity]}"
-BIN_DIR="${2:?usage: build-pkg.sh <app_path> <bin_dir> <assets_dir> <version> [signing_identity]}"
-ASSETS_DIR="${3:?usage: build-pkg.sh <app_path> <bin_dir> <assets_dir> <version> [signing_identity]}"
-VERSION="${4:?usage: build-pkg.sh <app_path> <bin_dir> <assets_dir> <version> [signing_identity]}"
-SIGNING_IDENTITY="${5:-}"
+usage() {
+    echo "usage: build-pkg.sh [--manifest manifest.json] <app_path> <bin_dir> <assets_dir> <config_root> <version> [signing_identity]" >&2
+}
+
+MANIFEST_PATH=""
+SIGNING_IDENTITY=""
+POSITIONAL=()
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --manifest)
+            MANIFEST_PATH="${2:?--manifest requires a path}"
+            shift 2
+            ;;
+        --signing-identity)
+            SIGNING_IDENTITY="${2:?--signing-identity requires a value}"
+            shift 2
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        --)
+            shift
+            while [ "$#" -gt 0 ]; do
+                POSITIONAL+=("$1")
+                shift
+            done
+            ;;
+        --*)
+            echo "ERROR: unknown option $1" >&2
+            usage
+            exit 2
+            ;;
+        *)
+            POSITIONAL+=("$1")
+            shift
+            ;;
+    esac
+done
+
+if [ "${#POSITIONAL[@]}" -lt 5 ] || [ "${#POSITIONAL[@]}" -gt 6 ]; then
+    usage
+    exit 2
+fi
+
+APP_PATH="${POSITIONAL[0]}"
+BIN_DIR="${POSITIONAL[1]}"
+ASSETS_DIR="${POSITIONAL[2]}"
+CONFIG_ROOT="${POSITIONAL[3]}"
+VERSION="${POSITIONAL[4]}"
+if [ -z "$SIGNING_IDENTITY" ] && [ "${#POSITIONAL[@]}" -eq 6 ]; then
+    SIGNING_IDENTITY="${POSITIONAL[5]}"
+fi
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 WORK_DIR=$(mktemp -d)
@@ -62,21 +113,46 @@ fi
 # current-arch so `just install` does not mutate ~/.capsem after Installer.app
 # returns.
 mkdir -p "$SHARE_DIR/assets"
+ASSETS_VIEW="$ASSETS_DIR"
+if [ -n "$MANIFEST_PATH" ]; then
+    if [ ! -f "$MANIFEST_PATH" ]; then
+        echo "ERROR: manifest not found: $MANIFEST_PATH" >&2
+        exit 1
+    fi
+    ASSETS_VIEW="$WORK_DIR/assets-view"
+    mkdir -p "$ASSETS_VIEW"
+    cp "$MANIFEST_PATH" "$ASSETS_VIEW/manifest.json"
+    for arch_dir in "$ASSETS_DIR"/*; do
+        [ -d "$arch_dir" ] || continue
+        ln -s "$arch_dir" "$ASSETS_VIEW/$(basename "$arch_dir")"
+    done
+fi
 ASSET_MODE="${CAPSEM_PKG_ASSET_MODE:-manifest-only}"
 case "$ASSET_MODE" in
     manifest-only)
-        if [ -f "$ASSETS_DIR/manifest.json" ]; then
-            cp "$ASSETS_DIR/manifest.json" "$SHARE_DIR/assets/"
+        if [ -f "$ASSETS_VIEW/manifest.json" ]; then
+            cp "$ASSETS_VIEW/manifest.json" "$SHARE_DIR/assets/"
         fi
         ;;
     current-arch)
-        bash "$SCRIPT_DIR/sync-dev-assets.sh" "$ASSETS_DIR" "$SHARE_DIR/assets"
+        bash "$SCRIPT_DIR/sync-dev-assets.sh" "$ASSETS_VIEW" "$SHARE_DIR/assets"
         ;;
     *)
         echo "ERROR: unknown CAPSEM_PKG_ASSET_MODE=$ASSET_MODE" >&2
         exit 1
         ;;
 esac
+
+# Materialized profile catalog. This must be installed with the assets it pins;
+# otherwise the daemon falls back to compiled source profiles and can disagree
+# with the package asset payload.
+if [ ! -d "$CONFIG_ROOT/profiles" ]; then
+    echo "ERROR: materialized profiles not found: $CONFIG_ROOT/profiles" >&2
+    echo "Run: just _materialize-config" >&2
+    exit 1
+fi
+mkdir -p "$SHARE_DIR/profiles"
+cp -R "$CONFIG_ROOT/profiles/." "$SHARE_DIR/profiles/"
 
 echo "=== Building component package ==="
 
@@ -108,10 +184,8 @@ cat > "$WORK_DIR/welcome.html" <<'WELCOME_EOF'
 </html>
 WELCOME_EOF
 
-# Stamp version into distribution XML (append build timestamp for uniqueness)
-BUILD_TS=$(date +%s)
-PKG_VERSION="$VERSION.$BUILD_TS"
-sed "s/__VERSION__/$PKG_VERSION/g" "$SCRIPT_DIR/pkg-distribution.xml" > "$WORK_DIR/pkg-distribution.xml"
+# Stamp version into distribution XML.
+sed "s/__VERSION__/$VERSION/g" "$SCRIPT_DIR/pkg-distribution.xml" > "$WORK_DIR/pkg-distribution.xml"
 
 # Build the distribution .pkg (wraps component with UI)
 productbuild \

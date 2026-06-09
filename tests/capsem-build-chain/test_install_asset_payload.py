@@ -14,24 +14,45 @@ def test_just_install_does_not_sync_assets_after_installer() -> None:
     assert "scripts/sync-dev-assets.sh" not in install_body
     assert "CAPSEM_PKG_ASSET_MODE=current-arch bash scripts/build-pkg.sh" in install_body
     assert "CAPSEM_DEB_ASSET_MODE=current-arch bash scripts/repack-deb.sh" in install_body
+    assert '--manifest "{{assets_dir}}/manifest.json"' in install_body
+    assert '"target/config"' in install_body
+    assert 'NEW="1.3.$(date +%s)"' in install_body
+    assert "pkill -9 -x capsem-app" in install_body
 
 
 def test_package_builders_support_current_arch_asset_payloads() -> None:
     build_pkg = (PROJECT_ROOT / "scripts" / "build-pkg.sh").read_text()
     repack_deb = (PROJECT_ROOT / "scripts" / "repack-deb.sh").read_text()
     deb_postinst = (PROJECT_ROOT / "scripts" / "deb-postinst.sh").read_text()
+    pkg_preinstall = (PROJECT_ROOT / "scripts" / "pkg-scripts" / "preinstall").read_text()
 
     assert "CAPSEM_PKG_ASSET_MODE" in build_pkg
     assert 'current-arch)' in build_pkg
-    assert 'bash "$SCRIPT_DIR/sync-dev-assets.sh" "$ASSETS_DIR" "$SHARE_DIR/assets"' in build_pkg
+    assert "--manifest" in build_pkg
+    assert 'MANIFEST_PATH="${2:?--manifest requires a path}"' in build_pkg
+    assert '--version "$VERSION"' in build_pkg
+    assert "PKG_VERSION" not in build_pkg
+    assert 'cp "$MANIFEST_PATH" "$ASSETS_VIEW/manifest.json"' in build_pkg
+    assert 'bash "$SCRIPT_DIR/sync-dev-assets.sh" "$ASSETS_VIEW" "$SHARE_DIR/assets"' in build_pkg
+    assert 'CONFIG_ROOT="${POSITIONAL[3]}"' in build_pkg
+    assert 'cp -R "$CONFIG_ROOT/profiles/." "$SHARE_DIR/profiles/"' in build_pkg
     assert "capsem-admin" in build_pkg
     assert "capsem-tui" in build_pkg
+    assert "rm -rf /Applications/Capsem.app" in pkg_preinstall
+    assert "rm -rf /usr/local/share/capsem" in pkg_preinstall
+    assert "pkill -9 -x capsem-app" in pkg_preinstall
 
     assert "CAPSEM_DEB_ASSET_MODE" in repack_deb
-    assert 'bash "$SCRIPT_DIR/sync-dev-assets.sh" "$ASSETS_DIR"' in repack_deb
+    assert 'CONFIG_ROOT="${POSITIONAL[2]}"' in repack_deb
+    assert "--manifest" in repack_deb
+    assert "BUILD_TS=" not in repack_deb
+    assert 'cp "$MANIFEST_PATH" "$ASSETS_VIEW/manifest.json"' in repack_deb
+    assert 'cp -R "$CONFIG_ROOT/profiles/." "$WORK_DIR/deb/usr/share/capsem/profiles/"' in repack_deb
+    assert 'bash "$SCRIPT_DIR/sync-dev-assets.sh" "$ASSETS_VIEW"' in repack_deb
     assert "capsem-admin" in repack_deb
     assert "capsem-tui" in repack_deb
     assert "/usr/share/capsem/assets" in deb_postinst
+    assert "/usr/share/capsem/profiles" in deb_postinst
     assert "capsem-admin" in deb_postinst
     assert "capsem-tui" in deb_postinst
 
@@ -42,6 +63,7 @@ def test_macos_postinstall_adds_capsem_bin_to_fish_path() -> None:
     assert ".config/fish/config.fish" in postinstall
     assert "fish_add_path" in postinstall
     assert "grep -qF 'fish_add_path --path \"$HOME/.capsem/bin\"'" in postinstall
+    assert "pkill -x capsem-app" in postinstall
 
 
 def test_release_workflow_uses_profile_asset_rail_and_full_host_binary_set() -> None:

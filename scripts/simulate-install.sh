@@ -1,7 +1,7 @@
 #!/bin/bash
 # simulate-install.sh -- Reproduce the installed layout for testing.
-# Usage: simulate-install.sh <bin_dir_src> <assets_dir_src>
-# Installs to ~/.capsem/{bin,assets,run}
+# Usage: simulate-install.sh <bin_dir_src> <assets_dir_src> <config_root>
+# Installs to ~/.capsem/{bin,assets,profiles,run}
 #
 # This is the single source of truth for how binaries land in ~/.capsem/.
 # Both `just install` and the Docker e2e test harness call this script.
@@ -10,14 +10,16 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-BIN_SRC="${1:?usage: simulate-install.sh <bin_dir> <assets_dir>}"
-ASSETS_SRC="${2:?usage: simulate-install.sh <bin_dir> <assets_dir>}"
+BIN_SRC="${1:?usage: simulate-install.sh <bin_dir> <assets_dir> <config_root>}"
+ASSETS_SRC="${2:?usage: simulate-install.sh <bin_dir> <assets_dir> <config_root>}"
+CONFIG_ROOT="${3:?usage: simulate-install.sh <bin_dir> <assets_dir> <config_root>}"
 
 # Honor CAPSEM_HOME so the install-test suite can redirect this script into
 # an isolated temp dir (see tests/capsem-install/conftest.py::_resolve_capsem_home).
 CAPSEM_HOME_DIR="${CAPSEM_HOME:-$HOME/.capsem}"
 INSTALL_DIR="$CAPSEM_HOME_DIR/bin"
 ASSETS_DST="$CAPSEM_HOME_DIR/assets"
+PROFILES_DST="$CAPSEM_HOME_DIR/profiles"
 RUN_DIR="${CAPSEM_RUN_DIR:-$CAPSEM_HOME_DIR/run}"
 
 # Preflight: reap any running capsem processes FROM THIS INSTALL PREFIX so
@@ -38,6 +40,11 @@ if [[ -L "$ASSETS_DST" ]]; then
     rm "$ASSETS_DST"
 fi
 mkdir -p "$ASSETS_DST"
+if [[ ! -d "$CONFIG_ROOT/profiles" ]]; then
+    echo "ERROR: materialized profiles not found: $CONFIG_ROOT/profiles" >&2
+    echo "Run: just _materialize-config" >&2
+    exit 1
+fi
 
 # Copy binaries
 for bin in capsem capsem-service capsem-process capsem-tui capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-gateway capsem-tray capsem-admin; do
@@ -71,6 +78,10 @@ if [[ -f "$ASSETS_SRC/manifest.json" ]]; then
     bash "$SCRIPT_DIR/sync-dev-assets.sh" "$ASSETS_SRC" "$ASSETS_DST"
 fi
 
+rm -rf "$PROFILES_DST"
+mkdir -p "$PROFILES_DST"
+cp -R "$CONFIG_ROOT/profiles/." "$PROFILES_DST/"
+
 # Drop legacy v1 layout directories that ManifestV2::resolve() no longer reads.
 for legacy in "$ASSETS_DST"/v1.0.*; do
     [[ -d "$legacy" ]] || continue
@@ -79,6 +90,7 @@ done
 
 echo "Installed to $INSTALL_DIR ($(ls "$INSTALL_DIR" | wc -l | tr -d ' ') binaries)"
 echo "Assets at $ASSETS_DST"
+echo "Profiles at $PROFILES_DST"
 
 # Print build hash for verification (use source binary -- installed copy may not be signed yet)
 "$BIN_SRC/capsem" version 2>/dev/null | head -1 || true
