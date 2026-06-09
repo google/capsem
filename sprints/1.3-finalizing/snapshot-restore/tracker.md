@@ -104,8 +104,8 @@ the guarantee or explicitly burn it.
   gate records current numbers.
 - [x] `89b04f87 perf: tune rootfs squashfs block size` decision:
   superseded. Notes: current 1.3 build contract in `guest/config/build.toml`
-  runs EROFS/LZ4HC level 12 as the primary rootfs on kernel 7.0. Squashfs is
-  legacy fallback only; do not restore squashfs tuning as a release target.
+  runs EROFS/LZ4HC level 12 as the rootfs on kernel 7.0. Squashfs is not a
+  runtime/build fallback; do not restore squashfs tuning as a release target.
 - [x] `6823cf1f feat: package capsem tui binary` decision:
   conceptual_port. Notes: current tree has no `capsem-tui`/TUI package rail, so
   the capability remains active under the TUI restore slice. Restore the modern
@@ -1270,7 +1270,12 @@ the guarantee or explicitly burn it.
   1.3 rootfs contract. The docs sweep found no remaining active
   `rootfs.squashfs`/legacy-fallback references outside historical benchmark
   comparison rows.
-- [ ] Record zstd comparison evidence and decision.
+- [x] Record zstd comparison evidence and decision.
+  Proof: `docs/src/content/docs/benchmarks/results.md` records the rootfs
+  comparison table (`squashfs zstd`, `EROFS zstd-15`, `EROFS lz4hc-12`) and
+  states zstd was tested on macOS/Linux but is not worth it for the 1.3
+  speed-first workload. The raw current-run benchmark artifact/metadata item
+  below remains open.
 - [ ] Record benchmark numbers with image format, compression, compression
   level, architecture, kernel, host OS, command line, event/workload counts,
   latency, and throughput where applicable.
