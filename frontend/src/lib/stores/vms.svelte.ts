@@ -139,8 +139,15 @@ class VmStore {
 
   async provision(opts: ProvisionRequest): Promise<{ id: string; name: string }> {
     console.log('[vmStore] provision(%o)', opts);
-    if (this.assetHealth?.ready !== true) {
-      throw new Error('VM assets are not ready');
+    let assetHealth: AssetStatusResponse | null = null;
+    try {
+      assetHealth = await api.getAssetsStatus(opts.profile_id);
+    } catch (e) {
+      throw new Error(assetStatusError(e));
+    }
+    if (assetHealth.ready !== true) {
+      this.assetHealth = assetHealth;
+      throw new Error(`VM assets are not ready for profile ${opts.profile_id}`);
     }
     this.acting = true;
     try {

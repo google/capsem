@@ -3,6 +3,8 @@
   import { vmStore } from '../../stores/vms.svelte.ts';
   import { tabStore } from '../../stores/tabs.svelte.ts';
   import * as api from '../../api';
+  import type { ProfileSummary } from '../../api';
+  import type { AssetStatusResponse } from '../../types/assets';
   import type { VmSummary } from '../../types/gateway';
   import type { GlobalStats } from '../../types/gateway';
   import { formatUptime, formatTokens, formatCost } from '../../format';
@@ -14,6 +16,7 @@
   import Plus from 'phosphor-svelte/lib/Plus';
   import BracketsAngle from 'phosphor-svelte/lib/BracketsAngle';
   import CircleNotch from 'phosphor-svelte/lib/CircleNotch';
+  import DownloadSimple from 'phosphor-svelte/lib/DownloadSimple';
   import Warning from 'phosphor-svelte/lib/Warning';
   import X from 'phosphor-svelte/lib/X';
   import GitFork from 'phosphor-svelte/lib/GitFork';
@@ -27,7 +30,21 @@
 
   let initialLoading = $derived(!vmStore.polled);
 
+  type ProfileLauncher = {
+    profile: ProfileSummary;
+    assets: AssetStatusResponse | null;
+    loading: boolean;
+    ensuring: boolean;
+    creating: boolean;
+    error: string | null;
+  };
+
+  let profileLaunchers = $state<ProfileLauncher[]>([]);
+  let profilesLoading = $state(true);
+  let profilesError = $state<string | null>(null);
+
   onMount(async () => {
+    void loadProfileLaunchers();
     try {
       const stats = await api.getStats();
       globalStats = stats.global;
@@ -116,10 +133,7 @@
   let creatingTemp = $state(false);
   let actionError = $state<string | null>(null);
 
-  let assetsReady = $derived(vmStore.assetHealth?.ready === true);
-  let missingAssets = $derived(vmStore.assetHealth?.assets.filter(asset => asset.status !== 'present').map(asset => asset.name) ?? []);
-  let assetStatusText = $derived.by(() => {
-    const assetHealth = vmStore.assetHealth;
+  function profileAssetText(assetHealth: AssetStatusResponse | null): string {
     if (!assetHealth) return 'Checking VM assets.';
     if (assetHealth.downloading) {
       const name = assetHealth.current_asset ? ` ${assetHealth.current_asset}` : '';
@@ -132,9 +146,66 @@
     if (assetHealth.error || assetHealth.reconcile_error) {
       return assetHealth.error ?? assetHealth.reconcile_error ?? 'Asset reconciliation failed.';
     }
+    const missingAssets = assetHealth.assets
+      .filter(asset => asset.status !== 'present')
+      .map(asset => asset.name);
     if (missingAssets.length > 0) return `Missing: ${missingAssets.join(', ')}.`;
-    return 'Assets are not ready.';
-  });
+    return assetHealth.ready ? 'Ready.' : 'Assets are not ready.';
+  }
+
+  function updateProfileLauncher(profileId: string, patch: Partial<ProfileLauncher>) {
+    profileLaunchers = profileLaunchers.map(launcher =>
+      launcher.profile.id === profileId ? { ...launcher, ...patch } : launcher
+    );
+  }
+
+  function delay(ms: number): Promise<void> {
+    return new Promise(resolve => window.setTimeout(resolve, ms));
+  }
+
+  async function fetchProfileAssets(profile: ProfileSummary): Promise<ProfileLauncher> {
+    try {
+      return {
+        profile,
+        assets: await api.getAssetsStatus(profile.id),
+        loading: false,
+        ensuring: false,
+        creating: false,
+        error: null,
+      };
+    } catch (err) {
+      return {
+        profile,
+        assets: null,
+        loading: false,
+        ensuring: false,
+        creating: false,
+        error: parseApiError(err),
+      };
+    }
+  }
+
+  async function loadProfileLaunchers() {
+    profilesLoading = true;
+    profilesError = null;
+    try {
+      const profiles = (await api.listProfiles()).profiles.filter(profile => profile.availability.web);
+      profileLaunchers = profiles.map(profile => ({
+        profile,
+        assets: null,
+        loading: true,
+        ensuring: false,
+        creating: false,
+        error: null,
+      }));
+      profileLaunchers = await Promise.all(profiles.map(fetchProfileAssets));
+    } catch (err) {
+      profilesError = parseApiError(err);
+      profileLaunchers = [];
+    } finally {
+      profilesLoading = false;
+    }
+  }
 
   function parseApiError(e: unknown): string {
     if (!(e instanceof Error)) return 'An unexpected error occurred';
@@ -152,18 +223,23 @@
     return stripped || msg;
   }
 
-  async function createTemporary() {
-    console.log('[NewTabPage] createTemporary() creatingTemp=%s', creatingTemp);
+  async function createFromProfile(profileId: string) {
     if (creatingTemp) return;
     actionError = null;
-    if (!assetsReady) {
-      actionError = 'VM assets are not ready';
+    const launcher = profileLaunchers.find(item => item.profile.id === profileId);
+    if (!launcher || launcher.assets?.ready !== true) {
+      actionError = `VM assets are not ready for profile ${profileId}`;
       return;
     }
     creatingTemp = true;
+    updateProfileLauncher(profileId, { creating: true });
     try {
-      console.log('[NewTabPage] calling vmStore.provision()');
-      const { id, name } = await vmStore.provision({ ram_mb: 2048, cpus: 2, persistent: false });
+      const { id, name } = await vmStore.provision({
+        profile_id: profileId,
+        ram_mb: 2048,
+        cpus: 2,
+        persistent: false,
+      });
       console.log('[NewTabPage] provision OK id=%s name=%s', id, name);
       tabStore.openVM(id, name);
     } catch (e) {
@@ -171,6 +247,26 @@
       actionError = parseApiError(e);
     } finally {
       creatingTemp = false;
+      updateProfileLauncher(profileId, { creating: false });
+    }
+  }
+
+  async function ensureProfileAssets(profileId: string) {
+    actionError = null;
+    updateProfileLauncher(profileId, { ensuring: true, error: null });
+    try {
+      let assets = await api.ensureAssets(profileId);
+      updateProfileLauncher(profileId, { assets });
+      for (let attempt = 0; attempt < 120 && assets.downloading && !assets.ready; attempt += 1) {
+        await delay(1000);
+        assets = await api.getAssetsStatus(profileId);
+        updateProfileLauncher(profileId, { assets });
+        if (assets.ready || !assets.downloading) break;
+      }
+      updateProfileLauncher(profileId, { assets, ensuring: false });
+      await vmStore.refresh();
+    } catch (err) {
+      updateProfileLauncher(profileId, { ensuring: false, error: parseApiError(err) });
     }
   }
 </script>
@@ -270,43 +366,83 @@
         type="button"
         class="inline-flex items-center gap-x-2 bg-surface border border-line-2 text-foreground hover:bg-muted-hover rounded-lg px-4 py-2 text-sm font-medium transition-colors disabled:opacity-50 disabled:pointer-events-none"
         onclick={() => vmStore.showCreateModal = true}
-        disabled={creatingTemp || !assetsReady}
-        title={!assetsReady ? 'VM assets are not ready' : 'Customize Session'}
+        disabled={creatingTemp}
+        title="Customize Session"
       >
         <Plus size={16} weight="bold" />
         Customize Session...
       </button>
-      <button
-        type="button"
-        class="inline-flex items-center gap-x-2 bg-primary text-primary-foreground hover:bg-primary-hover rounded-lg px-4 py-2 text-sm font-medium transition-colors disabled:opacity-50 disabled:pointer-events-none"
-        onclick={createTemporary}
-        disabled={creatingTemp || !assetsReady}
-        title={!assetsReady ? 'VM assets are not ready' : 'Quick Session'}
-      >
-        <BracketsAngle size={16} weight="bold" />
-        {creatingTemp ? 'Creating...' : 'Quick Session'}
-      </button>
     </div>
   </div>
 
-  <!-- Asset health warning -->
-  {#if vmStore.assetHealth && !vmStore.assetHealth.ready}
-    <div class="flex items-start gap-x-3 p-4 mb-4 rounded-lg border border-warning/30 bg-warning/10 text-sm">
-      <Warning size={18} class="text-warning mt-0.5 shrink-0" />
+  <!-- Profile launchers -->
+  <h3 class="text-xs font-semibold text-foreground uppercase tracking-wider mb-3">Start from a profile</h3>
+  {#if profilesLoading}
+    <div class="bg-card border border-card-line rounded-xl p-6 flex items-center gap-x-3 mb-6">
+      <CircleNotch size={18} class="text-muted-foreground-1 animate-spin" />
+      <p class="text-muted-foreground-1 text-sm">Loading profiles...</p>
+    </div>
+  {:else if profilesError}
+    <div class="flex items-start gap-x-3 p-4 mb-6 rounded-lg border border-destructive/30 bg-destructive/10 text-sm">
+      <Warning size={18} class="text-destructive mt-0.5 shrink-0" />
       <div class="flex-1 min-w-0">
-        <p class="font-medium text-foreground">VM assets are not ready</p>
-        <p class="text-muted-foreground-1 mt-0.5">
-          {assetStatusText}
-        </p>
+        <p class="font-medium text-foreground">Profiles unavailable</p>
+        <p class="text-muted-foreground-1 mt-0.5 break-words">{profilesError}</p>
       </div>
       <button
         type="button"
-        class="shrink-0 inline-flex items-center gap-x-2 bg-layer border border-layer-line text-layer-foreground hover:bg-muted-hover rounded-lg px-3 py-1.5 text-xs font-medium disabled:opacity-50 disabled:pointer-events-none"
-        onclick={() => vmStore.ensureAssets()}
-        disabled={vmStore.acting || vmStore.assetHealth.downloading}
+        class="shrink-0 inline-flex items-center gap-x-2 bg-layer border border-layer-line text-layer-foreground hover:bg-muted-hover rounded-lg px-3 py-1.5 text-xs font-medium"
+        onclick={loadProfileLaunchers}
       >
-        {vmStore.assetHealth.downloading ? 'Downloading' : 'Ensure'}
+        Retry
       </button>
+    </div>
+  {:else if profileLaunchers.length === 0}
+    <div class="bg-card border border-card-line rounded-xl p-6 flex items-center justify-center mb-6">
+      <p class="text-muted-foreground-1 text-sm">No web-available profiles</p>
+    </div>
+  {:else}
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-6">
+      {#each profileLaunchers as launcher (launcher.profile.id)}
+        {@const ready = launcher.assets?.ready === true}
+        {@const busy = launcher.loading || launcher.ensuring || launcher.creating || launcher.assets?.downloading === true}
+        <button
+          type="button"
+          class="group text-left bg-card border border-card-line rounded-xl p-4 transition-colors hover:border-primary/50 hover:bg-muted-hover disabled:opacity-70 disabled:pointer-events-none"
+          onclick={() => ready ? createFromProfile(launcher.profile.id) : ensureProfileAssets(launcher.profile.id)}
+          disabled={creatingTemp || launcher.loading || launcher.creating || launcher.ensuring || launcher.assets?.downloading === true}
+          title={ready ? `Start ${launcher.profile.name}` : profileAssetText(launcher.assets)}
+        >
+          <div class="flex items-start gap-x-3">
+            <span class="size-10 shrink-0 inline-flex items-center justify-center rounded-lg bg-muted text-foreground [&>svg]:size-5 [&>svg]:max-w-5 [&>svg]:max-h-5" aria-hidden="true">
+              {#if launcher.profile.icon_svg}
+                {@html launcher.profile.icon_svg}
+              {:else}
+                <BracketsAngle size={20} weight="bold" />
+              {/if}
+            </span>
+            <span class="min-w-0 flex-1">
+              <span class="flex items-center justify-between gap-x-3">
+                <span class="text-sm font-semibold text-foreground truncate">{launcher.profile.name}</span>
+                <span class="shrink-0 inline-flex items-center gap-x-1 text-xs font-medium {ready ? 'text-primary' : 'text-muted-foreground-1'}">
+                  {#if busy}
+                    <CircleNotch size={14} class="animate-spin" />
+                    {launcher.creating ? 'Creating' : launcher.ensuring || launcher.assets?.downloading ? 'Downloading' : 'Checking'}
+                  {:else if ready}
+                    <BracketsAngle size={14} />
+                    Start
+                  {:else}
+                    <DownloadSimple size={14} />
+                    Download
+                  {/if}
+                </span>
+              </span>
+              <span class="block text-xs text-muted-foreground-1 mt-1 line-clamp-2">{launcher.profile.description}</span>
+              <span class="block text-[11px] text-muted-foreground-2 mt-2">{launcher.error ?? profileAssetText(launcher.assets)}</span>
+            </span>
+          </div>
+        </button>
+      {/each}
     </div>
   {/if}
 

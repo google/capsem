@@ -1,17 +1,30 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import { vmStore } from '../../stores/vms.svelte.ts';
   import { tabStore } from '../../stores/tabs.svelte.ts';
+  import { listProfiles, type ProfileSummary } from '../../api';
   import Modal from './Modal.svelte';
-  import CircleNotch from 'phosphor-svelte/lib/CircleNotch';
 
+  let profiles = $state<ProfileSummary[]>([]);
+  let profileId = $state('code');
   let name = $state('');
   let ramMb = $state(2048);
   let cpus = $state(2);
   let error = $state<string | null>(null);
   let creating = $state(false);
 
+  onMount(async () => {
+    try {
+      profiles = (await listProfiles()).profiles.filter(profile => profile.availability.web);
+      profileId = profiles[0]?.id ?? 'code';
+    } catch {
+      profiles = [];
+    }
+  });
+
   function close() {
     vmStore.showCreateModal = false;
+    profileId = profiles[0]?.id ?? 'code';
     name = '';
     ramMb = 2048;
     cpus = 2;
@@ -24,6 +37,7 @@
     const hasName = name.trim().length > 0;
     try {
       const { id, name: finalName } = await vmStore.provision({
+        profile_id: profileId,
         name: hasName ? name.trim() : undefined,
         ram_mb: ramMb,
         cpus: cpus,
@@ -53,6 +67,27 @@
         {error}
       </div>
     {/if}
+
+    <div class="space-y-1.5">
+      <label for="sb-profile" class="text-sm font-medium text-foreground">Profile</label>
+      <select
+        id="sb-profile"
+        bind:value={profileId}
+        class="w-full px-3 py-2 rounded-lg bg-background-1 border border-line-2 focus:border-primary outline-hidden text-sm text-foreground"
+        disabled={creating}
+      >
+        {#if profiles.length === 0}
+          <option value="code">code</option>
+        {:else}
+          {#each profiles as profile (profile.id)}
+            <option value={profile.id}>{profile.name}</option>
+          {/each}
+        {/if}
+      </select>
+      <p class="text-[11px] text-muted-foreground-1">
+        {profiles.find(profile => profile.id === profileId)?.description ?? 'Profile-selected VM configuration.'}
+      </p>
+    </div>
 
     <div class="space-y-1.5">
       <label for="sb-name" class="text-sm font-medium text-foreground">Name <span class="text-muted-foreground font-normal">(optional)</span></label>

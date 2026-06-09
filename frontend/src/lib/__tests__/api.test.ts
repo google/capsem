@@ -171,16 +171,27 @@ describe('api', () => {
 
     it('provisionVm sends POST /vms/create', async () => {
       mockFetch.mockReturnValueOnce(jsonResponse({ id: 'vm-1' }));
-      const result = await api.provisionVm({ ram_mb: 2048, cpus: 2, persistent: false });
+      const result = await api.provisionVm({
+        profile_id: 'code',
+        ram_mb: 2048,
+        cpus: 2,
+        persistent: false,
+      });
       expect(result.id).toBe('vm-1');
       const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
       expect(call[0]).toContain('/vms/create');
       expect(call[1].method).toBe('POST');
+      expect(JSON.parse(call[1].body).profile_id).toBe('code');
     });
 
     it('runVm sends POST /run', async () => {
       mockFetch.mockReturnValueOnce(jsonResponse({ id: 'vm-2' }));
-      const result = await api.runVm({ ram_mb: 4096, cpus: 4, persistent: true });
+      const result = await api.runVm({
+        profile_id: 'code',
+        ram_mb: 4096,
+        cpus: 4,
+        persistent: true,
+      });
       expect(result.id).toBe('vm-2');
     });
 

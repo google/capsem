@@ -110,6 +110,7 @@ export interface VmOperationStatusResponse {
 
 // POST /vms/create, POST /run
 export interface ProvisionRequest {
+  profile_id: string;
   name?: string;
   ram_mb: number;
   cpus: number;

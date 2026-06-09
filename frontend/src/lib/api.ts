@@ -127,6 +127,12 @@ export interface ProfileSummary {
   id: string;
   name: string;
   description: string;
+  icon_svg?: string | null;
+  availability: {
+    web: boolean;
+    shell: boolean;
+    mobile: boolean;
+  };
   source: string;
   rule_count: number;
   default_rule_count: number;

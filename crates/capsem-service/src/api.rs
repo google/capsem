@@ -202,6 +202,8 @@ pub struct ProfileSummary {
     pub id: String,
     pub name: String,
     pub description: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub icon_svg: Option<String>,
     pub availability: ProfileAvailabilitySummary,
     pub source: String,
     pub rule_count: usize,

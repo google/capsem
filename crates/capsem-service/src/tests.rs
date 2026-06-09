@@ -314,6 +314,10 @@ async fn handle_profiles_list_returns_code_profile_inventory() {
     assert_eq!(response.profiles.len(), 1);
     assert_eq!(response.profiles[0].id, "code");
     assert!(
+        response.profiles[0].icon_svg.is_some(),
+        "profile list must expose profile-owned icon_svg for launch surfaces"
+    );
+    assert!(
         response.profiles[0].plugin_count > 0,
         "profile inventory should reflect editable plugin policy"
     );

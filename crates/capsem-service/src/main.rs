@@ -4218,6 +4218,7 @@ fn build_profile_summary(
         id: manifest.id.clone(),
         name: manifest.name.clone(),
         description: manifest.description.clone(),
+        icon_svg: manifest.icon_svg.clone(),
         availability: api::ProfileAvailabilitySummary {
             web: manifest.availability.web,
             shell: manifest.availability.shell,
