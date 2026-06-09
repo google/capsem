@@ -390,11 +390,14 @@ export const SNAPSHOT_LIST_SQL = `
 import type { PresetQuery } from './types';
 
 export const PRESET_QUERIES: PresetQuery[] = [
-  { label: 'Recent events', sql: 'SELECT timestamp, event_type, summary FROM event_log ORDER BY timestamp DESC LIMIT 20' },
-  { label: 'HTTP requests', sql: 'SELECT method, url, status_code, decision, duration_ms FROM http_requests ORDER BY timestamp DESC LIMIT 20' },
-  { label: 'Tool calls', sql: 'SELECT tool_name, server, duration_ms, timestamp FROM tool_calls ORDER BY timestamp DESC LIMIT 20' },
-  { label: 'Model calls', sql: 'SELECT provider, model, input_tokens, output_tokens, estimated_cost_usd FROM model_calls ORDER BY timestamp DESC' },
-  { label: 'File events', sql: 'SELECT path, operation, size_bytes, timestamp FROM file_events ORDER BY timestamp DESC LIMIT 20' },
+  { label: 'Security ledger', sql: 'SELECT timestamp_unix_ms, event_id, event_type, rule_id, rule_action, detection_level, trace_id FROM security_rule_events ORDER BY timestamp_unix_ms DESC LIMIT 50' },
+  { label: 'HTTP requests', sql: 'SELECT timestamp, event_id, method, domain, path, status_code, decision, duration_ms, matched_rule FROM net_events ORDER BY id DESC LIMIT 50' },
+  { label: 'DNS queries', sql: 'SELECT timestamp, event_id, qname, qtype, rcode, decision, matched_rule, policy_rule FROM dns_events ORDER BY id DESC LIMIT 50' },
+  { label: 'MCP calls', sql: 'SELECT timestamp, event_id, server_name, method, tool_name, decision, duration_ms, policy_rule FROM mcp_calls ORDER BY id DESC LIMIT 50' },
+  { label: 'Model calls', sql: 'SELECT timestamp, event_id, provider, model, input_tokens, output_tokens, estimated_cost_usd, trace_id FROM model_calls ORDER BY id DESC LIMIT 50' },
+  { label: 'File events', sql: 'SELECT timestamp, event_id, action, path, size, trace_id FROM fs_events ORDER BY id DESC LIMIT 50' },
+  { label: 'Process exec', sql: 'SELECT timestamp, event_id, source, command, exit_code, duration_ms, trace_id FROM exec_events ORDER BY id DESC LIMIT 50' },
+  { label: 'Credential substitutions', sql: 'SELECT timestamp, event_id, material_class, source, event_type, substitution_ref, outcome, provider FROM substitution_events ORDER BY id DESC LIMIT 50' },
 ];
 
 /**

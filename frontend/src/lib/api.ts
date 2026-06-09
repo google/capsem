@@ -160,6 +160,7 @@ export interface ProfileValidateResponse {
 
 export type SecurityRuleAction = 'allow' | 'ask' | 'block' | 'preprocess' | 'rewrite' | 'postprocess';
 export type SecurityRuleDetectionLevel = 'informational' | 'low' | 'medium' | 'high' | 'critical';
+export type RuntimeSecurityRuleDetectionLevel = SecurityRuleDetectionLevel | 'none';
 
 export interface EnforcementRuleInfo {
   rule_id: string;
@@ -196,6 +197,44 @@ export interface EnforcementInfoResponse {
 export type DetectionRuleInfo = EnforcementRuleInfo;
 export type DetectionRuleListResponse = EnforcementRuleListResponse;
 export type DetectionInfoResponse = EnforcementInfoResponse;
+
+export interface SecurityRuleActionCount {
+  rule_action: SecurityRuleAction;
+  count: number;
+}
+
+export interface SecurityRuleEventTypeCount {
+  event_type: string;
+  count: number;
+}
+
+export interface SecurityRuleStatsByRule {
+  rule_id: string;
+  rule_action: SecurityRuleAction;
+  detection_level: RuntimeSecurityRuleDetectionLevel;
+  count: number;
+  latest_event_id: string;
+  latest_timestamp_unix_ms: number;
+}
+
+export interface SecurityRuleStats {
+  total: number;
+  by_action: SecurityRuleActionCount[];
+  by_event_type: SecurityRuleEventTypeCount[];
+  by_rule: SecurityRuleStatsByRule[];
+}
+
+export interface SecurityRuleEvent {
+  timestamp_unix_ms: number;
+  event_id: string;
+  event_type: string;
+  rule_id: string;
+  rule_action: SecurityRuleAction;
+  detection_level: RuntimeSecurityRuleDetectionLevel;
+  rule_json: string;
+  event_json: string;
+  trace_id?: string | null;
+}
 
 // -- Initialization --
 
@@ -887,6 +926,16 @@ export async function getSecurityStatus(): Promise<unknown> {
   return await resp.json();
 }
 
+export async function getVmSecurityLatest(id: string, limit = 100): Promise<SecurityRuleEvent[]> {
+  const resp = await _get(`/vms/${encodeURIComponent(id)}/security/latest?limit=${encodeURIComponent(String(limit))}`);
+  return await resp.json();
+}
+
+export async function getVmSecurityStatus(id: string): Promise<SecurityRuleStats> {
+  const resp = await _get(`/vms/${encodeURIComponent(id)}/security/status`);
+  return await resp.json();
+}
+
 export async function getEnforcementLatest(): Promise<unknown> {
   const resp = await _get('/enforcement/latest');
   return await resp.json();
@@ -897,6 +946,16 @@ export async function getEnforcementStatus(): Promise<unknown> {
   return await resp.json();
 }
 
+export async function getVmEnforcementLatest(id: string, limit = 100): Promise<SecurityRuleEvent[]> {
+  const resp = await _get(`/vms/${encodeURIComponent(id)}/enforcement/latest?limit=${encodeURIComponent(String(limit))}`);
+  return await resp.json();
+}
+
+export async function getVmEnforcementStatus(id: string): Promise<SecurityRuleStats> {
+  const resp = await _get(`/vms/${encodeURIComponent(id)}/enforcement/status`);
+  return await resp.json();
+}
+
 export async function getDetectionLatest(): Promise<unknown> {
   const resp = await _get('/detection/latest');
   return await resp.json();
@@ -904,6 +963,16 @@ export async function getDetectionLatest(): Promise<unknown> {
 
 export async function getDetectionStatus(): Promise<unknown> {
   const resp = await _get('/detection/status');
+  return await resp.json();
+}
+
+export async function getVmDetectionLatest(id: string, limit = 100): Promise<SecurityRuleEvent[]> {
+  const resp = await _get(`/vms/${encodeURIComponent(id)}/detection/latest?limit=${encodeURIComponent(String(limit))}`);
+  return await resp.json();
+}
+
+export async function getVmDetectionStatus(id: string): Promise<SecurityRuleStats> {
+  const resp = await _get(`/vms/${encodeURIComponent(id)}/detection/status`);
   return await resp.json();
 }
 

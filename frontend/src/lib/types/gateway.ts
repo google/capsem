@@ -142,7 +142,7 @@ export interface InspectRequest {
 
 export interface InspectResponse {
   columns: string[];
-  rows: Record<string, string | number | null>[];
+  rows: (Record<string, string | number | null> | (string | number | null)[])[];
 }
 
 // POST /vms/{id}/files/read

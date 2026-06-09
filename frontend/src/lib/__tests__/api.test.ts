@@ -271,11 +271,71 @@ describe('api', () => {
     });
 
     it('inspectQuery sends POST /vms/{id}/inspect', async () => {
-      mockFetch.mockReturnValueOnce(jsonResponse({ columns: ['n'], rows: [{ n: 1 }] }));
+      mockFetch.mockReturnValueOnce(jsonResponse({ columns: ['n'], rows: [[1]] }));
       const result = await api.inspectQuery('vm-1', 'SELECT 1 as n');
       const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
       expect(call[0]).toContain('/vms/vm-1/inspect');
       expect(result.columns).toEqual(['n']);
+      expect(result.rows).toEqual([[1]]);
+    });
+
+    it('getVmSecurityLatest sends GET /vms/{id}/security/latest with limit', async () => {
+      mockFetch.mockReturnValueOnce(jsonResponse([
+        {
+          timestamp_unix_ms: 1700000000000,
+          event_id: 'abc123abc123',
+          event_type: 'http.request',
+          rule_id: 'profiles.rules.default_http',
+          rule_action: 'allow',
+          detection_level: 'none',
+          rule_json: '{}',
+          event_json: '{}',
+          trace_id: null,
+        },
+      ]));
+      const result = await api.getVmSecurityLatest('vm-1', 25);
+      const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
+      expect(call[0]).toContain('/vms/vm-1/security/latest?limit=25');
+      expect(result[0].event_id).toBe('abc123abc123');
+    });
+
+    it('getVmSecurityStatus sends GET /vms/{id}/security/status', async () => {
+      mockFetch.mockReturnValueOnce(jsonResponse({
+        total: 1,
+        by_action: [{ rule_action: 'block', count: 1 }],
+        by_event_type: [{ event_type: 'dns.query', count: 1 }],
+        by_rule: [{
+          rule_id: 'corp.rules.block_dns',
+          rule_action: 'block',
+          detection_level: 'high',
+          count: 1,
+          latest_event_id: 'abc123abc123',
+          latest_timestamp_unix_ms: 1700000000000,
+        }],
+      }));
+      const result = await api.getVmSecurityStatus('vm-1');
+      const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
+      expect(call[0]).toContain('/vms/vm-1/security/status');
+      expect(result.by_rule[0].rule_id).toBe('corp.rules.block_dns');
+    });
+
+    it('VM detection and enforcement helpers use profile-scoped runtime routes', async () => {
+      mockFetch
+        .mockReturnValueOnce(jsonResponse([]))
+        .mockReturnValueOnce(jsonResponse({ total: 0, by_action: [], by_event_type: [], by_rule: [] }))
+        .mockReturnValueOnce(jsonResponse([]))
+        .mockReturnValueOnce(jsonResponse({ total: 0, by_action: [], by_event_type: [], by_rule: [] }));
+
+      await api.getVmDetectionLatest('vm-1', 5);
+      await api.getVmDetectionStatus('vm-1');
+      await api.getVmEnforcementLatest('vm-1', 7);
+      await api.getVmEnforcementStatus('vm-1');
+
+      const paths = mockFetch.mock.calls.slice(-4).map(call => call[0]);
+      expect(paths[0]).toContain('/vms/vm-1/detection/latest?limit=5');
+      expect(paths[1]).toContain('/vms/vm-1/detection/status');
+      expect(paths[2]).toContain('/vms/vm-1/enforcement/latest?limit=7');
+      expect(paths[3]).toContain('/vms/vm-1/enforcement/status');
     });
   });
 
