@@ -1253,9 +1253,23 @@ the guarantee or explicitly burn it.
   `cargo run -p capsem-admin -- image verify --profile
   target/config/profiles/code.toml --config-root target/config --output assets
   --manifest assets/manifest.json --arch arm64 --json`.
-- [ ] Verify the built boot assets are EROFS/LZ4HC level 12 from the
+- [x] Verify the built boot assets are EROFS/LZ4HC level 12 from the
   generated `target/config` profile-selected asset chain, not from a stale
   benchmark artifact or a manually patched checked-in profile.
+  Proof: `just _materialize-config` regenerated `target/config/profiles/code.toml`
+  from source config plus `assets/manifest.json`; `cargo run -p capsem-admin
+  -- profile validate target/config/profiles/code.toml --config-root
+  target/config --json` returned `ok: true` with 7 compiled rules; `cargo run
+  -p capsem-admin -- image verify --profile target/config/profiles/code.toml
+  --config-root target/config --output assets --manifest assets/manifest.json
+  --arch arm64 --json` returned `ok: true` and verified local `file://`
+  profile-selected assets by size and BLAKE3. Arm64 rootfs proof:
+  `logical_name = rootfs.erofs`, size `910360576`, BLAKE3
+  `dd32949abf690412c611f1a558d1bb6462089f98e585009d70fb70e8ad6a6620`.
+  LZ4HC level 12 remains pinned by `guest/config/build.toml`,
+  `capsem-admin image plan`, and focused `TestKernelConfig`/`TestCreateErofs`
+  coverage above; local macOS lacks `fsck.erofs`/`dump.erofs` for deeper image
+  introspection.
 - [ ] Restore/verify multi-arch asset proof.
 - [x] Restore advanced benchmark harness/artifacts for EROFS/LZ4HC.
   Proof: `capsem-bench storage` mode and focused storage gate tests are back;
