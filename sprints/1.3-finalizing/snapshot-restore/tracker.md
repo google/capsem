@@ -1202,7 +1202,14 @@ the guarantee or explicitly burn it.
   `cargo test -p capsem-core hypervisor -- --nocapture` passed 107 focused
   hypervisor/FUSE tests on macOS. Linux runtime execution remains a separate
   handoff item below.
-- [ ] Preserve modern `iptables-nft` path; do not restore legacy path.
+- [x] Preserve modern `iptables-nft` path; do not restore legacy path.
+  Proof: guest init sets `IPTABLES=iptables-nft`, fails closed when nft is
+  missing or insertion fails, and docs now show nft commands explicitly.
+  Guardrail tests passed:
+  `uv run pytest
+  tests/test_docker.py::TestRootfsSecurityInvariants::test_rootfs_strips_iptables_legacy_frontend
+  tests/test_docker.py::TestKernelConfig::test_iptables_nft_nat_redirect_enabled
+  tests/test_docker.py::TestKernelConfig::test_init_uses_iptables_nft_only -q`.
 - [ ] Restore/verify EROFS/LZ4HC as accepted 1.3 runtime asset format on every
   supported architecture.
 - [x] Ensure profile/admin asset generation emits EROFS/LZ4HC for every

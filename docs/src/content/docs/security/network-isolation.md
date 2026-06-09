@@ -45,12 +45,17 @@ No packets leave the VM through a NIC. DNS reaches the host only through vsock p
 | 2. Dummy NIC | `ip link add dummy0 type dummy` | Create fake interface |
 | 3. Assign IP | `ip addr add 10.0.0.1/24 dev dummy0` | Give it a local address |
 | 4. Default route | `ip route add default dev dummy0` | All traffic routes to dummy0 |
-| 5. DNS redirect | `iptables -t nat -A OUTPUT -p udp --dport 53 -j REDIRECT --to-port 1053` plus TCP | Send DNS to `capsem-dns-proxy` |
-| 6. HTTPS redirect | `iptables -t nat -A OUTPUT -p tcp --dport 443 -j REDIRECT --to-port 10443` | Redirect HTTPS to proxy |
-| 7. Net proxy | `capsem-net-proxy` | TCP:10443 to vsock:5002 bridge |
-| 8. DNS proxy | `capsem-dns-proxy` | UDP/TCP :1053 to vsock:5007 bridge |
+| 5. DNS redirect | `iptables-nft -t nat -A OUTPUT -p udp --dport 53 -j REDIRECT --to-port 1053` plus TCP | Send DNS to `capsem-dns-proxy` |
+| 6. HTTPS redirect | `iptables-nft -t nat -A OUTPUT -p tcp --dport 443 -j REDIRECT --to-port 10443` | Redirect HTTPS to the TLS proxy listener |
+| 7. Plain HTTP redirect | `iptables-nft -t nat -A OUTPUT -p tcp --dport 80 -j REDIRECT --to-port 10080` plus 3128/3713/8080/11434 | Redirect HTTP/dev proxy ports to the plain-HTTP listener |
+| 8. Net proxy | `capsem-net-proxy` | TCP listeners to vsock:5002 bridge |
+| 9. DNS proxy | `capsem-dns-proxy` | UDP/TCP :1053 to vsock:5007 bridge |
 
-The result: when an application resolves `github.com`, the query is captured on port 53, handled by `capsem-dns-proxy`, and resolved or denied by the host DNS handler. When an application connects to `github.com:443`, iptables redirects the socket to `127.0.0.1:10443`; `capsem-net-proxy` bridges the TCP connection to the host over vsock port 5002.
+The result: when an application resolves `github.com`, the query is captured on
+port 53, handled by `capsem-dns-proxy`, and resolved or denied by the host DNS
+handler. When an application connects to `github.com:443`, `iptables-nft`
+redirects the socket to `127.0.0.1:10443`; `capsem-net-proxy` bridges the TCP
+connection to the host over vsock port 5002.
 
 ## MITM proxy overview
 
