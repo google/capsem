@@ -12,6 +12,7 @@
   import DotsThreeVertical from 'phosphor-svelte/lib/DotsThreeVertical';
   import Info from 'phosphor-svelte/lib/Info';
   import GearSix from 'phosphor-svelte/lib/GearSix';
+  import IdentificationCard from 'phosphor-svelte/lib/IdentificationCard';
   import Pause from 'phosphor-svelte/lib/Pause';
   import Terminal from 'phosphor-svelte/lib/Terminal';
   import ChartBar from 'phosphor-svelte/lib/ChartBar';
@@ -202,6 +203,14 @@
           >
             <HardDrives size={16} />
             <span>Service Logs</span>
+          </button>
+          <button
+            type="button"
+            class="w-full flex items-center gap-x-3 py-2 px-3 text-sm text-dropdown-item-foreground rounded-lg hover:bg-dropdown-item-hover"
+            onclick={() => { tabStore.openSingleton('profile', 'Profile'); menuOpen = false; }}
+          >
+            <IdentificationCard size={16} />
+            <span>Profile</span>
           </button>
           <button
             type="button"

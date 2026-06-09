@@ -36,9 +36,9 @@ vi.mock('../api', () => ({
   getMcpTools: vi.fn(async (_profileId: string, serverId: string) =>
     mockTools.filter((tool) => tool.server_name === serverId)
   ),
-  setMcpServerEnabled: vi.fn(async () => {}),
-  addMcpServer: vi.fn(async () => {}),
-  removeMcpServer: vi.fn(async () => {}),
+  updateMcpServer: vi.fn(async () => {}),
+  upsertMcpServer: vi.fn(async () => {}),
+  deleteMcpServer: vi.fn(async () => {}),
   approveMcpTool: vi.fn(async () => {}),
   refreshMcpTools: vi.fn(async () => {}),
 }));
@@ -83,22 +83,22 @@ describe('mcpStore', () => {
   it('toggleServer calls API and reloads', async () => {
     await mcpStore.load();
     await mcpStore.toggleServer('builtin', false);
-    const { setMcpServerEnabled } = await import('../api');
-    expect(setMcpServerEnabled).toHaveBeenCalledWith('builtin', false);
+    const { updateMcpServer } = await import('../api');
+    expect(updateMcpServer).toHaveBeenCalledWith('code', 'builtin', { enabled: false });
   });
 
   it('addServer calls API and reloads', async () => {
     await mcpStore.load();
     await mcpStore.addServer('new-srv', 'http://new', { 'X-H': 'v' });
-    const { addMcpServer } = await import('../api');
-    expect(addMcpServer).toHaveBeenCalledWith('new-srv', 'http://new', { 'X-H': 'v' });
+    const { upsertMcpServer } = await import('../api');
+    expect(upsertMcpServer).toHaveBeenCalledWith('code', 'new-srv', 'http://new', { 'X-H': 'v' });
   });
 
   it('removeServer calls API and reloads', async () => {
     await mcpStore.load();
     await mcpStore.removeServer('external');
-    const { removeMcpServer } = await import('../api');
-    expect(removeMcpServer).toHaveBeenCalledWith('external');
+    const { deleteMcpServer } = await import('../api');
+    expect(deleteMcpServer).toHaveBeenCalledWith('code', 'external');
   });
 
   it('does not expose retired policy mutation methods', () => {

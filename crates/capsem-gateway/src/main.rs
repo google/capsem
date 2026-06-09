@@ -380,6 +380,14 @@ fn service_proxy_routes() -> Router<Arc<AppState>> {
         )
         .route("/profiles/{profile_id}/mcp/info", get(proxy::handle_proxy))
         .route(
+            "/profiles/{profile_id}/mcp/servers/{server_id}/edit",
+            put(proxy::handle_proxy),
+        )
+        .route(
+            "/profiles/{profile_id}/mcp/servers/{server_id}/delete",
+            delete(proxy::handle_proxy),
+        )
+        .route(
             "/profiles/{profile_id}/mcp/servers/{server_id}/tools/list",
             get(proxy::handle_proxy),
         )
@@ -622,6 +630,8 @@ mod tests {
             ("PATCH", "/profiles/code/plugins/dummy_pre_eicar/edit"),
             ("GET", "/profiles/code/mcp/info"),
             ("GET", "/profiles/code/mcp/servers/list"),
+            ("PUT", "/profiles/code/mcp/servers/local/edit"),
+            ("DELETE", "/profiles/code/mcp/servers/local/delete"),
             ("GET", "/profiles/code/mcp/servers/local/tools/list"),
             ("POST", "/profiles/code/mcp/servers/local/refresh"),
             ("PATCH", "/profiles/code/mcp/servers/local/tools/echo/edit"),

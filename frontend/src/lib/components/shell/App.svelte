@@ -8,6 +8,7 @@
 
   // Heavy views split into separate chunks; loaded on first use.
   const loadSettings = () => import('./SettingsPage.svelte').then(m => m.default);
+  const loadProfile = () => import('./ProfilePage.svelte').then(m => m.default);
   const loadStats = () => import('../views/StatsView.svelte').then(m => m.default);
   const loadLogs = () => import('../views/LogsView.svelte').then(m => m.default);
   const loadServiceLogs = () => import('../views/ServiceLogsView.svelte').then(m => m.default);
@@ -132,6 +133,10 @@
             <NewTabPage />
           {:else if tab.view === 'settings'}
             {#await loadSettings() then Component}
+              <Component />
+            {/await}
+          {:else if tab.view === 'profile'}
+            {#await loadProfile() then Component}
               <Component />
             {/await}
           {:else if tab.view === 'logs' && !tab.vmId}

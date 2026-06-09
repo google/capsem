@@ -117,6 +117,12 @@ export interface PluginListResponse {
   plugins: PluginInfo[];
 }
 
+export interface McpServerEditRequest {
+  url?: string;
+  headers?: Record<string, string>;
+  enabled?: boolean;
+}
+
 export interface ProfileSummary {
   id: string;
   name: string;
@@ -288,6 +294,22 @@ async function _patch(path: string, body?: unknown): Promise<Response> {
   return resp;
 }
 
+async function _put(path: string, body?: unknown): Promise<Response> {
+  const resp = await fetch(`${_baseUrl}${path}`, {
+    method: 'PUT',
+    headers: {
+      Authorization: `Bearer ${_token}`,
+      ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
+    },
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw new ApiError(resp.status, text);
+  }
+  return resp;
+}
+
 async function _delete(path: string): Promise<Response> {
   const resp = await fetch(`${_baseUrl}${path}`, {
     method: 'DELETE',
@@ -322,6 +344,32 @@ export async function getStatus(): Promise<StatusResponse> {
     }
     throw err;
   }
+}
+
+async function routeJson(path: string): Promise<unknown> {
+  const resp = await _get(path);
+  return await resp.json();
+}
+
+function settledValue(result: PromiseSettledResult<unknown>): unknown {
+  if (result.status === 'fulfilled') return result.value;
+  return { error: result.reason instanceof Error ? result.reason.message : String(result.reason) };
+}
+
+export async function debugSnapshot(): Promise<unknown> {
+  const [status, profilesStatus, corpInfo] = await Promise.allSettled([
+    getStatus(),
+    routeJson('/profiles/status'),
+    routeJson('/corp/info'),
+  ]);
+  return {
+    generated_at: new Date().toISOString(),
+    connected: _connected,
+    base_url: _baseUrl,
+    status: settledValue(status),
+    profiles_status: settledValue(profilesStatus),
+    corp_info: settledValue(corpInfo),
+  };
 }
 
 function emptyStatus(): StatusResponse {
@@ -876,32 +924,40 @@ export async function updatePlugin(
   return await resp.json();
 }
 
-// -- MCP config (mutations via settings API) --
+// -- MCP config --
 
-/** Enable/disable an MCP server via settings. */
-export async function setMcpServerEnabled(name: string, enabled: boolean): Promise<void> {
-  await saveSettings({ [`mcp.servers.${name}.enabled`]: enabled });
-}
-
-/** Add an MCP server via settings. */
-export async function addMcpServer(
-  name: string,
+/** Add or replace an MCP server in a profile. */
+export async function upsertMcpServer(
+  profileId: string,
+  serverId: string,
   url: string,
   headers: Record<string, string>,
-): Promise<void> {
-  const changes: Record<string, unknown> = {
-    [`mcp.servers.${name}.url`]: url,
-    [`mcp.servers.${name}.enabled`]: true,
-  };
-  if (Object.keys(headers).length > 0) {
-    changes[`mcp.servers.${name}.headers`] = headers;
-  }
-  await saveSettings(changes);
+): Promise<McpServerInfo> {
+  const resp = await _put(
+    `/profiles/${encodeURIComponent(profileId)}/mcp/servers/${encodeURIComponent(serverId)}/edit`,
+    { url, headers, enabled: true } satisfies McpServerEditRequest,
+  );
+  return await resp.json();
 }
 
-/** Remove an MCP server via settings. */
-export async function removeMcpServer(name: string): Promise<void> {
-  await saveSettings({ [`mcp.servers.${name}`]: null });
+/** Enable/disable or otherwise update an MCP server in a profile. */
+export async function updateMcpServer(
+  profileId: string,
+  serverId: string,
+  update: McpServerEditRequest,
+): Promise<McpServerInfo> {
+  const resp = await _put(
+    `/profiles/${encodeURIComponent(profileId)}/mcp/servers/${encodeURIComponent(serverId)}/edit`,
+    update,
+  );
+  return await resp.json();
+}
+
+/** Remove an MCP server from a profile. */
+export async function deleteMcpServer(profileId: string, serverId: string): Promise<void> {
+  await _delete(
+    `/profiles/${encodeURIComponent(profileId)}/mcp/servers/${encodeURIComponent(serverId)}/delete`,
+  );
 }
 
 // -- MCP runtime --

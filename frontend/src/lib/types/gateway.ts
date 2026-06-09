@@ -34,6 +34,7 @@ export interface VmSummary {
   name: string | null;
   status: string; // "Running" | "Stopped" | "Suspended" | "Error" | "Booting"
   persistent: boolean;
+  profile_id: string;
   // Telemetry (present for running VMs, absent for stopped)
   uptime_secs?: number;
   total_input_tokens?: number;

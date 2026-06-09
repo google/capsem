@@ -1,10 +1,8 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { slide } from 'svelte/transition';
-  import { settingsStore } from '../../stores/settings.svelte.ts';
   import { mcpStore } from '../../stores/mcp.svelte.ts';
   import type { McpServerInfo, McpToolInfo } from '../../types';
-  import * as api from '../../api';
   import ArrowClockwise from 'phosphor-svelte/lib/ArrowClockwise';
   import CaretDown from 'phosphor-svelte/lib/CaretDown';
   import Plus from 'phosphor-svelte/lib/Plus';
@@ -12,10 +10,10 @@
   import WarningCircle from 'phosphor-svelte/lib/WarningCircle';
   import X from 'phosphor-svelte/lib/X';
 
-  // MCP servers from the settings tree (loaded by SettingsPage onMount)
-  let servers = $derived(settingsStore.model?.mcpServers ?? []);
-  let userServers = $derived(servers.filter(s => !s.builtin));
-  let builtinServers = $derived(servers.filter(s => s.builtin));
+  let servers = $derived(mcpStore.servers);
+  let userServers = $derived(servers.filter(s => s.source !== 'builtin'));
+  let builtinServers = $derived(servers.filter(s => s.source === 'builtin'));
+  let actionError = $state<string | null>(null);
 
   // Runtime status lookup by server name
   let runtimeByName = $derived.by(() => {
@@ -65,20 +63,20 @@
   async function addServer() {
     if (!canAdd) return;
     saving = true;
+    actionError = null;
     try {
       const headers: Record<string, string> = {};
       for (const h of newHeaders) {
         if (h.key.trim()) headers[h.key.trim()] = h.value;
       }
-      await api.addMcpServer(
+      await mcpStore.addServer(
         newName.trim(),
         newUrl.trim(),
         headers,
       );
-      await api.reloadProfile();
       resetForm();
-      await settingsStore.load();
-      await mcpStore.load();
+    } catch (err) {
+      actionError = String(err instanceof Error ? err.message : err);
     } finally {
       saving = false;
     }
@@ -86,11 +84,11 @@
 
   async function removeServer(name: string) {
     saving = true;
+    actionError = null;
     try {
-      await api.removeMcpServer(name);
-      await api.reloadProfile();
-      await settingsStore.load();
-      await mcpStore.load();
+      await mcpStore.removeServer(name);
+    } catch (err) {
+      actionError = String(err instanceof Error ? err.message : err);
     } finally {
       saving = false;
     }
@@ -98,11 +96,11 @@
 
   async function toggleServer(name: string, currentlyEnabled: boolean) {
     saving = true;
+    actionError = null;
     try {
-      await api.setMcpServerEnabled(name, !currentlyEnabled);
-      await api.reloadProfile();
-      await settingsStore.load();
-      await mcpStore.load();
+      await mcpStore.toggleServer(name, !currentlyEnabled);
+    } catch (err) {
+      actionError = String(err instanceof Error ? err.message : err);
     } finally {
       saving = false;
     }
@@ -156,23 +154,29 @@
     </button>
   </div>
 
+  {#if actionError || mcpStore.error}
+    <div class="border border-destructive/40 rounded-lg p-3 text-sm text-destructive-foreground">
+      {actionError ?? mcpStore.error}
+    </div>
+  {/if}
+
   <!-- Built-in Servers -->
   {#if builtinServers.length > 0}
     <div>
       <h3 class="text-xs font-semibold text-foreground uppercase tracking-wider mb-2">Built-in</h3>
-      {#each builtinServers as server (server.key)}
-        {@const runtime = runtimeByName.get(server.key)}
-        {@const tools = mcpStore.toolsByServer[server.key] ?? []}
-        {@const isExpanded = expandedGroups.has(server.key)}
+      {#each builtinServers as server (server.name)}
+        {@const runtime = runtimeByName.get(server.name)}
+        {@const tools = mcpStore.toolsByServer[server.name] ?? []}
+        {@const isExpanded = expandedGroups.has(server.name)}
         <div class="bg-card border border-card-line rounded-xl mb-3 overflow-hidden">
           <div class="flex items-center justify-between px-4 py-3">
             <button
               type="button"
               class="flex items-center gap-x-3 min-w-0 flex-1 text-left"
-              onclick={() => toggleGroup(server.key)}
+              onclick={() => toggleGroup(server.name)}
             >
               <span class="text-sm font-semibold text-foreground font-mono truncate">{server.name}</span>
-              <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-muted text-muted-foreground-1 shrink-0">{server.transport}</span>
+              <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-muted text-muted-foreground-1 shrink-0">{server.is_stdio ? 'stdio' : 'http'}</span>
               {#if runtime}
                 <span class="flex items-center gap-x-1 text-[10px] px-1.5 py-0.5 rounded-full shrink-0
                   {runtime.running ? 'bg-primary/10 text-primary' : 'bg-muted text-muted-foreground-1'}">
@@ -194,12 +198,12 @@
                 type="button"
                 class="relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200
                   {server.enabled ? 'bg-primary' : 'bg-muted'}
-                  {server.corp_locked ? 'opacity-50 cursor-not-allowed' : ''}"
+                  {server.source === 'corp' ? 'opacity-50 cursor-not-allowed' : ''}"
                 role="switch"
                 aria-label="{server.enabled ? 'Disable' : 'Enable'} {server.name}"
                 aria-checked={server.enabled}
-                disabled={server.corp_locked || saving}
-                onclick={() => toggleServer(server.key, server.enabled)}
+                disabled={server.source === 'corp' || saving}
+                onclick={() => toggleServer(server.name, server.enabled)}
               >
                 <span
                   class="pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow transition duration-200
@@ -208,9 +212,9 @@
               </button>
             </div>
           </div>
-          {#if server.description && !isExpanded}
+          {#if server.has_auth_credential && !isExpanded}
             <div class="px-4 pb-3">
-              <p class="text-xs text-muted-foreground-1">{server.description}</p>
+              <p class="text-xs text-muted-foreground-1">Uses brokered credential reference</p>
             </div>
           {/if}
           {#if isExpanded && tools.length > 0}
@@ -347,19 +351,19 @@
         </button>
       </div>
     {:else}
-      {#each userServers as server (server.key)}
-        {@const runtime = runtimeByName.get(server.key)}
-        {@const tools = mcpStore.toolsByServer[server.key] ?? []}
-        {@const isExpanded = expandedGroups.has(server.key)}
+      {#each userServers as server (server.name)}
+        {@const runtime = runtimeByName.get(server.name)}
+        {@const tools = mcpStore.toolsByServer[server.name] ?? []}
+        {@const isExpanded = expandedGroups.has(server.name)}
         <div class="bg-card border border-card-line rounded-xl mb-3 overflow-hidden">
           <div class="flex items-center justify-between px-4 py-3">
             <button
               type="button"
               class="flex items-center gap-x-3 min-w-0 flex-1 text-left"
-              onclick={() => toggleGroup(server.key)}
+              onclick={() => toggleGroup(server.name)}
             >
               <span class="text-sm font-semibold text-foreground font-mono truncate">{server.name}</span>
-              <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-muted text-muted-foreground-1 shrink-0">{server.transport}</span>
+              <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-muted text-muted-foreground-1 shrink-0">{server.is_stdio ? 'stdio' : 'http'}</span>
               {#if runtime}
                 <span class="flex items-center gap-x-1 text-[10px] px-1.5 py-0.5 rounded-full shrink-0
                   {runtime.running ? 'bg-primary/10 text-primary' : 'bg-muted text-muted-foreground-1'}">
@@ -381,25 +385,25 @@
                 type="button"
                 class="relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200
                   {server.enabled ? 'bg-primary' : 'bg-muted'}
-                  {server.corp_locked ? 'opacity-50 cursor-not-allowed' : ''}"
+                  {server.source === 'corp' ? 'opacity-50 cursor-not-allowed' : ''}"
                 role="switch"
                 aria-label="{server.enabled ? 'Disable' : 'Enable'} {server.name}"
                 aria-checked={server.enabled}
-                disabled={server.corp_locked || saving}
-                onclick={() => toggleServer(server.key, server.enabled)}
+                disabled={server.source === 'corp' || saving}
+                onclick={() => toggleServer(server.name, server.enabled)}
               >
                 <span
                   class="pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow transition duration-200
                     {server.enabled ? 'translate-x-4' : 'translate-x-0'}"
                 ></span>
               </button>
-              {#if !server.corp_locked}
+              {#if server.source !== 'corp'}
                 <button
                   type="button"
                   class="p-1.5 rounded-md text-muted-foreground-1 hover:text-destructive-foreground hover:bg-muted-hover transition-colors"
                   title="Remove server"
                   disabled={saving}
-                  onclick={() => removeServer(server.key)}
+                  onclick={() => removeServer(server.name)}
                 >
                   <Trash size={14} />
                 </button>

@@ -785,6 +785,18 @@ async fn mounted_fail_closed_stub_routes_return_explicit_errors() {
             "profile skill delete requires profile file persistence",
         ),
         (
+            axum::http::Method::PUT,
+            "/profiles/code/mcp/servers/github/edit",
+            Some(json!({ "url": "https://mcp.invalid/github", "enabled": true })),
+            "profile MCP server edit requires profile file persistence",
+        ),
+        (
+            axum::http::Method::DELETE,
+            "/profiles/code/mcp/servers/github/delete",
+            None,
+            "profile MCP server delete requires profile file persistence",
+        ),
+        (
             axum::http::Method::PATCH,
             "/vms/ops-vm/edit",
             Some(json!({ "ram_mb": 8192 })),

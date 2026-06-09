@@ -7,6 +7,7 @@ use axum::{
 };
 use capsem_core::poll::{poll_until, PollOpts};
 use capsem_core::{
+    mcp::policy::{McpManualServer, McpUserConfig},
     net::policy_config::{
         CompiledSecurityRule, DetectionLevel, ProfileAssetDescriptor, ProfileCatalog,
         ProfileCatalogSource, ProfileConfigFile, ProviderRuleProfile, SecurityPluginConfig,
@@ -249,6 +250,17 @@ struct PluginUpdate {
 struct McpToolEditRequest {
     #[serde(default)]
     approved: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct McpServerEditRequest {
+    #[serde(default)]
+    url: Option<String>,
+    #[serde(default)]
+    headers: HashMap<String, String>,
+    #[serde(default)]
+    enabled: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -4490,6 +4502,79 @@ fn ensure_profile_mcp_server(
     }
 }
 
+fn validate_mcp_server_id(server_id: &str) -> Result<(), AppError> {
+    if server_id.trim().is_empty() {
+        return Err(AppError(
+            StatusCode::BAD_REQUEST,
+            "MCP server id must not be empty".to_string(),
+        ));
+    }
+    if server_id.contains(capsem_core::mcp::types::NS_SEP) {
+        return Err(AppError(
+            StatusCode::BAD_REQUEST,
+            format!(
+                "MCP server id must not contain namespace separator {}",
+                capsem_core::mcp::types::NS_SEP
+            ),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_mcp_server_edit_request(
+    server_id: &str,
+    update: McpServerEditRequest,
+) -> Result<(), AppError> {
+    validate_mcp_server_id(server_id)?;
+    if let Some(url) = update.url.as_deref() {
+        if url.trim().is_empty() {
+            return Err(AppError(
+                StatusCode::BAD_REQUEST,
+                "MCP server URL must not be empty".to_string(),
+            ));
+        }
+    }
+    let server = McpManualServer {
+        name: server_id.to_string(),
+        url: update
+            .url
+            .unwrap_or_else(|| "http://profile-persistence-placeholder.invalid".to_string()),
+        headers: update.headers,
+        auth: None,
+        enabled: update.enabled.unwrap_or(true),
+    };
+    McpUserConfig {
+        servers: vec![server],
+        ..McpUserConfig::default()
+    }
+    .validate("profile")
+    .map_err(|error| AppError(StatusCode::BAD_REQUEST, error))?;
+    Ok(())
+}
+
+/// PUT /profiles/:profile_id/mcp/servers/:server_id/edit -- add or replace one MCP server.
+async fn handle_profile_mcp_server_edit(
+    Path((profile_id, server_id)): Path<(String, String)>,
+    Json(update): Json<McpServerEditRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let _profile = profile_manifest_for_route(profile_id)?;
+    validate_mcp_server_edit_request(&server_id, update)?;
+    Err(profile_persistence_not_implemented(
+        "profile MCP server edit",
+    ))
+}
+
+/// DELETE /profiles/:profile_id/mcp/servers/:server_id/delete -- remove one MCP server.
+async fn handle_profile_mcp_server_delete(
+    Path((profile_id, server_id)): Path<(String, String)>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let _profile = profile_manifest_for_route(profile_id)?;
+    validate_mcp_server_id(&server_id)?;
+    Err(profile_persistence_not_implemented(
+        "profile MCP server delete",
+    ))
+}
+
 async fn handle_profile_mcp_servers(
     Path(profile_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, AppError> {
@@ -6945,6 +7030,14 @@ fn build_service_router(state: Arc<ServiceState>) -> Router {
         .route(
             "/profiles/{profile_id}/mcp/info",
             get(handle_profile_mcp_info),
+        )
+        .route(
+            "/profiles/{profile_id}/mcp/servers/{server_id}/edit",
+            put(handle_profile_mcp_server_edit),
+        )
+        .route(
+            "/profiles/{profile_id}/mcp/servers/{server_id}/delete",
+            delete(handle_profile_mcp_server_delete),
         )
         .route(
             "/profiles/{profile_id}/mcp/servers/{server_id}/tools/list",

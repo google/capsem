@@ -383,6 +383,23 @@ pub fn run_with_opts(opts: Opts) -> Result<PathBuf> {
         }
     }
 
+    // -- profile/corp diagnostics index --
+    {
+        let entry_path = format!("{bundle_root}/system/config-diagnostics.json");
+        let diagnostics = config_diagnostics(&home);
+        let bytes = serde_json::to_vec_pretty(&diagnostics)?;
+        let len = bytes.len() as u64;
+        add_bytes(&mut tar, &entry_path, &bytes)?;
+        sections.push(Section {
+            path: entry_path,
+            kind: "json",
+            bytes: Some(len),
+            missing: false,
+            reason: None,
+            truncated_to_last_bytes: None,
+        });
+    }
+
     // -- system info --
     {
         let version_json = serde_json::json!({
@@ -638,6 +655,80 @@ fn read_tail(path: &Path, max_bytes: u64) -> Option<Vec<u8>> {
         tail.drain(..=idx);
     }
     Some(tail)
+}
+
+fn config_diagnostics(home: &Path) -> serde_json::Value {
+    use capsem_core::net::policy_config::{
+        corp_config_paths, corp_provision, ProfileCatalog, ProfileCatalogSource,
+    };
+
+    let profiles = match ProfileCatalog::load_default() {
+        Ok(catalog) => {
+            let source = match catalog.source() {
+                ProfileCatalogSource::BuiltIn => "built_in".to_string(),
+                ProfileCatalogSource::Directory(path) => format!("directory:{}", path.display()),
+            };
+            let profiles = catalog
+                .profiles()
+                .map(|profile| {
+                    let mcp_server_count = profile
+                        .mcp
+                        .as_ref()
+                        .map(|mcp| {
+                            mcp.servers.len()
+                                + usize::from(
+                                    mcp.server_enabled.get("local").copied().unwrap_or(false),
+                                )
+                        })
+                        .unwrap_or(0);
+                    serde_json::json!({
+                        "id": profile.id,
+                        "name": profile.name,
+                        "description": profile.description,
+                        "revision": profile.revision,
+                        "refresh_policy": profile.refresh_policy,
+                        "availability": profile.availability,
+                        "asset_arches": profile.assets.arch.keys().collect::<Vec<_>>(),
+                        "default_rule_count": profile.default.len(),
+                        "profile_rule_count": profile.profiles.rules.len(),
+                        "ai_rule_count": profile.ai.values().map(|provider| provider.rules.len()).sum::<usize>(),
+                        "plugin_count": profile.plugins.len(),
+                        "mcp_server_count": mcp_server_count,
+                    })
+                })
+                .collect::<Vec<_>>();
+            serde_json::json!({
+                "ok": true,
+                "source": source,
+                "profile_count": profiles.len(),
+                "profiles": profiles,
+            })
+        }
+        Err(error) => serde_json::json!({
+            "ok": false,
+            "error": error,
+        }),
+    };
+
+    let corp_paths = corp_config_paths()
+        .into_iter()
+        .map(|path| {
+            serde_json::json!({
+                "path": path.display().to_string(),
+                "exists": path.exists(),
+            })
+        })
+        .collect::<Vec<_>>();
+    let corp = serde_json::json!({
+        "installed": corp_paths.iter().any(|path| path["exists"].as_bool().unwrap_or(false)),
+        "paths": corp_paths,
+        "source": corp_provision::read_corp_source(home),
+    });
+
+    serde_json::json!({
+        "profiles": profiles,
+        "corp": corp,
+    })
 }
 
 fn redact_log_bytes(bytes: &[u8]) -> Vec<u8> {

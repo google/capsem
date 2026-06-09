@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed (route surfaces and diagnostics)
+- Moved frontend MCP controls off settings-backed `mcp.servers.*` mutation and
+  onto profile-scoped MCP routes. Settings now stays focused on UI/app
+  preferences, while the Profile surface owns rules, plugins, MCP, and assets.
+- Added a `capsem debug` CLI alias for redacted support bundles and expanded
+  `capsem status` with profile catalog readiness and corp config
+  presence/source/hash information when the service is running.
+- Added a route-backed frontend debug snapshot:
+  `window.__capsemDebug.snapshot()` now returns frontend version/log context,
+  websocket tail, gateway status, profile catalog status, and corp info for
+  pasteable bug reports.
+- Updated the session UI to display each VM's backend-provided `profile_id` and
+  replaced hard-coded About runtime/kernel claims with live diagnostic status.
+
 ### Added (kernel 7.0 + EROFS)
 - Added a stable-kernel upgrade path for guest builds: `kernel_branch = "7.0"`
   now resolves against kernel.org stable releases, while `auto` remains

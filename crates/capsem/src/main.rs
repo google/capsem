@@ -84,6 +84,7 @@ const GROUPED_HELP: &str = "\
 \x1b[36;1;4mMisc:\x1b[0m
   \x1b[32;1mupdate\x1b[0m       Check for updates and install the latest version
   \x1b[32;1mdoctor\x1b[0m       Run diagnostic tests in a fresh session
+  \x1b[32;1mdebug\x1b[0m        Write a redacted support bundle for bug reports
   \x1b[32;1mcompletions\x1b[0m  Generate shell completions (bash, zsh, fish, powershell)
   \x1b[32;1mversion\x1b[0m      Show version and build information
   \x1b[32;1muninstall\x1b[0m    Uninstall capsem completely (service, binaries, data)";
@@ -400,6 +401,7 @@ enum MiscCommands {
     /// Secrets in user.toml/corp.toml and bearer tokens in log lines are
     /// stripped by default. The bundle excludes rootfs.img unless
     /// `--include-rootfs` is passed.
+    #[command(alias = "debug")]
     SupportBundle {
         /// Output tar.gz path. Default: ~/.capsem/support/capsem-support-<ts>-<host>.tar.gz
         #[arg(long, short)]
@@ -754,6 +756,77 @@ async fn check_service_health() -> Result<Vec<String>> {
     Ok(issues)
 }
 
+async fn service_json(client: &UdsClient, path: &str) -> Option<serde_json::Value> {
+    client
+        .get::<ApiResponse<serde_json::Value>>(path)
+        .await
+        .ok()?
+        .into_result()
+        .ok()
+}
+
+fn print_profiles_status(status: &serde_json::Value) {
+    let source = status["source"].as_str().unwrap_or("unknown");
+    let profile_count = status["profile_count"].as_u64().unwrap_or(0);
+    let ready_count = status["ready_count"].as_u64().unwrap_or(0);
+    println!("Profiles:  {ready_count}/{profile_count} ready ({source})");
+    if let Some(profiles) = status["profiles"].as_array() {
+        for profile in profiles {
+            let id = profile["id"].as_str().unwrap_or("-");
+            let name = profile["name"].as_str().unwrap_or(id);
+            let ready = profile["ready"].as_bool().unwrap_or(false);
+            let arch = profile["current_arch"].as_str().unwrap_or("-");
+            let hash = profile["profile_payload_hash"].as_str().unwrap_or("-");
+            let missing = profile["missing_assets"]
+                .as_array()
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(|item| item.as_str())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            let readiness = if ready { "ready" } else { "not-ready" };
+            println!("  - {id}: {name} ({readiness}, arch {arch}, hash {hash})");
+            if !missing.is_empty() {
+                println!("    missing: {}", missing.join(", "));
+            }
+        }
+    }
+}
+
+fn print_corp_status(info: &serde_json::Value) {
+    let installed = info["installed"].as_bool().unwrap_or(false);
+    println!(
+        "Corp:      {}",
+        if installed {
+            "installed"
+        } else {
+            "not installed"
+        }
+    );
+    if let Some(source) = info["source"].as_object() {
+        let url = source.get("url").and_then(|value| value.as_str());
+        let file_path = source.get("file_path").and_then(|value| value.as_str());
+        let hash = source
+            .get("content_hash")
+            .and_then(|value| value.as_str())
+            .unwrap_or("-");
+        let refresh = source
+            .get("refresh_interval_hours")
+            .and_then(|value| value.as_u64())
+            .map(|hours| format!("{hours}h"))
+            .unwrap_or_else(|| "-".to_string());
+        if let Some(url) = url {
+            println!("  source:  {url}");
+        } else if let Some(path) = file_path {
+            println!("  source:  {path}");
+        }
+        println!("  hash:    {hash}");
+        println!("  refresh: {refresh}");
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -929,6 +1002,21 @@ async fn main() -> Result<()> {
                         }
                     }
                     _ => println!("Gateway:   no token/port files"),
+                }
+            }
+
+            if status.running {
+                let home = crate::paths::capsem_home().unwrap_or_default();
+                let sock = home.join("run/service.sock");
+                let status_client = client::UdsClient::new(sock, false);
+                println!();
+                match service_json(&status_client, "/profiles/status").await {
+                    Some(profile_status) => print_profiles_status(&profile_status),
+                    None => println!("Profiles:  unavailable"),
+                }
+                match service_json(&status_client, "/corp/info").await {
+                    Some(corp_info) => print_corp_status(&corp_info),
+                    None => println!("Corp:      unavailable"),
                 }
             }
 
@@ -2155,6 +2243,15 @@ mod tests {
         assert!(matches!(
             cli.command.unwrap(),
             Commands::Misc(MiscCommands::Status)
+        ));
+    }
+
+    #[test]
+    fn parse_debug_aliases_support_bundle() {
+        let cli = Cli::parse_from(["capsem", "debug"]);
+        assert!(matches!(
+            cli.command.unwrap(),
+            Commands::Misc(MiscCommands::SupportBundle { .. })
         ));
     }
 

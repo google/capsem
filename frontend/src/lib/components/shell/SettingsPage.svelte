@@ -3,16 +3,11 @@
   import { themeStore, PRELINE_THEMES, FONT_SIZES, FONT_FAMILIES, UI_FONT_SIZES } from '../../stores/theme.svelte.ts';
   import { settingsStore } from '../../stores/settings.svelte.ts';
   import { THEME_FAMILIES, getTheme, resolveThemeKey } from '../../terminal/themes';
+  import * as api from '../../api';
   import SettingsSection from '../settings/SettingsSection.svelte';
-  import McpSection from '../settings/McpSection.svelte';
-  import PluginSection from '../settings/PluginSection.svelte';
   import Palette from 'phosphor-svelte/lib/Palette';
   import GearSix from 'phosphor-svelte/lib/GearSix';
-  import Brain from 'phosphor-svelte/lib/Brain';
-  import GitBranch from 'phosphor-svelte/lib/GitBranch';
-  import Shield from 'phosphor-svelte/lib/Shield';
   import Desktop from 'phosphor-svelte/lib/Desktop';
-  import Plugs from 'phosphor-svelte/lib/Plugs';
   import Info from 'phosphor-svelte/lib/Info';
   import Sun from 'phosphor-svelte/lib/Sun';
   import Moon from 'phosphor-svelte/lib/Moon';
@@ -25,10 +20,14 @@
   // Active section (panel-per-section, not scrollspy)
   let activeSection = $state('appearance');
 
-  // Dynamic sections from settings tree (exclude 'appearance' -- handled by custom UI)
+  // Dynamic sections from settings tree (UI/app preferences only).
   let dynamicSections = $derived.by(() => {
     const sections = settingsStore.model?.sections ?? [];
-    return sections.filter(s => s.key !== 'appearance' && s.key !== 'app' && s.key !== 'mcp');
+    return sections.filter(s =>
+      s.key !== 'appearance'
+      && s.key !== 'app'
+      && !['ai', 'repository', 'security', 'vm', 'mcp', 'plugins', 'policy'].includes(s.key)
+    );
   });
 
   // Active dynamic group (if sidebar selected a dynamic section)
@@ -39,13 +38,9 @@
   // Icon map for dynamic sections
   const SECTION_ICONS: Record<string, any> = {
     app: GearSix,
-    ai: Brain,
-    repository: GitBranch,
-    security: Shield,
-    vm: Desktop,
   };
 
-  // Build full nav list: Appearance + dynamic + Policy + MCP + About
+  // Build full nav list: Appearance + settings-owned dynamic sections + About.
   let navItems = $derived.by(() => {
     const items: { key: string; label: string; icon: any }[] = [
       { key: 'appearance', label: 'Appearance', icon: Palette },
@@ -57,15 +52,17 @@
         icon: SECTION_ICONS[section.key] ?? GearSix,
       });
     }
-    items.push({ key: 'policy', label: 'Policy', icon: Shield });
-    items.push({ key: 'plugins', label: 'Plugins', icon: Plugs });
-    items.push({ key: 'mcp', label: 'MCP Servers', icon: Plugs });
     items.push({ key: 'about', label: 'About', icon: Info });
     return items;
   });
 
+  let diagnostics = $state<Record<string, any> | null>(null);
+  let diagnosticsError = $state<string | null>(null);
+  let diagnosticsCopied = $state(false);
+
   onMount(() => {
     settingsStore.load();
+    refreshDiagnostics();
   });
 
   let importInput = $state<HTMLInputElement>(null!);
@@ -97,6 +94,22 @@
       importMessage = { text: String(err instanceof Error ? err.message : err), error: true };
     }
     input.value = '';
+  }
+
+  async function refreshDiagnostics() {
+    diagnosticsError = null;
+    try {
+      diagnostics = await api.debugSnapshot() as Record<string, any>;
+    } catch (err) {
+      diagnosticsError = err instanceof Error ? err.message : String(err);
+    }
+  }
+
+  async function copyDiagnostics() {
+    const snapshot = diagnostics ?? (await api.debugSnapshot() as Record<string, any>);
+    await navigator.clipboard.writeText(JSON.stringify(snapshot, null, 2));
+    diagnosticsCopied = true;
+    window.setTimeout(() => { diagnosticsCopied = false; }, 1500);
   }
 </script>
 
@@ -320,14 +333,6 @@
           </div>
         </div>
 
-      {:else if activeSection === 'mcp'}
-        <!-- ===== MCP ===== -->
-        <McpSection />
-
-      {:else if activeSection === 'plugins'}
-        <!-- ===== Plugins ===== -->
-        <PluginSection />
-
       {:else if activeSection === 'about'}
         <!-- ===== About ===== -->
         <h2 class="text-xl font-medium text-foreground mb-6">About</h2>
@@ -338,20 +343,55 @@
           <SettingsSection group={appGroup} depth={1} />
         {/if}
 
-        <!-- Version info -->
-        <h3 class="text-xs font-semibold text-foreground uppercase tracking-wider mb-2 mt-6">Version</h3>
+        <!-- Diagnostics -->
+        <h3 class="text-xs font-semibold text-foreground uppercase tracking-wider mb-2 mt-6">Diagnostics</h3>
         <div class="bg-card border border-card-line rounded-xl divide-y divide-card-divider">
           <div class="flex items-center justify-between p-4">
-            <p class="text-sm text-foreground">Version</p>
-            <p class="text-sm text-muted-foreground-1">0.1.0-dev</p>
+            <p class="text-sm text-foreground">Service</p>
+            <p class="text-sm text-muted-foreground-1">{diagnostics?.status?.service ?? 'unknown'}</p>
           </div>
           <div class="flex items-center justify-between p-4">
-            <p class="text-sm text-foreground">Runtime</p>
-            <p class="text-sm text-muted-foreground-1">Apple Virtualization.framework</p>
+            <p class="text-sm text-foreground">Gateway version</p>
+            <p class="text-sm text-muted-foreground-1">{diagnostics?.status?.gateway_version ?? 'unknown'}</p>
           </div>
           <div class="flex items-center justify-between p-4">
-            <p class="text-sm text-foreground">Kernel</p>
-            <p class="text-sm text-muted-foreground-1">6.12-capsem</p>
+            <p class="text-sm text-foreground">Profiles</p>
+            <p class="text-sm text-muted-foreground-1">
+              {diagnostics?.profiles_status?.ready_count ?? 0}/{diagnostics?.profiles_status?.profile_count ?? 0} ready
+            </p>
+          </div>
+          <div class="flex items-center justify-between p-4">
+            <p class="text-sm text-foreground">Corp</p>
+            <p class="text-sm text-muted-foreground-1">
+              {diagnostics?.corp_info?.installed ? 'installed' : 'not installed'}
+            </p>
+          </div>
+          <div class="flex items-center justify-between p-4">
+            <div>
+              <p class="text-sm font-medium text-foreground">Debug snapshot</p>
+              <p class="text-xs text-muted-foreground-1 mt-0.5">
+                Service, profile, corp, and VM status for bug reports
+              </p>
+              {#if diagnosticsError}
+                <p class="text-xs text-destructive mt-1">{diagnosticsError}</p>
+              {/if}
+            </div>
+            <div class="flex items-center gap-x-2">
+              <button
+                type="button"
+                class="py-2 px-4 inline-flex items-center gap-x-2 text-sm font-medium rounded-lg border border-line-2 bg-layer text-foreground hover:bg-layer-hover transition-colors"
+                onclick={refreshDiagnostics}
+              >
+                Refresh
+              </button>
+              <button
+                type="button"
+                class="py-2 px-4 inline-flex items-center gap-x-2 text-sm font-medium rounded-lg border border-line-2 bg-layer text-foreground hover:bg-layer-hover transition-colors"
+                onclick={copyDiagnostics}
+              >
+                {diagnosticsCopied ? 'Copied' : 'Copy'}
+              </button>
+            </div>
           </div>
         </div>
 

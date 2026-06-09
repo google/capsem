@@ -1,10 +1,10 @@
-// MCP store -- loads servers, tools, and policy for the MCP settings section.
+// MCP store -- loads profile-owned MCP servers and tools.
 import {
   getMcpServers,
   getMcpTools,
-  setMcpServerEnabled,
-  addMcpServer,
-  removeMcpServer,
+  updateMcpServer,
+  upsertMcpServer,
+  deleteMcpServer,
   approveMcpTool,
   refreshMcpTools,
 } from '../api';
@@ -56,17 +56,17 @@ class McpStore {
   }
 
   async toggleServer(name: string, enabled: boolean) {
-    await setMcpServerEnabled(name, enabled);
+    await updateMcpServer(PROFILE_ID, name, { enabled });
     await this.load();
   }
 
   async addServer(name: string, url: string, headers: Record<string, string>) {
-    await addMcpServer(name, url, headers);
+    await upsertMcpServer(PROFILE_ID, name, url, headers);
     await this.load();
   }
 
   async removeServer(name: string) {
-    await removeMcpServer(name);
+    await deleteMcpServer(PROFILE_ID, name);
     await this.load();
   }
 

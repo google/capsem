@@ -19,7 +19,7 @@
   import GitFork from 'phosphor-svelte/lib/GitFork';
   import FloppyDisk from 'phosphor-svelte/lib/FloppyDisk';
 
-  type SortKey = 'name' | 'status' | 'uptime';
+  type SortKey = 'name' | 'status' | 'profile' | 'uptime';
   type SortDir = 'asc' | 'desc';
 
   let globalStats = $state<GlobalStats | null>(null);
@@ -56,6 +56,7 @@
       switch (sortKey) {
         case 'name': cmp = (a.name ?? a.id).localeCompare(b.name ?? b.id); break;
         case 'status': cmp = a.status.localeCompare(b.status); break;
+        case 'profile': cmp = a.profile_id.localeCompare(b.profile_id); break;
         case 'uptime': cmp = (a.uptime_secs ?? 0) - (b.uptime_secs ?? 0); break;
       }
       return sortDir === 'asc' ? cmp : -cmp;
@@ -183,6 +184,7 @@
             {#each [
               { key: 'name', label: 'Name' },
               { key: 'status', label: 'Status' },
+              { key: 'profile', label: 'Profile' },
               { key: 'uptime', label: 'Uptime' },
               { key: 'tokens', label: 'Tokens' },
               { key: 'cost', label: 'Cost' },
@@ -212,6 +214,7 @@
               <td class="p-3 whitespace-nowrap text-sm">
                 <span class="text-xs px-2 py-0.5 rounded-full {statusBadge(vm.status)}">{vm.status}</span>
               </td>
+              <td class="p-3 whitespace-nowrap text-sm text-muted-foreground-1">{vm.profile_id}</td>
               <td class="p-3 whitespace-nowrap text-sm text-muted-foreground-1 tabular-nums">{vm.uptime_secs != null ? formatUptime(vm.uptime_secs) : '--'}</td>
               <td class="p-3 whitespace-nowrap text-sm text-muted-foreground-1 tabular-nums">{vm.total_input_tokens != null ? formatTokens((vm.total_input_tokens ?? 0) + (vm.total_output_tokens ?? 0)) : '--'}</td>
               <td class="p-3 whitespace-nowrap text-sm text-muted-foreground-1 tabular-nums">{vm.total_estimated_cost != null ? formatCost(vm.total_estimated_cost) : '--'}</td>

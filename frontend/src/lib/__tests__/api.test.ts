@@ -133,6 +133,29 @@ describe('api', () => {
       expect(status.service).toBe('offline');
       expect(status.vms).toEqual([]);
     });
+
+    it('debugSnapshot reads status, profiles status, and corp info routes', async () => {
+      mockFetch
+        .mockReturnValueOnce(jsonResponse({ ok: true, version: '1.0.0', service_socket: '/tmp/s' }))
+        .mockReturnValueOnce(jsonResponse({ token: 'tok' }));
+      await api.init();
+
+      mockFetch
+        .mockReturnValueOnce(jsonResponse({ service: 'running', gateway_version: '1.0.0', vm_count: 0, vms: [], resource_summary: null }))
+        .mockReturnValueOnce(jsonResponse({ source: 'built_in', profile_count: 1, ready_count: 1, profiles: [] }))
+        .mockReturnValueOnce(jsonResponse({ installed: true, source: { content_hash: 'blake3:test' } }));
+
+      const snapshot = await api.debugSnapshot() as Record<string, unknown>;
+
+      expect(snapshot.connected).toBe(true);
+      expect((snapshot.status as Record<string, unknown>).service).toBe('running');
+      expect((snapshot.profiles_status as Record<string, unknown>).profile_count).toBe(1);
+      expect((snapshot.corp_info as Record<string, unknown>).installed).toBe(true);
+      const paths = mockFetch.mock.calls.slice(-3).map(call => call[0]);
+      expect(paths[0]).toContain('/status');
+      expect(paths[1]).toContain('/profiles/status');
+      expect(paths[2]).toContain('/corp/info');
+    });
   });
 
   // ---- VM lifecycle ----
@@ -285,9 +308,9 @@ describe('api', () => {
 
   });
 
-  // ---- MCP config (via settings) ----
+  // ---- MCP profile config ----
 
-  describe('MCP config via settings', () => {
+  describe('MCP profile config', () => {
     beforeEach(async () => {
       mockFetch
         .mockReturnValueOnce(jsonResponse({ ok: true, version: '1.0.0', service_socket: '/tmp/s' }))
@@ -295,38 +318,44 @@ describe('api', () => {
       await api.init();
     });
 
-    it('setMcpServerEnabled calls saveSettings with correct key', async () => {
-      mockFetch.mockReturnValueOnce(jsonResponse({ tree: [], issues: [] }));
-      await api.setMcpServerEnabled('my-server', true);
+    it('updateMcpServer sends PUT /profiles/{profile_id}/mcp/servers/{server_id}/edit', async () => {
+      mockFetch.mockReturnValueOnce(jsonResponse({ name: 'my-server', enabled: true }));
+      await api.updateMcpServer('code', 'my-server', { enabled: true });
       const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
-      const body = JSON.parse(call[1].body);
-      expect(body['mcp.servers.my-server.enabled']).toBe(true);
+      expect(call[0]).toContain('/profiles/code/mcp/servers/my-server/edit');
+      expect(call[1].method).toBe('PUT');
+      expect(JSON.parse(call[1].body)).toEqual({ enabled: true });
     });
 
-    it('addMcpServer calls saveSettings with url, enabled, and non-secret headers', async () => {
-      mockFetch.mockReturnValueOnce(jsonResponse({ tree: [], issues: [] }));
-      await api.addMcpServer('srv', 'http://x', { 'X-Trace': 'val' });
+    it('upsertMcpServer sends route payload with url, enabled, and non-secret headers', async () => {
+      mockFetch.mockReturnValueOnce(jsonResponse({ name: 'srv', enabled: true }));
+      await api.upsertMcpServer('code', 'srv', 'http://x', { 'X-Trace': 'val' });
       const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
+      expect(call[0]).toContain('/profiles/code/mcp/servers/srv/edit');
+      expect(call[1].method).toBe('PUT');
       const body = JSON.parse(call[1].body);
-      expect(body['mcp.servers.srv.url']).toBe('http://x');
-      expect(body['mcp.servers.srv.enabled']).toBe(true);
-      expect(body['mcp.servers.srv.headers']).toEqual({ 'X-Trace': 'val' });
+      expect(body.url).toBe('http://x');
+      expect(body.enabled).toBe(true);
+      expect(body.headers).toEqual({ 'X-Trace': 'val' });
       expect(Object.keys(body).some((key) => key.includes('bearer_token'))).toBe(false);
     });
 
-    it('removeMcpServer sends null for the server key', async () => {
-      mockFetch.mockReturnValueOnce(jsonResponse({ tree: [], issues: [] }));
-      await api.removeMcpServer('old-srv');
+    it('deleteMcpServer sends DELETE /profiles/{profile_id}/mcp/servers/{server_id}/delete', async () => {
+      mockFetch.mockReturnValueOnce(jsonResponse({ ok: true }));
+      await api.deleteMcpServer('code', 'old-srv');
       const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
-      const body = JSON.parse(call[1].body);
-      expect(body['mcp.servers.old-srv']).toBeNull();
+      expect(call[0]).toContain('/profiles/code/mcp/servers/old-srv/delete');
+      expect(call[1].method).toBe('DELETE');
     });
 
-    it('does not expose retired MCP policy mutators', () => {
+    it('does not expose retired MCP policy or settings mutators', () => {
       expect('getMcpPolicy' in api).toBe(false);
       expect('setMcpGlobalPolicy' in api).toBe(false);
       expect('setMcpDefaultPermission' in api).toBe(false);
       expect('setMcpToolPermission' in api).toBe(false);
+      expect('setMcpServerEnabled' in api).toBe(false);
+      expect('addMcpServer' in api).toBe(false);
+      expect('removeMcpServer' in api).toBe(false);
     });
   });
 
