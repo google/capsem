@@ -133,9 +133,14 @@ These modes are opt-in because they stress hot paths more aggressively than the 
 
 | Mode | What it exercises |
 |------|-------------------|
+| `mitm-local` | Deterministic local debug-upstream scenarios: tiny HTTP, 1 MiB body, gzip, SSE model stream, JSON model response, denied-target, credential-shaped response, and WebSocket control frames |
 | `mitm-load` | Concurrent HTTPS requests through the MITM proxy |
 | `mcp-load` | Guest MCP framed transport and host endpoint dispatch |
 | `dns-load` | DNS redirect, capsem-dns-proxy, host DNS policy, and resolver path |
+
+Release benchmark proof must use local fixtures. Public-network HTTP,
+throughput, model, or DNS numbers are debugging data only and cannot close the
+release gate.
 
 ### Snapshot operations (`snapshot`)
 

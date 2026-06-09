@@ -110,6 +110,7 @@ pub fn ready_payload(addr: SocketAddr) -> ReadyPayload {
             "/bytes/{size}",
             "/gzip/{size}",
             "/sse/model",
+            "/model/response",
             "/slow-chunks",
             "/credential/response",
             "/echo",
@@ -139,6 +140,7 @@ pub fn app() -> Router {
         .route("/bytes/{size}", get(bytes_endpoint))
         .route("/gzip/{size}", get(gzip_endpoint))
         .route("/sse/model", get(sse_model))
+        .route("/model/response", get(model_response))
         .route("/slow-chunks", get(slow_chunks))
         .route("/credential/response", get(credential_response))
         .route("/echo", post(echo))
@@ -216,6 +218,40 @@ async fn sse_model() -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
             .data(r#"{"finish_reason":"stop"}"#),
     ];
     Sse::new(tokio_stream::iter(events.into_iter().map(Ok))).keep_alive(KeepAlive::default())
+}
+
+async fn model_response() -> impl IntoResponse {
+    Json(serde_json::json!({
+        "id": "chatcmpl-debug-local",
+        "object": "chat.completion",
+        "provider": "debug",
+        "model": "debug-local",
+        "choices": [
+            {
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": "hello from capsem-debug-upstream",
+                    "tool_calls": [
+                        {
+                            "id": "tool_0001",
+                            "type": "function",
+                            "function": {
+                                "name": "debug_lookup",
+                                "arguments": "{\"query\":\"capsem\"}"
+                            }
+                        }
+                    ]
+                },
+                "finish_reason": "tool_calls"
+            }
+        ],
+        "usage": {
+            "prompt_tokens": 7,
+            "completion_tokens": 5,
+            "total_tokens": 12
+        }
+    }))
 }
 
 async fn slow_chunks() -> Response {
@@ -472,6 +508,27 @@ mod tests {
 
         assert!(body.contains("event: model.tool_call"));
         assert!(body.contains("debug_lookup"));
+
+        upstream.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn model_response_contains_tool_call_fixture() {
+        let upstream = spawn_debug_upstream().await.unwrap();
+        let body: serde_json::Value =
+            reqwest::get(format!("{}/model/response", upstream.base_url()))
+                .await
+                .unwrap()
+                .json()
+                .await
+                .unwrap();
+
+        assert_eq!(body["provider"], "debug");
+        assert_eq!(body["model"], "debug-local");
+        assert_eq!(
+            body["choices"][0]["message"]["tool_calls"][0]["function"]["name"],
+            "debug_lookup"
+        );
 
         upstream.shutdown().await.unwrap();
     }

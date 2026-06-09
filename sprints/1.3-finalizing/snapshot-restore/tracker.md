@@ -1454,14 +1454,51 @@ S4 progress note:
 
 ## S5: Security Corpus And Bench Gates
 
-- [ ] Restore detection/enforcement corpus in the new rule format.
-- [ ] Restore Sigma facade/import/export tests for detection rules.
-- [ ] Restore pack/corpus compile and backtest commands through `capsem-admin`
-  or the accepted typed admin rail.
-- [ ] Restore security-event benchmarks for HTTP, DNS, MCP, model, process, and
-  file events.
+- [ ] Reject old detection/enforcement corpus and pack/backtest commits unless
+  already represented by current `SecurityRuleSet`/CEL tests.
+  Decision so far: old policy-pack, detection-pack, S08C, and policy-context
+  JSONL abstractions stay burned. Current coverage already includes direct
+  enforcement TOML parsing, Sigma YAML parsing, stale field rejection, old
+  `policy.http.*` rejection, and profile rule-file rejection through
+  `SecurityRuleProfile`/`SecurityRuleSet`.
+- [x] Restore security-event microbenchmarks for rule matching, plugin dispatch,
+  credential-broker substitution, and runtime classification across HTTP, DNS,
+  MCP, model, file, and process events.
+  Proof: `cargo bench -p capsem-core --bench security_actions -- --warm-up-time
+  1 --measurement-time 2` completed. Current medians: rule match `54.776ns`;
+  plugin dispatch `credential_broker 95.170ns`, `dummy_pre_eicar 159.77ns`,
+  `dummy_post_allow 203.79ns`; broker substitute/materialize `218.85ns`;
+  runtime classify `http 1.3306us`, `model 1.3240us`, `mcp 1.3284us`,
+  `dns 1.2561us`, `file 1.2101us`, `process 1.2898us`.
+- [x] Add model-shaped local debug-upstream fixture to release benchmark path.
+  Proof: `capsem-debug-upstream` now exposes `/model/response` alongside
+  `/sse/model`; `uv run pytest tests/test_capsem_bench_mitm_local.py -q`
+  passed 13 tests; host-direct local smoke
+  `PYTHONPATH=guest/artifacts uv run --with rich --with requests --with
+  websockets python -m capsem_bench mitm-local http://127.0.0.1:61085 10 1`
+  passed all scenarios, including `model_json_response` at `2506.4 rps`,
+  `0.4ms` p50, `0.5ms` p99.
+- [ ] Add or run MCP brokered-auth benchmark numbers against the local MCP
+  recording server.
+  Current proof is functional, not a benchmark: `local_http_mcp_e2e_uses_brokered_oauth_and_records_tool_call`
+  connects to a local Streamable HTTP MCP server, resolves brokered OAuth,
+  lists/calls `echo`, and proves the server receives the real bearer token
+  rather than a `credential:blake3` reference. S5 cannot claim broker
+  benchmark closure until this has numbers or an owner-accepted deferral.
+- [ ] Refresh release benchmark artifacts with local HTTP/model, DNS-load,
+  DB-writer, EROFS/storage, lifecycle/fork, and security-action numbers.
+  Current recorded evidence: EROFS/LZ4HC rootfs decision table in
+  `docs/src/content/docs/benchmarks/results.md`; DNS baseline
+  `benchmarks/dns-load/baseline.json` (`c=10` `12928.5 rps`, `0.744ms` p50,
+  `1.142ms` p99, `0` errors); VM MITM-local artifact
+  `benchmarks/mitm-local/data_1.0.1780763638_arm64.json`; DB writer artifact
+  `benchmarks/db-writer/data_1.0.1780763638_arm64.json`.
 - [ ] Add regression tests proving old policy-v2/domain/MCP decision rails stay
-  absent.
+  absent and do not show up as live code paths.
+  Current focused proof: `uv run pytest
+  tests/capsem-service/test_svc_mcp_api.py::TestRetiredMcpPolicy::test_retired_mcp_endpoints_are_burned
+  -q` passed; searches show old `policy.http.*` strings only in rejection
+  tests and admin/profile old-syntax rejection fixtures.
 - [ ] Commit S5.
 
 ## S6: Docs, Changelog, And Verification

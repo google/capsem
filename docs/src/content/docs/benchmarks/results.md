@@ -64,6 +64,44 @@ Sequential I/O benefits from VirtioFS pass-through to APFS. Random write IOPS
 are limited by per-write `fdatasync`, which reflects worst-case
 database-style writes.
 
+## Local Network And Model Fixtures
+
+Release network proof uses `capsem-debug-upstream`, not public internet. The
+current VM MITM-local artifact was recorded against local HTTP, gzip, SSE model,
+denied-target, credential-shaped, and WebSocket fixtures. The benchmark now also
+includes the `/model/response` JSON model fixture; rerun the local MITM gate
+before release so the committed artifact includes that row.
+
+| Scenario | Success | Requests/sec | p50 | p99 |
+|---|---:|---:|---:|---:|
+| tiny HTTP | 10/10 | 602.9 | 1.3ms | 4.0ms |
+| 1 MiB HTTP | 10/10 | 72.1 | 13.7ms | 15.0ms |
+| gzip 1 MiB | 10/10 | 29.8 | 33.3ms | 34.7ms |
+| SSE model stream | 10/10 | 683.1 | 1.3ms | 2.5ms |
+| denied target fixture | 10/10 | 799.8 | 1.1ms | 2.1ms |
+| credential-shaped response | 10/10 | 833.2 | 1.1ms | 2.0ms |
+
+WebSocket control fixture: echo `10` frames at `2,656.0` frames/sec with
+`0.2ms` p50 latency; close control frame completed in `1.7ms` p50.
+
+Host-direct control smoke after adding the JSON model fixture:
+`model_json_response` completed `10/10` requests at `2,506.4` requests/sec with
+`0.4ms` p50 and `0.5ms` p99. This is a fixture sanity check, not a replacement
+for the VM MITM release artifact.
+
+## DNS Load
+
+DNS release proof must run `capsem-bench dns-load` inside a VM so traffic goes
+through the guest redirect, DNS proxy, host DNS handler, and
+`SecurityRuleSet`. Current baseline artifact:
+
+| Concurrency | Requests/sec | p50 | p99 | Errors |
+|---:|---:|---:|---:|---:|
+| 1 | 3,556.5 | 0.264ms | 0.497ms | 0 |
+| 10 | 12,928.5 | 0.744ms | 1.142ms | 0 |
+| 50 | 12,425.0 | 3.971ms | 4.915ms | 0 |
+| 200 | 11,482.1 | 16.464ms | 26.734ms | 0 |
+
 ## VM Lifecycle
 
 Host-side latency for individual VM operations. Measured over 3

@@ -17,7 +17,9 @@ use capsem_core::security_engine::{
     RuntimeSecurityEvent, RuntimeSecurityEventType, SecurityActionRegistry, SecurityEvent,
     SecurityPluginStage,
 };
-use capsem_logger::{Decision, McpCall, ModelCall, NetEvent, WriteOp};
+use capsem_logger::{
+    AuditEvent, Decision, DnsEvent, FileAction, FileEvent, McpCall, ModelCall, NetEvent, WriteOp,
+};
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use std::collections::BTreeMap;
 use std::time::SystemTime;
@@ -63,10 +65,18 @@ match = 'http.host == "api.anthropic.com"'
     )
 }
 
-fn brokered_header_event() -> (SecurityEvent, tempfile::TempDir, EnvVarGuard) {
+fn brokered_header_event() -> (SecurityEvent, tempfile::TempDir, Vec<EnvVarGuard>) {
     let tmp = tempfile::tempdir().unwrap();
     let store_path = tmp.path().join("broker-store.json");
-    let guard = EnvVarGuard::set(TEST_STORE_ENV, store_path.as_os_str());
+    let user_config = tmp.path().join("user.toml");
+    let corp_config = tmp.path().join("corp.toml");
+    std::fs::write(&user_config, "").unwrap();
+    std::fs::write(&corp_config, "").unwrap();
+    let guards = vec![
+        EnvVarGuard::set(TEST_STORE_ENV, store_path.as_os_str()),
+        EnvVarGuard::set("CAPSEM_USER_CONFIG", user_config.as_os_str()),
+        EnvVarGuard::set("CAPSEM_CORP_CONFIG", corp_config.as_os_str()),
+    ];
     let brokered = broker_observed_credential(&CredentialObservation {
         provider: CredentialProvider::Anthropic,
         raw_value: "sk-ant-security-action-bench".to_string(),
@@ -92,7 +102,7 @@ fn brokered_header_event() -> (SecurityEvent, tempfile::TempDir, EnvVarGuard) {
             None,
         ),
     );
-    (event, tmp, guard)
+    (event, tmp, guards)
 }
 
 fn net_write() -> WriteOp {
@@ -188,6 +198,61 @@ fn mcp_write() -> WriteOp {
     })
 }
 
+fn dns_write() -> WriteOp {
+    WriteOp::DnsEvent(DnsEvent {
+        event_id: None,
+        timestamp: SystemTime::now(),
+        qname: "api.anthropic.com".to_string(),
+        qtype: 1,
+        qclass: 1,
+        rcode: 0,
+        decision: "allowed".to_string(),
+        matched_rule: None,
+        source_proto: Some("udp".to_string()),
+        process_name: Some("bench".to_string()),
+        upstream_resolver_ms: 1,
+        trace_id: Some("bench-trace".to_string()),
+        policy_mode: None,
+        policy_action: None,
+        policy_rule: None,
+        policy_reason: None,
+        credential_ref: None,
+    })
+}
+
+fn file_write() -> WriteOp {
+    WriteOp::FileEvent(FileEvent {
+        event_id: None,
+        timestamp: SystemTime::now(),
+        action: FileAction::Read,
+        path: "/workspace/security/SKILL.md".to_string(),
+        size: Some(4096),
+        trace_id: Some("bench-trace".to_string()),
+        credential_ref: None,
+    })
+}
+
+fn process_write() -> WriteOp {
+    WriteOp::AuditEvent(AuditEvent {
+        event_id: None,
+        timestamp: SystemTime::now(),
+        pid: 42,
+        ppid: 1,
+        uid: 1000,
+        exe: "/usr/bin/codex".to_string(),
+        comm: Some("codex".to_string()),
+        argv: "codex run".to_string(),
+        cwd: Some("/workspace".to_string()),
+        tty: None,
+        session_id: None,
+        audit_id: Some("bench-audit".to_string()),
+        exec_event_id: None,
+        parent_exe: Some("/bin/bash".to_string()),
+        trace_id: Some("bench-trace".to_string()),
+        credential_ref: None,
+    })
+}
+
 fn bench_rule_match(c: &mut Criterion) {
     let rules = rule_match_set();
     let event =
@@ -213,10 +278,13 @@ fn bench_action_chain(c: &mut Criterion) {
             "security_action_plugin_credential_broker",
             "credential_broker",
         ),
-        ("security_action_plugin_dummy_pre", "dummy_pre"),
-        ("security_action_plugin_dummy_post", "dummy_post"),
+        ("security_action_plugin_dummy_pre_eicar", "dummy_pre_eicar"),
+        (
+            "security_action_plugin_dummy_post_allow",
+            "dummy_post_allow",
+        ),
     ] {
-        let stage = if plugin == "dummy_post" {
+        let stage = if plugin == "dummy_post_allow" {
             SecurityPluginStage::PostDecision
         } else {
             SecurityPluginStage::PreDecision
@@ -238,7 +306,7 @@ fn bench_action_chain(c: &mut Criterion) {
 
 fn bench_broker_substitute(c: &mut Criterion) {
     let registry = registry_for_plugin("credential_broker");
-    let (event, _tmp, _guard) = brokered_header_event();
+    let (event, _tmp, _guards) = brokered_header_event();
 
     c.bench_function("security_action_broker_substitute_header_ref", |b| {
         b.iter(|| {
@@ -270,6 +338,9 @@ fn bench_runtime_event_handoff(c: &mut Criterion) {
     let net = net_write();
     let model = model_write();
     let mcp = mcp_write();
+    let dns = dns_write();
+    let file = file_write();
+    let process = process_write();
 
     c.bench_function("security_event_runtime_classify_http", |b| {
         b.iter(|| {
@@ -288,6 +359,27 @@ fn bench_runtime_event_handoff(c: &mut Criterion) {
     c.bench_function("security_event_runtime_classify_mcp", |b| {
         b.iter(|| {
             let event = RuntimeSecurityEvent::from_logger_write(black_box(mcp.clone()));
+            black_box(event);
+        });
+    });
+
+    c.bench_function("security_event_runtime_classify_dns", |b| {
+        b.iter(|| {
+            let event = RuntimeSecurityEvent::from_logger_write(black_box(dns.clone()));
+            black_box(event);
+        });
+    });
+
+    c.bench_function("security_event_runtime_classify_file", |b| {
+        b.iter(|| {
+            let event = RuntimeSecurityEvent::from_logger_write(black_box(file.clone()));
+            black_box(event);
+        });
+    });
+
+    c.bench_function("security_event_runtime_classify_process", |b| {
+        b.iter(|| {
+            let event = RuntimeSecurityEvent::from_logger_write(black_box(process.clone()));
             black_box(event);
         });
     });

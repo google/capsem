@@ -68,7 +68,7 @@ class TestMcpTools:
         )
 
 
-class TestMcpPolicy:
+class TestRetiredMcpPolicy:
 
     def test_retired_mcp_endpoints_are_burned(self, client):
         """Retired global MCP endpoints must not expose alternate authoring."""

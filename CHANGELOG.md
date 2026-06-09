@@ -34,6 +34,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   asset resolution no longer selects `rootfs.squashfs`, and in-VM doctor checks
   require `/dev/vda` to be EROFS.
 
+### Added (benchmarks)
+- Added a deterministic `/model/response` fixture to `capsem-debug-upstream`
+  and wired `capsem-bench mitm-local` to exercise both SSE model streams and
+  JSON model responses without public-network dependencies.
+- Expanded the security-action Criterion benchmark to cover runtime event
+  classification for HTTP, DNS, MCP, model, file, and process events in
+  addition to rule matching, plugin dispatch, and broker substitution.
+
 ### Fixed (install/setup)
 - macOS package postinstall now adds `~/.capsem/bin` to fish shell startup via
   an idempotent `fish_add_path --path "$HOME/.capsem/bin"` entry.

@@ -54,6 +54,13 @@ HTTP_SCENARIOS = (
         "required_text": "model.tool_call",
     },
     {
+        "name": "model_json_response",
+        "path": "/model/response",
+        "expected_status": 200,
+        "body_kind": "model_json",
+        "required_text": "tool_calls",
+    },
+    {
         "name": "denied_target",
         "path": "/deny-target",
         "expected_status": 200,

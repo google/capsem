@@ -184,19 +184,24 @@ Required capabilities:
 
 ## S5: Security Corpus And Bench Gates
 
-Goal: restore release evidence without resurrecting old policy engines.
+Goal: preserve release evidence without resurrecting old policy engines.
 
-Required capabilities:
+Required posture:
 
-- Detection/enforcement corpus exists for the new rule format.
-- Sigma facade/import/export tests exist where detection level is present.
-- Backtests compile and execute against `SecurityRuleSet`.
-- Benchmarks cover HTTP, DNS, MCP, model, process/file security events.
-- Benchmarks and runtime status expose latency attribution across plugin
-  stages, CEL compile/evaluation, rule matching, logging enqueue, and total
-  boundary time.
-- Plugin benchmarks prove overhead by plugin id, version, stage, fixture,
-  event count, mutation count, error count, and latency percentiles.
+- Reject old policy-pack, detection-pack, S08C corpus, policy-context JSONL, and
+  admin policy backtest commits unless a piece already exists on the current
+  `SecurityRuleSet`/CEL contract.
+- Keep current enforcement TOML and Sigma YAML tests that compile directly into
+  `SecurityRuleSet`; do not add another pack/backtest abstraction.
+- Benchmarks cover the current hot paths: rule matching, plugin dispatch,
+  credential-broker substitution, runtime event classification for HTTP, DNS,
+  MCP, model, file, and process, local HTTP/model fixtures, MCP brokered auth,
+  DNS load, DB writer, and EROFS/storage/lifecycle gates.
+- Local network/model release proof uses `capsem-debug-upstream`: tiny HTTP,
+  1 MiB body, gzip, SSE model stream, JSON model response, denied-target,
+  credential-shaped response, and WebSocket control frames.
+- DNS release proof runs `capsem-bench dns-load` inside a VM; public-network DNS
+  numbers are not release proof.
 - Old policy-v2/domain/MCP decision rails remain burned.
 
 ## S6: Docs, Changelog, And Verification

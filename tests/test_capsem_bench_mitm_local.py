@@ -71,6 +71,38 @@ class _DebugHandler(BaseHTTPRequestHandler):
                 "text/event-stream",
             )
             return
+        if self.path == "/model/response":
+            self._send(
+                200,
+                json.dumps({
+                    "id": "chatcmpl-debug-local",
+                    "object": "chat.completion",
+                    "provider": "debug",
+                    "model": "debug-local",
+                    "choices": [{
+                        "message": {
+                            "role": "assistant",
+                            "content": "hello",
+                            "tool_calls": [{
+                                "id": "tool_0001",
+                                "type": "function",
+                                "function": {
+                                    "name": "debug_lookup",
+                                    "arguments": "{\"query\":\"capsem\"}",
+                                },
+                            }],
+                        },
+                        "finish_reason": "tool_calls",
+                    }],
+                    "usage": {
+                        "prompt_tokens": 7,
+                        "completion_tokens": 5,
+                        "total_tokens": 12,
+                    },
+                }).encode(),
+                "application/json",
+            )
+            return
         if self.path == "/deny-target":
             self._send(200, b"capsem-debug-upstream:deny-target\n", "text/plain")
             return
@@ -322,6 +354,7 @@ def test_mitm_local_drives_debug_http_fixture():
     assert by_name["http_1mb"]["successful"] == 1
     assert by_name["gzip_1mb"]["successful"] == 1
     assert by_name["sse_model"]["successful"] == 1
+    assert by_name["model_json_response"]["successful"] == 1
     assert by_name["denied_target"]["successful"] == 1
     assert by_name["credential_response"]["successful"] == 1
     assert by_name["credential_response"]["secret_shaped_fixture_seen"] is True
