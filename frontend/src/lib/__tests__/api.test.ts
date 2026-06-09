@@ -173,9 +173,10 @@ describe('api', () => {
       mockFetch.mockReturnValueOnce(jsonResponse({ id: 'vm-1' }));
       const result = await api.provisionVm({
         profile_id: 'code',
+        name: 'code-dev',
         ram_mb: 2048,
         cpus: 2,
-        persistent: false,
+        persistent: true,
       });
       expect(result.id).toBe('vm-1');
       const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
@@ -222,13 +223,6 @@ describe('api', () => {
       await api.resumeVm('my-vm');
       const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
       expect(call[0]).toContain('/vms/my-vm/resume');
-    });
-
-    it('persistVm sends POST', async () => {
-      mockFetch.mockReturnValueOnce(jsonResponse(null));
-      await api.persistVm('vm-1');
-      const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
-      expect(call[0]).toContain('/vms/vm-1/save');
     });
 
     it('forkVm sends POST with body', async () => {
@@ -796,7 +790,7 @@ describe('api', () => {
         service: 'running',
         gateway_version: '1.0.0',
         vm_count: 1,
-        vms: [{ id: 'vm-1', name: null, status: 'Running', persistent: false }],
+        vms: [{ id: 'vm-1', name: 'code-dev', status: 'Running', persistent: true }],
         resource_summary: null,
       }));
       const state = await api.vmStatus();

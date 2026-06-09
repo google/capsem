@@ -9,7 +9,6 @@
   import type { GlobalStats } from '../../types/gateway';
   import { formatUptime, formatTokens, formatCost } from '../../format';
   import Modal from './Modal.svelte';
-  import ArrowClockwise from 'phosphor-svelte/lib/ArrowClockwise';
   import Pause from 'phosphor-svelte/lib/Pause';
   import Trash from 'phosphor-svelte/lib/Trash';
   import Play from 'phosphor-svelte/lib/Play';
@@ -20,7 +19,7 @@
   import Warning from 'phosphor-svelte/lib/Warning';
   import X from 'phosphor-svelte/lib/X';
   import GitFork from 'phosphor-svelte/lib/GitFork';
-  import FloppyDisk from 'phosphor-svelte/lib/FloppyDisk';
+  import Stop from 'phosphor-svelte/lib/Stop';
 
   type SortKey = 'name' | 'status' | 'profile' | 'uptime';
   type SortDir = 'asc' | 'desc';
@@ -80,8 +79,7 @@
     });
   }
 
-  let ephemeralVms = $derived(sortVms(vmStore.vms.filter(v => !v.persistent)));
-  let persistentVms = $derived(sortVms(vmStore.vms.filter(v => v.persistent)));
+  let allVms = $derived(sortVms(vmStore.vms));
 
   const statusColor: Record<string, string> = {
     Running: 'bg-primary text-primary-foreground',
@@ -96,7 +94,7 @@
   }
 
   // --- Modal state ---
-  type DashModalKind = 'stop' | 'destroy' | null;
+  type DashModalKind = 'stop' | 'delete' | null;
   let dashModalKind = $state<DashModalKind>(null);
   let dashModalVm = $state<VmSummary | null>(null);
 
@@ -118,19 +116,41 @@
     closeDashModal();
     if (kind === 'stop') {
       await vmStore.stop(id);
-    } else if (kind === 'destroy') {
+    } else if (kind === 'delete') {
       const tab = tabStore.tabs.find(t => t.vmId === id);
       if (tab) tabStore.close(tab.id);
       await vmStore.delete(id);
     }
   }
 
-  async function handleResume(e: MouseEvent, vm: VmSummary) {
+  async function handleStart(e: MouseEvent, vm: VmSummary) {
     e.stopPropagation();
-    if (vm.name) await vmStore.resume(vm.name);
+    await vmStore.resume(vm.name ?? vm.id);
   }
 
-  let creatingTemp = $state(false);
+  async function handlePause(e: MouseEvent, vm: VmSummary) {
+    e.stopPropagation();
+    await vmStore.suspend(vm.id);
+  }
+
+  async function handleFork(e: MouseEvent, vm: VmSummary) {
+    e.stopPropagation();
+    const baseName = vm.name ?? vm.id;
+    const name = prompt('Fork name:', `${baseName}-fork`);
+    if (name?.trim()) await vmStore.fork(vm.id, { name: name.trim() });
+  }
+
+  function generatedVmName(profileId: string): string {
+    const safeProfile = profileId
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9-]+/g, '-')
+      .replace(/^-+|-+$/g, '') || 'vm';
+    const stamp = Date.now().toString(36);
+    return `${safeProfile}-${stamp}`;
+  }
+
+  let creatingVm = $state(false);
   let actionError = $state<string | null>(null);
 
   function profileAssetText(assetHealth: AssetStatusResponse | null): string {
@@ -224,21 +244,22 @@
   }
 
   async function createFromProfile(profileId: string) {
-    if (creatingTemp) return;
+    if (creatingVm) return;
     actionError = null;
     const launcher = profileLaunchers.find(item => item.profile.id === profileId);
     if (!launcher || launcher.assets?.ready !== true) {
       actionError = `VM assets are not ready for profile ${profileId}`;
       return;
     }
-    creatingTemp = true;
+    creatingVm = true;
     updateProfileLauncher(profileId, { creating: true });
     try {
       const { id, name } = await vmStore.provision({
         profile_id: profileId,
+        name: generatedVmName(profileId),
         ram_mb: 2048,
         cpus: 2,
-        persistent: false,
+        persistent: true,
       });
       console.log('[NewTabPage] provision OK id=%s name=%s', id, name);
       tabStore.openVM(id, name);
@@ -246,7 +267,7 @@
       console.error('[NewTabPage] provision FAIL:', e);
       actionError = parseApiError(e);
     } finally {
-      creatingTemp = false;
+      creatingVm = false;
       updateProfileLauncher(profileId, { creating: false });
     }
   }
@@ -316,37 +337,24 @@
               <td class="p-3 whitespace-nowrap text-sm text-muted-foreground-1 tabular-nums">{vm.total_estimated_cost != null ? formatCost(vm.total_estimated_cost) : '--'}</td>
               <td class="p-3 whitespace-nowrap text-end">
                 <div class="inline-flex items-center gap-x-1">
-                  {#if !vm.persistent}
-                    <!-- Ephemeral: save (persist) + destroy -->
-                    {#if vm.status === 'Running'}
-                      <button type="button" class="size-7 inline-flex items-center justify-center rounded-lg text-muted-foreground-1 hover:text-primary hover:bg-surface" onclick={async (e: MouseEvent) => { e.stopPropagation(); const name = prompt('Save as:'); if (name) await vmStore.persist(vm.id, name); }} aria-label="Save" title="Save as persistent">
-                        <FloppyDisk size={16} />
-                      </button>
-                    {/if}
-                    <button type="button" class="size-7 inline-flex items-center justify-center rounded-lg text-muted-foreground-1 hover:text-destructive hover:bg-surface" onclick={(e: MouseEvent) => openDashModal(e, 'destroy', vm)} aria-label="Destroy" title="Destroy">
-                      <Trash size={16} />
+                  {#if vm.status === 'Running'}
+                    <button type="button" class="size-7 inline-flex items-center justify-center rounded-lg text-muted-foreground-1 hover:text-foreground hover:bg-surface" onclick={(e: MouseEvent) => handlePause(e, vm)} aria-label="Pause" title="Pause">
+                      <Pause size={16} />
                     </button>
-                  {:else}
-                    <!-- Persistent: actions depend on status -->
-                    {#if vm.status === 'Running'}
-                      <button type="button" class="size-7 inline-flex items-center justify-center rounded-lg text-muted-foreground-1 hover:text-foreground hover:bg-surface" onclick={async (e: MouseEvent) => { e.stopPropagation(); await vmStore.restart(vm.id); }} aria-label="Restart" title="Restart">
-                        <ArrowClockwise size={16} />
-                      </button>
-                      <button type="button" class="size-7 inline-flex items-center justify-center rounded-lg text-muted-foreground-1 hover:text-foreground hover:bg-surface" onclick={async (e: MouseEvent) => { e.stopPropagation(); await vmStore.suspend(vm.id); }} aria-label="Pause" title="Pause">
-                        <Pause size={16} />
-                      </button>
-                      <button type="button" class="size-7 inline-flex items-center justify-center rounded-lg text-muted-foreground-1 hover:text-foreground hover:bg-surface" onclick={async (e: MouseEvent) => { e.stopPropagation(); const name = prompt('Fork name:'); if (name) await vmStore.fork(vm.id, { name }); }} aria-label="Fork" title="Fork">
-                        <GitFork size={16} />
-                      </button>
-                    {:else if vm.status === 'Stopped' || vm.status === 'Suspended' || vm.status === 'Error'}
-                      <button type="button" class="size-7 inline-flex items-center justify-center rounded-lg text-muted-foreground-1 hover:text-primary hover:bg-surface" onclick={(e: MouseEvent) => handleResume(e, vm)} aria-label="Resume" title="Resume">
-                        <Play size={16} />
-                      </button>
-                    {/if}
-                    <button type="button" class="size-7 inline-flex items-center justify-center rounded-lg text-muted-foreground-1 hover:text-destructive hover:bg-surface" onclick={(e: MouseEvent) => openDashModal(e, 'destroy', vm)} aria-label="Delete" title="Delete">
-                      <Trash size={16} />
+                    <button type="button" class="size-7 inline-flex items-center justify-center rounded-lg text-muted-foreground-1 hover:text-foreground hover:bg-surface" onclick={(e: MouseEvent) => openDashModal(e, 'stop', vm)} aria-label="Stop" title="Stop">
+                      <Stop size={16} />
+                    </button>
+                  {:else if vm.status === 'Stopped' || vm.status === 'Suspended' || vm.status === 'Error'}
+                    <button type="button" class="size-7 inline-flex items-center justify-center rounded-lg text-muted-foreground-1 hover:text-primary hover:bg-surface" onclick={(e: MouseEvent) => handleStart(e, vm)} aria-label={vm.status === 'Suspended' ? 'Resume' : 'Start'} title={vm.status === 'Suspended' ? 'Resume' : 'Start'}>
+                      <Play size={16} />
                     </button>
                   {/if}
+                  <button type="button" class="size-7 inline-flex items-center justify-center rounded-lg text-muted-foreground-1 hover:text-foreground hover:bg-surface" onclick={(e: MouseEvent) => handleFork(e, vm)} aria-label="Fork" title="Fork">
+                    <GitFork size={16} />
+                  </button>
+                  <button type="button" class="size-7 inline-flex items-center justify-center rounded-lg text-muted-foreground-1 hover:text-destructive hover:bg-surface" onclick={(e: MouseEvent) => openDashModal(e, 'delete', vm)} aria-label="Delete" title="Delete">
+                    <Trash size={16} />
+                  </button>
                 </div>
               </td>
             </tr>
@@ -358,19 +366,19 @@
 {/snippet}
 
 <div class="p-6 max-w-5xl mx-auto">
-  <!-- Sessions header -->
+  <!-- VMs header -->
   <div class="flex items-center justify-between mb-6">
-    <h2 class="text-2xl font-bold text-foreground">Sessions</h2>
+    <h2 class="text-2xl font-bold text-foreground">VMs</h2>
     <div class="flex items-center gap-x-2">
       <button
         type="button"
         class="inline-flex items-center gap-x-2 bg-surface border border-line-2 text-foreground hover:bg-muted-hover rounded-lg px-4 py-2 text-sm font-medium transition-colors disabled:opacity-50 disabled:pointer-events-none"
         onclick={() => vmStore.showCreateModal = true}
-        disabled={creatingTemp}
-        title="Customize Session"
+        disabled={creatingVm}
+        title="Customize VM"
       >
         <Plus size={16} weight="bold" />
-        Customize Session...
+        Customize VM...
       </button>
     </div>
   </div>
@@ -410,7 +418,7 @@
           type="button"
           class="group text-left bg-card border border-card-line rounded-xl p-4 transition-colors hover:border-primary/50 hover:bg-muted-hover disabled:opacity-70 disabled:pointer-events-none"
           onclick={() => ready ? createFromProfile(launcher.profile.id) : ensureProfileAssets(launcher.profile.id)}
-          disabled={creatingTemp || launcher.loading || launcher.creating || launcher.ensuring || launcher.assets?.downloading === true}
+          disabled={creatingVm || launcher.loading || launcher.creating || launcher.ensuring || launcher.assets?.downloading === true}
           title={ready ? `Start ${launcher.profile.name}` : profileAssetText(launcher.assets)}
         >
           <div class="flex items-start gap-x-3">
@@ -451,7 +459,7 @@
     <div class="flex items-start gap-x-3 p-4 mb-4 rounded-lg border border-destructive/30 bg-destructive/10 text-sm">
       <Warning size={18} class="text-destructive mt-0.5 shrink-0" />
       <div class="flex-1 min-w-0">
-        <p class="font-medium text-foreground">Failed to create session</p>
+        <p class="font-medium text-foreground">Failed to create VM</p>
         <p class="text-muted-foreground-1 mt-0.5 break-words">{actionError}</p>
       </div>
       <button
@@ -465,34 +473,19 @@
     </div>
   {/if}
 
-  <!-- Ephemeral sessions -->
-  <h3 class="text-xs font-semibold text-foreground uppercase tracking-wider mb-3">Ephemeral</h3>
+  <!-- VM list -->
+  <h3 class="text-xs font-semibold text-foreground uppercase tracking-wider mb-3">VMs</h3>
   {#if initialLoading}
     <div class="bg-card border border-card-line rounded-xl p-12 flex items-center justify-center gap-x-3">
       <CircleNotch size={18} class="text-muted-foreground-1 animate-spin" />
-      <p class="text-muted-foreground-1 text-sm">Loading sessions...</p>
+      <p class="text-muted-foreground-1 text-sm">Loading VMs...</p>
     </div>
-  {:else if ephemeralVms.length === 0}
+  {:else if allVms.length === 0}
     <div class="bg-card border border-card-line rounded-xl p-8 flex items-center justify-center">
-      <p class="text-muted-foreground-1 text-sm">No ephemeral sessions</p>
+      <p class="text-muted-foreground-1 text-sm">No VMs</p>
     </div>
   {:else}
-    {@render sessionTable(ephemeralVms)}
-  {/if}
-
-  <!-- Persistent sessions -->
-  <h3 class="text-xs font-semibold text-foreground uppercase tracking-wider mt-8 mb-3">Persistent</h3>
-  {#if initialLoading}
-    <div class="flex items-center gap-x-2 py-3">
-      <CircleNotch size={14} class="text-muted-foreground-1 animate-spin" />
-      <span class="text-xs text-muted-foreground-1">Loading...</span>
-    </div>
-  {:else if persistentVms.length === 0}
-    <div class="bg-card border border-card-line rounded-xl p-8 flex items-center justify-center">
-      <p class="text-muted-foreground-1 text-sm">No persistent sessions</p>
-    </div>
-  {:else}
-    {@render sessionTable(persistentVms)}
+    {@render sessionTable(allVms)}
   {/if}
 
   <!-- Statistics -->
@@ -505,7 +498,7 @@
   {:else}
     <div class="grid grid-cols-4 gap-3">
       <div class="bg-card border border-card-line rounded-lg p-3">
-        <div class="text-[11px] text-muted-foreground mb-0.5 uppercase tracking-wider">Sessions</div>
+        <div class="text-[11px] text-muted-foreground mb-0.5 uppercase tracking-wider">VMs</div>
         <div class="text-lg font-semibold text-foreground">{globalStats?.total_sessions ?? 0}</div>
       </div>
       <div class="bg-card border border-card-line rounded-lg p-3">
@@ -526,25 +519,22 @@
 
 <Modal
   open={dashModalKind === 'stop'}
-  title="Stop Session"
+  title="Stop VM"
   confirmLabel="Stop"
   destructive
   onconfirm={handleDashModalConfirm}
   oncancel={closeDashModal}
 >
   <p class="text-sm text-foreground">Stop <strong>{dashModalVm?.name ?? dashModalVm?.id}</strong>?</p>
-  {#if dashModalVm && !dashModalVm.persistent}
-    <p class="text-xs text-muted-foreground-1 mt-2">This is an ephemeral session. It will be destroyed.</p>
-  {/if}
 </Modal>
 
 <Modal
-  open={dashModalKind === 'destroy'}
-  title="Destroy Session"
-  confirmLabel="Destroy"
+  open={dashModalKind === 'delete'}
+  title="Delete VM"
+  confirmLabel="Delete"
   destructive
   onconfirm={handleDashModalConfirm}
   oncancel={closeDashModal}
 >
-  <p class="text-sm text-foreground">Destroy <strong>{dashModalVm?.name ?? dashModalVm?.id}</strong>? This cannot be undone.</p>
+  <p class="text-sm text-foreground">Delete <strong>{dashModalVm?.name ?? dashModalVm?.id}</strong>? This cannot be undone.</p>
 </Modal>

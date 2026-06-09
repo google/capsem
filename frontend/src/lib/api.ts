@@ -425,10 +425,6 @@ export async function resumeVm(name: string): Promise<void> {
   await _post(`/vms/${encodeURIComponent(name)}/resume`);
 }
 
-export async function persistVm(id: string, name: string): Promise<void> {
-  await _post(`/vms/${encodeURIComponent(id)}/save`, { name });
-}
-
 export async function forkVm(id: string, opts: ForkRequest): Promise<ForkResponse> {
   const resp = await _post(`/vms/${encodeURIComponent(id)}/fork`, opts);
   return await resp.json();

@@ -22,6 +22,11 @@
 
   const vmViews = ['terminal', 'stats', 'logs', 'files', 'inspector'] as const;
 
+  function generatedVmName(profileId: string): string {
+    const stamp = Date.now().toString(36);
+    return `${profileId}-${stamp}`;
+  }
+
   function handleExternalLinkClick(e: MouseEvent) {
     const a = (e.target as Element | null)?.closest('a');
     if (!a) return;
@@ -39,9 +44,10 @@
       try {
         const { id, name } = await vmStore.provision({
           profile_id: 'code',
+          name: generatedVmName('code'),
           ram_mb: 2048,
           cpus: 2,
-          persistent: false,
+          persistent: true,
         });
         tabStore.openVM(id, name);
       } catch {

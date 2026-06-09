@@ -170,16 +170,6 @@ class VmStore {
     }
   }
 
-  async persist(id: string, name: string): Promise<void> {
-    this.acting = true;
-    try {
-      await api.persistVm(id, name);
-      await this.refresh();
-    } finally {
-      this.acting = false;
-    }
-  }
-
   async fork(id: string, opts: ForkRequest): Promise<ForkResponse> {
     this.acting = true;
     try {

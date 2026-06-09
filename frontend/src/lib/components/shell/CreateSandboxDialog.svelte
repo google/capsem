@@ -33,15 +33,19 @@
 
   async function handleSubmit() {
     error = null;
+    const trimmedName = name.trim();
+    if (!trimmedName) {
+      error = 'Name is required';
+      return;
+    }
     creating = true;
-    const hasName = name.trim().length > 0;
     try {
       const { id, name: finalName } = await vmStore.provision({
         profile_id: profileId,
-        name: hasName ? name.trim() : undefined,
+        name: trimmedName,
         ram_mb: ramMb,
         cpus: cpus,
-        persistent: hasName,
+        persistent: true,
       });
       tabStore.openVM(id, finalName);
       close();
@@ -55,7 +59,7 @@
 
 <Modal
   open={vmStore.showCreateModal}
-  title="Customize Session"
+  title="Customize VM"
   confirmLabel={creating ? 'Creating...' : 'Create'}
   onconfirm={handleSubmit}
   oncancel={close}
@@ -90,16 +94,16 @@
     </div>
 
     <div class="space-y-1.5">
-      <label for="sb-name" class="text-sm font-medium text-foreground">Name <span class="text-muted-foreground font-normal">(optional)</span></label>
+      <label for="sb-name" class="text-sm font-medium text-foreground">Name</label>
       <input
         id="sb-name"
         type="text"
         bind:value={name}
-        placeholder="Leave empty for a temporary session"
+        placeholder="coding-agent"
         class="w-full px-3 py-2 rounded-lg bg-background-1 border border-line-2 focus:border-primary focus:ring-2 focus:ring-primary/20 outline-hidden transition-all text-sm text-foreground"
         disabled={creating}
       />
-      <p class="text-[11px] text-muted-foreground-1">Named sessions are persistent. Unnamed sessions are ephemeral.</p>
+      <p class="text-[11px] text-muted-foreground-1">Each VM is named and tied to its selected profile.</p>
     </div>
 
     <div class="grid grid-cols-2 gap-4">
