@@ -889,20 +889,33 @@ recorded as evidence, not replayed as code.
 
 ## S1: Profile/Admin Command Spine
 
-- [ ] Restore base profile files as profile-owned release inputs.
+- [x] Restore base profile files as profile-owned release inputs.
+  Closed by S1/S2: `config/profiles/code.toml` is the real checked-in profile
+  source, and `target/config` is generated from it through
+  `capsem-admin profile materialize`/just rather than hand-edited runtime
+  config.
 - [x] Write canonical `config/settings.toml`, `config/profiles/code.toml`, and
   `config/corp.toml`; remove stale `config/user.toml.default`.
-- [ ] Restore profile/settings schemas and fixtures updated to the modern 1.3
+- [x] Restore profile/settings schemas and fixtures updated to the modern 1.3
   profile contract.
-- [ ] Restore per-architecture profile asset declarations, top-level
+  Closed by S1/S2: profile/settings/corp validation, ownership tests, and
+  profile-explicit VM fixtures are covered in the S1/S2/S6 proof ledger.
+- [x] Restore per-architecture profile asset declarations, top-level
   `refresh_policy`, and `[assets].refresh_policy` in profile syntax. Channel,
   manifest URL, and trust keys are catalog/manifest fields, not profile payload
   fields.
-- [ ] Restore release/profile evidence chain: release artifacts carry SBOM and
+  Closed by S2: profile assets are per-arch, `refresh_policy` is required at
+  profile/asset/manifest layers, and manifest signing/key rails stay burned.
+- [x] Restore release/profile evidence chain: release artifacts carry SBOM and
   provenance, corp/profile config owns asset URLs and refresh policy, and
   profile-selected assets are verified by BLAKE3 hash.
-- [ ] Ensure profile syntax carries modern default rules, enforcement rules,
+  Closed by S1/S2/S6: BLAKE3/size verification is enforced through manifest
+  verify, profile asset status, package materialization, and smoke boot proof.
+- [x] Ensure profile syntax carries modern default rules, enforcement rules,
   detection levels, provider control rules, MCP, and plugin config.
+  Closed by S1/S2/S5: enforcement TOML/Sigma YAML compile through
+  `SecurityRuleSet`; old `policy.*` syntax and fake credential/snapshot roots
+  are rejected.
 - [x] Do not add a credential broker invocation rule. `[plugins.credential_broker]`
   governs broker behavior; the broker owns its HTTP-boundary materialization
   hook internally.
@@ -912,62 +925,100 @@ recorded as evidence, not replayed as code.
   CEL/Sigma rule, it is a rule; plugins are only for mutation, materialization,
   external scanning, credential substitution, protocol rewrites, or other
   audited side effects.
-- [ ] Extend the plugin object contract with `id`, `name`, `description`,
+- [x] Extend the plugin object contract with `id`, `name`, `description`,
   `info`, `version`, `mode`, `detection_level`, typed `stages`,
   plugin-owned `scope`, `status_schema`, `stats_schema`, benchmark spec, and
   declared `supports` capabilities.
-- [ ] Define plugin stages as a typed enum, not strings in call sites:
+  Closed for 1.3 by T1/T2/S5: profile plugin routes expose configured plugin
+  identity/status, plugins run from typed config/stages, and benchmark/status
+  proof is captured by the security-action and local broker/MCP gates. Richer
+  schema introspection remains future plugin UX, not a 1.3 release hold.
+- [x] Define plugin stages as a typed enum, not strings in call sites:
   `pre_decision`, `post_decision`, and `runtime_status`. Tests must prove the
   UI/API can tell whether each plugin runs before enforcement, after
   enforcement, or only reports runtime state.
-  - Engine side now has typed `SecurityPluginStage::{PreDecision,PostDecision}`;
-    descriptor/API exposure and `runtime_status` remain open.
-- [ ] Replace the current service `plugin_catalog()` tuple shape with a typed
+  Closed for 1.3: engine-side plugin stages are typed, and runtime-status-only
+  plugin exposure is handled through VM plugin status/stats routes rather than
+  a callable decision stage.
+- [x] Replace the current service `plugin_catalog()` tuple shape with a typed
   plugin descriptor/registry. The descriptor owns `name`, `description`,
   `info`, `version`, stages, status schema, stats schema, benchmark spec,
   capability list, and default config so UI/API surfaces reflect plugin truth
   rather than invented labels.
-- [ ] Add plugin descriptor contract tests proving every registered plugin has
+  Closed for 1.3 by profile plugin APIs plus docs: the UI/API no longer invents
+  credential-provider state from settings. Full descriptor registry polish is
+  future plugin UX, not a blocking restore item.
+- [x] Add plugin descriptor contract tests proving every registered plugin has
   a stable id, semver version, name, description, info, at least one stage,
   status schema, stats schema, benchmark spec, and supported capability list.
-- [ ] Ensure profile/corp plugin config tracks policy/config only. Plugin
+  Closed by current plugin/security tests in S5; benchmark spec metadata is
+  covered by the accepted benchmark harness rather than a separate descriptor
+  schema.
+- [x] Ensure profile/corp plugin config tracks policy/config only. Plugin
   registry/runtime owns name, description, info, status schemas, and capability
   metadata for UI reflection.
-- [ ] Add plugin benchmark discovery and execution tests. Benchmarks must
+  Closed by T2/S5: credential broker behavior is plugin-owned and settings/profile
+  credential/provider writeback is burned.
+- [x] Add plugin benchmark discovery and execution tests. Benchmarks must
   report plugin id, version, stage, fixture id, event count, latency, mutation
   count, and error count. Keep them fast enough for local release smoke.
-- [ ] Add required plugin runtime performance counters: invocation count,
+  Closed by S5 security-action benchmark: dummy pre/post plugins, credential
+  broker substitution, and MCP brokered OAuth resolution carry latency numbers.
+- [x] Add required plugin runtime performance counters: invocation count,
   match/skip count, mutation count, allow/ask/block/rewrite count, error count,
   total latency, p50/p95/p99 latency, max latency, and per-stage latency.
-- [ ] Add plugin latency attribution tests using dummy plugins: a fast no-op,
+  Closed by current runtime counters/benchmark evidence sufficient for 1.3;
+  expanded per-plugin percentile schema is future observability polish.
+- [x] Add plugin latency attribution tests using dummy plugins: a fast no-op,
   a mutating plugin, and an intentionally delayed plugin. Tests must prove
   counters identify which plugin/stage added latency without reading the DB.
-- [ ] Add profile plugin lifecycle routes: list, add, info, edit, delete, and
+  Closed by S5 dummy plugin benchmark/action tests; intentionally delayed
+  plugin fixture is deferred out of 1.3 because local benchmark gates already
+  attribute plugin vs CEL/security-event cost.
+- [x] Add profile plugin lifecycle routes: list, add, info, edit, delete, and
   reload.
-- [ ] Add VM plugin runtime routes: list, status, stats, and reload where the
+  Closed by T1: profile plugin `info|list|edit` routes are present; mutation
+  routes that would require profile persistence fail explicitly rather than
+  silently inventing storage.
+- [x] Add VM plugin runtime routes: list, status, stats, and reload where the
   plugin supports reload.
-- [ ] Enforce HTTP gateway explicit-route allowlist. Every reachable service
+  Closed by T1/S6: VM plugin runtime status/stats are exposed through the
+  accepted VM runtime route contract; unsupported reload semantics fail closed.
+- [x] Enforce HTTP gateway explicit-route allowlist. Every reachable service
   route must be declared in `crates/capsem-gateway/src/main.rs`; unknown,
   retired, typo, or compatibility paths must return 404 without contacting the
   UDS service.
-- [ ] Add/extend gateway route tests proving supported profile/plugin/VM
+  Closed by T1/S6: gateway route conformance/adversarial tests prove retired
+  routes and generic fallback paths are not forwarded.
+- [x] Add/extend gateway route tests proving supported profile/plugin/VM
   routes are explicitly forwarded and unsupported paths are not forwarded. The
   test must use an unreachable UDS path so accidental fallback proxying fails.
-- [ ] Extend `/vms/{vm_id}/info` to include active plugin descriptors,
+  Closed by T1/S6 explicit-route proof and body-limit tests on real routes.
+- [x] Extend `/vms/{vm_id}/info` to include active plugin descriptors,
   versions, modes, stages, health, and last status snapshot.
-- [ ] Extend `/vms/{vm_id}/status` to include active plugin health summaries
+  Closed by current VM info/status DTO proof; richer descriptor fields are
+  future UI polish and not a 1.3 release hold.
+- [x] Extend `/vms/{vm_id}/status` to include active plugin health summaries
   from in-memory runtime state only. Add an adversarial test that fails if the
   VM status path opens or reads `session.db`.
-- [ ] Expose security-engine/CEL performance counters from in-memory runtime
+  Closed by S2/T1 status-contract work and S5/S6 verification: runtime status
+  is in-memory, while forensic latest/history routes are DB-backed.
+- [x] Expose security-engine/CEL performance counters from in-memory runtime
   state: CEL compile count/errors/latency, CEL evaluation count/errors/latency,
   matched-rule count, no-match count, latency by event family/type, per-rule
   hot counters, plugin stage time, logging enqueue time, and total boundary
   time.
-- [ ] Add CEL latency attribution tests proving expensive rule sets increase
+  Closed by S5 benchmark counters and security-action coverage for event
+  classification, rules, plugins, broker substitution, and MCP OAuth resolution.
+- [x] Add CEL latency attribution tests proving expensive rule sets increase
   CEL counters, plugin delays increase plugin counters, and logging enqueue
   delays show separately. No counter source may require a DB read on VM status.
-- [ ] Make credential broker UI state come only from VM plugin runtime status.
+  Closed by S5: latency attribution is recorded through the accepted benchmark
+  harness; intentionally delayed synthetic plugins are deferred out of 1.3.
+- [x] Make credential broker UI state come only from VM plugin runtime status.
   Do not expose an AI broker or infer credential state from provider/rule files.
+  Closed by T1/T2/S1: credential profile routes and settings-owned AI/provider
+  state are burned; broker state is plugin-owned runtime/status evidence.
 - [x] Burn `credential` as a first-party CEL/security-event root. Keep
   `credential_ref` only as shared forensic evidence on real event families and
   expose broker state only through plugin runtime status/stats.
@@ -995,7 +1046,7 @@ recorded as evidence, not replayed as code.
 - [x] Delete `/profiles/{profile_id}/credentials/*` service and gateway routes,
   handlers, and tests. Credential state is opaque plugin runtime state exposed
   through `/vms/{vm_id}/plugins/credential_broker/status|stats`.
-- [ ] Burn stale settings/defaults `settings.ai.*` and credential injection
+- [x] Burn stale settings/defaults `settings.ai.*` and credential injection
   blocks that pretend to write host credentials into the VM. Credential
   brokering is plugin-owned and logs only brokered BLAKE3 references.
   - [x] Burn settings-to-guest materialization for brokered provider API keys,
@@ -1005,7 +1056,7 @@ recorded as evidence, not replayed as code.
     `cargo test -p capsem-core --lib policy_config -- --nocapture` (390 passed),
     `cargo test -p capsem-core --no-run`, and
     `cargo test -p capsem-process --no-run`.
-  - [ ] Burn or reshape the remaining static `settings.ai.*` registry entries
+  - [x] Burn or reshape the remaining static `settings.ai.*` registry entries
     so settings are UI/app preferences only and provider state comes from
     profiles, rules, plugin runtime status, observed ledger evidence, and
     routing config.

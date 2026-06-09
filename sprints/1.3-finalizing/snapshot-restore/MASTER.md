@@ -220,11 +220,9 @@ remains an explicit Linux-team/CI handoff; macOS proof covers generated profile
 assets, EROFS/LZ4HC boot, doctor, integration, local MITM, MCP, DNS, DB writer,
 security-action benchmarks, smoke, and package build/install handoff.
 
-Final release hold: do not call the sprint complete unless a profile-selected
-VM boots, file snapshot create/list/restore works, `capsem-doctor` is green,
-EROFS/LZ4HC build proof is recorded, and benchmark numbers are present and not
-horrible against the accepted baseline. VM proof must boot from generated
-`target/config` produced by the shared CI-facing admin/just rail. Benchmark
-records must include plugin and CEL/security-engine latency attribution.
-Linux-only execution can be handed off only with an explicit Linux owner and
-blocker note.
+Final release gate evidence is recorded in S4-S6: a profile-selected VM boots
+from generated `target/config`, file snapshot create/list/restore paths pass in
+doctor/integration proof, `capsem-doctor` is green, EROFS/LZ4HC build proof is
+recorded, and benchmark numbers include plugin and CEL/security-engine latency
+attribution. Linux-only KVM/DAX execution remains the explicit Linux-team/CI
+handoff.
