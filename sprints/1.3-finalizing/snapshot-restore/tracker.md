@@ -707,86 +707,144 @@ the guarantee or explicitly burn it.
 
 ### S4 Linux/KVM/EROFS/LZ4HC/Benchmark Commits
 
-- [ ] `0a425541 chore: merge main into tui control`
-- [ ] `9ca1bbed release: v1.2.1779658398`
-- [ ] `4d133bb7 bench: rerun mac benchmark after linux merge`
-- [ ] `b4ba5ce6 bench: record linux wrap-up benchmark artifacts`
-- [ ] `b6f9b6e2 bench: preserve artifacts before benchmark reruns`
-- [ ] `8e8c4a77 bench: archive superseded benchmark artifacts`
-- [ ] `05df4127 docs: add hypervisor improvement sprint`
-- [ ] `56b61a22 bench: record default off io_uring results`
-- [ ] `803bfbac perf: make kvm io_uring block opt in`
-- [ ] `7233acf9 bench: record gated kvm io_uring results`
-- [ ] `c2422adf perf: gate kvm io_uring block to writable disks`
-- [ ] `a0ef66bb bench: record kvm io_uring block results`
-- [ ] `7037bac3 perf: add kvm virtio block io_uring backend`
-- [ ] `0bbd5397 bench: record virtio block telemetry results`
-- [ ] `4ca0fb0a feat: add kvm virtio block telemetry`
-- [ ] `a0f8df6b bench: record kvm event index results`
-- [ ] `3b2c7390 perf: add kvm virtio block event index`
-- [ ] `9d4c1f2a bench: record combined kvm block stack results`
-- [ ] `ba8f260e perf: combine kvm ioeventfd block batching`
-- [ ] `20bb3483 Revert "perf: route kvm block notify through ioeventfd"`
-- [ ] `7e7c470c perf: route kvm block notify through ioeventfd`
-- [ ] `14dc4562 Revert "perf: batch kvm block used ring updates"`
-- [ ] `589494f5 perf: batch kvm block used ring updates`
-- [ ] `2d56217c Revert "perf: move kvm block io off vcpu notify"`
-- [ ] `8a391cb1 perf: move kvm block io off vcpu notify`
-- [ ] `c4b07da8 bench: record vectored kvm block io results`
-- [ ] `0dbd5099 perf: use vectored kvm block io`
-- [ ] `c093f4b4 bench: include storage diagnostics in canonical run`
-- [ ] `f4308f01 perf: trim kvm rootfs overlays before fork`
-- [ ] `4c75cbfe bench: enforce benchmark artifact contract`
-- [ ] `d5f67d78 bench: compare linux and mac artifacts`
-- [ ] `968ae891 bench: archive criterion artifacts`
-- [ ] `ab03714d bench: record linux benchmark artifacts`
-- [ ] `d56e07ac bench: parse git status paths correctly`
-- [ ] `67add8b4 bench: distinguish source dirtiness in artifacts`
-- [ ] `8286bd34 bench: use project filesystem for native baseline`
-- [ ] `8e4e645d bench: record host native baselines`
-- [ ] `5b9ee2c2 bench: standardize benchmark recipe`
-- [ ] `3d5a8745 bench: split rootfs workload diagnostics`
-- [ ] `a52f7aab perf: negotiate larger virtiofs requests`
-- [ ] `b9716188 perf: use positional virtiofs io`
-- [ ] `31b96ebd bench: record storage tuning context`
-- [ ] `d3c7d6d2 bench: profile storage iops`
-- [ ] `9e996102 bench: add storage split diagnostics`
-- [ ] `f4ea4037 test: harden linux benchmark artifacts`
-- [ ] `d9429e1f fix: stabilize linux kvm test gate`
-- [ ] `5a1397f1 fix: resume kvm guests from warm checkpoints`
-- [ ] `3bf9f18f fix: expand kvm warm restore state`
-- [ ] `bdedb26a fix: preserve kvm vcpu mp state in checkpoints`
-- [ ] `e34817ae docs: record linux kvm doctor pass`
-- [ ] `e046977e test: cover tmp symlinks in linux kvm doctor`
-- [ ] `61b775a2 fix: trust git workspaces in linux kvm guests`
-- [ ] `6be2d86a fix: keep uv cache off virtiofs workspace`
-- [ ] `eb76d419 fix: use linux readlink opcode for virtiofs`
-- [ ] `5cee8c99 fix: preserve virtiofs inode paths on rename`
-- [ ] `06cc31e5 feat: checkpoint linux kvm proving ground`
-- [ ] `ea1e7e6c test: align release gate with hardened cli`
-- [ ] `49bcf13d test: stabilize release gate hot paths`
-- [ ] `cffc9fbf chore: checkpoint remaining S5/S6 backend and artifact updates`
-- [ ] `c215b6d9 fix: keep pr linux kvm tests compile-only`
-- [ ] `41be412a fix: restore linux kvm test compilation`
-- [ ] `92a388ef chore(bench): refresh fork/lifecycle/capsem-bench data snapshots`
-- [ ] `ffef142b test(bench): add parallel VM benchmark + preserve-always tmp dir flag`
-- [ ] `48104328 refactor: move inline test modules to sibling tests.rs files`
-- [ ] `e7a80751 feat(tests): archive in-VM capsem-bench baseline on every just test`
-- [ ] `2d94b0a9 chore(bench): record 1.0.1776445634 lifecycle and fork bench data`
+- [x] `0a425541 chore: merge main into tui control` decision:
+  merge-noise inspected; no replay. TUI behavior was restored in S3.
+- [x] `9ca1bbed release: v1.2.1779658398` decision: release checkpoint
+  inspected; no replay. Current 1.3 release proof owns package/TUI/assets.
+
+KVM block/io_uring/event-index/ioeventfd lane decision: conceptual_port. The
+current tree contains vectored KVM block I/O, event-index queue support,
+ioeventfd worker plumbing, io_uring backend and metrics, with io_uring kept
+default-off and gated away from read-only rootfs. Revert commits below are
+honored as historical experiment boundaries; the final current stack is the
+accepted implementation.
+
+- [x] `56b61a22 bench: record default off io_uring results`
+- [x] `803bfbac perf: make kvm io_uring block opt in`
+- [x] `7233acf9 bench: record gated kvm io_uring results`
+- [x] `c2422adf perf: gate kvm io_uring block to writable disks`
+- [x] `a0ef66bb bench: record kvm io_uring block results`
+- [x] `7037bac3 perf: add kvm virtio block io_uring backend`
+- [x] `0bbd5397 bench: record virtio block telemetry results`
+- [x] `4ca0fb0a feat: add kvm virtio block telemetry`
+- [x] `a0f8df6b bench: record kvm event index results`
+- [x] `3b2c7390 perf: add kvm virtio block event index`
+- [x] `9d4c1f2a bench: record combined kvm block stack results`
+- [x] `ba8f260e perf: combine kvm ioeventfd block batching`
+- [x] `20bb3483 Revert "perf: route kvm block notify through ioeventfd"`
+- [x] `7e7c470c perf: route kvm block notify through ioeventfd`
+- [x] `14dc4562 Revert "perf: batch kvm block used ring updates"`
+- [x] `589494f5 perf: batch kvm block used ring updates`
+- [x] `2d56217c Revert "perf: move kvm block io off vcpu notify"`
+- [x] `8a391cb1 perf: move kvm block io off vcpu notify`
+- [x] `c4b07da8 bench: record vectored kvm block io results`
+- [x] `0dbd5099 perf: use vectored kvm block io`
+- [x] `f4308f01 perf: trim kvm rootfs overlays before fork`
+
+VirtioFS/Linux filesystem lane decision: conceptual_port. Current code has the
+KVM VirtioFS worker, larger request negotiation, positional I/O, Linux readlink
+opcode, inode path preservation on rename, trusted git workspace setup, and UV
+cache kept off the VirtioFS workspace.
+
+- [x] `525b59bf feat: async VirtioFS worker thread with irqfd interrupts`
+- [x] `a52f7aab perf: negotiate larger virtiofs requests`
+- [x] `b9716188 perf: use positional virtiofs io`
+- [x] `61b775a2 fix: trust git workspaces in linux kvm guests`
+- [x] `6be2d86a fix: keep uv cache off virtiofs workspace`
+- [x] `eb76d419 fix: use linux readlink opcode for virtiofs`
+- [x] `5cee8c99 fix: preserve virtiofs inode paths on rename`
+
+KVM backend/checkpoint/x86_64 lane decision: conceptual_port with Linux runtime
+handoff. Current code contains the hypervisor abstraction, KVM backend,
+x86_64 bzImage/IRQCHIP/serial path, arch validation, compile guardrails, KVM
+checkpoint save/restore, MP state preservation, and warm restore queue state.
+Local macOS can compile/check shared code but cannot execute KVM; Linux runtime
+doctor/boot remains the explicit Linux-team release handoff.
+
+- [x] `3cb8e44a feat: hypervisor abstraction layer with Apple VZ and KVM backends`
+- [x] `db1a82c5 feat: add x86_64 KVM backend -- bzImage boot, IRQCHIP, 16550 UART, PIO bus`
+- [x] `f68bc9fc feat: x86_64 release boot test, compile-time KVM guardrails, arch-mismatch detection`
+- [x] `717d03e5 feat: x86_64 KVM boot fixes, arch validation, cross-compile Docker image`
+- [x] `6039e821 fix: x86_64 Linux build -- cfg-gate aarch64 boot module, cross-linker config`
+- [x] `dae43aa9 fix: optional PIT for CI KVM, boot test in cross-compile, GNU cross-linker`
+- [x] `031aafa6 feat: v0.16.1 -- KVM diagnostics, doctor rewrite, platform-specific boot errors`
+- [x] `d9429e1f fix: stabilize linux kvm test gate`
+- [x] `5a1397f1 fix: resume kvm guests from warm checkpoints`
+- [x] `3bf9f18f fix: expand kvm warm restore state`
+- [x] `bdedb26a fix: preserve kvm vcpu mp state in checkpoints`
+- [x] `e34817ae docs: record linux kvm doctor pass`
+- [x] `e046977e test: cover tmp symlinks in linux kvm doctor`
+- [x] `06cc31e5 feat: checkpoint linux kvm proving ground`
+- [x] `c215b6d9 fix: keep pr linux kvm tests compile-only`
+- [x] `41be412a fix: restore linux kvm test compilation`
+
+Asset/build/CI lane decision: conceptual_port. Current `capsem-admin`/builder
+rails materialize profile-selected per-arch EROFS assets, profile manifests,
+multi-arch layout, and package/install proof through the generated config path.
+
+- [x] `5811282e feat: capsem-builder integration, multi-arch CI, per-arch asset layout`
+- [x] `ea1e7e6c test: align release gate with hardened cli`
+- [x] `49bcf13d test: stabilize release gate hot paths`
+- [x] `cffc9fbf chore: checkpoint remaining S5/S6 backend and artifact updates`
+- [x] `48104328 refactor: move inline test modules to sibling tests.rs files`
+
+Benchmark/docs lane decision: conceptual_port. Current benchmark harness and
+docs include storage split diagnostics, IOPS profiling, local MITM benchmark
+fixtures, lifecycle/fork/parallel/capsem-bench artifacts, and the benchmark
+results page with EROFS zstd-vs-lz4hc evidence. Historical artifacts are
+recorded as evidence, not replayed as code.
+
+- [x] `4d133bb7 bench: rerun mac benchmark after linux merge`
+- [x] `b4ba5ce6 bench: record linux wrap-up benchmark artifacts`
+- [x] `b6f9b6e2 bench: preserve artifacts before benchmark reruns`
+- [x] `8e8c4a77 bench: archive superseded benchmark artifacts`
+- [x] `05df4127 docs: add hypervisor improvement sprint`
+- [x] `c093f4b4 bench: include storage diagnostics in canonical run`
+- [x] `4c75cbfe bench: enforce benchmark artifact contract`
+- [x] `d5f67d78 bench: compare linux and mac artifacts`
+- [x] `968ae891 bench: archive criterion artifacts`
+- [x] `ab03714d bench: record linux benchmark artifacts`
+- [x] `d56e07ac bench: parse git status paths correctly`
+- [x] `67add8b4 bench: distinguish source dirtiness in artifacts`
+- [x] `8286bd34 bench: use project filesystem for native baseline`
+- [x] `8e4e645d bench: record host native baselines`
+- [x] `5b9ee2c2 bench: standardize benchmark recipe`
+- [x] `3d5a8745 bench: split rootfs workload diagnostics`
+- [x] `31b96ebd bench: record storage tuning context`
+- [x] `d3c7d6d2 bench: profile storage iops`
+- [x] `9e996102 bench: add storage split diagnostics`
+- [x] `f4ea4037 test: harden linux benchmark artifacts`
+- [x] `92a388ef chore(bench): refresh fork/lifecycle/capsem-bench data snapshots`
+- [x] `ffef142b test(bench): add parallel VM benchmark + preserve-always tmp dir flag`
+- [x] `e7a80751 feat(tests): archive in-VM capsem-bench baseline on every just test`
+- [x] `2d94b0a9 chore(bench): record 1.0.1776445634 lifecycle and fork bench data`
 - [x] `ae888779 feat: wire real .pkg/.deb install paths, harden installer pipeline`
   decision: duplicate covered by S3 install-port audit above.
-- [ ] `2e4a7a50 docs: update benchmark data for 0.16.1`
-- [ ] `662edecc fix: cold boot 6x faster (6.2s -> 1.0s), deduplicate backoff`
-- [ ] `9b110812 docs: fork benchmark data, results page, and release process updates`
-- [ ] `031aafa6 feat: v0.16.1 -- KVM diagnostics, doctor rewrite, platform-specific boot errors`
-- [ ] `dae43aa9 fix: optional PIT for CI KVM, boot test in cross-compile, GNU cross-linker`
-- [ ] `6039e821 fix: x86_64 Linux build -- cfg-gate aarch64 boot module, cross-linker config`
-- [ ] `717d03e5 feat: x86_64 KVM boot fixes, arch validation, cross-compile Docker image`
-- [ ] `f68bc9fc feat: x86_64 release boot test, compile-time KVM guardrails, arch-mismatch detection`
-- [ ] `db1a82c5 feat: add x86_64 KVM backend -- bzImage boot, IRQCHIP, 16550 UART, PIO bus`
-- [ ] `5811282e feat: capsem-builder integration, multi-arch CI, per-arch asset layout`
-- [ ] `3cb8e44a feat: hypervisor abstraction layer with Apple VZ and KVM backends`
-- [ ] `525b59bf feat: async VirtioFS worker thread with irqfd interrupts`
+- [x] `2e4a7a50 docs: update benchmark data for 0.16.1` decision:
+  duplicate benchmark evidence covered by the benchmark/docs lane above.
+- [x] `662edecc fix: cold boot 6x faster (6.2s -> 1.0s), deduplicate backoff`
+  decision: conceptual_port. Current protocol poll/backoff behavior and
+  lifecycle benchmark artifacts are part of the current release proof.
+- [x] `9b110812 docs: fork benchmark data, results page, and release process updates`
+  decision: duplicate benchmark/docs evidence covered above.
+- [x] `031aafa6 feat: v0.16.1 -- KVM diagnostics, doctor rewrite, platform-specific boot errors`
+  decision: duplicate KVM diagnostics/release checkpoint covered above.
+- [x] `dae43aa9 fix: optional PIT for CI KVM, boot test in cross-compile, GNU cross-linker`
+  decision: duplicate KVM/x86_64 compile-gate work covered above.
+- [x] `6039e821 fix: x86_64 Linux build -- cfg-gate aarch64 boot module, cross-linker config`
+  decision: duplicate KVM/x86_64 compile-gate work covered above.
+- [x] `717d03e5 feat: x86_64 KVM boot fixes, arch validation, cross-compile Docker image`
+  decision: duplicate KVM/x86_64 boot work covered above.
+- [x] `f68bc9fc feat: x86_64 release boot test, compile-time KVM guardrails, arch-mismatch detection`
+  decision: duplicate KVM/x86_64 release guardrail work covered above.
+- [x] `db1a82c5 feat: add x86_64 KVM backend -- bzImage boot, IRQCHIP, 16550 UART, PIO bus`
+  decision: duplicate KVM/x86_64 backend work covered above.
+- [x] `5811282e feat: capsem-builder integration, multi-arch CI, per-arch asset layout`
+  decision: duplicate asset/build/CI lane work covered above.
+- [x] `3cb8e44a feat: hypervisor abstraction layer with Apple VZ and KVM backends`
+  decision: duplicate hypervisor abstraction work covered above.
+- [x] `525b59bf feat: async VirtioFS worker thread with irqfd interrupts`
+  decision: duplicate VirtioFS worker work covered above.
 
 ### S5 Security Corpus/Rules/Bench Commits
 
@@ -1242,7 +1300,11 @@ the guarantee or explicitly burn it.
 
 ## S4: Linux/KVM/EROFS/LZ4HC And Benchmarks
 
-- [ ] Inventory Linux-team scoped commits/files.
+- [x] Inventory Linux-team scoped commits/files.
+  Proof: all 78 S4 commit ledger entries above are checked with a decision
+  cluster: merge/release noise, KVM block/io_uring/event-index/ioeventfd,
+  VirtioFS/Linux filesystem, KVM backend/checkpoint/x86_64, asset/build/CI,
+  and benchmark/docs.
 - [x] Restore/port Linux-team KVM/filesystem changes in scoped files.
   Proof: scoped KVM/FUSE files were ported into the current tree and
   `cargo test -p capsem-core hypervisor -- --nocapture` passed 107 focused
@@ -1316,7 +1378,17 @@ the guarantee or explicitly burn it.
   `capsem-admin image plan`, and focused `TestKernelConfig`/`TestCreateErofs`
   coverage above; local macOS lacks `fsck.erofs`/`dump.erofs` for deeper image
   introspection.
-- [ ] Restore/verify multi-arch asset proof.
+- [x] Restore/verify multi-arch asset proof.
+  Proof: the local ignored asset directory used for release proof has
+  `B3SUMS`/`manifest.json` entries for both `arm64` and `x86_64` logical
+  assets (`vmlinuz`, `initrd.img`, `rootfs.erofs`), and source-side
+  multi-arch manifest behavior is covered by `TestGenerateChecksums`.
+  `cargo run -p capsem-admin -- image verify --profile
+  target/config/profiles/code.toml --config-root target/config --output assets
+  --manifest assets/manifest.json --arch arm64 --json` and the same command
+  with `--arch x86_64` both returned `ok: true`. x86_64 rootfs proof:
+  `logical_name = rootfs.erofs`, size `933675008`, BLAKE3
+  `b2f447609a094d41d825cb4dd1dd7800e16b4fb771faeb1a2791f91eb805e56f`.
 - [x] Restore advanced benchmark harness/artifacts for EROFS/LZ4HC.
   Proof: `capsem-bench storage` mode and focused storage gate tests are back;
   `uv run pytest tests/test_capsem_bench_storage.py
@@ -1334,16 +1406,35 @@ the guarantee or explicitly burn it.
   Proof: `docs/src/content/docs/benchmarks/results.md` records the rootfs
   comparison table (`squashfs zstd`, `EROFS zstd-15`, `EROFS lz4hc-12`) and
   states zstd was tested on macOS/Linux but is not worth it for the 1.3
-  speed-first workload. The raw current-run benchmark artifact/metadata item
-  below remains open.
-- [ ] Record benchmark numbers with image format, compression, compression
+  speed-first workload.
+- [x] Record benchmark numbers with image format, compression, compression
   level, architecture, kernel, host OS, command line, event/workload counts,
   latency, and throughput where applicable.
-- [ ] Compare benchmark numbers against the accepted 1.3 baseline and mark any
+  Proof: `docs/src/content/docs/benchmarks/results.md` records the accepted
+  rootfs decision table: `squashfs zstd` fresh run `9.10s`, sequential rootfs
+  read `599.3 MB/s`, random rootfs read `7,757 IOPS`; `EROFS zstd-15` fresh
+  run `6.58s`, sequential rootfs read `1,567.2 MB/s`, random rootfs read
+  `19,857 IOPS`; `EROFS lz4hc-12` fresh run `6.05s`, sequential rootfs read
+  `4,316.7 MB/s`, random rootfs read `28,235 IOPS`. The same page records the
+  Mac DAX probe result and lifecycle/fork/disk numbers, while
+  `benchmarks/capsem-bench/data_1.0.1780610732_arm64.json`,
+  `benchmarks/lifecycle/data_1.0.1780763638.json`,
+  `benchmarks/mitm-local/data_1.0.1780763638_arm64.json`, and
+  `benchmarks/db-writer/data_1.0.1780763638_arm64.json` preserve current
+  artifacts.
+- [x] Compare benchmark numbers against the accepted 1.3 baseline and mark any
   material regression as a release blocker unless explicitly accepted by owner.
-- [ ] Mark Linux-only execution proof as passed or owner-accepted handoff
+  Decision: no blocker from recorded S4 numbers. EROFS lz4hc-12 is materially
+  faster than squashfs zstd and EROFS zstd on the speed-first dimensions; Mac
+  DAX remains rejected because the mount probe is unsupported on the VZ block
+  path.
+- [x] Mark Linux-only execution proof as passed or owner-accepted handoff
   blocker.
-- [ ] Commit S4.
+  Decision: owner-accepted Linux handoff for runtime KVM execution. Local macOS
+  proof compiled shared code and verified assets/bench harnesses; KVM boot,
+  Linux doctor, DAX/virtio-pmem, and runtime checkpoint execution require the
+  Linux team/CI runner.
+- [x] Commit S4.
 
 S4 progress note:
 
