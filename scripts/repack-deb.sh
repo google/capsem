@@ -24,6 +24,7 @@
 #   /usr/share/capsem/profiles/
 #   DEBIAN/postinst script
 set -euo pipefail
+export COPYFILE_DISABLE=1
 
 usage() {
     echo "usage: repack-deb.sh [--manifest manifest.json] <input.deb> <bin_dir> <config_root> [assets_dir] [output.deb]" >&2

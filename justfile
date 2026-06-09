@@ -840,7 +840,7 @@ install: _pnpm-install _stamp-version _check-assets _pack-initrd _materialize-co
         echo "=== Building Capsem.app ==="
         eval cargo tauri build --bundles app $TAURI_FLAGS
         echo "=== Assembling .pkg (v$VERSION) ==="
-        CAPSEM_PKG_ASSET_MODE=current-arch bash scripts/build-pkg.sh \
+        bash scripts/build-pkg.sh \
             --manifest "{{assets_dir}}/manifest.json" \
             "target/release/bundle/macos/Capsem.app" \
             "target/release" \
@@ -856,7 +856,7 @@ install: _pnpm-install _stamp-version _check-assets _pack-initrd _materialize-co
         echo "=== Building .deb ==="
         eval cargo tauri build --bundles deb $TAURI_FLAGS
         DEB=$(ls target/release/bundle/deb/*.deb)
-        CAPSEM_DEB_ASSET_MODE=current-arch bash scripts/repack-deb.sh --manifest "{{assets_dir}}/manifest.json" "$DEB" "target/release" "target/config" "{{assets_dir}}"
+        bash scripts/repack-deb.sh --manifest "{{assets_dir}}/manifest.json" "$DEB" "target/release" "target/config" "{{assets_dir}}"
         echo "=== Installing .deb ==="
         sudo dpkg -i "$DEB" 2>&1 || sudo apt-get install -f -y
     fi

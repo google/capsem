@@ -25,6 +25,7 @@
 # A postinstall script copies binaries to ~/.capsem/bin/, codesigns them,
 # registers the LaunchAgent, and waits for service readiness.
 set -euo pipefail
+export COPYFILE_DISABLE=1
 
 usage() {
     echo "usage: build-pkg.sh [--manifest manifest.json] <app_path> <bin_dir> <assets_dir> <config_root> <version> [signing_identity]" >&2
@@ -84,6 +85,17 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 WORK_DIR=$(mktemp -d)
 trap 'rm -rf "$WORK_DIR"' EXIT
 
+copy_tree_clean() {
+    local src="${1:?copy_tree_clean <src> <dst>}"
+    local dst="${2:?copy_tree_clean <src> <dst>}"
+    mkdir -p "$dst"
+    if command -v ditto >/dev/null 2>&1; then
+        ditto --norsrc --noextattr "$src" "$dst"
+    else
+        COPYFILE_DISABLE=1 cp -R "$src/." "$dst/"
+    fi
+}
+
 echo "=== Assembling .pkg payload ==="
 
 # Application bundle
@@ -124,7 +136,7 @@ if [ -n "$MANIFEST_PATH" ]; then
     fi
     ASSETS_VIEW="$WORK_DIR/assets-view"
     mkdir -p "$ASSETS_VIEW"
-    cp "$MANIFEST_PATH" "$ASSETS_VIEW/manifest.json"
+    install -m 0644 "$MANIFEST_PATH" "$ASSETS_VIEW/manifest.json"
     for arch_dir in "$ASSETS_DIR"/*; do
         [ -d "$arch_dir" ] || continue
         ln -s "$arch_dir" "$ASSETS_VIEW/$(basename "$arch_dir")"
@@ -134,7 +146,7 @@ ASSET_MODE="${CAPSEM_PKG_ASSET_MODE:-manifest-only}"
 case "$ASSET_MODE" in
     manifest-only)
         if [ -f "$ASSETS_VIEW/manifest.json" ]; then
-            cp "$ASSETS_VIEW/manifest.json" "$SHARE_DIR/assets/"
+            install -m 0644 "$ASSETS_VIEW/manifest.json" "$SHARE_DIR/assets/manifest.json"
         fi
         ;;
     current-arch)
@@ -155,16 +167,30 @@ if [ ! -d "$CONFIG_ROOT/profiles" ]; then
     exit 1
 fi
 mkdir -p "$SHARE_DIR/profiles"
-cp -R "$CONFIG_ROOT/profiles/." "$SHARE_DIR/profiles/"
+copy_tree_clean "$CONFIG_ROOT/profiles" "$SHARE_DIR/profiles"
 
 echo "=== Building component package ==="
 
-# Build the component .pkg with postinstall script
+PKG_SCRIPTS="$WORK_DIR/pkg-scripts"
+mkdir -p "$PKG_SCRIPTS"
+install -m 0755 "$SCRIPT_DIR/pkg-scripts/preinstall" "$PKG_SCRIPTS/preinstall"
+install -m 0755 "$SCRIPT_DIR/pkg-scripts/postinstall" "$PKG_SCRIPTS/postinstall"
+
+# Strip macOS extended attributes in the temporary staging area. Otherwise
+# pkgbuild serializes AppleDouble `._*` sidecars into Payload/Scripts.
+if command -v xattr >/dev/null 2>&1; then
+    xattr -rc "$WORK_DIR/payload" "$PKG_SCRIPTS" 2>/dev/null || true
+fi
+find "$WORK_DIR/payload" "$PKG_SCRIPTS" -name '._*' -delete
+
+# Build the component .pkg with package-owned preinstall/postinstall scripts.
 pkgbuild \
     --root "$WORK_DIR/payload" \
-    --scripts "$SCRIPT_DIR/pkg-scripts" \
+    --scripts "$PKG_SCRIPTS" \
     --identifier "com.capsem.pkg" \
     --version "$VERSION" \
+    --filter '/\._[^/]*$' \
+    --filter '\.DS_Store$' \
     "$WORK_DIR/capsem.pkg"
 
 echo "=== Building distribution package ==="

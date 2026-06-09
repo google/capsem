@@ -12,8 +12,10 @@ def test_just_install_does_not_sync_assets_after_installer() -> None:
 
     assert "Syncing local dev assets" not in install_body
     assert "scripts/sync-dev-assets.sh" not in install_body
-    assert "CAPSEM_PKG_ASSET_MODE=current-arch bash scripts/build-pkg.sh" in install_body
-    assert "CAPSEM_DEB_ASSET_MODE=current-arch bash scripts/repack-deb.sh" in install_body
+    assert "CAPSEM_PKG_ASSET_MODE=current-arch bash scripts/build-pkg.sh" not in install_body
+    assert "CAPSEM_DEB_ASSET_MODE=current-arch bash scripts/repack-deb.sh" not in install_body
+    assert "bash scripts/build-pkg.sh" in install_body
+    assert "bash scripts/repack-deb.sh --manifest" in install_body
     assert '--manifest "{{assets_dir}}/manifest.json"' in install_body
     assert '"target/config"' in install_body
     assert 'NEW="1.3.$(date +%s)"' in install_body
@@ -27,16 +29,23 @@ def test_package_builders_support_current_arch_asset_payloads() -> None:
     pkg_preinstall = (PROJECT_ROOT / "scripts" / "pkg-scripts" / "preinstall").read_text()
 
     assert "CAPSEM_PKG_ASSET_MODE" in build_pkg
+    assert "export COPYFILE_DISABLE=1" in build_pkg
     assert 'current-arch)' in build_pkg
     assert "--manifest" in build_pkg
     assert 'MANIFEST_PATH="${2:?--manifest requires a path}"' in build_pkg
     assert '--version "$VERSION"' in build_pkg
     assert "PKG_VERSION" not in build_pkg
-    assert 'cp "$MANIFEST_PATH" "$ASSETS_VIEW/manifest.json"' in build_pkg
-    assert 'cp "$ASSETS_VIEW/manifest.json" "$SHARE_DIR/assets/"' in build_pkg
+    assert 'install -m 0644 "$MANIFEST_PATH" "$ASSETS_VIEW/manifest.json"' in build_pkg
+    assert 'install -m 0644 "$ASSETS_VIEW/manifest.json" "$SHARE_DIR/assets/manifest.json"' in build_pkg
     assert 'bash "$SCRIPT_DIR/sync-dev-assets.sh" "$ASSETS_VIEW" "$SHARE_DIR/assets"' in build_pkg
     assert 'CONFIG_ROOT="${POSITIONAL[3]}"' in build_pkg
-    assert 'cp -R "$CONFIG_ROOT/profiles/." "$SHARE_DIR/profiles/"' in build_pkg
+    assert 'ditto --norsrc --noextattr "$src" "$dst"' in build_pkg
+    assert 'copy_tree_clean "$CONFIG_ROOT/profiles" "$SHARE_DIR/profiles"' in build_pkg
+    assert 'install -m 0755 "$SCRIPT_DIR/pkg-scripts/preinstall"' in build_pkg
+    assert 'xattr -rc "$WORK_DIR/payload" "$PKG_SCRIPTS"' in build_pkg
+    assert 'find "$WORK_DIR/payload" "$PKG_SCRIPTS" -name' in build_pkg
+    assert '--scripts "$PKG_SCRIPTS"' in build_pkg
+    assert "--filter '/\\._[^/]*$'" in build_pkg
     assert "capsem-admin" in build_pkg
     assert "capsem-tui" in build_pkg
     assert "rm -rf /Applications/Capsem.app" in pkg_preinstall
@@ -44,6 +53,7 @@ def test_package_builders_support_current_arch_asset_payloads() -> None:
     assert "pkill -9 -x capsem-app" in pkg_preinstall
 
     assert "CAPSEM_DEB_ASSET_MODE" in repack_deb
+    assert "export COPYFILE_DISABLE=1" in repack_deb
     assert 'CONFIG_ROOT="${POSITIONAL[2]}"' in repack_deb
     assert "--manifest" in repack_deb
     assert "BUILD_TS=" not in repack_deb

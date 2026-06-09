@@ -176,6 +176,11 @@
   and preserve package versions instead of appending build timestamps. Local
   install, Docker install, and CI release workflows now pass the manifest
   explicitly.
+- Completed slice: `just install` now builds the package with the explicit
+  `--manifest` override and materialized profile `file://` asset descriptors.
+  It no longer enables current-arch asset payload mode; local dev assets are
+  copied by the normal profile asset reconciliation path from the installed
+  profile's `file://` descriptors.
 - Verification: package-only macOS build succeeded for
   `packages/Capsem-1.3.1781035201.pkg`; expanded payload contains
   `Scripts/preinstall`, `Scripts/postinstall`, `assets/manifest.json`,
