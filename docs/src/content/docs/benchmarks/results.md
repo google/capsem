@@ -67,22 +67,23 @@ database-style writes.
 ## Local Network And Model Fixtures
 
 Release network proof uses `capsem-debug-upstream`, not public internet. The
-current VM MITM-local artifact was recorded against local HTTP, gzip, SSE model,
-denied-target, credential-shaped, and WebSocket fixtures. The benchmark now also
-includes the `/model/response` JSON model fixture; rerun the local MITM gate
-before release so the committed artifact includes that row.
+current VM MITM-local artifact is
+`benchmarks/mitm-local/data_1.0.1780954707_arm64.json` and was recorded through
+the profile-selected VM path against local HTTP, gzip, SSE model, JSON model,
+denied-target, credential-shaped, and WebSocket fixtures.
 
 | Scenario | Success | Requests/sec | p50 | p99 |
 |---|---:|---:|---:|---:|
-| tiny HTTP | 10/10 | 602.9 | 1.3ms | 4.0ms |
-| 1 MiB HTTP | 10/10 | 72.1 | 13.7ms | 15.0ms |
-| gzip 1 MiB | 10/10 | 29.8 | 33.3ms | 34.7ms |
-| SSE model stream | 10/10 | 683.1 | 1.3ms | 2.5ms |
-| denied target fixture | 10/10 | 799.8 | 1.1ms | 2.1ms |
-| credential-shaped response | 10/10 | 833.2 | 1.1ms | 2.0ms |
+| tiny HTTP | 10/10 | 831.7 | 0.9ms | 3.4ms |
+| 1 MiB HTTP | 10/10 | 83.7 | 11.7ms | 13.2ms |
+| gzip 1 MiB | 10/10 | 38.2 | 26.1ms | 27.1ms |
+| SSE model stream | 10/10 | 986.2 | 0.9ms | 1.8ms |
+| JSON model response | 10/10 | 1,102.8 | 0.8ms | 1.6ms |
+| denied target fixture | 10/10 | 1,165.8 | 0.8ms | 1.5ms |
+| credential-shaped response | 10/10 | 1,129.8 | 0.8ms | 1.5ms |
 
-WebSocket control fixture: echo `10` frames at `2,656.0` frames/sec with
-`0.2ms` p50 latency; close control frame completed in `1.7ms` p50.
+WebSocket control fixture: echo `10` frames at `2,499.5` frames/sec with
+`0.2ms` p50 latency; close control frame completed in `1.3ms` p50.
 
 Host-direct control smoke after adding the JSON model fixture proved only that
 `/model/response` is routable and returns model-shaped JSON. Do not use its
@@ -123,6 +124,11 @@ Focused VM-path `c=64` check from this release branch:
 `CAPSEM_BENCH_CONCURRENCY=64 CAPSEM_BENCH_DURATION_S=5 capsem-bench mcp-load`
 completed `37,775` `local__echo` calls in 5s, `7,555.0` requests/sec,
 `7.52ms` p50, `20.92ms` p99, `24.66ms` p999, `0` errors.
+
+MCP brokered OAuth credential resolution is measured in
+`cargo bench -p capsem-core --bench security_actions` as
+`mcp_brokered_oauth_resolve`: `10.10µs` median with the brokered secret stored
+behind a `credential:blake3` reference.
 
 ## VM Lifecycle
 

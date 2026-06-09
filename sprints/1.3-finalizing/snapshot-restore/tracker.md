@@ -848,21 +848,44 @@ recorded as evidence, not replayed as code.
 
 ### S5 Security Corpus/Rules/Bench Commits
 
-- [ ] `24c846e8 refactor: rename admin policy packs to enforcement`
-- [ ] `923d603f test: add session process policy corpus`
-- [ ] `63eccc3f feat: support admin model tool policy paths`
-- [ ] `9944c7ba feat: expand admin policy context parity`
-- [ ] `391eaece fix: compile-check policy backtests before replay`
-- [ ] `b07101ed test: tighten admin policy path compile`
-- [ ] `2f9b0fd0 test: expand s08c policy corpus diversity`
-- [ ] `80a416be feat: add admin policy compile`
-- [ ] `2db1259a test: pin s08c detection ir parity`
-- [ ] `099152a4 feat: add admin policy backtest corpus`
-- [ ] `7b14ccb4 feat: add admin detection backtest corpus`
-- [ ] `2bedce99 feat: seed policy context rule corpus`
-- [ ] `0e1e6b1b feat: add detection ir parity`
-- [ ] `66141eee feat: compile detection packs`
-- [ ] `d773481f feat: validate security packs`
+- [x] `24c846e8 refactor: rename admin policy packs to enforcement`
+  decision: reject old pack/backtest rail; current `capsem-admin enforcement`
+  validates and compiles directly into `SecurityRuleSet`.
+- [x] `923d603f test: add session process policy corpus`
+  decision: reject corpus replay shape; current process events are covered by
+  first-party security-event/CEL tests and runtime classification benchmarks.
+- [x] `63eccc3f feat: support admin model tool policy paths`
+  decision: reject old path authoring; current model/tool fields are first-party
+  `SecurityEvent` members compiled through `SecurityRuleSet`.
+- [x] `9944c7ba feat: expand admin policy context parity`
+  decision: reject policy-context JSONL parity layer; profile enforcement TOML
+  and Sigma YAML compile through the current Rust contract.
+- [x] `391eaece fix: compile-check policy backtests before replay`
+  decision: reject replay/backtest rail; compile checks live in
+  `capsem-admin enforcement|detection compile` plus profile validation.
+- [x] `b07101ed test: tighten admin policy path compile`
+  decision: covered by current admin enforcement/detection compile tests.
+- [x] `2f9b0fd0 test: expand s08c policy corpus diversity`
+  decision: reject S08C corpus as stale coverage; current fixtures exercise
+  direct CEL/event roots without separate IR.
+- [x] `80a416be feat: add admin policy compile`
+  decision: concept port complete via current `capsem-admin enforcement compile`.
+- [x] `2db1259a test: pin s08c detection ir parity`
+  decision: reject detection IR parity rail; Sigma facade compiles into the
+  current rule contract.
+- [x] `099152a4 feat: add admin policy backtest corpus`
+  decision: reject old policy backtest corpus.
+- [x] `7b14ccb4 feat: add admin detection backtest corpus`
+  decision: reject old detection backtest corpus.
+- [x] `2bedce99 feat: seed policy context rule corpus`
+  decision: reject old policy-context corpus.
+- [x] `0e1e6b1b feat: add detection ir parity`
+  decision: reject separate detection IR.
+- [x] `66141eee feat: compile detection packs`
+  decision: concept port complete via current `capsem-admin detection compile`.
+- [x] `d773481f feat: validate security packs`
+  decision: reject security-pack validator; current profile/rule validation is
+  the only accepted rail.
 
 ## S1: Profile/Admin Command Spine
 
@@ -1454,13 +1477,14 @@ S4 progress note:
 
 ## S5: Security Corpus And Bench Gates
 
-- [ ] Reject old detection/enforcement corpus and pack/backtest commits unless
+- [x] Reject old detection/enforcement corpus and pack/backtest commits unless
   already represented by current `SecurityRuleSet`/CEL tests.
-  Decision so far: old policy-pack, detection-pack, S08C, and policy-context
+  Decision: old policy-pack, detection-pack, S08C, and policy-context
   JSONL abstractions stay burned. Current coverage already includes direct
   enforcement TOML parsing, Sigma YAML parsing, stale field rejection, old
   `policy.http.*` rejection, and profile rule-file rejection through
-  `SecurityRuleProfile`/`SecurityRuleSet`.
+  `SecurityRuleProfile`/`SecurityRuleSet`. Every S5 old-branch corpus commit is
+  marked inspected above with reject/concept-port rationale.
 - [x] Restore security-event microbenchmarks for rule matching, plugin dispatch,
   credential-broker substitution, and runtime classification across HTTP, DNS,
   MCP, model, file, and process events.
@@ -1469,7 +1493,13 @@ S4 progress note:
   plugin dispatch `credential_broker 95.170ns`, `dummy_pre_eicar 159.77ns`,
   `dummy_post_allow 203.79ns`; broker substitute/materialize `218.85ns`;
   runtime classify `http 1.3306us`, `model 1.3240us`, `mcp 1.3284us`,
-  `dns 1.2561us`, `file 1.2101us`, `process 1.2898us`.
+  `dns 1.2561us`, `file 1.2101us`, `process 1.2898us`. Follow-up S5 run after
+  adding brokered MCP auth numbers: rule match `53.811ns`; plugin dispatch
+  `credential_broker 90.671ns`, `dummy_pre_eicar 152.38ns`,
+  `dummy_post_allow 196.04ns`; broker substitute/materialize `214.33ns`;
+  `mcp_brokered_oauth_resolve 10.100us`; runtime classify `http 1.2224us`,
+  `model 1.3006us`, `mcp 1.2326us`, `dns 1.1686us`, `file 1.1429us`,
+  `process 1.1912us`.
 - [x] Add model-shaped local debug-upstream fixture to release benchmark path.
   Proof: `capsem-debug-upstream` now exposes `/model/response` alongside
   `/sse/model`; `uv run pytest tests/test_capsem_bench_mitm_local.py -q`
@@ -1494,9 +1524,8 @@ S4 progress note:
   guest/artifacts/capsem_bench/__main__.py scripts/benchmark_report.py
   tests/test_capsem_bench_mitm_local.py tests/test_benchmark_report.py`; `uv run
   pytest tests/test_capsem_bench_mitm_local.py tests/test_benchmark_report.py
-  -q` passed 24 tests; `uv run --with matplotlib scripts/benchmark_report.py
-  benchmarks/mcp-load/baseline.json benchmarks/dns-load/baseline.json --plot
-  benchmarks/dns-load/baseline.json
+  -q` passed 25 tests; `uv run --with matplotlib scripts/benchmark_report.py
+  benchmarks/mcp-load/baseline.json benchmarks/dns-load/baseline.json
   benchmarks/mitm-local/control_host_direct_c64_model_credential_1.0.1780954707_arm64.json
   --plot benchmarks/load_baseline_report.png` validated load and scenario
   artifacts and produced the graph.
@@ -1518,29 +1547,39 @@ S4 progress note:
   /tmp/capsem-benchmark.json"` completed `21,669` DNS requests in 5s,
   `4333.8 rps`, `13.13ms` p50, `33.82ms` p99, `0` errors,
   `decision_distribution.allowed=21669`.
-- [ ] Add or run MCP brokered-auth benchmark numbers against the local MCP
+- [x] Add or run MCP brokered-auth benchmark numbers against the local MCP
   recording server.
-  Current proof is functional, not a benchmark: `local_http_mcp_e2e_uses_brokered_oauth_and_records_tool_call`
+  Functional proof: `local_http_mcp_e2e_uses_brokered_oauth_and_records_tool_call`
   connects to a local Streamable HTTP MCP server, resolves brokered OAuth,
   lists/calls `echo`, and proves the server receives the real bearer token
-  rather than a `credential:blake3` reference. S5 cannot claim broker
-  benchmark closure until this has numbers or an owner-accepted deferral.
-- [ ] Refresh release benchmark artifacts with local HTTP/model, DNS-load,
+  rather than a `credential:blake3` reference. Benchmark proof:
+  `cargo bench -p capsem-core --bench security_actions -- --warm-up-time 1
+  --measurement-time 2` now includes `mcp_brokered_oauth_resolve` at `10.100us`
+  median against the brokered credential store.
+- [x] Refresh release benchmark artifacts with local HTTP/model, DNS-load,
   DB-writer, EROFS/storage, lifecycle/fork, and security-action numbers.
   Current recorded evidence: EROFS/LZ4HC rootfs decision table in
   `docs/src/content/docs/benchmarks/results.md`; DNS baseline
-  `benchmarks/dns-load/baseline.json` (`c=10` `12928.5 rps`, `0.744ms` p50,
-  `1.142ms` p99, `0` errors); VM MITM-local artifact
-  `benchmarks/mitm-local/data_1.0.1780763638_arm64.json` still predates the
-  `/model/response` row and must be refreshed from inside a VM; DB writer
-  artifact `benchmarks/db-writer/data_1.0.1780763638_arm64.json`.
-- [ ] Add regression tests proving old policy-v2/domain/MCP decision rails stay
+  `benchmarks/dns-load/baseline.json` plus focused VM `c=64` DNS check
+  (`21,669` requests, `4333.8 rps`, `33.82ms` p99, `0` errors); focused VM
+  `c=64` MCP check (`37,775` calls, `7555.0 rps`, `20.92ms` p99, `0` errors);
+  DB writer artifact `benchmarks/db-writer/data_1.0.1780763638_arm64.json`;
+  lifecycle/fork artifacts under `benchmarks/lifecycle/` and
+  `benchmarks/fork/`; security-action Criterion numbers above; refreshed VM
+  MITM-local artifact `benchmarks/mitm-local/data_1.0.1780954707_arm64.json`
+  includes `/model/response` and passed session DB/no-secret checks. Command:
+  `CAPSEM_RUN_MITM_LOCAL_BENCH=1 CAPSEM_BENCH_TOTAL_REQUESTS=10
+  CAPSEM_BENCH_CONCURRENCY=1 uv run pytest
+  tests/capsem-serial/test_mitm_local_benchmark.py -xvs`.
+- [x] Add regression tests proving old policy-v2/domain/MCP decision rails stay
   absent and do not show up as live code paths.
-  Current focused proof: `uv run pytest
+  Proof: `uv run pytest tests/test_security_rails_retired.py
+  tests/test_capsem_bench_mitm_local.py tests/test_benchmark_report.py -q`
+  passed 28 tests. Existing focused proof: `uv run pytest
   tests/capsem-service/test_svc_mcp_api.py::TestRetiredMcpPolicy::test_retired_mcp_endpoints_are_burned
   -q` passed; searches show old `policy.http.*` strings only in rejection
   tests and admin/profile old-syntax rejection fixtures.
-- [ ] Commit S5.
+- [x] Commit S5.
 
 ## S6: Docs, Changelog, And Verification
 

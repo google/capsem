@@ -5,7 +5,8 @@
 //! `cargo bench -p capsem-core --bench security_actions`.
 
 use capsem_core::credential_broker::{
-    broker_observed_credential, CredentialObservation, CredentialProvider,
+    broker_observed_credential, resolve_broker_reference_for_provider, CredentialObservation,
+    CredentialProvider,
 };
 use capsem_core::net::ai_traffic::provider::ProviderKind;
 use capsem_core::net::policy_config::{
@@ -103,6 +104,31 @@ fn brokered_header_event() -> (SecurityEvent, tempfile::TempDir, Vec<EnvVarGuard
         ),
     );
     (event, tmp, guards)
+}
+
+fn brokered_mcp_auth_ref() -> (String, tempfile::TempDir, Vec<EnvVarGuard>) {
+    let tmp = tempfile::tempdir().unwrap();
+    let store_path = tmp.path().join("broker-store.json");
+    let user_config = tmp.path().join("user.toml");
+    let corp_config = tmp.path().join("corp.toml");
+    std::fs::write(&user_config, "").unwrap();
+    std::fs::write(&corp_config, "").unwrap();
+    let guards = vec![
+        EnvVarGuard::set(TEST_STORE_ENV, store_path.as_os_str()),
+        EnvVarGuard::set("CAPSEM_USER_CONFIG", user_config.as_os_str()),
+        EnvVarGuard::set("CAPSEM_CORP_CONFIG", corp_config.as_os_str()),
+    ];
+    let brokered = broker_observed_credential(&CredentialObservation {
+        provider: CredentialProvider::Mcp,
+        raw_value: "local-mcp-oauth-token-security-action-bench".to_string(),
+        source: "mcp.auth.bench".to_string(),
+        event_type: Some("mcp.server.auth".to_string()),
+        confidence: 1.0,
+        trace_id: None,
+        context_json: None,
+    })
+    .unwrap();
+    (brokered.credential_ref, tmp, guards)
 }
 
 fn net_write() -> WriteOp {
@@ -322,6 +348,21 @@ fn bench_broker_substitute(c: &mut Criterion) {
     });
 }
 
+fn bench_mcp_brokered_auth(c: &mut Criterion) {
+    let (credential_ref, _tmp, _guards) = brokered_mcp_auth_ref();
+
+    c.bench_function("mcp_brokered_oauth_resolve", |b| {
+        b.iter(|| {
+            let resolved = resolve_broker_reference_for_provider(
+                CredentialProvider::Mcp,
+                black_box(&credential_ref),
+            )
+            .unwrap();
+            black_box(resolved);
+        });
+    });
+}
+
 fn registry_for_plugin(plugin: &str) -> SecurityActionRegistry {
     let mut policy = BTreeMap::new();
     policy.insert(
@@ -390,6 +431,7 @@ criterion_group!(
     bench_rule_match,
     bench_action_chain,
     bench_broker_substitute,
+    bench_mcp_brokered_auth,
     bench_runtime_event_handoff
 );
 criterion_main!(benches);

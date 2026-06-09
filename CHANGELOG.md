@@ -48,7 +48,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   committed load artifacts.
 - Expanded the security-action Criterion benchmark to cover runtime event
   classification for HTTP, DNS, MCP, model, file, and process events in
-  addition to rule matching, plugin dispatch, and broker substitution.
+  addition to rule matching, plugin dispatch, broker substitution, and MCP
+  brokered OAuth credential-reference resolution.
+- Refreshed the VM `mitm-local` release artifact so the local fixture corpus now
+  includes JSON model responses, credential-shaped responses, WebSocket control,
+  and session DB/no-secret verification through the profile-selected VM path.
+- Added a retired security-rail guard test that fails if old Policy V2,
+  domain-policy, or MCP decision-provider code paths reappear in live crates or
+  configuration.
 
 ### Fixed (install/setup)
 - macOS package postinstall now adds `~/.capsem/bin` to fish shell startup via

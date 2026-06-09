@@ -109,6 +109,9 @@ def _stop_process(proc):
         proc.wait(timeout=5)
     except subprocess.TimeoutExpired:
         proc.kill()
+        proc.wait(timeout=5)
+    if proc.stdout is not None:
+        proc.stdout.close()
 
 
 def _assert_mitm_local_succeeded(data):
@@ -242,6 +245,7 @@ def test_mitm_local_benchmark_artifact():
     try:
         client.post("/vms/create", {
             "name": name,
+            "profile_id": "code",
             "ram_mb": DEFAULT_RAM_MB,
             "cpus": DEFAULT_CPUS,
         })
