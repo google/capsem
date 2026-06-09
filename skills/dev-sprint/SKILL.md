@@ -85,7 +85,8 @@ Keep configuration ownership crisp during every sprint:
   `CAPSEM_PROFILES_DIR=target/config/profiles`) after the instantiate step.
 - The instantiate step must be implemented in the same admin/just path used by
   CI and release, normally `capsem-admin image build|verify|workspace` and the
-  `just build-kernel`, `just build-rootfs`, `just build-assets`,
+  `just build-kernel <arch> <profile>`, `just build-rootfs <arch> <profile>`,
+  `just build-assets <profile> [arch]`,
   `_pack-initrd`, `smoke`, and `test` chains. Do not create a dev-only config
   patcher that CI does not run.
 - Commit source templates/support and the code that generates runtime config.

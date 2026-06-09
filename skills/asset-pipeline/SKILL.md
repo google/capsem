@@ -95,8 +95,7 @@ rootfs-89eb92b83534d9d0.erofs
 ```
 
 Hash-based naming: `{stem}-{hash[..16]}{ext}`. Same hash = same file across
-versions = natural dedup. EROFS lz4hc level 12 is the 1.3 default; squashfs is
-only a legacy read fallback when an older manifest lacks `rootfs.erofs`.
+versions = natural dedup. EROFS lz4hc level 12 is the 1.3 rootfs contract.
 
 ## Boot-Time Resolution
 

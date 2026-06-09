@@ -11,9 +11,9 @@ sidebar:
 |---------|-------|-----|
 | `codesign: command not found` | Xcode CLTools not installed | `xcode-select --install` |
 | Entitlement crash on launch | Binary not codesigned | `just doctor` to diagnose, then `just run` (signs automatically) |
-| `CAPSEM_ASSETS_DIR` error | Assets not built | `just build-assets` (first time only) |
-| `vmlinuz not found` | Missing kernel asset | `just build-kernel` |
-| `rootfs.img not found` | Missing rootfs asset | `just build-rootfs` |
+| `CAPSEM_ASSETS_DIR` error | Assets not built | `just build-assets code` (first time only) |
+| `vmlinuz not found` | Missing kernel asset | `just build-kernel <arch> code` |
+| `rootfs.erofs not found` | Missing rootfs asset | `just build-rootfs <arch> code` |
 
 ## Boot hangs or times out
 

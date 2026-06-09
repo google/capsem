@@ -87,14 +87,24 @@ LIMIT 20;"
 
 | Recipe | What it does | Time |
 |--------|-------------|------|
-| `just build-assets` | Full rebuild: kernel + rootfs via capsem-builder (needs Docker) | ~10 min |
-| `just build-kernel <arch>` | Kernel only | ~5 min |
-| `just build-rootfs <arch>` | Rootfs only | ~8 min |
+| `just build-assets code [arch]` | Full profile-derived rebuild: kernel + rootfs via `capsem-admin` (needs Docker) | ~10 min |
+| `just build-kernel <arch> code` | Kernel only through the profile-derived admin rail | ~5 min |
+| `just build-rootfs <arch> code` | Rootfs only through the profile-derived admin rail | ~8 min |
 | `just cross-compile [arch]` | Full Linux build in container: agent binaries + deb + AppImage | ~15 min |
 
-You only need `just build-assets` on first setup or when `guest/config/`
+You only need `just build-assets code` on first setup or when `guest/config/`
 changes rootfs packages or image build inputs. Day-to-day, `just shell` and
 `just exec` repack the initrd without rebuilding rootfs images.
+
+Runtime recipes run the shared generated-config path:
+
+```text
+_check-assets -> _pack-initrd -> _materialize-config -> _ensure-service
+```
+
+`_materialize-config` invokes `capsem-admin profile materialize`, which writes
+the current-build runtime profile under `target/config/` from checked-in
+`config/` source files and `assets/manifest.json`.
 
 ## Session inspection
 

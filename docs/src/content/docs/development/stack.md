@@ -44,7 +44,7 @@ flowchart TD
         DOCKER["Docker (via Colima)"]
         TOML --> BUILDER --> DOCKER
         DOCKER --> VMLINUZ["vmlinuz"]
-        DOCKER --> ROOTFS["rootfs.squashfs"]
+        DOCKER --> ROOTFS["rootfs.erofs"]
         DOCKER --> INITRD_BASE["initrd.img (base)"]
     end
 
@@ -95,11 +95,13 @@ just cross-compile x86_64    # Build x86_64 deb
 
 The initrd is a gzipped cpio archive that the kernel unpacks into RAM at boot. The `_pack-initrd` recipe:
 
-1. Extracts the base initrd (produced by `just build-assets`)
+1. Extracts the base initrd (produced by `just build-assets code`)
 2. Copies in the freshly cross-compiled guest binaries (chmod 555, read-only)
 3. Copies in shell scripts: `capsem-init` (PID 1), `capsem-doctor`, `capsem-bench`, `snapshots`
 4. Repacks with `cpio + gzip`
 5. Regenerates BLAKE3 checksums (`B3SUMS` + `manifest.json`)
+6. `_materialize-config` uses the updated manifest to generate
+   `target/config/profiles/code.toml`
 
 This is why `just run` is fast (~10s) -- it only rebuilds what changed, not the full rootfs.
 
@@ -149,22 +151,25 @@ On macOS, all binaries must be codesigned with the `com.apple.security.virtualiz
 
 ## Stage 4: Boot
 
-The service loads three assets from `~/.capsem/assets/v{VERSION}/` (installed) or `assets/{arch}/` (development):
+The service loads the selected profile from `target/config/profiles` in
+development and the installed profile directory in packaged builds. That
+profile selects three assets from `~/.capsem/assets/` (installed) or
+`assets/{arch}/` (development):
 
 | Asset | Produced by | What it is |
 |-------|-------------|------------|
-| `vmlinuz` | `just build-assets` | Custom Linux kernel (no modules, no IP stack, 7MB) |
+| `vmlinuz` | `just build-assets code [arch]` | Custom Linux kernel |
 | `initrd.img` | `just run` (repacked each time) | Guest binaries + init scripts |
-| `rootfs.squashfs` | `just build-assets` | Debian bookworm base + AI CLIs + tools |
+| `rootfs.erofs` | `just build-assets code [arch]` | Debian bookworm base + AI CLIs + tools, EROFS/LZ4HC |
 
 Boot sequence: capsem-service spawns capsem-process, which loads the kernel + initrd into a VM. `capsem-init` (PID 1) sets up overlayfs, air-gapped networking, and launches the PTY agent + net proxy + MCP server + sysutil. The host connects over vsock.
 
-## VM image builds (`just build-assets`)
+## VM image builds (`just build-assets code`)
 
 The slow path (~10 min, first-time only). The [capsem-builder](/architecture/build-system/) Python CLI reads TOML configs from `guest/config/` and produces kernel + rootfs via Docker.
 
 ```bash
-uv run capsem-builder build guest/ --arch arm64    # build everything
+cargo run -p capsem-admin -- image build --profile config/profiles/code.toml --config-root config --arch arm64
 uv run capsem-builder validate guest/               # lint configs
 uv run capsem-builder doctor guest/                  # check prerequisites
 ```
@@ -212,7 +217,7 @@ flowchart LR
 | Job | Runner | Produces |
 |-----|--------|----------|
 | `preflight` | macos-14 | Validates Apple cert, Tauri key, notarization creds |
-| `build-assets` | ubuntu arm64 + x86_64 | vmlinuz, initrd.img, rootfs.squashfs per arch |
+| `build-assets` | ubuntu arm64 + x86_64 | vmlinuz, initrd.img, rootfs.erofs per arch |
 | `test` | macos-14 | Unit tests + coverage, frontend check, audit |
 | `build-app-macos` | macos-14 | DMG (codesigned + notarized), host binaries, latest.json |
 | `build-app-linux` | ubuntu arm64 + x86_64 | deb (both arches), latest.json |

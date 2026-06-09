@@ -86,8 +86,8 @@ Release artifacts receive [SLSA build provenance](https://slsa.dev/) attestation
 |----------|-------------|
 | `.dmg` (macOS installer) | Build provenance |
 | `.deb` (Linux package) | Build provenance |
-| `rootfs.squashfs` (arm64) | Build provenance |
-| `rootfs.squashfs` (x86_64) | Build provenance |
+| `rootfs.erofs` (arm64) | Build provenance |
+| `rootfs.erofs` (x86_64) | Build provenance |
 | `.dmg`, `.deb` | SBOM (SPDX 2.3) |
 
 Attestations are published to the GitHub Attestations API and can be verified with `gh attestation verify`.
@@ -95,6 +95,9 @@ Attestations are published to the GitHub Attestations API and can be verified wi
 ## Asset integrity
 
 VM assets (kernel, initrd, rootfs) are verified via BLAKE3 hashes at every stage from build to boot.
+The checked-in profile is materialized into `target/config/` before runtime, so
+the service boots from a generated profile whose asset URLs, hashes, and sizes
+come directly from `assets/manifest.json`.
 
 ### Verification flow
 

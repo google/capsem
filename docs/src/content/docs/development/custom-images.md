@@ -146,7 +146,7 @@ uv run capsem-builder validate guest/
 uv run capsem-builder build guest/ --dry-run
 
 # 3. Rebuild the rootfs (kernel rebuild only needed if you changed defconfig)
-just build-rootfs
+just build-rootfs arm64 code
 
 # 4. Boot and verify
 just run "capsem-doctor"
@@ -155,7 +155,7 @@ just run "capsem-doctor"
 If you changed kernel config, rebuild everything:
 
 ```bash
-just build-assets
+just build-assets code
 just run "capsem-doctor"
 ```
 
@@ -163,17 +163,17 @@ just run "capsem-doctor"
 
 | What you changed | Rebuild command |
 |-----------------|----------------|
-| `packages/*.toml` | `just build-rootfs` |
-| `ai/*.toml` | `just build-rootfs` |
-| `mcp/*.toml` | `just build-rootfs` |
+| `packages/*.toml` | `just build-rootfs <arch> code` |
+| `ai/*.toml` | `just build-rootfs <arch> code` |
+| `mcp/*.toml` | `just build-rootfs <arch> code` |
 | `security/web.toml` | No rebuild -- applied at boot via settings |
 | `vm/resources.toml` | No rebuild -- applied at boot via settings |
 | `vm/environment.toml` | No rebuild -- applied at boot via settings |
-| `kernel/defconfig.*` | `just build-kernel` |
-| `build.toml` | `just build-assets` (full rebuild) |
-| `guest/artifacts/tips.txt` | `just build-rootfs` (baked into rootfs) |
-| `guest/artifacts/banner.txt` | `just build-rootfs` (baked into rootfs) |
-| `guest/artifacts/capsem-bashrc` | `just build-rootfs` (baked into rootfs) |
+| `kernel/defconfig.*` | `just build-kernel <arch> code` |
+| `build.toml` | `just build-assets code [arch]` (full rebuild) |
+| `guest/artifacts/tips.txt` | `just build-rootfs <arch> code` (baked into rootfs) |
+| `guest/artifacts/banner.txt` | `just build-rootfs <arch> code` (baked into rootfs) |
+| `guest/artifacts/capsem-bashrc` | `just build-rootfs <arch> code` (baked into rootfs) |
 | `guest/artifacts/capsem-init` | `just run` (repacks initrd automatically) |
 
 Settings-only changes (security, resources, environment) take effect on the next `just run` without any rebuild -- capsem-builder generates `defaults.json` which the host reads at boot.

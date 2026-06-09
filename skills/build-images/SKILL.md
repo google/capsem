@@ -60,7 +60,7 @@ assets/
   B3SUMS                 BLAKE3 checksums
   arm64/
     vmlinuz              Kernel
-    rootfs.squashfs      Root filesystem
+    rootfs.erofs         Root filesystem
     initrd.img           Initial ramdisk (repacked by just run)
 ```
 
@@ -280,7 +280,7 @@ For rootfs:
 3. Render Dockerfile from template
 4. `docker build`
 5. Export container filesystem as tar
-6. Create squashfs from tar (`create_squashfs` -- runs mksquashfs in a container)
+6. Create EROFS from tar (`create_erofs` -- runs `mkfs.erofs` in a container)
 7. Extract tool versions (`extract_tool_versions`)
 8. Clean up container image
 
@@ -331,4 +331,4 @@ This can occur with any container VM backend on macOS.
 Files affected:
 - `Dockerfile.kernel.j2` (line 11)
 - `Dockerfile.rootfs.j2` (line 11)
-- `docker.py` `create_squashfs()` function
+- `docker.py` `create_erofs()` function

@@ -34,7 +34,7 @@ Boot timing is measured independently from `capsem-bench`. The guest init script
 |-------|-------------|
 | `rootfs` | Mount the compressed read-only rootfs from the virtio block device |
 | `virtiofs` | Mount the VirtioFS shared directory from the host |
-| `overlayfs` | Create the overlay filesystem (ext4 loopback upper + squashfs lower) |
+| `overlayfs` | Create the overlay filesystem (ext4 loopback upper + EROFS lower) |
 | `workspace` | Bind-mount `/root` from the VirtioFS workspace |
 | `network` | Configure dummy0 interface and iptables DNS/HTTPS redirect rules |
 | `dns_proxy` | Start capsem-dns-proxy and bridge DNS to host vsock:5007 |

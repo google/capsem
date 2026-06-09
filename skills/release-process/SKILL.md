@@ -57,7 +57,7 @@ Test runs in parallel with builds. A test failure blocks `create-release` but do
 ### CI invariants (hard-won lessons)
 
 - **Per-arch VM assets use arch-prefixed names on GitHub.** CI uploads with `gh release upload "$f#${arch}-${base}"`, renaming `vmlinuz` to `arm64-vmlinuz`, etc. The v2 manifest keeps bare filenames in per-arch `arches` maps.
-- **Use justfile recipes in CI.** `build-assets` must call `just build-kernel` and `just build-rootfs`, not reimplement the builder commands. Drift between the justfile and CI caused v0.14.2-v0.14.4 to ship without vmlinuz/initrd.img.
+- **Use justfile/admin recipes in CI.** `build-assets` must call profile-derived `just build-kernel <arch> code`, `just build-rootfs <arch> code`, and `capsem-admin profile materialize`, not reimplement the builder or generated-config commands. Drift between the justfile and CI caused v0.14.2-v0.14.4 to ship without vmlinuz/initrd.img.
 - **Build both kernel and rootfs.** The builder defaults to `--template rootfs` only. The kernel template must be built explicitly.
 - **`assets/current` must be a real directory, not a symlink.** `generate_checksums()` creates a symlink, but GitHub Actions strips symlinks from artifacts. After calling `generate_checksums`, replace the symlink with `rm -rf assets/current && cp -r assets/arm64 assets/current`.
 - **`Cargo.lock` is gitignored.** CI resolves a fresh lockfile each build. This means dependency versions can drift between builds. Acceptable for now but a reproducibility risk.

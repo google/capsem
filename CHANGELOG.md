@@ -26,9 +26,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rule insertion errors, and the rootfs build strips Debian's legacy iptables
   frontend binaries.
 - Promoted EROFS lz4hc rootfs assets into the normal asset contract:
-  `just build-assets`, manifests, service resolution, setup status, release
-  attestation, and installer download tests now prefer `rootfs.erofs` while
-  retaining squashfs as a legacy read fallback.
+  `just build-assets code [arch]`, manifests, service resolution, setup status,
+  release attestation, and installer download tests now use `rootfs.erofs` as
+  the 1.3 runtime rootfs.
 
 ### Fixed (install/setup)
 - macOS package postinstall now adds `~/.capsem/bin` to fish shell startup via
@@ -79,6 +79,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `config/` plus `assets/manifest.json` instead of hand-editing source
   profiles. Service test helpers and `just _ensure-service` load
   `target/config/profiles` fail-closed.
+- Updated docs and developer skills to document the same generated-config rail:
+  checked-in `config/` is source/support material, current-build runtime config
+  lives under `target/config`, and EROFS/LZ4HC level 12 is the 1.3 rootfs
+  contract rather than a best-effort fallback.
 - Restored the Linux-team KVM/FUSE performance work and storage benchmark
   harness into the current EROFS/LZ4HC rail, including bounded VM proof for
   `capsem-bench storage` from the generated profile-selected asset chain.
@@ -99,8 +103,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Updated architecture docs and local development skills to match the 1.3
   contract: settings endpoints are `/settings/info|edit` and expose only
   `tree`/`issues`, install is service/profile-asset readiness rather than a
-  setup wizard, and EROFS lz4hc is the primary rootfs with squashfs only as a
-  legacy fallback.
+  setup wizard, and EROFS/LZ4HC is the rootfs contract.
 - Moved VM APIs under the explicit `/vms/...` contract. VM creation, listing,
   info, stop, pause, delete, resume, save, fork, exec, logs, inspect, history,
   timeline, and file read/write/list/content routes now live under

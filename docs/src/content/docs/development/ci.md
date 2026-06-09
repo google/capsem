@@ -78,7 +78,7 @@ preflight (30s) --> build-assets (arm64 + x86_64, 10 min) --> build-app-macos (1
 | Job | Runner | What it produces |
 |-----|--------|-----------------|
 | `preflight` | macos-14 | Validates Apple cert, Tauri signing key, notarization creds |
-| `build-assets` | ubuntu arm64 + x86_64 | vmlinuz, initrd.img, rootfs.squashfs per arch |
+| `build-assets` | ubuntu arm64 + x86_64 | vmlinuz, initrd.img, rootfs.erofs per arch |
 | `test` | macos-14 | Unit tests + coverage + audit (gates release) |
 | `build-app-macos` | macos-14 | DMG (codesigned + notarized), host binaries, latest.json |
 | `build-app-linux` | ubuntu arm64 + x86_64 | deb packages (both arches), latest.json |
@@ -97,9 +97,14 @@ The macOS build signs all binaries with a Developer ID certificate:
 Each release publishes:
 - `capsem-{version}-{arch}.dmg` -- macOS desktop app
 - `capsem_{version}_{arch}.deb` -- Linux package
-- `{arch}-vmlinuz`, `{arch}-initrd.img`, `{arch}-rootfs.squashfs` -- VM images
+- `{arch}-vmlinuz`, `{arch}-initrd.img`, `{arch}-rootfs.erofs` -- VM images
 - `manifest.json` -- asset manifest with BLAKE3 hashes
 - `latest.json` -- Tauri auto-updater metadata
+
+Release packaging materializes runtime profiles through the same admin rail as
+local development: `capsem-admin profile materialize` copies checked-in config
+into `target/config/` and pins profile asset descriptors to the current
+`assets/manifest.json`. CI must not hand-edit profiles or bypass that step.
 
 ## Running CI checks locally
 

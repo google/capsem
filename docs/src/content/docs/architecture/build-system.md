@@ -29,9 +29,10 @@ flowchart TD
 
   subgraph Output["Build Outputs"]
     Docker["Docker Build"]
-    Assets["assets/{arch}/\nvmlinuz, initrd.img,\nrootfs.squashfs"]
+    Assets["assets/{arch}/\nvmlinuz, initrd.img,\nrootfs.erofs"]
     JSON["config/defaults.json\n(consumed by Rust)"]
     BOM["manifest.json\n+ B3SUMS"]
+    RuntimeConfig["target/config/\nmaterialized runtime profiles"]
   end
 
   TOML --> Config
@@ -43,6 +44,7 @@ flowchart TD
   Jinja --> Docker
   Docker --> Assets
   Assets --> BOM
+  BOM --> RuntimeConfig
   Defaults --> JSON
 ```
 
@@ -55,11 +57,12 @@ TOML configs are the single source of truth. The data flows through four layers:
 3. **Context dicts** (`docker.py`) -- template variables assembled from the validated config. Each template type (`rootfs`, `kernel`) has its own context builder that collects packages by manager type.
 4. **Jinja2 templates** -- Dockerfile output parameterized per architecture.
 
-Three outputs are produced:
+Four outputs are produced:
 
 1. **defaults.json** -- settings interchange consumed by Rust via `include_str!`, validated against `settings-schema.json`.
 2. **Rendered Dockerfiles** -- Jinja2 templates (`Dockerfile.rootfs.j2`, `Dockerfile.kernel.j2`) parameterized per architecture.
 3. **manifest.json** -- bill-of-materials with package versions, BLAKE3 hashes, and vulnerability findings.
+4. **target/config/** -- generated runtime config produced by `capsem-admin profile materialize` from checked-in `config/` plus `assets/manifest.json`.
 
 ## TOML Config Structure
 
@@ -182,15 +185,19 @@ assets/
   arm64/
     vmlinuz
     initrd.img
-    rootfs.squashfs
+    rootfs.erofs
     tool-versions.txt
   x86_64/
     vmlinuz
     initrd.img
-    rootfs.squashfs
+    rootfs.erofs
     tool-versions.txt
   manifest.json
   B3SUMS
+target/
+  config/
+    assets/manifest.json
+    profiles/code.toml
 ```
 
 ## Build Pipeline
@@ -205,11 +212,10 @@ flowchart TD
   Render --> Context["Assemble build context\n(CA cert, bashrc, diagnostics, binaries)"]
   Context --> Build["Docker build"]
   Build --> Export["Export container filesystem"]
-  Export --> Squash["mksquashfs fallback (zstd)"]
-  Export --> Erofs["mkfs.erofs primary (lz4hc level 12)"]
-  Squash --> Versions["Extract tool versions"]
-  Erofs --> Versions
+  Export --> Erofs["mkfs.erofs (lz4hc level 12)"]
+  Erofs --> Versions["Extract tool versions"]
   Versions --> Checksums["Generate B3SUMS + manifest.json"]
+  Checksums --> Materialize["Materialize target/config\nfrom profile + manifest"]
 ```
 
 The kernel build follows a parallel path:

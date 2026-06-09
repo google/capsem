@@ -12,8 +12,8 @@ artifacts.
 
 ## 1.3 Rootfs Decision
 
-Capsem 1.3 uses EROFS as the primary rootfs asset and keeps squashfs as a
-legacy fallback. The release default is EROFS `lz4hc` level `12`.
+Capsem 1.3 uses EROFS `lz4hc` level `12` as the release rootfs asset. The
+squashfs row below is historical comparison data only, not a release fallback.
 
 | Lane | Rootfs size | Fresh run | Sequential rootfs read | Random rootfs read | `node --version` | `codex --version` |
 |---|---:|---:|---:|---:|---:|---:|

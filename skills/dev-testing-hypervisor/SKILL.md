@@ -79,5 +79,5 @@ Read `references/rust-async-patterns.md` for tokio patterns (tasks, channels, st
 
 - VirtioFS path traversal: FUSE lookup must reject `..` components
 - Resource limits: file handle cap (4096), read size clamp (1MB), gather buffer limit (2MB)
-- Read-only rootfs: squashfs lower layer must not be writable through overlay
+- Read-only rootfs: EROFS lower layer must not be writable through overlay
 - Guest binary integrity: binaries deployed chmod 555, guest cannot modify them

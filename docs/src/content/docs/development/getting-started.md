@@ -14,7 +14,7 @@ sidebar:
 | **macOS 13+** (Ventura) | Required for Virtualization.framework |
 | **Apple Silicon** (arm64) | Intel Macs are not supported |
 | **Xcode Command Line Tools** | Provides `codesign`, `cc`, and system headers. Install: `xcode-select --install` |
-| **Docker (via Colima on macOS)** | Needed for `just build-assets` (kernel + rootfs builds) |
+| **Docker (via Colima on macOS)** | Needed for `just build-assets code` (kernel + rootfs builds) |
 
 ### Linux
 
@@ -23,7 +23,7 @@ sidebar:
 | **Debian/Ubuntu** | apt-based distro (for .deb install) |
 | **x86_64 or arm64** | Both architectures supported |
 | **KVM** | `/dev/kvm` must be accessible. Load `kvm-intel` or `kvm-amd` module. |
-| **Docker** | Needed for `just build-assets` (kernel + rootfs builds) |
+| **Docker** | Needed for `just build-assets code` (kernel + rootfs builds) |
 
 ## Clone and bootstrap
 
@@ -45,7 +45,7 @@ git clone https://github.com/google/capsem.git && cd capsem
 | 2 | `uv` | `astral.sh/uv` installer → `~/.local/bin` | Python deps for `capsem-builder` |
 | 2 | Python deps | `uv sync` | Locked via `uv.lock` |
 | 2 (macOS) | `flock`, `pnpm` | `brew` | flock = multi-agent recipe lock; pnpm = frontend deps |
-| 2 (macOS) | `colima`, `docker`, `docker-buildx` | `brew` + symlink into `~/.docker/cli-plugins` | Container runtime for `just build-assets` |
+| 2 (macOS) | `colima`, `docker`, `docker-buildx` | `brew` + symlink into `~/.docker/cli-plugins` | Container runtime for `just build-assets code` |
 | 2 (macOS) | Colima VM | `colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8` | Runs Docker; Rosetta enables x86_64 cross-builds |
 | 2 | Frontend deps | `pnpm install --frozen-lockfile` (in `frontend/`) | Tauri UI dependencies |
 | 3 | Doctor `--fix` | `scripts/doctor-common.sh --fix` | Installs Rust targets, `cargo-llvm-cov`, `cargo-audit`, `b3sum`, `cargo-tauri` (= `tauri-cli` crate), `cargo-sbom`, builds VM assets, packs initrd |
@@ -55,10 +55,15 @@ Pressing **Enter** at any prompt accepts the install (Y is the default). Type `n
 ## Build VM assets
 
 ```bash
-just build-assets
+just build-assets code
 ```
 
 Builds the Linux kernel and rootfs via Docker (~10 min on first run). The kernel version is **not** pinned — `kernel_branch = "auto"` in `guest/config/build.toml` makes the resolver fetch the newest non-EOL longterm (LTS) branch from `kernel.org/releases.json` and pull its latest patch (e.g. `6.18.26`). To freeze a specific branch (CI reproducibility, security freeze), set `kernel_branch = "6.6"` (or any `X.Y`) in the same file. Assets are gitignored and must be built locally. See [Life of a Build > Container runtime](./stack#container-runtime) if you need to retune Colima resources.
+
+The build is profile-derived. `code` is the default coding-agent profile, and
+the runtime profile for the current local build is generated under
+`target/config/` by `capsem-admin profile materialize` during `just shell`,
+`just exec`, `just smoke`, `just test`, and release packaging.
 
 ## Verify
 
@@ -136,11 +141,11 @@ If `just run` or `just doctor` reports a codesign failure:
    - Check SIP status: `csrutil status` (should be "enabled")
    - Verify `cc` works: `echo 'int main(){return 0;}' | cc -x c -o /tmp/test -` -- if this fails, reinstall CLTools: `sudo rm -rf /Library/Developer/CommandLineTools && xcode-select --install`
 
-### `just build-assets` or `just test-install` fails with exit 137 (or 143 mid-cargo-build)
+### `just build-assets code` or `just test-install` fails with exit 137 (or 143 mid-cargo-build)
 
 The container runtime ran out of memory. The Tauri install-test cold build needs >12GB. See [Life of a Build > Container runtime](./stack#container-runtime) for how to bump Colima to 16GB.
 
-### `just build-assets` fails with "Release file not valid yet"
+### `just build-assets code` fails with "Release file not valid yet"
 
 The container VM's clock has drifted:
 - Colima: `colima stop && colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8`
@@ -148,6 +153,6 @@ The container VM's clock has drifted:
 
 ### `just run` fails with "assets not found"
 
-Run `just build-assets` first. Assets are gitignored and must be built locally.
+Run `just build-assets code` first. Assets are gitignored and must be built locally.
 
 For runtime issues (disk full, boot hangs, cross-compile errors, network problems), see [Troubleshooting](/debugging/troubleshooting/).

@@ -255,7 +255,7 @@ Every build produces `assets/manifest.json` (format 2) -- a single top-level fil
           "arm64": {
             "vmlinuz":         {"hash": "<64-char blake3>", "size": 7797248},
             "initrd.img":      {"hash": "<64-char blake3>", "size": 2314963},
-            "rootfs.squashfs": {"hash": "<64-char blake3>", "size": 454230016}
+            "rootfs.erofs": {"hash": "<64-char blake3>", "size": 454230016}
           }
         }
       }

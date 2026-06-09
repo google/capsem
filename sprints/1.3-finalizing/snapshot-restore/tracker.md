@@ -1242,6 +1242,13 @@ the guarantee or explicitly burn it.
   tests/test_capsem_bench_gates.py tests/test_capsem_bench_mitm_local.py
   tests/test_build_assets_profile.py -q` passed 38 tests, and a bounded VM
   `capsem-bench storage` run exited 0 from generated `target/config`.
+- [x] Document the generated config/profile asset rail in docs and skills.
+  Proof: docs and skills now state `config/` is source/support,
+  `target/config/` is generated runtime config, runtime recipes materialize it
+  through `capsem-admin profile materialize`, and EROFS/LZ4HC level 12 is the
+  1.3 rootfs contract. The docs sweep found no remaining active
+  `rootfs.squashfs`/legacy-fallback references outside historical benchmark
+  comparison rows.
 - [ ] Record zstd comparison evidence and decision.
 - [ ] Record benchmark numbers with image format, compression, compression
   level, architecture, kernel, host OS, command line, event/workload counts,

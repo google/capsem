@@ -198,17 +198,17 @@ confirm signing works.
 ### `just doctor` fails
 Run `just doctor-fix` to auto-fix all fixable issues. Fixes run in dependency order (rustup targets before cargo tools before build-assets before pack-initrd). Non-fixable issues show install hints.
 
-### `just build-assets` or `just test-install` fails with exit code 137 (or 143 mid-cargo-build)
+### `just build-assets code` or `just test-install` fails with exit code 137 (or 143 mid-cargo-build)
 The container runtime VM ran out of memory. Bump Colima to at least 12GB (16GB recommended):
 - Colima: `colima stop && colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8`
 - Linux: Docker runs natively, no memory tuning needed
 
-### `just build-assets` fails with "Release file not valid yet"
+### `just build-assets code` fails with "Release file not valid yet"
 The container VM's clock has drifted. The builder uses `Acquire::Check-Valid-Until=false` to work around this, but if you see this error on an old builder version:
 - Colima: `colima stop && colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8` (resets clock)
 - Docker Desktop: restart Docker Desktop
 
-### `just build-assets` fails (other)
+### `just build-assets code` fails (other)
 - Check Docker is running: `docker info`
 - Check guest config is valid: `uv run capsem-builder validate guest/`
 - On first run, Docker image pulls can be slow
@@ -252,7 +252,7 @@ Fix: set `credsStore` to empty string in `~/.docker/config.json`:
 
 ### VM boot hangs
 - Check codesigning: `codesign -dvv target/debug/capsem 2>&1 | grep entitlements`
-- Check assets exist: `ls assets/arm64/vmlinuz assets/arm64/rootfs.squashfs`
+- Check assets exist: `ls assets/arm64/vmlinuz assets/arm64/rootfs.erofs`
 - Check kernel architecture matches host: wrong-arch kernel causes silent hang. `VmConfig::build()` now rejects mismatched kernels at config time.
 - Try with debug logs: `RUST_LOG=capsem=debug just run`
 

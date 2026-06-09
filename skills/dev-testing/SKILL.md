@@ -55,8 +55,9 @@ configuration from generated runtime configuration:
   hand-edited checked-in profile files.
 - The generated runtime config must be produced by the same `capsem-admin` and
   `just` path used by CI/release. Do not add a local-only script or test helper
-  that patches profiles differently from `just build-kernel`,
-  `just build-rootfs`, `just build-assets`, `_pack-initrd`, `smoke`, or `test`.
+  that patches profiles differently from `just build-kernel <arch> <profile>`,
+  `just build-rootfs <arch> <profile>`, `just build-assets <profile> [arch]`,
+  `_pack-initrd`, `smoke`, or `test`.
 - Tests that claim a current VM image boots must validate the generated profile
   under `target/config`, run the service with that profile directory, and boot
   through the normal profile-selected asset chain.
@@ -121,7 +122,7 @@ When touching security-relevant code, check these invariants have test coverage:
 | CORS rejects external origins | Only localhost/127.0.0.1/tauri allowed | `capsem-gateway::tests` |
 | Body size limit | 413 for >10MB payloads | `capsem-gateway::proxy::tests` |
 | VM ID validation | Path traversal (`../`), dots, spaces, null bytes rejected | `capsem-gateway::terminal::tests` |
-| Rootfs read-only | squashfs mounted ro, guest binaries 555 | `capsem-doctor` in-VM tests |
+| Rootfs read-only | EROFS mounted ro, guest binaries 555 | `capsem-doctor` in-VM tests |
 | Suspend reports errors | IPC failure and timeout both return 500, not silent success | `capsem-service` tests |
 
 ## Test fixture anti-pattern: masking races with polling
