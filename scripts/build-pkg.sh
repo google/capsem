@@ -109,9 +109,12 @@ if [ -f "$SCRIPT_DIR/../entitlements.plist" ]; then
     cp "$SCRIPT_DIR/../entitlements.plist" "$SHARE_DIR/"
 fi
 
-# VM assets. Release packages can stay manifest-only; local dev packages use
-# current-arch so `just install` does not mutate ~/.capsem after Installer.app
-# returns.
+# VM assets. The selected manifest is package payload, not a side-channel:
+# postinstall copies it from /usr/local/share/capsem/assets/manifest.json into
+# ~/.capsem/assets/manifest.json, and the daemon resolves profile assets from
+# that installed manifest. Release packages can stay manifest-only; local dev
+# packages use current-arch so `just install` does not mutate ~/.capsem after
+# Installer.app returns.
 mkdir -p "$SHARE_DIR/assets"
 ASSETS_VIEW="$ASSETS_DIR"
 if [ -n "$MANIFEST_PATH" ]; then

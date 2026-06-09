@@ -33,6 +33,7 @@ def test_package_builders_support_current_arch_asset_payloads() -> None:
     assert '--version "$VERSION"' in build_pkg
     assert "PKG_VERSION" not in build_pkg
     assert 'cp "$MANIFEST_PATH" "$ASSETS_VIEW/manifest.json"' in build_pkg
+    assert 'cp "$ASSETS_VIEW/manifest.json" "$SHARE_DIR/assets/"' in build_pkg
     assert 'bash "$SCRIPT_DIR/sync-dev-assets.sh" "$ASSETS_VIEW" "$SHARE_DIR/assets"' in build_pkg
     assert 'CONFIG_ROOT="${POSITIONAL[3]}"' in build_pkg
     assert 'cp -R "$CONFIG_ROOT/profiles/." "$SHARE_DIR/profiles/"' in build_pkg
@@ -47,12 +48,14 @@ def test_package_builders_support_current_arch_asset_payloads() -> None:
     assert "--manifest" in repack_deb
     assert "BUILD_TS=" not in repack_deb
     assert 'cp "$MANIFEST_PATH" "$ASSETS_VIEW/manifest.json"' in repack_deb
+    assert 'cp "$ASSETS_VIEW/manifest.json" "$WORK_DIR/deb/usr/share/capsem/assets/manifest.json"' in repack_deb
     assert 'cp -R "$CONFIG_ROOT/profiles/." "$WORK_DIR/deb/usr/share/capsem/profiles/"' in repack_deb
     assert 'bash "$SCRIPT_DIR/sync-dev-assets.sh" "$ASSETS_VIEW"' in repack_deb
     assert "capsem-admin" in repack_deb
     assert "capsem-tui" in repack_deb
     assert "/usr/share/capsem/assets" in deb_postinst
     assert "/usr/share/capsem/profiles" in deb_postinst
+    assert 'cp -R /usr/share/capsem/assets/. "$CAPSEM_DIR/assets/"' in deb_postinst
     assert "capsem-admin" in deb_postinst
     assert "capsem-tui" in deb_postinst
 
@@ -63,6 +66,7 @@ def test_macos_postinstall_adds_capsem_bin_to_fish_path() -> None:
     assert ".config/fish/config.fish" in postinstall
     assert "fish_add_path" in postinstall
     assert "grep -qF 'fish_add_path --path \"$HOME/.capsem/bin\"'" in postinstall
+    assert 'cp -R "$PKG_SHARE/assets/"* "$CAPSEM_DIR/assets/"' in postinstall
     assert "pkill -x capsem-app" in postinstall
 
 

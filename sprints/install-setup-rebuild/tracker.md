@@ -161,19 +161,21 @@
 - Decision: package install is allowed to replace or downgrade. The package
   itself removes the previous app/share payload before installing; PackageKit
   version ordering is not a safety mechanism.
-- Decision: package builders accept `--manifest <path>`. CI, local dev, and
-  corp package builds use the same package rail while selecting the manifest
-  explicitly; current-arch local packages still copy local assets before
-  Installer.app runs.
+- Decision: package builders shape the authoritative manifest for the package.
+  By default it comes from the build assets; corp/dev can override it with
+  `--manifest <path>`. The selected manifest is copied into the package payload
+  and then into `~/.capsem/assets/manifest.json` by postinstall. It is not a
+  post-install side channel.
 - Completed slice: macOS package builds now include `pkg-scripts/preinstall`.
   It stops old Capsem service processes, kills stale `capsem-app`, removes the
   old `/Applications/Capsem.app`, and removes package-owned
   `/usr/local/share/capsem` before payload install. Package replacement and
   downgrade no longer depend on PackageKit version ordering.
 - Completed slice: `scripts/build-pkg.sh` and `scripts/repack-deb.sh` accept
-  `--manifest <path>` and preserve package versions instead of appending build
-  timestamps. Local install, Docker install, and CI release workflows now pass
-  the manifest explicitly.
+  `--manifest <path>` as the corp/dev override for the package manifest view,
+  and preserve package versions instead of appending build timestamps. Local
+  install, Docker install, and CI release workflows now pass the manifest
+  explicitly.
 - Verification: package-only macOS build succeeded for
   `packages/Capsem-1.3.1781035201.pkg`; expanded payload contains
   `Scripts/preinstall`, `Scripts/postinstall`, `assets/manifest.json`,

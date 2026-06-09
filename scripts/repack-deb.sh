@@ -133,6 +133,9 @@ elif [ "$ASSET_MODE" != "manifest-only" ]; then
     echo "ERROR: unknown CAPSEM_DEB_ASSET_MODE=$ASSET_MODE" >&2
     exit 1
 else
+    # The selected manifest is package payload. deb-postinst copies it from
+    # /usr/share/capsem/assets/manifest.json into ~/.capsem/assets/manifest.json,
+    # and the daemon resolves profile assets from that installed manifest.
     if [ -n "$ASSETS_VIEW" ] && [ -f "$ASSETS_VIEW/manifest.json" ]; then
         mkdir -p "$WORK_DIR/deb/usr/share/capsem/assets"
         cp "$ASSETS_VIEW/manifest.json" "$WORK_DIR/deb/usr/share/capsem/assets/manifest.json"
