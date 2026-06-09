@@ -1,6 +1,6 @@
 ---
 name: dev-mitm-proxy
-description: MITM proxy development for Capsem -- the air-gapped network interception layer. Use when working on TLS termination, HTTP inspection, domain/HTTP policy, cert minting, SSE parsing, telemetry recording, or debugging network issues. Covers the full proxy pipeline, content-encoding handling, and lessons learned from past bugs.
+description: MITM proxy development for Capsem -- the air-gapped network interception layer. Use when working on TLS termination, HTTP inspection, SecurityEvent/CEL enforcement, cert minting, SSE parsing, telemetry recording, or debugging network issues. Covers the full proxy pipeline, content-encoding handling, and lessons learned from past bugs.
 ---
 
 # MITM Proxy
@@ -12,10 +12,12 @@ The MITM proxy is the most complex subsystem in Capsem. It intercepts all HTTPS 
 ```
 Guest curl -> iptables REDIRECT -> capsem-net-proxy (guest, port 10443)
   -> vsock port 5002 -> Host MITM proxy
-  -> SNI parse -> domain policy check
+  -> SNI parse -> network mechanics snapshot
   -> TLS terminate (rustls, per-domain cert minted from Capsem CA)
   -> HTTP request parse (hyper)
-  -> HTTP policy check (method + path rules)
+  -> build typed SecurityEvent (http/model roots)
+  -> SecurityRuleSet/CEL evaluation
+  -> configured plugin stages
   -> Forward to real upstream over TLS
   -> Record telemetry to session DB
   -> Stream response back to guest
@@ -25,12 +27,12 @@ Guest curl -> iptables REDIRECT -> capsem-net-proxy (guest, port 10443)
 
 | File | What |
 |------|------|
-| `crates/capsem-core/src/net/mitm_proxy.rs` | Async MITM proxy (rustls + hyper): TLS termination, HTTP inspection, upstream bridging |
+| `crates/capsem-core/src/net/mitm_proxy/` | Async MITM proxy (rustls + hyper): TLS termination, HTTP inspection, upstream bridging, telemetry hooks |
 | `crates/capsem-core/src/net/cert_authority.rs` | CA loader + on-demand domain cert minting with RwLock cache |
-| `crates/capsem-core/src/net/http_policy.rs` | Method+path policy engine (extends domain-level policy) |
-| `crates/capsem-core/src/net/domain_policy.rs` | Domain allow/block evaluation |
+| `crates/capsem-core/src/net/policy.rs` | Network mechanics: ports, capture, decompression, routing, cache settings |
 | `crates/capsem-core/src/net/sni.rs` | SNI parser for TLS ClientHello |
-| `crates/capsem-core/src/net/policy_config.rs` | user.toml + corp.toml merge logic |
+| `crates/capsem-core/src/net/policy_config/` | profile/corp parsing into network mechanics and `SecurityRuleSet` |
+| `crates/capsem-core/src/security_engine/` | `SecurityEvent`, `SecurityRuleSet`/CEL evaluation, plugins, endpoint DTOs |
 | `crates/capsem-agent/src/net_proxy.rs` | Guest-side TCP-to-vsock relay |
 
 ## Content-Encoding: the systemic rule
@@ -57,12 +59,17 @@ SSE parsing happens AFTER decompression. The body must be plaintext UTF-8 by the
 
 Only emit `model_calls` telemetry for actual LLM API paths (e.g., `/v1/messages`, `/v1/chat/completions`), not every request to an AI provider domain. Health checks, auth endpoints, and static assets should not create model_call rows.
 
-## Policy evaluation order
+## Enforcement evaluation order
 
-1. Corp config (`/etc/capsem/corp.toml`) overrides user config per field
-2. Domain policy: allow/block list evaluation
-3. HTTP policy: method+path rules per domain (only if domain is allowed)
-4. Default action: allow or deny (configurable)
+1. Profile/corp config materializes network mechanics and a `SecurityRuleSet`.
+2. The network engine parses and normalizes HTTP/model evidence into one typed
+   `SecurityEvent`.
+3. `SecurityRuleSet` evaluates CEL once over that event. Default behavior is
+   expressed as normal late-priority profile rules.
+4. A block decision is absolute once effective. Ask and allow decisions remain
+   auditable ledger rows.
+5. Plugins run by typed stage from their descriptors; CEL rules do not call
+   plugins and plugin-private fields do not become public rule roots.
 
 ## Certificate authority
 
@@ -80,7 +87,7 @@ Read these for the exact SSE format, request/response shapes, and telemetry extr
 
 ## Testing the proxy
 
-- Unit tests: `cargo test -p capsem-core net` (policy evaluation, SNI parsing, cert minting)
+- Unit tests: `cargo test -p capsem-core net` (SecurityEvent evaluation, SNI parsing, cert minting)
 - In-VM: `just run "capsem-doctor -k network"` (TLS trust chain, port blocking, domain filtering)
 - Telemetry: `just run "curl -s https://api.anthropic.com/"` then `just inspect-session` (check net_events)
 - Adversarial: test with blocked domains, overlapping wildcards, malformed SNI, huge request bodies

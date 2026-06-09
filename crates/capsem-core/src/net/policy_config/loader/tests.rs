@@ -248,6 +248,54 @@ fn env_var_path_resolution() {
 }
 
 #[test]
+fn load_settings_files_preserves_direct_corp_rule_groups_from_env_config() {
+    let _guard = crate::credential_broker::TEST_ENV_LOCK.blocking_lock();
+    let tmp = tempfile::tempdir().unwrap();
+    let user_path = tmp.path().join("user.toml");
+    let corp_path = tmp.path().join("corp.toml");
+    std::fs::write(&user_path, "").unwrap();
+    std::fs::write(
+        &corp_path,
+        r#"
+[corp.rules.block_local_deny_target]
+name = "block_local_deny_target"
+action = "block"
+priority = -100
+detection_level = "high"
+reason = "Loader regression proof."
+match = 'http.host == "127.0.0.1" && http.path == "/deny-target"'
+
+[plugins.credential_broker]
+mode = "rewrite"
+        "#,
+    )
+    .unwrap();
+
+    let prev_user = std::env::var("CAPSEM_USER_CONFIG").ok();
+    let prev_corp = std::env::var("CAPSEM_CORP_CONFIG").ok();
+    std::env::set_var("CAPSEM_USER_CONFIG", &user_path);
+    std::env::set_var("CAPSEM_CORP_CONFIG", &corp_path);
+    let (_, corp) = load_settings_files();
+    match prev_user {
+        Some(v) => std::env::set_var("CAPSEM_USER_CONFIG", v),
+        None => std::env::remove_var("CAPSEM_USER_CONFIG"),
+    }
+    match prev_corp {
+        Some(v) => std::env::set_var("CAPSEM_CORP_CONFIG", v),
+        None => std::env::remove_var("CAPSEM_CORP_CONFIG"),
+    }
+
+    assert!(
+        corp.corp.rules.contains_key("block_local_deny_target"),
+        "direct corp rules must not be dropped by load_settings_files"
+    );
+    assert!(
+        corp.plugins.contains_key("credential_broker"),
+        "corp plugin policy must not be dropped by load_settings_files"
+    );
+}
+
+#[test]
 fn parse_mcp_section_ignores_missing_section() {
     let toml = "[settings]\n";
     assert!(parse_mcp_section(toml, PolicySource::User).is_empty());

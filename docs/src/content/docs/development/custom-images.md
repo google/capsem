@@ -5,7 +5,11 @@ sidebar:
   order: 15
 ---
 
-The VM image is defined by TOML configs in `guest/config/`. To change what's installed in the VM -- packages, AI providers, MCP servers, security policy -- you edit these configs and rebuild.
+The VM image is defined by TOML configs in `guest/config/`. To change what's
+installed in the VM -- packages, guest tools, MCP server binaries, network
+mechanics, or VM resources -- edit these configs and rebuild. Enforcement,
+detection, provider access, and credentials are profile/corp/plugin runtime
+truth, not image-build truth.
 
 ## The config directory
 
@@ -15,16 +19,16 @@ guest/
         build.toml              Build settings (base image, compression, kernel branch)
         manifest.toml           Package metadata
         ai/
-            anthropic.toml      Claude Code provider
-            google.toml         Gemini CLI provider
-            openai.toml         Codex provider
+            anthropic.toml      Claude Code tool metadata
+            google.toml         Gemini CLI tool metadata
+            openai.toml         Codex tool metadata
         packages/
             apt.toml            System packages (coreutils, git, curl, python3, ...)
             python.toml         Python packages (numpy, requests, pytest, ...)
         mcp/
             capsem.toml         Built-in MCP server
         security/
-            web.toml            Domain allow/block policy
+            web.toml            Network mechanics
         vm/
             resources.toml      CPU, RAM, disk limits
             environment.toml    Shell config, bashrc, PATH, TLS
@@ -64,32 +68,11 @@ Edit `guest/config/packages/python.toml`:
 packages = ["numpy", "pandas", "requests", "pytest", "your-package"]
 ```
 
-### Add an AI provider
+### Add a guest AI CLI
 
-Create `guest/config/ai/your-provider.toml`:
-
-```toml
-[your_provider]
-name = "Your Provider"
-description = "Your LLM provider"
-enabled = true
-
-[your_provider.api_key]
-name = "API Key"
-env_vars = ["YOUR_PROVIDER_API_KEY"]
-prefix = "sk-"
-docs_url = "https://your-provider.com/keys"
-
-[your_provider.network]
-domains = ["api.your-provider.com"]
-allow_get = true
-allow_post = true
-
-[your_provider.install]
-manager = "npm"
-prefix = "/opt/ai-clis"
-packages = ["your-provider-cli"]
-```
+Guest AI CLI metadata can install a tool into the rootfs, but it does not grant
+network access or inject credentials. Add network/provider behavior through
+profile/corp enforcement rules and the credential broker plugin.
 
 ### Change network policy
 
@@ -166,9 +149,9 @@ just run "capsem-doctor"
 | `packages/*.toml` | `just build-rootfs <arch> code` |
 | `ai/*.toml` | `just build-rootfs <arch> code` |
 | `mcp/*.toml` | `just build-rootfs <arch> code` |
-| `security/web.toml` | No rebuild -- applied at boot via settings |
-| `vm/resources.toml` | No rebuild -- applied at boot via settings |
-| `vm/environment.toml` | No rebuild -- applied at boot via settings |
+| `security/web.toml` | No rebuild -- network mechanics are resolved with the active profile |
+| `vm/resources.toml` | No rebuild -- profile VM defaults are resolved at VM creation |
+| `vm/environment.toml` | No rebuild -- profile/guest environment defaults are resolved at VM creation |
 | `kernel/defconfig.*` | `just build-kernel <arch> code` |
 | `build.toml` | `just build-assets code [arch]` (full rebuild) |
 | `guest/artifacts/tips.txt` | `just build-rootfs <arch> code` (baked into rootfs) |

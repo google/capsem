@@ -594,14 +594,14 @@ impl ProfilesResponse {
         self.profiles
             .into_iter()
             .filter(ProfileRecordResponse::is_tui_launchable)
-            .filter_map(|record| {
+            .map(|record| {
                 let id = record.id;
-                Some(ProfileOption {
+                ProfileOption {
                     is_default: false,
                     id,
                     name: record.name,
                     description: Some(record.description),
-                })
+                }
             })
             .collect()
     }

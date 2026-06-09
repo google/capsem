@@ -163,14 +163,12 @@ class TestProxyEdgeCases:
                  "-H", f"Authorization: Bearer {gateway_env.token}",
                  "-H", "Content-Type: application/octet-stream",
                  "--data-binary", f"@{tmp_path}",
-                 f"http://127.0.0.1:{gateway_env.port}/echo"],
+                 f"http://127.0.0.1:{gateway_env.port}/vms/vm-001/files/content?path=/root/boundary.bin"],
                 capture_output=True, text=True, timeout=60,
             )
             status = result.stdout.strip()
             # 10MB exactly should be accepted (limit rejects >10MB)
-            assert status in ("200", "502"), (
-                f"10MB body returned {status}, expected 200 or 502 (502 if mock can't handle)"
-            )
+            assert status == "200", f"10MB body returned {status}, expected 200"
         finally:
             os.unlink(tmp_path)
 

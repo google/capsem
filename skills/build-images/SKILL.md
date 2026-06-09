@@ -15,10 +15,10 @@ capsem-builder is a config-driven build system. It reads TOML configs from `gues
 guest/config/
   build.toml              Architectures, compression, base images
   manifest.toml           Image name, version, changelog
-  ai/*.toml               AI provider configs (Claude, Gemini, Codex)
+  ai/*.toml               Guest AI CLI/tool metadata (not credential truth)
   packages/*.toml         Package sets (apt, python)
   mcp/*.toml              MCP server configs
-  security/web.toml       Web security (allow/block domains)
+  security/web.toml       Network mechanics (ports/capture)
   vm/resources.toml       CPU, RAM, disk
   vm/environment.toml     Shell, TLS, env vars
   kernel/*.defconfig      Kernel defconfigs per architecture
@@ -73,12 +73,16 @@ assets/
 
 Do not edit Dockerfiles directly -- they are rendered from Jinja2 templates in `src/capsem/builder/templates/`.
 
-## Adding a new AI provider
+## Adding a guest AI CLI/tool
 
-1. Create `guest/config/ai/<provider>.toml` with provider config
-2. Add domain entries to `guest/config/security/web.toml` if needed
-3. Validate: `uv run capsem-builder validate guest/`
-4. Rebuild: `just build-assets code`
+1. Add guest tool install metadata under `guest/config/ai/<tool>.toml` only if
+   the tool must be baked into the image.
+2. Add network/provider behavior through profile/corp enforcement rules, not
+   `guest/config/ai` or `security/web.toml`.
+3. Let the credential broker plugin capture/materialize credentials at runtime;
+   do not add settings-owned boot secrets.
+4. Validate: `uv run capsem-builder validate guest/`
+5. Rebuild: `just build-assets code`
 
 ## Dockerfile templates
 
@@ -194,7 +198,7 @@ In `src/capsem/builder/scaffold.py`, add to `_INSTALL_CMDS`:
 
 ### Step 5: Update the TOML config
 
-In `guest/config/ai/<provider>.toml`:
+For guest tool metadata in `guest/config/ai/<tool>.toml`:
 
 ```toml
 [provider.install]
@@ -209,7 +213,7 @@ packages = ["https://example.com/install.sh"]
 
 ## How to: Change how an AI CLI is installed
 
-1. Edit `guest/config/ai/<provider>.toml` -- change `[provider.install]` section
+1. Edit `guest/config/ai/<tool>.toml` -- change the install section
 2. If changing install manager type, may need to update `_rootfs_context()` in `docker.py`
 3. Check `extract_tool_versions()` in `docker.py` -- it hardcodes version-check paths
 4. Update tests in `test_docker.py` and `test_cli.py`
@@ -239,38 +243,30 @@ just cross-compile           # Build for host arch (arm64 on Apple Silicon)
 just cross-compile x86_64    # Build x86_64 deb + AppImage
 ```
 
-## AI provider TOML schema
+## Guest AI CLI/tool TOML schema
 
 ```toml
-[provider_key]
-name = "Provider Name"
-description = "What this provider does"
+[tool_key]
+name = "Tool Name"
+description = "What this guest tool does"
 enabled = true  # false to exclude from build
 
-[provider_key.cli]
+[tool_key.cli]
 key = "cli-binary-name"      # e.g. "claude", "gemini", "codex"
 name = "CLI Display Name"
 
-[provider_key.api_key]
-name = "API Key Name"
-env_vars = ["ENV_VAR_NAME"]   # At least one required
-prefix = "sk-"                # Key prefix for validation
-docs_url = "https://..."
-
-[provider_key.network]
-domains = ["*.example.com"]   # At least one required
-allow_get = true
-allow_post = true
-
-[provider_key.install]
+[tool_key.install]
 manager = "npm"               # "npm", "curl", "apt", "uv", "pip"
 prefix = "/opt/ai-clis"       # Install prefix (npm only)
 packages = ["@scope/package"] # Package names or URLs
 
-[provider_key.files.some_config]
+[tool_key.files.some_config]
 path = "/root/.config/file.json"
 content = '{"key": "value"}'
 ```
+
+Do not put credentials or allow/block domains here. Credentials are brokered at
+runtime. Network access is enforced by profile/corp rules.
 
 ## Build pipeline (what `build_image()` does)
 

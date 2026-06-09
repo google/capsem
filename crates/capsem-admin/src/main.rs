@@ -1860,7 +1860,7 @@ mod tests {
         let report = validate_settings(&path).expect("settings validates");
 
         assert!(report.ok);
-        assert_eq!(report.app.auto_update, true);
+        assert!(report.app.auto_update);
         assert_eq!(report.appearance.theme, "system");
     }
 

@@ -95,7 +95,7 @@ class TestProxySecurity:
                  "-H", f"Authorization: Bearer {gateway_env.token}",
                  "-H", "Content-Type: application/octet-stream",
                  "--data-binary", f"@{tmp_path}",
-                 f"http://127.0.0.1:{gateway_env.port}/echo"],
+                 f"http://127.0.0.1:{gateway_env.port}/vms/vm-001/files/content?path=/root/oversized.bin"],
                 capture_output=True, text=True, timeout=60,
             )
             assert result.stdout.strip() == "413"

@@ -1,16 +1,15 @@
 ---
 title: Settings System
-description: How Capsem loads, merges, and applies configuration from defaults, user, and enterprise sources.
+description: How Capsem loads, merges, and applies UI/application preferences from defaults, user, and enterprise sources.
 ---
 
-Capsem's settings system controls service and UI preferences such as VM
-resources, repository settings, and explicit non-secret boot configuration.
-Provider access, enforcement, detections, and credential brokerage are owned by
-profile/corp security rules plus plugins, not by settings-owned AI provider
-toggles. Settings are declared in TOML, merged from defaults, user, and
-enterprise sources with enterprise override, rendered in a dynamic UI, and
-translated into the small boot-time config surface that is allowed to enter the
-guest VM.
+Capsem's settings system controls UI/application preferences: appearance,
+notifications, local app behavior, and other service-level preferences that are
+not profile runtime truth. VM resources, assets, MCP, provider access,
+enforcement, detections, and credential brokerage are owned by profile/corp
+contracts plus plugins, not by settings-owned AI provider toggles. Settings are
+declared in TOML, merged from defaults, user, and enterprise sources with
+enterprise override, and rendered in a dynamic UI.
 
 ## File Sources
 
@@ -23,12 +22,7 @@ flowchart LR
   CT["corp.toml\n(/etc/capsem/corp.toml)"] --> R
   R --> RS["Resolved Settings"]
   RS --> TB[Tree Builder]
-  RS --> P2["Policy Rules"]
-  RS --> PB[Policy Builder]
   TB --> SR["Settings Response\n{tree, issues}"]
-  P2 --> SR
-  PB --> NP["Network Policy\n(MITM proxy rules)"]
-  PB --> GC["Guest Config\n(env vars + files)"]
 ```
 
 | File | Location | Purpose | Editable |
@@ -49,7 +43,8 @@ The settings TOML uses a formal grammar with four node types, distinguished by k
 | has `action` key | **Action** | UI button/widget, no stored value |
 | neither | **Group** | Container that organizes children |
 
-A fourth node type, **MCP Server**, lives in a separate `[mcp]` section.
+MCP server configuration is profile-owned and may be reflected in profile UI,
+but it is not a settings node type.
 
 ### Setting types
 
@@ -194,7 +189,8 @@ Accepts a batch of changes as `{ setting_id: value, ... }`. Behavior:
 3. **Write to user.toml** in a single file operation
 4. **Return fresh `SettingsResponse`** reflecting the new state
 
-Bool toggles use `save_settings` immediately (instant policy reload). Text, number, file, and list changes accumulate locally and are sent as a batch when the user clicks Save.
+Bool toggles use `save_settings` immediately. Text, number, file, and list
+changes accumulate locally and are sent as a batch when the user clicks Save.
 
 Security rules are stored under `profiles.rules`, `corp.rules`, or referenced
 rule files. A profile can point at shared rule packs:
@@ -205,8 +201,8 @@ enforcement = "profiles/base/enforcement.toml"
 sigma = "profiles/base/detection.yaml"
 ```
 
-The same atomic validation applies: one invalid rule rejects the entire save
-batch before `user.toml` is changed.
+Profile rule edits use the profile enforcement endpoints, not the settings save
+endpoint.
 
 ## Frontend Architecture
 
@@ -279,21 +275,20 @@ Key behaviors:
 
 ## MCP Server Definitions
 
-MCP servers are declared in a separate `[mcp]` section and resolved as profile
-configuration:
+MCP servers are profile configuration. The settings UI may display MCP profile
+config, but settings do not own or merge MCP runtime truth:
 
 ```mermaid
 flowchart LR
-  DM["defaults.toml\n[mcp.capsem]"] --> MR[MCP Resolver]
-  UM["user.toml\n[mcp.my_tool]"] --> MR
-  CM["corp.toml\n[mcp.acme]"] --> MR
-  MR --> MS["Resolved MCP Servers"]
-  MS --> ROUTE["Network/MCP runtime routing"]
+  P["profile.toml\n[mcp]"] --> MR[MCP Resolver]
+  C["corp.toml\nlocks/constraints"] --> MR
+  MR --> MS["Resolved profile MCP servers"]
+  MS --> ROUTE["MCP runtime routing"]
   MS --> TOOLS["Per-server tool inventory"]
-  MS --> TREE["Settings Tree\nMcpServer nodes in UI"]
+  MS --> TREE["Profile UI"]
 ```
 
-Resolution follows the same `corp > user > defaults` merge (per key). Corp entries are `corp_locked`. Example from defaults.toml:
+Resolution is profile-first with corp constraints. Example profile entry:
 
 ```toml
 [mcp.capsem]
@@ -317,10 +312,9 @@ args = ["--config", "/etc/acme.json"]
 ## Security Rules
 
 Security rules live outside ordinary `settings` leaves. They are resolved from
-`corp.rules`, `profiles.rules`, provider convenience defaults, and referenced
-`rule_files`. Corp rules keep corporate priority and lock semantics; profile
-rules run after built-in defaults unless they explicitly choose a later user
-priority.
+profile/corp enforcement TOML and Sigma detection YAML. Corp rules keep
+corporate priority and lock semantics; profile/user rules run after corp rules,
+and built-in default rules run last.
 
 See [Policy](/security/policy/) for rule syntax, first-party `SecurityEvent`
 fields, actions, priorities, Sigma import, examples, and telemetry.

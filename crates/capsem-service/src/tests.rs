@@ -13,6 +13,8 @@ fn process_env_allowlist_forwards_mcp_timeout_knobs() {
     );
 
     for key in [
+        "CAPSEM_USER_CONFIG",
+        "CAPSEM_CORP_CONFIG",
         "CAPSEM_MCP_DEFAULT_TIMEOUT_SECS",
         "CAPSEM_MCP_TOOL_CALL_TIMEOUT_SECS",
         "CAPSEM_MCP_TOOL_CALL_TIMEOUT_CEILING_SECS",

@@ -4,7 +4,7 @@ import uuid
 
 import pytest
 
-from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
+from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
 from helpers.service import wait_exec_ready
 
 pytestmark = pytest.mark.config_runtime
@@ -16,7 +16,15 @@ def test_blocked_domain_denied(config_svc):
     name = f"block-{uuid.uuid4().hex[:8]}"
 
     try:
-        client.post("/vms/create", {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
+        client.post(
+            "/vms/create",
+            {
+                "name": name,
+                "profile_id": CODE_PROFILE_ID,
+                "ram_mb": DEFAULT_RAM_MB,
+                "cpus": DEFAULT_CPUS,
+            },
+        )
         assert wait_exec_ready(client, name, timeout=EXEC_READY_TIMEOUT)
 
         # Try to access a domain that should be blocked by default policy

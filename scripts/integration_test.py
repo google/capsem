@@ -133,7 +133,7 @@ def _start_debug_upstream() -> tuple[subprocess.Popen, str]:
         raise
 
 
-def _stop_process(proc: subprocess.Popen | None) -> None:
+def _stop_process(proc: Optional[subprocess.Popen]) -> None:
     if proc is None:
         return
     proc.terminate()

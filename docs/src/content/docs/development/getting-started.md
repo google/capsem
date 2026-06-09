@@ -108,21 +108,16 @@ No Apple Developer ID certificate is needed for local development -- ad-hoc sign
 
 ## Customizing the VM image
 
-To add packages, AI providers, or change security policy, edit the TOML configs in `guest/config/` and rebuild. See [Customizing VM Images](./custom-images) for the workflow.
+To add packages or guest tools, edit the TOML configs in `guest/config/` and
+rebuild. Profile/corp files own security rules and provider access. See
+[Customizing VM Images](./custom-images) for the workflow.
 
 ## API keys (optional)
 
-Needed for `just full-test` (integration tests exercise real AI API calls) and interactive AI sessions inside the VM.
-
-Create `~/.capsem/user.toml`:
-
-```toml
-[ai.anthropic]
-api_key = "sk-ant-..."
-
-[ai.google]
-api_key = "AIza..."
-```
+Interactive AI sessions can configure credentials inside the VM or let the
+credential broker capture/materialize them at a supported boundary. Raw API keys
+are not settings-owned boot secrets; logs and profile state use BLAKE3
+references.
 
 ## Troubleshooting
 

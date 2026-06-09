@@ -22,17 +22,15 @@ capsem-builder build my-corp-image/
 my-corp-image/
     config/
         build.toml              Architectures, compression, base images
-        ai/
-            anthropic.toml      Provider: API key, domains, CLI install, config files
-            google.toml
-            openai.toml
         packages/
             apt.toml            System packages
             python.toml         Python packages + PyPI registry
         mcp/
             capsem.toml         MCP server definitions
         security/
-            web.toml            Domain allow/block policy
+            network.toml        Network mechanics such as upstream HTTP ports
+            enforcement.toml    Profile security rules
+            detection.yaml      Sigma detection rules
         vm/
             resources.toml      CPU, RAM, disk, session limits
             environment.toml    Shell, bashrc, TLS config
@@ -48,42 +46,12 @@ my-corp-image/
 
 ## Configuration Reference
 
-### AI Providers
+### Guest Tools
 
-Each file in `config/ai/` defines one provider. The filename is the provider identifier.
-
-```toml
-# config/ai/anthropic.toml
-[anthropic]
-name = "Anthropic"
-description = "Claude Code AI agent"
-enabled = true
-
-[anthropic.api_key]
-name = "Anthropic API Key"
-env_vars = ["ANTHROPIC_API_KEY"]
-prefix = "sk-ant-"
-docs_url = "https://console.anthropic.com/settings/keys"
-
-[anthropic.network]
-domains = ["*.anthropic.com", "*.claude.com"]
-allow_get = true
-allow_post = true
-
-[anthropic.install]
-manager = "curl"
-packages = ["https://claude.ai/install.sh"]
-
-[anthropic.files.settings_json]
-path = "/root/.claude/settings.json"
-content = '{"permissions":{"defaultMode":"bypassPermissions"}}'
-```
-
-Add a custom provider:
-
-```bash
-capsem-builder add ai-provider my-llm
-```
+Images may install guest tools, but provider access, credentials, rules, and
+tool configuration are not image-owned. Provider/network control is profile/corp
+rule truth. Credentials are captured and materialized by the credential broker
+plugin at runtime, and logged only as BLAKE3 references.
 
 ### Package Sets
 
@@ -231,7 +199,7 @@ The `PATH` is set by the host at boot via the settings registry -- do not set PA
 | `capsem-builder inspect [DIR]` | Render build manifest |
 | `capsem-builder audit` | Vulnerability scan |
 | `capsem-builder init NAME/` | Scaffold new image |
-| `capsem-builder add ai-provider NAME` | Add provider template |
+| `capsem-builder add ai-provider NAME` | Add guest AI CLI/tool template |
 | `capsem-builder add packages NAME` | Add package set template |
 | `capsem-builder add mcp NAME` | Add MCP server template |
 | `capsem-builder doctor` | Check build prerequisites |
@@ -332,9 +300,9 @@ remote_enforcement = "https://security.example.invalid/capsem/enforcement"
 ### Workflow
 
 1. `capsem-builder init corp-image/` -- scaffold from defaults
-2. Remove unwanted providers: delete `config/ai/openai.toml`
-3. Add internal providers: `capsem-builder add ai-provider internal-llm`
-4. Edit security rules: lock down domains in the profile/corp rule file
+2. Edit profile/corp security rules to allow, ask, or block provider/network boundaries
+3. Add internal guest tools only if they must be baked into the image
+4. Keep credentials brokered at runtime; do not add them to image config
 5. Add corporate packages: edit `config/packages/python.toml`
 6. Validate: `capsem-builder validate corp-image/`
 7. Build: `capsem-builder build corp-image/`
@@ -342,12 +310,10 @@ remote_enforcement = "https://security.example.invalid/capsem/enforcement"
 
 ### Lockdown Example
 
-Remove all AI providers except Anthropic, block external search, allow only internal registries:
+Block external search and allow only internal registries:
 
 ```bash
 capsem-builder init corp-image/
-rm corp-image/config/ai/google.toml
-rm corp-image/config/ai/openai.toml
 ```
 
 Edit the image/profile security rule file:
@@ -399,8 +365,8 @@ Anything installed under `/root/` during the Docker build is hidden at runtime b
 |-----------|-------|-----|
 | `error[E001] missing required field` | TOML config missing a schema field | Check file:line in error, compare against examples above |
 | `error[E304] defconfig missing` | Kernel config for declared arch doesn't exist | Add `config/kernel/defconfig.{arch}` |
-| `warn[W001] no npm registry` | npm packages declared but no registry in web.toml | Add npm registry entry to security policy |
-| `warn[W005] API key in config` | Hardcoded key in TOML | Use `~/.capsem/user.toml` for personal keys |
+| `warn[W001] no npm registry` | npm packages declared but no registry config | Add a registry entry to the profile build config |
+| `warn[W005] API key in config` | Hardcoded key in TOML | Remove it; credentials must be brokered at runtime |
 | Build fails: "container runtime not found" | No Docker | Install Docker (`brew install colima docker` on macOS, `sudo apt install docker.io` on Linux) |
 | Build fails: exit 137 (OOM) or exit 143 (SIGTERM mid-build) | Container runtime VM out of memory -- Tauri install-test cold build needs >12GB | Bump Colima to 16GB: `colima stop && colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8` |
 | Build fails: "Release file not valid yet" | Container VM clock drift | Builder handles this automatically via `Acquire::Check-Valid-Until=false` |

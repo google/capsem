@@ -143,6 +143,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   profile-owned VM contract: every VM creation and one-shot run test now passes
   the real `code` profile id explicitly, and the gateway mock rejects missing
   profile ids instead of accepting old default-profile payloads.
+- Fixed runtime config loading so env-supplied corp/profile config preserves
+  direct `corp.rules`, `profiles.rules`, `default`, `plugins`, and refresh
+  groups when materializing `MergedPolicies`. Negative-priority corp rules now
+  survive into VM processes and are covered by deterministic local MITM
+  telemetry proof.
 - Added `GET /vms/{vm_id}/status` as the runtime-state endpoint for one VM so
   UI state reads no longer need to treat `/vms/{vm_id}/info` as a status API.
 - Added `PATCH /vms/{vm_id}/edit` as a fail-closed VM edit gate: attempts to
@@ -178,6 +183,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and route-level tests exercise the same mounted API contract, including
   detection-rule authoring through `/profiles/.../detection/rules/...` and
   ledger readback through `/vms/.../security/latest`.
+- Tightened gateway and service release fixtures around the explicit API
+  contract: generic fallback proxy paths stay rejected, body-limit tests use
+  real file-content routes, MCP credential status remains opaque, and macOS
+  process leak detection survives `KERN_PROCARGS2` permission denials.
 - Expanded mounted service route contract tests across fail-closed profile/VM
   stubs, profile/settings/corp reads, corp edit/reload, plugin edit/evaluate,
   MCP profile scoping, service-wide security ledgers, and file import/export

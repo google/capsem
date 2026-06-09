@@ -98,7 +98,7 @@ rail decides allow, ask, block, preprocess, postprocess, and detection.
 ```mermaid
 graph TD
     A["DNS or HTTP event parsed"] --> B["Build SecurityEvent"]
-    B --> C["Preprocess plugin rules"]
+    B --> C["Configured preprocess plugins"]
     C --> D["Evaluate SecurityRuleSet by priority"]
     D --> E{"Final decision"}
     E -->|Block| F["Deny boundary<br/>log rule rows"]

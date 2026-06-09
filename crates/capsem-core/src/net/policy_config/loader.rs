@@ -316,9 +316,24 @@ pub fn load_settings_files() -> (SettingsFile, SettingsFile) {
                 // External rule files: first corp path wins per reference.
                 corp.rule_files.merge_first_wins(file.rule_files);
                 corp.corp_rule_files.merge_first_wins(file.corp_rule_files);
+                if corp.refresh_interval_hours.is_none() {
+                    corp.refresh_interval_hours = file.refresh_interval_hours;
+                }
+                for (rule_id, rule) in file.default {
+                    corp.default.entry(rule_id).or_insert(rule);
+                }
+                for (rule_id, rule) in file.profiles.rules {
+                    corp.profiles.rules.entry(rule_id).or_insert(rule);
+                }
+                for (rule_id, rule) in file.corp.rules {
+                    corp.corp.rules.entry(rule_id).or_insert(rule);
+                }
                 // Provider profile config: first corp path wins per provider.
                 for (provider_id, provider) in file.ai {
                     corp.ai.entry(provider_id).or_insert(provider);
+                }
+                for (plugin_id, plugin) in file.plugins {
+                    corp.plugins.entry(plugin_id).or_insert(plugin);
                 }
             }
             Err(e) => {

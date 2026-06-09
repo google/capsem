@@ -4465,6 +4465,50 @@ match = 'http.host.matches("(^|.*\.)openai\.com$")'
 }
 
 #[test]
+fn integration_corp_rule_beats_profile_default_allow_for_deny_target() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(std::path::Path::parent)
+        .expect("capsem-core lives under crates/");
+    let _guard = crate::credential_broker::TEST_ENV_LOCK.blocking_lock();
+    let _user_config = EnvVarGuard::set(
+        "CAPSEM_USER_CONFIG",
+        root.join("config/integration-test-user.toml"),
+    );
+    let _corp_config = EnvVarGuard::set(
+        "CAPSEM_CORP_CONFIG",
+        root.join("config/integration-test-corp.toml"),
+    );
+    let (user, corp) = load_settings_files();
+    let policies = MergedPolicies::from_files(&user, &corp);
+    let event = serde_json::json!({
+        "http": {
+            "host": "127.0.0.1",
+            "path": "/deny-target"
+        }
+    });
+    let evaluation = policies
+        .security_rules
+        .evaluate(&event)
+        .expect("integration event evaluates");
+    let enforcement_rules: Vec<_> = evaluation
+        .enforcement_rules()
+        .into_iter()
+        .map(|rule| (rule.rule_id.as_str(), rule.action, rule.priority))
+        .collect();
+
+    assert_eq!(
+        enforcement_rules.first(),
+        Some(&(
+            "corp.rules.block_local_deny_target",
+            SecurityRuleAction::Block,
+            -100
+        )),
+        "corp block must be the first enforcement decision before profile defaults: {enforcement_rules:?}"
+    );
+}
+
+#[test]
 fn merged_policies_carry_live_model_endpoint_registry() {
     let user: SettingsFile = toml::from_str(
         r#"

@@ -12,12 +12,12 @@ capsem-builder is a Python CLI that reads TOML configs from `guest/config/`, val
 ```mermaid
 flowchart TD
   subgraph Input["Source of Truth"]
-    TOML["guest/config/*.toml\n(AI providers, packages,\nsecurity, VM resources)"]
+    TOML["guest/config/*.toml\n(guest tools, packages,\nnetwork mechanics, VM resources)"]
   end
 
   subgraph Validation["Validation Layer"]
     Config["config.py\nTOML loader"]
-    Models["models.py\nPydantic models\n(PackageManager, InstallConfig,\nAiProviderConfig, ...)"]
+    Models["models.py\nPydantic models\n(PackageManager, InstallConfig,\ntool/package/network configs, ...)"]
     Validate["validate.py\nLinter (E001-E402, W001-W012)"]
   end
 
@@ -52,7 +52,7 @@ flowchart TD
 
 TOML configs are the single source of truth. The data flows through four layers:
 
-1. **TOML configs** (`guest/config/`) -- user-facing, declarative definitions for AI providers, packages, security policy, and VM resources.
+1. **TOML configs** (`guest/config/`) -- declarative image-build inputs for guest tools, packages, network mechanics, and VM resources. They are not credential, provider-authorization, or enforcement truth.
 2. **Pydantic models** (`models.py`) -- type-safe validation with enums (`PackageManager`: apt, uv, pip, npm, curl), frozen models, and cross-field validators.
 3. **Context dicts** (`docker.py`) -- template variables assembled from the validated config. Each template type (`rootfs`, `kernel`) has its own context builder that collects packages by manager type.
 4. **Jinja2 templates** -- Dockerfile output parameterized per architecture.
@@ -72,7 +72,7 @@ All config lives under `guest/config/`. Each file maps to a Pydantic model.
 |------|-------|---------|------------|
 | `build.toml` | `BuildConfig` | Architectures, compression | `compression`, `compression_level`, `architectures.*` |
 | `manifest.toml` | `ImageManifestConfig` | Image identity and changelog | `name`, `version`, `description`, `changelog` |
-| `ai/*.toml` | `AiProviderConfig` | AI provider definitions | `api_key`, `network.domains`, `install` (manager: npm/curl), `cli`, `files` |
+| `ai/*.toml` | guest tool metadata | Preinstalled AI CLI/tool metadata | `install`, `cli`, non-secret bootstrap files |
 | `packages/apt.toml` | `PackageSetConfig` | Apt package set | `manager`, `install_cmd`, `packages`, `network` |
 | `packages/python.toml` | `PackageSetConfig` | Python package set | `manager`, `install_cmd`, `packages` |
 | `mcp/*.toml` | `McpServerConfig` | MCP server definitions | `transport`, `command`, `url`, `args`, `env` |
@@ -103,7 +103,7 @@ defconfig = "kernel/defconfig.arm64"
 node_major = 24
 ```
 
-Example AI provider (`ai/anthropic.toml`):
+Example guest tool metadata (`ai/anthropic.toml`):
 
 ```toml
 [anthropic]
@@ -111,21 +111,14 @@ name = "Anthropic"
 description = "Claude Code AI agent"
 enabled = true
 
-[anthropic.api_key]
-name = "Anthropic API Key"
-env_vars = ["ANTHROPIC_API_KEY"]
-prefix = "sk-ant-"
-docs_url = "https://console.anthropic.com/settings/keys"
-
-[anthropic.network]
-domains = ["*.anthropic.com", "*.claude.com"]
-allow_get = true
-allow_post = true
-
 [anthropic.install]
 manager = "curl"
 packages = ["https://claude.ai/install.sh"]
 ```
+
+Provider allow/block decisions live in profile/corp enforcement rules.
+Credentials are captured and materialized by the credential broker plugin at
+runtime and logged only as BLAKE3 references.
 
 ## Validation Pipeline
 
@@ -149,14 +142,14 @@ packages = ["https://claude.ai/install.sh"]
 
 | Code | Description |
 |------|-------------|
-| W001 | Package sets configured but no registry in web security |
+| W001 | Package sets configured but no registry config |
 | W002 | Development packages (`-dev`, `-devel`) in package lists |
 | W003 | Potential secrets detected in file content, headers, or env |
 | W004 | Package set with no network config |
-| W005 | Conflicting allow/block security rules |
+| W005 | Conflicting profile/corp enforcement rules |
 | W006 | Placeholder file content (TODO, FIXME) |
 | W007 | Overly broad security rule match expressions |
-| W008 | Duplicate env_vars across AI providers |
+| W008 | Duplicate tool credential hints |
 | W009 | Shell metacharacters in install_cmd |
 | W010 | PATH missing essential directories (`/usr/bin`, `/bin`) |
 | W011 | Wide-open network/security rule posture |
@@ -165,7 +158,7 @@ packages = ["https://claude.ai/install.sh"]
 Diagnostic output format:
 
 ```
-error: [E006] config/ai/anthropic.toml: Invalid domain pattern 'https://api.anthropic.com'
+error: [E006] config/security/network.toml: Invalid domain pattern 'https://api.anthropic.com'
 warning: [W003] config/mcp/capsem.toml: Potential secret in mcp.capsem.headers.Authorization
 ```
 
@@ -343,7 +336,7 @@ The `audit` subcommand parses vulnerability scanner output and fails on CRITICAL
 | `audit` | Parse vulnerability scan results | `--scanner` (trivy/grype), `--input`, `--json` |
 | `init` | Scaffold a minimal guest config directory | `--force` |
 | `new` | Create a new image config from a base | `--from`, `--non-interactive`, `--force` |
-| `add ai-provider` | Add an AI provider template | `--dir`, `--force` |
+| `add ai-provider` | Add a guest AI CLI/tool template | `--dir`, `--force` |
 | `add packages` | Add a package set template | `--dir`, `--manager`, `--force` |
 | `add mcp` | Add an MCP server template | `--dir`, `--transport`, `--force` |
 | `mcp` | Start MCP stdio server for builder tools | (none) |

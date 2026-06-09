@@ -22,7 +22,7 @@ graph TD
     D --> E["Build SecurityEvent<br/>http + optional model roots"]
     E --> F{"Security rules<br/>CEL over SecurityEvent"}
     F -->|Block or unresolved ask| G["403 Forbidden<br/>+ log telemetry"]
-    F -->|Allow| I["Postprocess plugins<br/>credential broker, scanners"]
+    F -->|Allow| I["Configured plugin stages<br/>credential broker, scanners"]
     I --> J["Upstream TLS connection<br/>(cached per-connection)"]
     J --> K["Forward request"]
     K --> L["Stream response to guest<br/>(inline SSE parsing for AI traffic)"]
@@ -139,10 +139,13 @@ reason = "Block OpenAI organization GitHub writes"
 match = 'http.host == "github.com" && http.method == "POST" && http.path.matches("^/openai(/|$)")'
 ```
 
-Plugin behavior is expressed through `preprocess` or `postprocess` rules. For
-example, credential brokering is a postprocess plugin rule over the same HTTP
-event; plugin-private header handling must not become a public CEL field unless
-it is intentionally added to the `SecurityEvent` contract.
+Plugin behavior is configured through profile/corp plugin descriptors, not by
+calling plugins from CEL rules. Rules decide enforcement and detection over the
+typed `SecurityEvent`; plugins run at their declared stages, own their private
+filtering/scope, and may mutate the event or ledger payload according to their
+contract. For example, credential brokering can capture and materialize
+`credential:blake3:*` references without exposing raw credential fields as CEL
+roots.
 
 ## AI traffic handling
 
@@ -252,11 +255,11 @@ The `TelemetryBody` wrapper around the hyper response body triggers `tokio::spaw
 
 | File | Purpose |
 |------|---------|
-| `capsem-core/src/net/mitm_proxy.rs` | Connection handling, HTTP forwarding, telemetry emission |
+| `capsem-core/src/net/mitm_proxy/` | Connection handling, HTTP forwarding, telemetry hooks, and proxy pipeline |
 | `capsem-core/src/net/cert_authority.rs` | CA loading, leaf cert minting, cache |
-| `capsem-core/src/net/domain_policy.rs` | Domain allow/block evaluation |
-| `capsem-core/src/net/policy_config/` | Named policy rule parsing, validation, and condition evaluation |
-| `capsem-core/src/net/mitm_proxy/` | HTTP/model policy enforcement hooks and proxy pipeline |
+| `capsem-core/src/net/policy.rs` | Network mechanics: ports, capture, decompression, routing, cache settings |
+| `capsem-core/src/net/policy_config/` | Profile/corp config parsing into network mechanics and `SecurityRuleSet` |
+| `capsem-core/src/security_engine/` | `SecurityEvent`, `SecurityRuleSet`/CEL evaluation, plugins, endpoint DTOs |
 | `capsem-core/src/net/ai_traffic/` | SSE parsing, provider parsers, events, pricing |
 | `capsem-core/src/net/ai_traffic/mod.rs` | TraceState for multi-turn linking |
 | `security/keys/capsem-ca.key`, `security/keys/capsem-ca.crt` | Static ECDSA P-256 CA keypair |

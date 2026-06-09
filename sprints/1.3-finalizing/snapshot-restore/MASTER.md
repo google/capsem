@@ -211,12 +211,14 @@ These are not optional:
 | S3 TUI/Shell | Done | `capsem shell` works through the restored `capsem-tui`; profile/session readiness, lifecycle actions, terminal reconnect, and deterministic render snapshots are back on current routes. |
 | S4 Linux/KVM/Bench | Done | Linux-team KVM/filesystem/EROFS/LZ4HC work and benchmark harness/proof are restored; Linux runtime KVM execution is an explicit Linux-team/CI handoff. |
 | S5 Security Corpus | Done | Old corpus/pack/backtest commits are rejected against the current `SecurityRuleSet`/CEL contract; security-action, local HTTP/model, DNS, MCP broker, DB-writer, EROFS/storage, lifecycle/fork, and old-rail regression gates carry concrete proof or accepted handoff notes. |
-| S6 Docs/Verification | In Progress | Current-truth docs, changelog, tests, smoke/install, VM boot, `capsem-doctor`, file snapshot, and benchmark records are updated. |
+| S6 Docs/Verification | Done | Current-truth docs, changelog, tests, smoke, install/package handoff, VM boot, `capsem-doctor`, file snapshot, and benchmark records are updated. |
 
 ## Release Hold
 
-1.3 is blocked until S1-S5 are complete or each remaining item is documented as
-an explicit owner-accepted release blocker.
+The local 1.3 rescue release hold is cleared. Linux runtime KVM/DAX execution
+remains an explicit Linux-team/CI handoff; macOS proof covers generated profile
+assets, EROFS/LZ4HC boot, doctor, integration, local MITM, MCP, DNS, DB writer,
+security-action benchmarks, smoke, and package build/install handoff.
 
 Final release hold: do not call the sprint complete unless a profile-selected
 VM boots, file snapshot create/list/restore works, `capsem-doctor` is green,

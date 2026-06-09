@@ -5,7 +5,8 @@ description: Debug security plugin for exercising preprocess detection and absol
 
 Plugin id: `dummy_pre_eicar`
 
-Stage: intended for `preprocess` or `rewrite` rules.
+Stage: preprocess. Plugin mode may request `rewrite`, `ask`, `allow`, `block`,
+or disabled behavior according to the profile/corp plugin config.
 
 Config:
 
@@ -23,6 +24,7 @@ Decision: an EICAR match requests `block`; plugin policy can also request `allow
 
 Detection contract: enabled executions append one plugin detection record to `SecurityEvent.detections`. Matching rules with `detection_level` append their own rule detection records before plugin execution.
 
-Failure: no external I/O; failures should only come from rule/plugin registration errors.
+Failure: no external I/O; failures should only come from plugin descriptor or
+profile/corp plugin config errors.
 
 Tests: `builtin_dummy_plugins_block_eicar_and_cannot_be_downgraded_by_postprocess`.

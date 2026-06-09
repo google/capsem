@@ -99,6 +99,7 @@ class MockServiceHandler(BaseHTTPRequestHandler):
                 sandboxes.append({
                     "id": vm["id"],
                     "pid": vm["pid"],
+                    "profile_id": CODE_PROFILE_ID,
                     "status": vm["status"],
                     "persistent": vm["persistent"],
                     "ram_mb": vm["ram_mb"],
@@ -117,6 +118,7 @@ class MockServiceHandler(BaseHTTPRequestHandler):
                 vm = MOCK_VMS[vm_id]
                 self._send_json({
                     "id": vm["id"],
+                    "profile_id": CODE_PROFILE_ID,
                     "status": vm["status"],
                     "pid": vm["pid"],
                     "persistent": vm["persistent"],

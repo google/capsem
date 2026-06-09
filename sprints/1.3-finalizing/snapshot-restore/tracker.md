@@ -1583,18 +1583,88 @@ S4 progress note:
 
 ## S6: Docs, Changelog, And Verification
 
-- [ ] Restore current-truth profile/admin command docs.
-- [ ] Restore profile assets/catalog docs against the current contract.
-- [ ] Restore benchmark docs/page with current 1.3 numbers.
-- [ ] Update changelog.
-- [ ] Run focused tests for S1-S5.
-- [ ] Run smoke.
-- [ ] Run install cycle.
-- [ ] Boot a profile-selected VM from restored EROFS/LZ4HC assets.
-- [ ] Run `capsem-doctor` inside the VM and require green output.
-- [ ] Prove file snapshot create/list/restore through the accepted runtime path.
-- [ ] Run UI and TUI sanity.
-- [ ] Run benchmark gate or record Linux handoff.
-- [ ] Update benchmark docs/page with current EROFS/LZ4HC numbers and note any
+- [x] Restore current-truth profile/admin command docs.
+  Proof: architecture/development docs and local skills now document
+  `capsem-admin profile materialize`, checked-in `config/` as source/support
+  material, generated `target/config` as runtime truth, settings as UI/app
+  preferences only, and the single typed `SecurityEvent`/`SecurityRuleSet` rail.
+- [x] Restore profile assets/catalog docs against the current contract.
+  Proof: custom image/build/getting-started docs and build/setup skills now
+  describe profile-owned EROFS/LZ4HC assets, BLAKE3/size verification,
+  profile catalog readiness, and no manifest signing/minisign authority.
+- [x] Restore benchmark docs/page with current 1.3 numbers.
+  Proof: `docs/src/content/docs/benchmarks/results.md` records the accepted
+  EROFS `lz4hc` level 12 rootfs decision table, DAX probe result, local MITM,
+  DNS, MCP, DB-writer, lifecycle/fork, and security-action numbers.
+- [x] Update changelog.
+  Proof: `CHANGELOG.md` records the S6 verification fixes: profile-explicit
+  test fixtures, direct corp rule-group loader preservation, explicit gateway
+  route/body-limit proof, deterministic local MITM corp telemetry, MCP opaque
+  credential status naming, and robust macOS leak detection.
+- [x] Run focused tests for S1-S5.
+  Proof: focused runs passed before the full smoke: `cargo test -p capsem-core
+  net::policy_config:: -- --nocapture` (`375 passed`); `uv run pytest
+  tests/capsem-gateway/test_gw_proxy.py::TestProxySecurity::test_oversized_body_rejected
+  tests/capsem-gateway/test_gw_proxy_advanced.py::TestProxyEdgeCases::test_body_at_10mb_boundary
+  tests/capsem-gateway/test_gw_status.py
+  tests/capsem-gateway/test_gw_status_advanced.py
+  tests/capsem-service/test_svc_mcp_api.py::TestMcpServers::test_servers_returns_list
+  -q` (`12 passed`); `uv run pytest tests/capsem-cli/test_commands.py
+  tests/capsem-gateway/test_mitm_policy.py::test_mitm_policy_telemetry -q`
+  (`20 passed`); leak-detector regression
+  `uv run pytest tests/capsem-cli/test_commands.py::TestRun::test_run_returns_output
+  -q` (`1 passed`).
+- [x] Run smoke.
+  Proof: `just smoke` passed in `214s` after the S6 fixes. It includes
+  frontend checks, Rust audit/clippy, in-VM doctor, injection, integration,
+  Python gateway/service/CLI/MCP suites, state transitions, and resume-path
+  tests.
+- [x] Run install/package cycle.
+  Proof: `just install` stamped `1.0.1780977620`, rebuilt host release
+  binaries, rebuilt the frontend/Tauri app, synced current-arch dev assets
+  through the manifest-driven installer payload, and produced
+  `packages/Capsem-1.0.1780977620.pkg` (`686M`). On macOS the recipe then
+  waits on `open -W` for the GUI Installer; the privileged click-through is a
+  human handoff, not an automatable silent gate. The waiting `open -W` process
+  was terminated after package build to release the blocked shell.
+- [x] Boot a profile-selected VM from restored EROFS/LZ4HC assets.
+  Proof: `just smoke` repacked/materialized the `code` profile and booted the
+  profile-selected EROFS/LZ4HC VM for doctor and integration.
+- [x] Run `capsem-doctor` inside the VM and require green output.
+  Proof: smoke doctor fast gate reported `288 passed, 23 skipped, 1 deselected`
+  and `RESULT: PASS`; integration doctor subset reported `94 passed, 2 skipped,
+  216 deselected` and `RESULT: PASS`.
+- [x] Prove file snapshot create/list/restore through the accepted runtime path.
+  Proof: the doctor MCP snapshot corpus in smoke passed create/list/changes,
+  revert, delete, compact, scenario, and regression cases; integration also
+  recorded `21 fs_events` and boot snapshot slot 0 under
+  `auto_snapshots/workspace` and `auto_snapshots/system`.
+- [x] Run UI and TUI sanity.
+  Proof: smoke ran `pnpm -C frontend check` with `0 errors`/`0 warnings`;
+  focused pre-smoke TUI gates passed `cargo clippy -p capsem-tui --all-targets
+  -- -D warnings` and `cargo test -p capsem-tui` (`54 passed`).
+- [x] Run benchmark gate or record Linux handoff.
+  Proof: S5 benchmark gates are recorded above. Linux runtime KVM/DAX execution
+  remains the explicit Linux-team/CI handoff; macOS proof covers generated
+  profile assets, EROFS/LZ4HC, doctor, integration, local MITM, MCP, DNS, DB
+  writer, and security-action gates.
+- [x] Update benchmark docs/page with current EROFS/LZ4HC numbers and note any
   Linux handoff explicitly.
-- [ ] Commit S6.
+  Proof: benchmark results page and S4/S5 tracker entries carry current
+  EROFS/LZ4HC numbers plus the Linux-team handoff for runtime KVM execution.
+- [x] Commit S6.
+
+S6 root fixes found during final smoke:
+
+- `load_settings_files()` was dropping direct `corp.rules`, `profiles.rules`,
+  `plugins`, `default`, and `refresh_interval_hours` groups from env-supplied
+  corp/profile config. This made the integration corp `/deny-target` rule look
+  configured but evaluate as allowed. The loader now preserves those groups,
+  and tests prove env corp rules beat profile defaults.
+- Python/gateway tests still encoded burned contracts: profile-less VM
+  creation, generic `/echo` gateway forwarding, `has_bearer_token`, and
+  default-domain DNS blocks. Tests now exercise the current profile-explicit,
+  explicit-route, opaque credential, local corp-rule telemetry contract.
+- The leak detector still used `psutil.process_iter(["pid", "name"])` even
+  though its own comment required lazy per-proc reads on macOS. It now avoids
+  attr prefetch and survives `KERN_PROCARGS2` permission denials.

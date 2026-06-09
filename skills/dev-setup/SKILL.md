@@ -126,18 +126,12 @@ just dev              # Full Tauri app with hot-reload
 
 See `/dev-just` for the complete recipe reference.
 
-## API keys (optional, needed for integration tests)
+## API keys (optional)
 
-Create `~/.capsem/user.toml`:
-```toml
-[providers.anthropic]
-api_key = "sk-ant-..."
-
-[providers.google]
-api_key = "AIza..."
-```
-
-Needed for: `just test` (integration tests exercise real AI API calls), interactive AI sessions inside the VM.
+Interactive AI sessions can configure credentials inside the VM or let the
+credential broker capture/materialize them at a supported boundary. Raw API keys
+are not settings-owned boot secrets; logs and profile state use BLAKE3
+references.
 
 ## Claude Code permissions
 

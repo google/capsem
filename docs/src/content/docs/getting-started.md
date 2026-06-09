@@ -102,22 +102,10 @@ gemini    # Gemini CLI
 codex     # Codex
 ```
 
-API keys can be configured in the VM or brokered by Capsem when observed at a
-supported boundary. Brokered credentials are stored as BLAKE3 references in
-settings and logs; raw credentials stay broker-private.
-
-```toml
-[ai.anthropic]
-api_key = "sk-ant-..."
-
-[ai.google]
-api_key = "AIza..."
-
-[ai.openai]
-api_key = "sk-..."
-```
-
-The keys are securely forwarded into the VM at boot time. They never touch the guest filesystem.
+API keys can be configured by the tool inside the VM or brokered by Capsem when
+observed at a supported boundary. Brokered credentials are stored and logged
+only as BLAKE3 references; raw credentials stay broker-private and are not
+materialized as settings-owned boot secrets.
 
 ## Network policy
 

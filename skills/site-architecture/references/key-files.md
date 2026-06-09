@@ -10,12 +10,12 @@
 
 ## Network
 
-- `crates/capsem-core/src/net/mitm_proxy.rs` -- async MITM proxy (rustls + hyper): TLS termination, HTTP inspection, upstream bridging
+- `crates/capsem-core/src/net/mitm_proxy/` -- async MITM proxy (rustls + hyper): TLS termination, HTTP inspection, upstream bridging, telemetry hooks
 - `crates/capsem-core/src/net/cert_authority.rs` -- CA loader + on-demand domain cert minting with RwLock cache
-- `crates/capsem-core/src/net/http_policy.rs` -- method+path policy engine
-- `crates/capsem-core/src/net/domain_policy.rs` -- domain allow/block evaluation
+- `crates/capsem-core/src/net/policy.rs` -- network mechanics: ports, capture, decompression, routing, cache settings
+- `crates/capsem-core/src/net/policy_config/` -- profile/corp config parsing into network mechanics and `SecurityRuleSet`
+- `crates/capsem-core/src/security_engine/` -- `SecurityEvent`, `SecurityRuleSet`/CEL evaluation, plugins, endpoint DTOs
 - `crates/capsem-core/src/net/sni.rs` -- SNI parser for TLS ClientHello
-- `crates/capsem-core/src/net/policy_config.rs` -- user.toml + corp.toml merge logic
 
 ## VM
 

@@ -304,6 +304,27 @@ async fn run_async_main_loop(
     // producer starts emitting security events.
     let (user_sf, corp_sf) = capsem_core::net::policy_config::load_settings_files();
     let merged = capsem_core::net::policy_config::MergedPolicies::from_files(&user_sf, &corp_sf);
+    let user_config_path = capsem_core::net::policy_config::user_config_path()
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|| "none".to_string());
+    let corp_config_paths = capsem_core::net::policy_config::corp_config_paths()
+        .into_iter()
+        .map(|path| path.display().to_string())
+        .collect::<Vec<_>>();
+    let security_rule_ids = merged
+        .security_rules
+        .rules()
+        .iter()
+        .map(|rule| rule.rule_id.as_str())
+        .collect::<Vec<_>>();
+    info!(
+        user_config_path = %user_config_path,
+        corp_config_paths = ?corp_config_paths,
+        security_rule_count = security_rule_ids.len(),
+        security_rule_ids = ?security_rule_ids,
+        plugin_count = merged.plugins.len(),
+        "capsem-process loaded runtime security config"
+    );
     let snap_settings = capsem_core::net::policy_config::resolve_settings(&user_sf, &corp_sf);
     let guest_config = merged.guest.clone();
     let security_rules = Arc::new(std::sync::RwLock::new(Arc::new(merged.security_rules)));

@@ -29,11 +29,11 @@ class TestMcpServers:
         assert isinstance(resp, list), f"/mcp/servers did not return list: {resp!r}"
         for server in resp:
             for key in (
-                "name", "url", "has_bearer_token", "custom_header_count",
+                "name", "url", "has_auth_credential", "custom_header_count",
                 "source", "enabled", "running", "tool_count", "is_stdio",
             ):
                 assert key in server, f"server missing '{key}': {server}"
-            assert isinstance(server["has_bearer_token"], bool)
+            assert isinstance(server["has_auth_credential"], bool)
             assert isinstance(server["enabled"], bool)
             assert isinstance(server["tool_count"], int)
             assert server["tool_count"] >= 0
