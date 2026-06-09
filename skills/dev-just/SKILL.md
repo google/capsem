@@ -13,8 +13,8 @@ All workflows use `just` (not make). The justfile is the single entry point.
 |---------|-------------|
 | `just doctor` | Check all required tools, colored output, structured recap |
 | `just doctor fix` | Doctor + auto-fix all fixable issues in dependency order |
-| `just shell` | Daily driver: cross-compile + repack initrd + build + sign + boot temp VM + shell (~10s) |
-| `just exec "CMD"` | Run CMD in a fresh temp VM (auto-provisioned and destroyed) |
+| `just shell` | Daily driver: cross-compile + repack initrd + build + sign + boot a VM + shell (~10s) |
+| `just exec "CMD"` | Run CMD in a fresh disposable VM (auto-provisioned and destroyed) |
 | `just run-service` | Start capsem-service daemon (builds, signs, launches or reuses) |
 | `just ui` | Tauri dev with hot reload (service + Astro dev server on :5173 in Tauri webview) |
 | `just dev-frontend` | Frontend-only dev server on :5173 (no Tauri, no VM, mock data) |
@@ -136,7 +136,7 @@ When debugging build issues, check `target/build.log` first. When writing new bu
 just doctor        # Check tools (colored output, shows fixable issues)
 just doctor fix    # Auto-fix missing targets, cargo tools, config files
 just build-assets code  # Build kernel + rootfs (~10 min, needs docker)
-just shell         # Boot a temp VM and drop into a shell
+just shell         # Boot a VM and drop into a shell
 ```
 
 Or use bootstrap which does all of this:

@@ -211,11 +211,13 @@ The aggregator splits on the first `__` when routing, so tool names containing `
 
 ## Server definition sources
 
-Three layers combined with deduplication (first occurrence wins by name). The list is processed in trust order so the first-wins rule encodes the documented `corp > user > defaults` policy:
+MCP server definitions are profile-owned and filtered by corp constraints. The
+list is processed in trust order so corp constraints cannot be shadowed by a
+profile entry:
 
-1. **Corp-injected servers** from `/etc/capsem/corp.toml` (enterprise policy -- definitions and enable/disable overrides; cannot be shadowed by a same-name user or auto-detected entry)
-2. **Auto-detected** from host AI CLI configs (`~/.claude/settings.json`, `~/.gemini/settings.json`)
-3. **User manual servers** from `~/.capsem/user.toml` `[mcp]` section
+1. **Corp constraints** from corp config and referenced rule files
+2. **Profile MCP servers** from the active profile
+3. **Registry/builtin server descriptors** owned by Capsem
 
 Names containing `__` or matching `builtin` are rejected. Empty names are rejected.
 
@@ -223,9 +225,9 @@ Names containing `__` or matching `builtin` are rejected. Empty names are reject
 
 The `refresh` operation allows live reconfiguration without restarting the VM:
 
-1. Service receives `POST /reload-config`
+1. Service receives `POST /profiles/{profile_id}/mcp/servers/{server_id}/refresh`
 2. Service sends `McpRefreshTools` IPC to capsem-process
-3. capsem-process reads fresh settings from disk, calls `build_server_list()`
+3. capsem-process reads fresh profile/corp MCP config
 4. Client sends `refresh` with new definitions to the aggregator
 5. Aggregator disconnects all servers, replaces definitions, reconnects
 

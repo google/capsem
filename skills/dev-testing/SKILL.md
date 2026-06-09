@@ -303,20 +303,19 @@ When the capsem MCP server is configured, Claude Code has direct VM control via 
 
 | Tool | What it does |
 |------|-------------|
-| `capsem_create` | Spin up a fresh VM (returns VM id). Named VMs are persistent. |
-| `capsem_run` | One-shot: boot temp VM, exec command, destroy, return output |
+| `capsem_create` | Spin up a fresh VM from a profile (returns VM id). |
+| `capsem_run` | One-shot: boot disposable VM, exec command, destroy, return output |
 | `capsem_exec` | Run a command inside a running guest |
-| `capsem_stop` | Stop VM (persistent: preserve state; ephemeral: destroy) |
-| `capsem_resume` | Resume a stopped persistent VM |
+| `capsem_stop` | Stop VM |
+| `capsem_resume` | Resume a stopped or paused VM |
 | `capsem_read_file` | Read a file from the guest filesystem |
 | `capsem_write_file` | Write a file into the guest |
 | `capsem_inspect_schema` | Get session.db table schema |
 | `capsem_inspect` | Run SQL against session.db (telemetry) |
-| `capsem_list` | Show all VMs (running + stopped persistent) |
-| `capsem_info` | VM details (config, status, persistent, PID) |
+| `capsem_list` | Show all VMs with profile/status metadata |
+| `capsem_info` | VM details (profile, config, status, PID) |
 | `capsem_delete` | Destroy VM and wipe all state |
-| `capsem_persist` | Convert running ephemeral VM to persistent |
-| `capsem_purge` | Kill all temp VMs (all=true includes persistent) |
+| `capsem_purge` | Clean up disposable VMs; all=true includes retained VMs |
 | `capsem_fork` | Fork a running/stopped VM into a reusable image |
 | `capsem_image_list` | List all user images |
 | `capsem_image_inspect` | Inspect a specific image's metadata |

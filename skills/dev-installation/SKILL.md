@@ -11,9 +11,10 @@ description: Capsem native CLI installer -- service registration, self-update, p
 ~/.capsem/
   bin/capsem, capsem-service, capsem-process, capsem-mcp, capsem-gateway, capsem-tray
   assets/manifest.json, v{ver}/
-  run/service.sock, service.pid, instances/, persistent/
+  run/service.sock, service.pid, instances/
   update-check.json
-  user.toml
+  settings.toml
+  profiles/
   corp.toml               (CLI-provisioned corp config)
   corp-source.json         (corp config source metadata)
 ```
@@ -105,7 +106,6 @@ Docker-based e2e tests in `tests/capsem-install/`:
 | test_smoke.py | Harness works (systemd, binaries, build hash) |
 | test_auto_launch.py | Auto-launch, path discovery, asset resolution, error cases |
 | test_service_install.py | Install/uninstall/status, idempotent, systemd integration |
-| test_setup_wizard.py | Non-interactive, rerun skip, --force, user.toml |
 | test_corp_config.py | Provisioning, validation, precedence |
 | test_update.py | Dev build bail, layout detection, cache, preserve-on-fail |
 | test_completions.py | bash/zsh/fish output |
@@ -123,7 +123,6 @@ crates/capsem/src/
   main.rs              CLI entry, command dispatch, UdsClient with auto-launch
   paths.rs             Binary + asset path discovery
   platform.rs          Install layout detection
-  setup.rs             Setup wizard orchestrator
   update.rs            Self-update + cache
   service_install.rs   LaunchAgent + systemd unit generation + registration
   completions.rs       Shell completions via clap_complete

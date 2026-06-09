@@ -23,6 +23,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ledger routes. It now surfaces Model, MCP, HTTP, DNS, Files, Process,
   Security, and Snapshot evidence, links directly to raw session DB inspection,
   and uses DB-backed security/detection/enforcement rows for forensic details.
+- Updated public architecture docs and internal development skills to reflect
+  the 1.3 contract: profile-owned assets/rules/MCP/plugins, settings as UI/app
+  preferences only, explicit gateway routes, ledger-backed Stats/Inspector,
+  and the single SecurityEvent/CEL rule rail.
 - Added a `capsem debug` CLI alias for redacted support bundles and expanded
   `capsem status` with profile catalog readiness and corp config
   presence/source/hash information when the service is running.

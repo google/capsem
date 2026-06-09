@@ -24,7 +24,6 @@ graph TD
         LOGS["logs"]
         DELETE["delete / rm"]
         FORK["fork"]
-        PERSIST["persist"]
         PURGE["purge"]
     end
 
@@ -36,7 +35,6 @@ graph TD
     end
 
     subgraph "Misc Commands"
-        SETUP["setup"]
         UPDATE["update"]
         DOCTOR["doctor"]
         COMPLETIONS["completions"]
@@ -49,11 +47,12 @@ graph TD
 
 ### create
 
-Create and boot a new session. Sessions are ephemeral by default. Use `-n <name>` to make it persistent.
+Create and boot a new session from a profile. Use `-n <name>` for a retained,
+named VM that can be stopped, resumed, forked, and inspected later.
 
 ```sh
-capsem create                          # ephemeral session
-capsem create -n mybox                 # persistent session
+capsem create                          # unnamed session
+capsem create -n mybox                 # named retained session
 capsem create -n mybox --ram 8 --cpu 4 # custom resources
 capsem create --from template          # clone from existing session
 capsem create -e API_KEY=sk-...        # with environment variables
@@ -61,18 +60,19 @@ capsem create -e API_KEY=sk-...        # with environment variables
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `-n, --name <NAME>` | -- | Name for the session (makes it persistent) |
+| `-n, --name <NAME>` | -- | Name for the session |
 | `--ram <GB>` | 4 | RAM in GB |
 | `--cpu <CORES>` | 4 | CPU cores |
 | `-e, --env <KEY=VALUE>` | -- | Environment variables (repeatable) |
-| `--from <NAME>` | -- | Clone state from existing persistent session (alias: `--image`) |
+| `--from <NAME>` | -- | Clone state from an existing retained session/template (alias: `--image`) |
 
 ### shell
 
-Open an interactive shell. With no arguments, creates a temporary session that is destroyed on exit.
+Open an interactive shell. With no arguments, creates an unnamed session for
+the shell and cleans it up when the shell exits.
 
 ```sh
-capsem shell              # temp session (destroyed on exit)
+capsem shell              # unnamed shell session
 capsem shell mybox        # attach to existing session
 capsem shell -n mybox     # find by name
 capsem shell abc123       # find by ID
@@ -80,7 +80,7 @@ capsem shell abc123       # find by ID
 
 | Flag | Description |
 |------|-------------|
-| `-n, --name <NAME>` | Find by name (persistent sessions) |
+| `-n, --name <NAME>` | Find by name |
 | `[SESSION]` | Name or ID of an existing session |
 
 ### resume
@@ -94,11 +94,11 @@ capsem attach mybox       # alias
 
 | Arg | Description |
 |-----|-------------|
-| `<name>` | Name of the persistent session (required) |
+| `<name>` | Name of the session |
 
 ### suspend
 
-Suspend a running session to disk. Saves RAM and CPU state. Only persistent sessions can be suspended.
+Suspend a running retained session to disk. Saves RAM and CPU state.
 
 ```sh
 capsem suspend mybox
@@ -110,7 +110,7 @@ capsem suspend mybox
 
 ### restart
 
-Restart a persistent session (reboot).
+Restart a session.
 
 ```sh
 capsem restart mybox
@@ -118,7 +118,7 @@ capsem restart mybox
 
 | Arg | Description |
 |-----|-------------|
-| `<name>` | Name of the persistent session (required) |
+| `<name>` | Name of the session |
 
 ### exec
 
@@ -137,7 +137,8 @@ capsem exec mybox "pip install numpy" --timeout 120
 
 ### run
 
-Run a command in a fresh temporary session. The session is auto-provisioned and destroyed after the command completes.
+Run a command in a fresh one-shot session. The session is provisioned and
+destroyed after the command completes.
 
 ```sh
 capsem run "python3 -c 'print(1+1)'"
@@ -153,7 +154,7 @@ capsem run "pytest" -e API_KEY=sk-...
 
 ### list
 
-List all sessions (running + suspended persistent).
+List all sessions.
 
 ```sh
 capsem list
@@ -212,7 +213,8 @@ capsem rm mybox           # alias
 
 ### fork
 
-Fork a session into a new persistent session. Creates a point-in-time copy of the disk state.
+Fork a session into a retained VM/template. Creates a point-in-time copy of the
+disk state.
 
 ```sh
 capsem fork mybox template
@@ -225,33 +227,21 @@ capsem fork mybox template -d "Clean Python env with numpy"
 | `<name>` | Name for the new session |
 | `-d, --description <TEXT>` | Optional description |
 
-The forked session can be booted with `capsem resume <name>` or used as a template with `capsem create --from <name>`.
-
-### persist
-
-Promote a running ephemeral session to persistent.
-
-```sh
-capsem persist abc123 mybox
-```
-
-| Arg | Description |
-|-----|-------------|
-| `<SESSION>` | Name or ID of the running ephemeral session |
-| `<name>` | Name to assign |
+The forked session can be booted with `capsem resume <name>` or used as a
+template with `capsem create --from <name>`.
 
 ### purge
 
-Destroy all temporary sessions. Use `--all` to also destroy persistent sessions.
+Destroy disposable sessions. Use `--all` to include retained sessions.
 
 ```sh
-capsem purge              # temp sessions only
+capsem purge              # disposable sessions only
 capsem purge --all        # everything (requires confirmation)
 ```
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--all` | false | Also destroy persistent sessions |
+| `--all` | false | Also destroy retained sessions |
 
 ## Service commands
 
@@ -277,7 +267,8 @@ capsem update -y          # skip confirmation
 
 ### doctor
 
-Run diagnostic tests in a fresh session. Boots a temporary VM, runs the capsem-doctor test suite, and reports results.
+Run diagnostic tests in a fresh session. Boots a VM, runs the capsem-doctor
+test suite, and reports results.
 
 ```sh
 capsem doctor
@@ -319,8 +310,7 @@ stateDiagram-v2
     Running --> Suspended: suspend
     Suspended --> Running: resume
     Running --> Running: restart
-    Running --> [*]: delete (ephemeral)
-    Running --> Persistent: persist
+    Running --> Stopped: stop
     Suspended --> [*]: delete
     Running --> Forked: fork
     Forked --> Running: resume / create --from
@@ -328,8 +318,9 @@ stateDiagram-v2
 
 | Concept | Description |
 |---------|-------------|
-| **Ephemeral** | Default. Destroyed on delete. Created by `create` (no name) or `shell` (no args) |
-| **Persistent** | Survives suspend/resume. Created by `create -n <name>` or `persist` |
+| **Profile** | The VM contract: assets, rules, detection, MCP, plugins, VM defaults, name, description, and icon |
+| **Named retained VM** | A VM with a stable name and retained state |
+| **One-shot run** | A disposable VM used by `capsem run` for one command |
 | **Suspended** | RAM + CPU state saved to disk. Resume with `resume` |
 | **Forked** | Point-in-time copy. Use as template with `create --from` |
 

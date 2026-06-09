@@ -148,29 +148,126 @@ Each running VM gets its own `capsem-process` child. This provides security isol
 
 ## Service HTTP API
 
-The service exposes a REST API over UDS. The gateway proxies this transparently.
+The service exposes a REST API over UDS. The gateway exposes the same contract
+through an explicit allowlist. Unknown paths return 404 at the gateway and are
+not forwarded to the service.
+
+`status` means hot runtime counters suitable for polling. `info` means
+configuration and identity. Profile-owned behavior lives under
+`/profiles/{profile_id}/...`; only service-wide runtime aggregation lives at
+the root.
+
+### VM Runtime
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| POST | `/vms/create` | Create a new VM (`persistent: true` for named VMs) |
-| GET | `/vms/list` | List all VMs (running + stopped persistent) |
-| GET | `/vms/{id}/info` | VM details (config, identity, persistent metadata) |
+| POST | `/vms/create` | Create a VM from a profile, optionally with a name and resource overrides |
+| GET | `/vms/list` | List VMs and their profile/status metadata |
+| GET | `/vms/{id}/info` | VM identity, profile, config, plugin descriptors, and non-hot metadata |
 | GET | `/vms/{id}/status` | Runtime state for one VM |
+| PATCH | `/vms/{id}/edit` | Edit mutable VM runtime resources |
 | POST | `/vms/{id}/exec` | Execute command, return stdout/stderr/exit_code |
 | POST | `/run` | One-shot: provision + exec + destroy |
-| POST | `/vms/{id}/stop` | Stop VM (persistent: preserve; ephemeral: destroy) |
-| POST | `/vms/{id}/resume` | Resume a stopped persistent VM |
-| POST | `/vms/{id}/save` | Convert ephemeral to persistent |
-| POST | `/purge` | Kill all temp VMs (`all: true` includes persistent) |
+| POST | `/vms/{id}/stop` | Stop a VM |
+| POST | `/vms/{id}/pause` | Suspend a VM to disk when supported |
+| POST | `/vms/{id}/start` | Start a stopped VM |
+| POST | `/vms/{id}/resume` | Resume a stopped or paused VM |
+| POST | `/vms/{id}/restart` | Restart a VM |
+| POST | `/vms/{id}/save` | Save current VM state |
+| GET | `/vms/{id}/save/status` | Save operation status |
+| POST | `/vms/{id}/fork` | Fork VM into a reusable image/VM state |
+| GET | `/vms/{id}/fork/status` | Fork operation status |
+| POST | `/vms/{id}/reload-profile` | Reload the VM's profile-derived runtime state |
+| DELETE | `/vms/{id}/delete` | Destroy VM and wipe state |
+| POST | `/purge` | Stop/delete matching VMs according to the request |
 | POST | `/vms/{id}/files/write` | Write file to guest |
 | POST | `/vms/{id}/files/read` | Read file from guest |
+| GET/POST | `/vms/{id}/files/content` | Download or upload file content |
+| GET | `/vms/{id}/files/list` | List guest files through the file API |
 | GET | `/vms/{id}/logs` | Serial/boot logs |
 | POST | `/vms/{id}/inspect` | SQL query against session.db |
-| DELETE | `/vms/{id}/delete` | Destroy VM and wipe state |
-| POST | `/vms/{id}/pause` | Suspend VM to disk (persistent only) |
-| POST | `/vms/{id}/fork` | Fork VM into reusable image |
+| GET | `/vms/{id}/timeline` | VM event timeline |
+| GET | `/vms/{id}/history` | Session history summary |
+| GET | `/vms/{id}/history/processes` | Process history |
+| GET | `/vms/{id}/history/counts` | History counters |
+| GET | `/vms/{id}/history/transcript` | Terminal transcript history |
+
+### Ledger Runtime
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| GET | `/vms/{id}/security/latest` | Latest `security_rule_events` rows for one VM |
+| GET | `/vms/{id}/security/status` | VM-scoped security ledger counters |
+| GET | `/vms/{id}/detection/latest` | Latest detection-bearing security rows for one VM |
+| GET | `/vms/{id}/detection/status` | VM-scoped detection counters |
+| GET | `/vms/{id}/enforcement/latest` | Latest enforcement-bearing security rows for one VM |
+| GET | `/vms/{id}/enforcement/status` | VM-scoped enforcement counters |
+| GET | `/security/latest` | Service-wide latest security rows |
+| GET | `/security/status` | Service-wide security counters |
+| GET | `/detection/latest` | Service-wide latest detection rows |
+| GET | `/detection/status` | Service-wide detection counters |
+| GET | `/enforcement/latest` | Service-wide latest enforcement rows |
+| GET | `/enforcement/status` | Service-wide enforcement counters |
+
+### Profiles, Rules, Plugins, Assets, MCP
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| GET | `/profiles/list` | List configured profiles |
+| GET | `/profiles/status` | Profile readiness, asset status, and validation state |
+| POST | `/profiles/reload` | Reload the profile catalog |
+| POST | `/profiles/create` | Create a profile |
+| GET | `/profiles/{profile_id}/info` | Profile identity/config truth |
+| PATCH | `/profiles/{profile_id}/edit` | Edit profile-owned config |
+| DELETE | `/profiles/{profile_id}/delete` | Delete a profile |
+| POST | `/profiles/{profile_id}/clone` | Clone a profile |
+| POST | `/profiles/{profile_id}/validate` | Validate a profile |
+| POST | `/profiles/{profile_id}/reload` | Reload one profile |
+| POST | `/profiles/{profile_id}/enforcement/evaluate` | Evaluate a supplied security event against enforcement rules |
+| GET | `/profiles/{profile_id}/enforcement/info` | Enforcement file/config info |
+| GET | `/profiles/{profile_id}/enforcement/rules/list` | Compiled enforcement rules |
+| PUT | `/profiles/{profile_id}/enforcement/rules/{rule_id}/edit` | Add or replace one enforcement rule |
+| DELETE | `/profiles/{profile_id}/enforcement/rules/{rule_id}/delete` | Delete one enforcement rule |
+| POST | `/profiles/{profile_id}/enforcement/reload` | Reload enforcement rules |
+| POST | `/profiles/{profile_id}/detection/evaluate` | Evaluate a supplied security event against detection rules |
+| GET | `/profiles/{profile_id}/detection/info` | Detection file/config info |
+| GET | `/profiles/{profile_id}/detection/rules/list` | Compiled detection rules |
+| PUT | `/profiles/{profile_id}/detection/rules/{rule_id}/edit` | Add or replace one detection rule |
+| DELETE | `/profiles/{profile_id}/detection/rules/{rule_id}/delete` | Delete one detection rule |
+| POST | `/profiles/{profile_id}/detection/reload` | Reload detection rules |
+| GET | `/profiles/{profile_id}/plugins/list` | Profile plugin config plus registry descriptors |
+| GET | `/profiles/{profile_id}/plugins/info` | Plugin subsystem info for the profile |
+| GET | `/profiles/{profile_id}/plugins/{plugin_id}/info` | One plugin config and descriptor |
+| PATCH | `/profiles/{profile_id}/plugins/{plugin_id}/edit` | Edit one plugin config |
+| GET | `/profiles/{profile_id}/assets/status` | Profile asset readiness |
+| GET | `/profiles/{profile_id}/assets/info` | Profile asset descriptors |
+| PATCH | `/profiles/{profile_id}/assets/edit` | Edit profile asset descriptors |
+| POST | `/profiles/{profile_id}/assets/ensure` | Download/verify profile assets |
+| GET | `/profiles/{profile_id}/mcp/info` | Profile MCP config info |
+| GET | `/profiles/{profile_id}/mcp/servers/list` | Profile MCP servers |
+| PUT | `/profiles/{profile_id}/mcp/servers/{server_id}/edit` | Add or replace one MCP server |
+| DELETE | `/profiles/{profile_id}/mcp/servers/{server_id}/delete` | Delete one MCP server |
+| GET | `/profiles/{profile_id}/mcp/servers/{server_id}/tools/list` | Tools for one MCP server |
+| POST | `/profiles/{profile_id}/mcp/servers/{server_id}/refresh` | Refresh one MCP server |
+| PATCH | `/profiles/{profile_id}/mcp/servers/{server_id}/tools/{tool_id}/edit` | Enable/disable or edit one MCP tool |
+| POST | `/profiles/{profile_id}/mcp/servers/{server_id}/tools/{tool_id}/call` | Call one MCP tool |
+
+### Service, Settings, Corp
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| GET | `/version` | Service version |
 | GET | `/stats` | Full telemetry dump (all sessions) |
-| POST | `/reload-config` | Hot-reload settings from disk |
+| GET | `/service-logs` | Service log tail |
+| GET | `/triage` | Debug triage bundle |
+| GET | `/panics` | Panic log summary |
+| GET | `/host-logs/{name}` | Named host log |
+| GET | `/settings/info` | UI/application settings |
+| PATCH | `/settings/edit` | Edit settings-owned preferences |
+| GET | `/corp/info` | Corporate constraint/reporting config |
+| PUT | `/corp/edit` | Replace corporate config |
+| POST | `/corp/validate` | Validate corporate config |
+| POST | `/corp/reload` | Reload corporate config |
 
 ## Installation
 
@@ -188,8 +285,9 @@ authority path.
   assets/              manifest.json, v{VERSION}/{vmlinuz, initrd.img, rootfs.erofs}
   run/                 service.sock, service.pid, gateway.token, gateway.port, instances/
   update-check.json    Self-update cache (24h TTL)
-  user.toml            User settings
-  corp.toml            Enterprise config (optional)
+  settings.toml        UI/application preferences
+  corp.toml            Enterprise constraints/reporting config (optional)
+  profiles/            Profile-owned assets, rules, MCP, plugins, VM defaults
 ```
 
 ### Self-update

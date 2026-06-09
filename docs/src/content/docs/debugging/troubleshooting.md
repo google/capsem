@@ -28,7 +28,7 @@ sidebar:
 | Symptom | Cause | Fix |
 |---------|-------|-----|
 | `curl: (60) SSL certificate problem` | CA bundle not injected | Check `capsem-doctor -k "ca_env"` |
-| Domain blocked unexpectedly | Matching block/ask rule | Check profile/corp security rules in `~/.capsem/user.toml` and `/etc/capsem/corp.toml` |
+| Domain blocked unexpectedly | Matching block/ask rule | Check the active profile/corp enforcement rules and the VM security ledger |
 | All HTTPS fails | MITM proxy not running | Check `capsem-doctor -k "net_proxy"` for L2 status |
 | Slow downloads | Expected for air-gapped proxy | All traffic routes through the MITM proxy by design |
 
@@ -37,7 +37,7 @@ sidebar:
 | Symptom | Cause | Fix |
 |---------|-------|-----|
 | `claude: command not found` | Not in PATH | Check `/opt/ai-clis/bin` is in PATH: `echo $PATH` |
-| `disabled by policy` at boot | API key not configured | Add key to `~/.capsem/user.toml` |
+| `disabled by policy` at boot | Profile/corp rule or broker state blocked materialization | Check profile rules, corp rules, and credential broker status |
 | CLI hangs on first run | Waiting for network it can't reach | Check provider HTTP/DNS rules and brokered credential state |
 
 ## Disk full / Colima eating all disk space

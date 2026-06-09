@@ -11,8 +11,8 @@ sidebar:
 
 | Recipe | What it does | Time |
 |--------|-------------|------|
-| `just shell` | Build/sign as needed, boot a temporary VM, and attach a shell | ~10s after first build |
-| `just exec "CMD"` | Run a command in a fresh temporary VM, then destroy it | ~10s after first build |
+| `just shell` | Build/sign as needed, boot a VM, and attach a shell | ~10s after first build |
+| `just exec "CMD"` | Run a command in a fresh disposable VM, then destroy it | ~10s after first build |
 | `just run-service` | Start or reuse the daemon service | continuous |
 | `just ui` | Tauri desktop app with hot reload and the service path | continuous |
 | `just dev-frontend` | Frontend-only dev server with mock data on port 5173 | continuous |

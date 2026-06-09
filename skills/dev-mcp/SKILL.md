@@ -18,15 +18,14 @@ When the capsem MCP server is configured in your AI CLI, you have direct VM cont
 
 | Tool | Parameters | What it does |
 |------|-----------|-------------|
-| `capsem_create` | name?, ramMb?, cpuCount?, env?, image? | Boot a fresh VM (~10s). Named VMs are persistent. env = `{"KEY": "VALUE"}` for guest injection. image = boot from a forked template. |
-| `capsem_run` | command, timeout? | One-shot: boot temp VM, exec command, destroy, return output |
-| `capsem_list` | -- | List all VMs (running + stopped persistent) |
-| `capsem_info` | id | VM config, status, persistent, PID |
+| `capsem_create` | name?, ramMb?, cpuCount?, env?, image? | Boot a fresh VM from a profile. Profile VM defaults apply when RAM/CPU are omitted. |
+| `capsem_run` | command, timeout? | One-shot: boot a disposable VM, exec command, destroy, return output |
+| `capsem_list` | -- | List VMs with profile, status, resources, and telemetry |
+| `capsem_info` | id | VM config, profile, status, plugin descriptors, PID |
 | `capsem_exec` | id, command, timeout? | Run command in guest, get stdout/stderr/exit_code. No default command timeout; pass `timeout` only when the user asked for a deadline. |
-| `capsem_stop` | id | Stop VM (persistent: preserve state; ephemeral: destroy) |
-| `capsem_resume` | name | Resume a stopped persistent VM |
-| `capsem_persist` | id, name | Convert running ephemeral VM to persistent |
-| `capsem_purge` | all? | Kill all temp VMs (all=true includes persistent) |
+| `capsem_stop` | id | Stop VM |
+| `capsem_resume` | name | Resume a stopped or paused VM |
+| `capsem_purge` | all? | Clean up disposable VMs; all=true includes retained VMs |
 | `capsem_read_file` | id, path | Read file content from guest |
 | `capsem_write_file` | id, path, content | Write file into guest |
 | `capsem_vm_logs` | id, grep?, tail? | Serial + process logs. grep filters lines, tail limits to last N. |
@@ -35,7 +34,7 @@ When the capsem MCP server is configured in your AI CLI, you have direct VM cont
 | `capsem_inspect` | id, sql | Raw SQL against session.db |
 | `capsem_delete` | id | Destroy VM and wipe all state |
 | `capsem_version` | -- | MCP server version + service connectivity status |
-| `capsem_fork` | id, name, description? | Fork a running/stopped VM into a new stopped persistent session (use as a reusable template). |
+| `capsem_fork` | id, name, description? | Fork a running/stopped VM into a retained VM/template. |
 | `capsem_mcp_servers` | -- | List configured MCP servers with connection status and tool counts. |
 | `capsem_mcp_tools` | server? | List discovered MCP tools across all connected servers. Filter by `server` name to scope to one server. |
 | `capsem_mcp_call` | name, args? | Call an MCP tool by namespaced name (e.g. `github__search_repos`) with JSON arguments. Lets the agent exercise the MCP policy + telemetry path without driving guest stdio. |
@@ -51,7 +50,7 @@ When the capsem MCP server is configured in your AI CLI, you have direct VM cont
 capsem_run { command: "capsem-doctor -k net" }
 
 -- Iterative debugging (long-lived VM):
-1. capsem_create        -- boot a fresh sandbox (add name for persistence)
+1. capsem_create        -- boot a fresh sandbox
 2. capsem_exec          -- run the thing you want to test
 3. capsem_read_file     -- check config, logs, state
 4. capsem_inspect       -- query telemetry tables
@@ -217,16 +216,12 @@ The endpoint parses the namespace to route to the correct server.
 
 ### Policy evaluation
 
-```
-1. Blocked servers list (highest priority)
-2. Allowed servers whitelist (if non-empty)
-3. Per-tool decision map
-4. Default fallback (Allow/Warn/Block)
-```
-
-Config hierarchy: corp.toml > user.toml > auto-detected from AI CLI settings.
-
-Decisions: `Allow`, `Warn` (log + continue), `Block` (error -32600).
+MCP is not a separate decision engine. The framed MCP parser emits normalized
+`SecurityEvent` fields (`mcp.method`, `mcp.server.name`,
+`mcp.tool_call.name`, tool/list/resource data), then the shared
+`SecurityRuleSet` evaluates CEL rules in priority order. Corp/profile rules and
+profile defaults decide allow/ask/block/rewrite/pre/post behavior. MCP config
+selects servers and tools; security decisions stay in the security engine.
 
 ### Built-in tools
 

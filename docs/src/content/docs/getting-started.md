@@ -57,9 +57,11 @@ Boot a sandboxed VM and get a shell:
 capsem shell
 ```
 
-This creates a temporary Linux session with an air-gapped network. You get a terminal inside the sandbox with Python 3, Node.js, git, and 30+ packages pre-installed. The session is destroyed when you exit.
+This creates a Linux session with an air-gapped network. You get a terminal
+inside the sandbox with Python 3, Node.js, git, and common developer packages
+pre-installed. The default session uses the `code` profile.
 
-For a persistent session that survives suspend/resume cycles:
+For a named retained session that survives stop/resume cycles:
 
 ```sh
 capsem create -n mybox
@@ -111,7 +113,7 @@ materialized as settings-owned boot secrets.
 
 By default, the VM is air-gapped -- network traffic routes through Capsem's host
 network engine, where HTTP and DNS become first-party security events. Add
-allow/block behavior with profile rules in `~/.capsem/user.toml`:
+allow/block behavior with profile or corp enforcement rules:
 
 ```toml
 [profiles.rules.allow_python_registry]
@@ -125,7 +127,9 @@ action = "block"
 match = 'dns.qname.matches("(^|.*\\.)(openai\\.com|anthropic\\.com|googleapis\\.com)$")'
 ```
 
-Every HTTPS request is logged to a per-session SQLite database with full method, path, headers, and body preview. The Capsem GUI shows this in real time in the Network tab.
+Every HTTP/DNS/model/MCP/file/process boundary is logged to a per-VM SQLite
+database when observed. The Capsem GUI shows this in the VM Stats tab, and the
+Inspector tab can query the same `session.db` directly.
 
 ## MCP integration
 

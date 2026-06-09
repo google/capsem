@@ -128,8 +128,8 @@ Contract discipline:
 - MCP tools/resources/prompts are per server:
   `/profiles/{profile_id}/mcp/servers/{server_id}/tools/list`, etc. There is
   no global MCP tool list.
-- Plugin documentation lives on the docs site under `/plugins/...`; do not add
-  `/plugins/{id}/man` API routes.
+- Plugin documentation lives on the docs site under `/security/plugins/...`;
+  do not add `/plugins/{id}/man` API routes.
 - Provider is not a 1.3 profile API object. Credential brokerage and rules own
   that behavior.
 
@@ -177,7 +177,10 @@ Capsem runs VMs from profiles. Keep the ownership split sharp:
 
 - Guest VM is air-gapped. No real NIC, no real DNS, no direct internet.
 - Guest binaries are read-only (chmod 555). Rootfs mounted read-only.
-- **Everything is ephemeral unless asked otherwise.** VMs are temporary by default (destroyed on exit). Only named VMs (`capsem create -n <name>`) are persistent -- their workspace and rootfs overlay survive stops and can be resumed. `capsem create` is always detached; `capsem shell` is the interactive entry point (bare `capsem shell` = temp VM + auto-destroy).
+- VMs run from profiles. A profile owns assets, VM defaults, rules,
+  detections, MCP, plugins, name, description, icon, and availability. Named
+  retained VMs preserve state across stop/resume; one-shot runs are disposable
+  execution helpers.
 - The binary must be codesigned with `com.apple.security.virtualization`.
 - `capsem-core` owns all business logic. App crate and agent crate are thin shells.
 - **Fork images are first-class objects.** `capsem fork <vm> <image-name>` snapshots a VM into a reusable template. `capsem create --image <name>` boots from it. Images depend only on a base profile rootfs asset (flat genealogy -- no image-to-image deps). Asset cleanup protects rootfs assets referenced by any image. Images live in `~/.capsem/images/`.

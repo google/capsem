@@ -6,7 +6,7 @@ description: Built-in Capsem security plugin for brokered credential capture.
 Plugin id: `credential_broker`
 
 Version: supplied by the plugin registry descriptor and emitted in profile
-plugin lists, VM plugin status, logs, and benchmark output.
+plugin lists, VM info/status, logs, and benchmark output.
 
 Stage: plugin-owned HTTP-boundary materialization. CEL rules do not invoke the
 credential broker.
@@ -45,12 +45,12 @@ or access tokens.
 
 Decision: plugin policy can request `allow`, `ask`, `block`, or `rewrite`; `rewrite` keeps the effective decision at `allow` while recording mutation intent.
 
-Status contract: credential state is opaque and VM-scoped. The UI must query
-`/vms/{vm_id}/plugins/credential_broker/status` or
-`/vms/{vm_id}/plugins/credential_broker/stats`; it must not infer credential
-state from AI/provider config. VM `info` and `status` include the active
-credential broker descriptor, version, stage health, and last in-memory status
-snapshot without reading `session.db`.
+Status contract: credential state is opaque and VM-scoped. The UI must not
+infer credential state from AI/provider config. Profile plugin configuration is
+read through `/profiles/{profile_id}/plugins/list` and
+`/profiles/{profile_id}/plugins/credential_broker/info`; VM `info` and
+`status` carry the active descriptor, version, stage health, and last in-memory
+status snapshot without reading `session.db`.
 
 Benchmark contract: the plugin descriptor owns a stable benchmark spec for
 capture, substitution, failed materialization, and status snapshot overhead.

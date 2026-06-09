@@ -5,7 +5,7 @@ sidebar:
   order: 20
 ---
 
-Every Capsem VM gets its own SQLite database (`session.db`) that records network requests, DNS queries, AI model calls, MCP tool invocations, exec activity, kernel audit events, file changes, and snapshots. The database lives in the session directory and is destroyed with the VM (ephemeral) or preserved (persistent/forked).
+Every Capsem VM gets its own SQLite database (`session.db`) that records network requests, DNS queries, AI model calls, MCP tool invocations, exec activity, kernel audit events, file changes, security rule matches, credential substitutions, and snapshots. The database lives in the session directory and follows the VM lifecycle; retained/forked VMs keep their database for forensic review.
 
 ## Schema overview
 
@@ -148,10 +148,10 @@ Every HTTP request through the MITM proxy, whether allowed or denied.
 | `request_body_preview` | TEXT | First 4 KB of request body |
 | `response_body_preview` | TEXT | First 4 KB of response body |
 | `conn_type` | TEXT | Default `https`, `https-mitm` for proxied |
-| `policy_mode` | TEXT | Policy engine mode, when set |
-| `policy_action` | TEXT | Legacy helper; use `security_rule_events.rule_action` for security rules |
-| `policy_rule` | TEXT | Legacy helper; use `security_rule_events.rule_id` for security rules |
-| `policy_reason` | TEXT | Legacy helper; use `security_rule_events.rule_json` for rule reason |
+| `policy_mode` | TEXT | Transport-local policy mode hint, when set |
+| `policy_action` | TEXT | Denormalized transport hint; `security_rule_events.rule_action` is rule truth |
+| `policy_rule` | TEXT | Denormalized transport hint; `security_rule_events.rule_id` is rule truth |
+| `policy_reason` | TEXT | Denormalized transport hint; `security_rule_events.rule_json` is rule truth |
 | `trace_id` | TEXT | Cross-table correlation ID |
 
 ### model_calls
@@ -237,10 +237,10 @@ MCP JSON-RPC tool invocations through the guest MCP relay and host MITM MCP endp
 | `process_name` | TEXT | Guest process |
 | `bytes_sent` | INTEGER | Request size |
 | `bytes_received` | INTEGER | Response size |
-| `policy_mode` | TEXT | Legacy MCP policy mode, when used |
-| `policy_action` | TEXT | Legacy helper; use `security_rule_events.rule_action` for security rules |
-| `policy_rule` | TEXT | Legacy helper; use `security_rule_events.rule_id` for security rules |
-| `policy_reason` | TEXT | Legacy helper; use `security_rule_events.rule_json` for rule reason |
+| `policy_mode` | TEXT | Transport-local policy mode hint, when set |
+| `policy_action` | TEXT | Denormalized transport hint; `security_rule_events.rule_action` is rule truth |
+| `policy_rule` | TEXT | Denormalized transport hint; `security_rule_events.rule_id` is rule truth |
+| `policy_reason` | TEXT | Denormalized transport hint; `security_rule_events.rule_json` is rule truth |
 | `trace_id` | TEXT | Cross-table correlation ID |
 
 ### dns_events
@@ -262,10 +262,10 @@ DNS queries handled by the host DNS proxy.
 | `process_name` | TEXT | Guest process, when known |
 | `upstream_resolver_ms` | INTEGER | Upstream resolver latency |
 | `trace_id` | TEXT | Cross-table correlation ID |
-| `policy_mode` | TEXT | Policy engine mode, when set |
-| `policy_action` | TEXT | Legacy helper; use `security_rule_events.rule_action` for security rules |
-| `policy_rule` | TEXT | Legacy helper; use `security_rule_events.rule_id` for security rules |
-| `policy_reason` | TEXT | Legacy helper; use `security_rule_events.rule_json` for rule reason |
+| `policy_mode` | TEXT | Transport-local policy mode hint, when set |
+| `policy_action` | TEXT | Denormalized transport hint; `security_rule_events.rule_action` is rule truth |
+| `policy_rule` | TEXT | Denormalized transport hint; `security_rule_events.rule_id` is rule truth |
+| `policy_reason` | TEXT | Denormalized transport hint; `security_rule_events.rule_json` is rule truth |
 
 ### security_rule_events
 
@@ -280,14 +280,14 @@ ledger, but 1.3 does not expose fake `credential.*` or `snapshot.*` rule roots.
 | `event_id` | TEXT | 12-hex primary event id from the protocol/event table |
 | `event_type` | TEXT | Canonical security event type such as `http.request`, `mcp.tool_call`, or `file.read` |
 | `rule_id` | TEXT | Stable rule id such as `profiles.rules.skill_loaded` |
-| `rule_action` | TEXT | `allow`, `ask`, `block`, `preprocess`, or `postprocess` |
+| `rule_action` | TEXT | `allow`, `ask`, `block`, `preprocess`, `rewrite`, or `postprocess` |
 | `detection_level` | TEXT | `none`, `informational`, `low`, `medium`, `high`, or `critical` |
 | `rule_json` | TEXT | JSON rule snapshot at match time |
 | `event_json` | TEXT | JSON normalized `SecurityEvent` payload matched by the rule |
 | `trace_id` | TEXT | Cross-table correlation ID |
 
-This table is the forensic rule ledger. Runtime `/latest` and `/info` style
-views must be regeneratable from these rows and the primary event tables.
+This table is the forensic rule ledger. Runtime `/latest` and `/status` views
+must be regeneratable from these rows and the primary event tables.
 
 ### security_ask_events
 
@@ -570,16 +570,39 @@ The `DbReader` provides pre-built aggregate queries:
 | `capsem info <id> --stats` | CLI -> service HTTP `/vms/{id}/info` | Pre-built `SessionStats` |
 | MCP `capsem_inspect` | MCP -> service HTTP `/vms/{id}/inspect` | Raw SQL (read-only) |
 | MCP `capsem_inspect_schema` | MCP -> service HTTP | Table schemas for LLM context |
-| Frontend dashboard | Gateway -> `/vms/{id}/inspect` | sql.js in-browser (downloads session.db) |
+| Frontend Stats tab | Gateway -> `/vms/{id}/inspect` plus VM-scoped security ledger routes | Per-table summaries and event inspection |
+| Frontend Inspector tab | Gateway -> `/vms/{id}/inspect` | Raw read-only SQL with presets for current tables |
 
 The `/inspect` endpoint executes arbitrary SQL against the session database in read-only mode (`query_only` pragma). The reader connection uses separate pragmas from the writer.
+
+## Frontend Stats And Inspection
+
+The VM **Stats** tab is ledger/database backed. It does not infer security
+state from profile config or live rules. It reads protocol tables through
+`POST /vms/{id}/inspect` and reads rule truth through VM-scoped ledger routes:
+
+| Stats tab | Primary source |
+|-----------|----------------|
+| Model | `model_calls` |
+| MCP | `mcp_calls` |
+| HTTP | `net_events` |
+| DNS | `dns_events` |
+| Files | `fs_events` |
+| Process | `exec_events`, `audit_events`, `substitution_events` |
+| Security | `/vms/{id}/security/latest`, `/vms/{id}/security/status`, `/vms/{id}/detection/latest`, `/vms/{id}/enforcement/latest` |
+| Snapshots | `snapshot_events` |
+
+The **Inspector** tab is the raw read-only SQL escape hatch for forensics. Its
+presets point at current session tables such as `security_rule_events`,
+`net_events`, `dns_events`, `mcp_calls`, `model_calls`, `fs_events`,
+`exec_events`, and `substitution_events`.
 
 ## Per-VM isolation
 
 | Property | Value |
 |----------|-------|
 | Location | `~/.capsem/sessions/{id}/session.db` |
-| Lifetime | Created at VM boot, destroyed with ephemeral VM or preserved with persistent VM |
+| Lifetime | Created at VM boot and retained or deleted with the VM's lifecycle state |
 | Access | Only the owning capsem-process can write; service reads via IPC |
 | VirtioFS boundary | `session.db` is outside the VirtioFS share; guest cannot access it |
 | Concurrent access | WAL mode allows concurrent reader + writer |

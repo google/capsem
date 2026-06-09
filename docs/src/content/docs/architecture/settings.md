@@ -18,7 +18,7 @@ Three TOML files feed the settings system, merged with a strict priority order:
 ```mermaid
 flowchart LR
   DT["defaults.toml\n(compile-time embedded)"] --> R[Resolver]
-  UT["user.toml\n(~/.capsem/user.toml)"] --> R
+  UT["settings.toml\n(~/.capsem/settings.toml)"] --> R
   CT["corp.toml\n(/etc/capsem/corp.toml)"] --> R
   R --> RS["Resolved Settings"]
   RS --> TB[Tree Builder]
@@ -28,10 +28,10 @@ flowchart LR
 | File | Location | Purpose | Editable |
 |---|---|---|---|
 | `defaults.toml` | Embedded at compile time | All built-in settings with types and defaults | No (source code) |
-| `user.toml` | `~/.capsem/user.toml` | User overrides and custom values | Yes (UI + manual) |
+| `settings.toml` | `~/.capsem/settings.toml` | User UI/app preference overrides | Yes (UI + manual) |
 | `corp.toml` | `/etc/capsem/corp.toml` | Enterprise lockdown (MDM-distributed) | IT admin only |
 
-Environment variables `CAPSEM_USER_CONFIG` and `CAPSEM_CORP_CONFIG` can override the default paths for testing.
+Environment variables can override the default settings and corp paths for testing.
 
 ## Settings Grammar
 
@@ -96,7 +96,7 @@ Settings are resolved per-key with corp taking highest priority:
 ```mermaid
 flowchart TD
   D["Default value\n(defaults.toml)"] -->|"user has override?"| U
-  U["User value\n(user.toml)"] -->|"corp has override?"| C
+  U["User value\n(settings.toml)"] -->|"corp has override?"| C
   C["Corp value\n(corp.toml)"] --> E["Effective value"]
   style C fill:#7c3aed,color:#fff
   style U fill:#3b82f6,color:#fff
@@ -161,7 +161,7 @@ sequenceDiagram
   Note over UI: User clicks Save
   UI->>GW: PATCH /settings/edit {id: value, ...}
   GW->>SVC: PATCH /settings/edit (UDS)
-  SVC->>SVC: validate ALL then write user.toml
+  SVC->>SVC: validate ALL then write settings.toml
   SVC-->>GW: SettingsResponse (fresh state)
   GW-->>UI: response
   UI->>M: new SettingsModel(response)
@@ -186,7 +186,7 @@ Accepts a batch of changes as `{ setting_id: value, ... }`. Behavior:
 
 1. **Validate ALL changes upfront** (atomic -- all or nothing)
 2. **Reject entire batch** if any change targets a corp-locked setting, uses an unknown ID, or fails validation
-3. **Write to user.toml** in a single file operation
+3. **Write to settings.toml** in a single file operation
 4. **Return fresh `SettingsResponse`** reflecting the new state
 
 Bool toggles use `save_settings` immediately. Text, number, file, and list

@@ -53,7 +53,7 @@ logs/tray.log                   tray stdout/stderr (if spawned)
 sessions/<vm-id>/process.log    per-VM capsem-process log (vsock bridge, IPC, spawn chain)
 sessions/<vm-id>/serial.log     VM serial console (kernel boot, capsem-init, agent startup)
 sessions/<vm-id>/session.db     SQLite telemetry DB (net_events, model_calls, ...)
-persistent/<name>/...           persistent-VM state (checkpoint.vzsave, workspace)
+retained/<name>/...             retained VM state (checkpoint.vzsave, workspace)
 ```
 
 `test-artifacts/` is gitignored. Multiple failures sharing a session-scoped service land in different subdirs but the latest run's name tags them by the most recent failing nodeid. First place to look for "VM didn't become exec-ready" style failures: `sessions/<id>/serial.log` (did the VM boot?) and `sessions/<id>/process.log` (did the agent come up + IPC handshake?). For "provision hung" or service-side contention: `service.log`, grep for the VM id.
@@ -67,7 +67,9 @@ just run "<manual investigation command>"
 ```
 Check boot logs for daemon startup failures, vsock connection issues, or timing problems.
 
-**Network/policy issues**: Check the MITM proxy path -- SNI parsing, domain policy evaluation, HTTP rule matching, cert minting. Use session DB to see what actually happened:
+**Network/policy issues**: Check the MITM proxy path -- SNI parsing,
+normalized `SecurityEvent` construction, CEL rule evaluation, cert minting, and
+ledger rows. Use session DB to see what actually happened:
 ```bash
 just inspect-session   # Check net_events for domain, decision, status_code
 ```
@@ -89,7 +91,8 @@ Write down what you find. The diagnosis should explain *why* the bug exists, not
 
 - "Suspend timed out" appearing only at `-n 4` -> `handle_suspend` IPC race; investigate the `with_quiescence` path and the `Suspend` round-trip, not the test timeout
 - "Session did not become ready" only with multiple parallel provisions -> Apple VZ resource contention, VirtioFS lock, or service handle_provision serialization gap
-- Two tests collide on the same VM/session name -> `validate_vm_name` / persistent registry has a TOCTOU; UUID prefix in the test is not the bug
+- Two tests collide on the same VM/session name -> `validate_vm_name` /
+  retained-VM registry has a TOCTOU; UUID prefix in the test is not the bug
 - "Connection refused" on a per-VM UDS only at `-n 4` -> service spawned the process but didn't wait for the socket to be bound; race in the spawn path
 - A test passes serial but hangs at n=4 -> a global lock somewhere (state mutex held across an await, blocking Tokio worker; or a sync `std::Mutex` on a hot path)
 

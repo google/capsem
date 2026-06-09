@@ -79,7 +79,7 @@ telemetry name. Both are intentionally required and validated.
 | Field | Required | Default | Description |
 |---|---:|---|---|
 | `name` | yes | none | Stable lowercase rule name, max 64 chars. Use `a-z`, `0-9`, `_`, or `-`. |
-| `action` | yes | none | One of `allow`, `ask`, or `block`. |
+| `action` | yes | none | One of `allow`, `ask`, `block`, `preprocess`, `rewrite`, or `postprocess`. |
 | `match` | yes | none | CEL expression over first-party `SecurityEvent` roots. |
 | `detection_level` | no | none | Sigma-style severity: `informational`, `low`, `medium`, `high`, or `critical`. `info` is accepted as shorthand and canonicalizes to `informational`. |
 | `priority` | no | source default | Lower values sort first. Explicit values must be from `-1000` to `1000`. |
@@ -92,6 +92,9 @@ telemetry name. Both are intentionally required and validated.
 | `allow` | Allow the event boundary to continue. It can still emit a detection when `detection_level` is set. |
 | `ask` | Pause materialization until an approval or denial is recorded. |
 | `block` | Deny the event boundary and log the matched rule. |
+| `preprocess` | Run before enforcement materialization for rule-driven preprocessing. |
+| `rewrite` | Mutate the event or materialized boundary. Aliases `redact`, `mutate`, and `neutralize` canonicalize to `rewrite`. |
+| `postprocess` | Run after enforcement materialization for audited postprocessing. |
 
 Detection is not an action. A rule reports a detection by setting
 `detection_level`, and can still allow, ask, or block.
@@ -136,27 +139,31 @@ return 404 without contacting the UDS service.
 |---|---|---|
 | `/profiles/{profile_id}/enforcement/evaluate` | `POST` | Test a supplied `SecurityEvent` fixture and rule TOML through the same `SecurityEventEngine` used at runtime. The response uses `SerializableSecurityEvent`, with every first-party root present and absent roots encoded as `null`. |
 | `/profiles/{profile_id}/enforcement/rules/list` | `GET` | Return compiled profile rule truth, including source, default-rule, priority, action, detection level, and lock metadata. |
-| `/profiles/{profile_id}/enforcement/rules/{rule_id}/edit` | `PUT` | Add or replace one user profile rule. The rule body is the native rule object; Capsem compiles it with `SecurityRuleProfile` before writing `user.toml`. |
-| `/profiles/{profile_id}/enforcement/rules/{rule_id}/delete` | `DELETE` | Remove one user profile rule from `user.toml`. Corporate rules are not mutable through this endpoint. |
+| `/profiles/{profile_id}/enforcement/rules/{rule_id}/edit` | `PUT` | Add or replace one profile enforcement rule. The rule body is the native rule object; Capsem compiles it with `SecurityRuleProfile` before writing profile-owned config. |
+| `/profiles/{profile_id}/enforcement/rules/{rule_id}/delete` | `DELETE` | Remove one profile enforcement rule. Corporate rules are not mutable through this endpoint. |
 | `/profiles/{profile_id}/enforcement/reload` | `POST` | Reload that profile's enforcement rules. |
+| `/profiles/{profile_id}/detection/evaluate` | `POST` | Test a supplied `SecurityEvent` fixture against the profile detection rules. |
+| `/profiles/{profile_id}/detection/info` | `GET` | Return detection file/config info for the profile. |
+| `/profiles/{profile_id}/detection/rules/list` | `GET` | Return compiled profile detection rule truth. |
+| `/profiles/{profile_id}/detection/rules/{rule_id}/edit` | `PUT` | Add or replace one profile detection rule. |
+| `/profiles/{profile_id}/detection/rules/{rule_id}/delete` | `DELETE` | Remove one profile detection rule. |
+| `/profiles/{profile_id}/detection/reload` | `POST` | Reload that profile's detection rules. |
 | `/profiles/{profile_id}/plugins/list` | `GET` | Return profile plugin config plus registry-owned version, name, description, info, stages, schemas, benchmark spec, and capabilities. No runtime counters. |
-| `/profiles/{profile_id}/plugins/add` | `POST` | Add one profile plugin config object after validating the plugin id and schema. |
+| `/profiles/{profile_id}/plugins/info` | `GET` | Return plugin subsystem info for the profile. |
 | `/profiles/{profile_id}/plugins/{plugin_id}/info` | `GET` | Inspect one profile plugin config object plus registry-owned version, name, description, info, stages, schemas, benchmark spec, and capabilities. |
 | `/profiles/{profile_id}/plugins/{plugin_id}/edit` | `PATCH` | Update one profile plugin config object where policy allows it. |
-| `/profiles/{profile_id}/plugins/{plugin_id}/delete` | `DELETE` | Remove one profile plugin config object where policy allows it. |
-| `/profiles/{profile_id}/plugins/reload` | `POST` | Reload profile plugin config and publish it to affected VM runtimes. |
 | `/vms/{vm_id}/enforcement/latest` | `GET` | Return stored `security_rule_events` rows for one VM. |
 | `/vms/{vm_id}/enforcement/status` | `GET` | Return counters regenerated from stored security rule rows for one VM. |
 | `/vms/{vm_id}/detection/latest` | `GET` | Return stored detection-bearing security rule rows for one VM. |
 | `/vms/{vm_id}/detection/status` | `GET` | Return detection counters regenerated from stored security rule rows for one VM. |
-| `/vms/{vm_id}/info` | `GET` | Return VM configuration/runtime info, including active plugin descriptors, versions, modes, stages, health, and last in-memory status snapshot. No DB reads. |
-| `/vms/{vm_id}/status` | `GET` | Return hot-path VM liveness/readiness counters from memory, including active plugin health summaries. No DB reads. |
-| `/vms/{vm_id}/plugins/list` | `GET` | List plugins active in one VM with descriptor metadata, version, stages, runtime health, and aggregate in-memory performance counters. |
-| `/vms/{vm_id}/plugins/{plugin_id}/status` | `GET` | Return one plugin's VM-scoped in-memory runtime status, performance counters, last error, last security event id, version, and stage health. No DB reads. |
-| `/vms/{vm_id}/plugins/{plugin_id}/stats` | `GET` | Return plugin-owned performance counters for one VM, including per-stage latency and error counts. |
-| `/vms/{vm_id}/plugins/{plugin_id}/reload` | `POST` | Ask one VM runtime to reload one plugin's runtime state when supported. |
+| `/vms/{vm_id}/info` | `GET` | Return VM configuration/runtime info, including active profile/plugin descriptors. |
+| `/vms/{vm_id}/status` | `GET` | Return hot-path VM liveness/readiness counters from memory. No DB reads. |
 
-Rule add/update is profile-user scoped by design. Corporate policy arrives from
+There are no `/plugins/{id}/man` or global provider-control endpoints. Plugin
+copy belongs in docs pages such as `/security/plugins/credential-broker/`; UI
+state comes from profile plugin configuration and VM info/status.
+
+Rule add/update is profile-scoped by design. Corporate policy arrives from
 corp config, referenced enforcement TOML, or referenced Sigma YAML, then compiles
 through the same rule rail.
 

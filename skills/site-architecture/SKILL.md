@@ -12,7 +12,10 @@ Capsem sandboxes AI agents in air-gapped Linux VMs on macOS using Apple's Virtua
 **Host-side:**
 - **capsem-service** (daemon): always-running background service. Axum HTTP server over Unix Domain Socket (`~/.capsem/run/service.sock`). Manages VM lifecycle, routes API calls to per-VM processes.
 - **capsem-process** (per-VM): one process per sandbox. Boots the VM, bridges vsock connections (terminal + control), manages structured jobs (exec, file I/O) via a job store.
-- **capsem** (CLI): user-facing CLI. **Everything is ephemeral unless asked otherwise.** `capsem shell` (no args) = temp VM + auto-destroy on exit. `capsem create -n <name>` = persistent VM (detached). `capsem create` (no name) = ephemeral VM (detached). `capsem shell <id>` = attach to existing. Talks to capsem-service over UDS HTTP.
+- **capsem** (CLI): user-facing CLI. `capsem shell` is the interactive entry
+  point; `capsem create -n <name>` creates a named retained VM; `capsem run`
+  uses a disposable one-shot VM. All VMs run from profiles. Talks to
+  capsem-service over UDS HTTP.
 - **capsem-mcp** (MCP server): stdio-based MCP server for AI agents (Claude Code, Gemini CLI). Bridges MCP tool calls to capsem-service HTTP API.
 - **capsem-gateway** (HTTP gateway): TCP-to-UDS reverse proxy (default port 19222). Bearer token auth, CORS, 10MB body limit. Provides `/status` (cached 1s), `/terminal/{id}` (WebSocket relay to per-VM UDS), and transparent fallback proxy to capsem-service. The frontend and tray app connect through the gateway. Writes runtime files to `~/.capsem/run/` (gateway.token, gateway.port, gateway.pid).
 - **capsem-app** (Tauri GUI): thin webview shell. Connects to gateway at `http://127.0.0.1:19222`. No VM logic, no capsem-core dependency. Only 2 IPC commands: `open_url` (opens URL in system browser) and `check_for_app_update` (Tauri updater). Bundles `frontend/dist` as offline fallback when gateway is unreachable.
@@ -68,16 +71,16 @@ Tray app  -> capsem-gateway (TCP)-> HTTP/UDS -> capsem-service
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| POST | `/vms/create` | Create a new sandbox VM (set `persistent: true` for named VMs) |
-| GET | `/vms/list` | List all sandboxes (running + stopped persistent) |
-| GET | `/vms/{id}/info` | Sandbox details (config, identity, persistent metadata) |
+| POST | `/vms/create` | Create a new sandbox VM from a profile |
+| GET | `/vms/list` | List VMs with profile/status metadata |
+| GET | `/vms/{id}/info` | Sandbox details (profile, config, identity, plugin descriptors) |
 | GET | `/vms/{id}/status` | Runtime state for one sandbox |
 | POST | `/vms/{id}/exec` | Execute command, return stdout/stderr/exit_code |
-| POST | `/run` | One-shot: provision temp VM, exec command, destroy, return output |
-| POST | `/vms/{id}/stop` | Stop VM (persistent: preserve state; ephemeral: destroy) |
-| POST | `/vms/{id}/resume` | Resume a stopped persistent VM |
-| POST | `/vms/{id}/save` | Convert running ephemeral VM to persistent |
-| POST | `/purge` | Kill all temp VMs (set `all: true` to include persistent) |
+| POST | `/run` | One-shot: provision disposable VM, exec command, destroy, return output |
+| POST | `/vms/{id}/stop` | Stop VM |
+| POST | `/vms/{id}/resume` | Resume a stopped or paused VM |
+| POST | `/vms/{id}/save` | Save VM state |
+| POST | `/purge` | Clean up disposable VMs; `all: true` includes retained VMs |
 | POST | `/vms/{id}/files/write` | Write file to guest |
 | POST | `/vms/{id}/files/read` | Read file from guest |
 | GET | `/vms/{id}/logs` | Serial/boot logs |
@@ -90,7 +93,10 @@ Tray app  -> capsem-gateway (TCP)-> HTTP/UDS -> capsem-service
 
 ### MCP tools (capsem-mcp)
 
-21 tools: `capsem_create` (env + image params), `capsem_list`, `capsem_info`, `capsem_exec` (timeout param), `capsem_run`, `capsem_stop`, `capsem_resume`, `capsem_persist`, `capsem_purge`, `capsem_read_file`, `capsem_write_file`, `capsem_vm_logs` (grep + tail), `capsem_service_logs` (grep + tail), `capsem_inspect_schema`, `capsem_inspect`, `capsem_delete`, `capsem_version`, `capsem_fork`, `capsem_image_list`, `capsem_image_inspect`, `capsem_image_delete`.
+MCP tools mirror the service API: create/list/info/exec/run/stop/resume/purge,
+file read/write, logs, inspect/schema, delete, version, fork, image
+list/inspect/delete, host logs, panics, triage, timeline, and guest MCP server
+tooling.
 
 ## Host-guest communication
 
@@ -158,7 +164,7 @@ Guest: shutdown -> capsem-sysutil -> vsock:5004 -> capsem-process
   capsem-process: sends HostToGuest::Shutdown on control channel (vsock:5000)
   capsem-pty-agent: receives Shutdown -> sync + SIGTERM + grace + SIGKILL -> exit
   capsem-process: VM stops, process exits
-  capsem-service: child reaper cleans up (ephemeral: destroy session, persistent: preserve)
+  capsem-service: child reaper records VM exit and applies the VM lifecycle policy
 ```
 
 ### capsem-net-proxy
@@ -210,10 +216,12 @@ The guest is air-gapped. No real NIC, no real DNS, no direct internet access.
 
 ### Network policy
 
-- User config: `~/.capsem/user.toml` -- domain allow/block lists + HTTP rules
-- Corp config: `/etc/capsem/corp.toml` -- enterprise lockdown (MDM-distributed)
-- Merge: corp overrides user entirely per field; unspecified fields fall through
-- HTTP rules: `[[network.rules]]` with method+path matching per domain
+Network parsing/routing belongs to the network engine. Security decisions do
+not live in a separate domain hook. HTTP, DNS, MCP, model, file, and process
+boundaries emit normalized `SecurityEvent` objects into the shared security
+engine, where profile/corp/default CEL rules decide allow/ask/block/rewrite and
+write ledger rows. Corp rules run first, profile/user rules next, built-in
+defaults last.
 
 ### MITM CA
 
@@ -227,9 +235,18 @@ The guest is air-gapped. No real NIC, no real DNS, no direct internet access.
 
 **Block mode**: `mke2fs` runs unconditionally at boot. Overlay upper is always tmpfs.
 
-**Everything is ephemeral unless asked otherwise.** VMs are temporary by default. Named VMs (`capsem create -n <name>`) are persistent -- their workspace and rootfs overlay survive stops and can be resumed. Persistent VM data lives in `~/.capsem/run/persistent/`. Never make the overlay upper layer persistent for ephemeral VMs. To add packages: edit guest config and `just build-assets code`.
+**Profiles own VM runtime behavior.** Profiles select assets, VM resources,
+rules, detection files, MCP servers, plugins, name/description/icon, and
+surface availability. Named retained VMs preserve workspace and overlay state
+across stop/resume. One-shot VMs are disposable execution helpers. To add
+packages, update the profile/rootfs inputs and run the profile-derived
+`just build-assets code` path.
 
-**Fork images** extend the ephemeral model with reusable templates. `capsem fork <vm> <image-name>` snapshots a VM (running or stopped) via APFS clonefile. `capsem create --image <name>` boots from the template. Images have flat genealogy: each depends only on a base profile rootfs asset, never on other images. Deleting any image is always safe; asset cleanup protects referenced rootfs assets.
+**Fork images** are reusable templates. `capsem fork <vm> <image-name>`
+snapshots a VM (running or stopped) via APFS clonefile. `capsem create --image
+<name>` boots from the template. Images have flat genealogy: each depends only
+on a base profile rootfs asset, never on other images. Deleting any image is
+always safe; asset cleanup protects referenced rootfs assets.
 
 ## Installation and service lifecycle
 
@@ -296,7 +313,7 @@ capsem-process is a **low-privilege** per-VM process. Security invariants:
 - Other VMs' session dirs (0700, different path)
 - Other VMs' UDS sockets (0600)
 - The service's UDS socket (filesystem permission only)
-- The persistent registry or other service state
+- The retained-VM registry or other service state
 - The user's environment variables (cleared at spawn)
 
 ### MITM CA key transparency

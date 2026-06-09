@@ -106,9 +106,10 @@ graph TD
     E -->|Allow| H["Materialize request<br/>log telemetry"]
 ```
 
-### User configuration
+### Profile And Corp Rules
 
-Users customize policy with profile rules in `~/.capsem/user.toml`:
+Users customize policy with profile rules; organizations add constraints with
+corp rules or referenced enforcement/Sigma files.
 
 ```toml
 [profiles.rules.allow_internal_http]

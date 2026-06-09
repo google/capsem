@@ -44,7 +44,7 @@ docs/src/content/docs/
     settings-schema.md    Two-node schema, JSON Schema, Pydantic, cross-language conformance
   security/
     overview.md           Security model overview
-    network-isolation.md  Air-gapped networking, domain policy
+    network-isolation.md  Air-gapped networking, security rules
     virtualization.md     VM isolation guarantees
     build-verification.md Build reproducibility, checksums
     kernel-hardening.md   Custom kernel, allnoconfig, minimal attack surface

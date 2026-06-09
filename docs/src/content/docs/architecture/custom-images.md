@@ -355,7 +355,7 @@ packages = ["https://claude.ai/install.sh"]
 
 Each URL gets its own `RUN curl -fsSL <url> | bash` step. Binaries are automatically copied from `~/.local/bin/` to `/usr/local/bin/` (chmod 555) because `/root` is a tmpfs at runtime.
 
-:::caution[/root is ephemeral]
+:::caution[/root is runtime overlay state]
 Anything installed under `/root/` during the Docker build is hidden at runtime by the tmpfs overlay. If your installer puts binaries in `~/.local/bin/` or `~/.claude/bin/`, the template automatically copies them to `/usr/local/bin/`. If you add a custom curl-based installer, verify where it puts its binaries and ensure they're copied to a system path.
 :::
 

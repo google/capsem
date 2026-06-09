@@ -67,17 +67,17 @@ sequenceDiagram
 |------|-------------|-----------------|
 | `capsem_create` | Create a new VM (name, RAM, CPUs, env, image) | `POST /vms/create` |
 | `capsem_list` | List all VMs with status and config | `GET /vms/list` |
-| `capsem_info` | VM details (ID, PID, status, persistent) | `GET /vms/{id}/info` |
+| `capsem_info` | VM details (ID, PID, profile, status) | `GET /vms/{id}/info` |
 | `capsem_exec` | Run shell command inside VM (timeout param) | `POST /vms/{id}/exec` |
 | `capsem_run` | One-shot: provision + exec + destroy | `POST /run` |
 | `capsem_read_file` | Read file from guest filesystem | `POST /vms/{id}/files/read` |
 | `capsem_write_file` | Write file to guest filesystem | `POST /vms/{id}/files/write` |
-| `capsem_stop` | Stop VM (persistent: preserve, ephemeral: destroy) | `POST /vms/{id}/stop` |
+| `capsem_stop` | Stop VM | `POST /vms/{id}/stop` |
 | `capsem_suspend` | Suspend VM (save RAM/CPU state) | `POST /vms/{id}/pause` |
-| `capsem_resume` | Resume stopped persistent VM | `POST /vms/{id}/resume` |
-| `capsem_persist` | Convert ephemeral VM to persistent | `POST /vms/{id}/save` |
+| `capsem_resume` | Resume stopped or paused VM | `POST /vms/{id}/resume` |
+| `capsem_save` | Save current VM state | `POST /vms/{id}/save` |
 | `capsem_delete` | Permanently destroy VM and all state | `DELETE /vms/{id}/delete` |
-| `capsem_purge` | Kill all temp VMs (all=true includes persistent) | `POST /purge` |
+| `capsem_purge` | Clean up disposable sessions; `all=true` includes retained sessions | `POST /purge` |
 | `capsem_fork` | Fork VM into reusable image | `POST /vms/{id}/fork` |
 | `capsem_vm_logs` | Get serial/process logs (grep + tail params) | `GET /vms/{id}/logs` |
 | `capsem_service_logs` | Get service logs (grep + tail params) | Service log file |
@@ -222,7 +222,10 @@ builtin = true
 enabled = true
 ```
 
-External MCP servers are auto-detected from AI CLI settings (`~/.claude/settings.json`, `~/.gemini/settings.json`), defined manually in `~/.capsem/user.toml`, or injected via corp policy. Definitions are merged by `build_server_list()` and passed to the [MCP Aggregator](/architecture/mcp-aggregator/) subprocess at spawn time.
+External MCP servers are profile-owned. Profile MCP config and corp constraints
+are validated by the service and passed to the [MCP Aggregator](/architecture/mcp-aggregator/)
+subprocess at spawn time. Credentials are referenced through the credential
+broker (`credential:blake3:*`), not stored as raw tokens in MCP config.
 
 ## Key source files
 

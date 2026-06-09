@@ -165,7 +165,9 @@ CREATE TABLE fs_events (
 
 Global rollup at `~/.capsem/main.db`. Key tables:
 
-- **sessions** -- one row per session: id, mode, status, timestamps, aggregated counts (total_requests, allowed/denied, tokens, cost, tool_calls, mcp_calls, file_events)
+- **sessions** -- one row per session: id, profile, status, timestamps,
+  aggregated counts (total_requests, allowed/denied, tokens, cost, model calls,
+  MCP calls, fs_events)
 - **ai_usage** -- per-session per-provider aggregates (call_count, tokens, cost, duration)
 - **tool_usage** -- per-session per-tool aggregates
 - **mcp_usage** -- per-session per-MCP-tool aggregates

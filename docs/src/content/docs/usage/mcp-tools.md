@@ -28,17 +28,16 @@ or source install flow.
 
 | Tool | Parameters | Description |
 |------|-----------|-------------|
-| `capsem_create` | `name?`, `ramMb?`, `cpuCount?`, `env?`, `image?` | Create and boot a new session. Named sessions are persistent. RAM/CPU fall back to the user's configured defaults. Returns session ID. |
-| `capsem_run` | `command`, `timeout?` | Run a command in a fresh temporary session. Auto-provisions and destroys the VM. Returns stdout, stderr, exit_code. |
-| `capsem_list` | -- | List all sessions (running and stopped persistent) with ID, name, status, RAM, CPUs, uptime, and telemetry. |
-| `capsem_info` | `id` | Session details: ID, name, status, persistent, RAM, CPUs, version, telemetry. |
-| `capsem_resume` | `name` | Resume a stopped persistent session (or get ID of a running one). Returns session ID. |
-| `capsem_suspend` | `id` | Suspend a session to disk (saves RAM + CPU state). Persistent sessions only. |
-| `capsem_stop` | `id` | Stop a session. Persistent sessions preserve state; ephemeral sessions are destroyed. |
-| `capsem_delete` | `id` | Delete a session permanently. Destroys all state including persistent data. |
-| `capsem_persist` | `id`, `name` | Convert a running ephemeral session to a persistent named session. |
-| `capsem_fork` | `id`, `name`, `description?` | Fork a running or stopped session into a new stopped persistent session. Works as a reusable template. |
-| `capsem_purge` | `all?` | Kill all temporary sessions. Set `all=true` to also destroy persistent sessions. |
+| `capsem_create` | `name?`, `ramMb?`, `cpuCount?`, `env?`, `image?` | Create and boot a new session from a profile. RAM/CPU fall back to profile VM defaults. Returns session ID. |
+| `capsem_run` | `command`, `timeout?` | Run a command in a fresh one-shot VM and destroy it after completion. Returns stdout, stderr, exit_code. |
+| `capsem_list` | -- | List sessions with ID, name, profile, status, RAM, CPUs, uptime, and telemetry. |
+| `capsem_info` | `id` | Session details: ID, name, profile, status, RAM, CPUs, version, plugin/profile metadata, telemetry. |
+| `capsem_resume` | `name` | Resume a stopped named session or get ID of a running one. Returns session ID. |
+| `capsem_suspend` | `id` | Suspend a retained session to disk (saves RAM + CPU state). |
+| `capsem_stop` | `id` | Stop a session. |
+| `capsem_delete` | `id` | Delete a session permanently. Destroys all retained state for that VM. |
+| `capsem_fork` | `id`, `name`, `description?` | Fork a running or stopped session into a retained VM/template. |
+| `capsem_purge` | `all?` | Clean up disposable sessions. Set `all=true` to include retained sessions. |
 
 ## Exec and file access
 
