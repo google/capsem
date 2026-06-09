@@ -48,6 +48,7 @@ sys.modules.setdefault("rich.text", rich_text)
 from capsem_bench import __main__ as bench_main  # noqa: E402
 from capsem_bench import http_bench, throughput  # noqa: E402
 from capsem_bench import mitm_local  # noqa: E402
+from capsem_bench import load_harness  # noqa: E402
 
 
 class _DebugHandler(BaseHTTPRequestHandler):
@@ -302,9 +303,9 @@ def test_env_defaults_are_fast_and_overrideable(monkeypatch):
         }
 
     monkeypatch.setenv(mitm_local.BASE_URL_ENV, "http://127.0.0.1:9999")
-    monkeypatch.setenv(mitm_local.TOTAL_REQUESTS_ENV, "3")
-    monkeypatch.setenv(mitm_local.CONCURRENCY_ENV, "2")
-    monkeypatch.setenv(mitm_local.TIMEOUT_ENV, "4")
+    monkeypatch.setenv(load_harness.GLOBAL_TOTAL_REQUESTS_ENV, "3")
+    monkeypatch.setenv(load_harness.GLOBAL_CONCURRENCY_ENV, "2")
+    monkeypatch.setenv(load_harness.GLOBAL_TIMEOUT_ENV, "4")
     monkeypatch.setattr(mitm_local, "_run_http_scenario", fake_http)
     monkeypatch.setattr(mitm_local, "_run_websocket_scenario", lambda *_: {
         "name": "websocket_echo",
@@ -330,6 +331,122 @@ def test_env_defaults_are_fast_and_overrideable(monkeypatch):
     assert result["timeout_s"] == 4.0
     assert len(result["scenarios"]) == len(mitm_local.HTTP_SCENARIOS)
     assert calls[0] == ("tiny_http", 3, 2, 4.0)
+
+
+def test_global_load_config_parses_count_and_duration_modes(monkeypatch):
+    monkeypatch.setenv(load_harness.GLOBAL_CONCURRENCY_ENV, "64")
+    monkeypatch.setenv(load_harness.GLOBAL_DURATION_ENV, "7.5")
+    duration = load_harness.DurationLoadConfig.from_inputs(
+        "dns-load",
+        default_concurrency=(1, 10),
+        default_duration_s=10,
+    )
+    assert duration.concurrency_levels == (64,)
+    assert duration.duration_s == 7.5
+
+    monkeypatch.setenv(load_harness.GLOBAL_TOTAL_REQUESTS_ENV, "50000")
+    monkeypatch.setenv(load_harness.GLOBAL_TIMEOUT_ENV, "9")
+    monkeypatch.setenv(load_harness.GLOBAL_SCENARIOS_ENV, "model_json_response")
+    count = load_harness.CountLoadConfig.from_inputs(
+        "mitm-local",
+        default_total_requests=20,
+        default_concurrency=1,
+        default_timeout_s=30,
+    )
+    assert count.total_requests == 50_000
+    assert count.concurrency == 64
+    assert count.timeout_s == 9.0
+    assert count.scenarios == ("model_json_response",)
+
+
+def test_mode_specific_load_config_overrides_global(monkeypatch):
+    monkeypatch.setenv(load_harness.GLOBAL_CONCURRENCY_ENV, "64")
+    monkeypatch.setenv("CAPSEM_BENCH_DNS_LOAD_CONCURRENCY", "1,32")
+    config = load_harness.DurationLoadConfig.from_inputs(
+        "dns-load",
+        default_concurrency=(1, 10),
+        default_duration_s=10,
+    )
+    assert config.concurrency_levels == (1, 32)
+
+
+@pytest.mark.parametrize("value", ["", "0", "-1", "one"])
+def test_load_config_rejects_bad_concurrency(value):
+    with pytest.raises(ValueError):
+        load_harness.parse_concurrency_levels(value)
+
+
+def test_scenario_selection_filters_http_scenarios(monkeypatch):
+    calls = []
+
+    def fake_http(base_url, scenario, total_requests, concurrency, timeout_s):
+        calls.append((scenario["name"], total_requests, concurrency, timeout_s))
+        return {
+            "name": scenario["name"],
+            "path": scenario["path"],
+            "body_kind": scenario["body_kind"],
+            "total_requests": total_requests,
+            "concurrency": concurrency,
+            "successful": total_requests,
+            "failed": 0,
+            "total_duration_ms": 1.0,
+            "requests_per_sec": 1000.0,
+            "transfer_bytes": 1,
+            "bytes_per_sec": 1000.0,
+            "latency_ms": {
+                "min": 1.0,
+                "max": 1.0,
+                "mean": 1.0,
+                "p50": 1.0,
+                "p95": 1.0,
+                "p99": 1.0,
+            },
+            "errors": {},
+        }
+
+    monkeypatch.setattr(mitm_local, "_run_http_scenario", fake_http)
+    monkeypatch.setattr(mitm_local, "_run_websocket_scenario", lambda *_: {
+        "name": "websocket_echo",
+        "path": "/ws/echo",
+        "skipped": True,
+        "frames": 0,
+        "frames_per_sec": 0.0,
+        "latency_ms": {
+            "min": 0.0,
+            "max": 0.0,
+            "mean": 0.0,
+            "p50": 0.0,
+            "p95": 0.0,
+            "p99": 0.0,
+        },
+    })
+
+    result = mitm_local.mitm_local_bench(
+        base_url="http://127.0.0.1:9999",
+        total_requests=50_000,
+        concurrency=64,
+        timeout_s=4,
+        scenarios="model_json_response,credential_response",
+    )
+
+    assert result["selected_scenarios"] == [
+        "model_json_response",
+        "credential_response",
+    ]
+    assert [call[0] for call in calls] == [
+        "model_json_response",
+        "credential_response",
+    ]
+    assert all(call[1] == 50_000 for call in calls)
+    assert all(call[2] == 64 for call in calls)
+
+
+def test_scenario_selection_rejects_unknown_name():
+    with pytest.raises(ValueError, match="unknown mitm-local scenario"):
+        mitm_local.mitm_local_bench(
+            base_url="http://127.0.0.1:9999",
+            scenarios="model_json_response,not_real",
+        )
 
 
 def test_mitm_local_drives_debug_http_fixture():

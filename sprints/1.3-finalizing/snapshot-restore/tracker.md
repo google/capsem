@@ -1473,11 +1473,51 @@ S4 progress note:
 - [x] Add model-shaped local debug-upstream fixture to release benchmark path.
   Proof: `capsem-debug-upstream` now exposes `/model/response` alongside
   `/sse/model`; `uv run pytest tests/test_capsem_bench_mitm_local.py -q`
-  passed 13 tests; host-direct local smoke
+  passed 25 tests after the shared harness/reporting refactor; host-direct local smoke
   `PYTHONPATH=guest/artifacts uv run --with rich --with requests --with
   websockets python -m capsem_bench mitm-local http://127.0.0.1:61085 10 1`
-  passed all scenarios, including `model_json_response` at `2506.4 rps`,
-  `0.4ms` p50, `0.5ms` p99.
+  passed all scenarios. That smoke run is functional fixture proof only; its
+  localhost latency/rps are not release performance evidence because it bypasses
+  the VM, guest redirect, vsock, MITM, CEL/security evaluation, and DB logging.
+- [x] Replace one-off load benchmark knobs with a shared harness and reporting
+  path.
+  Proof: `guest/artifacts/capsem_bench/load_harness.py` now owns positive
+  integer/float parsing, global `CAPSEM_BENCH_CONCURRENCY`,
+  `CAPSEM_BENCH_DURATION_S`, `CAPSEM_BENCH_TOTAL_REQUESTS`,
+  `CAPSEM_BENCH_SCENARIOS`, duration-load rows, RSS, and Rich table rendering
+  for `mitm-load`, `mcp-load`, and `dns-load`; `mitm-local` uses the same
+  count-load config. `scripts/benchmark_report.py` validates load artifacts with
+  Pydantic and can render matplotlib graphs. Proof commands: `python3 -m
+  py_compile guest/artifacts/capsem_bench/load_harness.py
+  guest/artifacts/capsem_bench/mitm_local.py guest/artifacts/capsem_bench/mitm_load.py
+  guest/artifacts/capsem_bench/mcp_load.py guest/artifacts/capsem_bench/dns_load.py
+  guest/artifacts/capsem_bench/__main__.py scripts/benchmark_report.py
+  tests/test_capsem_bench_mitm_local.py tests/test_benchmark_report.py`; `uv run
+  pytest tests/test_capsem_bench_mitm_local.py tests/test_benchmark_report.py
+  -q` passed 24 tests; `uv run --with matplotlib scripts/benchmark_report.py
+  benchmarks/mcp-load/baseline.json benchmarks/dns-load/baseline.json --plot
+  benchmarks/dns-load/baseline.json
+  benchmarks/mitm-local/control_host_direct_c64_model_credential_1.0.1780954707_arm64.json
+  --plot benchmarks/load_baseline_report.png` validated load and scenario
+  artifacts and produced the graph.
+- [x] Run corrected host-direct model/credential calibration with real sample
+  size.
+  Proof: `PYTHONPATH=guest/artifacts uv run --with rich --with requests --with
+  websockets python -m capsem_bench mitm-local http://127.0.0.1:61416 50000 64
+  model_json_response,credential_response` passed `50,000/50,000` for both
+  selected scenarios with zero errors. `model_json_response`: `4321.8 rps`,
+  `13.9ms` p50, `30.7ms` p99. `credential_response`: `4361.8 rps`, `13.8ms`
+  p50, `30.2ms` p99, and `raw_secret_stored_in_result=false`. Artifact:
+  `benchmarks/mitm-local/control_host_direct_c64_model_credential_1.0.1780954707_arm64.json`.
+- [x] Run focused VM-path `c=64` MCP and DNS load checks.
+  Proof: `just exec "CAPSEM_BENCH_CONCURRENCY=64 CAPSEM_BENCH_DURATION_S=5
+  capsem-bench mcp-load && cat /tmp/capsem-benchmark.json"` completed `37,775`
+  MCP `local__echo` calls in 5s, `7555.0 rps`, `7.52ms` p50, `20.92ms` p99,
+  `24.66ms` p999, `0` errors. `just exec "CAPSEM_BENCH_CONCURRENCY=64
+  CAPSEM_BENCH_DURATION_S=5 capsem-bench dns-load && cat
+  /tmp/capsem-benchmark.json"` completed `21,669` DNS requests in 5s,
+  `4333.8 rps`, `13.13ms` p50, `33.82ms` p99, `0` errors,
+  `decision_distribution.allowed=21669`.
 - [ ] Add or run MCP brokered-auth benchmark numbers against the local MCP
   recording server.
   Current proof is functional, not a benchmark: `local_http_mcp_e2e_uses_brokered_oauth_and_records_tool_call`
@@ -1491,8 +1531,9 @@ S4 progress note:
   `docs/src/content/docs/benchmarks/results.md`; DNS baseline
   `benchmarks/dns-load/baseline.json` (`c=10` `12928.5 rps`, `0.744ms` p50,
   `1.142ms` p99, `0` errors); VM MITM-local artifact
-  `benchmarks/mitm-local/data_1.0.1780763638_arm64.json`; DB writer artifact
-  `benchmarks/db-writer/data_1.0.1780763638_arm64.json`.
+  `benchmarks/mitm-local/data_1.0.1780763638_arm64.json` still predates the
+  `/model/response` row and must be refreshed from inside a VM; DB writer
+  artifact `benchmarks/db-writer/data_1.0.1780763638_arm64.json`.
 - [ ] Add regression tests proving old policy-v2/domain/MCP decision rails stay
   absent and do not show up as live code paths.
   Current focused proof: `uv run pytest

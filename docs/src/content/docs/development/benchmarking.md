@@ -18,9 +18,9 @@ just run "capsem-bench startup"     # CLI cold-start only
 just run "capsem-bench http"        # HTTP through proxy
 just run "capsem-bench throughput"  # 100MB download
 just run "capsem-bench snapshot"    # Snapshot operations only
-just run "capsem-bench mitm-load"   # MITM proxy concurrency/load test
-just run "capsem-bench mcp-load"    # Guest MCP endpoint concurrency/load test
-just run "capsem-bench dns-load"    # DNS proxy concurrency/load test
+just run "capsem-bench mitm-load 64 5"  # MITM proxy concurrency/load test
+just run "capsem-bench mcp-load 64 5"   # Guest MCP endpoint concurrency/load test
+just run "capsem-bench dns-load 64 5"   # DNS proxy concurrency/load test
 just full-test                      # Full validation including benchmarks
 ```
 
@@ -141,6 +141,28 @@ These modes are opt-in because they stress hot paths more aggressively than the 
 Release benchmark proof must use local fixtures. Public-network HTTP,
 throughput, model, or DNS numbers are debugging data only and cannot close the
 release gate.
+
+All load tests use the same concurrency and duration contract:
+
+- `CAPSEM_BENCH_CONCURRENCY`: one value (`64`) or a comma-separated sweep (`1,10,50,200`).
+- `CAPSEM_BENCH_DURATION_S`: seconds per concurrency level for duration-based load tests.
+- `CAPSEM_BENCH_TOTAL_REQUESTS`: requests per selected scenario for `mitm-local`.
+- `CAPSEM_BENCH_SCENARIOS`: comma-separated `mitm-local` scenario names, for example `model_json_response,credential_response`.
+
+The same values are available as CLI arguments:
+
+```bash
+capsem-bench mcp-load 64 5
+capsem-bench dns-load 64 5
+capsem-bench mitm-local http://127.0.0.1:3713 50000 64 model_json_response,credential_response
+```
+
+Host-side benchmark artifacts can be validated and rendered with:
+
+```bash
+uv run scripts/benchmark_report.py benchmarks/mcp-load/baseline.json benchmarks/dns-load/baseline.json benchmarks/mitm-local/control_host_direct_c64_model_credential_1.0.1780954707_arm64.json
+uv run --with matplotlib scripts/benchmark_report.py benchmarks/mcp-load/baseline.json benchmarks/dns-load/baseline.json benchmarks/mitm-local/control_host_direct_c64_model_credential_1.0.1780954707_arm64.json --plot benchmarks/load_baseline_report.png
+```
 
 ### Snapshot operations (`snapshot`)
 

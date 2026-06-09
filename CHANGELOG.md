@@ -38,6 +38,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added a deterministic `/model/response` fixture to `capsem-debug-upstream`
   and wired `capsem-bench mitm-local` to exercise both SSE model streams and
   JSON model responses without public-network dependencies.
+- Added a shared `capsem-bench` load harness for MITM, MCP, DNS, and local
+  debug-upstream tests: `CAPSEM_BENCH_CONCURRENCY`,
+  `CAPSEM_BENCH_DURATION_S`, `CAPSEM_BENCH_TOTAL_REQUESTS`, and
+  `CAPSEM_BENCH_SCENARIOS` now drive one tested config path, and load rows
+  share the same request/error/rps/p50/p95/p99/p999/RSS schema.
+- Added `scripts/benchmark_report.py`, a Pydantic-validated host reporter that
+  renders benchmark JSON as Markdown and can produce matplotlib PNG graphs for
+  committed load artifacts.
 - Expanded the security-action Criterion benchmark to cover runtime event
   classification for HTTP, DNS, MCP, model, file, and process events in
   addition to rule matching, plugin dispatch, and broker substitution.

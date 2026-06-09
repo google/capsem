@@ -36,13 +36,15 @@ level fails the build.
 """
 
 import os
-import resource
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from rich.table import Table
-
-from .helpers import console, percentile
+from .helpers import console
+from .load_harness import (
+    DurationLoadConfig,
+    render_load_table,
+    summarize_load_level,
+)
 
 # Non-routable domain so every request resolves to the upstream-dial
 # failure path -- isolates the proxy's per-request cost from real
@@ -93,58 +95,32 @@ def _drive_at_concurrency(url, concurrency, duration_s):
 
 def _summarize(results, concurrency, duration_s):
     """Build the JSON-shaped row for this concurrency level."""
-    if not results:
-        return {
-            "concurrency": concurrency,
-            "duration_s": duration_s,
-            "total_requests": 0,
-            "errors": 0,
-            "rps": 0.0,
-            "p50_ms": 0.0,
-            "p95_ms": 0.0,
-            "p99_ms": 0.0,
-            "p999_ms": 0.0,
-        }
     latencies = sorted(r[0] for r in results)
     errors = sum(1 for r in results if r[2] is not None)
-    return {
-        "concurrency": concurrency,
-        "duration_s": duration_s,
-        "total_requests": len(results),
-        "errors": errors,
-        "rps": len(results) / duration_s,
-        "p50_ms": percentile(latencies, 50),
-        "p95_ms": percentile(latencies, 95),
-        "p99_ms": percentile(latencies, 99),
-        "p999_ms": percentile(latencies, 99.9),
-    }
-
-
-def _peak_rss_mb():
-    """Peak RSS of this process in MB."""
-    ru = resource.getrusage(resource.RUSAGE_SELF)
-    # Linux: ru_maxrss is in KB. macOS: bytes. We're in-VM (Linux),
-    # so KB is right.
-    return ru.ru_maxrss / 1024.0
+    return summarize_load_level(latencies, errors, concurrency, duration_s)
 
 
 def mitm_load_bench(target=None, concurrency_levels=None, duration_s=None):
     """Drive the MITM proxy at each concurrency level; return the result dict."""
     target = target or os.environ.get("CAPSEM_BENCH_MITM_TARGET", DEFAULT_TARGET)
-    concurrency_levels = concurrency_levels or DEFAULT_CONCURRENCY
-    duration_s = duration_s or float(
-        os.environ.get("CAPSEM_BENCH_MITM_DURATION", DEFAULT_DURATION_S)
+    config = DurationLoadConfig.from_inputs(
+        "mitm-load",
+        default_concurrency=DEFAULT_CONCURRENCY,
+        default_duration_s=DEFAULT_DURATION_S,
+        concurrency_levels=concurrency_levels,
+        duration_s=duration_s,
     )
 
-    console.print(f"[bold]mitm-load[/bold] target={target} duration={duration_s}s")
+    console.print(
+        f"[bold]mitm-load[/bold] target={target} duration={config.duration_s}s "
+        f"concurrency={','.join(str(c) for c in config.concurrency_levels)}"
+    )
 
     rows = []
-    for c in concurrency_levels:
+    for c in config.concurrency_levels:
         console.print(f"  concurrency={c} ...")
-        results = _drive_at_concurrency(target, c, duration_s)
-        row = _summarize(results, c, duration_s)
-        row["rss_peak_mb"] = _peak_rss_mb()
-        rows.append(row)
+        results = _drive_at_concurrency(target, c, config.duration_s)
+        rows.append(_summarize(results, c, config.duration_s))
 
     out = {
         "version": "1.0",
@@ -152,25 +128,9 @@ def mitm_load_bench(target=None, concurrency_levels=None, duration_s=None):
         "concurrency_levels": rows,
     }
 
-    # Human-readable table to stderr.
-    table = Table(title=f"mitm-load (target={target}, {duration_s}s per level)")
-    table.add_column("concurrency", justify="right")
-    table.add_column("rps", justify="right")
-    table.add_column("p50_ms", justify="right")
-    table.add_column("p95_ms", justify="right")
-    table.add_column("p99_ms", justify="right")
-    table.add_column("p999_ms", justify="right")
-    table.add_column("errors", justify="right")
-    for row in rows:
-        table.add_row(
-            str(row["concurrency"]),
-            f"{row['rps']:.1f}",
-            f"{row['p50_ms']:.1f}",
-            f"{row['p95_ms']:.1f}",
-            f"{row['p99_ms']:.1f}",
-            f"{row['p999_ms']:.1f}",
-            str(row["errors"]),
-        )
-    console.print(table)
+    render_load_table(
+        f"mitm-load (target={target}, {config.duration_s}s per level)",
+        rows,
+    )
 
     return out

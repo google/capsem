@@ -153,12 +153,13 @@ def _assert_session_db_contains_mitm_events(capsem_home, vm_name, total_requests
         "/bytes/1mb",
         "/gzip/1mb",
         "/sse/model",
+        "/model/response",
         "/deny-target",
         "/credential/response",
         "/ws/echo",
         "/ws/close",
     }
-    expected_count = total_requests * 6 + 2
+    expected_count = total_requests * 7 + 2
 
     deadline = time.monotonic() + 5
     rows = []
@@ -229,8 +230,8 @@ def test_mitm_local_benchmark_artifact():
             "so guest traffic traverses iptables-nft redirection"
         )
 
-    total_requests = int(os.environ.get("CAPSEM_BENCH_MITM_LOCAL_N", "10"))
-    concurrency = int(os.environ.get("CAPSEM_BENCH_MITM_LOCAL_CONCURRENCY", "1"))
+    total_requests = int(os.environ.get("CAPSEM_BENCH_TOTAL_REQUESTS", "10"))
+    concurrency = int(os.environ.get("CAPSEM_BENCH_CONCURRENCY", "1"))
 
     svc = ServiceInstance()
     _write_local_benchmark_policy(svc.tmp_dir, base_url)

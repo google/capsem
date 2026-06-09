@@ -84,10 +84,20 @@ before release so the committed artifact includes that row.
 WebSocket control fixture: echo `10` frames at `2,656.0` frames/sec with
 `0.2ms` p50 latency; close control frame completed in `1.7ms` p50.
 
-Host-direct control smoke after adding the JSON model fixture:
-`model_json_response` completed `10/10` requests at `2,506.4` requests/sec with
-`0.4ms` p50 and `0.5ms` p99. This is a fixture sanity check, not a replacement
-for the VM MITM release artifact.
+Host-direct control smoke after adding the JSON model fixture proved only that
+`/model/response` is routable and returns model-shaped JSON. Do not use its
+localhost latency or requests/sec as release performance evidence; the release
+gate must rerun `mitm-local` from inside a profile-selected VM so the request
+crosses guest redirect, vsock, MITM parsing, CEL/security evaluation, logging,
+and the local debug upstream.
+
+Corrected host-direct calibration with meaningful sample size:
+`50,000` requests per selected scenario at concurrency `64` completed with zero
+errors. `model_json_response`: `4,321.8` requests/sec, `13.9ms` p50,
+`30.7ms` p99. `credential_response`: `4,361.8` requests/sec, `13.8ms` p50,
+`30.2ms` p99, and the JSON artifact confirmed no raw synthetic credential was
+stored. This remains a host-control fixture only, archived as
+`benchmarks/mitm-local/control_host_direct_c64_model_credential_1.0.1780954707_arm64.json`.
 
 ## DNS Load
 
@@ -101,6 +111,18 @@ through the guest redirect, DNS proxy, host DNS handler, and
 | 10 | 12,928.5 | 0.744ms | 1.142ms | 0 |
 | 50 | 12,425.0 | 3.971ms | 4.915ms | 0 |
 | 200 | 11,482.1 | 16.464ms | 26.734ms | 0 |
+
+Focused VM-path `c=64` check from this release branch:
+`CAPSEM_BENCH_CONCURRENCY=64 CAPSEM_BENCH_DURATION_S=5 capsem-bench dns-load`
+completed `21,669` DNS requests in 5s, `4,333.8` requests/sec, `13.13ms` p50,
+`33.82ms` p99, `0` errors, decision distribution `allowed=21669`.
+
+## MCP Load
+
+Focused VM-path `c=64` check from this release branch:
+`CAPSEM_BENCH_CONCURRENCY=64 CAPSEM_BENCH_DURATION_S=5 capsem-bench mcp-load`
+completed `37,775` `local__echo` calls in 5s, `7,555.0` requests/sec,
+`7.52ms` p50, `20.92ms` p99, `24.66ms` p999, `0` errors.
 
 ## VM Lifecycle
 

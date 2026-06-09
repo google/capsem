@@ -32,16 +32,22 @@ def main():
         console.print("  http [URL] [N] [C]  HTTP benchmarks (ab-style)")
         console.print("  throughput          100 MB download through MITM proxy")
         console.print("  snapshot            Snapshot ops (create/list/revert/delete via MCP)")
-        console.print("  mitm-local URL [N] [C]  Local debug-upstream MITM benchmark")
-        console.print("  mitm-load           MITM proxy load test at 1/10/50/200 concurrency")
-        console.print("  mcp-load            MCP path load test (echo tool) at 1/10/50/200 concurrency")
-        console.print("  dns-load            DNS proxy load test at 1/10/50/200 concurrency")
+        console.print(
+            "  mitm-local URL [N] [C] [SCENARIOS]  Local debug-upstream MITM benchmark"
+        )
+        console.print("  mitm-load [C[,C]] [SECONDS]  MITM proxy load test")
+        console.print("  mcp-load [C[,C]] [SECONDS]   MCP path load test")
+        console.print("  dns-load [C[,C]] [SECONDS]   DNS proxy load test")
         console.print("  all                 Run all benchmarks (default)")
         console.print()
         console.print("Environment:")
         console.print("  CAPSEM_BENCH_DIR      Test directory (default: /root)")
         console.print("  CAPSEM_BENCH_SIZE_MB  Write test size in MB (default: 256)")
         console.print("  CAPSEM_BENCH_MITM_LOCAL_BASE_URL  Base URL for mitm-local")
+        console.print("  CAPSEM_BENCH_CONCURRENCY          Load concurrency, e.g. 64 or 1,64")
+        console.print("  CAPSEM_BENCH_DURATION_S           Seconds per load level")
+        console.print("  CAPSEM_BENCH_TOTAL_REQUESTS       Total requests per count scenario")
+        console.print("  CAPSEM_BENCH_SCENARIOS            Comma-separated mitm-local scenarios")
         console.print("  CAPSEM_STORAGE_BENCH_PATHS      Storage paths for split diagnostics")
         console.print("  CAPSEM_STORAGE_BENCH_SIZE_MB    Storage split write size in MB")
         console.print("  CAPSEM_STORAGE_IO_PROFILE_SIZE_MB    Storage IOPS profile size")
@@ -97,8 +103,9 @@ def main():
         url = args[1] if len(args) > 1 else None
         n = int(args[2]) if len(args) > 2 else None
         c = int(args[3]) if len(args) > 3 else None
+        scenarios = args[4] if len(args) > 4 else None
         output["mitm_local"] = mitm_local_bench(
-            base_url=url, total_requests=n, concurrency=c
+            base_url=url, total_requests=n, concurrency=c, scenarios=scenarios
         )
 
     # mitm-load runs only when explicitly requested -- it's a long-running
@@ -106,18 +113,33 @@ def main():
     # of pure proxy load) and would dominate `capsem-bench all`.
     if mode == "mitm-load":
         from .mitm_load import mitm_load_bench
-        output["mitm_load"] = mitm_load_bench()
+        from .load_harness import parse_concurrency_levels
+        c = parse_concurrency_levels(args[1]) if len(args) > 1 else None
+        duration = float(args[2]) if len(args) > 2 else None
+        output["mitm_load"] = mitm_load_bench(
+            concurrency_levels=c, duration_s=duration
+        )
 
     if mode == "mcp-load":
         from .mcp_load import mcp_load_bench
-        output["mcp_load"] = mcp_load_bench()
+        from .load_harness import parse_concurrency_levels
+        c = parse_concurrency_levels(args[1]) if len(args) > 1 else None
+        duration = float(args[2]) if len(args) > 2 else None
+        output["mcp_load"] = mcp_load_bench(
+            concurrency_levels=c, duration_s=duration
+        )
 
     # dns-load runs only when explicitly requested -- same rationale
     # as mitm-load: ~40s of pure proxy stress per invocation, would
     # dominate `capsem-bench all`.
     if mode == "dns-load":
         from .dns_load import dns_load_bench
-        output["dns_load"] = dns_load_bench()
+        from .load_harness import parse_concurrency_levels
+        c = parse_concurrency_levels(args[1]) if len(args) > 1 else None
+        duration = float(args[2]) if len(args) > 2 else None
+        output["dns_load"] = dns_load_bench(
+            concurrency_levels=c, duration_s=duration
+        )
 
     # JSON to file (machine-readable)
     json_path = "/tmp/capsem-benchmark.json"

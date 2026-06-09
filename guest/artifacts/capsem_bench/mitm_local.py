@@ -14,11 +14,9 @@ from urllib.parse import urlsplit, urlunsplit
 from rich.table import Table
 
 from .helpers import console, percentile
+from .load_harness import CountLoadConfig
 
 BASE_URL_ENV = "CAPSEM_BENCH_MITM_LOCAL_BASE_URL"
-TOTAL_REQUESTS_ENV = "CAPSEM_BENCH_MITM_LOCAL_N"
-CONCURRENCY_ENV = "CAPSEM_BENCH_MITM_LOCAL_CONCURRENCY"
-TIMEOUT_ENV = "CAPSEM_BENCH_MITM_LOCAL_TIMEOUT"
 DEFAULT_TOTAL_REQUESTS = 20
 DEFAULT_CONCURRENCY = 1
 DEFAULT_TIMEOUT_S = 30.0
@@ -79,6 +77,24 @@ WEBSOCKET_SCENARIOS = (
     {"name": "websocket_echo", "path": "/ws/echo", "frames": 10},
     {"name": "websocket_close", "path": "/ws/close", "frames": 1},
 )
+
+
+def _selected_http_scenarios(selected=None):
+    if not selected:
+        return list(HTTP_SCENARIOS)
+
+    if isinstance(selected, str):
+        wanted = [name.strip() for name in selected.split(",") if name.strip()]
+    else:
+        wanted = list(selected)
+    by_name = {scenario["name"]: scenario for scenario in HTTP_SCENARIOS}
+    unknown = [name for name in wanted if name not in by_name]
+    if unknown:
+        valid = ", ".join(sorted(by_name))
+        raise ValueError(
+            f"unknown mitm-local scenario(s): {', '.join(unknown)}; valid: {valid}"
+        )
+    return [by_name[name] for name in wanted]
 
 
 def _strip_trailing_slash(url):
@@ -307,46 +323,53 @@ def _run_websocket_scenario(base_url, scenario, timeout_s):
 
 
 def mitm_local_bench(
-    base_url=None, total_requests=None, concurrency=None, timeout_s=None
+    base_url=None, total_requests=None, concurrency=None, timeout_s=None,
+    scenarios=None,
 ):
     """Run deterministic local MITM benchmark scenarios."""
     base_url = _base_url(base_url)
-    total_requests = total_requests or int(
-        os.environ.get(TOTAL_REQUESTS_ENV, DEFAULT_TOTAL_REQUESTS)
+    config = CountLoadConfig.from_inputs(
+        "mitm-local",
+        default_total_requests=DEFAULT_TOTAL_REQUESTS,
+        default_concurrency=DEFAULT_CONCURRENCY,
+        default_timeout_s=DEFAULT_TIMEOUT_S,
+        total_requests=total_requests,
+        concurrency=concurrency,
+        timeout_s=timeout_s,
+        scenarios=scenarios,
     )
-    concurrency = concurrency or int(
-        os.environ.get(CONCURRENCY_ENV, DEFAULT_CONCURRENCY)
-    )
-    timeout_s = timeout_s or float(os.environ.get(TIMEOUT_ENV, DEFAULT_TIMEOUT_S))
-    if total_requests <= 0:
-        raise ValueError("mitm-local total_requests must be > 0")
-    if concurrency <= 0:
-        raise ValueError("mitm-local concurrency must be > 0")
+    selected_scenarios = _selected_http_scenarios(config.scenarios)
 
     console.print(
         "[bold]mitm-local[/bold] "
-        f"base_url={base_url} requests={total_requests} concurrency={concurrency}"
+        f"base_url={base_url} requests={config.total_requests} "
+        f"concurrency={config.concurrency}"
     )
 
-    scenarios = []
-    for scenario in HTTP_SCENARIOS:
+    scenario_results = []
+    for scenario in selected_scenarios:
         row = _run_http_scenario(
-            base_url, scenario, total_requests, concurrency, timeout_s
+            base_url,
+            scenario,
+            config.total_requests,
+            config.concurrency,
+            config.timeout_s,
         )
-        scenarios.append(row)
+        scenario_results.append(row)
 
     websocket = [
-        _run_websocket_scenario(base_url, scenario, timeout_s)
+        _run_websocket_scenario(base_url, scenario, config.timeout_s)
         for scenario in WEBSOCKET_SCENARIOS
     ]
 
     out = {
         "version": "1.0",
         "base_url": base_url,
-        "total_requests": total_requests,
-        "concurrency": concurrency,
-        "timeout_s": timeout_s,
-        "scenarios": scenarios,
+        "total_requests": config.total_requests,
+        "concurrency": config.concurrency,
+        "timeout_s": config.timeout_s,
+        "selected_scenarios": [scenario["name"] for scenario in selected_scenarios],
+        "scenarios": scenario_results,
         "websocket": websocket,
     }
 
