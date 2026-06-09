@@ -5,7 +5,8 @@
 - [x] Create sprint plan, tracker, and master board.
 - [x] T0: Freeze install/setup replacement contract.
 - [x] T0: Trace current macOS `.pkg`, Linux `.deb`, Docker install test, and `just install` flows.
-- [x] T0: Decide local dev asset policy: bundled current-arch assets vs local release URL.
+- [x] T0: Decide local dev asset policy: selected package manifest plus profile
+  `file://` URLs for dev assets.
 - [x] T1: Remove post-installer mutation from `just install`.
 - [x] T1: Make package payload mode explicit and testable.
 - [x] T1: Make package install own previous-version removal, including stale
@@ -154,10 +155,10 @@
   service persists durable status checkpoints at reconcile start, per-asset
   completion, and final success/failure, and clears stale `in_progress` state
   when a new daemon starts.
-- Decision: local dev installs bundle the current host-arch asset payload into
-  the `.pkg`/`.deb` before the installer runs. Release packages may remain
-  manifest-only. `just install` must not copy assets into `~/.capsem` after
-  Installer.app or `dpkg` returns.
+- Decision: local dev installs package the selected manifest and materialized
+  profile file URLs before the installer runs. The package always moves that
+  manifest to the runtime asset directory; there is no asset-mode variable and
+  no post-install asset patching.
 - Decision: package install is allowed to replace or downgrade. The package
   itself removes the previous app/share payload before installing; PackageKit
   version ordering is not a safety mechanism.
@@ -178,9 +179,12 @@
   explicitly.
 - Completed slice: `just install` now builds the package with the explicit
   `--manifest` override and materialized profile `file://` asset descriptors.
-  It no longer enables current-arch asset payload mode; local dev assets are
-  copied by the normal profile asset reconciliation path from the installed
-  profile's `file://` descriptors.
+  Local dev assets are copied by the normal profile asset reconciliation path
+  from the installed profile's `file://` descriptors.
+- Completed slice: `/profiles/status` and
+  `/profiles/{profile_id}/assets/status` now report the runtime asset manifest
+  origin, installed path, BLAKE3 hash, format, refresh policy, current asset
+  release, and current binary release.
 - Verification: package-only macOS build succeeded for
   `packages/Capsem-1.3.1781035201.pkg`; expanded payload contains
   `Scripts/preinstall`, `Scripts/postinstall`, `assets/manifest.json`,
@@ -243,10 +247,13 @@
   `rerun_wizard` typed settings action, service setup-state module, and all
   remaining `/setup/*` service routes. Corporate policy provisioning now lives
   at `POST /corp-config`.
-- Completed slice: T1 package discipline moved local dev assets into the
-  package payload via explicit `CAPSEM_PKG_ASSET_MODE=current-arch` /
-  `CAPSEM_DEB_ASSET_MODE=current-arch` modes and removed the post-installer
-  `sync-dev-assets.sh` call from `just install`.
+- Completed slice: T1 package discipline now moves exactly one selected
+  manifest into the package payload, installs it into `~/.capsem/assets`, and
+  relies on profile `file://`/`https://` descriptors for asset reconciliation.
+  `CAPSEM_PKG_ASSET_MODE` and `CAPSEM_DEB_ASSET_MODE` are removed. Packages
+  also install `manifest-origin.json`, and service status reports the installed
+  manifest path, BLAKE3 hash, origin, source, and package timestamp for
+  corp/debug provenance.
 - Completed slice: install asset-copy scripts now skip nested directories in
   arch asset folders, preventing a stray `assets/arm64/arm64` directory from
   breaking local installed-layout tests.
@@ -422,8 +429,8 @@
   assets endpoint is unreachable, and disables `Customize Session...` /
   `Quick Session` until assets are ready.
 - Static gate: `just --dry-run install` proves the install recipe parses and
-  assembles packages with current-arch asset payload modes and no
-  post-installer asset sync.
+  assembles packages with the selected manifest and no post-installer asset
+  sync.
 - Static gate: `just --dry-run test-install` proves the Docker/systemd install
   recipe still expands cleanly after the package/install refactor.
 - Static gate: `just --dry-run test` proves the full release test recipe still
@@ -470,8 +477,8 @@
 - Missing/deferred: full interactive `just install` on macOS still needs manual
   Installer.app completion before release sign-off. Attempt on 2026-06-06:
   release binaries, frontend, Tauri app bundle, and
-  `packages/Capsem-1.0.1780763638.pkg` built successfully with current-arch
-  dev assets embedded. The first attempt caught a real release CLI compile
+  `packages/Capsem-1.0.1780763638.pkg` built successfully with package-owned
+  dev asset metadata. The first attempt caught a real release CLI compile
   fallout from the new `ProcessToService::LogFileBoundaryResult` variant; fixed
   by making `capsem shell` ignore that internal response. The second attempt
   blocked for ~8 minutes on `open -W packages/Capsem-1.0.1780763638.pkg`

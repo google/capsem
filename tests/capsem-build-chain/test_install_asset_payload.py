@@ -22,22 +22,24 @@ def test_just_install_does_not_sync_assets_after_installer() -> None:
     assert "pkill -9 -x capsem-app" in install_body
 
 
-def test_package_builders_support_current_arch_asset_payloads() -> None:
+def test_package_builders_move_selected_manifest_payload() -> None:
     build_pkg = (PROJECT_ROOT / "scripts" / "build-pkg.sh").read_text()
     repack_deb = (PROJECT_ROOT / "scripts" / "repack-deb.sh").read_text()
     deb_postinst = (PROJECT_ROOT / "scripts" / "deb-postinst.sh").read_text()
     pkg_preinstall = (PROJECT_ROOT / "scripts" / "pkg-scripts" / "preinstall").read_text()
 
-    assert "CAPSEM_PKG_ASSET_MODE" in build_pkg
+    assert "CAPSEM_PKG_ASSET_MODE" not in build_pkg
+    assert "ASSET_MODE=" not in build_pkg
     assert "export COPYFILE_DISABLE=1" in build_pkg
-    assert 'current-arch)' in build_pkg
     assert "--manifest" in build_pkg
     assert 'MANIFEST_PATH="${2:?--manifest requires a path}"' in build_pkg
     assert '--version "$VERSION"' in build_pkg
     assert "PKG_VERSION" not in build_pkg
     assert 'install -m 0644 "$MANIFEST_PATH" "$ASSETS_VIEW/manifest.json"' in build_pkg
     assert 'install -m 0644 "$ASSETS_VIEW/manifest.json" "$SHARE_DIR/assets/manifest.json"' in build_pkg
-    assert 'bash "$SCRIPT_DIR/sync-dev-assets.sh" "$ASSETS_VIEW" "$SHARE_DIR/assets"' in build_pkg
+    assert 'SELECTED_MANIFEST_SOURCE="$MANIFEST_PATH"' in build_pkg
+    assert 'write_manifest_origin "$SELECTED_MANIFEST_SOURCE" "$SHARE_DIR/assets/manifest-origin.json"' in build_pkg
+    assert "sync-dev-assets.sh" not in build_pkg
     assert 'CONFIG_ROOT="${POSITIONAL[3]}"' in build_pkg
     assert 'ditto --norsrc --noextattr "$src" "$dst"' in build_pkg
     assert 'copy_tree_clean "$CONFIG_ROOT/profiles" "$SHARE_DIR/profiles"' in build_pkg
@@ -52,15 +54,18 @@ def test_package_builders_support_current_arch_asset_payloads() -> None:
     assert "rm -rf /usr/local/share/capsem" in pkg_preinstall
     assert "pkill -9 -x capsem-app" in pkg_preinstall
 
-    assert "CAPSEM_DEB_ASSET_MODE" in repack_deb
+    assert "CAPSEM_DEB_ASSET_MODE" not in repack_deb
+    assert "ASSET_MODE=" not in repack_deb
     assert "export COPYFILE_DISABLE=1" in repack_deb
     assert 'CONFIG_ROOT="${POSITIONAL[2]}"' in repack_deb
     assert "--manifest" in repack_deb
     assert "BUILD_TS=" not in repack_deb
     assert 'cp "$MANIFEST_PATH" "$ASSETS_VIEW/manifest.json"' in repack_deb
     assert 'cp "$ASSETS_VIEW/manifest.json" "$WORK_DIR/deb/usr/share/capsem/assets/manifest.json"' in repack_deb
+    assert 'SELECTED_MANIFEST_SOURCE="$MANIFEST_PATH"' in repack_deb
+    assert 'write_manifest_origin "$SELECTED_MANIFEST_SOURCE" "$WORK_DIR/deb/usr/share/capsem/assets/manifest-origin.json"' in repack_deb
     assert 'cp -R "$CONFIG_ROOT/profiles/." "$WORK_DIR/deb/usr/share/capsem/profiles/"' in repack_deb
-    assert 'bash "$SCRIPT_DIR/sync-dev-assets.sh" "$ASSETS_VIEW"' in repack_deb
+    assert "sync-dev-assets.sh" not in repack_deb
     assert "capsem-admin" in repack_deb
     assert "capsem-tui" in repack_deb
     assert "/usr/share/capsem/assets" in deb_postinst

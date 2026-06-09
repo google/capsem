@@ -7,8 +7,8 @@
 #   input.deb   Path to the Tauri-built .deb package
 #   bin_dir     Directory containing companion binaries (capsem, capsem-service, etc.)
 #   config_root Materialized runtime config root (usually target/config)
-#   assets_dir  Optional assets dir. When CAPSEM_DEB_ASSET_MODE=current-arch,
-#               current-arch assets are added to /usr/share/capsem/assets.
+#   assets_dir  Optional assets dir used only to resolve arch directories when
+#               a manifest override is inspected by package tooling.
 #   output.deb  Optional output path (defaults to overwriting input)
 #   --manifest  Optional manifest to package instead of <assets_dir>/manifest.json.
 #
@@ -76,6 +76,26 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 WORK_DIR=$(mktemp -d)
 trap 'rm -rf "$WORK_DIR"' EXIT
 
+write_manifest_origin() {
+    local manifest_source="${1:?write_manifest_origin <manifest_source> <dst>}"
+    local dst="${2:?write_manifest_origin <manifest_source> <dst>}"
+    python3 - "$manifest_source" "$dst" <<'PY'
+import datetime
+import json
+import pathlib
+import sys
+
+source = pathlib.Path(sys.argv[1]).resolve()
+dst = pathlib.Path(sys.argv[2])
+dst.write_text(json.dumps({
+    "schema": "capsem.manifest_origin.v1",
+    "origin": "package",
+    "source": str(source),
+    "packaged_at": datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+}, sort_keys=True) + "\n")
+PY
+}
+
 echo "=== Extracting .deb ==="
 dpkg-deb -R "$INPUT_DEB" "$WORK_DIR/deb"
 
@@ -106,13 +126,14 @@ echo "=== Adding materialized profiles ==="
 mkdir -p "$WORK_DIR/deb/usr/share/capsem/profiles"
 cp -R "$CONFIG_ROOT/profiles/." "$WORK_DIR/deb/usr/share/capsem/profiles/"
 
-ASSET_MODE="${CAPSEM_DEB_ASSET_MODE:-manifest-only}"
 ASSETS_VIEW="$ASSETS_DIR"
+SELECTED_MANIFEST_SOURCE="$ASSETS_DIR/manifest.json"
 if [ -n "$MANIFEST_PATH" ]; then
     if [ ! -f "$MANIFEST_PATH" ]; then
         echo "ERROR: manifest not found: $MANIFEST_PATH" >&2
         exit 1
     fi
+    SELECTED_MANIFEST_SOURCE="$MANIFEST_PATH"
     ASSETS_VIEW="$WORK_DIR/assets-view"
     mkdir -p "$ASSETS_VIEW"
     cp "$MANIFEST_PATH" "$ASSETS_VIEW/manifest.json"
@@ -123,25 +144,13 @@ if [ -n "$MANIFEST_PATH" ]; then
         done
     fi
 fi
-if [ "$ASSET_MODE" = "current-arch" ]; then
-    if [ -z "$ASSETS_VIEW" ]; then
-        echo "ERROR: CAPSEM_DEB_ASSET_MODE=current-arch requires assets_dir" >&2
-        exit 1
-    fi
-    echo "=== Adding current-arch assets ==="
-    bash "$SCRIPT_DIR/sync-dev-assets.sh" "$ASSETS_VIEW" "$WORK_DIR/deb/usr/share/capsem/assets"
-elif [ "$ASSET_MODE" != "manifest-only" ]; then
-    echo "ERROR: unknown CAPSEM_DEB_ASSET_MODE=$ASSET_MODE" >&2
+if [ -z "$ASSETS_VIEW" ] || [ ! -f "$ASSETS_VIEW/manifest.json" ]; then
+    echo "ERROR: manifest not found: $ASSETS_VIEW/manifest.json" >&2
     exit 1
-else
-    # The selected manifest is package payload. deb-postinst copies it from
-    # /usr/share/capsem/assets/manifest.json into ~/.capsem/assets/manifest.json,
-    # and the daemon resolves profile assets from that installed manifest.
-    if [ -n "$ASSETS_VIEW" ] && [ -f "$ASSETS_VIEW/manifest.json" ]; then
-        mkdir -p "$WORK_DIR/deb/usr/share/capsem/assets"
-        cp "$ASSETS_VIEW/manifest.json" "$WORK_DIR/deb/usr/share/capsem/assets/manifest.json"
-    fi
 fi
+mkdir -p "$WORK_DIR/deb/usr/share/capsem/assets"
+cp "$ASSETS_VIEW/manifest.json" "$WORK_DIR/deb/usr/share/capsem/assets/manifest.json"
+write_manifest_origin "$SELECTED_MANIFEST_SOURCE" "$WORK_DIR/deb/usr/share/capsem/assets/manifest-origin.json"
 
 echo "=== Repacking .deb ==="
 dpkg-deb -b "$WORK_DIR/deb" "$OUTPUT_DEB"

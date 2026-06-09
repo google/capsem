@@ -491,6 +491,24 @@ fn print_asset_status(status: &AssetStatusResponse) {
     if let Some(error) = &status.reconcile_error {
         println!("Last error: {error}");
     }
+    if let Some(manifest) = &status.manifest {
+        println!("Manifest: {} ({})", manifest.origin, manifest.path);
+        if let Some(source) = &manifest.origin_source {
+            println!("Manifest source: {source}");
+        }
+        if let Some(packaged_at) = &manifest.packaged_at {
+            println!("Packaged at: {packaged_at}");
+        }
+        if let Some(hash) = &manifest.blake3 {
+            println!("Manifest hash: blake3:{hash}");
+        }
+        if let Some(current) = &manifest.assets_current {
+            println!("Asset set: {current}");
+        }
+        if let Some(current) = &manifest.binaries_current {
+            println!("Binary set: {current}");
+        }
+    }
     for asset in &status.assets {
         match &asset.path {
             Some(path) => println!("  {:<14} {:<8} {}", asset.name, asset.status, path),
@@ -770,6 +788,41 @@ fn print_profiles_status(status: &serde_json::Value) {
     let profile_count = status["profile_count"].as_u64().unwrap_or(0);
     let ready_count = status["ready_count"].as_u64().unwrap_or(0);
     println!("Profiles:  {ready_count}/{profile_count} ready ({source})");
+    if let Some(manifest) = status["asset_manifest"].as_object() {
+        let origin = manifest
+            .get("origin")
+            .and_then(|value| value.as_str())
+            .unwrap_or("unknown");
+        let path = manifest
+            .get("path")
+            .and_then(|value| value.as_str())
+            .unwrap_or("-");
+        println!("Manifest:  {origin} ({path})");
+        if let Some(source) = manifest
+            .get("origin_source")
+            .and_then(|value| value.as_str())
+        {
+            println!("  source:  {source}");
+        }
+        if let Some(packaged_at) = manifest.get("packaged_at").and_then(|value| value.as_str()) {
+            println!("  built:   {packaged_at}");
+        }
+        if let Some(hash) = manifest.get("blake3").and_then(|value| value.as_str()) {
+            println!("  hash:    blake3:{hash}");
+        }
+        if let Some(current) = manifest
+            .get("assets_current")
+            .and_then(|value| value.as_str())
+        {
+            println!("  assets:  {current}");
+        }
+        if let Some(current) = manifest
+            .get("binaries_current")
+            .and_then(|value| value.as_str())
+        {
+            println!("  binary:  {current}");
+        }
+    }
     if let Some(profiles) = status["profiles"].as_array() {
         for profile in profiles {
             let id = profile["id"].as_str().unwrap_or("-");

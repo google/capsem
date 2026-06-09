@@ -248,11 +248,9 @@ Implemented:
 
 - `just install` no longer invokes `scripts/sync-dev-assets.sh` after
   Installer.app or `dpkg` returns.
-- macOS package build has explicit `CAPSEM_PKG_ASSET_MODE`:
-  `manifest-only` for release-style packages and `current-arch` for local dev
-  packages.
-- Linux `.deb` repack has explicit `CAPSEM_DEB_ASSET_MODE` with the same
-  `manifest-only` / `current-arch` split.
+- macOS and Linux packages always move one selected manifest into the package
+  payload. `--manifest` is the only corp/dev override; asset-mode environment
+  variables are burned.
 - macOS and Linux postinstall copy any package-provided assets into the
   installed asset directory as part of the package install path.
 - Asset copy scripts skip nested directories inside `assets/<arch>/`, so a
@@ -274,7 +272,7 @@ Still open:
 
 - Full interactive `just install` on macOS. Attempt on 2026-06-06 built release
   binaries, frontend, Tauri app, and `packages/Capsem-1.0.1780763638.pkg` with
-  current-arch assets embedded. It also caught and fixed a release CLI
+  the selected manifest moved by the package rail. It also caught and fixed a release CLI
   exhaustive-match fallout for `ProcessToService::LogFileBoundaryResult`.
   The gate remains open because the second run blocked on the GUI
   Installer.app flow (`open -W packages/Capsem-1.0.1780763638.pkg`) without

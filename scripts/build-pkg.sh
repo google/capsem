@@ -17,8 +17,7 @@
 # The .pkg installs:
 #   /Applications/Capsem.app           -- Tauri GUI
 #   /usr/local/share/capsem/bin/       -- 6 companion binaries
-#   /usr/local/share/capsem/assets/    -- manifest.json, or current-arch assets when
-#                                         CAPSEM_PKG_ASSET_MODE=current-arch
+#   /usr/local/share/capsem/assets/    -- selected manifest.json
 #   /usr/local/share/capsem/profiles/  -- materialized profile catalog + rule files
 #   /usr/local/share/capsem/entitlements.plist
 #
@@ -96,6 +95,26 @@ copy_tree_clean() {
     fi
 }
 
+write_manifest_origin() {
+    local manifest_source="${1:?write_manifest_origin <manifest_source> <dst>}"
+    local dst="${2:?write_manifest_origin <manifest_source> <dst>}"
+    python3 - "$manifest_source" "$dst" <<'PY'
+import datetime
+import json
+import pathlib
+import sys
+
+source = pathlib.Path(sys.argv[1]).resolve()
+dst = pathlib.Path(sys.argv[2])
+dst.write_text(json.dumps({
+    "schema": "capsem.manifest_origin.v1",
+    "origin": "package",
+    "source": str(source),
+    "packaged_at": datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+}, sort_keys=True) + "\n")
+PY
+}
+
 echo "=== Assembling .pkg payload ==="
 
 # Application bundle
@@ -121,19 +140,21 @@ if [ -f "$SCRIPT_DIR/../entitlements.plist" ]; then
     cp "$SCRIPT_DIR/../entitlements.plist" "$SHARE_DIR/"
 fi
 
-# VM assets. The selected manifest is package payload, not a side-channel:
+# VM manifest. The selected manifest is package payload, not a side-channel:
 # postinstall copies it from /usr/local/share/capsem/assets/manifest.json into
 # ~/.capsem/assets/manifest.json, and the daemon resolves profile assets from
-# that installed manifest. Release packages can stay manifest-only; local dev
-# packages use current-arch so `just install` does not mutate ~/.capsem after
-# Installer.app returns.
+# that installed manifest. Local dev profiles may use file:// asset URLs;
+# remote/corp profiles may use https:// URLs. The package always moves the
+# selected manifest, never a second asset-mode branch.
 mkdir -p "$SHARE_DIR/assets"
 ASSETS_VIEW="$ASSETS_DIR"
+SELECTED_MANIFEST_SOURCE="$ASSETS_DIR/manifest.json"
 if [ -n "$MANIFEST_PATH" ]; then
     if [ ! -f "$MANIFEST_PATH" ]; then
         echo "ERROR: manifest not found: $MANIFEST_PATH" >&2
         exit 1
     fi
+    SELECTED_MANIFEST_SOURCE="$MANIFEST_PATH"
     ASSETS_VIEW="$WORK_DIR/assets-view"
     mkdir -p "$ASSETS_VIEW"
     install -m 0644 "$MANIFEST_PATH" "$ASSETS_VIEW/manifest.json"
@@ -142,21 +163,12 @@ if [ -n "$MANIFEST_PATH" ]; then
         ln -s "$arch_dir" "$ASSETS_VIEW/$(basename "$arch_dir")"
     done
 fi
-ASSET_MODE="${CAPSEM_PKG_ASSET_MODE:-manifest-only}"
-case "$ASSET_MODE" in
-    manifest-only)
-        if [ -f "$ASSETS_VIEW/manifest.json" ]; then
-            install -m 0644 "$ASSETS_VIEW/manifest.json" "$SHARE_DIR/assets/manifest.json"
-        fi
-        ;;
-    current-arch)
-        bash "$SCRIPT_DIR/sync-dev-assets.sh" "$ASSETS_VIEW" "$SHARE_DIR/assets"
-        ;;
-    *)
-        echo "ERROR: unknown CAPSEM_PKG_ASSET_MODE=$ASSET_MODE" >&2
-        exit 1
-        ;;
-esac
+if [ ! -f "$ASSETS_VIEW/manifest.json" ]; then
+    echo "ERROR: manifest not found: $ASSETS_VIEW/manifest.json" >&2
+    exit 1
+fi
+install -m 0644 "$ASSETS_VIEW/manifest.json" "$SHARE_DIR/assets/manifest.json"
+write_manifest_origin "$SELECTED_MANIFEST_SOURCE" "$SHARE_DIR/assets/manifest-origin.json"
 
 # Materialized profile catalog. This must be installed with the assets it pins;
 # otherwise the daemon falls back to compiled source profiles and can disagree

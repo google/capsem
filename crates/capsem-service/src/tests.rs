@@ -144,6 +144,7 @@ async fn route_request(
 fn make_asset_state(assets_dir: PathBuf) -> Arc<ServiceState> {
     let run_dir = assets_dir.join("run");
     let asset_status_path = asset_status_path_for_run_dir(&run_dir);
+    let manifest = capsem_core::asset_manager::load_manifest_for_assets(&assets_dir).map(Arc::new);
     Arc::new(ServiceState {
         instances: Mutex::new(HashMap::new()),
         persistent_registry: Mutex::new(PersistentRegistry::load(
@@ -153,7 +154,7 @@ fn make_asset_state(assets_dir: PathBuf) -> Arc<ServiceState> {
         assets_dir,
         run_dir,
         job_counter: AtomicU64::new(1),
-        manifest: None,
+        manifest,
         current_version: "0.0.0".into(),
         asset_reconcile: Mutex::new(AssetReconcileState::default()),
         asset_reconcile_inflight: AtomicBool::new(false),
@@ -2034,6 +2035,7 @@ fn asset_status_reports_reconcile_progress_fields() {
 
     let status = profile_asset_status_value(&state, &profile);
     assert_eq!(status["profile_id"], "code");
+    assert_eq!(status["manifest"]["origin"], "missing");
     assert_eq!(status["ready"], true);
     assert_eq!(status["downloading"], true);
     assert_eq!(status["current_asset"], "rootfs.erofs");
@@ -2062,6 +2064,7 @@ fn profile_asset_status_uses_profile_current_arch_contract() {
     assert_eq!(status["revision"], profile.revision);
     assert_eq!(status["profile_payload_hash"], test_profile_payload_hash());
     assert_eq!(status["current_arch"], arch);
+    assert_eq!(status["manifest"]["origin"], "missing");
     assert_eq!(status["ready"], false, "initrd is intentionally missing");
     assert!(
         status.get("filesystem").is_none(),
@@ -2097,6 +2100,77 @@ fn profile_asset_status_uses_profile_current_arch_contract() {
             && asset.get("compression").is_none()
             && asset.get("compression_level").is_none()
     }));
+}
+
+#[test]
+fn profile_asset_status_reports_installed_manifest_origin_and_hash() {
+    let dir = tempfile::tempdir().unwrap();
+    let arch = capsem_core::net::policy_config::current_profile_arch();
+    std::fs::create_dir_all(dir.path().join(arch)).unwrap();
+    let manifest_json = serde_json::json!({
+        "format": 2,
+        "refresh_policy": "24h",
+        "assets": {
+            "current": "2026.0609.11",
+            "releases": {
+                "2026.0609.11": {
+                    "date": "2026-06-09",
+                    "deprecated": false,
+                    "min_binary": "1.0.0",
+                    "arches": {}
+                }
+            }
+        },
+        "binaries": {
+            "current": "1.3.1781035201",
+            "releases": {
+                "1.3.1781035201": {
+                    "date": "2026-06-09",
+                    "deprecated": false,
+                    "min_assets": "2026.0609.11"
+                }
+            }
+        }
+    })
+    .to_string();
+    let manifest_path = dir.path().join("manifest.json");
+    std::fs::write(&manifest_path, manifest_json).unwrap();
+    let origin_path = dir.path().join("manifest-origin.json");
+    std::fs::write(
+        &origin_path,
+        serde_json::json!({
+            "schema": "capsem.manifest_origin.v1",
+            "origin": "package",
+            "source": "/tmp/corp/manifest.json",
+            "packaged_at": "2026-06-09T12:00:00Z"
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let expected_hash = capsem_core::asset_manager::hash_file(&manifest_path).unwrap();
+
+    let state = make_asset_state(dir.path().to_path_buf());
+    let profile = ProfileConfigFile::builtin_code();
+    let status = profile_asset_status_value(&state, &profile);
+
+    assert_eq!(status["manifest"]["origin"], "package");
+    assert_eq!(
+        status["manifest"]["path"],
+        manifest_path.display().to_string()
+    );
+    assert_eq!(
+        status["manifest"]["origin_path"],
+        origin_path.display().to_string()
+    );
+    assert_eq!(
+        status["manifest"]["origin_source"],
+        "/tmp/corp/manifest.json"
+    );
+    assert_eq!(status["manifest"]["packaged_at"], "2026-06-09T12:00:00Z");
+    assert_eq!(status["manifest"]["blake3"], expected_hash);
+    assert_eq!(status["manifest"]["format"], 2);
+    assert_eq!(status["manifest"]["assets_current"], "2026.0609.11");
+    assert_eq!(status["manifest"]["binaries_current"], "1.3.1781035201");
 }
 
 #[test]

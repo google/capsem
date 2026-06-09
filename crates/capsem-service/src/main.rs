@@ -3470,6 +3470,7 @@ fn profile_asset_status_value(
             "profile_id": profile.id,
             "revision": profile.revision,
             "profile_payload_hash": profile_payload_hash(profile).ok(),
+            "manifest": asset_manifest_status_value(state),
             "ready": false,
             "downloading": reconcile.in_progress,
             "current_arch": current_arch,
@@ -3510,12 +3511,64 @@ fn profile_asset_status_value(
         "profile_id": profile.id,
         "revision": profile.revision,
         "profile_payload_hash": profile_payload_hash(profile).ok(),
+        "manifest": asset_manifest_status_value(state),
         "ready": all_ready,
         "downloading": reconcile.in_progress,
         "current_arch": current_arch,
         "assets": assets,
     });
     append_asset_reconcile_status(&mut value, &reconcile);
+    value
+}
+
+fn asset_manifest_status_value(state: &ServiceState) -> serde_json::Value {
+    let path = state.assets_dir.join("manifest.json");
+    let origin_path = state.assets_dir.join("manifest-origin.json");
+    let origin_metadata = std::fs::read_to_string(&origin_path)
+        .ok()
+        .and_then(|body| serde_json::from_str::<serde_json::Value>(&body).ok());
+    let blake3 = if path.is_file() {
+        capsem_core::asset_manager::hash_file(&path).ok()
+    } else {
+        None
+    };
+    let origin = if let Some(origin) = origin_metadata
+        .as_ref()
+        .and_then(|value| value.get("origin"))
+        .and_then(|value| value.as_str())
+    {
+        origin
+    } else if path.is_file() {
+        "installed"
+    } else {
+        "missing"
+    };
+    let mut value = json!({
+        "origin": origin,
+        "path": path.display().to_string(),
+        "blake3": blake3,
+    });
+    if let (Some(metadata), Some(obj)) = (&origin_metadata, value.as_object_mut()) {
+        obj.insert(
+            "origin_path".to_string(),
+            json!(origin_path.display().to_string()),
+        );
+        if let Some(source) = metadata.get("source").and_then(|value| value.as_str()) {
+            obj.insert("origin_source".to_string(), json!(source));
+        }
+        if let Some(packaged_at) = metadata.get("packaged_at").and_then(|value| value.as_str()) {
+            obj.insert("packaged_at".to_string(), json!(packaged_at));
+        }
+    }
+    if let (Some(manifest), Some(obj)) = (&state.manifest, value.as_object_mut()) {
+        obj.insert("format".to_string(), json!(manifest.format));
+        obj.insert("refresh_policy".to_string(), json!(manifest.refresh_policy));
+        obj.insert("assets_current".to_string(), json!(manifest.assets.current));
+        obj.insert(
+            "binaries_current".to_string(),
+            json!(manifest.binaries.current),
+        );
+    }
     value
 }
 
@@ -4153,6 +4206,7 @@ fn profile_catalog_status_value(
         .count();
     json!({
         "source": profile_catalog_source_label(catalog.source()),
+        "asset_manifest": asset_manifest_status_value(state),
         "profile_count": profiles.len(),
         "ready_count": ready_count,
         "profiles": profiles,

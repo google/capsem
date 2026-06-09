@@ -191,10 +191,34 @@ pub struct AssetEntry {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
+pub struct AssetManifestStatus {
+    pub origin: String,
+    pub path: String,
+    #[serde(default)]
+    pub origin_path: Option<String>,
+    #[serde(default)]
+    pub origin_source: Option<String>,
+    #[serde(default)]
+    pub packaged_at: Option<String>,
+    #[serde(default)]
+    pub blake3: Option<String>,
+    #[serde(default)]
+    pub format: Option<u32>,
+    #[serde(default)]
+    pub refresh_policy: Option<String>,
+    #[serde(default)]
+    pub assets_current: Option<String>,
+    #[serde(default)]
+    pub binaries_current: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
 pub struct AssetStatusResponse {
     pub ready: bool,
     #[serde(default)]
     pub downloading: bool,
+    #[serde(default)]
+    pub manifest: Option<AssetManifestStatus>,
     #[serde(default)]
     pub current_asset: Option<String>,
     #[serde(default)]

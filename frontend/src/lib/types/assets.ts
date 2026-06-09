@@ -5,10 +5,24 @@ export interface AssetEntry {
   status: 'present' | 'missing' | 'corrupted' | 'downloading';
 }
 
+export interface AssetManifestStatus {
+  origin: string;
+  path: string;
+  origin_path?: string;
+  origin_source?: string;
+  packaged_at?: string;
+  blake3?: string;
+  format?: number;
+  refresh_policy?: string;
+  assets_current?: string;
+  binaries_current?: string;
+}
+
 /** Response from profile asset status and ensure routes. */
 export interface AssetStatusResponse {
   ready: boolean;
   downloading: boolean;
+  manifest?: AssetManifestStatus;
   assets: AssetEntry[];
   asset_version?: string;
   current_asset?: string;
