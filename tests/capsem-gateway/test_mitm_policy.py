@@ -1,10 +1,7 @@
 """Verify MITM proxy policy enforcement and telemetry logging."""
 
 import os
-import json
-import selectors
 import sqlite3
-import subprocess
 import time
 import uuid
 from pathlib import Path
@@ -12,54 +9,12 @@ from pathlib import Path
 import pytest
 
 from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
+from helpers.debug_upstream import DEBUG_UPSTREAM_BINARY, DEBUG_UPSTREAM_ADDR, start_debug_upstream, stop_process
 from helpers.service import ServiceInstance, wait_exec_ready
 
 pytestmark = pytest.mark.gateway
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
-DEBUG_UPSTREAM_BINARY = PROJECT_ROOT / "target" / "debug" / "capsem-debug-upstream"
-DEBUG_UPSTREAM_ADDR = "127.0.0.1:3713"
-
-
-def _read_ready_json(proc, timeout_s=10):
-    selector = selectors.DefaultSelector()
-    selector.register(proc.stdout, selectors.EVENT_READ)
-    deadline = time.monotonic() + timeout_s
-    lines = []
-    while time.monotonic() < deadline:
-        if proc.poll() is not None:
-            raise RuntimeError(
-                f"capsem-debug-upstream exited early with code {proc.returncode}: "
-                f"{''.join(lines)}"
-            )
-        for key, _ in selector.select(timeout=0.2):
-            line = key.fileobj.readline()
-            if not line:
-                continue
-            lines.append(line)
-            try:
-                payload = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if payload.get("service") == "capsem-debug-upstream":
-                return payload
-    raise TimeoutError(
-        "capsem-debug-upstream did not print ready JSON; "
-        f"stdout={''.join(lines)!r}"
-    )
-
-
-def _stop_process(proc):
-    if proc is None:
-        return
-    proc.terminate()
-    try:
-        proc.wait(timeout=5)
-    except subprocess.TimeoutExpired:
-        proc.kill()
-        proc.wait(timeout=5)
-    if proc.stdout is not None:
-        proc.stdout.close()
 
 
 @pytest.fixture(scope="module")
@@ -68,18 +23,11 @@ def debug_upstream():
         pytest.skip(
             f"{DEBUG_UPSTREAM_BINARY} not found; run `cargo build -p capsem-debug-upstream`"
         )
-    proc = subprocess.Popen(
-        [str(DEBUG_UPSTREAM_BINARY), "--addr", DEBUG_UPSTREAM_ADDR],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        bufsize=1,
-    )
+    proc, ready = start_debug_upstream()
     try:
-        ready = _read_ready_json(proc)
         yield ready["base_url"]
     finally:
-        _stop_process(proc)
+        stop_process(proc)
 
 
 @pytest.fixture(scope="module")

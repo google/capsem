@@ -3,6 +3,8 @@
 import json
 import subprocess
 
+from helpers.constants import CODE_PROFILE_ID
+
 
 class UdsHttpClient:
     """HTTP client that talks to an Axum server over a Unix Domain Socket via curl."""
@@ -29,6 +31,8 @@ class UdsHttpClient:
         return json.loads(result.stdout)
 
     def post(self, path, body=None, timeout=60):
+        if path == "/vms/create" and isinstance(body, dict) and "profile_id" not in body:
+            body = {**body, "profile_id": CODE_PROFILE_ID}
         return self._curl("POST", path, body, timeout)
 
     def patch(self, path, body=None, timeout=60):

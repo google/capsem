@@ -41,6 +41,9 @@ class _FakeProc:
     def cmdline(self):
         return self._cmdline_impl()
 
+    def name(self):
+        return self.info["name"]
+
 
 @pytest.fixture
 def patch_iter(monkeypatch):

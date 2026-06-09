@@ -83,18 +83,20 @@ fn vm_summary_name_null_when_absent() {
 
 #[test]
 fn list_response_deserializes() {
-    let json = r#"{"sandboxes":[{"id":"abc","pid":123,"status":"Running","persistent":true,"ram_mb":2048,"cpus":2}]}"#;
+    let json = r#"{"sandboxes":[{"id":"abc","profile_id":"code","pid":123,"status":"Running","persistent":true,"ram_mb":2048,"cpus":2}]}"#;
     let list: ListResponse = serde_json::from_str(json).unwrap();
     assert_eq!(list.sessions.len(), 1);
     assert_eq!(list.sessions[0].id, "abc");
+    assert_eq!(list.sessions[0].profile_id, "code");
     assert!(list.sessions[0].persistent);
     assert_eq!(list.sessions[0].ram_mb, Some(2048));
 }
 
 #[test]
 fn list_response_handles_missing_optional_fields() {
-    let json = r#"{"sandboxes":[{"id":"abc","pid":123}]}"#;
+    let json = r#"{"sandboxes":[{"id":"abc","profile_id":"code","pid":123}]}"#;
     let list: ListResponse = serde_json::from_str(json).unwrap();
+    assert_eq!(list.sessions[0].profile_id, "code");
     assert_eq!(list.sessions[0].ram_mb, None);
     assert_eq!(list.sessions[0].cpus, None);
     assert!(!list.sessions[0].persistent);
@@ -235,9 +237,9 @@ async fn fetch_status_multiple_vms() {
         .route("/vms/list", axum::routing::get(|| async {
             axum::Json(serde_json::json!({
                 "sandboxes": [
-                    {"id": "vm1", "name": "dev", "pid": 100, "status": "Running", "persistent": true, "ram_mb": 2048, "cpus": 2},
-                    {"id": "vm2", "pid": 200, "status": "Running", "persistent": false, "ram_mb": 4096, "cpus": 4},
-                    {"id": "vm3", "name": "ci", "pid": 300, "status": "Stopped", "persistent": true, "ram_mb": 1024, "cpus": 1},
+                    {"id": "vm1", "profile_id": "code", "name": "dev", "pid": 100, "status": "Running", "persistent": true, "ram_mb": 2048, "cpus": 2},
+                    {"id": "vm2", "profile_id": "code", "pid": 200, "status": "Running", "persistent": false, "ram_mb": 4096, "cpus": 4},
+                    {"id": "vm3", "profile_id": "code", "name": "ci", "pid": 300, "status": "Stopped", "persistent": true, "ram_mb": 1024, "cpus": 1},
                 ]
             }))
         }));
@@ -329,9 +331,9 @@ async fn fetch_status_counts_suspended_vms() {
         .route("/vms/list", axum::routing::get(|| async {
             axum::Json(serde_json::json!({
                 "sandboxes": [
-                    {"id": "vm1", "pid": 100, "status": "Running", "persistent": true, "ram_mb": 2048, "cpus": 2},
-                    {"id": "vm2", "pid": 0, "status": "Suspended", "persistent": true, "ram_mb": 2048, "cpus": 2},
-                    {"id": "vm3", "pid": 0, "status": "Stopped", "persistent": true, "ram_mb": 1024, "cpus": 1},
+                    {"id": "vm1", "profile_id": "code", "pid": 100, "status": "Running", "persistent": true, "ram_mb": 2048, "cpus": 2},
+                    {"id": "vm2", "profile_id": "code", "pid": 0, "status": "Suspended", "persistent": true, "ram_mb": 2048, "cpus": 2},
+                    {"id": "vm3", "profile_id": "code", "pid": 0, "status": "Stopped", "persistent": true, "ram_mb": 1024, "cpus": 1},
                 ]
             }))
         }));
@@ -385,8 +387,9 @@ fn vm_summary_omits_absent_telemetry() {
 
 #[test]
 fn list_response_deserializes_telemetry() {
-    let json = r#"{"sandboxes":[{"id":"vm1","pid":100,"status":"Running","persistent":false,"ram_mb":2048,"cpus":2,"uptime_secs":60,"total_input_tokens":1000,"total_output_tokens":500,"total_estimated_cost":0.42}]}"#;
+    let json = r#"{"sandboxes":[{"id":"vm1","profile_id":"code","pid":100,"status":"Running","persistent":false,"ram_mb":2048,"cpus":2,"uptime_secs":60,"total_input_tokens":1000,"total_output_tokens":500,"total_estimated_cost":0.42}]}"#;
     let list: ListResponse = serde_json::from_str(json).unwrap();
+    assert_eq!(list.sessions[0].profile_id, "code");
     assert_eq!(list.sessions[0].uptime_secs, Some(60));
     assert_eq!(list.sessions[0].total_input_tokens, Some(1000));
     assert_eq!(list.sessions[0].total_output_tokens, Some(500));
@@ -400,7 +403,7 @@ async fn fetch_status_passes_through_telemetry() {
         axum::routing::get(|| async {
             axum::Json(serde_json::json!({
                 "sandboxes": [{
-                    "id": "vm1", "pid": 100, "status": "Running", "persistent": false,
+                    "id": "vm1", "profile_id": "code", "pid": 100, "status": "Running", "persistent": false,
                     "ram_mb": 2048, "cpus": 2,
                     "uptime_secs": 120, "total_input_tokens": 3000,
                     "total_output_tokens": 1000, "total_estimated_cost": 0.99,

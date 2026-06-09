@@ -78,7 +78,6 @@ CLI_ONLY: dict[str, str] = {
     "cp":           "host/session file copy convenience; MCP uses capsem_read_file/capsem_write_file",
 
     # MCP sub-namespace: not every entry has a tool
-    "mcp policy":   "read-only policy dump; AI callers don't need it",
     "mcp refresh":  "forces tool re-discovery; AI callers re-list directly",
 }
 

@@ -36,14 +36,14 @@ def test_multiple_execs_create_ordered_events(lifecycle_env, lifecycle_db):
             assert ids[i] > ids[i-1], f"Event IDs not ordered: {ids}"
 
 
-def test_net_event_has_domain_field(lifecycle_env, lifecycle_db):
+def test_net_event_has_domain_field(lifecycle_env, lifecycle_db, lifecycle_debug_upstream):
     """Net events should have a non-empty domain field."""
     client, vm_name, _, _ = lifecycle_env
 
-    # Trigger a deterministic denied request so it reaches HTTP telemetry
-    # without depending on public network reachability.
+    # Trigger deterministic local HTTP telemetry without depending on public DNS
+    # or Internet reachability.
     client.post(f"/vms/{vm_name}/exec", {
-        "command": "curl -skI --connect-timeout 5 https://evil-never-allowed.invalid 2>&1 || true"
+        "command": f"curl -s -o /dev/null --max-time 5 {lifecycle_debug_upstream}/tiny || true"
     })
 
     time.sleep(3)

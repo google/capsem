@@ -1752,38 +1752,53 @@ async fn mitm_proxy_classifies_unknown_first_byte() {
 
 #[tokio::test]
 async fn mitm_proxy_streams_large_payload() {
-    let (config, db) = make_proxy_config(&["httpbin.org"], &[], false);
-    let (proxy_task, addr) = spawn_proxy(config).await;
-
-    let tcp = tokio::net::TcpStream::connect(addr).await.unwrap();
-    let connector = TlsConnector::from(Arc::new(make_tls_client_config()));
-    let domain = ServerName::try_from("httpbin.org").unwrap();
-    let tls = connector.connect(domain, tcp).await.unwrap();
-
-    let io = TokioIo::new(tls);
-    let (mut sender, conn) = hyper::client::conn::http1::handshake(io).await.unwrap();
-    tokio::spawn(conn);
-
     let payload_size = 1024 * 1024;
     let large_body = vec![b'A'; payload_size];
 
-    let req = hyper::Request::builder()
-        .method("POST")
-        .uri("/post")
-        .header("host", "httpbin.org")
-        .body(Full::new(Bytes::from(large_body)))
-        .unwrap();
+    let (upstream_port, upstream_task) = spawn_fake_upstream(move |mut sock| {
+        Box::pin(async move {
+            let request = read_http11_request(&mut sock).await;
+            let head_end = request
+                .windows(4)
+                .position(|w| w == b"\r\n\r\n")
+                .map(|i| i + 4)
+                .unwrap_or(0);
+            assert_eq!(
+                request[head_end..].len(),
+                payload_size,
+                "upstream should receive the full large request body"
+            );
+            sock.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                .await
+                .unwrap();
+            let _ = sock.shutdown().await;
+            request
+        })
+    })
+    .await;
 
-    let resp = sender.send_request(req).await.unwrap();
-    assert!(
-        resp.status().as_u16() < 500,
-        "Large streaming request failed"
+    let (config, db) = make_proxy_config_full(&["127.0.0.1"], &[], false, &[80, upstream_port]);
+    let (proxy_task, addr) = spawn_proxy(config).await;
+
+    let mut tcp = tokio::net::TcpStream::connect(addr).await.unwrap();
+    let req_head = format!(
+        "POST /post HTTP/1.1\r\nHost: 127.0.0.1:{upstream_port}\r\nContent-Type: application/octet-stream\r\nContent-Length: {payload_size}\r\nConnection: close\r\n\r\n"
     );
+    tcp.write_all(req_head.as_bytes()).await.unwrap();
+    tcp.write_all(&large_body).await.unwrap();
+    tcp.flush().await.unwrap();
+    let mut resp_buf = Vec::new();
+    let _ = tcp.read_to_end(&mut resp_buf).await;
+    drop(tcp);
 
-    let _ = resp.into_body().collect().await;
-
-    drop(sender);
+    upstream_task.await.unwrap();
     proxy_task.await.unwrap();
+
+    let resp_text = String::from_utf8_lossy(&resp_buf);
+    assert!(
+        resp_text.starts_with("HTTP/1.1 200"),
+        "large streaming request failed:\n{resp_text}"
+    );
 
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 

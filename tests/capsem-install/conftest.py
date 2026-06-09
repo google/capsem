@@ -11,10 +11,12 @@ Tests are split into two tiers:
 from __future__ import annotations
 
 import atexit
+from contextlib import contextmanager
 import os
 import re
 import shutil
 import signal
+import stat
 import subprocess
 import tempfile
 import time
@@ -110,6 +112,65 @@ def run_capsem(*args: str, timeout: int = DEFAULT_TIMEOUT) -> subprocess.Complet
         text=True,
         timeout=timeout,
     )
+
+
+def installed_binary_path(name: str) -> Path:
+    """Return the real installed binary path, following postinstall symlinks."""
+    binary = INSTALL_DIR / name
+    return binary.resolve(strict=True)
+
+
+def _sudo_install(src: Path, dest: Path, mode: int) -> None:
+    subprocess.run(
+        ["sudo", "install", "-m", f"{mode:o}", str(src), str(dest)],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+
+
+@contextmanager
+def temporarily_replace_installed_binary(name: str, content: bytes, mode: int = 0o755):
+    """Replace a real installed binary and restore it after the test.
+
+    Debian packages symlink ~/.capsem/bin/* to /usr/bin/* and the systemd
+    unit executes the resolved /usr/bin path. Tests that validate a broken
+    service binary must therefore mutate the resolved target, not replace the
+    symlink with a private file that production never executes.
+    """
+    _kill_service()
+    binary = installed_binary_path(name)
+    original = binary.read_bytes()
+    original_mode = stat.S_IMODE(binary.stat().st_mode)
+    tmp_dir = Path(tempfile.mkdtemp(prefix="capsem-binary-replace-"))
+    replacement = tmp_dir / name
+    restored = tmp_dir / f"{name}.original"
+    replacement.write_bytes(content)
+    replacement.chmod(mode)
+    restored.write_bytes(original)
+    restored.chmod(original_mode)
+
+    writable = os.access(binary.parent, os.W_OK) and os.access(binary, os.W_OK)
+    try:
+        if writable:
+            binary.unlink()
+            binary.write_bytes(content)
+            binary.chmod(mode)
+        else:
+            _sudo_install(replacement, binary, mode)
+        yield binary
+    finally:
+        try:
+            _kill_service()
+            if writable:
+                binary.unlink(missing_ok=True)
+                binary.write_bytes(original)
+                binary.chmod(original_mode)
+            else:
+                _sudo_install(restored, binary, original_mode)
+        finally:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 def get_build_hash() -> str:

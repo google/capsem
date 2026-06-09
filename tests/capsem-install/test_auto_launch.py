@@ -7,11 +7,6 @@ starting the service. The installed layout is exercised via simulate-install.sh.
 from __future__ import annotations
 
 import os
-import signal
-import stat
-import subprocess
-import time
-from pathlib import Path
 
 import pytest
 
@@ -20,6 +15,7 @@ from .conftest import (
     RUN_DIR,
     run_capsem,
     BINARIES,
+    temporarily_replace_installed_binary,
 )
 
 
@@ -73,18 +69,7 @@ class TestAutoLaunch:
 
     def test_auto_launch_bad_service_binary(self, installed_layout, clean_state):
         """Clear error when capsem-service binary is broken (not a hang)."""
-        service_bin = INSTALL_DIR / "capsem-service"
-        original = service_bin.read_bytes()
-
-        try:
-            # unlink-then-write: overwriting the mapped binary of a still-
-            # running service process raises ETXTBSY on Linux. Unlinking
-            # breaks the inode association so the subsequent write lands
-            # on a fresh inode.
-            service_bin.unlink()
-            service_bin.write_text("#!/bin/sh\nexit 1\n")
-            service_bin.chmod(stat.S_IRWXU | stat.S_IRGRP | stat.S_IXGRP | stat.S_IROTH | stat.S_IXOTH)
-
+        with temporarily_replace_installed_binary("capsem-service", b"#!/bin/sh\nexit 1\n"):
             result = run_capsem("list", timeout=15)
             # Should fail with an error, not hang
             assert result.returncode != 0, "should fail with broken service binary"
@@ -92,11 +77,6 @@ class TestAutoLaunch:
             assert "failed" in combined.lower() or "error" in combined.lower(), (
                 f"expected error message, got:\nstdout: {result.stdout}\nstderr: {result.stderr}"
             )
-        finally:
-            # Restore original binary
-            service_bin.unlink(missing_ok=True)
-            service_bin.write_bytes(original)
-            service_bin.chmod(stat.S_IRWXU | stat.S_IRGRP | stat.S_IXGRP | stat.S_IROTH | stat.S_IXOTH)
 
     @pytest.mark.live_system
     def test_auto_launch_missing_assets(self, installed_layout, clean_state):

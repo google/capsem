@@ -306,7 +306,7 @@ sys.exit(proc.returncode)
             assert row["method"] == method
             assert row["decision"] == "allowed"
             assert row["process_name"] == "python3"
-            assert row["policy_mode"] == "audit_only"
+            assert row["policy_mode"] == "security_event"
             assert row["policy_action"] == "allow"
 
         rows = _query_mcp_rows(db_path)
@@ -647,13 +647,15 @@ reason = "test blocks local echo through security rules"
         assert proc.returncode == 0, stderr
         responses = _responses_by_id(stdout)
         assert "error" not in responses[2]
-        assert responses[3]["error"]["message"].startswith("MCP request blocked by policy")
+        assert responses[3]["error"]["message"].startswith(
+            "MCP request blocked by security rule"
+        )
 
         denied = _wait_for_mcp_row(
             db_path,
             lambda r: r["request_id"] == "3" and r["decision"] == "denied",
         )
-        assert denied["policy_action"] == "deny"
+        assert denied["policy_action"] == "block"
         assert denied["policy_rule"] == "profiles.rules.block_local_echo"
         assert "after-reload" in denied["request_preview"]
     finally:
@@ -728,7 +730,7 @@ sys.exit(proc.returncode)
             assert result.returncode == 0, result.stderr
             responses = _responses_by_id(result.stdout)
             assert "Status:" in json.dumps(responses[2]["result"])
-            assert "domain blocked by policy: blocked-builtin-http.invalid" in json.dumps(
+            assert "HTTP request blocked: blocked-builtin-http.invalid" in json.dumps(
                 responses[3]["result"]
             )
 
