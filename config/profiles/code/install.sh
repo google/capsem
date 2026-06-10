@@ -7,7 +7,7 @@ install_from_url() {
     tmp="$(mktemp -d)"
     trap 'rm -rf "$tmp"' EXIT
     curl -fsSL "$url" -o "$tmp/install.sh"
-    sh "$tmp/install.sh"
+    bash "$tmp/install.sh"
     if [ -x "/root/.local/bin/$name" ]; then
         install -m 555 "/root/.local/bin/$name" "/usr/local/bin/$name"
     elif command -v "$name" >/dev/null 2>&1; then
