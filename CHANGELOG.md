@@ -34,6 +34,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   write a durable `~/.capsem/logs/install.log`, package builders accept local
   paths plus `file://`, `http://`, and `https://` manifest overrides, and
   service status reports the installed manifest hash and package provenance.
+- Added per-install timestamped logs under `~/.capsem/logs/install-*.log` plus
+  `install-latest.log`, while preserving the aggregate `install.log`.
 - Expanded manifest status reporting with mutable-manifest semantics:
   `/profiles/status`, `/profiles/{id}/assets/status`, and CLI status output now
   report the current manifest hash, source, refresh timestamp, and validation

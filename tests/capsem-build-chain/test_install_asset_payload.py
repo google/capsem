@@ -76,7 +76,10 @@ def test_package_builders_move_selected_manifest_payload() -> None:
     assert "rm -rf /usr/local/share/capsem" in pkg_preinstall
     assert "pkill -9 -x capsem-app" in pkg_preinstall
     assert 'INSTALL_LOG="$CAPSEM_DIR/logs/install.log"' in pkg_preinstall
-    assert 'exec > >(tee -a "$INSTALL_LOG") 2>&1' in pkg_preinstall
+    assert 'INSTALL_RUN_LOG="$CAPSEM_DIR/logs/install-$INSTALL_RUN_ID.log"' in pkg_preinstall
+    assert 'install-current-run' in pkg_preinstall
+    assert 'install-latest.log' in pkg_preinstall
+    assert 'exec > >(tee -a "$INSTALL_LOG" "$INSTALL_RUN_LOG") 2>&1' in pkg_preinstall
 
     assert "CAPSEM_DEB_ASSET_MODE" not in repack_deb
     assert "ASSET_MODE=" not in repack_deb
@@ -100,7 +103,10 @@ def test_package_builders_move_selected_manifest_payload() -> None:
     assert "/usr/share/capsem/profiles" in deb_postinst
     assert 'cp -R /usr/share/capsem/assets/. "$CAPSEM_DIR/assets/"' in deb_postinst
     assert 'INSTALL_LOG="$CAPSEM_DIR/logs/install.log"' in deb_postinst
-    assert 'exec > >(tee -a "$INSTALL_LOG") 2>&1' in deb_postinst
+    assert 'INSTALL_RUN_LOG="$CAPSEM_DIR/logs/install-$INSTALL_RUN_ID.log"' in deb_postinst
+    assert 'install-current-run' in deb_postinst
+    assert 'install-latest.log' in deb_postinst
+    assert 'exec > >(tee -a "$INSTALL_LOG" "$INSTALL_RUN_LOG") 2>&1' in deb_postinst
     assert "capsem-admin" in deb_postinst
     assert "capsem-tui" in deb_postinst
 
@@ -114,8 +120,12 @@ def test_macos_postinstall_adds_capsem_bin_to_fish_path() -> None:
     assert 'cp -R "$PKG_SHARE/assets/"* "$CAPSEM_DIR/assets/"' in postinstall
     assert "pkill -x capsem-app" in postinstall
     assert 'INSTALL_LOG="$CAPSEM_DIR/logs/install.log"' in postinstall
-    assert 'exec > >(tee -a "$INSTALL_LOG") 2>&1' in postinstall
+    assert 'INSTALL_RUN_ID=$(cat "$INSTALL_RUN_FILE" 2>/dev/null || date' in postinstall
+    assert 'INSTALL_RUN_LOG="$CAPSEM_DIR/logs/install-$INSTALL_RUN_ID.log"' in postinstall
+    assert 'install-latest.log' in postinstall
+    assert 'exec > >(tee -a "$INSTALL_LOG" "$INSTALL_RUN_LOG") 2>&1' in postinstall
     assert "event=readiness_poll" in postinstall
+    assert "attempt=$attempt" in postinstall
 
 
 def test_release_workflow_uses_profile_asset_rail_and_full_host_binary_set() -> None:

@@ -26,13 +26,18 @@ fi
 USER_HOME=$(eval echo "~$TARGET_USER")
 CAPSEM_DIR="$USER_HOME/.capsem"
 INSTALL_LOG="$CAPSEM_DIR/logs/install.log"
+INSTALL_RUN_ID=$(date -u '+%Y%m%dT%H%M%SZ')
+INSTALL_RUN_LOG="$CAPSEM_DIR/logs/install-$INSTALL_RUN_ID.log"
+INSTALL_RUN_FILE="$CAPSEM_DIR/logs/install-current-run"
 
 # Create user-level directory layout
 mkdir -p "$CAPSEM_DIR/bin" "$CAPSEM_DIR/assets" "$CAPSEM_DIR/run" "$CAPSEM_DIR/logs"
-touch "$INSTALL_LOG"
+touch "$INSTALL_LOG" "$INSTALL_RUN_LOG"
+printf '%s\n' "$INSTALL_RUN_ID" > "$INSTALL_RUN_FILE"
+ln -sf "$(basename "$INSTALL_RUN_LOG")" "$CAPSEM_DIR/logs/install-latest.log"
 chown -R "$TARGET_USER:$(id -gn "$TARGET_USER")" "$CAPSEM_DIR/logs"
-exec > >(tee -a "$INSTALL_LOG") 2>&1
-echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=start user=$TARGET_USER"
+exec > >(tee -a "$INSTALL_LOG" "$INSTALL_RUN_LOG") 2>&1
+echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=start user=$TARGET_USER install_run_id=$INSTALL_RUN_ID install_run_log=$INSTALL_RUN_LOG"
 
 # Copy package-provided assets, if present. Packages provide the selected
 # manifest and its provenance; the service reconciles asset payloads from it.

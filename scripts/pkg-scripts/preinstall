@@ -11,17 +11,23 @@ if [ "${USER:-root}" = "root" ] || [ -z "${USER:-}" ]; then
     USER=$(stat -f '%Su' /dev/console 2>/dev/null || echo "")
 fi
 
+INSTALL_RUN_ID=$(date -u '+%Y%m%dT%H%M%SZ')
 INSTALL_LOG="/tmp/capsem-install.log"
+INSTALL_RUN_LOG="/tmp/capsem-install-$INSTALL_RUN_ID.log"
 if [ -n "${USER:-}" ] && [ "$USER" != "root" ]; then
     USER_HOME=$(eval echo "~$USER")
     CAPSEM_DIR="$USER_HOME/.capsem"
     mkdir -p "$CAPSEM_DIR/logs"
     INSTALL_LOG="$CAPSEM_DIR/logs/install.log"
-    touch "$INSTALL_LOG"
-    chown "$USER" "$INSTALL_LOG" "$CAPSEM_DIR/logs"
+    INSTALL_RUN_LOG="$CAPSEM_DIR/logs/install-$INSTALL_RUN_ID.log"
+    INSTALL_RUN_FILE="$CAPSEM_DIR/logs/install-current-run"
+    touch "$INSTALL_LOG" "$INSTALL_RUN_LOG"
+    printf '%s\n' "$INSTALL_RUN_ID" > "$INSTALL_RUN_FILE"
+    ln -sf "$(basename "$INSTALL_RUN_LOG")" "$CAPSEM_DIR/logs/install-latest.log"
+    chown "$USER" "$INSTALL_LOG" "$INSTALL_RUN_LOG" "$INSTALL_RUN_FILE" "$CAPSEM_DIR/logs" 2>/dev/null || true
 fi
-exec > >(tee -a "$INSTALL_LOG") 2>&1
-echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=preinstall event=start user=${USER:-unknown}"
+exec > >(tee -a "$INSTALL_LOG" "$INSTALL_RUN_LOG") 2>&1
+echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=preinstall event=start user=${USER:-unknown} install_run_id=$INSTALL_RUN_ID install_run_log=$INSTALL_RUN_LOG"
 
 if [ -n "${USER:-}" ] && [ "$USER" != "root" ]; then
     PLIST="$USER_HOME/Library/LaunchAgents/com.capsem.service.plist"

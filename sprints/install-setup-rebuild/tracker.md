@@ -266,6 +266,10 @@
   metadata, not an immutable install pin. Status reports `validation_status`,
   `validation_error`, `refreshed_at`, current BLAKE3 hash, source provenance,
   and manifest current asset/binary versions when the on-disk manifest parses.
+- Completed slice: installer diagnostics now write both aggregate
+  `~/.capsem/logs/install.log` and per-run timestamped
+  `~/.capsem/logs/install-<UTC>.log`, with `install-latest.log` pointing to the
+  newest run. Readiness poll log lines include numeric attempts.
 - Completed slice: install asset-copy scripts now skip nested directories in
   arch asset folders, preventing a stray `assets/arm64/arm64` directory from
   breaking local installed-layout tests.

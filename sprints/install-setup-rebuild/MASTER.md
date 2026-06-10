@@ -260,7 +260,8 @@ Implemented:
   asset/binary versions. It does not pretend the install-time hash is a
   permanent security pin.
 - macOS and Linux package scripts write durable install diagnostics to
-  `~/.capsem/logs/install.log`.
+  `~/.capsem/logs/install.log`, plus per-run timestamped logs and
+  `install-latest.log`.
 - macOS and Linux postinstall copy any package-provided assets into the
   installed asset directory as part of the package install path.
 - Asset copy scripts skip nested directories inside `assets/<arch>/`, so a

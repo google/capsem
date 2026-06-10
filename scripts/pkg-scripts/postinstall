@@ -26,10 +26,14 @@ USER_HOME=$(eval echo "~$USER")
 CAPSEM_DIR="$USER_HOME/.capsem"
 INSTALL_LOG="$CAPSEM_DIR/logs/install.log"
 mkdir -p "$CAPSEM_DIR/logs"
-touch "$INSTALL_LOG"
+INSTALL_RUN_FILE="$CAPSEM_DIR/logs/install-current-run"
+INSTALL_RUN_ID=$(cat "$INSTALL_RUN_FILE" 2>/dev/null || date -u '+%Y%m%dT%H%M%SZ')
+INSTALL_RUN_LOG="$CAPSEM_DIR/logs/install-$INSTALL_RUN_ID.log"
+touch "$INSTALL_LOG" "$INSTALL_RUN_LOG"
+ln -sf "$(basename "$INSTALL_RUN_LOG")" "$CAPSEM_DIR/logs/install-latest.log"
 chown -R "$USER" "$CAPSEM_DIR/logs"
-exec > >(tee -a "$INSTALL_LOG") 2>&1
-echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=postinstall event=start user=$USER pkg_share=$PKG_SHARE"
+exec > >(tee -a "$INSTALL_LOG" "$INSTALL_RUN_LOG") 2>&1
+echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=postinstall event=start user=$USER pkg_share=$PKG_SHARE install_run_id=$INSTALL_RUN_ID install_run_log=$INSTALL_RUN_LOG"
 
 # Create user-level directory layout. Remove stale asset symlinks from dev
 # installs so this package never writes through to an old worktree.
@@ -112,9 +116,9 @@ echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=postinstall event=service_registere
 
 READY=0
 STATUS_OUTPUT=""
-for _ in $(seq 1 30); do
+for attempt in $(seq 1 30); do
     STATUS_OUTPUT=$(su "$USER" -c "$CAPSEM_DIR/bin/capsem status" 2>/dev/null || true)
-    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=postinstall event=readiness_poll attempt=$_"
+    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=postinstall event=readiness_poll attempt=$attempt"
     if echo "$STATUS_OUTPUT" | grep -q "Service:   ok" \
         && echo "$STATUS_OUTPUT" | grep -q "Gateway:   ok"; then
         READY=1
