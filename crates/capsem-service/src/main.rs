@@ -10,9 +10,9 @@ use capsem_core::{
     mcp::policy::{McpManualServer, McpUserConfig},
     net::policy_config::{
         CompiledSecurityRule, DetectionLevel, ProfileAssetDescriptor, ProfileCatalog,
-        ProfileCatalogSource, ProfileConfigFile, ProfileObomConfig, ProfileObomDescriptor,
-        ProviderRuleProfile, SecurityPluginConfig, SecurityPluginMode, SecurityRule,
-        SecurityRuleGroup, SecurityRuleProfile, SecurityRuleSet, SecurityRuleSource, SettingsFile,
+        ProfileCatalogSource, ProfileConfigFile, ProviderRuleProfile, SecurityPluginConfig,
+        SecurityPluginMode, SecurityRule, SecurityRuleGroup, SecurityRuleProfile, SecurityRuleSet,
+        SecurityRuleSource, SettingsFile,
     },
     security_engine::{
         FileSecurityEvent, RuntimeSecurityEventType, SecurityActionRegistry, SecurityEmitError,
