@@ -499,6 +499,15 @@ fn print_asset_status(status: &AssetStatusResponse) {
         if let Some(packaged_at) = &manifest.packaged_at {
             println!("Packaged at: {packaged_at}");
         }
+        if let Some(refreshed_at) = &manifest.refreshed_at {
+            println!("Manifest refreshed: {refreshed_at}");
+        }
+        if let Some(status) = &manifest.validation_status {
+            println!("Manifest status: {status}");
+        }
+        if let Some(error) = &manifest.validation_error {
+            println!("Manifest error: {error}");
+        }
         if let Some(hash) = &manifest.blake3 {
             println!("Manifest hash: blake3:{hash}");
         }
@@ -806,6 +815,24 @@ fn print_profiles_status(status: &serde_json::Value) {
         }
         if let Some(packaged_at) = manifest.get("packaged_at").and_then(|value| value.as_str()) {
             println!("  built:   {packaged_at}");
+        }
+        if let Some(refreshed_at) = manifest
+            .get("refreshed_at")
+            .and_then(|value| value.as_str())
+        {
+            println!("  refresh: {refreshed_at}");
+        }
+        if let Some(validation_status) = manifest
+            .get("validation_status")
+            .and_then(|value| value.as_str())
+        {
+            println!("  status:  {validation_status}");
+        }
+        if let Some(error) = manifest
+            .get("validation_error")
+            .and_then(|value| value.as_str())
+        {
+            println!("  error:   {error}");
         }
         if let Some(hash) = manifest.get("blake3").and_then(|value| value.as_str()) {
             println!("  hash:    blake3:{hash}");

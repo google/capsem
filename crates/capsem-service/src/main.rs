@@ -3527,11 +3527,16 @@ fn asset_manifest_status_value(state: &ServiceState) -> serde_json::Value {
     let origin_metadata = std::fs::read_to_string(&origin_path)
         .ok()
         .and_then(|body| serde_json::from_str::<serde_json::Value>(&body).ok());
+    let refreshed_at = std::fs::metadata(&path)
+        .ok()
+        .and_then(|metadata| metadata.modified().ok())
+        .map(format_system_time_rfc3339);
     let blake3 = if path.is_file() {
         capsem_core::asset_manager::hash_file(&path).ok()
     } else {
         None
     };
+    let manifest_validation = validate_asset_manifest_file(&path);
     let origin = if let Some(origin) = origin_metadata
         .as_ref()
         .and_then(|value| value.get("origin"))
@@ -3547,7 +3552,18 @@ fn asset_manifest_status_value(state: &ServiceState) -> serde_json::Value {
         "origin": origin,
         "path": path.display().to_string(),
         "blake3": blake3,
+        "validation_status": manifest_validation.status,
     });
+    if let Some(refreshed_at) = refreshed_at {
+        if let Some(obj) = value.as_object_mut() {
+            obj.insert("refreshed_at".to_string(), json!(refreshed_at));
+        }
+    }
+    if let Some(error) = manifest_validation.error.as_ref() {
+        if let Some(obj) = value.as_object_mut() {
+            obj.insert("validation_error".to_string(), json!(error));
+        }
+    }
     if let (Some(metadata), Some(obj)) = (&origin_metadata, value.as_object_mut()) {
         obj.insert(
             "origin_path".to_string(),
@@ -3560,7 +3576,14 @@ fn asset_manifest_status_value(state: &ServiceState) -> serde_json::Value {
             obj.insert("packaged_at".to_string(), json!(packaged_at));
         }
     }
-    if let (Some(manifest), Some(obj)) = (&state.manifest, value.as_object_mut()) {
+    let manifest = manifest_validation.manifest.as_ref().or_else(|| {
+        if manifest_validation.status == "missing" {
+            state.manifest.as_deref()
+        } else {
+            None
+        }
+    });
+    if let (Some(manifest), Some(obj)) = (manifest, value.as_object_mut()) {
         obj.insert("format".to_string(), json!(manifest.format));
         obj.insert("refresh_policy".to_string(), json!(manifest.refresh_policy));
         obj.insert("assets_current".to_string(), json!(manifest.assets.current));
@@ -3570,6 +3593,45 @@ fn asset_manifest_status_value(state: &ServiceState) -> serde_json::Value {
         );
     }
     value
+}
+
+struct AssetManifestValidation {
+    status: &'static str,
+    manifest: Option<capsem_core::asset_manager::ManifestV2>,
+    error: Option<String>,
+}
+
+fn validate_asset_manifest_file(path: &std::path::Path) -> AssetManifestValidation {
+    if !path.is_file() {
+        return AssetManifestValidation {
+            status: "missing",
+            manifest: None,
+            error: None,
+        };
+    }
+    match std::fs::read_to_string(path) {
+        Ok(content) => match capsem_core::asset_manager::ManifestV2::from_json(&content) {
+            Ok(manifest) => AssetManifestValidation {
+                status: "valid",
+                manifest: Some(manifest),
+                error: None,
+            },
+            Err(error) => AssetManifestValidation {
+                status: "invalid",
+                manifest: None,
+                error: Some(error.to_string()),
+            },
+        },
+        Err(error) => AssetManifestValidation {
+            status: "invalid",
+            manifest: None,
+            error: Some(error.to_string()),
+        },
+    }
+}
+
+fn format_system_time_rfc3339(time: std::time::SystemTime) -> String {
+    humantime::format_rfc3339_seconds(time).to_string()
 }
 
 fn append_asset_reconcile_status(value: &mut serde_json::Value, reconcile: &AssetReconcileState) {

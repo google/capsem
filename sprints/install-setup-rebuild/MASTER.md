@@ -255,6 +255,10 @@ Implemented:
 - Manifest production is documented and tested through
   `capsem-admin manifest generate <assets_dir>`, including corp custom builds.
   Direct generator internals are not a public package/install path.
+- Service/CLI manifest status reports mutable-manifest truth: current hash,
+  source provenance, refresh timestamp, validation status/error, and current
+  asset/binary versions. It does not pretend the install-time hash is a
+  permanent security pin.
 - macOS and Linux package scripts write durable install diagnostics to
   `~/.capsem/logs/install.log`.
 - macOS and Linux postinstall copy any package-provided assets into the

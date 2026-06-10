@@ -262,6 +262,10 @@
   also install `manifest-origin.json`, and service status reports the installed
   manifest path, BLAKE3 hash, origin, source, and package timestamp for
   corp/debug provenance.
+- Completed slice: manifest status now treats the manifest as mutable release
+  metadata, not an immutable install pin. Status reports `validation_status`,
+  `validation_error`, `refreshed_at`, current BLAKE3 hash, source provenance,
+  and manifest current asset/binary versions when the on-disk manifest parses.
 - Completed slice: install asset-copy scripts now skip nested directories in
   arch asset folders, preventing a stray `assets/arm64/arm64` directory from
   breaking local installed-layout tests.

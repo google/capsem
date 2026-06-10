@@ -2168,9 +2168,72 @@ fn profile_asset_status_reports_installed_manifest_origin_and_hash() {
     );
     assert_eq!(status["manifest"]["packaged_at"], "2026-06-09T12:00:00Z");
     assert_eq!(status["manifest"]["blake3"], expected_hash);
+    assert_eq!(status["manifest"]["validation_status"], "valid");
+    assert!(status["manifest"]["refreshed_at"].as_str().is_some());
     assert_eq!(status["manifest"]["format"], 2);
     assert_eq!(status["manifest"]["assets_current"], "2026.0609.11");
     assert_eq!(status["manifest"]["binaries_current"], "1.3.1781035201");
+}
+
+#[test]
+fn profile_asset_status_reports_invalid_manifest_without_stale_truth() {
+    let dir = tempfile::tempdir().unwrap();
+    let manifest_path = dir.path().join("manifest.json");
+    std::fs::write(
+        &manifest_path,
+        serde_json::json!({
+            "format": 2,
+            "refresh_policy": "24h",
+            "assets": {
+                "current": "2026.0609.stale",
+                "releases": {
+                    "2026.0609.stale": {
+                        "date": "2026-06-09",
+                        "deprecated": false,
+                        "min_binary": "1.0.0",
+                        "arches": {
+                            "arm64": {
+                                "vmlinuz": {
+                                    "hash": "1111111111111111111111111111111111111111111111111111111111111111",
+                                    "size": 1
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "binaries": {
+                "current": "1.3.stale",
+                "releases": {
+                    "1.3.stale": {
+                        "date": "2026-06-09",
+                        "deprecated": false,
+                        "min_assets": "2026.0609.stale"
+                    }
+                }
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let state = make_asset_state(dir.path().to_path_buf());
+    std::fs::write(&manifest_path, r#"{"format":2}"#).unwrap();
+
+    let profile = ProfileConfigFile::builtin_code();
+    let status = profile_asset_status_value(&state, &profile);
+
+    assert_eq!(status["manifest"]["origin"], "installed");
+    assert_eq!(status["manifest"]["validation_status"], "invalid");
+    assert!(!status["manifest"]["validation_error"]
+        .as_str()
+        .unwrap()
+        .is_empty());
+    assert_eq!(
+        status["manifest"]["path"],
+        manifest_path.display().to_string()
+    );
+    assert!(status["manifest"].get("assets_current").is_none());
+    assert!(status["manifest"].get("binaries_current").is_none());
 }
 
 #[test]

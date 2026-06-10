@@ -11,6 +11,9 @@ export interface AssetManifestStatus {
   origin_path?: string;
   origin_source?: string;
   packaged_at?: string;
+  refreshed_at?: string;
+  validation_status?: 'valid' | 'missing' | 'invalid';
+  validation_error?: string;
   blake3?: string;
   format?: number;
   refresh_policy?: string;

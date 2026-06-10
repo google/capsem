@@ -201,6 +201,12 @@ pub struct AssetManifestStatus {
     #[serde(default)]
     pub packaged_at: Option<String>,
     #[serde(default)]
+    pub refreshed_at: Option<String>,
+    #[serde(default)]
+    pub validation_status: Option<String>,
+    #[serde(default)]
+    pub validation_error: Option<String>,
+    #[serde(default)]
     pub blake3: Option<String>,
     #[serde(default)]
     pub format: Option<u32>,
