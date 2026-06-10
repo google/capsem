@@ -4,8 +4,6 @@ Tests cache TTL expiry, response schema, and edge cases through the
 real gateway binary.
 """
 
-import json
-import subprocess
 import time
 
 import pytest

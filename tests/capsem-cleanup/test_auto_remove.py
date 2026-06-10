@@ -88,11 +88,9 @@ def test_persistent_preserved_on_process_death(cleanup_env):
     # Give the service time to run stale-instance cleanup
     time.sleep(5)
 
-    # Persistent VM session dir should still exist
-    persistent_dir = cleanup_env.tmp_dir / "persistent" / name
     # The VM should still appear in list (as Stopped)
     listing = client.get("/vms/list")
-    vm = next((s for s in listing.get("sandboxes", []) if s["id"] == name), None)
+    assert isinstance(listing.get("sandboxes", []), list)
     # Note: the stale-instance cleanup removes from instances map but the
     # persistent registry keeps it, so it shows in /vms/list as Stopped
     # (or it may have been cleaned from instances but still in registry)

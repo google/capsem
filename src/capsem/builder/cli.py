@@ -183,7 +183,7 @@ def build(
             click.echo(f"error: {e}", err=True)
             raise SystemExit(1)
 
-        click.echo(f"Using container runtime: docker")
+        click.echo("Using container runtime: docker")
         out = Path(output_dir)
 
         try:
@@ -244,7 +244,6 @@ def agent(
 
     # Default to host architecture
     import os
-    import sys
 
     host_arch = "arm64" if os.uname().machine in ("arm64", "aarch64") else "x86_64"
     arch_name = arch or host_arch

@@ -8,7 +8,6 @@ Tests each KVM ioctl individually to pinpoint the failure.
 
 Usage: python3 scripts/kvm-diagnostic.py
 """
-import ctypes
 import fcntl
 import os
 import struct
@@ -84,11 +83,11 @@ def main():
         sys.exit(1)
     print(f"  [{PASS}] open(/dev/kvm): fd={kvm}")
 
-    api_ver = check("KVM_GET_API_VERSION",
-                     lambda: fcntl.ioctl(kvm, KVM_GET_API_VERSION, 0))
+    check("KVM_GET_API_VERSION",
+          lambda: fcntl.ioctl(kvm, KVM_GET_API_VERSION, 0))
 
-    mmap_size = check("KVM_GET_VCPU_MMAP_SIZE",
-                      lambda: fcntl.ioctl(kvm, KVM_GET_VCPU_MMAP_SIZE, 0))
+    check("KVM_GET_VCPU_MMAP_SIZE",
+          lambda: fcntl.ioctl(kvm, KVM_GET_VCPU_MMAP_SIZE, 0))
 
     # -- Phase 2: capabilities -------------------------------------------
     print()
@@ -120,8 +119,8 @@ def main():
           lambda: fcntl.ioctl(vm1, KVM_SET_IDENTITY_MAP_ADDR,
                               struct.pack("Q", 0xFFFBC000)))
 
-    irqchip_ok = check("KVM_CREATE_IRQCHIP",
-                       lambda: fcntl.ioctl(vm1, KVM_CREATE_IRQCHIP, 0))
+    check("KVM_CREATE_IRQCHIP",
+          lambda: fcntl.ioctl(vm1, KVM_CREATE_IRQCHIP, 0))
 
     check("KVM_CREATE_PIT2",
           lambda: fcntl.ioctl(vm1, KVM_CREATE_PIT2, b"\x00" * 64))

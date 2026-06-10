@@ -10,7 +10,7 @@ import uuid
 
 from pathlib import Path
 
-from .constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
+from .constants import EXEC_READY_TIMEOUT
 from .sign import sign_binary
 from .uds_client import UdsHttpClient
 

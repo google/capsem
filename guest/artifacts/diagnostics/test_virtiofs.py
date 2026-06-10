@@ -8,7 +8,6 @@ These tests verify the VirtioFS single-share hybrid architecture:
 
 import os
 import pathlib
-import subprocess
 
 import pytest
 

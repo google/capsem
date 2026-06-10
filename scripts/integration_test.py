@@ -857,7 +857,7 @@ def verify_session(session_id: str, expect_model_calls: bool) -> bool:
 
     if vm_log_path.exists():
         vm_log_content = vm_log_path.read_text()
-        vm_log_lines = [l for l in vm_log_content.splitlines() if l.strip()]
+        vm_log_lines = [line for line in vm_log_content.splitlines() if line.strip()]
         r.check(
             len(vm_log_lines) >= 3,
             f"{len(vm_log_lines)} entries in process.log",
@@ -954,7 +954,7 @@ def verify_session(session_id: str, expect_model_calls: bool) -> bool:
         jsonl_files = sorted(launch_log_dir.glob("*.jsonl"), key=lambda p: p.name, reverse=True)
         if jsonl_files:
             latest = jsonl_files[0]
-            latest_lines = [l for l in latest.read_text().splitlines() if l.strip()]
+            latest_lines = [line for line in latest.read_text().splitlines() if line.strip()]
             r.check(
                 len(latest_lines) >= 5,
                 f"latest launch log {latest.name} has {len(latest_lines)} entries",
@@ -972,7 +972,7 @@ def verify_session(session_id: str, expect_model_calls: bool) -> bool:
     snap_dir = SESSIONS_DIR / session_id / "auto_snapshots"
     r.check(
         snap_dir.exists(),
-        f"auto_snapshots directory exists",
+        "auto_snapshots directory exists",
         f"auto_snapshots directory NOT found at {snap_dir}",
     )
     if snap_dir.exists():

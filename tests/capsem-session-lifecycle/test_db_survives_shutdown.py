@@ -1,7 +1,6 @@
 """Verify session.db survives clean VM shutdown."""
 
 import shutil
-import sqlite3
 import tempfile
 import uuid
 

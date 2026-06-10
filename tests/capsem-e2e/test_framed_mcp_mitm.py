@@ -7,7 +7,6 @@ vsock:5002 and writes `mcp_calls` from the MITM frame layer.
 
 import base64
 import json
-import os
 import shlex
 import sqlite3
 import subprocess

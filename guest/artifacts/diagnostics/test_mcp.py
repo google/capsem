@@ -846,8 +846,7 @@ def test_snapshots_revert():
     # Create snapshot.
     r = run("snapshots create snap_revert_test --json")
     assert r.returncode == 0, f"create failed: {r.stderr}"
-    data = json.loads(r.stdout)
-    checkpoint = data["checkpoint"]
+    json.loads(r.stdout)
 
     # Modify file.
     r = run("echo snap_modified > /root/snap_revert_test.txt")
@@ -1820,7 +1819,7 @@ def test_scenario_s17_modify_one_dir_other_unchanged():
 def test_scenario_s20_touch_mtime_unchanged():
     """S20: create, snap, touch -m (mtime only), snap -> unchanged (size-based detection)."""
     run("echo s20 > /root/s20.txt")
-    cp1 = _mcp_snap_create("s20_orig")
+    _mcp_snap_create("s20_orig")
     run("touch -m /root/s20.txt")  # change mtime, not content
     cp2 = _mcp_snap_create("s20_touched")
 

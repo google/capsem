@@ -5,7 +5,6 @@ TDD: tests written first (RED), then scaffold.py makes them pass (GREEN).
 
 from __future__ import annotations
 
-import shutil
 from pathlib import Path
 
 import pytest

@@ -1,6 +1,5 @@
 """Verify service handles orphaned VM processes after restart."""
 
-import signal
 import uuid
 
 import pytest

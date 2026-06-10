@@ -81,7 +81,6 @@ class TestServiceStartup:
         boot timeouts.
         """
         import os
-        import signal
         import time
 
         svc = ServiceInstance()

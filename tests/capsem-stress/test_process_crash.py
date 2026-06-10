@@ -7,7 +7,7 @@ import uuid
 
 import pytest
 
-from helpers.service import ServiceInstance, wait_exec_ready
+from helpers.service import ServiceInstance
 
 pytestmark = pytest.mark.stress
 

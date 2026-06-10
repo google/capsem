@@ -7,7 +7,6 @@ never touch the developer's real config.
 """
 
 import re
-from pathlib import Path
 
 import pytest
 

@@ -5,10 +5,7 @@ Uses mock UDS with a WebSocket echo server to verify relay behavior.
 """
 
 import asyncio
-import json
 import os
-import socket
-import subprocess
 import tempfile
 import threading
 import time

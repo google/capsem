@@ -7,9 +7,8 @@ Build execution tests mock run_cmd (single subprocess seam) -- no Docker needed.
 import json
 import re
 import shutil
-import subprocess
 from pathlib import Path
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -17,6 +16,7 @@ from capsem.builder.config import load_guest_config
 from capsem.builder.models import ErofsConfig
 from capsem.builder.docker import (
     BUILD_LEDGER_NAME,
+    FALLBACK_KERNEL_VERSION,
     GUEST_BINARIES,
     ROOTFS_SCRIPTS,
     _append_build_ledger,
@@ -25,10 +25,22 @@ from capsem.builder.docker import (
     build_version_script,
     build_image,
     container_compile_agent,
+    create_erofs,
     cross_compile_agent,
+    detect_runtime,
+    docker_build,
+    experimental_erofs_build_config,
+    export_container_fs,
     extract_tool_versions,
+    extract_kernel_assets,
     generate_build_context,
+    generate_checksums,
+    get_project_version,
+    is_ci,
+    prepare_build_context,
     render_dockerfile,
+    resolve_kernel_version,
+    sync_container_clock,
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -467,7 +479,7 @@ class TestEdgeCases:
 
     def test_no_python_packages(self, real_config):
         """Removing python package set still renders."""
-        from capsem.builder.models import BuildConfig, GuestImageConfig
+        from capsem.builder.models import GuestImageConfig
 
         minimal = GuestImageConfig(
             build=real_config.build,
@@ -505,24 +517,6 @@ class TestEdgeCases:
 # ---------------------------------------------------------------------------
 # Build execution: resolve_kernel_version
 # ---------------------------------------------------------------------------
-
-
-from capsem.builder.docker import (
-    FALLBACK_KERNEL_VERSION,
-    create_erofs,
-    detect_runtime,
-    docker_build,
-    experimental_erofs_build_config,
-    export_container_fs,
-    extract_kernel_assets,
-    generate_checksums,
-    get_project_version,
-    is_ci,
-    prepare_build_context,
-    resolve_kernel_version,
-    run_cmd,
-    sync_container_clock,
-)
 
 
 class TestResolveKernelVersion:
@@ -808,7 +802,6 @@ class TestBuildVersionScript:
 
     def test_disabled_provider_excluded(self, real_config):
         """Disabled AI providers are not included in the version script."""
-        from capsem.builder.models import GuestImageConfig
         # Create config with all providers disabled
         disabled_providers = {}
         for key, prov in real_config.ai_providers.items():
@@ -1710,7 +1703,7 @@ class TestRootfsArtifactConstants:
             assert f"COPY {artifact} " in rendered_arm64, (
                 f"{artifact} missing COPY line in Dockerfile.rootfs.j2"
             )
-            assert f"chmod" in rendered_arm64 and artifact in rendered_arm64, (
+            assert "chmod" in rendered_arm64 and artifact in rendered_arm64, (
                 f"{artifact} missing chmod line in Dockerfile.rootfs.j2"
             )
 

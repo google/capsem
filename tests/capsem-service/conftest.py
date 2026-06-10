@@ -1,6 +1,5 @@
 """Shared fixtures for capsem-service HTTP API integration tests."""
 
-import uuid
 
 import pytest
 

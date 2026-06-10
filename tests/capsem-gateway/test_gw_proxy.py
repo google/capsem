@@ -3,7 +3,6 @@
 Verifies that requests are correctly proxied from TCP to UDS.
 """
 
-import json
 import subprocess
 
 import pytest

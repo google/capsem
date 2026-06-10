@@ -817,8 +817,6 @@ def generate_mock_ts(
     lines.append("}")
     lines.append("")
 
-    # -- MCP mock data --
-    mcp_servers = defaults.get("mcp", {})
     tools = mcp_tools or []
 
     lines.append("// ---------------------------------------------------------------------------")
@@ -857,9 +855,9 @@ def generate_mock_ts(
         lines.append(f"    description: {_ts_value(desc)},")
         lines.append(f"    server_name: {_ts_value(tool.get('server_name', 'builtin'))},")
         lines.append(f"    annotations: {ann_ts},")
-        lines.append(f"    pin_hash: null,")
-        lines.append(f"    approved: true,")
-        lines.append(f"    pin_changed: false,")
+        lines.append("    pin_hash: null,")
+        lines.append("    approved: true,")
+        lines.append("    pin_changed: false,")
         lines.append("  },")
     lines.append("];")
     lines.append("")

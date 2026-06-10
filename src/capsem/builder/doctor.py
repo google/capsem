@@ -102,7 +102,7 @@ def check_container_resources() -> CheckResult | None:
             cpus = data.get("NCPU", 0)
             memory_mb = memory_bytes // (1024 * 1024)
             return _check_resources("Colima", memory_mb, cpus,
-                fix=f"colima stop && colima start --memory 8 --cpu 8")
+                fix="colima stop && colima start --memory 8 --cpu 8")
     except Exception:
         pass
 
@@ -271,10 +271,7 @@ def check_guest_config(guest_dir: Path) -> CheckResult:
             fix=f"capsem-builder init {guest_dir}",
         )
 
-    try:
-        import tomllib
-    except ModuleNotFoundError:
-        import tomli as tomllib  # type: ignore[no-redef]
+    import tomllib
 
     try:
         with open(build_toml, "rb") as f:

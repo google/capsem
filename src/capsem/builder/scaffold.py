@@ -8,13 +8,9 @@ a new image directory by selecting components from a base config.
 from __future__ import annotations
 
 import shutil
+import tomllib
 from datetime import date
 from pathlib import Path
-
-try:
-    import tomllib
-except ModuleNotFoundError:
-    import tomli as tomllib  # type: ignore[no-redef]
 
 
 # ---------------------------------------------------------------------------

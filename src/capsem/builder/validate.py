@@ -347,9 +347,7 @@ def _validate_artifacts(
     a new artifact.
     """
     from capsem.builder.docker import (
-        ROOTFS_SCRIPTS,
         ROOTFS_SCRIPT_DIRS,
-        ROOTFS_SUPPORT_FILES,
     )
 
     # E301: CA certificate

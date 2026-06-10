@@ -3,7 +3,6 @@
 GET /status returns aggregated system health for tray polling.
 """
 
-import time
 
 import pytest
 

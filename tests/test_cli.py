@@ -7,7 +7,6 @@ Uses Click's CliRunner for isolated command testing.
 from __future__ import annotations
 
 import json
-import textwrap
 from pathlib import Path
 
 import pytest

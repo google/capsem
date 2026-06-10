@@ -4,10 +4,7 @@ Verifies the gateway handles parallel requests correctly through the
 real binary process (not just Rust unit tests).
 """
 
-import json
-import subprocess
 import threading
-import time
 
 import pytest
 

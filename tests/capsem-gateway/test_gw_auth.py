@@ -3,7 +3,6 @@
 All endpoints except GET / require a valid Bearer token.
 """
 
-import json
 import subprocess
 
 import pytest

@@ -23,8 +23,8 @@ def test_resume_after_neighbor_delete():
         client.post("/vms/create", {"name": vm_a, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
         client.post("/vms/create", {"name": vm_b, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
 
-        assert wait_exec_ready(client, vm_a), f"VM-A never exec-ready"
-        assert wait_exec_ready(client, vm_b), f"VM-B never exec-ready"
+        assert wait_exec_ready(client, vm_a), "VM-A never exec-ready"
+        assert wait_exec_ready(client, vm_b), "VM-B never exec-ready"
 
         # Write a file in VM-A
         client.post(f"/vms/{vm_a}/files/write", {

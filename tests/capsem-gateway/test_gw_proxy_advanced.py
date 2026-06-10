@@ -4,7 +4,6 @@ Tests binary responses, large bodies, endpoint coverage, and edge cases
 through the real gateway binary against the mock UDS service.
 """
 
-import json
 import subprocess
 import tempfile
 import os
@@ -135,10 +134,9 @@ class TestProxyEdgeCases:
 
     def test_empty_post_body(self, gw_client):
         """POST with empty body is forwarded correctly."""
-        resp = gw_client.post("/echo", None)
+        gw_client.post("/echo", None)
         # Mock echoes back the body -- empty body returns empty or None
         # The key thing: no crash
-        assert True  # If we get here, no crash
 
     def test_json_post_with_nested_data(self, gw_client):
         """POST with nested JSON is forwarded correctly."""

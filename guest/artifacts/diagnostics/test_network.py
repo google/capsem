@@ -5,7 +5,6 @@ the exact layer that broke.
 """
 
 import os
-import subprocess
 from urllib.parse import urlsplit
 
 import pytest
@@ -308,10 +307,10 @@ def test_curl_verbose_diagnostics():
     lines = result.stdout.strip().split('\n') if result.stdout else []
     info = {
         "exit_code": result.returncode,
-        "connected": any("Connected to" in l for l in lines),
-        "ssl_handshake": any("SSL connection" in l for l in lines),
-        "http_response": any("HTTP/" in l for l in lines),
-        "error_lines": [l for l in lines if "error" in l.lower()],
+        "connected": any("Connected to" in line for line in lines),
+        "ssl_handshake": any("SSL connection" in line for line in lines),
+        "http_response": any("HTTP/" in line for line in lines),
+        "error_lines": [line for line in lines if "error" in line.lower()],
     }
     # If curl failed, print the full trace as the assertion message.
     if result.returncode != 0:

@@ -1,11 +1,9 @@
 """Verify no zombie processes after creating and deleting VMs."""
 
-import subprocess
 import uuid
 
 import pytest
 
-from helpers.service import wait_exec_ready
 
 pytestmark = pytest.mark.cleanup
 
@@ -25,13 +23,6 @@ def test_no_zombie_after_bulk_delete(cleanup_env):
 
     import time
     time.sleep(3)
-
-    # Check for capsem-process zombies
-    result = subprocess.run(
-        ["pgrep", "-f", "capsem-process"],
-        capture_output=True, text=True,
-    )
-    pids = result.stdout.strip().split("\n") if result.stdout.strip() else []
 
     # Filter: the service's own process binary doesn't count,
     # we only care about per-VM capsem-process instances.

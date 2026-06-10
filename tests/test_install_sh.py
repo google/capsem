@@ -14,7 +14,6 @@ import subprocess
 import textwrap
 from pathlib import Path
 
-import pytest
 
 INSTALL_SH = Path(__file__).parent.parent / "site" / "public" / "install.sh"
 

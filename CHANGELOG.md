@@ -82,6 +82,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   EROFS, kernel assets, tool-version output, compression settings, git revision,
   and project version; release CI uploads the ledger separately for retraceable
   failures.
+- Added Python quality gates: Ruff now runs across the repository, and `ty`
+  type-checks `src/capsem` in CI plus the local `just test`/`just smoke`
+  fast-fail stages.
 
 ### Added (benchmarks)
 - Added a deterministic `/model/response` fixture to `capsem-debug-upstream`

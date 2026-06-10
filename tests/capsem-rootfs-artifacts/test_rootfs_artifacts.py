@@ -1,6 +1,5 @@
 """Verify rootfs artifacts are consistent across build context, Dockerfile, and doctor checks."""
 
-import importlib
 import tempfile
 
 import pytest

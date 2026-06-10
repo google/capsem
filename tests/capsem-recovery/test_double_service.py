@@ -1,7 +1,5 @@
 """Verify only one service can bind to a socket at a time."""
 
-import subprocess
-import time
 
 import pytest
 

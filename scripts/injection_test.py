@@ -16,7 +16,6 @@ import os
 import subprocess
 import sys
 import tempfile
-from pathlib import Path
 
 BOLD = "\033[1m"
 DIM = "\033[2m"

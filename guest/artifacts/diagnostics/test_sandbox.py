@@ -1,12 +1,10 @@
 """Sandbox security tests -- validates the VM's isolation model."""
 
 import os
-import subprocess
 import time
 
 import pytest
 
-import pytest
 
 from conftest import run
 
@@ -213,13 +211,9 @@ def test_allowed_domain():
     elif "10.0.0.1" in r.stdout:
         errors.append(f"DNS: still resolving to dnsmasq sentinel 10.0.0.1: {r.stdout.strip()}")
     else:
-        # Capture the real IP for the rest of the steps.
         parts = r.stdout.split()
-        if parts:
-            real_ip = parts[0]
-        else:
+        if not parts:
             errors.append(f"DNS: empty getent output: {r.stdout!r}")
-            real_ip = None
 
     # If DNS failed entirely there's no point running TCP/TLS steps.
     if not errors:
@@ -228,7 +222,7 @@ def test_allowed_domain():
         r = run(
             "python3 -c \""
             "import socket; s=socket.socket(); s.settimeout(5); "
-            f"s.connect(('elie.net', 443)); "
+            "s.connect(('elie.net', 443)); "
             "print('TCP_OK'); s.close()\"",
             timeout=10,
         )
@@ -367,7 +361,7 @@ def test_swap_active():
     is_virtiofs = "virtiofs" in mount_result.stdout
     result = run("cat /proc/swaps")
     assert result.returncode == 0
-    swap_lines = [l for l in result.stdout.strip().split('\n') if l.strip()]
+    swap_lines = [line for line in result.stdout.strip().split('\n') if line.strip()]
     if is_virtiofs:
         # VirtioFS mode: no swap file expected.
         assert len(swap_lines) <= 1, \

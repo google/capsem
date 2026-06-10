@@ -12,10 +12,15 @@ import pytest
 
 from .conftest import (
     CAPSEM_DIR,
+    run_capsem,
 )
 
 CORP_TOML = CAPSEM_DIR / "corp.toml"
 SYSTEM_CORP = Path("/etc/capsem/corp.toml")
+VALID_CORP_CONTENT = (
+    '[settings]\n'
+    '"repository.providers.github.allow" = { value = true, modified = "2024-01-01T00:00:00Z" }\n'
+)
 
 
 class TestCorpPrecedence:
@@ -45,7 +50,7 @@ class TestCorpPrecedence:
 
         try:
             # System corp should win per-key; user corp can still provide other keys.
-            result = run_capsem("service", "status", timeout=10)
+            run_capsem("service", "status", timeout=10)
             # We can't easily verify merge from CLI output, but the test validates
             # the file layout is correct for the resolver
             assert SYSTEM_CORP.exists()

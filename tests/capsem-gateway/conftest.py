@@ -21,7 +21,6 @@ what the service should return, you're in the wrong directory.
 
 import json
 import os
-import socket
 import socketserver
 import tempfile
 import threading

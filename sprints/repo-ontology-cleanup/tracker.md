@@ -50,6 +50,10 @@
   compression settings, git revision, and project version.
 - [ ] S1: Extend build record to include profile and profile-owned payload
   files after the profile ledger hash schema lands.
+- [x] Tooling: Add Ruff as a full-repository Python lint gate.
+- [x] Tooling: Add `ty` as a Python source type-check gate for `src/capsem`.
+- [ ] Tooling: Burn full-tree `ty` debt for guest payloads/scripts/tests after
+  guest dependency paths and dynamic test helper types are normalized.
 - [ ] S1: Delete/rewrite Python builder scaffolding and product config models.
 - [ ] S1: Replace `GuestImageConfig` with backend-only image spec.
 - [ ] S1: Remove settings/default generation from guest image config.
@@ -132,11 +136,19 @@
   as `vm-build-ledger-<arch>` even on failed builds. This is not the full
   profile payload hash contract yet; that remains open until `profile.toml`
   owns file hashes.
+- Python tooling slice: Ruff is enabled for the full tree and has cleaned stale
+  unused imports/dead assignments/undefined names. `ty check src/capsem` passes
+  and is wired into CI/local gates. Full-tree `ty check .` still reports
+  existing guest/test typing debt, mostly guest-only dependencies (`rich`,
+  `fastmcp`, `capsem_bench` path setup) and dynamic tests; do not expand the
+  gate until that debt is burned deliberately.
 
 ## Coverage Ledger
 
 - Unit/contract: pending path resolver, profile file hash tests, MCP JSON parser
   tests, package file parser tests, and profile-root parser tests.
+- Tooling: `uv run ruff check .` and `uv run ty check src/capsem` are the
+  current Python quality gates.
 - Functional: pending `capsem-admin image verify` and profile materialization.
 - Auditability: backend build-ledger tests prove JSONL emission for rendered
   Dockerfile/build-context hashes, rootfs tar, EROFS, kernel assets, and tool

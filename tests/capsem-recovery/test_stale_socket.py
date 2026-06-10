@@ -1,7 +1,5 @@
 """Verify service starts cleanly when a stale socket exists."""
 
-import os
-import tempfile
 
 import pytest
 

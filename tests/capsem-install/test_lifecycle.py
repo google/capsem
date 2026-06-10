@@ -7,14 +7,12 @@ state-file conflicts, and service-restart races.
 
 from __future__ import annotations
 
-from pathlib import Path
 
 import pytest
 
 from .conftest import (
     CAPSEM_DIR,
     INSTALL_DIR,
-    RUN_DIR,
     run_capsem,
 )
 

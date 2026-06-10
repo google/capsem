@@ -26,7 +26,7 @@ class TestGuestFilesystem:
         client, name = guest_env
         resp = client.post(f"/vms/{name}/exec", {"command": "test -d /root && echo exists || echo missing"})
         stdout = resp.get("stdout", "") if resp else ""
-        assert "exists" in stdout, f"Workspace dir /root not found"
+        assert "exists" in stdout, "Workspace dir /root not found"
 
     def test_bin_writable_ephemeral(self, guest_env):
         """Overlay allows ephemeral writes to system paths like /bin."""

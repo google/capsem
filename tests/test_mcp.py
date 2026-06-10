@@ -8,10 +8,8 @@ from __future__ import annotations
 
 import io
 import json
-import textwrap
 from pathlib import Path
 
-import pytest
 
 from capsem.builder.mcp_server import BuilderMcpServer
 
@@ -259,7 +257,11 @@ class TestMcpProtocol:
         output_stream = io.StringIO()
         server = BuilderMcpServer(input_stream=input_stream, output_stream=output_stream)
         server.run()
-        responses = [json.loads(l) for l in output_stream.getvalue().strip().splitlines() if l.strip()]
+        responses = [
+            json.loads(line)
+            for line in output_stream.getvalue().strip().splitlines()
+            if line.strip()
+        ]
         assert responses[0]["error"]["code"] == -32700
 
     def test_missing_method(self):

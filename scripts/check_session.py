@@ -3,7 +3,6 @@
 
 import argparse
 import gzip
-import json
 import os
 import sqlite3
 import sys

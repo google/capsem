@@ -6,18 +6,14 @@ All subprocess/shutil calls are mocked -- no real tools needed to run tests.
 
 from __future__ import annotations
 
-import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
 
 from capsem.builder.doctor import (
-    MAX_CLOCK_SKEW_SECONDS,
     CheckResult,
     check_b3sum,
     check_container_clock,
-    check_container_resources,
     check_container_runtime,
     check_cross_target,
     check_guest_config,
@@ -357,7 +353,7 @@ class TestCheckSourceFiles:
         assert result.passed is False
         assert "capsem-init" in result.detail
 
-    def test_missing_snapshots(self, tmp_path):
+    def test_missing_snapshots_with_helper_fixture(self, tmp_path):
         artifacts = tmp_path / "guest" / "artifacts"
         artifacts.mkdir(parents=True)
         security_keys = tmp_path / "security" / "keys"

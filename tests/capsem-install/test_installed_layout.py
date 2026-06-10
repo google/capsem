@@ -22,7 +22,6 @@ import json
 import os
 import subprocess
 import tomllib
-from pathlib import Path
 
 import pytest
 
@@ -33,7 +32,6 @@ from .conftest import (
     INSTALL_DIR,
     RUN_DIR,
     run_capsem,
-    get_build_hash,
 )
 
 

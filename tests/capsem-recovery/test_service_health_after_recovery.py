@@ -1,6 +1,5 @@
 """Verify service is fully functional after recovering from bad state."""
 
-import signal
 import uuid
 
 import pytest

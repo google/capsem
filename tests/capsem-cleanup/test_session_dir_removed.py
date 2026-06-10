@@ -4,7 +4,6 @@ import uuid
 
 import pytest
 
-from pathlib import Path
 
 from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
 from helpers.service import wait_exec_ready

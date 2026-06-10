@@ -1,11 +1,9 @@
 """Verify service handles stale instance sockets on startup."""
 
-import os
 import uuid
 
 import pytest
 
-from pathlib import Path
 
 from helpers.service import ServiceInstance
 

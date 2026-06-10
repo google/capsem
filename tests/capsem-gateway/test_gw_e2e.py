@@ -4,13 +4,12 @@ These tests boot real VMs through the gateway TCP endpoint.
 Requires capsem-service binary, VM assets, and codesigned binaries.
 """
 
-import uuid
 
 import pytest
 
 from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT, EXEC_TIMEOUT_SECS, HTTP_TIMEOUT
 from helpers.gateway import GatewayInstance, TcpHttpClient
-from helpers.service import ServiceInstance, wait_exec_ready, vm_name
+from helpers.service import ServiceInstance, vm_name
 
 pytestmark = [pytest.mark.gateway, pytest.mark.e2e]
 

@@ -3,7 +3,6 @@
 Browser fetch needs CORS headers or requests fail.
 """
 
-import json
 import subprocess
 
 import pytest

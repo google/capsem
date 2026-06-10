@@ -13,7 +13,6 @@ Skipped cleanly on any machine without `dpkg-deb` on PATH (macOS default);
 executed in Linux CI and inside the capsem-install-test container.
 """
 
-import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -225,7 +224,7 @@ def test_version_is_preserved_for_downgrade_and_same_version_reinstall(tmp_path)
     extracted = _deb_contents(output, tmp_path / "extracted")
     control = (extracted / "DEBIAN" / "control").read_text()
     version_line = next(
-        (l for l in control.splitlines() if l.startswith("Version:")),
+        (line for line in control.splitlines() if line.startswith("Version:")),
         None,
     )
     assert version_line is not None, f"no Version: line in control: {control!r}"

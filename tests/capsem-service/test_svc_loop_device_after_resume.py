@@ -120,11 +120,11 @@ class TestLoopDeviceAfterResume:
             _exec(client, resumed, "ls /tmp /etc /var /opt /usr/local > /dev/null 2>&1; sync")
 
             post = _dmesg_offending_lines(client, resumed)
-            new_errors = [l for l in post if l not in pre]
+            new_errors = [line for line in post if line not in pre]
             assert not new_errors, (
                 "System-overlay EXT4 errors NEW after suspend/resume "
                 "(see sprints/done/virtio-blk-overlay-migration/ISSUE.md):\n"
-                + "\n".join(f"  {l}" for l in new_errors[:10])
+                + "\n".join(f"  {line}" for line in new_errors[:10])
             )
         finally:
             client.delete(f"/vms/{name}/delete")

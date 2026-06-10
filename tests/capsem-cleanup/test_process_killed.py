@@ -1,7 +1,6 @@
 """Verify VM process is killed after delete."""
 
 import os
-import signal
 import uuid
 
 import pytest

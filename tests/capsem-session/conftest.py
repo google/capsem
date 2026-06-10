@@ -1,7 +1,6 @@
 """Shared fixtures for session.db telemetry tests."""
 
 import sqlite3
-import time
 import uuid
 
 import pytest

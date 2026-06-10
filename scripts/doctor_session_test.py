@@ -18,7 +18,6 @@ import argparse
 import gzip
 import json
 import os
-import re
 import sqlite3
 import subprocess
 import sys
@@ -339,7 +338,7 @@ def verify_session(session_id: str) -> bool:
 
     if vm_log_path.exists():
         vm_log_content = vm_log_path.read_text()
-        vm_log_lines = [l for l in vm_log_content.splitlines() if l.strip()]
+        vm_log_lines = [line for line in vm_log_content.splitlines() if line.strip()]
         r.check(
             len(vm_log_lines) >= 3,
             f"{len(vm_log_lines)} entries in process.log",

@@ -3,11 +3,9 @@
 Provides a VM fixture for in-guest security checks via exec.
 """
 
-import uuid
 import pytest
 
-from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB
-from helpers.service import ServiceInstance, wait_exec_ready
+from helpers.service import ServiceInstance
 
 pytestmark = pytest.mark.security
 

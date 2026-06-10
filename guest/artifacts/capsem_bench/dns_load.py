@@ -48,6 +48,7 @@ import random
 import socket
 import struct
 import time
+import unittest
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from .load_harness import (
@@ -263,10 +264,6 @@ def dns_load_bench(qname=None, qtype=None, concurrency_levels=None, duration_s=N
 # Run via:
 #   python -m unittest guest.artifacts.capsem_bench.dns_load
 # -------------------------------------------------------------------
-
-import unittest
-
-
 class DnsLoadEncodingTests(unittest.TestCase):
     def test_encode_qname_simple(self):
         self.assertEqual(
