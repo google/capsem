@@ -209,6 +209,19 @@
   from the profile before invoking `capsem-builder`. This is the transition
   rail; the backend still has a `guest_dir` argument and must be burned down to
   an explicit image spec in S1.
+- Real arm64 rootfs build slice:
+  `cargo run -p capsem-admin -- image build --profile
+  config/profiles/code/profile.toml --config-root config --guest-dir guest
+  --output assets --arch arm64 --template rootfs` succeeded through the
+  profile-materialized workspace and produced EROFS/LZ4HC level 12
+  `assets/arm64/rootfs.erofs` with BLAKE3
+  `07e615c6254400317ed9da735f7032ea737719b72a058f0a871d6a027b85e63e`, size
+  `862875648`. The profile asset pins were reconciled to the generated
+  manifest for arm64 `initrd.img` and `rootfs.erofs`.
+- Installer proof: the first real Docker build failed because downloaded
+  installer scripts were executed with `/bin/sh`; the profile `install.sh` now
+  invokes them with Bash. The retry installed Claude Code `2.1.170` and
+  Antigravity CLI `1.0.7` during the rootfs build.
 - Verification for this slice:
   - `cargo test -p capsem-core --lib -- --nocapture` passed with 1506 tests,
     1 ignored.
@@ -253,6 +266,11 @@
   `config/profiles/<profile_id>/root/`.
 - E2E/VM: pending real rebuilt-profile boot and `capsem-doctor` proof that
   seeded files exist in runtime `/root`.
+- Asset build: arm64 rootfs rebuild through `capsem-admin image build` passed,
+  and `cargo run -p capsem-admin -- image verify --profile
+  config/profiles/code/profile.toml --config-root config --output assets
+  --manifest assets/manifest.json --arch arm64 --json` passed for vmlinuz,
+  initrd, and rootfs pins.
 - Linux/KVM: local macOS cannot execute KVM tests. Attempted
   `cargo check -p capsem-core --target x86_64-unknown-linux-gnu`, blocked
   because the target is not installed; attempted
