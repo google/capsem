@@ -9,10 +9,10 @@ use capsem_core::poll::{poll_until, PollOpts};
 use capsem_core::{
     mcp::policy::{McpManualServer, McpUserConfig},
     net::policy_config::{
-        CompiledSecurityRule, DetectionLevel, ProfileAssetDescriptor, ProfileCatalog,
+        CompiledSecurityRule, DetectionLevel, Profile, ProfileAssetDescriptor, ProfileCatalog,
         ProfileCatalogSource, ProfileConfigFile, ProviderRuleProfile, SecurityPluginConfig,
-        SecurityPluginMode, SecurityRule, SecurityRuleGroup, SecurityRuleProfile, SecurityRuleSet,
-        SecurityRuleSource, SettingsFile,
+        SecurityPluginMode, SecurityRule, SecurityRuleAction, SecurityRuleGroup,
+        SecurityRuleProfile, SecurityRuleSet, SecurityRuleSource, SettingsFile,
     },
     security_engine::{
         FileSecurityEvent, RuntimeSecurityEventType, SecurityActionRegistry, SecurityEmitError,
@@ -247,9 +247,9 @@ struct PluginUpdate {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct McpToolEditRequest {
-    #[serde(default)]
-    approved: Option<bool>,
+    pub action: SecurityRuleAction,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1199,6 +1199,13 @@ impl ServiceState {
     }
 
     fn profile_config(&self, profile_id: &str) -> Result<ProfileConfigFile> {
+        #[cfg(test)]
+        let catalog = if std::env::var_os("CAPSEM_PROFILES_DIR").is_none() {
+            ProfileCatalog::builtin()
+        } else {
+            ProfileCatalog::load_default().map_err(|e| anyhow!("load profile catalog: {e}"))?
+        };
+        #[cfg(not(test))]
         let catalog =
             ProfileCatalog::load_default().map_err(|e| anyhow!("load profile catalog: {e}"))?;
         catalog
@@ -3455,6 +3462,7 @@ async fn handle_save_settings(
     Ok(Json(serde_json::to_value(resp).unwrap_or_default()))
 }
 
+#[cfg(test)]
 fn profile_asset_status_value(
     state: &ServiceState,
     profile: &ProfileConfigFile,
@@ -3516,6 +3524,88 @@ fn profile_asset_status_value(
         "downloading": reconcile.in_progress,
         "current_arch": current_arch,
         "assets": assets,
+    });
+    append_asset_reconcile_status(&mut value, &reconcile);
+    value
+}
+
+fn profile_status_value(state: &ServiceState, profile: &Profile) -> serde_json::Value {
+    let reconcile = state
+        .asset_reconcile
+        .lock()
+        .map(|s| s.clone())
+        .unwrap_or_default();
+    let current_arch = capsem_core::net::policy_config::current_profile_arch();
+    let status = profile.status(&state.assets_dir, current_arch);
+    let config = profile.config();
+    let assets = status
+        .assets
+        .iter()
+        .map(|asset| {
+            json!({
+                "arch": asset.arch,
+                "kind": asset.kind,
+                "name": asset.path.file_name().and_then(|name| name.to_str()).unwrap_or("asset"),
+                "path": asset.path.display().to_string(),
+                "status": if !asset.present { "missing" } else if !asset.valid { "invalid" } else { "present" },
+                "present": asset.present,
+                "valid": asset.valid,
+                "expected_hash": asset.expected_hash,
+                "expected_size": asset.expected_size,
+                "actual_hash": asset.actual_hash,
+                "actual_size": asset.actual_size,
+            })
+        })
+        .collect::<Vec<_>>();
+    let files = status
+        .files
+        .iter()
+        .map(|file| {
+            json!({
+                "kind": file.kind,
+                "path": file.path.display().to_string(),
+                "status": if !file.present { "missing" } else if !file.valid { "invalid" } else { "present" },
+                "present": file.present,
+                "valid": file.valid,
+                "expected_hash": file.expected_hash,
+                "expected_size": file.expected_size,
+                "actual_hash": file.actual_hash,
+                "actual_size": file.actual_size,
+            })
+        })
+        .collect::<Vec<_>>();
+    let missing_assets = status
+        .assets
+        .iter()
+        .filter(|asset| !asset.present)
+        .map(|asset| json!({ "kind": asset.kind, "path": asset.path.display().to_string(), "valid": asset.valid }))
+        .collect::<Vec<_>>();
+    let invalid_assets = status
+        .assets
+        .iter()
+        .filter(|asset| !asset.valid)
+        .map(|asset| json!({ "kind": asset.kind, "path": asset.path.display().to_string(), "present": asset.present, "valid": asset.valid }))
+        .collect::<Vec<_>>();
+    let invalid_files = status
+        .files
+        .iter()
+        .filter(|file| !file.valid)
+        .map(|file| json!({ "kind": file.kind, "path": file.path.display().to_string(), "present": file.present, "valid": file.valid }))
+        .collect::<Vec<_>>();
+    let mut value = json!({
+        "profile_id": config.id,
+        "revision": config.revision,
+        "profile_payload_hash": profile_payload_hash(config).ok(),
+        "manifest": asset_manifest_status_value(state),
+        "ready": status.ready,
+        "downloading": reconcile.in_progress,
+        "current_arch": current_arch,
+        "files": files,
+        "invalid_files": invalid_files,
+        "assets": assets,
+        "missing_assets": missing_assets,
+        "invalid_assets": invalid_assets,
+        "errors": status.errors,
     });
     append_asset_reconcile_status(&mut value, &reconcile);
     value
@@ -4063,8 +4153,8 @@ async fn handle_profile_assets_status(
     Path(profile_id): Path<String>,
     State(state): State<Arc<ServiceState>>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let profile = profile_manifest_for_route(profile_id)?;
-    Ok(Json(profile_asset_status_value(&state, &profile)))
+    let profile = profile_for_route(profile_id)?;
+    Ok(Json(profile_status_value(&state, &profile)))
 }
 
 /// POST /profiles/{profile_id}/assets/ensure -- download missing/corrupt
@@ -4074,9 +4164,9 @@ async fn handle_profile_assets_ensure(
     Path(profile_id): Path<String>,
     State(state): State<Arc<ServiceState>>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let profile = profile_manifest_for_route(profile_id)?;
-    let ensure_result = ensure_profile_assets_for_state(Arc::clone(&state), &profile).await;
-    let mut status = profile_asset_status_value(&state, &profile);
+    let profile = profile_for_route(profile_id)?;
+    let ensure_result = ensure_profile_assets_for_state(Arc::clone(&state), profile.config()).await;
+    let mut status = profile_status_value(&state, &profile);
     if let Some(obj) = status.as_object_mut() {
         match ensure_result {
             Ok(downloaded) => {
@@ -4216,6 +4306,12 @@ async fn handle_corp_reload(
 // ---------------------------------------------------------------------------
 
 fn load_profile_catalog_for_service() -> Result<ProfileCatalog, AppError> {
+    #[cfg(test)]
+    {
+        if std::env::var_os("CAPSEM_PROFILES_DIR").is_none() {
+            return Ok(ProfileCatalog::builtin());
+        }
+    }
     ProfileCatalog::load_default().map_err(|error| {
         AppError(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -4231,6 +4327,66 @@ fn profile_catalog_source_label(source: &ProfileCatalogSource) -> String {
     }
 }
 
+fn builtin_profile_config_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../config")
+        .components()
+        .collect()
+}
+
+fn profile_from_catalog_entry(
+    profile: &ProfileConfigFile,
+    source: &ProfileCatalogSource,
+) -> Result<Profile, AppError> {
+    let (config_root, profile_dir) = match source {
+        ProfileCatalogSource::BuiltIn => {
+            let config_root = builtin_profile_config_root();
+            let profile_dir = config_root.join("profiles").join(&profile.id);
+            (config_root, profile_dir)
+        }
+        ProfileCatalogSource::Directory(profiles_dir) => {
+            let config_root = profiles_dir.parent().ok_or_else(|| {
+                AppError(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!(
+                        "profile directory {} must be under a config root",
+                        profiles_dir.display()
+                    ),
+                )
+            })?;
+            (config_root.to_path_buf(), profiles_dir.join(&profile.id))
+        }
+    };
+    Profile::from_config(config_root, profile_dir, profile.clone()).map_err(|error| {
+        AppError(
+            StatusCode::BAD_REQUEST,
+            format!("invalid profile {}: {error}", profile.id),
+        )
+    })
+}
+
+fn profile_for_route(profile_id: String) -> Result<Profile, AppError> {
+    let profile_id = validate_profile_route_id(profile_id)?;
+    let catalog = load_profile_catalog_for_service()?;
+    let profile = catalog.get(&profile_id).ok_or_else(|| {
+        AppError(
+            StatusCode::NOT_FOUND,
+            format!("profile not found: {profile_id}"),
+        )
+    })?;
+    match catalog.source() {
+        ProfileCatalogSource::Directory(profiles_dir) => {
+            Profile::load_from_dir(profiles_dir.join(&profile_id)).map_err(|error| {
+                AppError(
+                    StatusCode::BAD_REQUEST,
+                    format!("invalid profile {profile_id}: {error}"),
+                )
+            })
+        }
+        ProfileCatalogSource::BuiltIn => profile_from_catalog_entry(profile, catalog.source()),
+    }
+}
+
 fn profile_catalog_status_value(
     state: &ServiceState,
     catalog: &ProfileCatalog,
@@ -4238,17 +4394,20 @@ fn profile_catalog_status_value(
     let profiles = catalog
         .profiles()
         .map(|profile| {
-            let status = profile_asset_status_value(state, profile);
-            let missing = status["assets"]
-                .as_array()
-                .map(|assets| {
-                    assets
-                        .iter()
-                        .filter(|asset| asset["status"] == "missing")
-                        .filter_map(|asset| asset["name"].as_str().map(str::to_string))
-                        .collect::<Vec<_>>()
-                })
-                .unwrap_or_default();
+            let status = profile_from_catalog_entry(profile, catalog.source())
+                .map(|profile| profile_status_value(state, &profile))
+                .unwrap_or_else(|error| {
+                    json!({
+                        "ready": false,
+                        "current_arch": capsem_core::net::policy_config::current_profile_arch(),
+                        "assets": [],
+                        "missing_assets": [],
+                        "invalid_assets": [],
+                        "invalid_files": [],
+                        "errors": [error.1],
+                    })
+                });
+            let missing = status["missing_assets"].clone();
             json!({
                 "id": profile.id,
                 "name": profile.name,
@@ -4258,6 +4417,9 @@ fn profile_catalog_status_value(
                 "ready": status["ready"].as_bool().unwrap_or(false),
                 "current_arch": status["current_arch"].clone(),
                 "missing_assets": missing,
+                "invalid_assets": status["invalid_assets"].clone(),
+                "invalid_files": status["invalid_files"].clone(),
+                "errors": status["errors"].clone(),
                 "asset_count": status["assets"].as_array().map_or(0, Vec::len),
             })
         })
@@ -4767,6 +4929,40 @@ fn validate_mcp_server_edit_request(
     Ok(())
 }
 
+fn unix_timestamp_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as i64)
+        .unwrap_or_default()
+}
+
+async fn write_profile_mutation_event(
+    state: &ServiceState,
+    summary: capsem_core::net::policy_config::ProfileMutationSummary,
+) -> Result<capsem_logger::ProfileMutationEvent, AppError> {
+    let mutation_id = capsem_core::security_engine::SecurityEventId::new_uuid4()
+        .as_str()
+        .to_string();
+    let event = summary.into_logger_event(
+        unix_timestamp_ms(),
+        mutation_id,
+        capsem_logger::ProfileMutationStatus::Applied,
+        None,
+        None,
+    );
+    let writer = capsem_logger::DbWriter::open(&state.main_db_path(), 64).map_err(|error| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("open profile mutation ledger: {error}"),
+        )
+    })?;
+    writer
+        .write(capsem_logger::WriteOp::ProfileMutationEvent(event.clone()))
+        .await;
+    writer.shutdown_blocking();
+    Ok(event)
+}
+
 /// PUT /profiles/:profile_id/mcp/servers/:server_id/edit -- add or replace one MCP server.
 async fn handle_profile_mcp_server_edit(
     Path((profile_id, server_id)): Path<(String, String)>,
@@ -4894,36 +5090,22 @@ async fn handle_profile_mcp_server_refresh(
 
 /// PATCH /profiles/:profile_id/mcp/servers/:server_id/tools/:tool_id/edit -- edit tool mechanics.
 async fn handle_profile_mcp_tool_edit(
+    State(state): State<Arc<ServiceState>>,
     Path((profile_id, server_id, tool_id)): Path<(String, String, String)>,
     Json(update): Json<McpToolEditRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    ensure_profile_mcp_server(profile_id, &server_id)?;
-    let namespaced_name = resolve_mcp_tool_id(&server_id, &tool_id)?;
-    use capsem_core::mcp::{load_tool_cache, save_tool_cache};
-
-    let mut cache = load_tool_cache();
-    let found = cache.iter_mut().find(|entry| {
-        entry.server_name == server_id
-            && (entry.namespaced_name == namespaced_name || entry.original_name == tool_id)
-    });
-    match found {
-        Some(entry) => {
-            if let Some(approved) = update.approved {
-                entry.approved = approved;
-            }
-            save_tool_cache(&cache).map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
-            Ok(Json(serde_json::json!({
-                "server_id": server_id,
-                "tool_id": tool_id,
-                "namespaced_name": namespaced_name,
-                "approved": update.approved,
-            })))
-        }
-        None => Err(AppError(
-            StatusCode::NOT_FOUND,
-            format!("tool not found: {server_id}/{tool_id}"),
-        )),
-    }
+    let mut profile = profile_for_route(profile_id)?;
+    let summary = profile
+        .set_mcp_tool_permission(&server_id, &tool_id, update.action, "service-api")
+        .map_err(|error| AppError(StatusCode::BAD_REQUEST, error))?;
+    let event = write_profile_mutation_event(&state, summary).await?;
+    Ok(Json(json!({
+        "profile_id": event.profile_id,
+        "server_id": server_id,
+        "tool_id": tool_id,
+        "action": update.action,
+        "mutation": event,
+    })))
 }
 
 /// POST /profiles/:profile_id/mcp/servers/:server_id/tools/:tool_id/call -- call a tool via a VM aggregator.
@@ -5713,8 +5895,23 @@ fn append_compiled_rules(
     Ok(())
 }
 
+fn profile_security_rule_profile_for_route(
+    profile_id: &str,
+) -> Result<SecurityRuleProfile, AppError> {
+    let profile = profile_for_route(profile_id.to_string())?;
+    profile
+        .config()
+        .security_rule_profile_from_files(profile.config_root())
+        .map_err(|error| {
+            AppError(
+                StatusCode::BAD_REQUEST,
+                format!("invalid profile rule files for {profile_id}: {error}"),
+            )
+        })
+}
+
 fn list_enforcement_rules_for_profile(
-    user: &SettingsFile,
+    profile_id: &str,
     corp: &SettingsFile,
 ) -> Result<Vec<api::EnforcementRuleInfo>, AppError> {
     let mut rules = Vec::new();
@@ -5723,15 +5920,8 @@ fn list_enforcement_rules_for_profile(
         SecurityRuleSource::BuiltinDefault,
         ProviderRuleProfile::builtin_security_defaults(),
     )?;
-    append_compiled_rules(
-        &mut rules,
-        SecurityRuleSource::User,
-        SecurityRuleProfile {
-            profiles: user.profiles.clone(),
-            ai: user.ai.clone(),
-            ..SecurityRuleProfile::default()
-        },
-    )?;
+    let profile_rules = profile_security_rule_profile_for_route(profile_id)?;
+    append_compiled_rules(&mut rules, SecurityRuleSource::User, profile_rules)?;
     append_compiled_rules(
         &mut rules,
         SecurityRuleSource::Corp,
@@ -5751,10 +5941,10 @@ fn list_enforcement_rules_for_profile(
 }
 
 fn list_detection_rules_for_profile(
-    user: &SettingsFile,
+    profile_id: &str,
     corp: &SettingsFile,
 ) -> Result<Vec<api::DetectionRuleInfo>, AppError> {
-    Ok(list_enforcement_rules_for_profile(user, corp)?
+    Ok(list_enforcement_rules_for_profile(profile_id, corp)?
         .into_iter()
         .filter(|rule| rule.detection_level.is_some())
         .collect())
@@ -5793,8 +5983,8 @@ async fn handle_enforcement_info(
     Path(profile_id): Path<String>,
 ) -> Result<Json<api::EnforcementInfoResponse>, AppError> {
     let profile_id = validate_profile_route_id(profile_id)?;
-    let (user, corp) = capsem_core::net::policy_config::load_settings_files();
-    let rules = list_enforcement_rules_for_profile(&user, &corp)?;
+    let (_, corp) = capsem_core::net::policy_config::load_settings_files();
+    let rules = list_enforcement_rules_for_profile(&profile_id, &corp)?;
     Ok(Json(enforcement_info_for_rules(profile_id, &rules)))
 }
 
@@ -5802,8 +5992,8 @@ async fn handle_detection_info(
     Path(profile_id): Path<String>,
 ) -> Result<Json<api::DetectionInfoResponse>, AppError> {
     let profile_id = validate_profile_route_id(profile_id)?;
-    let (user, corp) = capsem_core::net::policy_config::load_settings_files();
-    let rules = list_detection_rules_for_profile(&user, &corp)?;
+    let (_, corp) = capsem_core::net::policy_config::load_settings_files();
+    let rules = list_detection_rules_for_profile(&profile_id, &corp)?;
     Ok(Json(enforcement_info_for_rules(profile_id, &rules)))
 }
 
@@ -5811,10 +6001,10 @@ async fn handle_enforcement_rules_list(
     Path(profile_id): Path<String>,
 ) -> Result<Json<api::EnforcementRuleListResponse>, AppError> {
     let profile_id = validate_profile_route_id(profile_id)?;
-    let (user, corp) = capsem_core::net::policy_config::load_settings_files();
+    let (_, corp) = capsem_core::net::policy_config::load_settings_files();
     Ok(Json(api::EnforcementRuleListResponse {
+        rules: list_enforcement_rules_for_profile(&profile_id, &corp)?,
         profile_id,
-        rules: list_enforcement_rules_for_profile(&user, &corp)?,
     }))
 }
 
@@ -5822,18 +6012,18 @@ async fn handle_detection_rules_list(
     Path(profile_id): Path<String>,
 ) -> Result<Json<api::DetectionRuleListResponse>, AppError> {
     let profile_id = validate_profile_route_id(profile_id)?;
-    let (user, corp) = capsem_core::net::policy_config::load_settings_files();
+    let (_, corp) = capsem_core::net::policy_config::load_settings_files();
     Ok(Json(api::DetectionRuleListResponse {
+        rules: list_detection_rules_for_profile(&profile_id, &corp)?,
         profile_id,
-        rules: list_detection_rules_for_profile(&user, &corp)?,
     }))
 }
 
 async fn handle_enforcement_rule_upsert(
+    State(state): State<Arc<ServiceState>>,
     Path((profile_id, rule_id)): Path<(String, String)>,
     Json(rule): Json<SecurityRule>,
 ) -> Result<Json<EnforcementRuleResponse>, AppError> {
-    let _profile_id = validate_profile_route_id(profile_id)?;
     if rule.corp_locked {
         return Err(AppError(
             StatusCode::BAD_REQUEST,
@@ -5842,18 +6032,11 @@ async fn handle_enforcement_rule_upsert(
         ));
     }
     let compiled = validate_single_user_profile_rule(&rule_id, &rule)?;
-    let (path, mut settings) = load_user_settings_for_enforcement_write()?;
-    settings
-        .profiles
-        .rules
-        .insert(rule_id.clone(), rule.clone());
-    validate_user_profile_rules(&settings)?;
-    capsem_core::net::policy_config::write_settings_file(&path, &settings).map_err(|error| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("failed to write enforcement rule: {error}"),
-        )
-    })?;
+    let mut profile = profile_for_route(profile_id)?;
+    let summary = profile
+        .upsert_profile_rule(&rule_id, rule.clone(), "service-api")
+        .map_err(|error| AppError(StatusCode::BAD_REQUEST, error))?;
+    let _event = write_profile_mutation_event(&state, summary).await?;
     Ok(Json(EnforcementRuleResponse {
         rule_id,
         compiled_rule_id: compiled.rule_id,
@@ -5862,6 +6045,7 @@ async fn handle_enforcement_rule_upsert(
 }
 
 async fn handle_detection_rule_upsert(
+    State(state): State<Arc<ServiceState>>,
     Path((profile_id, rule_id)): Path<(String, String)>,
     Json(rule): Json<SecurityRule>,
 ) -> Result<Json<EnforcementRuleResponse>, AppError> {
@@ -5871,27 +6055,25 @@ async fn handle_detection_rule_upsert(
             "detection rule endpoint requires detection_level".to_string(),
         ));
     }
-    handle_enforcement_rule_upsert(Path((profile_id, rule_id)), Json(rule)).await
+    handle_enforcement_rule_upsert(State(state), Path((profile_id, rule_id)), Json(rule)).await
 }
 
 async fn handle_enforcement_rule_delete(
+    State(state): State<Arc<ServiceState>>,
     Path((profile_id, rule_id)): Path<(String, String)>,
 ) -> Result<Json<EnforcementRuleDeleteResponse>, AppError> {
-    let _profile_id = validate_profile_route_id(profile_id)?;
-    let (path, mut settings) = load_user_settings_for_enforcement_write()?;
-    if settings.profiles.rules.remove(&rule_id).is_none() {
-        return Err(AppError(
-            StatusCode::NOT_FOUND,
-            format!("enforcement rule not found: {rule_id}"),
-        ));
-    }
-    validate_user_profile_rules(&settings)?;
-    capsem_core::net::policy_config::write_settings_file(&path, &settings).map_err(|error| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("failed to delete enforcement rule: {error}"),
-        )
-    })?;
+    let mut profile = profile_for_route(profile_id)?;
+    let summary = profile
+        .delete_profile_rule(&rule_id, "service-api")
+        .map_err(|error| {
+            let status = if error.contains("not found") {
+                StatusCode::NOT_FOUND
+            } else {
+                StatusCode::BAD_REQUEST
+            };
+            AppError(status, error)
+        })?;
+    let _event = write_profile_mutation_event(&state, summary).await?;
     Ok(Json(EnforcementRuleDeleteResponse {
         rule_id,
         deleted: true,
@@ -5899,9 +6081,10 @@ async fn handle_enforcement_rule_delete(
 }
 
 async fn handle_detection_rule_delete(
+    State(state): State<Arc<ServiceState>>,
     Path((profile_id, rule_id)): Path<(String, String)>,
 ) -> Result<Json<EnforcementRuleDeleteResponse>, AppError> {
-    handle_enforcement_rule_delete(Path((profile_id, rule_id))).await
+    handle_enforcement_rule_delete(State(state), Path((profile_id, rule_id))).await
 }
 
 async fn handle_enforcement_reload(
@@ -5917,22 +6100,6 @@ async fn handle_detection_reload(
     Path(profile_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     handle_enforcement_reload(State(state), Path(profile_id)).await
-}
-
-fn load_user_settings_for_enforcement_write() -> Result<(PathBuf, SettingsFile), AppError> {
-    let path = capsem_core::net::policy_config::user_config_path().ok_or_else(|| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "HOME not set; cannot resolve user settings path".to_string(),
-        )
-    })?;
-    let settings = capsem_core::net::policy_config::load_settings_file(&path).map_err(|error| {
-        AppError(
-            StatusCode::BAD_REQUEST,
-            format!("failed to load user settings: {error}"),
-        )
-    })?;
-    Ok((path, settings))
 }
 
 fn validate_single_user_profile_rule(
@@ -5957,21 +6124,6 @@ fn validate_single_user_profile_rule(
             "valid enforcement rule did not compile".to_string(),
         )
     })
-}
-
-fn validate_user_profile_rules(settings: &SettingsFile) -> Result<(), AppError> {
-    SecurityRuleProfile {
-        profiles: settings.profiles.clone(),
-        ..SecurityRuleProfile::default()
-    }
-    .compile(SecurityRuleSource::User)
-    .map_err(|error| {
-        AppError(
-            StatusCode::BAD_REQUEST,
-            format!("invalid user profile enforcement rules: {error}"),
-        )
-    })?;
-    Ok(())
 }
 
 impl EnforcementEventInput {

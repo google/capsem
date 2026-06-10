@@ -227,6 +227,401 @@ fn install_test_profile_assets(state: &ServiceState) {
     }
 }
 
+fn copy_dir_all(src: &std::path::Path, dst: &std::path::Path) {
+    std::fs::create_dir_all(dst).unwrap();
+    for entry in std::fs::read_dir(src).unwrap() {
+        let entry = entry.unwrap();
+        let ty = entry.file_type().unwrap();
+        let target = dst.join(entry.file_name());
+        if ty.is_dir() {
+            copy_dir_all(&entry.path(), &target);
+        } else {
+            std::fs::copy(entry.path(), target).unwrap();
+        }
+    }
+}
+
+fn install_code_profile_fixture(dir: &tempfile::TempDir) -> PathBuf {
+    let config_root = dir.path().join("config");
+    let profile_dir = config_root.join("profiles/code");
+    copy_dir_all(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../config/profiles/code")
+            .as_path(),
+        &profile_dir,
+    );
+    config_root
+}
+
+fn write_file_descriptor_profile(profile: &mut ProfileConfigFile, path: &std::path::Path) {
+    let bytes = std::fs::metadata(path).unwrap().len();
+    let hash = capsem_core::asset_manager::hash_file(path).unwrap();
+    let relative = path
+        .strip_prefix(path.ancestors().nth(3).unwrap())
+        .unwrap_or(path)
+        .to_string_lossy()
+        .to_string();
+    match path.file_name().and_then(|name| name.to_str()).unwrap() {
+        "enforcement.toml" => {
+            profile.files.enforcement =
+                Some(capsem_core::net::policy_config::ProfileFileDescriptor {
+                    path: relative,
+                    hash: format!("blake3:{hash}"),
+                    size: bytes,
+                });
+        }
+        "detection.yaml" => {
+            profile.files.detection =
+                Some(capsem_core::net::policy_config::ProfileFileDescriptor {
+                    path: relative,
+                    hash: format!("blake3:{hash}"),
+                    size: bytes,
+                });
+        }
+        "mcp.json" => {
+            profile.files.mcp = Some(capsem_core::net::policy_config::ProfileFileDescriptor {
+                path: relative,
+                hash: format!("blake3:{hash}"),
+                size: bytes,
+            });
+        }
+        other => panic!("unsupported profile fixture descriptor {other}"),
+    }
+}
+
+fn install_file_asset_profile_fixture(dir: &tempfile::TempDir) -> (PathBuf, ProfileConfigFile) {
+    let config_root = install_code_profile_fixture(dir);
+    let profile_dir = config_root.join("profiles/code");
+    let arch = capsem_core::net::policy_config::current_profile_arch();
+    let source_dir = dir.path().join("asset-source").join(arch);
+    std::fs::create_dir_all(&source_dir).unwrap();
+
+    let mut profile = ProfileConfigFile::builtin_code();
+    for (name, body) in [
+        ("vmlinuz", b"fixture-kernel".as_slice()),
+        ("initrd.img", b"fixture-initrd".as_slice()),
+        ("rootfs.erofs", b"fixture-rootfs".as_slice()),
+    ] {
+        std::fs::write(source_dir.join(name), body).unwrap();
+    }
+    let arch_assets = profile.assets.arch.get_mut(arch).unwrap();
+    for asset in [
+        &mut arch_assets.kernel,
+        &mut arch_assets.initrd,
+        &mut arch_assets.rootfs,
+    ] {
+        let source = source_dir.join(&asset.name);
+        let hash = capsem_core::asset_manager::hash_file(&source).unwrap();
+        asset.url = format!("file://{}", source.display());
+        asset.hash = format!("blake3:{hash}");
+        asset.size = std::fs::metadata(&source).unwrap().len();
+    }
+    for filename in ["enforcement.toml", "detection.yaml", "mcp.json"] {
+        write_file_descriptor_profile(&mut profile, &profile_dir.join(filename));
+    }
+    std::fs::write(
+        profile_dir.join("profile.toml"),
+        toml::to_string_pretty(&profile).unwrap(),
+    )
+    .unwrap();
+    (config_root, profile)
+}
+
+fn add_profile_enforcement_rule(
+    config_root: &std::path::Path,
+    rule_id: &str,
+    rule: capsem_core::net::policy_config::SecurityRule,
+) {
+    let profile_dir = config_root.join("profiles/code");
+    let enforcement_path = profile_dir.join("enforcement.toml");
+    let content = std::fs::read_to_string(&enforcement_path).unwrap();
+    let mut rule_profile = SecurityRuleProfile::parse_toml(&content).unwrap();
+    rule_profile
+        .profiles
+        .rules
+        .insert(rule_id.to_string(), rule);
+    std::fs::write(
+        &enforcement_path,
+        toml::to_string_pretty(&rule_profile).unwrap(),
+    )
+    .unwrap();
+    let mut profile: ProfileConfigFile =
+        toml::from_str(&std::fs::read_to_string(profile_dir.join("profile.toml")).unwrap())
+            .unwrap();
+    write_file_descriptor_profile(&mut profile, &enforcement_path);
+    std::fs::write(
+        profile_dir.join("profile.toml"),
+        toml::to_string_pretty(&profile).unwrap(),
+    )
+    .unwrap();
+}
+
+#[tokio::test]
+async fn profile_status_rejects_tampered_pinned_profile_files() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+
+    let dir = tempfile::tempdir().unwrap();
+    let (config_root, _) = install_file_asset_profile_fixture(&dir);
+    let _profiles_guard = EnvVarGuard::set("CAPSEM_PROFILES_DIR", config_root.join("profiles"));
+    std::fs::write(
+        config_root.join("profiles/code/enforcement.toml"),
+        "# tampered after profile hash pin\n",
+    )
+    .unwrap();
+
+    let state = make_asset_state(dir.path().join("assets"));
+    let app = build_service_router(state);
+
+    let (status, body) =
+        route_request(app, axum::http::Method::GET, "/profiles/status", None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["profile_count"], 1);
+    assert_eq!(body["ready_count"], 0);
+    assert_eq!(body["profiles"][0]["ready"], false);
+    assert!(body["profiles"][0]["invalid_files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|file| file["kind"] == "enforcement" && file["valid"] == false));
+}
+
+#[tokio::test]
+async fn profile_asset_status_download_and_corruption_checks_use_profile_pins() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+
+    let dir = tempfile::tempdir().unwrap();
+    let (config_root, profile) = install_file_asset_profile_fixture(&dir);
+    let _profiles_guard = EnvVarGuard::set("CAPSEM_PROFILES_DIR", config_root.join("profiles"));
+    let assets_dir = dir.path().join("assets");
+    let state = make_asset_state(assets_dir.clone());
+    let app = build_service_router(state);
+    let arch = capsem_core::net::policy_config::current_profile_arch();
+    let rootfs = &profile.assets.current_arch_assets().unwrap().rootfs;
+    let rootfs_target = assets_dir
+        .join(&arch)
+        .join(capsem_core::asset_manager::hash_filename(
+            &rootfs.name,
+            rootfs.hash.strip_prefix("blake3:").unwrap(),
+        ));
+
+    let (status, before) = route_request(
+        app.clone(),
+        axum::http::Method::GET,
+        "/profiles/code/assets/status",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{before}");
+    assert_eq!(before["ready"], false);
+    assert_eq!(before["missing_assets"].as_array().unwrap().len(), 3);
+
+    let (status, ensured) = route_request(
+        app.clone(),
+        axum::http::Method::POST,
+        "/profiles/code/assets/ensure",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{ensured}");
+    assert_eq!(ensured["ready"], true);
+    assert_eq!(ensured["downloaded"], 3);
+    assert!(rootfs_target.exists());
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&rootfs_target, std::fs::Permissions::from_mode(0o644)).unwrap();
+    }
+    std::fs::write(&rootfs_target, b"corrupted-rootfs").unwrap();
+    let (status, corrupted) = route_request(
+        app.clone(),
+        axum::http::Method::GET,
+        "/profiles/code/assets/status",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{corrupted}");
+    assert_eq!(corrupted["ready"], false);
+    assert!(corrupted["invalid_assets"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|asset| asset["kind"] == "rootfs" && asset["valid"] == false));
+
+    let (status, repaired) = route_request(
+        app,
+        axum::http::Method::POST,
+        "/profiles/code/assets/ensure",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{repaired}");
+    assert_eq!(repaired["ready"], true);
+    assert_eq!(repaired["downloaded"], 1);
+}
+
+#[tokio::test]
+async fn profile_mcp_tool_edit_writes_profile_rule_and_mutation_ledger() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+
+    let dir = tempfile::tempdir().unwrap();
+    let (config_root, _) = install_file_asset_profile_fixture(&dir);
+    let _profiles_guard = EnvVarGuard::set("CAPSEM_PROFILES_DIR", config_root.join("profiles"));
+    let state = make_asset_state(dir.path().join("assets"));
+    let app = build_service_router(Arc::clone(&state));
+
+    let (status, edited) = route_request(
+        app,
+        axum::http::Method::PATCH,
+        "/profiles/code/mcp/servers/capsem/tools/fetch_http/edit",
+        Some(json!({ "action": "ask" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{edited}");
+    assert_eq!(edited["profile_id"], "code");
+    assert_eq!(edited["server_id"], "capsem");
+    assert_eq!(edited["tool_id"], "fetch_http");
+    assert_eq!(edited["action"], "ask");
+    assert_eq!(edited["mutation"]["category"], "mcp");
+    assert_eq!(edited["mutation"]["target_kind"], "mcp_tool");
+    assert_eq!(edited["mutation"]["status"], "applied");
+
+    let enforcement = std::fs::read_to_string(config_root.join("profiles/code/enforcement.toml"))
+        .expect("mutated enforcement file");
+    let rule_profile = SecurityRuleProfile::parse_toml(&enforcement).unwrap();
+    let rule = rule_profile
+        .profiles
+        .rules
+        .get("mcp_capsem_fetch_http_permission")
+        .expect("profile-managed MCP permission rule");
+    assert_eq!(
+        rule.action,
+        capsem_core::net::policy_config::SecurityRuleAction::Ask
+    );
+    assert_eq!(
+        rule.condition,
+        r#"mcp.server.name == "capsem" && mcp.tool_call.name == "fetch_http""#
+    );
+
+    let profile: ProfileConfigFile = toml::from_str(
+        &std::fs::read_to_string(config_root.join("profiles/code/profile.toml")).unwrap(),
+    )
+    .unwrap();
+    let descriptor = profile.files.enforcement.expect("updated enforcement pin");
+    assert_eq!(descriptor.path, "profiles/code/enforcement.toml");
+    assert_eq!(
+        descriptor.hash,
+        format!(
+            "blake3:{}",
+            capsem_core::asset_manager::hash_file(
+                &config_root.join("profiles/code/enforcement.toml")
+            )
+            .unwrap()
+        )
+    );
+
+    let main_db = state.main_db_path();
+    let reader = capsem_logger::DbReader::open(&main_db).expect("main.db mutation ledger");
+    let rows = reader
+        .query_raw(
+            "SELECT profile_id, category, target_kind, target_key, operation, status \
+             FROM profile_mutation_events",
+        )
+        .expect("query profile mutation events");
+    let rows: serde_json::Value = serde_json::from_str(&rows).unwrap();
+    assert_eq!(
+        rows["rows"][0],
+        json!([
+            "code",
+            "mcp",
+            "mcp_tool",
+            "capsem/fetch_http",
+            "permission",
+            "applied"
+        ])
+    );
+}
+
+#[tokio::test]
+async fn profile_enforcement_list_uses_profile_files_and_corp_not_user_settings() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+
+    let dir = tempfile::tempdir().unwrap();
+    let (config_root, _) = install_file_asset_profile_fixture(&dir);
+    add_profile_enforcement_rule(
+        &config_root,
+        "route_file_probe",
+        capsem_core::net::policy_config::SecurityRule {
+            name: "route_file_probe".to_string(),
+            action: capsem_core::net::policy_config::SecurityRuleAction::Allow,
+            condition: r#"file.read.path.contains("skills/")"#.to_string(),
+            detection_level: Some(capsem_core::net::policy_config::DetectionLevel::Informational),
+            priority: None,
+            corp_locked: false,
+            reason: Some("record skill file reads".to_string()),
+            managed: None,
+            plugin_config: BTreeMap::new(),
+        },
+    );
+    let _profiles_guard = EnvVarGuard::set("CAPSEM_PROFILES_DIR", config_root.join("profiles"));
+    let (_settings_guard, user_path, corp_path) = install_empty_settings_env(&dir);
+
+    let mut user = capsem_core::net::policy_config::SettingsFile::default();
+    user.profiles.rules.insert(
+        "settings_only_should_not_load".to_string(),
+        capsem_core::net::policy_config::SecurityRule {
+            name: "settings_only_should_not_load".to_string(),
+            action: capsem_core::net::policy_config::SecurityRuleAction::Block,
+            condition: r#"http.host.contains("settings-only.invalid")"#.to_string(),
+            detection_level: None,
+            priority: None,
+            corp_locked: false,
+            reason: Some("old settings route must not leak".to_string()),
+            managed: None,
+            plugin_config: BTreeMap::new(),
+        },
+    );
+    capsem_core::net::policy_config::write_settings_file(&user_path, &user).unwrap();
+
+    let mut corp = capsem_core::net::policy_config::SettingsFile::default();
+    corp.corp.rules.insert(
+        "block_evil_example".to_string(),
+        capsem_core::net::policy_config::SecurityRule {
+            name: "block_evil_example".to_string(),
+            action: capsem_core::net::policy_config::SecurityRuleAction::Block,
+            condition: r#"http.host.contains("evil.example")"#.to_string(),
+            detection_level: Some(capsem_core::net::policy_config::DetectionLevel::High),
+            priority: Some(capsem_core::net::policy_config::SecurityRulePriority::Explicit(-100)),
+            corp_locked: false,
+            reason: Some("corp proof".to_string()),
+            managed: None,
+            plugin_config: BTreeMap::new(),
+        },
+    );
+    capsem_core::net::policy_config::write_settings_file(&corp_path, &corp).unwrap();
+
+    let Json(response) = handle_enforcement_rules_list(Path("code".to_string()))
+        .await
+        .expect("profile and corp rules compile");
+
+    assert!(response
+        .rules
+        .iter()
+        .any(|rule| rule.rule_id == "profiles.rules.route_file_probe"
+            && rule.source == api::EnforcementRuleSource::Profile));
+    assert!(response
+        .rules
+        .iter()
+        .any(|rule| rule.rule_id == "corp.rules.block_evil_example"
+            && rule.source == api::EnforcementRuleSource::Corp
+            && rule.corp_locked
+            && rule.priority == -100));
+    assert!(!response
+        .rules
+        .iter()
+        .any(|rule| rule.rule_id == "profiles.rules.settings_only_should_not_load"));
+}
+
 #[tokio::test]
 async fn security_latest_returns_full_session_db_rule_ledger_rows() {
     let state = make_test_state();
@@ -326,7 +721,7 @@ async fn handle_profiles_list_returns_code_profile_inventory() {
 }
 
 #[tokio::test]
-async fn handle_profiles_status_reports_builtin_catalog_readiness() {
+async fn handle_profiles_status_reports_builtin_catalog_and_rejects_fake_assets() {
     let (state, dir) = make_test_state_with_tempdir();
     install_test_profile_assets(&state);
 
@@ -336,33 +731,38 @@ async fn handle_profiles_status_reports_builtin_catalog_readiness() {
 
     assert_eq!(status["source"], "built_in");
     assert_eq!(status["profile_count"], 1);
-    assert_eq!(status["ready_count"], 1);
+    assert_eq!(
+        status["ready_count"], 0,
+        "S1-b status must verify asset hashes; placeholder files are not ready"
+    );
     assert_eq!(status["profiles"][0]["id"], "code");
     assert_eq!(
         status["profiles"][0]["profile_payload_hash"],
         test_profile_payload_hash()
     );
-    assert_eq!(
-        status["profiles"][0]["missing_assets"]
-            .as_array()
-            .unwrap()
-            .len(),
-        0
-    );
+    assert_eq!(status["profiles"][0]["ready"], false);
+    assert!(!status["profiles"][0]["invalid_assets"]
+        .as_array()
+        .unwrap()
+        .is_empty());
     drop(dir);
 }
 
 #[test]
 fn profile_catalog_status_reports_directory_catalog_readiness() {
-    let (state, dir) = make_test_state_with_tempdir();
-    install_test_profile_assets(&state);
-    let profiles_dir = dir.path().join("profiles");
-    std::fs::create_dir_all(profiles_dir.join("code")).unwrap();
-    std::fs::write(
-        profiles_dir.join("code/profile.toml"),
-        toml::to_string(&ProfileConfigFile::builtin_code()).unwrap(),
-    )
-    .unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let (config_root, _) = install_file_asset_profile_fixture(&dir);
+    let state = make_asset_state(dir.path().join("assets"));
+    let profile =
+        capsem_core::net::policy_config::Profile::load_from_dir(config_root.join("profiles/code"))
+            .unwrap();
+    profile
+        .download_assets(
+            &state.assets_dir,
+            capsem_core::net::policy_config::current_profile_arch(),
+        )
+        .unwrap();
+    let profiles_dir = config_root.join("profiles");
     let catalog = ProfileCatalog::load_from_dir(&profiles_dir).unwrap();
 
     let status = profile_catalog_status_value(&state, &catalog);
@@ -378,7 +778,7 @@ fn profile_catalog_status_reports_directory_catalog_readiness() {
     assert_eq!(status["profiles"][0]["id"], "code");
     assert_eq!(
         status["profiles"][0]["profile_payload_hash"],
-        test_profile_payload_hash()
+        profile_payload_hash(&profile.config()).unwrap()
     );
     assert_eq!(
         status["profiles"][0]["missing_assets"]
@@ -401,7 +801,7 @@ async fn handle_profiles_reload_reports_active_catalog_status() {
     assert_eq!(response["reloaded"], true);
     assert_eq!(response["catalog"]["source"], "built_in");
     assert_eq!(response["catalog"]["profile_count"], 1);
-    assert_eq!(response["catalog"]["ready_count"], 1);
+    assert_eq!(response["catalog"]["ready_count"], 0);
 }
 
 #[test]
@@ -699,6 +1099,7 @@ async fn t1_adversarial_route_inputs_fail_closed() {
         plugin_config: BTreeMap::new(),
     };
     let malformed_rule_id = handle_enforcement_rule_upsert(
+        State(make_test_state()),
         Path(("code".to_string(), "Bad Rule".to_string())),
         Json(bad_rule),
     )
@@ -1262,23 +1663,9 @@ async fn handle_enforcement_rules_list_returns_compiled_profile_rules() {
     let _env_lock = SETTINGS_ENV_LOCK.lock().await;
 
     let dir = tempfile::tempdir().unwrap();
-    let (_env_guard, user_path, _) = install_empty_settings_env(&dir);
-    let mut settings = capsem_core::net::policy_config::SettingsFile::default();
-    settings.profiles.rules.insert(
-        "skill_loaded".to_string(),
-        capsem_core::net::policy_config::SecurityRule {
-            name: "skill_loaded".to_string(),
-            action: capsem_core::net::policy_config::SecurityRuleAction::Allow,
-            condition: r#"file.read.path.contains("skills/")"#.to_string(),
-            detection_level: Some(capsem_core::net::policy_config::DetectionLevel::Informational),
-            priority: None,
-            corp_locked: false,
-            reason: Some("record skill file reads".to_string()),
-            managed: None,
-            plugin_config: BTreeMap::new(),
-        },
-    );
-    capsem_core::net::policy_config::write_settings_file(&user_path, &settings).unwrap();
+    let (config_root, _) = install_file_asset_profile_fixture(&dir);
+    let _profiles_guard = EnvVarGuard::set("CAPSEM_PROFILES_DIR", config_root.join("profiles"));
+    let (_settings_guard, _, _) = install_empty_settings_env(&dir);
 
     let Json(response) = handle_enforcement_rules_list(Path("code".to_string()))
         .await
@@ -1310,6 +1697,11 @@ async fn handle_enforcement_rules_list_returns_compiled_profile_rules() {
 
 #[tokio::test]
 async fn handle_enforcement_rules_list_rejects_unknown_profiles() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+
+    let dir = tempfile::tempdir().unwrap();
+    let (config_root, _) = install_file_asset_profile_fixture(&dir);
+    let _profiles_guard = EnvVarGuard::set("CAPSEM_PROFILES_DIR", config_root.join("profiles"));
     let err = handle_enforcement_rules_list(Path("strict".to_string()))
         .await
         .unwrap_err();
@@ -1323,23 +1715,9 @@ async fn handle_enforcement_info_summarizes_compiled_rules() {
     let _env_lock = SETTINGS_ENV_LOCK.lock().await;
 
     let dir = tempfile::tempdir().unwrap();
-    let (_env_guard, user_path, _) = install_empty_settings_env(&dir);
-    let mut settings = capsem_core::net::policy_config::SettingsFile::default();
-    settings.profiles.rules.insert(
-        "skill_loaded".to_string(),
-        capsem_core::net::policy_config::SecurityRule {
-            name: "skill_loaded".to_string(),
-            action: capsem_core::net::policy_config::SecurityRuleAction::Allow,
-            condition: r#"file.read.path.contains("skills/")"#.to_string(),
-            detection_level: Some(capsem_core::net::policy_config::DetectionLevel::Informational),
-            priority: None,
-            corp_locked: false,
-            reason: Some("record skill file reads".to_string()),
-            managed: None,
-            plugin_config: BTreeMap::new(),
-        },
-    );
-    capsem_core::net::policy_config::write_settings_file(&user_path, &settings).unwrap();
+    let (config_root, _) = install_file_asset_profile_fixture(&dir);
+    let _profiles_guard = EnvVarGuard::set("CAPSEM_PROFILES_DIR", config_root.join("profiles"));
+    let (_settings_guard, _, _) = install_empty_settings_env(&dir);
 
     let Json(info) = handle_enforcement_info(Path("code".to_string()))
         .await
@@ -1350,13 +1728,18 @@ async fn handle_enforcement_info_summarizes_compiled_rules() {
     assert!(info.default_rule_count > 0);
     assert!(info.custom_rule_count >= 1);
     assert!(info.detection_rule_count >= 1);
-    assert_eq!(info.source_counts["profile"], 1);
+    assert!(info.source_counts["profile"] >= 1);
     assert!(info.source_counts["builtin_default"] > 0);
     assert!(info.action_counts.contains_key("allow"));
 }
 
 #[tokio::test]
 async fn handle_enforcement_info_rejects_unknown_profiles() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+
+    let dir = tempfile::tempdir().unwrap();
+    let (config_root, _) = install_file_asset_profile_fixture(&dir);
+    let _profiles_guard = EnvVarGuard::set("CAPSEM_PROFILES_DIR", config_root.join("profiles"));
     let err = handle_enforcement_info(Path("strict".to_string()))
         .await
         .unwrap_err();
@@ -1370,24 +1753,10 @@ async fn handle_detection_rules_list_returns_detection_rules_only() {
     let _env_lock = SETTINGS_ENV_LOCK.lock().await;
 
     let dir = tempfile::tempdir().unwrap();
-    let (_env_guard, user_path, _) = install_empty_settings_env(&dir);
-    let mut settings = capsem_core::net::policy_config::SettingsFile::default();
-    settings.profiles.rules.insert(
-        "skill_loaded".to_string(),
-        capsem_core::net::policy_config::SecurityRule {
-            name: "skill_loaded".to_string(),
-            action: capsem_core::net::policy_config::SecurityRuleAction::Allow,
-            condition: r#"file.read.path.contains("skills/")"#.to_string(),
-            detection_level: Some(capsem_core::net::policy_config::DetectionLevel::Informational),
-            priority: None,
-            corp_locked: false,
-            reason: Some("record skill file reads".to_string()),
-            managed: None,
-            plugin_config: BTreeMap::new(),
-        },
-    );
-    settings.profiles.rules.insert(
-        "pure_block".to_string(),
+    let (config_root, _) = install_file_asset_profile_fixture(&dir);
+    add_profile_enforcement_rule(
+        &config_root,
+        "pure_block",
         capsem_core::net::policy_config::SecurityRule {
             name: "pure_block".to_string(),
             action: capsem_core::net::policy_config::SecurityRuleAction::Block,
@@ -1400,7 +1769,8 @@ async fn handle_detection_rules_list_returns_detection_rules_only() {
             plugin_config: BTreeMap::new(),
         },
     );
-    capsem_core::net::policy_config::write_settings_file(&user_path, &settings).unwrap();
+    let _profiles_guard = EnvVarGuard::set("CAPSEM_PROFILES_DIR", config_root.join("profiles"));
+    let (_settings_guard, _, _) = install_empty_settings_env(&dir);
 
     let Json(response) = handle_detection_rules_list(Path("code".to_string()))
         .await
@@ -1429,23 +1799,9 @@ async fn handle_detection_info_summarizes_detection_rules_only() {
     let _env_lock = SETTINGS_ENV_LOCK.lock().await;
 
     let dir = tempfile::tempdir().unwrap();
-    let (_env_guard, user_path, _) = install_empty_settings_env(&dir);
-    let mut settings = capsem_core::net::policy_config::SettingsFile::default();
-    settings.profiles.rules.insert(
-        "skill_loaded".to_string(),
-        capsem_core::net::policy_config::SecurityRule {
-            name: "skill_loaded".to_string(),
-            action: capsem_core::net::policy_config::SecurityRuleAction::Allow,
-            condition: r#"file.read.path.contains("skills/")"#.to_string(),
-            detection_level: Some(capsem_core::net::policy_config::DetectionLevel::Informational),
-            priority: None,
-            corp_locked: false,
-            reason: Some("record skill file reads".to_string()),
-            managed: None,
-            plugin_config: BTreeMap::new(),
-        },
-    );
-    capsem_core::net::policy_config::write_settings_file(&user_path, &settings).unwrap();
+    let (config_root, _) = install_file_asset_profile_fixture(&dir);
+    let _profiles_guard = EnvVarGuard::set("CAPSEM_PROFILES_DIR", config_root.join("profiles"));
+    let (_settings_guard, _, _) = install_empty_settings_env(&dir);
 
     let Json(info) = handle_detection_info(Path("code".to_string()))
         .await
@@ -1472,6 +1828,7 @@ async fn handle_detection_rule_upsert_requires_detection_level() {
     };
 
     let err = handle_detection_rule_upsert(
+        State(make_test_state()),
         Path(("code".to_string(), "pure_block".to_string())),
         Json(rule),
     )
@@ -1484,6 +1841,11 @@ async fn handle_detection_rule_upsert_requires_detection_level() {
 
 #[tokio::test]
 async fn handle_detection_rules_list_rejects_unknown_profiles() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+
+    let dir = tempfile::tempdir().unwrap();
+    let (config_root, _) = install_file_asset_profile_fixture(&dir);
+    let _profiles_guard = EnvVarGuard::set("CAPSEM_PROFILES_DIR", config_root.join("profiles"));
     let err = handle_detection_rules_list(Path("strict".to_string()))
         .await
         .unwrap_err();
@@ -1672,7 +2034,9 @@ async fn enforcement_rule_endpoints_add_delete_reload_and_reject_invalid_rules_a
     let _env_lock = SETTINGS_ENV_LOCK.lock().await;
 
     let dir = tempfile::tempdir().unwrap();
-    let (_env_guard, user_path, _) = install_empty_settings_env(&dir);
+    let (config_root, _) = install_file_asset_profile_fixture(&dir);
+    let _profiles_guard = EnvVarGuard::set("CAPSEM_PROFILES_DIR", config_root.join("profiles"));
+    let state = make_asset_state(dir.path().join("assets"));
     let rule = capsem_core::net::policy_config::SecurityRule {
         name: "file_import_eicar_block".to_string(),
         action: capsem_core::net::policy_config::SecurityRuleAction::Block,
@@ -1686,6 +2050,7 @@ async fn enforcement_rule_endpoints_add_delete_reload_and_reject_invalid_rules_a
     };
 
     let Json(saved) = handle_enforcement_rule_upsert(
+        State(Arc::clone(&state)),
         Path(("code".to_string(), "eicar_block".to_string())),
         Json(rule.clone()),
     )
@@ -1694,14 +2059,28 @@ async fn enforcement_rule_endpoints_add_delete_reload_and_reject_invalid_rules_a
     assert_eq!(saved.rule_id, "eicar_block");
     assert_eq!(saved.compiled_rule_id, "profiles.rules.eicar_block");
 
-    let loaded = capsem_core::net::policy_config::load_settings_file(&user_path).unwrap();
+    let enforcement_path = config_root.join("profiles/code/enforcement.toml");
+    let loaded =
+        SecurityRuleProfile::parse_toml(&std::fs::read_to_string(&enforcement_path).unwrap())
+            .unwrap();
     assert_eq!(
         loaded.profiles.rules["eicar_block"].action,
         capsem_core::net::policy_config::SecurityRuleAction::Block
     );
+    let profile_after_save: ProfileConfigFile = toml::from_str(
+        &std::fs::read_to_string(config_root.join("profiles/code/profile.toml")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        profile_after_save.files.enforcement.unwrap().hash,
+        format!(
+            "blake3:{}",
+            capsem_core::asset_manager::hash_file(&enforcement_path).unwrap()
+        )
+    );
 
     let Json(reload) =
-        handle_enforcement_reload(State(make_test_state()), Path("code".to_string()))
+        handle_enforcement_reload(State(Arc::clone(&state)), Path("code".to_string()))
             .await
             .expect("reload alias should broadcast to zero instances");
     assert_eq!(reload["success"], serde_json::json!(true));
@@ -1711,6 +2090,7 @@ async fn enforcement_rule_endpoints_add_delete_reload_and_reject_invalid_rules_a
     bad_priority.priority =
         Some(capsem_core::net::policy_config::SecurityRulePriority::Explicit(-100));
     let err = handle_enforcement_rule_upsert(
+        State(Arc::clone(&state)),
         Path(("code".to_string(), "bad_negative_priority".to_string())),
         Json(bad_priority),
     )
@@ -1726,6 +2106,7 @@ async fn enforcement_rule_endpoints_add_delete_reload_and_reject_invalid_rules_a
     let mut corp_locked = rule.clone();
     corp_locked.corp_locked = true;
     let err = handle_enforcement_rule_upsert(
+        State(Arc::clone(&state)),
         Path(("code".to_string(), "corp_locked".to_string())),
         Json(corp_locked),
     )
@@ -1733,7 +2114,9 @@ async fn enforcement_rule_endpoints_add_delete_reload_and_reject_invalid_rules_a
     .expect_err("user rule endpoint must not create corp-locked rules");
     assert_eq!(err.0, StatusCode::BAD_REQUEST);
 
-    let loaded = capsem_core::net::policy_config::load_settings_file(&user_path).unwrap();
+    let loaded =
+        SecurityRuleProfile::parse_toml(&std::fs::read_to_string(&enforcement_path).unwrap())
+            .unwrap();
     assert!(
         !loaded.profiles.rules.contains_key("bad_negative_priority"),
         "rejected rule must not be persisted"
@@ -1747,18 +2130,25 @@ async fn enforcement_rule_endpoints_add_delete_reload_and_reject_invalid_rules_a
         "valid existing rule must remain after rejected writes"
     );
 
-    let Json(deleted) =
-        handle_enforcement_rule_delete(Path(("code".to_string(), "eicar_block".to_string())))
-            .await
-            .expect("delete should remove existing rule");
+    let Json(deleted) = handle_enforcement_rule_delete(
+        State(Arc::clone(&state)),
+        Path(("code".to_string(), "eicar_block".to_string())),
+    )
+    .await
+    .expect("delete should remove existing rule");
     assert!(deleted.deleted);
     assert_eq!(deleted.rule_id, "eicar_block");
-    let loaded = capsem_core::net::policy_config::load_settings_file(&user_path).unwrap();
+    let loaded =
+        SecurityRuleProfile::parse_toml(&std::fs::read_to_string(&enforcement_path).unwrap())
+            .unwrap();
     assert!(!loaded.profiles.rules.contains_key("eicar_block"));
 
-    let err = handle_enforcement_rule_delete(Path(("code".to_string(), "eicar_block".to_string())))
-        .await
-        .expect_err("deleting a missing rule should return not found");
+    let err = handle_enforcement_rule_delete(
+        State(state),
+        Path(("code".to_string(), "eicar_block".to_string())),
+    )
+    .await
+    .expect_err("deleting a missing rule should return not found");
     assert_eq!(err.0, StatusCode::NOT_FOUND);
 }
 
@@ -1767,8 +2157,9 @@ async fn route_authored_detection_rule_triggers_runtime_ledger_and_latest_routes
     let _env_lock = SETTINGS_ENV_LOCK.lock().await;
 
     let dir = tempfile::tempdir().unwrap();
-    let (_env_guard, user_path, _) = install_empty_settings_env(&dir);
-    let state = make_test_state();
+    let (config_root, _) = install_file_asset_profile_fixture(&dir);
+    let _profiles_guard = EnvVarGuard::set("CAPSEM_PROFILES_DIR", config_root.join("profiles"));
+    let state = make_asset_state(dir.path().join("assets"));
     let app = build_service_router(Arc::clone(&state));
     let session_dir = dir.path().join("sessions").join("route-ledger-vm");
     std::fs::create_dir_all(&session_dir).unwrap();
@@ -1813,13 +2204,15 @@ async fn route_authored_detection_rule_triggers_runtime_ledger_and_latest_routes
         "profiles.rules.openai_http_observed"
     );
 
-    let loaded = capsem_core::net::policy_config::load_settings_file(&user_path).unwrap();
-    let compiled = SecurityRuleProfile {
-        profiles: loaded.profiles,
-        ..SecurityRuleProfile::default()
-    }
-    .compile(SecurityRuleSource::User)
-    .expect("route-authored rules compile for runtime");
+    let profile =
+        capsem_core::net::policy_config::Profile::load_from_dir(config_root.join("profiles/code"))
+            .unwrap();
+    let compiled = profile
+        .config()
+        .security_rule_profile_from_files(profile.config_root())
+        .unwrap()
+        .compile(SecurityRuleSource::User)
+        .expect("route-authored rules compile for runtime");
     let rule_set = SecurityRuleSet::new(compiled);
     let writer = capsem_logger::DbWriter::open(&session_dir.join("session.db"), 16).unwrap();
     let event_id = capsem_core::security_engine::SecurityEventId::parse("abcdef123456")
@@ -1845,7 +2238,10 @@ async fn route_authored_detection_rule_triggers_runtime_ledger_and_latest_routes
     .await
     .expect("matching rule emits ledger rows");
     writer.shutdown_blocking();
-    assert_eq!(emitted, 1);
+    assert!(
+        emitted >= 1,
+        "route-authored detection and profile default rules may both emit"
+    );
 
     let latest_response = app
         .clone()
@@ -1864,11 +2260,12 @@ async fn route_authored_detection_rule_triggers_runtime_ledger_and_latest_routes
         .unwrap();
     let events: Vec<capsem_logger::SecurityRuleEvent> =
         serde_json::from_slice(&latest_body).unwrap();
-    assert_eq!(events.len(), 1);
-    let event = &events[0];
+    let event = events
+        .iter()
+        .find(|event| event.rule_id == "profiles.rules.openai_http_observed")
+        .expect("route-authored detection row should be in security latest");
     assert_eq!(event.event_id, "abcdef123456");
     assert_eq!(event.event_type, "http.request");
-    assert_eq!(event.rule_id, "profiles.rules.openai_http_observed");
     assert_eq!(event.rule_action, capsem_logger::SecurityRuleAction::Allow);
     assert_eq!(
         event.detection_level,
@@ -1897,7 +2294,9 @@ async fn route_authored_detection_rule_triggers_runtime_ledger_and_latest_routes
         .unwrap();
     let detection_events: Vec<capsem_logger::SecurityRuleEvent> =
         serde_json::from_slice(&detection_body).unwrap();
-    assert_eq!(detection_events[0].rule_id, event.rule_id);
+    assert!(detection_events
+        .iter()
+        .any(|detection| detection.rule_id == event.rule_id));
 }
 
 #[tokio::test]

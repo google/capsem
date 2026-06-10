@@ -549,12 +549,180 @@ impl Profile {
         })
     }
 
+    pub fn upsert_profile_rule(
+        &mut self,
+        rule_id: &str,
+        rule: SecurityRule,
+        actor: &str,
+    ) -> Result<ProfileMutationSummary, String> {
+        validate_profile_target("profile rule id", rule_id)?;
+        if rule.corp_locked {
+            return Err(
+                "profile rule mutations cannot write corp_locked rules; corp rules must come from corp config"
+                    .to_string(),
+            );
+        }
+        let (enforcement_descriptor, enforcement_path, old_hash, old_size, mut rules) =
+            self.load_verified_enforcement_rules()?;
+        rules.profiles.rules.insert(rule_id.to_string(), rule);
+        rules.compile(SecurityRuleSource::User).map_err(|error| {
+            format!("compile profile enforcement rules after mutation: {error}")
+        })?;
+        let serialized = toml::to_string_pretty(&rules)
+            .map_err(|error| format!("serialize enforcement file: {error}"))?;
+        fs::write(&enforcement_path, serialized).map_err(|error| {
+            format!(
+                "write enforcement file {}: {error}",
+                enforcement_path.display()
+            )
+        })?;
+        let (new_hash, new_size) =
+            self.update_enforcement_pin(&enforcement_descriptor.path, &enforcement_path)?;
+        self.save()?;
+        Ok(ProfileMutationSummary {
+            profile_id: self.config.id.clone(),
+            actor: actor.to_string(),
+            category: "enforcement".to_string(),
+            filename: Path::new(&enforcement_descriptor.path)
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("enforcement.toml")
+                .to_string(),
+            affected_path: enforcement_descriptor.path,
+            target_kind: "security_rule".to_string(),
+            target_key: rule_id.to_string(),
+            operation: "upsert".to_string(),
+            rule_id: Some(format!("profiles.rules.{rule_id}")),
+            old_hash: format!("blake3:{old_hash}"),
+            old_size,
+            new_hash: format!("blake3:{new_hash}"),
+            new_size,
+        })
+    }
+
+    pub fn delete_profile_rule(
+        &mut self,
+        rule_id: &str,
+        actor: &str,
+    ) -> Result<ProfileMutationSummary, String> {
+        validate_profile_target("profile rule id", rule_id)?;
+        let (enforcement_descriptor, enforcement_path, old_hash, old_size, mut rules) =
+            self.load_verified_enforcement_rules()?;
+        if rules.profiles.rules.remove(rule_id).is_none() {
+            return Err(format!("profile enforcement rule not found: {rule_id}"));
+        }
+        rules
+            .compile(SecurityRuleSource::User)
+            .map_err(|error| format!("compile profile enforcement rules after delete: {error}"))?;
+        let serialized = toml::to_string_pretty(&rules)
+            .map_err(|error| format!("serialize enforcement file: {error}"))?;
+        fs::write(&enforcement_path, serialized).map_err(|error| {
+            format!(
+                "write enforcement file {}: {error}",
+                enforcement_path.display()
+            )
+        })?;
+        let (new_hash, new_size) =
+            self.update_enforcement_pin(&enforcement_descriptor.path, &enforcement_path)?;
+        self.save()?;
+        Ok(ProfileMutationSummary {
+            profile_id: self.config.id.clone(),
+            actor: actor.to_string(),
+            category: "enforcement".to_string(),
+            filename: Path::new(&enforcement_descriptor.path)
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("enforcement.toml")
+                .to_string(),
+            affected_path: enforcement_descriptor.path,
+            target_kind: "security_rule".to_string(),
+            target_key: rule_id.to_string(),
+            operation: "delete".to_string(),
+            rule_id: Some(format!("profiles.rules.{rule_id}")),
+            old_hash: format!("blake3:{old_hash}"),
+            old_size,
+            new_hash: format!("blake3:{new_hash}"),
+            new_size,
+        })
+    }
+
     pub fn save(&self) -> Result<(), String> {
         let path = self.profile_dir.join("profile.toml");
         let content = toml::to_string_pretty(&self.config)
             .map_err(|error| format!("serialize profile: {error}"))?;
         fs::write(&path, content)
             .map_err(|error| format!("write profile {}: {error}", path.display()))
+    }
+
+    fn load_verified_enforcement_rules(
+        &self,
+    ) -> Result<
+        (
+            ProfileFileDescriptor,
+            PathBuf,
+            String,
+            u64,
+            SecurityRuleProfile,
+        ),
+        String,
+    > {
+        let enforcement_descriptor = self.config.files.enforcement.clone().ok_or_else(|| {
+            "profile.files.enforcement is required before mutating enforcement rules".to_string()
+        })?;
+        let enforcement_rule_file =
+            self.config
+                .rule_files
+                .enforcement
+                .as_deref()
+                .ok_or_else(|| {
+                    "profile.rule_files.enforcement is required before mutating enforcement rules"
+                        .to_string()
+                })?;
+        if enforcement_descriptor.path != enforcement_rule_file {
+            return Err(format!(
+                "profile.files.enforcement.path must match rule_files.enforcement: {} != {}",
+                enforcement_descriptor.path, enforcement_rule_file
+            ));
+        }
+        let enforcement_path = self.config_root.join(&enforcement_descriptor.path);
+        let (old_hash, old_size) = verify_hash_and_size(
+            &enforcement_path,
+            enforcement_descriptor.hash.as_str(),
+            enforcement_descriptor.size,
+        )?;
+        let content = fs::read_to_string(&enforcement_path).map_err(|error| {
+            format!(
+                "read enforcement file {}: {error}",
+                enforcement_path.display()
+            )
+        })?;
+        let rules = SecurityRuleProfile::parse_toml(&content).map_err(|error| {
+            format!(
+                "parse enforcement file {} before mutation: {error}",
+                enforcement_path.display()
+            )
+        })?;
+        Ok((
+            enforcement_descriptor,
+            enforcement_path,
+            old_hash,
+            old_size,
+            rules,
+        ))
+    }
+
+    fn update_enforcement_pin(
+        &mut self,
+        descriptor_path: &str,
+        enforcement_path: &Path,
+    ) -> Result<(String, u64), String> {
+        let (new_hash, new_size) = file_hash_and_size(enforcement_path)?;
+        self.config.files.enforcement = Some(ProfileFileDescriptor {
+            path: descriptor_path.to_string(),
+            hash: format!("blake3:{new_hash}"),
+            size: new_size,
+        });
+        Ok((new_hash, new_size))
     }
 
     fn file_statuses(&self) -> Vec<ProfileFileStatus> {

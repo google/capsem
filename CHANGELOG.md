@@ -70,6 +70,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   are now hash-pinned profile files, `Profile` owns core status/check/download
   and MCP tool permission mutation, backend-managed rules carry typed
   ownership annotations, and profile mutations have a DB-writer ledger event.
+- Wired service profile routes onto that rail: profile status now verifies
+  pinned profile files plus asset hashes, profile asset ensure repairs corrupt
+  hash-prefixed assets, MCP tool permission edits write managed profile
+  enforcement rules and profile mutation ledger rows, and enforcement/detection
+  route listing and authoring compile from profile files plus corp overlays
+  without reading or writing user settings.
 - Updated in-VM diagnostics to validate that the profile-owned Gemini,
   Antigravity, Claude, Codex, and MCP config files are actually projected into
   runtime `/root`, point at the canonical Capsem MCP bridge where applicable,

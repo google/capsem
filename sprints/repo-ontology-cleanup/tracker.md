@@ -108,6 +108,25 @@
   `set_mcp_tool_permission("capsem", "fetch_http", Ask)` creates or updates one
   managed enforcement rule, updates the profile hash pin, reloads cleanly, and
   does not mutate `mcp.json`.
+- [x] S1-B: Wire profile status/assets routes through the `Profile` rail.
+  `/profiles/status` and `/profiles/{id}/assets/status` now verify pinned
+  profile sibling files and BLAKE3/size-pinned assets; fake or corrupted assets
+  are not reported ready. Proof:
+  `cargo test -p capsem-service profile_ -- --test-threads=1`.
+- [x] S1-B: Wire MCP tool permission route through profile-owned enforcement.
+  `PATCH /profiles/code/mcp/servers/capsem/tools/fetch_http/edit` with
+  `{"action":"ask"}` verifies pinned `mcp.json`, writes/updates one managed
+  enforcement rule, updates `profile.toml`'s BLAKE3/size pin, and writes a
+  `profile_mutation_events` row to `main.db`. Proof:
+  `profile_mcp_tool_edit_writes_profile_rule_and_mutation_ledger`.
+- [x] S1-B: Burn settings-backed enforcement/detection route authoring.
+  Enforcement/detection list/info now compile built-in defaults plus profile
+  rule files plus corp overlays, never `user.toml`; rule edit/delete routes
+  mutate the profile enforcement file, refresh profile pins, and write mutation
+  ledger rows. Proof:
+  `profile_enforcement_list_uses_profile_files_and_corp_not_user_settings`,
+  `enforcement_rule_endpoints_add_delete_reload_and_reject_invalid_rules_atomically`,
+  and `route_authored_detection_rule_triggers_runtime_ledger_and_latest_routes`.
 - [ ] S1: Replace rule-leaking UI/TUI mutation paths with semantic profile
   facade routes. MCP server/tool, plugin, and skill controls send enum/state
   edits; backend owns translation into profile-owned enforcement, plugin, skill,
@@ -120,9 +139,10 @@
   target kind, target key/path, operation, filename, affected file path,
   old/new hash and size, status, and error if any. No ad hoc route file edits
   and no side SQLite writes.
-  Partial S1-A: core summary/event/schema/write path exists for applied
-  mutations. Open: route service wiring, failed-mutation ledgering, lock/corp
-  checks, plugin/skill/default-rule adapters, and stale-hash race tests.
+  Partial S1-A/S1-B: core summary/event/schema/write path exists for applied
+  mutations; service routes now emit applied rows for MCP tool and profile rule
+  mutations. Open: failed-mutation ledgering, explicit route lock/corp
+  constraints, plugin/skill/default-rule adapters, and stale-hash race tests.
 - [ ] S1: Build the `Profile` object abstraction before wiring route
   mutations. `Profile` is the invariant rail for profile truth and owns
   load/path resolution/lock/verify/status/check/download/semantic
@@ -134,9 +154,10 @@
   directly. Any smaller document/store helpers are private implementation
   details.
   Partial S1-A: core load/path/status/check/file-url download/MCP tool semantic
-  mutation/save paths exist. Open: route-facing lock/reload/corp-constraint
-  integration, HTTP asset download progress, plugin/skill adapters, and service
-  status integration.
+  mutation/save paths exist. Partial S1-B: service status/assets and
+  enforcement/MCP rule routes use the profile rail. Open: route-facing
+  lock/reload/corp-constraint integration, plugin/skill adapters, and deeper
+  service status/UI integration.
 - [ ] S1: Extend `SecurityRule` with optional typed ownership annotations for
   backend-managed semantic rules. Enforce uniqueness for MCP server/tool,
   plugin, and skill targets so routes update the one owned rule instead of
@@ -147,6 +168,9 @@
   updates the profile enforcement rule, returns `effective_action = "ask"` from
   the tool list, and does not mutate `mcp.json`, `settings.toml`, or any
   `user.toml` path.
+  Partial S1-B: route edit writes the managed enforcement rule, updates the
+  profile pin, emits the mutation ledger row, and leaves `mcp.json` untouched.
+  Open: expose `effective_action` from the tool list route.
 - [ ] S1: Add adversarial tests for mutation discipline: stale hash rejects,
   manual file drift rejects, duplicate managed-rule annotations reject,
   unannotated user/corp CEL rules with the same server/tool do not confuse the
@@ -198,7 +222,8 @@
   `hypervisor::kvm` without the Linux toolchain/runtime.
 - [ ] S5: Magic inventory gate.
 - [ ] Changelog.
-  Partial: profile-owned image payload pinning is recorded under Unreleased.
+  Partial: profile-owned image payload pinning and S1-A/S1-B profile mutation
+  rail service wiring are recorded under Unreleased.
 - [ ] Commit.
 
 ## Notes
@@ -369,6 +394,18 @@
   proves profile file refs parse, serde/validate, and reject absolute paths,
   traversal, bad hash schemes, and zero-size pins. Restored KVM memory tests
   exist in `memory.rs`/`virtio_blk.rs` but are Linux-only.
+- S1-B unit/contract: `cargo test -p capsem-core --lib
+  net::policy_config::profile_contract::tests` passed with 20 tests, covering
+  malformed profiles, pinned profile file tamper, file-url asset download, and
+  MCP managed-rule mutation/update.
+- S1-B service/route: `cargo test -p capsem-service --bin capsem-service --
+  --test-threads=1` passed with 162 tests. This includes profile status
+  hash-verification, profile asset download/corruption repair, MCP tool
+  permission route mutation, enforcement/detection profile-file authoring, corp
+  overlay preservation, and route-authored detection ledger readback.
+- S1-B API/library: `cargo test -p capsem-service --lib` passed with 92 tests.
+- S1-B build hygiene: `cargo fmt --check`, `git diff --check`, and
+  `cargo check -p capsem-service --all-targets` passed.
 - Tooling: `uv run ruff check .` and `uv run ty check src/capsem` are the
   current Python quality gates.
 - Skill contract: `uv run capsem-builder validate-skills config/skills` and
