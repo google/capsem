@@ -9,10 +9,16 @@ The asset pipeline moves kernel, initrd, and rootfs images from build through to
 
 ## Build
 
-Guest image configuration lives in `guest/config/` as TOML files. The `capsem-builder` CLI loads them, renders Jinja2 Dockerfile templates, and produces per-architecture assets:
+Profile configuration lives under `config/profiles/<profile_id>/`. The
+admin rail validates the profile ledger and materializes a backend image
+workspace before Docker runs:
 
 ```
-guest/config/*.toml -> load_guest_config() -> capsem-builder build -> assets/{arch}/
+config/profiles/<id>/profile.toml
+  -> capsem-admin image build
+  -> generated backend image spec
+  -> capsem-builder
+  -> assets/{arch}/
 ```
 
 Two build templates exist:
@@ -48,7 +54,7 @@ assets/
 | `just shell` / `just exec "CMD"` | Repack initrd, materialize runtime config, sign, boot |
 | `capsem-admin manifest generate assets` | Generate `assets/manifest.json` from an asset directory |
 | `capsem-admin profile materialize` | Generate `target/config` from source `config/` plus `assets/manifest.json` |
-| `capsem-builder build guest/ --arch arm64 --template rootfs` | Build one template for one arch |
+| `capsem-admin image build --profile config/profiles/code/profile.toml --config-root config --arch arm64 --template rootfs` | Build one template for one arch through the profile rail |
 
 `config/` is checked-in source material: profile, corp, settings, rule files,
 and support templates. The current build's runtime config is generated under
@@ -248,7 +254,8 @@ profile, not the source profile.
 ```mermaid
 flowchart LR
     subgraph Build
-        TOML[guest/config/*.toml] --> Builder[capsem-builder]
+        PROFILE["config/profiles/<id>/profile.toml"] --> Admin["capsem-admin image build"]
+        Admin --> Builder[capsem-builder]
         Builder --> Assets[assets/arm64/]
         Builder --> Checksums[manifest.json]
     end

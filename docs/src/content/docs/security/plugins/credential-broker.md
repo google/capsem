@@ -31,17 +31,29 @@ not exposed as CEL fields.
 
 Mutation: stores observed credentials through the broker and writes the brokered `credential:blake3:*` reference back onto the event.
 
-MCP contract: remote MCP server config may carry only brokered auth metadata:
+MCP contract: remote MCP server config may carry only brokered auth metadata in
+profile-owned `mcp.json`:
 
-```toml
-[mcp.servers.remote.auth]
-kind = "oauth" # or "bearer"
-credential_ref = "credential:blake3:..."
+```json
+{
+  "servers": [
+    {
+      "id": "remote",
+      "name": "Remote MCP",
+      "transport": "sse",
+      "url": "https://mcp.example.invalid/sse",
+      "auth": {
+        "kind": "oauth",
+        "credential_ref": "credential:blake3:..."
+      }
+    }
+  ]
+}
 ```
 
-The broker owns OAuth/API-key material and resolution. MCP TOML must not store
-raw `bearer_token`, `bearerToken`, `Authorization`, `X-Api-Key`, refresh tokens,
-or access tokens.
+The broker owns OAuth/API-key material and resolution. MCP config must not
+store raw `bearer_token`, `bearerToken`, `Authorization`, `X-Api-Key`, refresh
+tokens, or access tokens.
 
 Decision: plugin policy can request `allow`, `ask`, `block`, or `rewrite`; `rewrite` keeps the effective decision at `allow` while recording mutation intent.
 

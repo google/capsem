@@ -5,17 +5,23 @@ sidebar:
   order: 30
 ---
 
-capsem-builder is a Python CLI that reads TOML configs from `guest/config/`, validates them through Pydantic models, renders Jinja2 Dockerfiles, and produces per-architecture VM assets. It also generates the `defaults.json` consumed by the Rust binary at compile time.
+Capsem builds VM assets from the profile/admin rail. Checked-in
+`config/profiles/<profile_id>/profile.toml` and its hash-pinned sibling files
+are product truth. `capsem-admin image build` resolves that profile into a
+generated backend workspace, then `capsem-builder` validates the backend image
+spec, renders Jinja2 Dockerfiles, and produces per-architecture VM assets.
 
 ## Architecture
 
 ```mermaid
 flowchart TD
   subgraph Input["Source of Truth"]
-    TOML["guest/config/*.toml\n(guest tools, packages,\nnetwork mechanics, VM resources)"]
+    PROFILE["config/profiles/<id>/profile.toml\n+ pinned package, MCP, rule,\nroot, install, tips files"]
+    ADMIN["capsem-admin image workspace\nmaterialized backend image spec"]
   end
 
   subgraph Validation["Validation Layer"]
+    Profile["capsem-admin profile check\nBLAKE3/size pins"]
     Config["config.py\nTOML loader"]
     Models["models.py\nPydantic models\n(PackageManager, InstallConfig,\ntool/package/network configs, ...)"]
     Validate["validate.py\nLinter (E001-E402, W001-W012)"]
@@ -24,62 +30,71 @@ flowchart TD
   subgraph Generation["Code Generation"]
     Context["docker.py\n_rootfs_context()\n_kernel_context()"]
     Jinja["Jinja2 Templates\nDockerfile.rootfs.j2\nDockerfile.kernel.j2"]
-    Defaults["config.py\ngenerate_defaults_json()"]
   end
 
   subgraph Output["Build Outputs"]
     Docker["Docker Build"]
     Assets["assets/{arch}/\nvmlinuz, initrd.img,\nrootfs.erofs"]
-    JSON["config/defaults.json\n(consumed by Rust)"]
-    BOM["manifest.json\n+ B3SUMS"]
+    Ledger["build-ledger.log\nconfig inputs + hashes"]
+    BOM["manifest.json\n+ B3SUMS\n+ obom.cdx.json"]
     RuntimeConfig["target/config/\nmaterialized runtime profiles"]
   end
 
-  TOML --> Config
+  PROFILE --> Profile
+  Profile --> ADMIN
+  ADMIN --> Config
   Config --> Models
   Models --> Validate
   Models --> Context
-  Models --> Defaults
   Context --> Jinja
   Jinja --> Docker
   Docker --> Assets
+  Docker --> Ledger
   Assets --> BOM
   BOM --> RuntimeConfig
-  Defaults --> JSON
 ```
 
 ### Data flow
 
-TOML configs are the single source of truth. The data flows through four layers:
+The data flows through four layers:
 
-1. **TOML configs** (`guest/config/`) -- declarative image-build inputs for guest tools, packages, network mechanics, and VM resources. They are not credential, provider-authorization, or enforcement truth.
-2. **Pydantic models** (`models.py`) -- type-safe validation with enums (`PackageManager`: apt, uv, pip, npm, curl), frozen models, and cross-field validators.
-3. **Context dicts** (`docker.py`) -- template variables assembled from the validated config. Each template type (`rootfs`, `kernel`) has its own context builder that collects packages by manager type.
-4. **Jinja2 templates** -- Dockerfile output parameterized per architecture.
+1. **Profile ledger** (`config/profiles/<id>/profile.toml`) -- runtime and build
+   product truth: assets, package files, MCP config, security rules, plugins,
+   root seed, install script, tips, and OBOM descriptors.
+2. **Admin materialization** (`capsem-admin image workspace`) -- validates
+   profile BLAKE3/size pins and writes a generated backend image workspace.
+3. **Pydantic models** (`models.py`) -- validate the generated backend image
+   spec with enums (`PackageManager`: apt, uv, pip, npm, curl), frozen models,
+   and cross-field validators.
+4. **Context dicts and Jinja2 templates** (`docker.py`, `config/docker/`) --
+   produce per-architecture Dockerfiles and build contexts.
 
 Four outputs are produced:
 
-1. **defaults.json** -- settings interchange consumed by Rust via `include_str!`, validated against `settings-schema.json`.
-2. **Rendered Dockerfiles** -- Jinja2 templates (`Dockerfile.rootfs.j2`, `Dockerfile.kernel.j2`) parameterized per architecture.
-3. **manifest.json** -- bill-of-materials with package versions, BLAKE3 hashes, and vulnerability findings.
-4. **target/config/** -- generated runtime config produced by `capsem-admin profile materialize` from checked-in `config/` plus `assets/manifest.json`.
+1. **Rendered Dockerfiles** -- Jinja2 templates (`Dockerfile.rootfs.j2`,
+   `Dockerfile.kernel.j2`) parameterized per architecture.
+2. **VM assets** -- `vmlinuz`, `initrd.img`, and `rootfs.erofs`.
+3. **build-ledger.log** -- JSONL debug evidence for rendered inputs, context
+   hashes, profile/package inputs, EROFS settings, git revision, and project
+   version.
+4. **target/config/** -- generated runtime config produced by
+   `capsem-admin profile materialize` from checked-in `config/` plus
+   `assets/manifest.json`.
 
-## TOML Config Structure
-
-All config lives under `guest/config/`. Each file maps to a Pydantic model.
+## Backend Image Spec
 
 | File | Model | Purpose | Key Fields |
 |------|-------|---------|------------|
 | `build.toml` | `BuildConfig` | Architectures, compression | `compression`, `compression_level`, `architectures.*` |
 | `manifest.toml` | `ImageManifestConfig` | Image identity and changelog | `name`, `version`, `description`, `changelog` |
-| `ai/*.toml` | guest tool metadata | Preinstalled AI CLI/tool metadata | `install`, `cli`, non-secret bootstrap files |
 | `packages/apt.toml` | `PackageSetConfig` | Apt package set | `manager`, `install_cmd`, `packages`, `network` |
 | `packages/python.toml` | `PackageSetConfig` | Python package set | `manager`, `install_cmd`, `packages` |
-| `mcp/*.toml` | `McpServerConfig` | MCP server definitions | `transport`, `command`, `url`, `args`, `env` |
-| `security/web.toml` | `WebSecurityConfig` | Network mechanics | `http_upstream_ports` |
-| `vm/resources.toml` | `VmResourcesConfig` | CPU, RAM, disk limits | `cpu_count`, `ram_gb`, `scratch_disk_size_gb` |
-| `vm/environment.toml` | `VmEnvironmentConfig` | Shell, PATH, TLS | `shell.term`, `shell.home`, `shell.path`, `tls.ca_bundle` |
 | `kernel/defconfig.*` | (raw) | Kernel configs per arch | Linux kernel defconfig files |
+
+These files are backend image spec, usually generated under `target/` by the
+admin rail. Do not add provider authorization, credentials, security policy, UI
+settings, or MCP runtime truth to the backend image spec. Those belong to the
+profile, corp config, rule files, and plugins.
 
 Example `build.toml`:
 
@@ -103,22 +118,11 @@ defconfig = "kernel/defconfig.arm64"
 node_major = 24
 ```
 
-Example guest tool metadata (`ai/anthropic.toml`):
-
-```toml
-[anthropic]
-name = "Anthropic"
-description = "Claude Code AI agent"
-enabled = true
-
-[anthropic.install]
-manager = "curl"
-packages = ["https://claude.ai/install.sh"]
-```
-
-Provider allow/block decisions live in profile/corp enforcement rules.
-Credentials are captured and materialized by the credential broker plugin at
-runtime and logged only as BLAKE3 references.
+Profile package files such as `config/profiles/code/apt-packages.txt`,
+`python-requirements.txt`, and `npm-packages.txt` are materialized into backend
+package TOML before the build. Provider allow/block decisions live in
+profile/corp enforcement rules. Credentials are captured and materialized by
+the credential broker plugin at runtime and logged only as BLAKE3 references.
 
 ## Validation Pipeline
 
@@ -231,7 +235,8 @@ Key implementation details:
 
 ## Container Runtime Requirements
 
-On macOS, Docker runs inside a Colima VM with limited resources. The rootfs build runs apt, npm, and curl-based CLI installers concurrently, requiring substantial memory.
+On macOS, Docker runs inside a Colima VM with limited resources. The rootfs
+build runs apt, npm, and profile install steps, requiring substantial memory.
 
 | Threshold | RAM | Notes |
 |-----------|-----|-------|
@@ -252,12 +257,13 @@ colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8
 
 ## Install Manager Types
 
-AI providers declare how their CLI gets installed via `[provider.install]`. The builder supports multiple install strategies:
+Profile-owned package files and install scripts resolve into backend package
+sets. The builder supports multiple install strategies:
 
 | Manager | Template Handling | Use Case | Example |
 |---------|------------------|----------|---------|
 | `npm` | Batched into single `npm install -g --prefix` | Node.js CLI tools | Gemini CLI, Codex |
-| `curl` | Each URL gets its own `RUN curl -fsSL URL \| bash` | Native binary installers | Claude Code |
+| `curl` | Profile install script or backend curl package set | Native binary installers | Claude Code |
 | `apt` | Package set (not per-provider) | System packages | coreutils, git, curl |
 | `uv` | Package set (not per-provider) | Python packages | numpy, pytest |
 | `pip` | Package set (not per-provider) | Python packages (fallback) | -- |
@@ -285,8 +291,7 @@ To add a new manager type (e.g., `cargo`):
 2. Collect packages in `_rootfs_context()` in `docker.py` -- create a new list variable
 3. Pass it to the template context dict
 4. Add a Jinja2 block in `Dockerfile.rootfs.j2`
-5. Add to `_INSTALL_CMDS` in `scaffold.py`
-6. Update tests in `test_docker.py` and `test_cli.py`
+5. Update tests in `test_docker.py` and the admin workspace materialization tests
 
 ### Rootfs Dockerfile layer structure
 
@@ -312,17 +317,18 @@ flowchart TD
 
 Step 10 and 11 ordering matters: curl installers run _after_ the `/root` cleanup so there's a clean HOME. Binaries are immediately copied to `/usr/local/bin/` since `/root` becomes tmpfs at boot.
 
-## Manifest and BOM
+## Manifest, Build Ledger, and OBOM
 
-Every build produces `manifest.json` at the asset root. The BOM records:
+Every build produces `manifest.json` at the asset root. The manifest records
+asset hashes and compatibility. The per-arch `build-ledger.log` records debug
+evidence for the inputs that produced the assets. The CycloneDX OBOM records
+installed base-image components.
 
 | Section | Source | Contents |
 |---------|--------|----------|
-| Packages (dpkg) | `dpkg-query` output | Name, version, architecture |
-| Packages (pip) | `pip list --format json` | Name, version |
-| Packages (npm) | `npm ls --json --global` | Name, version |
 | Assets | `b3sum` output | Filename, BLAKE3 hash, size in bytes |
-| Vulnerabilities | Trivy or Grype scan | CVE ID, severity, package, installed/fixed versions |
+| Build ledger | build pipeline | Rendered Dockerfile/context hashes, profile/package inputs, EROFS settings |
+| OBOM | cdxgen | Installed base-image package/component names and versions |
 
 The `audit` subcommand parses vulnerability scanner output and fails on CRITICAL or HIGH findings.
 
@@ -331,43 +337,39 @@ The `audit` subcommand parses vulnerability scanner output and fails on CRITICAL
 | Command | Description | Key Options |
 |---------|-------------|-------------|
 | `build` | Render Dockerfiles or build images | `--arch`, `--dry-run`, `--json`, `--template`, `--output`, `--kernel-version` |
-| `validate` | Lint and validate guest config | `--artifacts` (check built artifacts too) |
+| `validate` | Lint and validate backend image spec | `--artifacts` (check built artifacts too) |
 | `inspect` | Show config summary | `--json` |
 | `audit` | Parse vulnerability scan results | `--scanner` (trivy/grype), `--input`, `--json` |
-| `init` | Scaffold a minimal guest config directory | `--force` |
-| `new` | Create a new image config from a base | `--from`, `--non-interactive`, `--force` |
-| `add ai-provider` | Add a guest AI CLI/tool template | `--dir`, `--force` |
-| `add packages` | Add a package set template | `--dir`, `--manager`, `--force` |
-| `add mcp` | Add an MCP server template | `--dir`, `--transport`, `--force` |
 | `mcp` | Start MCP stdio server for builder tools | (none) |
-| `doctor` | Check build prerequisites | (none) |
+| `doctor` | Check build prerequisites and active profile | `--profile`, `--config-root` |
 
 Usage:
 
 ```bash
-# Validate config
-uv run capsem-builder validate guest
+# Validate the active profile and profile-owned files
+cargo run -p capsem-admin -- profile check config/profiles/code/profile.toml --config-root config
 
-# Dry-run: render Dockerfiles without building
-uv run capsem-builder build --dry-run --json
+# Dry-run: render the profile-derived build plan without building
+cargo run -p capsem-admin -- image build --profile config/profiles/code/profile.toml --config-root config --dry-run --json
 
-# Build rootfs for arm64 only
-uv run capsem-builder build --arch arm64
+# Build rootfs for arm64 through the admin rail
+cargo run -p capsem-admin -- image build --profile config/profiles/code/profile.toml --config-root config --arch arm64 --template rootfs
 
 # Build kernel for all architectures
 uv run capsem-builder build --template kernel
 
-# Scaffold a new image config
-uv run capsem-builder new my-image --from guest
+# Check prerequisites and active profile
+uv run capsem-builder doctor --profile code --config-root config
 ```
 
 ## Settings JSON Generation
 
-The builder bridges Python config and Rust runtime through a JSON interchange layer.
+Settings schema generation is separate from image building. Settings are UI/app
+preferences; profiles own assets, MCP, rules, plugins, and image payloads.
 
 ```mermaid
 flowchart LR
-  TOML["guest/config/*.toml"] --> Py["generate_defaults_json()"]
+  TOML["config/host/settings.toml"] --> Py["generate_defaults_json()"]
   Py --> DJ["config/defaults.json"]
   DJ --> Rust["include_str! in Rust"]
   Py --> Schema["settings-schema.json"]
@@ -375,7 +377,9 @@ flowchart LR
   DJ --> CV
 ```
 
-`generate_defaults_json()` transforms a `GuestImageConfig` into the hierarchical JSON tree consumed by the Rust settings registry. This JSON defines every setting's name, description, type, default value, and metadata (env vars, domain rules, UI hints).
+`generate_defaults_json()` transforms host settings source into the
+hierarchical JSON tree consumed by the Rust settings registry. This JSON defines
+each setting's name, description, type, default value, and UI metadata.
 
 The schema is generated from `SettingsRoot.model_json_schema()` (Pydantic) and written to `config/settings-schema.json`. Cross-language conformance tests verify that:
 

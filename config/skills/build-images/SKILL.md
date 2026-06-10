@@ -18,8 +18,9 @@ The product contract is profile-led:
 
 `capsem-admin` owns profile validation, asset/manifest materialization, and the
 package-facing build contract. The Python `capsem-builder` code is a backend
-implementation detail. Do not add new product truth to `guest/config`; it is a
-legacy input surface being burned during the repository ontology cleanup.
+implementation detail. Do not add new product truth to backend image-spec
+inputs; product truth belongs in profiles, corp config, settings, rules, and
+plugins.
 
 ## Source Layout
 
@@ -44,8 +45,8 @@ assets/                   Generated VM assets
 packages/                 Generated native packages
 ```
 
-Current transition note: some code still references `guest/config`. Treat that
-as cleanup target, not a place to add new behavior.
+Some backend code still consumes generated image-spec files. Treat those paths
+as implementation details, not product-authoring surfaces.
 
 ## CLI commands
 
@@ -178,7 +179,7 @@ The target flow is:
 - core guest binaries and diagnostics;
 - rootfs compression settings.
 
-It must not own AI provider policy, MCP policy, credentials, VM settings, UI
+It must not own model-provider policy, MCP policy, credentials, VM settings, UI
 settings, or security decisions.
 
 ### Kernel context dict
@@ -200,7 +201,7 @@ delete/rewrite product-authoring pieces instead of extending them:
 - `McpServerConfig`
 - web security/network policy config inside image config
 - VM resource/settings ownership inside image config
-- `capsem-builder init/new/add` product scaffolding
+- Deprecated builder product scaffolding commands
 - `generate_defaults_json()` from guest image config
 
 Keep backend-only concerns: arch config, resolved package install sets, kernel

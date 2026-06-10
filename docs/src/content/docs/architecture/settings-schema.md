@@ -167,7 +167,7 @@ The schema generation pipeline runs from Pydantic models to two output files:
 flowchart LR
     PM["schema.py\nPydantic models"] --> MSJ["model_json_schema()"]
     MSJ --> SCH["config/settings-schema.json"]
-    GC["guest/config/*.toml"] --> GD["generate_defaults_json()"]
+    GC["config/host/settings.toml"] --> GD["generate_defaults_json()"]
     GD --> DEF["config/defaults.json"]
 ```
 
@@ -178,7 +178,7 @@ just schema
 # Runs: uv run python scripts/generate_schema.py
 # Outputs:
 #   config/settings-schema.json  (JSON Schema from Pydantic)
-#   config/defaults.json         (defaults from guest TOML configs)
+#   config/defaults.json         (defaults from host settings source)
 ```
 
 The JSON Schema is derived from `SettingsRoot.model_json_schema()`. It contains `$defs` for all model types (GroupNode, SettingNode, SettingMetadata, enums) and a `properties.settings` array at the root.
@@ -226,7 +226,7 @@ Any schema change requires updating the golden fixture, expected.json, and all t
 
 ## Data Flow
 
-Two parallel paths connect guest TOML configs to the running application:
+Two parallel paths connect the settings contract to the running application:
 
 ```mermaid
 flowchart TD
@@ -237,10 +237,10 @@ flowchart TD
     end
 
     subgraph "Data Path (build time)"
-        TOML["guest/config/*.toml\n(ai, mcp, security, vm)"] --> GEN["generate_defaults_json()"]
+        TOML["config/host/settings.toml\n(UI/app preferences only)"] --> GEN["generate_defaults_json()"]
         GEN --> DEF["config/defaults.json"]
         DEF --> RUST["Rust include_str!()\nregistry.rs"]
-        RUST --> BOOT["Boot-time config\ninjection"]
+        RUST --> BOOT["Settings route\nand UI defaults"]
     end
 
     subgraph "Golden Fixture Path (test time)"
@@ -250,7 +250,10 @@ flowchart TD
     end
 ```
 
-The data path: guest TOML configs are processed by `generate_defaults_json()` into `config/defaults.json`. Rust embeds this file at compile time via `include_str!()` in `registry.rs`. At boot, the registry resolves settings (corp > user > defaults) and injects the result into the VM.
+The data path: host settings source is processed by `generate_defaults_json()`
+into `config/defaults.json`. Rust embeds this file at compile time via
+`include_str!()` in `registry.rs`. Settings are UI/app preferences. Profiles
+own assets, rules, MCP, plugins, image payloads, and VM runtime posture.
 
 The schema path: Pydantic models generate JSON Schema for documentation and validation. The conformance tests ensure all three languages agree on parsing.
 

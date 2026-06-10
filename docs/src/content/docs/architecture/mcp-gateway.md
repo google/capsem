@@ -209,23 +209,29 @@ reloads affect already-open guest MCP connections.
 
 ## Configuration files
 
-MCP server definitions live in TOML files under `guest/config/mcp/`:
+MCP server definitions are profile-owned. The profile points at `mcp.json`, and
+semantic routes mutate MCP server/tool posture through backend-owned profile
+rules instead of exposing raw rule text to the UI.
 
-```toml
-# guest/config/mcp/capsem.toml
-[capsem]
-name = "Capsem"
-description = "Built-in Capsem MCP server for file and snapshot tools"
-transport = "stdio"
-command = "/run/capsem-mcp-server"
-builtin = true
-enabled = true
+```json
+{
+  "servers": [
+    {
+      "id": "capsem",
+      "name": "Capsem",
+      "description": "Built-in Capsem MCP server for file and snapshot tools",
+      "transport": "stdio",
+      "command": "/run/capsem-mcp-server",
+      "builtin": true,
+      "enabled": true
+    }
+  ]
+}
 ```
 
-External MCP servers are profile-owned. Profile MCP config and corp constraints
-are validated by the service and passed to the [MCP Aggregator](/architecture/mcp-aggregator/)
-subprocess at spawn time. Credentials are referenced through the credential
-broker (`credential:blake3:*`), not stored as raw tokens in MCP config.
+Profile MCP config and corp constraints are validated by the service and passed
+to the [MCP Aggregator](/architecture/mcp-aggregator/) subprocess at spawn
+time. Credentials are broker-owned references, not raw tokens in MCP config.
 
 ## Key source files
 
@@ -243,6 +249,6 @@ broker (`credential:blake3:*`), not stored as raw tokens in MCP config.
 | `capsem-core/src/security_engine/` | SecurityEvent construction, rule evaluation, plugin actions, and rule-ledger emission |
 | `capsem-mcp-aggregator/src/main.rs` | Isolated subprocess: NDJSON loop, server connections |
 | `capsem-process/src/main.rs` | `spawn_mcp_aggregator()`: launch and driver tasks |
-| `guest/config/mcp/` | MCP server TOML definitions |
+| `config/profiles/<id>/mcp.json` | Profile MCP server definitions |
 
 See [MCP Aggregator](/architecture/mcp-aggregator/) for the full subprocess architecture.

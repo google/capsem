@@ -61,8 +61,8 @@ If you change the settings schema (node types, metadata fields), all three must 
 ## Schema generation pipeline
 
 ```
-guest/config/*.toml -> Pydantic models -> config/settings-schema.json (JSON Schema)
-                                       -> config/defaults.json (settings interchange)
+config/host/settings.toml -> Pydantic models -> config/settings-schema.json (JSON Schema)
+                                             -> config/defaults.json (settings interchange)
 ```
 
 - `just schema` runs `generate_schema.py` which calls `export_json_schema()` and `generate_defaults_json()`

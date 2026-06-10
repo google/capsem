@@ -39,10 +39,11 @@ flowchart TD
     end
 
     subgraph stage0["0. VM images (first-time only)"]
-        TOML["guest/config/*.toml"]
-        BUILDER["capsem-builder\n(Python CLI)"]
+        PROFILE["config/profiles/<id>/profile.toml\n+ pinned sibling files"]
+        ADMIN["capsem-admin image build"]
+        BUILDER["capsem-builder\nbackend"]
         DOCKER["Docker (via Colima)"]
-        TOML --> BUILDER --> DOCKER
+        PROFILE --> ADMIN --> BUILDER --> DOCKER
         DOCKER --> VMLINUZ["vmlinuz"]
         DOCKER --> ROOTFS["rootfs.erofs"]
         DOCKER --> INITRD_BASE["initrd.img (base)"]
@@ -166,11 +167,13 @@ Boot sequence: capsem-service spawns capsem-process, which loads the kernel + in
 
 ## VM image builds (`just build-assets code`)
 
-The slow path (~10 min, first-time only). The [capsem-builder](/architecture/build-system/) Python CLI reads TOML configs from `guest/config/` and produces kernel + rootfs via Docker.
+The slow path (~10 min, first-time only). The
+[capsem-admin image rail](/architecture/build-system/) validates the selected
+profile, materializes a backend image workspace, and then uses the Python
+builder to produce kernel + rootfs via Docker.
 
 ```bash
 cargo run -p capsem-admin -- image build --profile config/profiles/code/profile.toml --config-root config --arch arm64
-uv run capsem-builder validate guest/               # lint configs
 uv run capsem-builder doctor --profile code --config-root config # check prerequisites and profile
 ```
 

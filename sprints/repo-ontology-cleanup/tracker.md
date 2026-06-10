@@ -241,9 +241,15 @@
 - [x] S3: Teach `capsem-admin profile materialize` to attach a pinned
   `obom.cdx.json` when the asset manifest lists one; local OBOM documents are
   served only after size and BLAKE3 verification.
-- [ ] S4: Documentation and skill cleanup.
-- [ ] S4: Update public docs and internal skills after ontology paths land;
+- [x] S4: Documentation and skill cleanup.
+- [x] S4: Update public docs and internal skills after ontology paths land;
   stale `guest/config` guidance is a release hold.
+  Proof: active architecture/development/security docs and internal skills now
+  describe the profile/admin build contract, profile-owned package/MCP/rule
+  files, generated `target/config`, build-ledger-vs-OBOM evidence, and
+  `capsem-admin image build` as the public rail. Added
+  `tests/capsem-build-chain/test_active_docs_profile_contract.py` to fail if
+  active docs/skills reintroduce retired builder/product-authoring guidance.
 - [ ] S5: Verification gate.
 - [ ] S5: Full build gate: rebuild profile assets through the admin/just rail,
   including EROFS/LZ4HC rootfs.
@@ -495,6 +501,14 @@
   profile_info_and_obom_route_expose_base_image_obom_hash -- --nocapture`
   passed, proving pinned OBOM metadata materializes into the profile and is
   exposed by the runtime profile API after BLAKE3/size validation.
+- S4 docs/skills: `uv run python -m pytest
+  tests/capsem-build-chain/test_active_docs_profile_contract.py -q` passed,
+  proving active docs/skills do not teach retired product-authoring routes such
+  as raw backend builder commands, setup wizard/provider config, squashfs
+  fallback, or settings-owned AI/MCP config. Broad grep was reviewed; remaining
+  hits are telemetry terminology or explicit "retired path is gone" statements.
+  `cd docs && pnpm run build` passed with 47 pages, proving the edited Astro
+  docs and Mermaid diagrams build cleanly.
 - Adversarial: `cargo test -p capsem-admin profile_check -- --nocapture`
   proves mutated profile payload files are rejected and profile root manifests
   are verified. Remaining: checked-in credential sweep for

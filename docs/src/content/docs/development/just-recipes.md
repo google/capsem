@@ -92,9 +92,10 @@ LIMIT 20;"
 | `just build-rootfs <arch> code` | Rootfs only through the profile-derived admin rail | ~8 min |
 | `just cross-compile [arch]` | Full Linux build in container: agent binaries + deb + AppImage | ~15 min |
 
-You only need `just build-assets code` on first setup or when `guest/config/`
-changes rootfs packages or image build inputs. Day-to-day, `just shell` and
-`just exec` repack the initrd without rebuilding rootfs images.
+You only need `just build-assets code` on first setup or when profile-owned
+package/root/install inputs or backend image templates change rootfs contents.
+Day-to-day, `just shell` and `just exec` repack the initrd without rebuilding
+rootfs images.
 
 Runtime recipes run the shared generated-config path:
 

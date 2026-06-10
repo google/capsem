@@ -58,7 +58,13 @@ Pressing **Enter** at any prompt accepts the install (Y is the default). Type `n
 just build-assets code
 ```
 
-Builds the Linux kernel and rootfs via Docker (~10 min on first run). The kernel version is **not** pinned — `kernel_branch = "auto"` in `guest/config/build.toml` makes the resolver fetch the newest non-EOL longterm (LTS) branch from `kernel.org/releases.json` and pull its latest patch (e.g. `6.18.26`). To freeze a specific branch (CI reproducibility, security freeze), set `kernel_branch = "6.6"` (or any `X.Y`) in the same file. Assets are gitignored and must be built locally. See [Life of a Build > Container runtime](./stack#container-runtime) if you need to retune Colima resources.
+Builds the Linux kernel and rootfs via Docker (~10 min on first run). The code
+profile currently builds against the stable 7.0 kernel lane and EROFS/LZ4HC
+rootfs contract. Kernel branch changes are backend image-spec changes made
+through the profile/admin build rail, then verified by `capsem-admin image
+build` and the Linux handoff gate. Assets are gitignored and must be built
+locally. See [Life of a Build > Container runtime](./stack#container-runtime)
+if you need to retune Colima resources.
 
 The build is profile-derived. `code` is the default coding-agent profile, and
 the runtime profile for the current local build is generated under
@@ -108,8 +114,9 @@ No Apple Developer ID certificate is needed for local development -- ad-hoc sign
 
 ## Customizing the VM image
 
-To add packages or guest tools, edit the TOML configs in `guest/config/` and
-rebuild. Profile/corp files own security rules and provider access. See
+To add packages or guest tools, edit the profile-owned files under
+`config/profiles/code/` and rebuild through `just build-assets code`.
+Profile/corp files own security rules and provider access. See
 [Customizing VM Images](./custom-images) for the workflow.
 
 ## API keys (optional)

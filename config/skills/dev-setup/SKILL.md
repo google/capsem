@@ -101,7 +101,10 @@ Three phases. Default at every prompt is **Yes** (Enter accepts; type `n` to dec
 
 ### Kernel version
 
-`guest/config/build.toml` ships `kernel_branch = "auto"`, which makes `resolve_kernel_version` pick the newest non-EOL longterm release from `kernel.org/releases.json` and fetch its latest patch (e.g. `6.18.26`). Set `kernel_branch = "X.Y"` (e.g. `"6.6"`) to pin for reproducibility.
+The active profile/admin build rail currently uses the stable 7.0 kernel lane.
+Kernel branch changes are backend image-spec changes and must be validated
+through `capsem-admin image build`, then handed to Linux for KVM proof when
+they affect Linux runtime behavior.
 
 Or step by step:
 
