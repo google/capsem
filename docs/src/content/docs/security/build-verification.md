@@ -97,6 +97,12 @@ generator, generator version, and the rootfs BLAKE3 hash it describes. Runtime
 routes expose the descriptor as profile evidence; local OBOM documents are
 served only after size and BLAKE3 verification.
 
+The per-architecture `build-ledger.log` is separate evidence. It records the
+build-debug inputs that produced the rootfs, including rendered Dockerfiles,
+build context hashes, EROFS settings, git/project version, profile root and
+install-script inputs, and declared package config. It does not claim installed
+package state; installed component names and versions come from the OBOM.
+
 ## SLSA attestation
 
 Release artifacts receive [SLSA build provenance](https://slsa.dev/) attestation via `actions/attest-build-provenance@v4`:

@@ -89,9 +89,15 @@ assets/
 
 Each per-arch build emits `build-ledger.log` JSONL with hashes for rendered
 Dockerfiles, build contexts, rootfs tar, final EROFS, kernel assets, tool
-version output, compression settings, git revision, and project version. CI
-uploads the ledger as an artifact. As profile file hashing lands, the ledger
-must also record profile and profile-owned payload hashes.
+version output, compression settings, git revision, project version, and a
+`rootfs.config_inputs` stage. That stage records declared profile package
+inputs, rendered rootfs package lists, profile root/install-script inputs, and
+EROFS config.
+
+The build ledger is a debug/retrace ledger for what went into the build. It is
+not the installed-package truth. Installed base-image components and package
+versions belong in the CycloneDX OBOM (`obom.cdx.json`) published with profile
+assets and exposed through `/profiles/{profile_id}/obom`.
 
 ## Adding packages to the VM
 

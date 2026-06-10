@@ -66,6 +66,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pins. `capsem-admin profile check` verifies those pins plus the root seed
   manifest, and `capsem-admin image build` materializes a self-contained
   generated guest workspace before invoking the backend builder.
+- Expanded per-architecture VM build ledgers with a `rootfs.config_inputs`
+  stage that records declared package config, rendered rootfs install inputs,
+  profile root/install-script inputs, and EROFS settings. Installed package
+  names and versions remain OBOM evidence, not build-ledger claims.
 - Added the first profile mutation rail: enforcement and detection rule files
   are now hash-pinned profile files, `Profile` owns core status/check/download
   and MCP tool permission mutation, backend-managed rules carry typed

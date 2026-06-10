@@ -22,6 +22,7 @@ from capsem.builder.docker import (
     _append_build_ledger,
     _directory_tree_hash,
     _file_ledger_entry,
+    _rootfs_config_input_record,
     build_version_script,
     build_image,
     container_compile_agent,
@@ -1036,6 +1037,30 @@ class TestBuildLedger:
         assert records[0]["stage"] == "rootfs.erofs"
         assert records[0]["outputs"][0]["path"] == "rootfs.erofs"
 
+    def test_rootfs_config_input_record_tracks_declared_inputs_not_installed_state(
+        self, generated_profile_guest
+    ):
+        record = _rootfs_config_input_record(generated_profile_guest, "arm64")
+
+        assert record["stage"] == "rootfs.config_inputs"
+        assert record["arch"] == "arm64"
+        assert record["package_inputs"]["apt"]["packages"] == ["curl"]
+        assert record["package_inputs"]["python"]["packages"] == ["pytest"]
+        assert record["package_inputs"]["npm"]["packages"] == ["@openai/codex"]
+        assert record["package_inputs"]["python"]["install_cmd"] == (
+            "uv pip install --system --break-system-packages"
+        )
+        assert record["profile_inputs"]["root_seed"]["enabled"] is True
+        assert record["profile_inputs"]["install_script"]["enabled"] is True
+        assert record["erofs"] == {
+            "enabled": True,
+            "compression": "lz4hc",
+            "compression_level": 12,
+            "cluster_size": None,
+        }
+        assert "installed_packages" not in record
+        assert "installed_versions" not in record
+
     @patch("capsem.builder.docker.remove_image")
     @patch("capsem.builder.docker.extract_tool_versions")
     @patch("capsem.builder.docker.create_erofs")
@@ -1094,11 +1119,16 @@ class TestBuildLedger:
             for line in (tmp_path / "arm64" / BUILD_LEDGER_NAME).read_text().splitlines()
         ]
         assert [record["stage"] for record in records] == [
+            "rootfs.config_inputs",
             "rootfs.export",
             "rootfs.erofs",
             "rootfs.tool_versions",
         ]
-        erofs_record = records[1]
+        config_record = records[0]
+        assert config_record["package_inputs"]["apt"]["packages"]
+        assert config_record["profile_inputs"]["root_seed"]["enabled"] is False
+        assert "installed_packages" not in config_record
+        erofs_record = records[2]
         assert erofs_record["erofs"] == {
             "compression": "lz4hc",
             "compression_level": "12",

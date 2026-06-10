@@ -855,6 +855,81 @@ def _build_input_record(
     }
 
 
+def _path_input_record(path_value: str | None) -> dict[str, Any] | None:
+    """Return debug identity for a profile-provided path when it exists."""
+    if not path_value:
+        return None
+    path = Path(path_value)
+    record: dict[str, Any] = {"path": path.as_posix()}
+    if path.is_file():
+        record["file"] = _file_ledger_entry(path)
+    elif path.is_dir():
+        record["directory"] = {
+            "hash": _directory_tree_hash(path),
+            "files": _directory_file_entries(path),
+        }
+    else:
+        record["exists"] = False
+    return record
+
+
+def _package_config_record(config: GuestImageConfig) -> dict[str, Any]:
+    """Record declared package config inputs, not installed package state."""
+    package_inputs: dict[str, Any] = {}
+    for key, package_set in sorted(config.package_sets.items()):
+        package_inputs[key] = {
+            "manager": package_set.manager.value,
+            "install_cmd": package_set.install_cmd,
+            "packages": list(package_set.packages),
+            "version_commands": dict(sorted(package_set.version_commands.items())),
+        }
+    return package_inputs
+
+
+def _rootfs_config_input_record(
+    config: GuestImageConfig,
+    arch_name: str,
+) -> dict[str, Any]:
+    """Build the rootfs debug ledger record for declared config inputs.
+
+    This record is intentionally not an installed-package ledger. Installed
+    package/component truth belongs to the CycloneDX OBOM generated from the
+    produced rootfs. The build ledger records the config and profile inputs we
+    fed into the build so failures can be retraced.
+    """
+    ctx = _rootfs_context(config, arch_name)
+    erofs = config.build.erofs
+    return {
+        "stage": "rootfs.config_inputs",
+        "arch": arch_name,
+        "package_inputs": _package_config_record(config),
+        "rendered_rootfs_inputs": {
+            "apt_packages": list(ctx["apt_packages"]),
+            "python_packages": list(ctx["python_packages"]),
+            "python_install_cmd": ctx["python_install_cmd"],
+            "npm_packages": list(ctx["npm_packages"]),
+            "npm_prefix": ctx["npm_prefix"],
+            "curl_installs": list(ctx["curl_installs"]),
+        },
+        "profile_inputs": {
+            "root_seed": {
+                "enabled": config.profile_root_seed,
+                "source": _path_input_record(config.profile_root_seed_path),
+            },
+            "install_script": {
+                "enabled": config.profile_install_script,
+                "source": _path_input_record(config.profile_install_script_path),
+            },
+        },
+        "erofs": {
+            "enabled": erofs.enabled,
+            "compression": erofs.compression.value,
+            "compression_level": erofs.compression_level,
+            "cluster_size": erofs.cluster_size,
+        },
+    }
+
+
 def _select_rootfs_asset(asset_dir: Path) -> str | None:
     """Return the canonical rootfs asset name for a directory."""
     for filename in ROOTFS_ASSET_PREFERENCE:
@@ -1200,6 +1275,10 @@ def build_image(
                 docker_tag=tag,
                 docker_platform=arch.docker_platform,
                 runtime=runtime,
+            )
+            _append_build_ledger(
+                arch_output,
+                _rootfs_config_input_record(config, arch_name),
             )
             docker_build(
                 runtime, tag, context_dir / "Dockerfile", context_dir,

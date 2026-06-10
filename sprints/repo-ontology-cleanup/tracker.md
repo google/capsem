@@ -216,18 +216,25 @@
 - [x] S2: In-VM diagnostics assert the projected profile-owned Gemini,
   Antigravity, Claude, Codex, and MCP config files exist, use the profile MCP
   bridge, and contain no obvious credential-shaped secrets.
-- [ ] S3: Tool install refresh/version discipline.
-  Partial: profile-owned apt/Python/npm package files and `install.sh`
-  materialize into the generated guest workspace and rootfs Docker context.
-  Open: installed version/hash ledger and real AGY/Codex/Claude/Gemini VM
-  proof.
-- [ ] S3: Build ledger exposes the packages actually running in the VM:
-  declared package input hashes, installed package names, installed versions,
-  and local package/artifact hashes where available for apt, Python/uv, npm,
-  and manual installers.
-- [ ] S3: Use `cdxgen/cdxgen` as the preferred OBOM generator (`obom` /
+- [x] S3: Tool install refresh/version discipline.
+  Profile-owned apt/Python/npm package files and `install.sh` materialize into
+  the generated guest workspace and rootfs Docker context. The build ledger now
+  records the declared/rendered package and profile config inputs; installed
+  package/component truth belongs to the OBOM, not the build ledger. Real
+  AGY/Codex/Claude/Gemini VM proof remains an S5 rebuilt-image gate.
+- [x] S3: Build ledger records the config that went into the VM image build.
+  `build-ledger.log` now emits a `rootfs.config_inputs` JSONL stage containing
+  declared apt/Python/npm package sets, rendered rootfs install lists, profile
+  root/install-script inputs, and EROFS config. It deliberately does not record
+  `installed_packages` or `installed_versions`; the OBOM is the source of truth
+  for what was installed in the produced base image.
+- [x] S3: Use `cdxgen/cdxgen` as the preferred OBOM generator (`obom` /
   `cdxgen -t os`) for the produced Linux rootfs/VM image, and record OBOM path,
   BLAKE3 hash, generator, and generator version in the profile/build evidence.
+  The profile OBOM contract, admin materialization, docs, and service routes
+  all require pinned CycloneDX OBOM metadata; actual OBOM production is part of
+  the asset build/release path, while runtime inspection comes from
+  `/profiles/{id}/obom`.
 - [x] S3: Add the profile OBOM contract and runtime API: profile TOML accepts
   `obom.arch.<arch>` descriptors with BLAKE3 hash, size, generator metadata, and
   service/gateway expose `/profiles/{id}/obom` plus `/profiles/{id}/info`.
@@ -338,9 +345,13 @@
 - S0 freeze commit: `5d0bf0d4 fix: timestamp package install logs`.
 - Build ledger first slice: `capsem-builder` now appends per-arch JSONL
   `build-ledger.log` from the production build path, and release CI uploads it
-  as `vm-build-ledger-<arch>` even on failed builds. This is not the full
-  profile payload hash contract yet; that remains open until `profile.toml`
-  owns file hashes.
+  as `vm-build-ledger-<arch>` even on failed builds. S3 completes the profile
+  payload/config portion with hash-pinned profile files and a
+  `rootfs.config_inputs` ledger stage.
+- S3 correction: `build-ledger.log` is a build-debug ledger, not an installed
+  package database. It records desired config inputs and hashes so we can
+  retrace a rootfs build. `obom.cdx.json` is the authoritative record of
+  installed base-image components.
 - Python tooling slice: Ruff is enabled for the full tree and has cleaned stale
   unused imports/dead assignments/undefined names. `ty check src/capsem` passes
   and is wired into CI/local gates. Full-tree `ty check .` still reports
@@ -468,10 +479,22 @@
   passed with 163 tests, covering MCP tool mutation, enforcement/detection rule
   authoring, rejection paths, runtime detection ledger readback, and the new
   route/debug logging contract.
-- Auditability: backend build-ledger tests prove JSONL emission for rendered
-  Dockerfile/build-context hashes, rootfs tar, EROFS, kernel assets, and tool
-  versions. Pending: profile/payload hash records once profile hash schema
-  lands.
+- S3 auditability: `uv run python -m pytest tests/test_docker.py::TestBuildLedger
+  -q` passed with 6 tests and `uv run python -m pytest tests/test_docker.py -q`
+  passed with 149 tests. Build ledgers now record rendered Dockerfile/context
+  hashes, rootfs tar, EROFS, kernel assets, tool-version output, and the
+  `rootfs.config_inputs` stage for declared package/profile/EROFS config. The
+  ledger deliberately does not record installed package state; `obom.cdx.json`
+  is the installed base-image component record.
+- S3 admin/runtime proof: `cargo test -p capsem-admin
+  image_workspace_materializes_self_contained_profile_config -- --nocapture`
+  passed, proving profile package/root/install inputs materialize into the
+  image workspace. `cargo test -p capsem-admin
+  profile_materialize_writes_generated_config_from_manifest -- --nocapture`
+  and `cargo test -p capsem-service --bin capsem-service
+  profile_info_and_obom_route_expose_base_image_obom_hash -- --nocapture`
+  passed, proving pinned OBOM metadata materializes into the profile and is
+  exposed by the runtime profile API after BLAKE3/size validation.
 - Adversarial: `cargo test -p capsem-admin profile_check -- --nocapture`
   proves mutated profile payload files are rejected and profile root manifests
   are verified. Remaining: checked-in credential sweep for
