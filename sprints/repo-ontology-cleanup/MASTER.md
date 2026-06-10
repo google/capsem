@@ -107,7 +107,7 @@ Build rule:
 | `target/config/` | Yes generated | Materialized runtime config | Correct idea, but easy to confuse with checked-in `config/`. | Keep as generated output; docs/tests must reinforce. |
 | `assets/` | Yes generated | VM assets and manifest | Large generated output; correctly ignored, but visible at repo root. | Keep or later move to `target/assets`; for 1.3 avoid moving package assumptions unless necessary. |
 | `packages/` | Yes generated | Built installers | Correctly ignored. | Keep generated. |
-| `.claude/`, `.gemini/`, `.agents/` | Yes tracked shims | Local agent-tool compatibility shims/settings | Dot dirs at repo root look like runtime config. | Keep only if required by tools, document as developer shims, never product config. |
+| `.claude/`, `.codex/`, `.gemini/` | Yes tracked shims | Local agent-tool compatibility shims/settings | Dot dirs at repo root look like runtime config. | Keep only as symlinks/settings required by tools, document as developer shims, never product config. |
 | `frontend/`, `docs/`, `site/` | Yes | UI, docs site, marketing site | Generated `node_modules`, `.astro`, `dist` make inventory noisy. | Source stays; generated dirs ignored and excluded from ontology docs. |
 | `sprints/` | Yes | Planning/history | Large but useful. | Keep. New sprint docs must be self-contained. |
 
@@ -127,7 +127,7 @@ all equally bad, but each needs an explicit keep/move/delete decision.
 | `guest/artifacts/capsem-bashrc` | Copied into `/etc/capsem-bashrc`; agent uses it. | Shell behavior outside profile root/ledger. | Decide: profile root file or core guest payload. If profile-specific, move/hash-pin. |
 | `guest/artifacts/diagnostics` and `capsem-doctor` | Baked into rootfs. | Guest test payload, likely core not profile. | Keep as guest payload, but build record must hash it. |
 | Root `.gemini/settings.json` | Tracked root dotfile. | Looks like product runtime config at repo root. | Keep only as developer shim if required; document or move under dev tooling. |
-| Root `.claude/`, `.agents/` | Tracked symlinks/shims. | Developer-tool shims at root look like runtime config. | Keep only if required; document as dev shims, not product config. |
+| Root `.claude/`, `.codex/`, `.gemini/` | Tracked symlinks/shims/settings. | Developer-tool shims at root look like runtime config. | Keep only if required; document as dev shims, not product config. |
 | `CAPSEM_USER_CONFIG` / `CAPSEM_CORP_CONFIG` | Loader env overrides and tests. | Old settings/corp path model; can bypass profile/corp ontology if used in production. | Restrict to tests/dev or replace with profile/corp roots consistent with new contract. |
 | `CAPSEM_PROFILES_DIR` | Service/dev justfile. | Useful generated runtime profile selector, but must point at `target/config`/installed profile dirs only. | Keep, but rename/restrict if needed. |
 | `assets/current` | Justfile and builder symlink/copy. | Generated convenience alias, can hide real arch/hash. | Keep only as package/frontend build compatibility if verified; never ledger truth. |
@@ -172,6 +172,13 @@ Rule for this sprint: a path is allowed only if it is one of:
 - [x] Add backend/CI build ledger emission for rendered Dockerfile, build
   context, rootfs tar, final EROFS, kernel assets, tool versions, compression
   settings, git revision, and project version.
+- [x] Restore Linux KVM guest-memory safety hardening from the lost Linux work:
+  `0422a6ec` full guest physical range validation and `45800223` checked guest
+  memory offset arithmetic are ported into current KVM memory/virtio-blk code.
+- [ ] Validate AGY/Antigravity by booting the rebuilt profile and running the
+  tool inside the guest. Do not raise VM RAM caps speculatively; capture the
+  exact kernel/runtime failure and fix the specific guest kernel option if AGY
+  still fails.
 - [ ] Extend the ledger to hash profile and profile-owned payload files after
   the profile file-reference schema lands.
 - [ ] Demote `capsem-builder` to a backend that consumes the admin image spec.
@@ -191,7 +198,7 @@ Rule for this sprint: a path is allowed only if it is one of:
 - [ ] Resolve `config/defaults.json`, `settings-schema.json`, and
   `mcp-tools.json`: move generation source to host/profile truth, or move
   generated outputs under `target/config`.
-- [ ] Classify root dot-directories (`.gemini`, `.claude`, `.agents`) as
+- [x] Classify root dot-directories (`.gemini`, `.claude`, `.codex`) as
   developer shims or remove/move them.
 - [ ] Classify `CAPSEM_USER_CONFIG` and `CAPSEM_CORP_CONFIG` as test/dev-only
   or replace them with contract-consistent profile/corp roots.
@@ -242,13 +249,23 @@ Rule for this sprint: a path is allowed only if it is one of:
 
 ### S4: Documentation And Skill Cleanup
 
-- [ ] Update `skills/build-images`, `skills/asset-pipeline`,
-  `skills/dev-capsem`, and relevant testing skills.
+- [x] Move the canonical skill library to `config/skills/`; remove root
+  agent skill symlink shims. Profile/agent injection must copy or mount from
+  `config/skills/` explicitly.
+- [x] Add `capsem-builder validate-skills config/skills` as a Pydantic-backed
+  contract gate for skill directories and `SKILL.md` frontmatter; wire it into
+  `just test`, `just smoke`, and CI.
+- [ ] Update `config/skills/build-images`, `config/skills/asset-pipeline`,
+  `config/skills/dev-capsem`, and relevant testing skills.
 - [ ] Update docs architecture pages for config/source/generated/runtime
   separation.
 - [ ] Remove stale references to `guest/config/`.
 - [ ] Document `config/profiles/<profile_id>/root/` with examples and the
   no-secrets invariant.
+- [ ] Update release/install docs and skills to say the final local gate is a
+  real admin-driven asset build plus package install, not a dev-only sync path.
+- [ ] Document AGY/Antigravity package/config handling through profile-owned
+  package/root seed files once the install source is verified.
 
 ### S5: Verification Gate
 
@@ -262,7 +279,13 @@ Rule for this sprint: a path is allowed only if it is one of:
 - [ ] Init tests proving seed projection happens after runtime mounts.
 - [ ] `capsem-admin image verify` against the new layout.
 - [ ] `capsem-doctor` VM proof for AI CLI config and local MCP config.
-- [ ] Package/install smoke once the assets are rebuilt.
+- [ ] Full profile asset rebuild through the admin/just rail, including
+  EROFS/LZ4HC rootfs and build-ledger output.
+- [ ] Real package build and install smoke with manifest override support; the
+  installed service/UI must report profile readiness from installed state.
+- [ ] Linux KVM handoff: run the restored guest-memory range/overflow tests on
+  Linux CI/hardware. macOS cannot execute `hypervisor::kvm`; local cross-check
+  is blocked without Linux GNU/musl C toolchains.
 - [ ] Magic inventory gate: `rg` for `guest/config`,
   `src/capsem/builder/templates`, `config/guest`, `config/profiles/code.toml`,
   and old AI provider config paths returns no live production references.

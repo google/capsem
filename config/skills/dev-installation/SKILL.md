@@ -66,14 +66,22 @@ Side-effecting:
 The setup wizard is gone. Installation is service-first:
 
 1. Install binaries and LaunchAgent/systemd user unit.
-2. Start or connect to `capsem-service`.
-3. Resolve the selected profile, usually `code`.
-4. Report profile-owned asset status for kernel, initrd, and rootfs.
-5. Download/verify missing profile assets through `/profiles/{profile_id}/assets/ensure`.
-6. Surface package/service failures visibly instead of opening UI against a dead daemon.
+2. Install or record the selected asset manifest. Packages support local
+   `file://` manifests and remote `http://`/`https://` manifests for dev/corp
+   override flows.
+3. Start or connect to `capsem-service`.
+4. Resolve the selected profile, usually `code`.
+5. Report profile-owned asset status for kernel, initrd, and rootfs.
+6. Download/verify missing profile assets through `/profiles/{profile_id}/assets/ensure`.
+7. Surface package/service failures visibly instead of opening UI against a dead daemon.
 
 Credentials are not collected during install. They are observed and brokered at
 runtime by the credential-broker plugin and logged as BLAKE3 credential refs.
+
+Final release-candidate install proof must build the real package, run the
+package installer with the chosen manifest override, inspect timestamped
+`~/.capsem/logs/install-*.log`, and verify service/UI readiness from installed
+state. A dev asset sync is not install proof.
 
 ## Self-update (update.rs)
 

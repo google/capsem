@@ -36,12 +36,14 @@ Rule: if logic could be reused or tested without a specific crate, it belongs in
 | `frontend/` | Astro 5 + Svelte 5 + Tailwind v4 + Preline | `/frontend-design` |
 | `site/` | Marketing website (Astro + Svelte 5) | `/site-marketing` |
 | `docs/` | Documentation site (Astro Starlight) | `/site-infra` |
-| `src/capsem/builder/` | Python image builder CLI | `/build-images` |
-| `guest/config/` | Guest TOML configs | `/build-images` |
+| `config/profiles/` | Profile ledgers and profile-owned payloads | `/build-images`, `/asset-pipeline` |
+| `config/host/` | Host/corp/settings source contracts | `/dev-capsem`, `/site-architecture` |
+| `target/config/` | Generated runtime config from admin/just rails | `/asset-pipeline` |
+| `src/capsem/builder/` | Python image builder backend | `/build-images` |
 | `guest/artifacts/` | capsem-init, bashrc, diagnostics | `/dev-capsem-doctor`, `/build-initrd` |
 | `assets/` | Built VM assets (gitignored, per-arch) | `/build-images` |
 | `graphics/` | Brand icons and app icons (source of truth) | `/dev-capsem` |
-| `skills/` | AI agent skills | `/dev-skills`, `/meta-organize-skills` |
+| `config/skills/` | AI agent skill source | `/dev-skills`, `/meta-organize-skills` |
 | `config/` | defaults.toml, CA keypair | `/site-architecture` |
 | `scripts/` | preflight, integration test, doctor session | `/release-process` |
 
@@ -57,7 +59,7 @@ When working on a specific area, consult the relevant skill:
 | `/dev-debugging` | Bug investigation workflow |
 | `/dev-rust-patterns` | Async, cross-compile, error handling |
 | `/dev-capsem-doctor` | In-VM diagnostic suite |
-| `/dev-installation` | Setup wizard, service registration, self-update, install tests |
+| `/dev-installation` | Service registration, self-update, package install tests |
 | `/dev-setup` | New developer onboarding |
 | `/dev-skills` | Skills system internals |
 
@@ -73,7 +75,7 @@ When working on a specific area, consult the relevant skill:
 ### Build & release
 | Skill | When |
 |-------|------|
-| `/build-images` | capsem-builder, guest config, rootfs |
+| `/build-images` | profile-derived asset builds, capsem-admin image rail, rootfs |
 | `/build-initrd` | Guest binary repack, fast iteration |
 | `/release-process` | Release, CI, signing, docs, changelog |
 
@@ -197,4 +199,4 @@ credential-broker plugin observes and brokers them at runtime.
 - `assets/` -- manifest.json plus hash-named kernel, initrd, and rootfs assets
 - `run/` -- service.sock, service.pid, gateway.token, gateway.port, gateway.pid, instances/
 
-**Service registration**: LaunchAgent (macOS: `com.capsem.service`) / systemd user unit (Linux: `capsem.service`). Auto-restarts on crash. See `/dev-installation` for the full wizard flow.
+**Service registration**: LaunchAgent (macOS: `com.capsem.service`) / systemd user unit (Linux: `capsem.service`). Auto-restarts on crash. See `/dev-installation` for the package/service lifecycle.

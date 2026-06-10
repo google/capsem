@@ -1,30 +1,30 @@
 ---
-name: organize-skills
-description: Use when creating, reorganizing, or maintaining the skills/ directory. Covers the shared skill layout conventions, directory structure, SKILL.md format, symlink architecture, and how to add or restructure skills so both Claude Code and Gemini CLI discover them.
+name: meta-organize-skills
+description: Use when creating, reorganizing, or maintaining the config/skills/ directory. Covers the shared skill layout conventions, directory structure, SKILL.md format, canonical source ownership, and how to add or restructure skills for Capsem agent/profile injection.
 ---
 
 # Organize Skills
 
-This project uses a shared `skills/` directory at the repo root. Both Claude Code and Gemini CLI discover skills from it via symlinks -- one set of files, two consumers.
+This project uses `config/skills/` as the canonical checked-in skill library.
+Agent-specific discovery or guest injection copies or mounts from this path
+explicitly. Do not add root dot-dir symlinks as product truth.
 
 ## Directory structure
 
 ```
-skills/                          Canonical location (checked into git)
+config/skills/                   Canonical location (checked into git)
   <skill-name>/
     SKILL.md                     Required -- the skill itself
     references/                  Optional -- large docs loaded on demand
     scripts/                     Optional -- executable helpers
     assets/                      Optional -- templates, icons, etc.
-
-.claude/skills -> ../skills      Claude Code symlink
-.agents/skills -> ../skills      Gemini CLI symlink
 ```
 
 Rules:
 - One skill per directory. The directory name is the skill identifier.
 - Every skill directory must contain a `SKILL.md` file. No other naming is discovered.
-- Never put files directly in `.claude/skills/` or `.agents/skills/` -- those are symlinks to `skills/`.
+- Never put skill source files directly in `.claude/`, `.codex/`, or `.gemini/`;
+  those roots are agent-local settings only.
 - Bundled resources (references, scripts, assets) go in subdirectories of the skill directory.
 
 ## SKILL.md format
@@ -61,19 +61,20 @@ Keep SKILL.md lean. If approaching 500 lines, split detail into `references/` fi
 
 ## Adding a skill
 
-1. `mkdir skills/<name>`
-2. Write `skills/<name>/SKILL.md` with frontmatter + instructions
+1. `mkdir config/skills/<name>`
+2. Write `config/skills/<name>/SKILL.md` with frontmatter + instructions
 3. It's immediately available to both CLIs (live reload, no restart)
 
 For community skills from `npx skills find` or skills.sh:
 ```bash
 curl -sL https://raw.githubusercontent.com/<owner>/<repo>/main/skills/<name>/SKILL.md \
-  -o skills/<name>/SKILL.md
+  -o config/skills/<name>/SKILL.md
 ```
 
 ## Removing a skill
 
-`rm -rf skills/<name>` -- both CLIs stop seeing it immediately.
+`rm -rf config/skills/<name>` -- the source is gone and profile/agent injection
+can no longer include it.
 
 ## When to split vs. bundle
 
@@ -82,10 +83,12 @@ curl -sL https://raw.githubusercontent.com/<owner>/<repo>/main/skills/<name>/SKI
 
 ## Naming conventions
 
-Skills are flat (one level under `skills/`). Nested subdirectories are NOT discovered by Claude Code or Gemini CLI. Use **prefix-based grouping** to organize related skills into logical categories:
+Skills are flat (one level under `config/skills/`). Nested subdirectories are
+not valid skill roots. Use **prefix-based grouping** to organize related skills
+into logical categories:
 
 ```
-skills/
+config/skills/
   dev-testing/SKILL.md          dev category -- testing
   dev-debugging/SKILL.md        dev category -- debugging
   dev-diagnostics/SKILL.md      dev category -- in-VM diagnostics

@@ -61,6 +61,11 @@ The local 1.3 finalizing release hold was cleared before the later repository
 ontology review found remaining guest/config and profile-ledger drift. Current
 release work must complete `sprints/repo-ontology-cleanup/` before guest tool
 config, image input, or package manifest changes are treated as release-ready.
+That follow-on hold now explicitly includes docs/skills cleanup, a full
+admin-driven asset rebuild, a real package install gate with manifest override
+support, Linux-team/CI validation for restored KVM guest-memory range/overflow
+hardening, and a rebuilt-profile AGY/Antigravity guest smoke that captures any
+remaining kernel-option failure directly from the VM.
 
 Accepted handoff: Linux runtime KVM/DAX execution must be completed by the
 Linux team or CI on Linux hardware. The Linux-team code and EROFS/LZ4HC proof

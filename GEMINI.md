@@ -22,4 +22,4 @@ Skills contain hard-won lessons and project-specific patterns. **Before writing 
 | Release | `/release-process` | CI, signing, notarization, changelog |
 | Architecture | `/site-architecture` | System design, Tauri, vsock, key files |
 
-Skills live in `skills/` (symlinked to `.agents/skills/`). Start with `/dev-capsem` to orient, then load the specific skill for your area.
+Skills live in `config/skills/`. Start with `/dev-capsem` to orient, then load the specific skill for your area.

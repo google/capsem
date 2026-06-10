@@ -28,7 +28,7 @@
 - [x] Magic inventory pass found remaining suspicious paths:
   `guest/config`, builder templates under Python source, generated
   `config/defaults.json`/`settings-schema.json`/`mcp-tools.json`, root
-  `.gemini`/`.claude`/`.agents`, old `CAPSEM_USER_CONFIG` and
+  `.gemini`/`.claude`/`.codex`, old `CAPSEM_USER_CONFIG` and
   `CAPSEM_CORP_CONFIG`, `assets/current`, stale `rootfs.squashfs`,
   `sync-dev-assets.sh`/`simulate-install.sh`, and asset-only
   `manifest-origin.json`.
@@ -48,6 +48,13 @@
 - [x] S1: Emit backend/CI build record with hashes for rendered Dockerfile,
   build context, rootfs tar, final EROFS, kernel assets, tool-version output,
   compression settings, git revision, and project version.
+- [x] S1/S5: Restore Linux KVM guest-memory safety hardening from lost Linux
+  line:
+  `0422a6ec` guest memory range validation and `45800223` offset-overflow
+  guards are ported into current KVM memory/virtio-blk code.
+- [ ] S5: Boot rebuilt profile and run AGY/Antigravity in the guest. Do not
+  raise VM RAM caps speculatively; capture the exact kernel/runtime failure and
+  fix the specific kernel option if it still fails.
 - [ ] S1: Extend build record to include profile and profile-owned payload
   files after the profile ledger hash schema lands.
 - [x] Tooling: Add Ruff as a full-repository Python lint gate.
@@ -60,8 +67,14 @@
 - [ ] S1: Resolve generated config files (`defaults.json`,
   `settings-schema.json`, `mcp-tools.json`) so they derive from host/profile
   truth or move under `target/config`.
-- [ ] S1: Classify/remove root developer shims (`.gemini`, `.claude`,
-  `.agents`).
+- [x] S1: Classify/remove root developer shims (`.gemini`, `.claude`,
+  `.codex`): `config/skills/` is the only skill source; root skill symlinks
+  are removed; profile/agent injection must copy or mount from
+  `config/skills/` explicitly.
+- [x] S1: Add Pydantic-backed skill library validation. `capsem-builder
+  validate-skills config/skills` validates every skill directory and
+  `SKILL.md` frontmatter, rejects symlinks/nested skills/name drift, and runs
+  in `just test`, `just smoke`, and CI alongside Ruff/ty.
 - [ ] S1: Restrict or replace old config env overrides (`CAPSEM_USER_CONFIG`,
   `CAPSEM_CORP_CONFIG`).
 - [ ] S1: Update code/tests/docs/skills; remove old-path fallbacks.
@@ -73,7 +86,16 @@
 - [ ] S2: `capsem-init` projects seed into runtime `/`.
 - [ ] S3: Tool install refresh/version discipline.
 - [ ] S4: Documentation and skill cleanup.
+- [ ] S4: Update public docs and internal skills after ontology paths land;
+  stale `guest/config` guidance is a release hold.
 - [ ] S5: Verification gate.
+- [ ] S5: Full build gate: rebuild profile assets through the admin/just rail,
+  including EROFS/LZ4HC rootfs.
+- [ ] S5: Package/install gate: build the real package and install through the
+  package path with manifest override support, then verify service/UI readiness.
+- [ ] S5: Linux handoff gate: Linux CI/team must run KVM tests for restored
+  guest-memory range/overflow hardening because macOS cannot compile/execute
+  `hypervisor::kvm` without the Linux toolchain/runtime.
 - [ ] S5: Magic inventory gate.
 - [ ] Changelog.
 - [ ] Commit.
@@ -142,13 +164,41 @@
   existing guest/test typing debt, mostly guest-only dependencies (`rich`,
   `fastmcp`, `capsem_bench` path setup) and dynamic tests; do not expand the
   gate until that debt is burned deliberately.
+- Linux KVM guest-memory safety history check:
+  - `0422a6ec fix: validate kvm guest memory ranges` added
+    `GuestMemoryRef::gpa_range_to_host` and moved virtio-blk zero-copy/raw
+    pointer users from first-byte checks to full-range checks.
+  - `45800223 fix: guard kvm memory offset overflow` changed guest memory
+    `read_at`/`write_at` arithmetic to checked additions.
+  - Both concepts are now ported into the current branch. Local macOS native
+    tests cannot execute the KVM module because it is `target_os = "linux"`;
+    Linux CI/team validation remains required.
+- AGY/Antigravity correction: do not model this as a 48G/64G VM allocation
+  change. It is a guest-kernel/runtime option issue to diagnose from a real
+  rebuilt-profile boot with `capsem exec` once profile/root/package inputs are
+  rebuilt.
+- Verification for this slice:
+  - `cargo test -p capsem-core --lib -- --nocapture` passed with 1506 tests,
+    1 ignored.
+  - `cargo fmt --check` passed.
+  - `git diff --check` passed.
+  - `cargo test -p capsem-core hypervisor::kvm::memory -- --nocapture`
+    compiled the crate but ran zero KVM tests on macOS, then hit one transient
+    codesign failure for the unrelated `mcp_export` test binary.
+  - `cargo test -p capsem-core hypervisor::kvm::virtio_blk -- --nocapture`
+    completed with zero KVM tests on macOS because the module is Linux-only.
+  - Linux cross-check attempts are recorded in the coverage ledger below.
 
 ## Coverage Ledger
 
 - Unit/contract: pending path resolver, profile file hash tests, MCP JSON parser
-  tests, package file parser tests, and profile-root parser tests.
+  tests, package file parser tests, and profile-root parser tests. Restored KVM
+  memory tests exist in `memory.rs`/`virtio_blk.rs` but are Linux-only.
 - Tooling: `uv run ruff check .` and `uv run ty check src/capsem` are the
   current Python quality gates.
+- Skill contract: `uv run capsem-builder validate-skills config/skills` and
+  `uv run python -m pytest tests/test_skills.py -q` pass. The validator is
+  Pydantic-backed and wired into local/CI gates.
 - Functional: pending `capsem-admin image verify` and profile materialization.
 - Auditability: backend build-ledger tests prove JSONL emission for rendered
   Dockerfile/build-context hashes, rootfs tar, EROFS, kernel assets, and tool
@@ -159,6 +209,12 @@
   sibling files whose blake3 no longer matches.
 - E2E/VM: pending `capsem-doctor` proof that seeded files exist in runtime
   `/root`.
+- Linux/KVM: local macOS cannot execute KVM tests. Attempted
+  `cargo check -p capsem-core --target x86_64-unknown-linux-gnu`, blocked
+  because the target is not installed; attempted
+  `cargo check -p capsem-core --target x86_64-unknown-linux-musl`, blocked by
+  missing `x86_64-linux-musl-gcc` for C dependencies (`libsqlite3-sys`, `ring`,
+  `aws-lc-sys`). Linux CI/team must run this gate.
 - Telemetry: not directly touched unless doctor/status output changes.
 - Performance: tool refresh may affect image build time; runtime should not add
   hot-path latency.

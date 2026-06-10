@@ -91,6 +91,26 @@ def validate(guest_dir: str, artifacts: str | None) -> None:
         click.echo("passed: config is clean")
 
 
+@cli.command("validate-skills")
+@click.argument("skills_dir", default="config/skills", type=click.Path(exists=False))
+@click.option("--json", "json_output", is_flag=True, help="Output validation report as JSON.")
+def validate_skills(skills_dir: str, json_output: bool) -> None:
+    """Validate the canonical Capsem skill library."""
+    from capsem.builder.skills import validate_skill_library
+
+    path = Path(skills_dir)
+    try:
+        report = validate_skill_library(path)
+    except Exception as e:
+        click.echo(f"error: {e}", err=True)
+        raise SystemExit(1)
+
+    if json_output:
+        click.echo(report.model_dump_json(indent=2))
+    else:
+        click.echo(f"passed: {report.skill_count} skills validated in {report.root}")
+
+
 # ---------------------------------------------------------------------------
 # build
 # ---------------------------------------------------------------------------

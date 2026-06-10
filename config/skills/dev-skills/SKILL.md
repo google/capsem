@@ -1,6 +1,6 @@
 ---
 name: dev-skills
-description: How AI agent skills work -- discovery, loading, triggering, format, and organization. Use when building Capsem's skills system, implementing skill discovery for guest AI agents, or understanding how Claude Code and Gemini CLI consume SKILL.md files. Covers the SKILL.md format, discovery mechanics, progressive disclosure, naming conventions, and lessons learned from setting up this project's skills.
+description: How AI agent skills work -- discovery, loading, triggering, format, and organization. Use when building Capsem's skills system, implementing skill discovery for guest AI agents, or understanding how Claude Code, Codex, and Gemini CLI consume SKILL.md files. Covers the SKILL.md format, discovery mechanics, progressive disclosure, naming conventions, and lessons learned from setting up this project's skills.
 ---
 
 # AI Agent Skills System
@@ -9,20 +9,16 @@ This documents everything we know about how skills work across Claude Code and G
 
 ## Discovery
 
-### Claude Code
-- Looks in `.claude/skills/` (project) and `~/.claude/skills/` (global)
-- Discovers `<name>/SKILL.md` -- one level of nesting only
-- Nested directories (e.g., `category/skill/SKILL.md`) are NOT discovered
-- Symlinks work -- we use `.claude/skills -> ../skills` to share with Gemini
-- Live reload on file change, no restart needed
-
-### Gemini CLI
-- Looks in `.agents/skills/` or `.gemini/skills/`
-- Same `<name>/SKILL.md` format as Claude Code
-- We use `.agents/skills -> ../skills` symlink
+### Capsem repository
+- Canonical checked-in skill source is `config/skills/`.
+- Each skill is `config/skills/<name>/SKILL.md`.
+- Agent-specific discovery or VM injection must copy or mount from
+  `config/skills/` explicitly. Do not create root dot-dir symlinks as product
+  truth.
+- `.claude/`, `.codex/`, and `.gemini/` are agent-local settings roots only.
 
 ### What does NOT work
-- Nested categories: `skills/dev/testing/SKILL.md` is not found by either CLI
+- Nested categories: `config/skills/dev/testing/SKILL.md` is not a valid skill
 - Files named anything other than `SKILL.md` in a directory are not discovered as skills
 - Files directly in the skills root (not in a subdirectory) are not discovered
 
@@ -70,7 +66,7 @@ This means: keep SKILL.md lean. Put detailed wire formats, API docs, and large r
 Flat directory structure with naming convention for categories:
 
 ```
-skills/
+config/skills/
   dev-testing/SKILL.md          dev category
   dev-debugging/SKILL.md        dev category
   build-images/SKILL.md         build category
@@ -104,7 +100,7 @@ The `npx skills` CLI (skills.sh) discovers community skills. To use one:
 npx skills find <query>          # Search
 # Then manually fetch and place:
 curl -sL https://raw.githubusercontent.com/<owner>/<repo>/main/<path>/SKILL.md \
-  -o skills/<name>/references/<topic>.md
+  -o config/skills/<name>/references/<topic>.md
 ```
 
 We place community skills as references (not top-level SKILL.md) because:

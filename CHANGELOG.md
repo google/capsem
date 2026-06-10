@@ -50,11 +50,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pasteable bug reports.
 - Updated the session UI to display each VM's backend-provided `profile_id` and
   replaced hard-coded About runtime/kernel claims with live diagnostic status.
+- Moved the checked-in agent skill library to `config/skills/`, removed root
+  skill symlink shims, and added a Pydantic-backed `capsem-builder
+  validate-skills` gate that runs in local and CI test flows.
 
 ### Added (kernel 7.0 + EROFS)
 - Added a stable-kernel upgrade path for guest builds: `kernel_branch = "7.0"`
   now resolves against kernel.org stable releases, while `auto` remains
   LTS-only for conservative release automation.
+- Restored Linux KVM guest-memory hardening from the lost Linux line:
+  guest memory reads/writes now reject offset overflow, and virtio-blk validates
+  complete guest physical ranges before exposing raw host pointers to vectored
+  I/O.
 - Added experimental EROFS rootfs image generation with `lz4`, `lz4hc`, and
   `zstd` compression. EROFS zstd uses a newer `erofs-utils` container image,
   both guest defconfigs enable kernel-side EROFS zstd decompression, and

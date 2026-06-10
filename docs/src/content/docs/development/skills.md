@@ -1,23 +1,20 @@
 ---
 title: AI Agent Skills
-description: How Capsem organizes shared AI coding agent skills for Claude Code and Gemini CLI.
+description: How Capsem organizes shared AI coding agent skills for Claude Code, Codex, and Gemini CLI.
 sidebar:
   order: 20
 ---
 
-Capsem uses a shared `skills/` directory that both Claude Code and Gemini CLI discover via symlinks. One set of files, two consumers, zero duplication.
+Capsem uses a shared `config/skills/` directory as the canonical checked-in skill library. Agent-specific discovery and guest injection copy or mount from this path explicitly. Root dot-dir symlinks are not part of the product contract.
 
 ## Directory structure
 
 ```
-skills/
+config/skills/
   <skill-name>/
     SKILL.md                     The skill (required)
     references/                  Large docs loaded on demand (optional)
     scripts/                     Executable helpers (optional)
-
-.claude/skills -> ../skills      Claude Code symlink
-.agents/skills -> ../skills      Gemini CLI symlink
 ```
 
 Skills are flat (one level). Nested directories are **not** discovered. Use prefix-based naming for categories.
@@ -101,8 +98,8 @@ Keep SKILL.md lean. Put wire formats, API docs, and community references in `ref
 ## Adding a skill
 
 ```bash
-mkdir skills/<prefix-name>
-# Write skills/<prefix-name>/SKILL.md with frontmatter
+mkdir config/skills/<prefix-name>
+# Write config/skills/<prefix-name>/SKILL.md with frontmatter
 # Available immediately (live reload, no restart)
 ```
 
@@ -112,7 +109,7 @@ Search with `npx skills find <query>`. Place community skills as references, not
 
 ```bash
 curl -sL https://raw.githubusercontent.com/<owner>/<repo>/main/<path>/SKILL.md \
-  -o skills/<name>/references/<topic>.md
+  -o config/skills/<name>/references/<topic>.md
 ```
 
 ## Global skills

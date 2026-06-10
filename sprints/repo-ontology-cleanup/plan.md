@@ -61,9 +61,19 @@ burn.
 - Remove `generate_defaults_json()` dependency on guest image config.
 - Update `capsem-admin` path defaults and just recipes.
 - Update docs and skills that mention `guest/config`.
+- Update docs and skills so the release-ready gate is explicit: rebuild assets
+  through the admin/just rail, then build/install the real package with manifest
+  override support and verify service/UI readiness from installed state.
 - Resolve every item in the magic inventory: generated config JSON, MCP tool
   exports, root dot-shims, old env overrides, stale squashfs outputs, and
   dev-install bypass scripts.
+- Restore and verify the Linux KVM guest-memory safety hardening from the Linux
+  history (`0422a6ec`, `45800223`): checked guest-memory offset arithmetic and
+  full guest physical range validation before raw host pointer exposure.
+- Do not raise the VM RAM cap for AGY speculatively. AGY/Antigravity support is
+  validated by booting the rebuilt profile, running the tool, capturing the
+  exact kernel/runtime error, and fixing the specific guest kernel option if it
+  still fails.
 
 ## Testing Matrix
 
@@ -88,6 +98,11 @@ burn.
   remain.
 - `capsem-admin profile check` rejects a mutated enforcement/detection/MCP/
   package/root/tips file whose hash no longer matches `profile.toml`.
+- KVM memory/virtio-blk Linux-only tests prove offset overflow and guest range
+  crossing cases fail closed; if run from macOS, the Linux CI/team handoff is a
+  named release gate, not an implicit pass.
+- Final rebuilt-profile VM smoke runs AGY/Antigravity from inside the guest and
+  records the exact result; no synthetic high-memory VM is part of this gate.
 - Adversarial:
 - old path rejected;
 - Python builder cannot accept AI-provider/network/MCP/VM-settings fields in its
@@ -117,5 +132,9 @@ burn.
 - AI/tool config files are real guest seed files, not inline TOML theater.
 - The VM boots and doctor proves the seed projection.
 - Docs and skills no longer teach stale paths.
+- Full local final gate has run: asset build, package build/install, service/UI
+  readiness, smoke, and documented benchmark/status evidence.
+- Linux final gate has run for KVM guest-memory safety and runtime validation, or is
+  explicitly handed to the Linux team/CI with exact commands and expected proof.
 - Magic inventory is empty or every surviving item is explicitly documented as
   a generated output, core guest payload, or developer shim.

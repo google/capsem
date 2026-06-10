@@ -40,22 +40,23 @@ guest/config/             Guest image configuration (TOML configs)
 guest/artifacts/          Guest scripts and diagnostics (capsem-init, bashrc, tests)
 assets/                   Built VM assets (gitignored, per-arch: assets/{arch}/)
 graphics/                 Brand icons and Tauri app icons (source of truth)
-skills/                   Shared AI agent skills (SKILL.md format)
+config/skills/            Shared AI agent skills (SKILL.md format)
 ```
 
 ## Skills
 
-Skills live in `skills/` at the project root. Both Claude Code and Gemini CLI discover them via symlinks:
+Skills live in `config/skills/` at the project root. This is the canonical
+checked-in skill library. Agent-specific discovery or VM injection must copy or
+mount from this path explicitly; root dot-dir symlinks are not product truth.
 
 ```
-skills/<name>/SKILL.md        One skill per directory
-.claude/skills -> ../skills   Claude Code symlink
-.agents/skills -> ../skills   Gemini CLI symlink
+config/skills/<name>/SKILL.md    One skill per directory
 ```
 
 Prefix-based grouping: `dev-*`, `build-*`, `release-*`, `site-*`, `frontend-*`, `meta-*`. `asset-pipeline` covers the build-to-boot asset flow. See `/meta-organize-skills` for conventions.
 
-**Do not** put files in `.claude/skills/` or `.agents/skills/` directly -- those are symlinks.
+**Do not** put skill source files in `.claude/`, `.codex/`, or `.gemini/`.
+Those roots are agent-local settings only; `config/skills/` is the source.
 
 ## Skills -- LOAD BEFORE CODING
 

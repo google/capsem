@@ -27,7 +27,9 @@ The manifest tracks both with compatibility ranges (`min_binary`, `min_assets`).
 
 | What | Where |
 |------|-------|
-| Guest config (TOML) | `guest/config/` |
+| Profile source | `config/profiles/<profile_id>/profile.toml` plus hash-pinned sibling files |
+| Host/corp/settings source | `config/host/` |
+| Docker build templates | `config/docker/` target path during ontology cleanup |
 | Guest artifacts | `guest/artifacts/` |
 | Config source/templates/support | `config/` |
 | Generated runtime config | `target/config/` |

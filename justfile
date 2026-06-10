@@ -398,6 +398,7 @@ test: _install-tools _clean-stale _pnpm-install _generate-settings _check-assets
     cargo clippy --workspace --all-targets -- -D warnings & PID_CLIPPY=$!
     uv run ruff check . & PID_RUFF=$!
     uv run ty check src/capsem & PID_TY=$!
+    uv run capsem-builder validate-skills config/skills & PID_SKILLS=$!
     (
         cd frontend
         pnpm run check
@@ -410,6 +411,7 @@ test: _install-tools _clean-stale _pnpm-install _generate-settings _check-assets
     wait $PID_CLIPPY      || { echo "cargo clippy failed (warnings = error)"; FAIL=1; }
     wait $PID_RUFF        || { echo "ruff check failed"; FAIL=1; }
     wait $PID_TY          || { echo "ty check failed"; FAIL=1; }
+    wait $PID_SKILLS      || { echo "skill validation failed"; FAIL=1; }
     wait $PID_FE          || { echo "frontend (check/test/build) failed"; FAIL=1; }
     [ $FAIL -eq 0 ] || exit 1
 
@@ -691,6 +693,7 @@ smoke: _install-tools _pnpm-install _check-assets _pack-initrd _materialize-conf
     cargo clippy --workspace --all-targets -- -D warnings & CLIPPY_PID=$!
     uv run ruff check . & RUFF_PID=$!
     uv run ty check src/capsem & TY_PID=$!
+    uv run capsem-builder validate-skills config/skills & SKILLS_PID=$!
     cargo audit & AUDIT_PID=$!
     (cd frontend && pnpm audit) & PNPM_AUDIT_PID=$!
     (cd frontend && pnpm run check) & FE_CHECK_PID=$!
@@ -698,6 +701,7 @@ smoke: _install-tools _pnpm-install _check-assets _pack-initrd _materialize-conf
     wait $CLIPPY_PID     || { echo "cargo clippy failed"; FAIL=1; }
     wait $RUFF_PID       || { echo "ruff check failed"; FAIL=1; }
     wait $TY_PID         || { echo "ty check failed"; FAIL=1; }
+    wait $SKILLS_PID     || { echo "skill validation failed"; FAIL=1; }
     wait $AUDIT_PID      || { echo "cargo audit failed";  FAIL=1; }
     wait $PNPM_AUDIT_PID || { echo "pnpm audit failed";   FAIL=1; }
     wait $FE_CHECK_PID   || { echo "pnpm check failed";   FAIL=1; }

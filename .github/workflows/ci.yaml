@@ -164,6 +164,7 @@ jobs:
         run: |
           uv run ruff check .
           uv run ty check src/capsem
+          uv run capsem-builder validate-skills config/skills
 
       - name: Python schema tests with coverage
         run: uv run python -m pytest tests/ --cov=src/capsem --cov-report=xml:codecov-python.xml --cov-fail-under=90 --junitxml=python-junit.xml
