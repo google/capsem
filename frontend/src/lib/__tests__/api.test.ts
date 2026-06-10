@@ -7,6 +7,7 @@ vi.stubGlobal('fetch', mockFetch);
 // Mock WebSocket globally.
 const mockWsSend = vi.fn();
 const mockWsClose = vi.fn();
+const mockWsUrls: string[] = [];
 let wsOnMessage: ((ev: { data: string }) => void) | null = null;
 let wsOnOpen: (() => void) | null = null;
 let wsOnClose: (() => void) | null = null;
@@ -23,6 +24,7 @@ class MockWebSocket {
 
   constructor(url: string) {
     this.url = url;
+    mockWsUrls.push(url);
   }
 
   set onmessage(fn: any) { wsOnMessage = fn; }
@@ -59,6 +61,11 @@ describe('api', () => {
     mockFetch.mockReset();
     mockWsSend.mockReset();
     mockWsClose.mockReset();
+    mockWsUrls.length = 0;
+    wsOnMessage = null;
+    wsOnOpen = null;
+    wsOnClose = null;
+    vi.useRealTimers();
   });
 
   // ---- init / healthCheck ----
@@ -183,6 +190,28 @@ describe('api', () => {
       expect(call[0]).toContain('/vms/create');
       expect(call[1].method).toBe('POST');
       expect(JSON.parse(call[1].body).profile_id).toBe('code');
+    });
+
+    it('refreshes a rotated gateway token and retries VM creation once', async () => {
+      mockFetch
+        .mockReturnValueOnce(textResponse('{"error":"unauthorized"}', 401))
+        .mockReturnValueOnce(jsonResponse({ token: 'fresh-token' }))
+        .mockReturnValueOnce(jsonResponse({ id: 'vm-fresh' }));
+
+      const result = await api.provisionVm({
+        profile_id: 'code',
+        name: 'code-dev',
+        ram_mb: 2048,
+        cpus: 2,
+        persistent: true,
+      });
+
+      expect(result.id).toBe('vm-fresh');
+      const createCalls = mockFetch.mock.calls.filter(call => String(call[0]).includes('/vms/create'));
+      expect(createCalls).toHaveLength(2);
+      expect(createCalls[0][1].headers.Authorization).toBe('Bearer tok');
+      expect(createCalls[1][1].headers.Authorization).toBe('Bearer fresh-token');
+      expect(mockFetch.mock.calls.some(call => String(call[0]).endsWith('/token'))).toBe(true);
     });
 
     it('runVm sends POST /run', async () => {
@@ -942,6 +971,22 @@ describe('api', () => {
       const unsub = api.onDownloadProgress(cb);
       expect(typeof unsub).toBe('function');
       unsub();
+    });
+
+    it('refreshes token before reconnecting events websocket after gateway restart', async () => {
+      vi.useFakeTimers();
+      mockFetch
+        .mockReturnValueOnce(jsonResponse({ ok: true, version: '1.0.0', service_socket: '/tmp/s' }))
+        .mockReturnValueOnce(jsonResponse({ token: 'old-token' }));
+      await api.init();
+      expect(mockWsUrls.at(-1)).toContain('token=old-token');
+
+      mockFetch.mockReturnValueOnce(jsonResponse({ token: 'new-token' }));
+      wsOnClose?.();
+      await vi.advanceTimersByTimeAsync(5000);
+
+      expect(mockWsUrls.at(-1)).toContain('token=new-token');
+      expect(mockFetch.mock.calls.some(call => String(call[0]).endsWith('/token'))).toBe(true);
     });
   });
 

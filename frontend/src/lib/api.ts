@@ -281,7 +281,7 @@ export async function init(): Promise<InitResult> {
       return { connected: false, reachable: true, version: health.version };
     }
     const tokenData: TokenResponse = await tokenResp.json();
-    _token = tokenData.token;
+    _applyToken(tokenData.token);
 
     _connected = true;
     console.log('[api] init OK: connected, token acquired, version=%s', health.version);
@@ -292,6 +292,36 @@ export async function init(): Promise<InitResult> {
     _token = null;
     
     return { connected: false, reachable: false, version: null };
+  }
+}
+
+function _applyToken(token: string): void {
+  if (_token === token) return;
+  _token = token;
+  if (_eventWs) {
+    const ws = _eventWs;
+    _eventWs = null;
+    ws.onclose = null;
+    ws.close();
+  }
+}
+
+async function _refreshToken(): Promise<boolean> {
+  try {
+    const tokenResp = await fetch(`${_baseUrl}/token`);
+    if (!tokenResp.ok) {
+      _connected = false;
+      _token = null;
+      return false;
+    }
+    const tokenData: TokenResponse = await tokenResp.json();
+    _applyToken(tokenData.token);
+    _connected = true;
+    return true;
+  } catch {
+    _connected = false;
+    _token = null;
+    return false;
   }
 }
 
@@ -319,10 +349,27 @@ class ApiError extends Error {
   }
 }
 
-async function _get(path: string): Promise<Response> {
+function _isAuthRefreshStatus(status: number): boolean {
+  return status === 401 || status === 429;
+}
+
+async function _request(method: string, path: string, body?: unknown, retryAuth = true): Promise<Response> {
+  const init: RequestInit = {
+    headers: {
+      Authorization: `Bearer ${_token}`,
+      ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
+    },
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  };
+  if (method !== 'GET') {
+    init.method = method;
+  }
   const resp = await fetch(`${_baseUrl}${path}`, {
-    headers: { Authorization: `Bearer ${_token}` },
+    ...init,
   });
+  if (!resp.ok && retryAuth && _isAuthRefreshStatus(resp.status) && await _refreshToken()) {
+    return _request(method, path, body, false);
+  }
   if (!resp.ok) {
     const body = await resp.text();
     throw new ApiError(resp.status, body);
@@ -330,64 +377,24 @@ async function _get(path: string): Promise<Response> {
   return resp;
 }
 
+async function _get(path: string): Promise<Response> {
+  return _request('GET', path);
+}
+
 async function _post(path: string, body?: unknown): Promise<Response> {
-  const resp = await fetch(`${_baseUrl}${path}`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${_token}`,
-      ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
-    },
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-  });
-  if (!resp.ok) {
-    const text = await resp.text();
-    throw new ApiError(resp.status, text);
-  }
-  return resp;
+  return _request('POST', path, body);
 }
 
 async function _patch(path: string, body?: unknown): Promise<Response> {
-  const resp = await fetch(`${_baseUrl}${path}`, {
-    method: 'PATCH',
-    headers: {
-      Authorization: `Bearer ${_token}`,
-      ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
-    },
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-  });
-  if (!resp.ok) {
-    const text = await resp.text();
-    throw new ApiError(resp.status, text);
-  }
-  return resp;
+  return _request('PATCH', path, body);
 }
 
 async function _put(path: string, body?: unknown): Promise<Response> {
-  const resp = await fetch(`${_baseUrl}${path}`, {
-    method: 'PUT',
-    headers: {
-      Authorization: `Bearer ${_token}`,
-      ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
-    },
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-  });
-  if (!resp.ok) {
-    const text = await resp.text();
-    throw new ApiError(resp.status, text);
-  }
-  return resp;
+  return _request('PUT', path, body);
 }
 
 async function _delete(path: string): Promise<Response> {
-  const resp = await fetch(`${_baseUrl}${path}`, {
-    method: 'DELETE',
-    headers: { Authorization: `Bearer ${_token}` },
-  });
-  if (!resp.ok) {
-    const text = await resp.text();
-    throw new ApiError(resp.status, text);
-  }
-  return resp;
+  return _request('DELETE', path);
 }
 
 // Helper: returns true if error is a network failure (gateway unreachable)
@@ -782,7 +789,10 @@ function _connectEventWs() {
     _eventWs = null;
     // Auto-reconnect after 5s if still connected.
     if (_connected) {
-      setTimeout(() => _connectEventWs(), 5000);
+      setTimeout(async () => {
+        await _refreshToken();
+        _connectEventWs();
+      }, 5000);
     }
   };
 }

@@ -107,8 +107,8 @@ size = 341
 
 [files.root_manifest]
 path = "profiles/code/root.manifest.json"
-hash = "blake3:d49c05e47e8f28fa7668b46346f1ba65e1efaaeae63042112cdbf2b909367034"
-size = 1518
+hash = "blake3:7eef992e76349e3fc586cb120cc88439a145cdb97b7cdcd356d54f980bb4cd57"
+size = 1664
 
 [plugins.credential_broker]
 mode = "rewrite"

@@ -48,6 +48,21 @@ class TestGuestNetwork:
             f"Expected localhost in resolv.conf, got: {stdout}"
         )
 
+    def test_localhost_resolves_from_hosts(self, guest_env):
+        """localhost resolves through /etc/hosts before DNS."""
+        client, name = guest_env
+        resp = client.post(
+            f"/vms/{name}/exec",
+            {"command": "cat /etc/hosts; getent hosts localhost"},
+        )
+        stdout = resp.get("stdout", "") if resp else ""
+        assert "127.0.0.1 localhost" in stdout, (
+            f"Expected IPv4 localhost entry in /etc/hosts, got: {stdout}"
+        )
+        assert "localhost" in stdout and ("127.0.0.1" in stdout or "::1" in stdout), (
+            f"Expected localhost to resolve locally, got: {stdout}"
+        )
+
     def test_external_ping_fails(self, guest_env):
         """Direct ping to external IP should fail (air-gapped)."""
         client, name = guest_env

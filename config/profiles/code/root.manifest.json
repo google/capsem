@@ -45,6 +45,11 @@
       "path": "root/.mcp.json",
       "hash": "blake3:44dbee07dcb89910a47cd195f6b324d51260b2f4e34a13a8bd85e2e5039ea67b",
       "size": 90
+    },
+    {
+      "path": "etc/hosts",
+      "hash": "blake3:b3d43bdb7ed2a8e246a342895e0b0c2ba9fa53da1009ae489464aa51b00e747e",
+      "size": 61
     }
   ]
 }
