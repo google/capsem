@@ -65,6 +65,16 @@ size = 933675008
 enforcement = "profiles/code/enforcement.toml"
 sigma = "profiles/code/detection.yaml"
 
+[files.enforcement]
+path = "profiles/code/enforcement.toml"
+hash = "blake3:91b19b0e9f27ffe8710826c66b43cdf859785095c292db73b40cf91864c5cd2f"
+size = 1416
+
+[files.detection]
+path = "profiles/code/detection.yaml"
+hash = "blake3:c2515b79cb5baa7b3c0288c2805a71ab2e95c98700e28d7fe73d4e45e2f03fa7"
+size = 271
+
 [files.mcp]
 path = "profiles/code/mcp.json"
 hash = "blake3:44dbee07dcb89910a47cd195f6b324d51260b2f4e34a13a8bd85e2e5039ea67b"

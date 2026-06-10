@@ -211,6 +211,7 @@ impl RuntimeSecurityEventType {
             WriteOp::SecurityRuleEvent(_) => Self::SecurityRule,
             WriteOp::SecurityAskEvent(_) => Self::SecurityAsk,
             WriteOp::SecurityDecisionEvent(_) => Self::SecurityRule,
+            WriteOp::ProfileMutationEvent(_) => Self::SecurityRule,
         }
     }
 }
@@ -1520,6 +1521,7 @@ fn logger_write_credential_ref(op: &WriteOp) -> Option<String> {
         WriteOp::SecurityRuleEvent(_) => None,
         WriteOp::SecurityAskEvent(_) => None,
         WriteOp::SecurityDecisionEvent(_) => None,
+        WriteOp::ProfileMutationEvent(_) => None,
     }
 }
 
@@ -1538,6 +1540,7 @@ fn logger_write_trace_id(op: &WriteOp) -> Option<String> {
         WriteOp::SecurityRuleEvent(event) => event.trace_id.clone(),
         WriteOp::SecurityAskEvent(event) => event.trace_id.clone(),
         WriteOp::SecurityDecisionEvent(event) => event.trace_id.clone(),
+        WriteOp::ProfileMutationEvent(event) => event.trace_id.clone(),
     }
 }
 

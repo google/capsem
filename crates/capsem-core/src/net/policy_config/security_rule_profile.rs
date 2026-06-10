@@ -91,8 +91,104 @@ pub struct SecurityRule {
     pub corp_locked: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub managed: Option<SecurityRuleManagedTarget>,
     #[serde(default, flatten)]
     pub plugin_config: BTreeMap<String, toml::Value>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum SecurityRuleManagedTarget {
+    McpServer {
+        server: String,
+        operation: SecurityRuleManagedOperation,
+    },
+    McpTool {
+        server: String,
+        tool: String,
+        operation: SecurityRuleManagedOperation,
+    },
+    Plugin {
+        plugin: String,
+        operation: SecurityRuleManagedOperation,
+    },
+    Skill {
+        skill: String,
+        operation: SecurityRuleManagedOperation,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SecurityRuleManagedOperation {
+    Permission,
+}
+
+impl SecurityRuleManagedTarget {
+    pub fn identity_key(&self) -> String {
+        match self {
+            Self::McpServer { server, operation } => {
+                format!("mcp_server:{server}:{}", operation.as_str())
+            }
+            Self::McpTool {
+                server,
+                tool,
+                operation,
+            } => format!("mcp_tool:{server}:{tool}:{}", operation.as_str()),
+            Self::Plugin { plugin, operation } => {
+                format!("plugin:{plugin}:{}", operation.as_str())
+            }
+            Self::Skill { skill, operation } => format!("skill:{skill}:{}", operation.as_str()),
+        }
+    }
+
+    pub fn category(&self) -> &'static str {
+        match self {
+            Self::McpServer { .. } | Self::McpTool { .. } => "mcp",
+            Self::Plugin { .. } => "plugin",
+            Self::Skill { .. } => "skill",
+        }
+    }
+
+    pub fn target_kind(&self) -> &'static str {
+        match self {
+            Self::McpServer { .. } => "mcp_server",
+            Self::McpTool { .. } => "mcp_tool",
+            Self::Plugin { .. } => "plugin",
+            Self::Skill { .. } => "skill",
+        }
+    }
+
+    pub fn target_key(&self) -> String {
+        match self {
+            Self::McpServer { server, .. } => server.clone(),
+            Self::McpTool { server, tool, .. } => format!("{server}/{tool}"),
+            Self::Plugin { plugin, .. } => plugin.clone(),
+            Self::Skill { skill, .. } => skill.clone(),
+        }
+    }
+
+    fn validate(&self, rule_id: &str) -> Result<(), String> {
+        match self {
+            Self::McpServer { server, .. } => validate_profile_target("mcp server", server),
+            Self::McpTool { server, tool, .. } => {
+                validate_profile_target("mcp server", server)?;
+                validate_profile_target("mcp tool", tool)
+            }
+            Self::Plugin { plugin, .. } => validate_identifier("plugin id", plugin),
+            Self::Skill { skill, .. } => validate_profile_target("skill id", skill),
+        }
+        .map_err(|error| format!("{rule_id}.managed: {error}"))
+    }
+}
+
+impl SecurityRuleManagedOperation {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Permission => "permission",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -250,6 +346,7 @@ pub struct CompiledSecurityRule {
     pub priority: i32,
     pub corp_locked: bool,
     pub reason: Option<String>,
+    pub managed: Option<SecurityRuleManagedTarget>,
 }
 
 #[derive(Debug, Clone)]
@@ -336,6 +433,7 @@ impl SecurityRuleProfile {
                 rule.validate(&format!("ai.{provider_id}.rules.{rule_key}"))?;
             }
         }
+        validate_managed_targets_unique(self)?;
         Ok(())
     }
 
@@ -375,6 +473,7 @@ impl SecurityRuleProfile {
                     priority,
                     corp_locked: rule.corp_locked || matches!(source, SecurityRuleSource::Corp),
                     reason: rule.reason.clone(),
+                    managed: rule.managed.clone(),
                 });
             }
         }
@@ -409,6 +508,7 @@ impl SecurityRuleProfile {
                 priority,
                 corp_locked: rule.corp_locked || matches!(source, SecurityRuleSource::Corp),
                 reason: rule.reason.clone(),
+                managed: rule.managed.clone(),
             });
         }
         Ok(())
@@ -439,6 +539,7 @@ impl SecurityRuleProfile {
                 priority,
                 corp_locked: rule.corp_locked || matches!(source, SecurityRuleSource::Corp),
                 reason: rule.reason.clone(),
+                managed: rule.managed.clone(),
             });
         }
         Ok(())
@@ -516,6 +617,7 @@ impl SigmaRule {
                 .reason
                 .or(self.description)
                 .or_else(|| self.id.map(|id| format!("Sigma rule {id}"))),
+            managed: None,
             plugin_config: BTreeMap::new(),
         };
         rule.validate(&format!("profiles.rules.{rule_key}"))?;
@@ -850,6 +952,9 @@ impl SecurityRule {
                 "{rule_id} must not use 'plugin'; plugins own their filtering"
             ));
         }
+        if let Some(managed) = &self.managed {
+            managed.validate(rule_id)?;
+        }
         if !self.plugin_config.is_empty() {
             let fields = self
                 .plugin_config
@@ -982,6 +1087,46 @@ fn validate_default_rules(default: &BTreeMap<String, SecurityRule>) -> Result<()
     Ok(())
 }
 
+fn validate_managed_targets_unique(profile: &SecurityRuleProfile) -> Result<(), String> {
+    let mut seen = BTreeMap::new();
+    for (rule_key, rule) in &profile.default {
+        track_managed_target(&mut seen, format!("default.{rule_key}"), rule)?;
+    }
+    for (rule_key, rule) in &profile.corp.rules {
+        track_managed_target(&mut seen, format!("corp.rules.{rule_key}"), rule)?;
+    }
+    for (rule_key, rule) in &profile.profiles.rules {
+        track_managed_target(&mut seen, format!("profiles.rules.{rule_key}"), rule)?;
+    }
+    for (provider_id, provider) in &profile.ai {
+        for (rule_key, rule) in &provider.rules {
+            track_managed_target(
+                &mut seen,
+                format!("ai.{provider_id}.rules.{rule_key}"),
+                rule,
+            )?;
+        }
+    }
+    Ok(())
+}
+
+fn track_managed_target(
+    seen: &mut BTreeMap<String, String>,
+    rule_id: String,
+    rule: &SecurityRule,
+) -> Result<(), String> {
+    let Some(managed) = &rule.managed else {
+        return Ok(());
+    };
+    let identity = managed.identity_key();
+    if let Some(previous) = seen.insert(identity.clone(), rule_id.clone()) {
+        return Err(format!(
+            "managed security rule target {identity} is defined by both {previous} and {rule_id}"
+        ));
+    }
+    Ok(())
+}
+
 pub fn validate_security_event_match(condition: &str) -> Result<(), String> {
     validate_condition_with(condition, validate_security_event_field)
 }
@@ -1037,6 +1182,17 @@ fn validate_non_empty(kind: &str, value: &str) -> Result<(), String> {
     } else {
         Ok(())
     }
+}
+
+fn validate_profile_target(kind: &str, value: &str) -> Result<(), String> {
+    validate_non_empty(kind, value)?;
+    if value.len() > 128 {
+        return Err(format!("{kind} must be at most 128 characters"));
+    }
+    if value.contains("..") || value.contains('\\') || value.trim() != value {
+        return Err(format!("{kind} must not contain traversal or padding"));
+    }
+    Ok(())
 }
 
 #[cfg(test)]

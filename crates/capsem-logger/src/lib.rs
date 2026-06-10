@@ -7,10 +7,11 @@ pub mod writer;
 pub use db::SessionDb;
 pub use events::{
     credential_reference, is_credential_reference, AuditEvent, Decision, DnsEvent, ExecEvent,
-    ExecEventComplete, FileAction, FileEvent, McpCall, ModelCall, NetEvent, SecurityAskEvent,
-    SecurityAskPending, SecurityAskStatus, SecurityDecision, SecurityDecisionEvent,
-    SecurityDecisionStage, SecurityDetectionLevel, SecurityRuleAction, SecurityRuleEvent,
-    SnapshotEvent, SubstitutionEvent, ToolCallEntry, ToolResponseEntry, CREDENTIAL_REF_PREFIX,
+    ExecEventComplete, FileAction, FileEvent, McpCall, ModelCall, NetEvent, ProfileMutationEvent,
+    ProfileMutationStatus, SecurityAskEvent, SecurityAskPending, SecurityAskStatus,
+    SecurityDecision, SecurityDecisionEvent, SecurityDecisionStage, SecurityDetectionLevel,
+    SecurityRuleAction, SecurityRuleEvent, SnapshotEvent, SubstitutionEvent, ToolCallEntry,
+    ToolResponseEntry, CREDENTIAL_REF_PREFIX,
 };
 pub use reader::{
     validate_select_only, DbReader, DomainCount, FileEventStats, HistoryCounts, HistoryEntry,

@@ -1,6 +1,6 @@
 # Repo Ontology Cleanup
 
-Status: Planning
+Status: In progress
 
 ## Why This Exists
 

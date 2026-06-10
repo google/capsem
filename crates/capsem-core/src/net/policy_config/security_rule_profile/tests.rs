@@ -74,6 +74,77 @@ fn sigma_fixture_compiles_into_security_rule_profile() {
 }
 
 #[test]
+fn security_rule_managed_target_roundtrips_and_compiles() {
+    let profile = SecurityRuleProfile::parse_toml(
+        r#"
+[profiles.rules.mcp_capsem_fetch_http_permission]
+name = "mcp_capsem_fetch_http_permission"
+action = "ask"
+priority = "default"
+reason = "Profile-managed MCP permission."
+match = 'mcp.server.name == "capsem" && mcp.tool_call.name == "fetch_http"'
+
+[profiles.rules.mcp_capsem_fetch_http_permission.managed]
+kind = "mcp_tool"
+server = "capsem"
+tool = "fetch_http"
+operation = "permission"
+"#,
+    )
+    .expect("managed rule parses");
+
+    let managed = profile.profiles.rules["mcp_capsem_fetch_http_permission"]
+        .managed
+        .as_ref()
+        .expect("managed target");
+    assert_eq!(managed.category(), "mcp");
+    assert_eq!(managed.target_kind(), "mcp_tool");
+    assert_eq!(managed.target_key(), "capsem/fetch_http");
+    assert_eq!(
+        managed.identity_key(),
+        "mcp_tool:capsem:fetch_http:permission"
+    );
+
+    let compiled = profile.compile(SecurityRuleSource::User).expect("compiles");
+    assert_eq!(
+        compiled[0].managed.as_ref().unwrap().identity_key(),
+        "mcp_tool:capsem:fetch_http:permission"
+    );
+}
+
+#[test]
+fn security_rule_profile_rejects_duplicate_managed_targets() {
+    let error = SecurityRuleProfile::parse_toml(
+        r#"
+[profiles.rules.first]
+name = "first"
+action = "ask"
+match = 'mcp.server.name == "capsem"'
+
+[profiles.rules.first.managed]
+kind = "mcp_tool"
+server = "capsem"
+tool = "fetch_http"
+operation = "permission"
+
+[profiles.rules.second]
+name = "second"
+action = "block"
+match = 'mcp.tool_call.name == "fetch_http"'
+
+[profiles.rules.second.managed]
+kind = "mcp_tool"
+server = "capsem"
+tool = "fetch_http"
+operation = "permission"
+"#,
+    )
+    .expect_err("duplicate managed target rejected");
+
+    assert!(error.contains("managed security rule target"), "{error}");
+}
+
+#[test]
 fn sigma_fixture_evaluates_against_security_event_roots() {
     let profile = SecurityRuleProfile::parse_sigma_yaml(SIGMA_FIXTURE).expect("sigma fixture");
     let rules = SecurityRuleSet::compile_profile(&profile, SecurityRuleSource::User)

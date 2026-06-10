@@ -1,5 +1,6 @@
 use super::*;
 use axum::body::{to_bytes, Body};
+use capsem_core::net::policy_config::{ProfileObomConfig, ProfileObomDescriptor};
 use std::sync::atomic::AtomicU64;
 use tower::ServiceExt;
 
@@ -694,6 +695,7 @@ async fn t1_adversarial_route_inputs_fail_closed() {
         priority: None,
         corp_locked: false,
         reason: None,
+        managed: None,
         plugin_config: BTreeMap::new(),
     };
     let malformed_rule_id = handle_enforcement_rule_upsert(
@@ -1272,6 +1274,7 @@ async fn handle_enforcement_rules_list_returns_compiled_profile_rules() {
             priority: None,
             corp_locked: false,
             reason: Some("record skill file reads".to_string()),
+            managed: None,
             plugin_config: BTreeMap::new(),
         },
     );
@@ -1332,6 +1335,7 @@ async fn handle_enforcement_info_summarizes_compiled_rules() {
             priority: None,
             corp_locked: false,
             reason: Some("record skill file reads".to_string()),
+            managed: None,
             plugin_config: BTreeMap::new(),
         },
     );
@@ -1378,6 +1382,7 @@ async fn handle_detection_rules_list_returns_detection_rules_only() {
             priority: None,
             corp_locked: false,
             reason: Some("record skill file reads".to_string()),
+            managed: None,
             plugin_config: BTreeMap::new(),
         },
     );
@@ -1391,6 +1396,7 @@ async fn handle_detection_rules_list_returns_detection_rules_only() {
             priority: None,
             corp_locked: false,
             reason: Some("block example without reporting".to_string()),
+            managed: None,
             plugin_config: BTreeMap::new(),
         },
     );
@@ -1435,6 +1441,7 @@ async fn handle_detection_info_summarizes_detection_rules_only() {
             priority: None,
             corp_locked: false,
             reason: Some("record skill file reads".to_string()),
+            managed: None,
             plugin_config: BTreeMap::new(),
         },
     );
@@ -1460,6 +1467,7 @@ async fn handle_detection_rule_upsert_requires_detection_level() {
         priority: None,
         corp_locked: false,
         reason: Some("block without reporting".to_string()),
+        managed: None,
         plugin_config: BTreeMap::new(),
     };
 
@@ -1673,6 +1681,7 @@ async fn enforcement_rule_endpoints_add_delete_reload_and_reject_invalid_rules_a
         priority: Some(capsem_core::net::policy_config::SecurityRulePriority::Explicit(10)),
         corp_locked: false,
         reason: Some("debug EICAR fixture must block".to_string()),
+        managed: None,
         plugin_config: BTreeMap::new(),
     };
 
@@ -1778,6 +1787,7 @@ async fn route_authored_detection_rule_triggers_runtime_ledger_and_latest_routes
         priority: Some(capsem_core::net::policy_config::SecurityRulePriority::Explicit(10)),
         corp_locked: false,
         reason: Some("route-authored detection proof".to_string()),
+        managed: None,
         plugin_config: BTreeMap::new(),
     };
 
@@ -1997,6 +2007,7 @@ async fn mounted_service_ledger_routes_read_real_session_db_rows() {
                         ),
                         corp_locked: false,
                         reason: Some("service ledger route proof".to_string()),
+                        managed: None,
                         plugin_config: BTreeMap::new(),
                     },
                 )]),

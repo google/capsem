@@ -190,6 +190,55 @@ pub struct SecurityRuleEvent {
     pub trace_id: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProfileMutationEvent {
+    pub timestamp_unix_ms: i64,
+    pub mutation_id: String,
+    pub profile_id: String,
+    pub actor: String,
+    pub category: String,
+    pub filename: String,
+    pub affected_path: String,
+    pub target_kind: String,
+    pub target_key: String,
+    pub operation: String,
+    #[serde(default)]
+    pub rule_id: Option<String>,
+    pub old_hash: String,
+    pub old_size: u64,
+    pub new_hash: String,
+    pub new_size: u64,
+    pub status: ProfileMutationStatus,
+    #[serde(default)]
+    pub error: Option<String>,
+    #[serde(default)]
+    pub trace_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ProfileMutationStatus {
+    Applied,
+    Failed,
+}
+
+impl ProfileMutationStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Applied => "applied",
+            Self::Failed => "failed",
+        }
+    }
+
+    pub fn parse_str(value: &str) -> Option<Self> {
+        match value {
+            "applied" => Some(Self::Applied),
+            "failed" => Some(Self::Failed),
+            _ => None,
+        }
+    }
+}
+
 /// Append-only ask lifecycle status for an ask enforcement decision.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]

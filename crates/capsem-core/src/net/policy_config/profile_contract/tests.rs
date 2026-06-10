@@ -327,12 +327,224 @@ fn checked_in_code_profile_parses_and_validates() {
     assert!(profile.plugins.contains_key("credential_broker"));
     assert_eq!(
         profile
+            .files
+            .enforcement
+            .as_ref()
+            .map(|descriptor| descriptor.path.as_str()),
+        Some("profiles/code/enforcement.toml")
+    );
+    assert_eq!(
+        profile
+            .files
+            .detection
+            .as_ref()
+            .map(|descriptor| descriptor.path.as_str()),
+        Some("profiles/code/detection.yaml")
+    );
+    assert_eq!(
+        profile
             .mcp
             .as_ref()
             .and_then(|mcp| mcp.server_enabled.get("local"))
             .copied(),
         Some(true)
     );
+}
+
+#[test]
+fn profile_check_rejects_mutated_pinned_rule_file() {
+    let fixture = ProfileFixture::new();
+    let profile = Profile::load_from_dir(fixture.profile_dir()).expect("profile loads");
+    profile
+        .check(&fixture.assets_dir(), "arm64")
+        .expect("fixture is initially ready");
+
+    std::fs::write(
+        fixture.config_root().join("profiles/code/enforcement.toml"),
+        "[default.http]\nname = \"http\"\naction = \"allow\"\npriority = \"default\"\nmatch = 'has(http.host)'\n",
+    )
+    .unwrap();
+
+    let error = profile
+        .check(&fixture.assets_dir(), "arm64")
+        .expect_err("tampered enforcement file fails profile check");
+    assert!(error.contains("enforcement"), "{error}");
+}
+
+#[test]
+fn profile_download_assets_uses_file_url_same_status_path() {
+    let fixture = ProfileFixture::new_without_downloaded_assets();
+    let profile = Profile::load_from_dir(fixture.profile_dir()).expect("profile loads");
+    assert!(!profile.status(&fixture.assets_dir(), "arm64").ready);
+
+    let status = profile
+        .download_assets(&fixture.assets_dir(), "arm64")
+        .expect("file URL assets download through profile rail");
+
+    assert!(status.ready, "{status:?}");
+    assert_eq!(status.assets.len(), 3);
+    assert!(status
+        .assets
+        .iter()
+        .all(|asset| asset.present && asset.valid));
+}
+
+#[test]
+fn profile_mcp_tool_permission_mutation_updates_rule_and_pin() {
+    let fixture = ProfileFixture::new();
+    let mut profile = Profile::load_from_dir(fixture.profile_dir()).expect("profile loads");
+    let old_pin = profile
+        .config()
+        .files
+        .enforcement
+        .as_ref()
+        .unwrap()
+        .hash
+        .clone();
+
+    let summary = profile
+        .set_mcp_tool_permission("capsem", "fetch_http", SecurityRuleAction::Ask, "ui")
+        .expect("MCP tool permission mutation succeeds");
+
+    assert_eq!(summary.profile_id, "code");
+    assert_eq!(summary.category, "mcp");
+    assert_eq!(summary.filename, "enforcement.toml");
+    assert_eq!(summary.target_kind, "mcp_tool");
+    assert_eq!(summary.target_key, "capsem/fetch_http");
+    assert_eq!(
+        summary.rule_id.as_deref(),
+        Some("profiles.rules.mcp_capsem_fetch_http_permission")
+    );
+    assert_ne!(summary.new_hash, old_pin);
+
+    let reloaded = Profile::load_from_dir(fixture.profile_dir()).expect("profile reloads");
+    let new_pin = reloaded
+        .config()
+        .files
+        .enforcement
+        .as_ref()
+        .unwrap()
+        .hash
+        .clone();
+    assert_eq!(new_pin, summary.new_hash);
+    reloaded
+        .check(&fixture.assets_dir(), "arm64")
+        .expect("mutation keeps profile ledger valid");
+
+    let rules = reloaded
+        .config()
+        .security_rule_profile_from_files(reloaded.config_root())
+        .expect("mutated rules compile from files");
+    let rule = rules
+        .profiles
+        .rules
+        .get("mcp_capsem_fetch_http_permission")
+        .expect("managed permission rule exists");
+    assert_eq!(rule.action, SecurityRuleAction::Ask);
+    assert_eq!(
+        rule.managed,
+        Some(SecurityRuleManagedTarget::McpTool {
+            server: "capsem".to_string(),
+            tool: "fetch_http".to_string(),
+            operation: SecurityRuleManagedOperation::Permission,
+        })
+    );
+}
+
+#[test]
+fn profile_mcp_tool_permission_mutation_updates_existing_managed_rule() {
+    let fixture = ProfileFixture::new();
+    let mut profile = Profile::load_from_dir(fixture.profile_dir()).expect("profile loads");
+    profile
+        .set_mcp_tool_permission("capsem", "fetch_http", SecurityRuleAction::Ask, "ui")
+        .expect("first mutation succeeds");
+    profile
+        .set_mcp_tool_permission("capsem", "fetch_http", SecurityRuleAction::Block, "ui")
+        .expect("second mutation updates existing managed rule");
+
+    let rules = profile
+        .config()
+        .security_rule_profile_from_files(profile.config_root())
+        .expect("rules parse");
+    let matches = rules
+        .profiles
+        .rules
+        .values()
+        .filter(|rule| {
+            matches!(
+                rule.managed,
+                Some(SecurityRuleManagedTarget::McpTool {
+                    ref server,
+                    ref tool,
+                    operation: SecurityRuleManagedOperation::Permission,
+                }) if server == "capsem" && tool == "fetch_http"
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(matches.len(), 1);
+    assert_eq!(matches[0].action, SecurityRuleAction::Block);
+}
+
+#[test]
+fn profile_mcp_tool_permission_requires_pinned_enforcement_file() {
+    let fixture = ProfileFixture::new();
+    let mut config = Profile::load_from_dir(fixture.profile_dir())
+        .unwrap()
+        .config()
+        .clone();
+    config.files.enforcement = None;
+    let mut profile = Profile::from_config(
+        fixture.config_root(),
+        fixture.profile_dir().to_path_buf(),
+        config,
+    )
+    .expect("profile without enforcement pin can still parse before mutation");
+
+    let error = profile
+        .set_mcp_tool_permission("capsem", "fetch_http", SecurityRuleAction::Ask, "ui")
+        .expect_err("mutation requires enforcement pin");
+    assert!(error.contains("profile.files.enforcement"), "{error}");
+}
+
+#[test]
+fn profile_mcp_tool_permission_rejects_duplicate_managed_targets() {
+    let fixture = ProfileFixture::new();
+    let managed = r#"
+[profiles.rules.first]
+name = "first"
+action = "ask"
+match = 'mcp.server.name == "capsem"'
+
+[profiles.rules.first.managed]
+kind = "mcp_tool"
+server = "capsem"
+tool = "fetch_http"
+operation = "permission"
+
+[profiles.rules.second]
+name = "second"
+action = "block"
+match = 'mcp.tool_call.name == "fetch_http"'
+
+[profiles.rules.second.managed]
+kind = "mcp_tool"
+server = "capsem"
+tool = "fetch_http"
+operation = "permission"
+"#;
+    let enforcement = fixture.config_root().join("profiles/code/enforcement.toml");
+    std::fs::write(&enforcement, managed).unwrap();
+    fixture.repin(
+        "enforcement",
+        "profiles/code/enforcement.toml",
+        &enforcement,
+    );
+
+    let mut profile = Profile::load_from_dir(fixture.profile_dir()).expect("profile loads");
+    let error = profile
+        .set_mcp_tool_permission("capsem", "fetch_http", SecurityRuleAction::Ask, "ui")
+        .expect_err("duplicate managed targets are rejected");
+    assert!(error.contains("managed security rule target"), "{error}");
 }
 
 #[test]
@@ -516,4 +728,194 @@ fn profile_catalog_rejects_flat_only_profile_files() {
         error.contains("contains no profile directories with profile.toml"),
         "{error}"
     );
+}
+
+struct ProfileFixture {
+    dir: tempfile::TempDir,
+}
+
+impl ProfileFixture {
+    fn new() -> Self {
+        let fixture = Self::new_without_downloaded_assets();
+        let profile = Profile::load_from_dir(fixture.profile_dir()).expect("profile loads");
+        profile
+            .download_assets(&fixture.assets_dir(), "arm64")
+            .expect("fixture assets download");
+        fixture
+    }
+
+    fn new_without_downloaded_assets() -> Self {
+        let dir = tempfile::tempdir().unwrap();
+        let config_root = dir.path().join("config");
+        let profile_dir = config_root.join("profiles/code");
+        let source_dir = dir.path().join("asset-source/arm64");
+        std::fs::create_dir_all(&profile_dir).unwrap();
+        std::fs::create_dir_all(&source_dir).unwrap();
+
+        let enforcement = profile_dir.join("enforcement.toml");
+        let detection = profile_dir.join("detection.yaml");
+        let mcp = profile_dir.join("mcp.json");
+        std::fs::write(
+            &enforcement,
+            r#"
+[default.http]
+name = "http"
+action = "allow"
+priority = "default"
+reason = "Default allow HTTP."
+match = 'has(http.host)'
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            &detection,
+            r#"
+title: Skill Loaded
+logsource:
+  product: capsem
+  service: security_event
+detection:
+  selection:
+    file.read.path: /root/.codex/skills/security/SKILL.md
+  condition: selection
+level: informational
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            &mcp,
+            r#"{"mcpServers":{"capsem":{"command":"/run/capsem-mcp-server"}}}"#,
+        )
+        .unwrap();
+
+        let kernel = source_dir.join("vmlinuz");
+        let initrd = source_dir.join("initrd.img");
+        let rootfs = source_dir.join("rootfs.erofs");
+        std::fs::write(&kernel, b"kernel").unwrap();
+        std::fs::write(&initrd, b"initrd").unwrap();
+        std::fs::write(&rootfs, b"rootfs").unwrap();
+
+        let profile = format!(
+            r#"
+id = "code"
+name = "Code"
+description = "Optimized for coding and long-running agents."
+revision = "test.1"
+refresh_policy = "24h"
+
+[assets]
+format = "profile-assets.v1"
+refresh_policy = "on_profile_refresh"
+
+[assets.arch.arm64.kernel]
+name = "vmlinuz"
+url = "file://{}"
+hash = "{}"
+size = {}
+
+[assets.arch.arm64.initrd]
+name = "initrd.img"
+url = "file://{}"
+hash = "{}"
+size = {}
+
+[assets.arch.arm64.rootfs]
+name = "rootfs.erofs"
+url = "file://{}"
+hash = "{}"
+size = {}
+
+[rule_files]
+enforcement = "profiles/code/enforcement.toml"
+sigma = "profiles/code/detection.yaml"
+
+[files.enforcement]
+path = "profiles/code/enforcement.toml"
+hash = "{}"
+size = {}
+
+[files.detection]
+path = "profiles/code/detection.yaml"
+hash = "{}"
+size = {}
+
+[files.mcp]
+path = "profiles/code/mcp.json"
+hash = "{}"
+size = {}
+
+[plugins.credential_broker]
+mode = "rewrite"
+detectiOn_level = "informational"
+
+[mcp]
+health_check_interval_secs = 60
+
+[mcp.server_enabled]
+capsem = true
+"#,
+            kernel.display(),
+            descriptor_hash(&kernel),
+            file_size(&kernel),
+            initrd.display(),
+            descriptor_hash(&initrd),
+            file_size(&initrd),
+            rootfs.display(),
+            descriptor_hash(&rootfs),
+            file_size(&rootfs),
+            descriptor_hash(&enforcement),
+            file_size(&enforcement),
+            descriptor_hash(&detection),
+            file_size(&detection),
+            descriptor_hash(&mcp),
+            file_size(&mcp),
+        )
+        .replace("detectiOn_level", "detection_level");
+        std::fs::write(profile_dir.join("profile.toml"), profile).unwrap();
+        Self { dir }
+    }
+
+    fn config_root(&self) -> std::path::PathBuf {
+        self.dir.path().join("config")
+    }
+
+    fn profile_dir(&self) -> std::path::PathBuf {
+        self.config_root().join("profiles/code")
+    }
+
+    fn assets_dir(&self) -> std::path::PathBuf {
+        self.dir.path().join("assets")
+    }
+
+    fn repin(&self, field: &str, relative_path: &str, path: &std::path::Path) {
+        let profile_path = self.profile_dir().join("profile.toml");
+        let mut profile = std::fs::read_to_string(&profile_path).unwrap();
+        let hash_line = format!("hash = \"{}\"", descriptor_hash(path));
+        let size_line = format!("size = {}", file_size(path));
+        let section = format!("[files.{field}]\npath = \"{relative_path}\"");
+        let start = profile.find(&section).expect("section exists");
+        let suffix = &profile[start..];
+        let hash_pos = start + suffix.find("hash = ").expect("hash exists");
+        let hash_end = hash_pos + profile[hash_pos..].find('\n').unwrap();
+        profile.replace_range(hash_pos..hash_end, &hash_line);
+        let suffix = &profile[start..];
+        let size_pos = start + suffix.find("size = ").expect("size exists");
+        let size_end = size_pos
+            + profile[size_pos..]
+                .find('\n')
+                .unwrap_or(profile.len() - size_pos);
+        profile.replace_range(size_pos..size_end, &size_line);
+        std::fs::write(profile_path, profile).unwrap();
+    }
+}
+
+fn descriptor_hash(path: &std::path::Path) -> String {
+    format!(
+        "blake3:{}",
+        crate::asset_manager::hash_file(path).expect("hash fixture file")
+    )
+}
+
+fn file_size(path: &std::path::Path) -> u64 {
+    std::fs::metadata(path).unwrap().len()
 }

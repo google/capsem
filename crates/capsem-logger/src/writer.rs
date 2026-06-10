@@ -7,7 +7,8 @@ use uuid::Uuid;
 
 use crate::events::{
     AuditEvent, DnsEvent, ExecEvent, ExecEventComplete, FileEvent, McpCall, ModelCall, NetEvent,
-    SecurityAskEvent, SecurityDecisionEvent, SecurityRuleEvent, SnapshotEvent, SubstitutionEvent,
+    ProfileMutationEvent, SecurityAskEvent, SecurityDecisionEvent, SecurityRuleEvent,
+    SnapshotEvent, SubstitutionEvent,
 };
 use crate::schema;
 
@@ -63,6 +64,7 @@ pub enum WriteOp {
     SecurityRuleEvent(SecurityRuleEvent),
     SecurityAskEvent(SecurityAskEvent),
     SecurityDecisionEvent(SecurityDecisionEvent),
+    ProfileMutationEvent(ProfileMutationEvent),
 }
 
 impl WriteOp {
@@ -83,6 +85,7 @@ impl WriteOp {
             WriteOp::SecurityRuleEvent(event) => Some(event.event_id.clone()),
             WriteOp::SecurityAskEvent(event) => Some(event.event_id.clone()),
             WriteOp::SecurityDecisionEvent(event) => Some(event.event_id.clone()),
+            WriteOp::ProfileMutationEvent(event) => Some(event.mutation_id.clone()),
             WriteOp::ExecEventComplete(_) => None,
         }
     }
@@ -101,6 +104,7 @@ impl WriteOp {
             WriteOp::SecurityRuleEvent(event) => Some(event.event_id.as_str()),
             WriteOp::SecurityAskEvent(event) => Some(event.event_id.as_str()),
             WriteOp::SecurityDecisionEvent(event) => Some(event.event_id.as_str()),
+            WriteOp::ProfileMutationEvent(event) => Some(event.mutation_id.as_str()),
             WriteOp::ExecEventComplete(_) => None,
         }
     }
@@ -419,6 +423,7 @@ fn execute_batch(conn: &Connection, batch: &[WriteOp]) -> rusqlite::Result<()> {
             WriteOp::SecurityRuleEvent(e) => insert_security_rule_event(&tx, e)?,
             WriteOp::SecurityAskEvent(e) => insert_security_ask_event(&tx, e)?,
             WriteOp::SecurityDecisionEvent(e) => insert_security_decision_event(&tx, e)?,
+            WriteOp::ProfileMutationEvent(e) => insert_profile_mutation_event(&tx, e)?,
         }
     }
     tx.commit()
@@ -852,6 +857,41 @@ fn insert_security_decision_event(
             event.effective_decision.as_str(),
             event.reason,
             event.event_json,
+            event.trace_id,
+        ],
+    )?;
+    Ok(())
+}
+
+fn insert_profile_mutation_event(
+    conn: &Connection,
+    event: &ProfileMutationEvent,
+) -> rusqlite::Result<()> {
+    conn.execute(
+        "INSERT INTO profile_mutation_events (
+            timestamp_unix_ms, mutation_id, profile_id, actor, category, filename,
+            affected_path, target_kind, target_key, operation, rule_id,
+            old_hash, old_size, new_hash, new_size, status, error, trace_id
+         )
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
+        params![
+            event.timestamp_unix_ms,
+            event.mutation_id,
+            event.profile_id,
+            event.actor,
+            event.category,
+            event.filename,
+            event.affected_path,
+            event.target_kind,
+            event.target_key,
+            event.operation,
+            event.rule_id,
+            event.old_hash,
+            event.old_size as i64,
+            event.new_hash,
+            event.new_size as i64,
+            event.status.as_str(),
+            event.error,
             event.trace_id,
         ],
     )?;

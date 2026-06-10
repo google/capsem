@@ -622,6 +622,121 @@ async fn security_rule_event_roundtrip_preserves_forensic_snapshot() {
 }
 
 #[tokio::test]
+async fn profile_mutation_event_roundtrip_preserves_profile_ledger() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("profile-mutation.db");
+    let writer = DbWriter::open(&db_path, 64).unwrap();
+
+    writer
+        .write(WriteOp::ProfileMutationEvent(
+            crate::events::ProfileMutationEvent {
+                timestamp_unix_ms: 1_789_000_000_000,
+                mutation_id: "a1b2c3d4e5f6".into(),
+                profile_id: "code".into(),
+                actor: "ui".into(),
+                category: "mcp".into(),
+                filename: "enforcement.toml".into(),
+                affected_path: "profiles/code/enforcement.toml".into(),
+                target_kind: "mcp_tool".into(),
+                target_key: "capsem/fetch_http".into(),
+                operation: "permission".into(),
+                rule_id: Some("profiles.rules.mcp_capsem_fetch_http_permission".into()),
+                old_hash: format!("blake3:{}", "1".repeat(64)),
+                old_size: 10,
+                new_hash: format!("blake3:{}", "2".repeat(64)),
+                new_size: 20,
+                status: crate::events::ProfileMutationStatus::Applied,
+                error: None,
+                trace_id: Some("trace_profile".into()),
+            },
+        ))
+        .await;
+    drop(writer);
+
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    let row: (
+        String,
+        String,
+        String,
+        String,
+        String,
+        String,
+        String,
+        i64,
+        String,
+    ) = conn
+        .query_row(
+            "SELECT profile_id, actor, category, filename, target_kind, target_key,
+                    rule_id, new_size, status
+             FROM profile_mutation_events WHERE mutation_id = 'a1b2c3d4e5f6'",
+            [],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                    row.get(7)?,
+                    row.get(8)?,
+                ))
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        row,
+        (
+            "code".into(),
+            "ui".into(),
+            "mcp".into(),
+            "enforcement.toml".into(),
+            "mcp_tool".into(),
+            "capsem/fetch_http".into(),
+            "profiles.rules.mcp_capsem_fetch_http_permission".into(),
+            20,
+            "applied".into(),
+        )
+    );
+}
+
+#[test]
+fn profile_mutation_schema_rejects_bad_status_and_hashes() {
+    let conn = rusqlite::Connection::open_in_memory().unwrap();
+    crate::schema::create_tables(&conn).unwrap();
+
+    let bad_status = conn.execute(
+        "INSERT INTO profile_mutation_events (
+            timestamp_unix_ms, mutation_id, profile_id, actor, category, filename,
+            affected_path, target_kind, target_key, operation,
+            old_hash, old_size, new_hash, new_size, status
+         )
+         VALUES (1, 'a1b2c3d4e5f6', 'code', 'ui', 'mcp', 'enforcement.toml',
+            'profiles/code/enforcement.toml', 'mcp_tool', 'capsem/fetch_http',
+            'permission', ?1, 1, ?2, 1, 'maybe')",
+        rusqlite::params![
+            format!("blake3:{}", "1".repeat(64)),
+            format!("blake3:{}", "2".repeat(64)),
+        ],
+    );
+    assert!(bad_status.is_err(), "invalid mutation status must fail");
+
+    let bad_hash = conn.execute(
+        "INSERT INTO profile_mutation_events (
+            timestamp_unix_ms, mutation_id, profile_id, actor, category, filename,
+            affected_path, target_kind, target_key, operation,
+            old_hash, old_size, new_hash, new_size, status
+         )
+         VALUES (1, 'a1b2c3d4e5f6', 'code', 'ui', 'mcp', 'enforcement.toml',
+            'profiles/code/enforcement.toml', 'mcp_tool', 'capsem/fetch_http',
+            'permission', 'sha256:nope', 1, ?1, 1, 'applied')",
+        [format!("blake3:{}", "2".repeat(64))],
+    );
+    assert!(bad_hash.is_err(), "non-BLAKE3 profile pins must fail");
+}
+
+#[tokio::test]
 async fn security_ask_event_roundtrip_preserves_lifecycle_rows() {
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("security-ask.db");

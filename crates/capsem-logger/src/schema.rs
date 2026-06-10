@@ -9,6 +9,9 @@ const RULE_ACTION_CHECK: &str =
 const DETECTION_LEVEL_CHECK: &str =
     "CHECK (detection_level IN ('none', 'informational', 'low', 'medium', 'high', 'critical'))";
 const ASK_STATUS_CHECK: &str = "CHECK (status IN ('pending', 'approved', 'denied'))";
+const PROFILE_MUTATION_STATUS_CHECK: &str = "CHECK (status IN ('applied', 'failed'))";
+const BLAKE3_REF_CHECK: &str =
+    "CHECK (length(old_hash) = 71 AND old_hash GLOB 'blake3:[0-9a-f]*' AND length(new_hash) = 71 AND new_hash GLOB 'blake3:[0-9a-f]*')";
 const SECURITY_DECISION_CHECK: &str = "CHECK (previous_decision IN ('allow', 'ask', 'block') AND requested_decision IN ('allow', 'ask', 'block') AND effective_decision IN ('allow', 'ask', 'block'))";
 const SECURITY_DECISION_STAGE_CHECK: &str =
     "CHECK (stage IN ('preprocess', 'rule', 'rewrite', 'postprocess', 'ask_resolution'))";
@@ -354,6 +357,34 @@ pub const CREATE_SCHEMA: &str = "
         ON security_ask_events(event_id);
     CREATE INDEX IF NOT EXISTS idx_security_ask_events_rule_id
         ON security_ask_events(rule_id);
+
+    CREATE TABLE IF NOT EXISTS profile_mutation_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        timestamp_unix_ms INTEGER NOT NULL,
+        mutation_id TEXT NOT NULL CHECK (length(mutation_id) = 12 AND mutation_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
+        profile_id TEXT NOT NULL,
+        actor TEXT NOT NULL,
+        category TEXT NOT NULL,
+        filename TEXT NOT NULL,
+        affected_path TEXT NOT NULL,
+        target_kind TEXT NOT NULL,
+        target_key TEXT NOT NULL,
+        operation TEXT NOT NULL,
+        rule_id TEXT,
+        old_hash TEXT NOT NULL CHECK (length(old_hash) = 71 AND old_hash GLOB 'blake3:[0-9a-f]*'),
+        old_size INTEGER NOT NULL,
+        new_hash TEXT NOT NULL CHECK (length(new_hash) = 71 AND new_hash GLOB 'blake3:[0-9a-f]*'),
+        new_size INTEGER NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('applied', 'failed')),
+        error TEXT,
+        trace_id TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_profile_mutation_events_timestamp
+        ON profile_mutation_events(timestamp_unix_ms);
+    CREATE INDEX IF NOT EXISTS idx_profile_mutation_events_profile
+        ON profile_mutation_events(profile_id);
+    CREATE INDEX IF NOT EXISTS idx_profile_mutation_events_target
+        ON profile_mutation_events(category, target_kind, target_key);
 ";
 
 /// Create all tables and indexes on the given connection.
@@ -720,6 +751,36 @@ pub fn migrate(conn: &Connection) {
             ON security_ask_events(event_id);
         CREATE INDEX IF NOT EXISTS idx_security_ask_events_rule_id
             ON security_ask_events(rule_id);"
+    ));
+    let _ = conn.execute_batch(&format!(
+        "CREATE TABLE IF NOT EXISTS profile_mutation_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp_unix_ms INTEGER NOT NULL,
+            mutation_id TEXT NOT NULL {SECURITY_EVENT_ID_CHECK},
+            profile_id TEXT NOT NULL,
+            actor TEXT NOT NULL,
+            category TEXT NOT NULL,
+            filename TEXT NOT NULL,
+            affected_path TEXT NOT NULL,
+            target_kind TEXT NOT NULL,
+            target_key TEXT NOT NULL,
+            operation TEXT NOT NULL,
+            rule_id TEXT,
+            old_hash TEXT NOT NULL,
+            old_size INTEGER NOT NULL,
+            new_hash TEXT NOT NULL,
+            new_size INTEGER NOT NULL,
+            status TEXT NOT NULL {PROFILE_MUTATION_STATUS_CHECK},
+            error TEXT,
+            trace_id TEXT,
+            {BLAKE3_REF_CHECK}
+        );
+        CREATE INDEX IF NOT EXISTS idx_profile_mutation_events_timestamp
+            ON profile_mutation_events(timestamp_unix_ms);
+        CREATE INDEX IF NOT EXISTS idx_profile_mutation_events_profile
+            ON profile_mutation_events(profile_id);
+        CREATE INDEX IF NOT EXISTS idx_profile_mutation_events_target
+            ON profile_mutation_events(category, target_kind, target_key);"
     ));
 }
 

@@ -8,8 +8,9 @@ use serde::{Deserialize, Serialize};
 
 use super::provider_profile::AiProviderProfile;
 use super::security_rule_profile::{
-    SecurityPluginConfig, SecurityRuleGroup, SecurityRuleProfile, SecurityRuleSet,
-    SecurityRuleSource,
+    SecurityPluginConfig, SecurityRule, SecurityRuleAction, SecurityRuleGroup,
+    SecurityRuleManagedOperation, SecurityRuleManagedTarget, SecurityRulePriority,
+    SecurityRulePriorityName, SecurityRuleProfile, SecurityRuleSet, SecurityRuleSource,
 };
 use super::types::RuleFileReferences;
 
@@ -126,6 +127,10 @@ pub struct ProfileObomDescriptor {
 #[serde(deny_unknown_fields)]
 pub struct ProfileFileReferences {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enforcement: Option<ProfileFileDescriptor>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detection: Option<ProfileFileDescriptor>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mcp: Option<ProfileFileDescriptor>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub apt_packages: Option<ProfileFileDescriptor>,
@@ -175,6 +180,480 @@ impl Default for ProfileVmDefaults {
 pub struct ProfileSkills {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub paths: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Profile {
+    profile_dir: PathBuf,
+    config_root: PathBuf,
+    config: ProfileConfigFile,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProfileStatus {
+    pub profile_id: String,
+    pub ready: bool,
+    pub files: Vec<ProfileFileStatus>,
+    pub assets: Vec<ProfileAssetStatus>,
+    pub errors: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProfileFileStatus {
+    pub kind: String,
+    pub path: PathBuf,
+    pub expected_hash: String,
+    pub expected_size: u64,
+    pub actual_hash: Option<String>,
+    pub actual_size: Option<u64>,
+    pub present: bool,
+    pub valid: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProfileAssetStatus {
+    pub arch: String,
+    pub kind: String,
+    pub path: PathBuf,
+    pub expected_hash: String,
+    pub expected_size: u64,
+    pub actual_hash: Option<String>,
+    pub actual_size: Option<u64>,
+    pub present: bool,
+    pub valid: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProfileMutationSummary {
+    pub profile_id: String,
+    pub actor: String,
+    pub category: String,
+    pub filename: String,
+    pub affected_path: String,
+    pub target_kind: String,
+    pub target_key: String,
+    pub operation: String,
+    pub rule_id: Option<String>,
+    pub old_hash: String,
+    pub old_size: u64,
+    pub new_hash: String,
+    pub new_size: u64,
+}
+
+impl ProfileMutationSummary {
+    pub fn into_logger_event(
+        self,
+        timestamp_unix_ms: i64,
+        mutation_id: impl Into<String>,
+        status: capsem_logger::ProfileMutationStatus,
+        error: Option<String>,
+        trace_id: Option<String>,
+    ) -> capsem_logger::ProfileMutationEvent {
+        capsem_logger::ProfileMutationEvent {
+            timestamp_unix_ms,
+            mutation_id: mutation_id.into(),
+            profile_id: self.profile_id,
+            actor: self.actor,
+            category: self.category,
+            filename: self.filename,
+            affected_path: self.affected_path,
+            target_kind: self.target_kind,
+            target_key: self.target_key,
+            operation: self.operation,
+            rule_id: self.rule_id,
+            old_hash: self.old_hash,
+            old_size: self.old_size,
+            new_hash: self.new_hash,
+            new_size: self.new_size,
+            status,
+            error,
+            trace_id,
+        }
+    }
+}
+
+impl Profile {
+    pub fn load_from_dir(profile_dir: impl AsRef<Path>) -> Result<Self, String> {
+        let profile_dir = profile_dir.as_ref().to_path_buf();
+        let path = profile_dir.join("profile.toml");
+        let content = fs::read_to_string(&path)
+            .map_err(|error| format!("read profile {}: {error}", path.display()))?;
+        let config: ProfileConfigFile = toml::from_str(&content)
+            .map_err(|error| format!("parse profile {}: {error}", path.display()))?;
+        let config_root = profile_dir
+            .parent()
+            .and_then(Path::parent)
+            .ok_or_else(|| {
+                format!(
+                    "profile directory {} must be under <config>/profiles/<id>",
+                    profile_dir.display()
+                )
+            })?
+            .to_path_buf();
+        Self::from_config(config_root, profile_dir, config)
+    }
+
+    pub fn from_config(
+        config_root: PathBuf,
+        profile_dir: PathBuf,
+        config: ProfileConfigFile,
+    ) -> Result<Self, String> {
+        config.validate()?;
+        let dir_name = profile_dir
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| {
+                format!(
+                    "profile directory {} has no valid directory name",
+                    profile_dir.display()
+                )
+            })?;
+        if config.id != dir_name {
+            return Err(format!(
+                "profile directory id mismatch: directory is {dir_name}, profile id is {}",
+                config.id
+            ));
+        }
+        Ok(Self {
+            profile_dir,
+            config_root,
+            config,
+        })
+    }
+
+    pub fn id(&self) -> &str {
+        &self.config.id
+    }
+
+    pub fn config(&self) -> &ProfileConfigFile {
+        &self.config
+    }
+
+    pub fn config_root(&self) -> &Path {
+        &self.config_root
+    }
+
+    pub fn profile_dir(&self) -> &Path {
+        &self.profile_dir
+    }
+
+    pub fn status(&self, assets_dir: &Path, arch: &str) -> ProfileStatus {
+        let files = self.file_statuses();
+        let assets = self.asset_statuses(assets_dir, arch);
+        let mut errors = Vec::new();
+        for file in &files {
+            if !file.valid {
+                errors.push(format!("profile file {} is not valid", file.path.display()));
+            }
+        }
+        for asset in &assets {
+            if !asset.valid {
+                errors.push(format!(
+                    "profile asset {} is not valid",
+                    asset.path.display()
+                ));
+            }
+        }
+        ProfileStatus {
+            profile_id: self.config.id.clone(),
+            ready: errors.is_empty(),
+            files,
+            assets,
+            errors,
+        }
+    }
+
+    pub fn check(&self, assets_dir: &Path, arch: &str) -> Result<ProfileStatus, String> {
+        let status = self.status(assets_dir, arch);
+        if status.ready {
+            Ok(status)
+        } else {
+            Err(status.errors.join("; "))
+        }
+    }
+
+    pub fn download_assets(&self, assets_dir: &Path, arch: &str) -> Result<ProfileStatus, String> {
+        let arch_assets =
+            self.config.assets.arch.get(arch).ok_or_else(|| {
+                format!("profile {} has no assets for arch {arch}", self.config.id)
+            })?;
+        fs::create_dir_all(assets_dir.join(arch))
+            .map_err(|error| format!("create asset dir {}: {error}", assets_dir.display()))?;
+        for (kind, descriptor) in arch_assets.iter() {
+            let Some(source_path) = descriptor.url.strip_prefix("file://") else {
+                return Err(format!(
+                    "profile {} asset {arch}/{kind} must use file:// for local profile download",
+                    self.config.id
+                ));
+            };
+            let source_path = PathBuf::from(source_path);
+            let destination = profile_asset_path(assets_dir, arch, descriptor);
+            fs::copy(&source_path, &destination).map_err(|error| {
+                format!(
+                    "copy profile asset {} to {}: {error}",
+                    source_path.display(),
+                    destination.display()
+                )
+            })?;
+            verify_hash_and_size(&destination, descriptor.hash.as_str(), descriptor.size).map_err(
+                |error| {
+                    format!(
+                        "verify downloaded profile asset {}: {error}",
+                        destination.display()
+                    )
+                },
+            )?;
+        }
+        self.check(assets_dir, arch)
+    }
+
+    pub fn set_mcp_tool_permission(
+        &mut self,
+        server: &str,
+        tool: &str,
+        action: SecurityRuleAction,
+        actor: &str,
+    ) -> Result<ProfileMutationSummary, String> {
+        if !matches!(
+            action,
+            SecurityRuleAction::Allow | SecurityRuleAction::Ask | SecurityRuleAction::Block
+        ) {
+            return Err("MCP tool permission action must be allow, ask, or block".to_string());
+        }
+        validate_profile_target("mcp server", server)?;
+        validate_profile_target("mcp tool", tool)?;
+        self.ensure_mcp_server_known(server)?;
+
+        let enforcement_descriptor = self.config.files.enforcement.clone().ok_or_else(|| {
+            "profile.files.enforcement is required before mutating enforcement rules".to_string()
+        })?;
+        let enforcement_rule_file =
+            self.config
+                .rule_files
+                .enforcement
+                .as_deref()
+                .ok_or_else(|| {
+                    "profile.rule_files.enforcement is required before mutating enforcement rules"
+                        .to_string()
+                })?;
+        if enforcement_descriptor.path != enforcement_rule_file {
+            return Err(format!(
+                "profile.files.enforcement.path must match rule_files.enforcement: {} != {}",
+                enforcement_descriptor.path, enforcement_rule_file
+            ));
+        }
+
+        let enforcement_path = self.config_root.join(&enforcement_descriptor.path);
+        let (old_hash, old_size) = verify_hash_and_size(
+            &enforcement_path,
+            enforcement_descriptor.hash.as_str(),
+            enforcement_descriptor.size,
+        )?;
+        let content = fs::read_to_string(&enforcement_path).map_err(|error| {
+            format!(
+                "read enforcement file {}: {error}",
+                enforcement_path.display()
+            )
+        })?;
+        let mut rules = SecurityRuleProfile::parse_toml(&content).map_err(|error| {
+            format!(
+                "parse enforcement file {} before mutation: {error}",
+                enforcement_path.display()
+            )
+        })?;
+
+        let managed = SecurityRuleManagedTarget::McpTool {
+            server: server.to_string(),
+            tool: tool.to_string(),
+            operation: SecurityRuleManagedOperation::Permission,
+        };
+        let existing_keys = rules
+            .profiles
+            .rules
+            .iter()
+            .filter_map(|(key, rule)| {
+                (rule.managed.as_ref() == Some(&managed)).then(|| key.clone())
+            })
+            .collect::<Vec<_>>();
+        if existing_keys.len() > 1 {
+            return Err(format!(
+                "enforcement file {} has duplicate managed target {}",
+                enforcement_path.display(),
+                managed.identity_key()
+            ));
+        }
+        let rule_key = existing_keys
+            .first()
+            .cloned()
+            .unwrap_or_else(|| managed_mcp_rule_key(server, tool));
+        rules.profiles.rules.insert(
+            rule_key.clone(),
+            SecurityRule {
+                name: rule_key.clone(),
+                action,
+                condition: format!(
+                    "mcp.server.name == {} && mcp.tool_call.name == {}",
+                    cel_string(server),
+                    cel_string(tool)
+                ),
+                detection_level: None,
+                priority: Some(SecurityRulePriority::Named(
+                    SecurityRulePriorityName::Default,
+                )),
+                corp_locked: false,
+                reason: Some(format!(
+                    "Profile-managed MCP tool permission for {server}/{tool}."
+                )),
+                managed: Some(managed.clone()),
+                plugin_config: BTreeMap::new(),
+            },
+        );
+        rules.validate()?;
+
+        let serialized = toml::to_string_pretty(&rules)
+            .map_err(|error| format!("serialize enforcement file: {error}"))?;
+        fs::write(&enforcement_path, serialized).map_err(|error| {
+            format!(
+                "write enforcement file {}: {error}",
+                enforcement_path.display()
+            )
+        })?;
+        let (new_hash, new_size) = file_hash_and_size(&enforcement_path)?;
+        self.config.files.enforcement = Some(ProfileFileDescriptor {
+            path: enforcement_descriptor.path.clone(),
+            hash: format!("blake3:{new_hash}"),
+            size: new_size,
+        });
+        self.save()?;
+
+        Ok(ProfileMutationSummary {
+            profile_id: self.config.id.clone(),
+            actor: actor.to_string(),
+            category: managed.category().to_string(),
+            filename: Path::new(&enforcement_descriptor.path)
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("enforcement.toml")
+                .to_string(),
+            affected_path: enforcement_descriptor.path,
+            target_kind: managed.target_kind().to_string(),
+            target_key: managed.target_key(),
+            operation: SecurityRuleManagedOperation::Permission
+                .as_str()
+                .to_string(),
+            rule_id: Some(format!("profiles.rules.{rule_key}")),
+            old_hash: format!("blake3:{old_hash}"),
+            old_size,
+            new_hash: format!("blake3:{new_hash}"),
+            new_size,
+        })
+    }
+
+    pub fn save(&self) -> Result<(), String> {
+        let path = self.profile_dir.join("profile.toml");
+        let content = toml::to_string_pretty(&self.config)
+            .map_err(|error| format!("serialize profile: {error}"))?;
+        fs::write(&path, content)
+            .map_err(|error| format!("write profile {}: {error}", path.display()))
+    }
+
+    fn file_statuses(&self) -> Vec<ProfileFileStatus> {
+        self.config
+            .files
+            .iter()
+            .map(|(kind, descriptor)| {
+                let path = self.config_root.join(&descriptor.path);
+                match file_hash_and_size(&path) {
+                    Ok((hash, size)) => ProfileFileStatus {
+                        kind: kind.to_string(),
+                        path,
+                        expected_hash: descriptor.hash.clone(),
+                        expected_size: descriptor.size,
+                        actual_hash: Some(format!("blake3:{hash}")),
+                        actual_size: Some(size),
+                        present: true,
+                        valid: format!("blake3:{hash}") == descriptor.hash
+                            && size == descriptor.size,
+                    },
+                    Err(_) => ProfileFileStatus {
+                        kind: kind.to_string(),
+                        path,
+                        expected_hash: descriptor.hash.clone(),
+                        expected_size: descriptor.size,
+                        actual_hash: None,
+                        actual_size: None,
+                        present: false,
+                        valid: false,
+                    },
+                }
+            })
+            .collect()
+    }
+
+    fn asset_statuses(&self, assets_dir: &Path, arch: &str) -> Vec<ProfileAssetStatus> {
+        let Some(assets) = self.config.assets.arch.get(arch) else {
+            return Vec::new();
+        };
+        assets
+            .iter()
+            .map(|(kind, descriptor)| {
+                let path = profile_asset_path(assets_dir, arch, descriptor);
+                match file_hash_and_size(&path) {
+                    Ok((hash, size)) => ProfileAssetStatus {
+                        arch: arch.to_string(),
+                        kind: kind.to_string(),
+                        path,
+                        expected_hash: descriptor.hash.clone(),
+                        expected_size: descriptor.size,
+                        actual_hash: Some(format!("blake3:{hash}")),
+                        actual_size: Some(size),
+                        present: true,
+                        valid: format!("blake3:{hash}") == descriptor.hash
+                            && size == descriptor.size,
+                    },
+                    Err(_) => ProfileAssetStatus {
+                        arch: arch.to_string(),
+                        kind: kind.to_string(),
+                        path,
+                        expected_hash: descriptor.hash.clone(),
+                        expected_size: descriptor.size,
+                        actual_hash: None,
+                        actual_size: None,
+                        present: false,
+                        valid: false,
+                    },
+                }
+            })
+            .collect()
+    }
+
+    fn ensure_mcp_server_known(&self, server: &str) -> Result<(), String> {
+        let descriptor =
+            self.config.files.mcp.as_ref().ok_or_else(|| {
+                "profile.files.mcp is required to mutate MCP permissions".to_string()
+            })?;
+        let path = self.config_root.join(&descriptor.path);
+        verify_hash_and_size(&path, descriptor.hash.as_str(), descriptor.size)?;
+        let content = fs::read_to_string(&path)
+            .map_err(|error| format!("read MCP config {}: {error}", path.display()))?;
+        let config: McpJsonConfig = serde_json::from_str(&content)
+            .map_err(|error| format!("parse MCP config {}: {error}", path.display()))?;
+        if config.mcp_servers.contains_key(server) {
+            Ok(())
+        } else {
+            Err(format!(
+                "MCP server {server} is not declared in profile file {}",
+                descriptor.path
+            ))
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct McpJsonConfig {
+    #[serde(rename = "mcpServers")]
+    mcp_servers: BTreeMap<String, serde_json::Value>,
 }
 
 impl ProfileConfigFile {
@@ -368,6 +847,15 @@ impl ProfileAssetConfig {
 }
 
 impl ProfileArchAssets {
+    fn iter(&self) -> impl Iterator<Item = (&'static str, &ProfileAssetDescriptor)> {
+        [
+            ("kernel", &self.kernel),
+            ("initrd", &self.initrd),
+            ("rootfs", &self.rootfs),
+        ]
+        .into_iter()
+    }
+
     fn validate(&self, arch: &str) -> Result<(), String> {
         self.kernel
             .validate(&format!("profile.assets.arch.{arch}.kernel"))?;
@@ -425,7 +913,9 @@ impl ProfileObomDescriptor {
 
 impl ProfileFileReferences {
     pub fn is_empty(&self) -> bool {
-        self.mcp.is_none()
+        self.enforcement.is_none()
+            && self.detection.is_none()
+            && self.mcp.is_none()
             && self.apt_packages.is_none()
             && self.python_requirements.is_none()
             && self.npm_packages.is_none()
@@ -436,6 +926,8 @@ impl ProfileFileReferences {
 
     fn validate(&self) -> Result<(), String> {
         for (field, descriptor) in [
+            ("profile.files.enforcement", self.enforcement.as_ref()),
+            ("profile.files.detection", self.detection.as_ref()),
             ("profile.files.mcp", self.mcp.as_ref()),
             ("profile.files.apt_packages", self.apt_packages.as_ref()),
             (
@@ -456,6 +948,8 @@ impl ProfileFileReferences {
 
     pub fn iter(&self) -> impl Iterator<Item = (&'static str, &ProfileFileDescriptor)> {
         [
+            ("enforcement", self.enforcement.as_ref()),
+            ("detection", self.detection.as_ref()),
             ("mcp", self.mcp.as_ref()),
             ("apt_packages", self.apt_packages.as_ref()),
             ("python_requirements", self.python_requirements.as_ref()),
@@ -659,6 +1153,17 @@ fn validate_non_empty(kind: &str, value: &str) -> Result<(), String> {
     }
 }
 
+fn validate_profile_target(kind: &str, value: &str) -> Result<(), String> {
+    validate_non_empty(kind, value)?;
+    if value.len() > 128 {
+        return Err(format!("{kind} must be at most 128 characters"));
+    }
+    if value.contains("..") || value.contains('\\') || value.trim() != value {
+        return Err(format!("{kind} must not contain traversal or padding"));
+    }
+    Ok(())
+}
+
 const fn default_true() -> bool {
     true
 }
@@ -712,6 +1217,96 @@ fn validate_blake3_hash(field: &str, value: &str) -> Result<(), String> {
         return Err(format!("{field} must use lowercase hex"));
     }
     Ok(())
+}
+
+fn profile_asset_path(
+    assets_dir: &Path,
+    arch: &str,
+    descriptor: &ProfileAssetDescriptor,
+) -> PathBuf {
+    let hash = descriptor
+        .hash
+        .strip_prefix("blake3:")
+        .unwrap_or(&descriptor.hash);
+    assets_dir
+        .join(arch)
+        .join(crate::asset_manager::hash_filename(&descriptor.name, hash))
+}
+
+fn file_hash_and_size(path: &Path) -> Result<(String, u64), String> {
+    let metadata =
+        fs::metadata(path).map_err(|error| format!("stat {}: {error}", path.display()))?;
+    if !metadata.is_file() {
+        return Err(format!("{} is not a file", path.display()));
+    }
+    let hash = crate::asset_manager::hash_file(path)
+        .map_err(|error| format!("hash {}: {error}", path.display()))?;
+    Ok((hash, metadata.len()))
+}
+
+fn verify_hash_and_size(
+    path: &Path,
+    expected_hash: &str,
+    expected_size: u64,
+) -> Result<(String, u64), String> {
+    let (hash, size) = file_hash_and_size(path)?;
+    let expected_hash = expected_hash
+        .strip_prefix("blake3:")
+        .ok_or_else(|| "expected hash must use blake3: prefix".to_string())?;
+    if hash != expected_hash {
+        return Err(format!(
+            "{} hash mismatch: expected blake3:{expected_hash}, got blake3:{hash}",
+            path.display()
+        ));
+    }
+    if size != expected_size {
+        return Err(format!(
+            "{} size mismatch: expected {expected_size}, got {size}",
+            path.display()
+        ));
+    }
+    Ok((hash, size))
+}
+
+fn cel_string(value: &str) -> String {
+    serde_json::to_string(value).expect("string serialization cannot fail")
+}
+
+fn managed_mcp_rule_key(server: &str, tool: &str) -> String {
+    let mut key = format!(
+        "mcp_{}_{}_permission",
+        rule_key_fragment(server),
+        rule_key_fragment(tool)
+    );
+    if key.len() > 64 {
+        key.truncate(64);
+        while key.ends_with('_') || key.ends_with('-') {
+            key.pop();
+        }
+    }
+    key
+}
+
+fn rule_key_fragment(value: &str) -> String {
+    let mut output = String::new();
+    let mut last_was_sep = true;
+    for ch in value.chars() {
+        if ch.is_ascii_alphanumeric() {
+            output.push(ch.to_ascii_lowercase());
+            last_was_sep = false;
+        } else if !last_was_sep {
+            output.push('_');
+            last_was_sep = true;
+        }
+    }
+    while output.ends_with('_') {
+        output.pop();
+    }
+    if output.is_empty() {
+        "target".to_string()
+    } else {
+        output
+    }
 }
 
 #[cfg(test)]

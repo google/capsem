@@ -86,6 +86,28 @@
   `CAPSEM_USER_CONFIG` reference must be deleted, renamed to `settings.toml`,
   moved to profile/corp ownership, or explicitly confined to test/dev-only
   helpers. Production profile routes must not read or write `user.toml`.
+- [x] S1-A: Add `Profile` invariant rail core in
+  `Profile::load_from_dir`, `status`, `check`, `download_assets`,
+  `set_mcp_tool_permission`, and `save`. Proof:
+  `cargo test -p capsem-core --lib net::policy_config::profile_contract::tests`.
+- [x] S1-A: Hash-pin profile enforcement and detection files as first-class
+  `profile.files.enforcement` and `profile.files.detection` descriptors in the
+  code profile. Proof: checked-in profile tests parse, validate, compile rule
+  files, and reject a tampered pinned enforcement file.
+- [x] S1-A: Add optional typed `SecurityRule.managed` annotations for semantic
+  backend-owned targets with MCP server/tool, plugin, and skill variants.
+  Proof: `cargo test -p capsem-core --lib
+  net::policy_config::security_rule_profile::tests`.
+- [x] S1-A: Enforce uniqueness for managed rule targets so semantic routes can
+  update exactly one backend-owned rule and never search by CEL text. Proof:
+  duplicate managed-target rule tests fail closed at rule-profile and profile
+  mutation boundaries.
+- [x] S1-A: Add profile mutation ledger schema/event/write path through the
+  single DB writer. Proof: `cargo test -p capsem-logger profile_mutation`.
+- [x] S1-A: Add MCP tool permission core litmus below the route layer:
+  `set_mcp_tool_permission("capsem", "fetch_http", Ask)` creates or updates one
+  managed enforcement rule, updates the profile hash pin, reloads cleanly, and
+  does not mutate `mcp.json`.
 - [ ] S1: Replace rule-leaking UI/TUI mutation paths with semantic profile
   facade routes. MCP server/tool, plugin, and skill controls send enum/state
   edits; backend owns translation into profile-owned enforcement, plugin, skill,
@@ -98,6 +120,9 @@
   target kind, target key/path, operation, filename, affected file path,
   old/new hash and size, status, and error if any. No ad hoc route file edits
   and no side SQLite writes.
+  Partial S1-A: core summary/event/schema/write path exists for applied
+  mutations. Open: route service wiring, failed-mutation ledgering, lock/corp
+  checks, plugin/skill/default-rule adapters, and stale-hash race tests.
 - [ ] S1: Build the `Profile` object abstraction before wiring route
   mutations. `Profile` is the invariant rail for profile truth and owns
   load/path resolution/lock/verify/status/check/download/semantic
@@ -108,10 +133,15 @@
   parse/write profile files or duplicate asset readiness/download logic
   directly. Any smaller document/store helpers are private implementation
   details.
+  Partial S1-A: core load/path/status/check/file-url download/MCP tool semantic
+  mutation/save paths exist. Open: route-facing lock/reload/corp-constraint
+  integration, HTTP asset download progress, plugin/skill adapters, and service
+  status integration.
 - [ ] S1: Extend `SecurityRule` with optional typed ownership annotations for
   backend-managed semantic rules. Enforce uniqueness for MCP server/tool,
   plugin, and skill targets so routes update the one owned rule instead of
   searching CEL or inventing new rule names.
+  Partial S1-A complete for the rule contract; route use remains open.
 - [ ] S1: Add the MCP permission litmus test: changing the `capsem` server's
   `fetch_http` tool to `ask` through the profile MCP tool edit route writes or
   updates the profile enforcement rule, returns `effective_action = "ask"` from
@@ -122,6 +152,11 @@
   unannotated user/corp CEL rules with the same server/tool do not confuse the
   route-owned lookup, and failed mutations are ledgered without partial profile
   file updates.
+  Partial S1-A: manual drift, missing pin, duplicate managed annotation,
+  create/update idempotence, file-url asset readiness, and DB schema rejection
+  tests exist. Open: failed-mutation ledgering, route-level stale-hash race,
+  unannotated same-target CEL non-confusion at route boundary, and plugin/skill
+  mutation adversarial tests.
 - [ ] S1: Update code/tests/docs/skills; remove old-path fallbacks.
 - [x] S2: Add guest root seed and move CLI config files into real files.
 - [x] S2: Add `mcp.json`, `apt-packages.txt`,
@@ -197,6 +232,23 @@
   "profiles/code/enforcement.toml"` are not enough. The profile ledger must bind
   referenced files by blake3, and admin/doctor/service/package install must be
   able to verify/report that exact ledger.
+- S1-A implementation note: `Profile` now owns the first core rail for profile
+  ledger operations. The code profile pins `enforcement.toml` and
+  `detection.yaml`; `Profile::set_mcp_tool_permission` verifies the existing
+  enforcement pin, updates or creates one managed rule, writes the new
+  enforcement file, updates the profile pin, and returns a
+  `ProfileMutationSummary` convertible into a DB-writer
+  `ProfileMutationEvent`.
+- S1-A verification:
+  - `cargo test -p capsem-core --lib net::policy_config::profile_contract::tests`
+    passed: 20 tests.
+  - `cargo test -p capsem-core --lib net::policy_config::security_rule_profile::tests`
+    passed: 29 tests.
+  - `cargo test -p capsem-logger profile_mutation` passed: 2 tests.
+  - Package-level filtered core runs also executed the relevant library tests
+    but the unrelated `mcp_export` test binary hit the repo's macOS codesign
+    wrapper when run under broad package filtering; the scoped `--lib` gates are
+    the S1-A proof.
 - `config/profiles/<profile_id>/root/` represents guest `/`. Example:
   `config/profiles/code/root/root/.codex/config.toml` maps to
   `/root/.codex/config.toml`.
