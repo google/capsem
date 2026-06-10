@@ -138,6 +138,20 @@
   tests/test_justfile_contract.py tests/test_cli.py::TestDoctorCommand -q`,
   and grep audit for legacy `--guest-dir`
   / direct manifest reads in the touched rails.
+- [x] S1-D: Add structured route/debug logging for profile and rule mutation
+  paths. Rule upsert/delete and semantic MCP tool mutations must log request,
+  validation rejection, ledger enqueue failure, and applied mutation events with
+  stable fields matching the `profile_mutation_events` ledger: route,
+  profile_id, actor, category, filename, affected_path, target_kind,
+  target_key, operation, rule_id, old/new hash+size, status, and mutation_id.
+  Proof: `profile_mutation_log_fields_match_ledger_contract`,
+  `profile_mcp_tool_edit_writes_profile_rule_and_mutation_ledger`,
+  `enforcement_rule_endpoints_add_delete_reload_and_reject_invalid_rules_atomically`,
+  `handle_detection_rule_upsert_requires_detection_level`,
+  `route_authored_detection_rule_triggers_runtime_ledger_and_latest_routes`,
+  full `cargo test -p capsem-service --bin capsem-service --
+  --test-threads=1` with 163 tests, and
+  `cargo check -p capsem-service --all-targets`.
 - [ ] S1: Replace rule-leaking UI/TUI mutation paths with semantic profile
   facade routes. MCP server/tool, plugin, and skill controls send enum/state
   edits; backend owns translation into profile-owned enforcement, plugin, skill,
@@ -447,6 +461,13 @@
   tests. `capsem status` and default health derive profile/asset readiness from
   `/profiles/status`; support bundles collect `settings.toml`, corp metadata,
   and diagnostics without preserving `config/user.toml`.
+- S1-D observability: `cargo test -p capsem-service --bin capsem-service
+  profile_mutation_log_fields_match_ledger_contract -- --nocapture` proves the
+  structured log payload mirrors the profile mutation ledger contract.
+  `cargo test -p capsem-service --bin capsem-service -- --test-threads=1`
+  passed with 163 tests, covering MCP tool mutation, enforcement/detection rule
+  authoring, rejection paths, runtime detection ledger readback, and the new
+  route/debug logging contract.
 - Auditability: backend build-ledger tests prove JSONL emission for rendered
   Dockerfile/build-context hashes, rootfs tar, EROFS, kernel assets, and tool
   versions. Pending: profile/payload hash records once profile hash schema

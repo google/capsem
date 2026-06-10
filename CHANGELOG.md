@@ -82,6 +82,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   knobs, `capsem status`/default health read profile readiness from the service,
   and support bundles collect `settings.toml`/corp diagnostics without
   preserving `user.toml` as a config contract.
+- Added structured `capsem.profile_mutation` logs for profile mutation routes
+  and ledger writes. MCP tool edits plus enforcement/detection rule upserts and
+  deletes now log route requests, validation rejections, ledger-open failures,
+  and applied mutations with the same stable profile, target, operation, rule,
+  hash, size, status, and mutation identifiers stored in the mutation ledger.
 - Updated in-VM diagnostics to validate that the profile-owned Gemini,
   Antigravity, Claude, Codex, and MCP config files are actually projected into
   runtime `/root`, point at the canonical Capsem MCP bridge where applicable,

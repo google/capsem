@@ -542,6 +542,48 @@ async fn profile_mcp_tool_edit_writes_profile_rule_and_mutation_ledger() {
     );
 }
 
+#[test]
+fn profile_mutation_log_fields_match_ledger_contract() {
+    let event = capsem_logger::ProfileMutationEvent {
+        timestamp_unix_ms: 1_789_000_000_000,
+        mutation_id: "abc123def456".into(),
+        profile_id: "code".into(),
+        actor: "service-api".into(),
+        category: "enforcement".into(),
+        filename: "enforcement.toml".into(),
+        affected_path: "profiles/code/enforcement.toml".into(),
+        target_kind: "rule".into(),
+        target_key: "eicar_block".into(),
+        operation: "upsert".into(),
+        rule_id: Some("profiles.rules.eicar_block".into()),
+        old_hash: format!("blake3:{}", "1".repeat(64)),
+        old_size: 10,
+        new_hash: format!("blake3:{}", "2".repeat(64)),
+        new_size: 20,
+        status: capsem_logger::ProfileMutationStatus::Applied,
+        error: None,
+        trace_id: Some("trace-profile".into()),
+    };
+
+    let fields = profile_mutation_log_fields("enforcement_rule_upsert", &event);
+
+    assert_eq!(fields["route"], "enforcement_rule_upsert");
+    assert_eq!(fields["mutation_id"], "abc123def456");
+    assert_eq!(fields["profile_id"], "code");
+    assert_eq!(fields["actor"], "service-api");
+    assert_eq!(fields["category"], "enforcement");
+    assert_eq!(fields["filename"], "enforcement.toml");
+    assert_eq!(fields["affected_path"], "profiles/code/enforcement.toml");
+    assert_eq!(fields["target_kind"], "rule");
+    assert_eq!(fields["target_key"], "eicar_block");
+    assert_eq!(fields["operation"], "upsert");
+    assert_eq!(fields["rule_id"], "profiles.rules.eicar_block");
+    assert_eq!(fields["old_size"], 10);
+    assert_eq!(fields["new_size"], 20);
+    assert_eq!(fields["status"], "applied");
+    assert_eq!(fields["trace_id"], "trace-profile");
+}
+
 #[tokio::test]
 async fn profile_enforcement_list_uses_profile_files_and_corp_not_user_settings() {
     let _env_lock = SETTINGS_ENV_LOCK.lock().await;
