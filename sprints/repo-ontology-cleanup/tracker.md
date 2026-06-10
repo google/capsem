@@ -90,11 +90,28 @@
   facade routes. MCP server/tool, plugin, and skill controls send enum/state
   edits; backend owns translation into profile-owned enforcement, plugin, skill,
   or MCP files. Normal UI/TUI controls must not ship raw rule TOML over routes.
+- [ ] S1: Add generic profile mutation service and mutation ledger.
+  Route-originated profile changes for MCP, plugins, skills, rules, and future
+  profile-owned config must verify current hashes, mutate a single
+  profile-owned path, update BLAKE3/size pins, and emit typed mutation-ledger
+  rows through the DB writer. Ledger rows must include profile id, category,
+  target kind, target key/path, operation, filename, affected file path,
+  old/new hash and size, status, and error if any. No ad hoc route file edits
+  and no side SQLite writes.
+- [ ] S1: Extend `SecurityRule` with optional typed ownership annotations for
+  backend-managed semantic rules. Enforce uniqueness for MCP server/tool,
+  plugin, and skill targets so routes update the one owned rule instead of
+  searching CEL or inventing new rule names.
 - [ ] S1: Add the MCP permission litmus test: changing the `capsem` server's
   `fetch_http` tool to `ask` through the profile MCP tool edit route writes or
   updates the profile enforcement rule, returns `effective_action = "ask"` from
   the tool list, and does not mutate `mcp.json`, `settings.toml`, or any
   `user.toml` path.
+- [ ] S1: Add adversarial tests for mutation discipline: stale hash rejects,
+  manual file drift rejects, duplicate managed-rule annotations reject,
+  unannotated user/corp CEL rules with the same server/tool do not confuse the
+  route-owned lookup, and failed mutations are ledgered without partial profile
+  file updates.
 - [ ] S1: Update code/tests/docs/skills; remove old-path fallbacks.
 - [x] S2: Add guest root seed and move CLI config files into real files.
 - [x] S2: Add `mcp.json`, `apt-packages.txt`,
@@ -159,6 +176,13 @@
   semantic profile routes. The backend translates simple enum/state edits into
   profile-owned rules/config; do not expose the raw rule system to common UI/TUI
   controls and do not add compound clever routes.
+- User correction: semantic route mutations need a mutation ledger. Because
+  profile files are hash-pinned, route edits must update the profile ledger and
+  emit a DB-writer mutation record with the mutated path and old/new hashes; no
+  hand editing, no side writes, no silent hash drift.
+- User correction: backend-generated permission rules need typed ownership
+  annotations so route code can enforce one rule per semantic target such as MCP
+  server/tool. Do not infer route-owned rules by CEL text or naming tricks.
 - Security correction: path-only references such as `rule_files.enforcement =
   "profiles/code/enforcement.toml"` are not enough. The profile ledger must bind
   referenced files by blake3, and admin/doctor/service/package install must be

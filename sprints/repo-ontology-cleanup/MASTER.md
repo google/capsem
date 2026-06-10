@@ -131,6 +131,86 @@ The route remains specific and boring: no compound clever route, no generic
 endpoints may exist for expert/admin rule authoring, but product UI controls use
 semantic routes that reflect backend enum fields with select boxes/toggles.
 
+### Profile Mutation Abstraction And Ledger
+
+Semantic profile routes are not allowed to edit profile files as invisible file
+I/O. Any route that mutates profile-owned files must go through one generic
+backend profile mutation service. MCP, plugins, skills, default-rule edits, and
+future profile-owned config all use this same rail. The service accepts a typed
+mutation request, resolves it to one profile-owned target, applies it through a
+target-specific adapter, and writes the profile ledger update plus mutation
+ledger event atomically enough that validation can never observe a silently
+accepted hash drift.
+
+Core shape:
+
+- `ProfileMutationRequest`: profile id, actor/source route, target, operation,
+  value, optional expected profile/file hash;
+- `ProfileMutationTarget`: enum covering `mcp_server`, `mcp_tool`, `plugin`,
+  `skill`, `rule`, `profile_file`, and future targets;
+- `ProfileMutationCategory`: stable product category such as `mcp`, `plugin`,
+  `skill`, `enforcement`, `detection`, `asset`, or `profile`;
+- target filename/path: the profile-owned file that will be mutated, for
+  example `mcp.json`, `enforcement.toml`, `detection.yaml`, `profile.toml`, or
+  a pinned profile payload file;
+- `ProfileMutationAdapter`: target-specific logic that validates existence,
+  computes the exact profile-owned file path, applies the edit, and returns
+  generated rule ids or managed annotations when relevant;
+- `ProfileMutationLedgerEvent`: DB-writer event recording the mutation result.
+
+Every target-specific route is thin: parse enum/state input, build a
+`ProfileMutationRequest`, call the shared mutation service, return the updated
+effective object. Routes do not hand-edit TOML/JSON and do not independently
+know how to update hashes.
+
+The shared mutation service must:
+
+- loads the profile ledger and verifies current hashes before editing;
+- applies exactly one semantic mutation, such as MCP server permission, MCP tool
+  permission, plugin mode, plugin detection level, or skill enablement;
+- rewrites the affected profile-owned file and updates the corresponding
+  BLAKE3/size pin in `profile.toml` or the generated installed profile ledger;
+- emits one mutation-ledger row through the existing DB writer thread, not a
+  side SQLite connection.
+
+The mutation ledger is the forensic record for route-originated configuration
+changes. It should be a simple SQLite table owned by the logger/DB writer with
+fields sufficient to answer: mutation id, timestamp, actor/source route,
+profile id, category, target kind, target key/path, requested operation,
+filename, affected file path, previous hash/size, new hash/size, associated
+rule id or managed annotation key when one is created or updated, status, and
+error if the mutation failed. The security event/rule ledger says what happened
+at runtime; the mutation ledger says who changed the profile contract that later
+produced runtime behavior.
+
+Manual file edits are explicitly outside the route contract: they may be
+detected by profile validation as hash drift, but they are not silently accepted
+and they do not get retroactive mutation-ledger rows.
+
+### Rule Ownership Annotations
+
+Backend-generated rules need optional ownership annotations so semantic routes
+can find and update the exact rule they own without pattern-matching arbitrary
+CEL. Rule id alone is not enough because users and corp can write rules that
+also mention the same server/tool names.
+
+Add a typed optional annotation block to `SecurityRule`, for example
+`managed_by` or `target`, that can express:
+
+- owner: `profile_route`;
+- target kind: `mcp_server`, `mcp_tool`, `plugin`, or `skill`;
+- server id/name when the target is MCP;
+- tool id/name when the target is an MCP tool;
+- route/action family, such as `permission`;
+- stable target key used for uniqueness.
+
+Validation must enforce uniqueness for backend-managed targets inside a profile:
+there can be at most one managed permission rule for
+`profile=code/server=capsem/tool=fetch_http`. The route updates that rule if it
+exists, creates it if it does not, and refuses ambiguous duplicate annotations.
+The route must not discover its rule by string-searching CEL, and it must not
+invent alternate rule shapes for the same semantic target.
+
 ## `user.toml` Burn Contract
 
 `user.toml` is legacy naming and must not survive S1. It confuses the ownership
@@ -267,12 +347,26 @@ Rule for this sprint: a path is allowed only if it is one of:
   `block`, `enabled`, or plugin mode/detection-level; backend translates those
   into profile-owned enforcement/plugin/skill/MCP files. Do not expose raw rule
   authoring to normal UI/TUI controls.
+- [ ] Add a profile mutation service and mutation ledger. All semantic profile
+  route edits must verify existing profile hashes, mutate exactly one
+  profile-owned file path, update the relevant BLAKE3/size pin, and emit a
+  typed mutation-ledger event through the logger DB writer. No route may mutate
+  profile files with ad hoc file I/O or side SQLite writes.
+- [ ] Add optional typed rule ownership annotations for backend-managed rules.
+  Use them to enforce uniqueness for semantic targets such as
+  `mcp_tool:capsem:fetch_http:permission`; route code must find/update rules by
+  annotation, not by CEL string matching or invented rule-name conventions.
 - [ ] Add route-level tests for the MCP litmus: `PUT/PATCH
   /profiles/{profile_id}/mcp/servers/{server_id}/tools/{tool_id}/edit` changing
   `fetch_http` to `ask` persists the proper profile enforcement rule, reloads
   the effective rule inventory, and the subsequent tool list reports
   `effective_action = "ask"` without touching `settings.toml`, `user.toml`, or
   `mcp.json` decision fields.
+- [ ] Add adversarial mutation tests: stale profile hash rejects; manual file
+  drift rejects; duplicate managed-rule annotations reject; semantically
+  equivalent but unannotated user/corp CEL rules do not confuse the route-owned
+  rule lookup; failed mutations produce failed mutation-ledger rows without
+  partially updating profile files.
 - [ ] Keep `target/config/` as generated runtime config.
 - [ ] Remove path fallbacks to old locations once tests are green.
 
