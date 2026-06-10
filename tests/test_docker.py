@@ -16,9 +16,14 @@ import pytest
 from capsem.builder.config import load_guest_config
 from capsem.builder.models import ErofsConfig
 from capsem.builder.docker import (
+    BUILD_LEDGER_NAME,
     GUEST_BINARIES,
     ROOTFS_SCRIPTS,
+    _append_build_ledger,
+    _directory_tree_hash,
+    _file_ledger_entry,
     build_version_script,
+    build_image,
     container_compile_agent,
     cross_compile_agent,
     extract_tool_versions,
@@ -964,6 +969,163 @@ class TestCreateErofs:
         assert "tar xf /assets/rootfs.tar -C /rootfs" in cmd_str
         assert " /assets/out/rootfs.erofs /rootfs" in cmd_str
 
+
+class TestBuildLedger:
+    def test_file_ledger_entry_uses_blake3_and_relative_path(self, tmp_path):
+        data = tmp_path / "context" / "nested" / "file.txt"
+        data.parent.mkdir(parents=True)
+        data.write_text("ledger")
+
+        entry = _file_ledger_entry(data, base=tmp_path / "context")
+
+        assert entry["path"] == "nested/file.txt"
+        assert entry["size"] == len("ledger")
+        assert len(entry["blake3"]) == 64
+
+    def test_directory_tree_hash_changes_with_file_contents(self, tmp_path):
+        context = tmp_path / "ctx"
+        context.mkdir()
+        (context / "Dockerfile").write_text("FROM scratch\n")
+        first = _directory_tree_hash(context)
+
+        (context / "Dockerfile").write_text("FROM busybox\n")
+        second = _directory_tree_hash(context)
+
+        assert first != second
+
+    def test_append_build_ledger_writes_jsonl_records(self, tmp_path):
+        arch_output = tmp_path / "assets" / "arm64"
+        ledger = _append_build_ledger(arch_output, {
+            "stage": "rootfs.erofs",
+            "outputs": [{"path": "rootfs.erofs", "size": 4, "blake3": "0" * 64}],
+        })
+
+        records = [json.loads(line) for line in ledger.read_text().splitlines()]
+        assert ledger.name == BUILD_LEDGER_NAME
+        assert records[0]["schema"] == "capsem.build_ledger.v1"
+        assert records[0]["stage"] == "rootfs.erofs"
+        assert records[0]["outputs"][0]["path"] == "rootfs.erofs"
+
+    @patch("capsem.builder.docker.remove_image")
+    @patch("capsem.builder.docker.extract_tool_versions")
+    @patch("capsem.builder.docker.create_erofs")
+    @patch("capsem.builder.docker.export_container_fs")
+    @patch("capsem.builder.docker.docker_build")
+    @patch("capsem.builder.docker.cross_compile_agent")
+    @patch("capsem.builder.docker.sync_container_clock")
+    @patch("capsem.builder.docker.detect_runtime")
+    def test_rootfs_build_records_export_erofs_and_versions(
+        self,
+        mock_runtime,
+        _mock_sync,
+        mock_cross_compile,
+        _mock_docker_build,
+        mock_export,
+        mock_create_erofs,
+        mock_extract_versions,
+        _mock_remove,
+        real_config,
+        tmp_path,
+    ):
+        mock_runtime.return_value = "docker"
+
+        def fake_cross_compile(_rust_target, _repo_root, context_dir):
+            copied = []
+            for binary in GUEST_BINARIES:
+                path = context_dir / binary
+                path.write_text(binary)
+                copied.append(path)
+            return copied
+
+        def fake_export(_runtime, _tag, _platform, output_tar):
+            output_tar.write_bytes(b"rootfs tar")
+
+        def fake_erofs(_runtime, _tar_path, output_path, *_args):
+            output_path.write_bytes(b"erofs")
+
+        def fake_versions(_runtime, _tag, _platform, output_dir, _config):
+            (output_dir / "tool-versions.txt").write_text("codex=1.0.0\n")
+
+        mock_cross_compile.side_effect = fake_cross_compile
+        mock_export.side_effect = fake_export
+        mock_create_erofs.side_effect = fake_erofs
+        mock_extract_versions.side_effect = fake_versions
+
+        build_image(
+            real_config,
+            "arm64",
+            template="rootfs",
+            output_dir=tmp_path,
+            repo_root=PROJECT_ROOT,
+        )
+
+        records = [
+            json.loads(line)
+            for line in (tmp_path / "arm64" / BUILD_LEDGER_NAME).read_text().splitlines()
+        ]
+        assert [record["stage"] for record in records] == [
+            "rootfs.export",
+            "rootfs.erofs",
+            "rootfs.tool_versions",
+        ]
+        erofs_record = records[1]
+        assert erofs_record["erofs"] == {
+            "compression": "lz4hc",
+            "compression_level": "12",
+            "cluster_size": None,
+            "utils_image": "debian:bookworm-slim",
+        }
+        assert erofs_record["outputs"][0]["path"] == "rootfs.erofs"
+        assert erofs_record["inputs"]["build_context"]["hash"]
+
+    @patch("capsem.builder.docker.remove_image")
+    @patch("capsem.builder.docker.extract_kernel_assets")
+    @patch("capsem.builder.docker.docker_build")
+    @patch("capsem.builder.docker.sync_container_clock")
+    @patch("capsem.builder.docker.detect_runtime")
+    def test_kernel_build_records_assets(
+        self,
+        mock_runtime,
+        _mock_sync,
+        _mock_docker_build,
+        mock_extract,
+        _mock_remove,
+        real_config,
+        tmp_path,
+    ):
+        mock_runtime.return_value = "docker"
+
+        def fake_extract(_runtime, _tag, _platform, output_dir):
+            vmlinuz = output_dir / "vmlinuz"
+            initrd = output_dir / "initrd.img"
+            vmlinuz.write_bytes(b"kernel")
+            initrd.write_bytes(b"initrd")
+            return vmlinuz, initrd
+
+        mock_extract.side_effect = fake_extract
+
+        build_image(
+            real_config,
+            "arm64",
+            template="kernel",
+            output_dir=tmp_path,
+            kernel_version="7.0.11",
+            repo_root=PROJECT_ROOT,
+        )
+
+        records = [
+            json.loads(line)
+            for line in (tmp_path / "arm64" / BUILD_LEDGER_NAME).read_text().splitlines()
+        ]
+        assert len(records) == 1
+        assert records[0]["stage"] == "kernel.assets"
+        assert records[0]["kernel_version"] == "7.0.11"
+        assert {entry["path"] for entry in records[0]["outputs"]} == {
+            "vmlinuz",
+            "initrd.img",
+        }
+
+class TestErofsConfig:
     def test_config_defaults_enable_release_lz4hc(self):
         assert experimental_erofs_build_config({}, ErofsConfig()) == (
             True, "lz4hc", None, "12",

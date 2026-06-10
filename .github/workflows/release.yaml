@@ -106,6 +106,14 @@ jobs:
           just build-kernel ${{ matrix.arch }} code
           just build-rootfs ${{ matrix.arch }} code
 
+      - name: Upload VM asset build ledger
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: vm-build-ledger-${{ matrix.arch }}
+          path: assets/${{ matrix.arch }}/build-ledger.log
+          if-no-files-found: ignore
+
       - uses: actions/upload-artifact@v7
         with:
           name: vm-assets-${{ matrix.arch }}

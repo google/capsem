@@ -77,6 +77,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   only `rootfs.erofs`, manifests require EROFS rootfs entries, service/core
   asset resolution no longer selects `rootfs.squashfs`, and in-VM doctor checks
   require `/dev/vda` to be EROFS.
+- Added per-architecture VM asset `build-ledger.log` JSONL output from the real
+  builder path, covering rendered Dockerfile/build-context hashes, rootfs tar,
+  EROFS, kernel assets, tool-version output, compression settings, git revision,
+  and project version; release CI uploads the ledger separately for retraceable
+  failures.
 
 ### Added (benchmarks)
 - Added a deterministic `/model/response` fixture to `capsem-debug-upstream`

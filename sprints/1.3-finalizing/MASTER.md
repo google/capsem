@@ -57,7 +57,10 @@ The authoritative execution record is:
 
 ## Release Hold
 
-The local 1.3 finalizing release hold is cleared.
+The local 1.3 finalizing release hold was cleared before the later repository
+ontology review found remaining guest/config and profile-ledger drift. Current
+release work must complete `sprints/repo-ontology-cleanup/` before guest tool
+config, image input, or package manifest changes are treated as release-ready.
 
 Accepted handoff: Linux runtime KVM/DAX execution must be completed by the
 Linux team or CI on Linux hardware. The Linux-team code and EROFS/LZ4HC proof

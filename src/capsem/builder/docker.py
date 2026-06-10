@@ -28,6 +28,7 @@ DEFAULT_EROFS_UTILS_IMAGE = "debian:bookworm-slim"
 ZSTD_EROFS_UTILS_IMAGE = "debian:trixie-slim"
 BOOT_ASSETS = ("vmlinuz", "initrd.img")
 ROOTFS_ASSET_PREFERENCE = ("rootfs.erofs",)
+BUILD_LEDGER_NAME = "build-ledger.log"
 
 # Guest binaries COPY'd into the rootfs (cross-compiled Rust binaries).
 GUEST_BINARIES = [
@@ -452,7 +453,7 @@ def create_erofs(
     tar_rel = tar_abs.relative_to(common_dir).as_posix()
     out_rel = output_abs.relative_to(common_dir).as_posix()
     out_dir = Path(out_rel).parent.as_posix()
-    image = ZSTD_EROFS_UTILS_IMAGE if compression == "zstd" else DEFAULT_EROFS_UTILS_IMAGE
+    image = erofs_utils_image_for(compression)
     cluster_flag = f" -C{cluster_size}" if cluster_size else ""
     level_flag = f",level={compression_level}" if compression_level else ""
     mkdir_output = "" if out_dir == "." else f"mkdir -p /assets/{out_dir} && "
@@ -468,6 +469,13 @@ def create_erofs(
         f"mkfs.erofs -Enosbcrc -z{compression}{level_flag}{cluster_flag} "
         f"/assets/{out_rel} /rootfs",
     ])
+
+
+def erofs_utils_image_for(compression: str) -> str:
+    """Return the container image used to create an EROFS image."""
+    if compression == "zstd":
+        return ZSTD_EROFS_UTILS_IMAGE
+    return DEFAULT_EROFS_UTILS_IMAGE
 
 
 def experimental_erofs_build_config(
@@ -733,6 +741,112 @@ def _blake3_hex(path: Path) -> str:
         while chunk := f.read(1 << 20):
             hasher.update(chunk)
     return hasher.hexdigest()
+
+
+def _utc_now_iso() -> str:
+    return datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _file_ledger_entry(path: Path, *, base: Path | None = None) -> dict[str, Any]:
+    """Return the immutable ledger identity for a file."""
+    if not path.is_file():
+        raise FileNotFoundError(path)
+    display_path = path
+    if base is not None:
+        try:
+            display_path = path.resolve().relative_to(base.resolve())
+        except ValueError:
+            display_path = path
+    return {
+        "path": display_path.as_posix(),
+        "size": path.stat().st_size,
+        "blake3": _blake3_hex(path),
+    }
+
+
+def _directory_file_entries(directory: Path) -> list[dict[str, Any]]:
+    """Return sorted per-file ledger entries for a build context."""
+    entries: list[dict[str, Any]] = []
+    for path in sorted(p for p in directory.rglob("*") if p.is_file()):
+        entries.append(_file_ledger_entry(path, base=directory))
+    return entries
+
+
+def _directory_tree_hash(directory: Path) -> str:
+    """Hash a directory tree from relative paths and file BLAKE3 hashes."""
+    import blake3
+    hasher = blake3.blake3()
+    for entry in _directory_file_entries(directory):
+        hasher.update(entry["path"].encode())
+        hasher.update(b"\0")
+        hasher.update(str(entry["size"]).encode())
+        hasher.update(b"\0")
+        hasher.update(entry["blake3"].encode())
+        hasher.update(b"\n")
+    return hasher.hexdigest()
+
+
+def _git_revision(repo_root: Path) -> str | None:
+    try:
+        result = run_cmd(
+            ["git", "rev-parse", "HEAD"],
+            cwd=repo_root,
+            capture=True,
+            echo=False,
+        )
+        return result.stdout.strip() or None
+    except Exception:
+        return None
+
+
+def _project_version_or_unknown(repo_root: Path) -> str:
+    try:
+        return get_project_version(repo_root)
+    except Exception:
+        return "unknown"
+
+
+def _append_build_ledger(arch_output: Path, record: dict[str, Any]) -> Path:
+    """Append one JSON record to the per-arch build ledger."""
+    arch_output.mkdir(parents=True, exist_ok=True)
+    ledger_path = arch_output / BUILD_LEDGER_NAME
+    full_record = {
+        "schema": "capsem.build_ledger.v1",
+        "timestamp": _utc_now_iso(),
+        **record,
+    }
+    with ledger_path.open("a") as f:
+        f.write(json.dumps(full_record, sort_keys=True) + "\n")
+    return ledger_path
+
+
+def _build_input_record(
+    *,
+    repo_root: Path,
+    arch_name: str,
+    template: str,
+    template_name: str,
+    context_dir: Path,
+    dockerfile_path: Path,
+    docker_tag: str,
+    docker_platform: str,
+    runtime: str,
+) -> dict[str, Any]:
+    return {
+        "arch": arch_name,
+        "template": template,
+        "template_name": template_name,
+        "runtime": runtime,
+        "docker_tag": docker_tag,
+        "docker_platform": docker_platform,
+        "project_version": _project_version_or_unknown(repo_root),
+        "git_revision": _git_revision(repo_root),
+        "dockerfile": _file_ledger_entry(dockerfile_path, base=context_dir),
+        "build_context": {
+            "hash": _directory_tree_hash(context_dir),
+            "files": _directory_file_entries(context_dir),
+        },
+    }
 
 
 def _select_rootfs_asset(asset_dir: Path) -> str | None:
@@ -1004,9 +1118,20 @@ def build_image(
                 kernel_version = resolve_kernel_version(arch.kernel_branch)
             print(f"Kernel: {kernel_version}")
 
-            prepare_build_context(
+            dockerfile_path = prepare_build_context(
                 config, arch_name, template_name, context_dir, repo_root,
                 kernel_version=kernel_version,
+            )
+            build_inputs = _build_input_record(
+                repo_root=repo_root,
+                arch_name=arch_name,
+                template=template,
+                template_name=template_name,
+                context_dir=context_dir,
+                dockerfile_path=dockerfile_path,
+                docker_tag=tag,
+                docker_platform=arch.docker_platform,
+                runtime=runtime,
             )
             docker_build(
                 runtime, tag, context_dir / "Dockerfile", context_dir,
@@ -1018,6 +1143,15 @@ def build_image(
                 runtime, tag, arch.docker_platform, arch_output,
             )
             remove_image(runtime, tag)
+            _append_build_ledger(arch_output, {
+                "stage": "kernel.assets",
+                "inputs": build_inputs,
+                "kernel_version": kernel_version,
+                "outputs": [
+                    _file_ledger_entry(vmlinuz, base=arch_output),
+                    _file_ledger_entry(initrd, base=arch_output),
+                ],
+            })
             print(f"  vmlinuz:    {vmlinuz}")
             print(f"  initrd.img: {initrd}")
 
@@ -1028,8 +1162,19 @@ def build_image(
             for b in binaries:
                 print(f"  {b.name}: {b.stat().st_size} bytes")
 
-            prepare_build_context(
+            dockerfile_path = prepare_build_context(
                 config, arch_name, template_name, context_dir, repo_root,
+            )
+            build_inputs = _build_input_record(
+                repo_root=repo_root,
+                arch_name=arch_name,
+                template=template,
+                template_name=template_name,
+                context_dir=context_dir,
+                dockerfile_path=dockerfile_path,
+                docker_tag=tag,
+                docker_platform=arch.docker_platform,
+                runtime=runtime,
             )
             docker_build(
                 runtime, tag, context_dir / "Dockerfile", context_dir,
@@ -1040,6 +1185,12 @@ def build_image(
             tar_path = arch_output / "rootfs.tar"
             print("Exporting rootfs filesystem...")
             export_container_fs(runtime, tag, arch.docker_platform, tar_path)
+            tar_entry = _file_ledger_entry(tar_path, base=arch_output)
+            _append_build_ledger(arch_output, {
+                "stage": "rootfs.export",
+                "inputs": build_inputs,
+                "intermediates": [tar_entry],
+            })
 
             erofs_enabled, erofs_compression, erofs_cluster_size, erofs_level = (
                 experimental_erofs_build_config(defaults=config.build.erofs)
@@ -1058,10 +1209,30 @@ def build_image(
                 erofs_cluster_size,
                 erofs_level,
             )
+            erofs_entry = _file_ledger_entry(erofs_path, base=arch_output)
+            _append_build_ledger(arch_output, {
+                "stage": "rootfs.erofs",
+                "inputs": build_inputs,
+                "intermediates": [tar_entry],
+                "erofs": {
+                    "compression": erofs_compression,
+                    "compression_level": erofs_level,
+                    "cluster_size": erofs_cluster_size,
+                    "utils_image": erofs_utils_image_for(erofs_compression),
+                },
+                "outputs": [erofs_entry],
+            })
             tar_path.unlink(missing_ok=True)
 
             print("Extracting tool versions...")
             extract_tool_versions(runtime, tag, arch.docker_platform, arch_output, config)
+            versions_path = arch_output / "tool-versions.txt"
+            if versions_path.is_file():
+                _append_build_ledger(arch_output, {
+                    "stage": "rootfs.tool_versions",
+                    "inputs": build_inputs,
+                    "outputs": [_file_ledger_entry(versions_path, base=arch_output)],
+                })
             remove_image(runtime, tag)
 
             print(f"  rootfs.erofs:    {erofs_path}")
