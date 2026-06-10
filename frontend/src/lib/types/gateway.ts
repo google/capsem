@@ -32,9 +32,11 @@ export interface StatusResponse {
 export interface VmSummary {
   id: string;
   name: string | null;
-  status: string; // "Running" | "Stopped" | "Suspended" | "Error" | "Booting"
+  status: VmLifecycleState;
   persistent: boolean;
   profile_id: string;
+  can_resume: boolean;
+  resume_blocked_reason?: string;
   // Telemetry (present for running VMs, absent for stopped)
   uptime_secs?: number;
   total_input_tokens?: number;
@@ -66,8 +68,10 @@ export interface SandboxInfo {
   id: string;
   name?: string;
   pid: number;
-  status: string;
+  status: VmLifecycleState;
   persistent: boolean;
+  can_resume: boolean;
+  resume_blocked_reason?: string;
   ram_mb?: number;
   cpus?: number;
   version?: string;
@@ -91,13 +95,22 @@ export interface SandboxInfo {
 // GET /vms/{id}/status
 export interface VmStatusResponse {
   id: string;
-  status: string;
+  status: VmLifecycleState;
   pid?: number;
   persistent: boolean;
+  can_resume: boolean;
+  resume_blocked_reason?: string;
   uptime_secs?: number;
   created_at?: string;
   last_error?: string;
 }
+
+export type VmLifecycleState =
+  | 'Running'
+  | 'Stopped'
+  | 'Suspended'
+  | 'Defunct'
+  | 'Incompatible';
 
 // GET /vms/{id}/save/status, GET /vms/{id}/fork/status
 export interface VmOperationStatusResponse {

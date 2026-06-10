@@ -18,6 +18,7 @@ use client::{
     ApiResponse, AssetStatusResponse, ExecRequest, ExecResponse, ForkRequest, ForkResponse,
     HistoryResponse, ListResponse, LogsResponse, PersistRequest, ProvisionRequest,
     ProvisionResponse, PurgeRequest, PurgeResponse, RunRequest, SessionInfo, UdsClient,
+    VmLifecycleState,
 };
 
 const DEFAULT_PROFILE_ID: &str = "code";
@@ -1154,7 +1155,7 @@ async fn main() -> Result<()> {
                         let defunct: Vec<&client::SessionInfo> = list
                             .sessions
                             .iter()
-                            .filter(|s| s.status == "Defunct")
+                            .filter(|s| s.status == VmLifecycleState::Defunct)
                             .collect();
                         if !defunct.is_empty() {
                             println!();
@@ -1335,7 +1336,7 @@ async fn main() -> Result<()> {
                     // Defunct rows: show the tail of process.log inline so
                     // the user doesn't need a separate `capsem logs` call
                     // to see why boot failed.
-                    if s.status == "Defunct" {
+                    if s.status == VmLifecycleState::Defunct {
                         if let Some(err) = &s.last_error {
                             let last = err
                                 .lines()
@@ -1345,12 +1346,16 @@ async fn main() -> Result<()> {
                             println!("  ! {}", last);
                             println!("  (`capsem logs {}` for full context)", s.id);
                         }
+                    } else if s.status == VmLifecycleState::Incompatible {
+                        if let Some(reason) = &s.resume_blocked_reason {
+                            println!("  ! {}", reason);
+                        }
                     }
                 }
                 let defunct = resp
                     .sessions
                     .iter()
-                    .filter(|s| s.status == "Defunct")
+                    .filter(|s| s.status == VmLifecycleState::Defunct)
                     .count();
                 if defunct > 0 {
                     println!();

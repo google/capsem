@@ -4203,13 +4203,15 @@ async fn handle_list_shows_suspended_status() {
 
     let susp = list.sandboxes.iter().find(|s| s.id == "susp-vm").unwrap();
     assert_eq!(
-        susp.status, "Suspended",
+        susp.status,
+        VmLifecycleState::Suspended,
         "suspended VM should show Suspended status"
     );
 
     let stop = list.sandboxes.iter().find(|s| s.id == "stop-vm").unwrap();
     assert_eq!(
-        stop.status, "Stopped",
+        stop.status,
+        VmLifecycleState::Stopped,
         "non-suspended VM should show Stopped status"
     );
 }
@@ -4246,7 +4248,98 @@ async fn handle_info_shows_suspended_status() {
 
     let result = handle_info(State(state), Path("info-susp".into())).await;
     let Json(info) = result.unwrap();
-    assert_eq!(info.status, "Suspended");
+    assert_eq!(info.status, VmLifecycleState::Suspended);
+}
+
+#[tokio::test]
+async fn handle_list_marks_profile_payload_drift_incompatible() {
+    let (state, _dir) = make_test_state_with_tempdir();
+    install_test_profile_assets(&state);
+    {
+        let mut reg = state.persistent_registry.lock().unwrap();
+        reg.data.vms.insert(
+            "payload-drift".into(),
+            PersistentVmEntry {
+                name: "payload-drift".into(),
+                profile_id: "code".into(),
+                profile_revision: test_profile_revision(),
+                profile_payload_hash:
+                    "blake3:0000000000000000000000000000000000000000000000000000000000000000"
+                        .into(),
+                asset_pins: test_asset_pins(),
+                ram_mb: 2048,
+                cpus: 2,
+                base_version: "0.0.0".into(),
+                created_at: "0".into(),
+                session_dir: state.run_dir.join("persistent/payload-drift"),
+                forked_from: None,
+                description: None,
+                suspended: false,
+                defunct: false,
+                last_error: None,
+                checkpoint_path: None,
+                env: None,
+            },
+        );
+    }
+
+    let Json(list) = handle_list(State(state)).await;
+    let vm = list
+        .sandboxes
+        .iter()
+        .find(|s| s.id == "payload-drift")
+        .unwrap();
+    assert_eq!(vm.status, VmLifecycleState::Incompatible);
+    assert!(!vm.can_resume);
+    assert!(vm
+        .resume_blocked_reason
+        .as_deref()
+        .unwrap_or_default()
+        .contains("payload hash mismatch"));
+}
+
+#[tokio::test]
+async fn handle_info_marks_profile_payload_drift_incompatible() {
+    let (state, _dir) = make_test_state_with_tempdir();
+    install_test_profile_assets(&state);
+    {
+        let mut reg = state.persistent_registry.lock().unwrap();
+        reg.data.vms.insert(
+            "payload-drift-info".into(),
+            PersistentVmEntry {
+                name: "payload-drift-info".into(),
+                profile_id: "code".into(),
+                profile_revision: test_profile_revision(),
+                profile_payload_hash:
+                    "blake3:0000000000000000000000000000000000000000000000000000000000000000"
+                        .into(),
+                asset_pins: test_asset_pins(),
+                ram_mb: 2048,
+                cpus: 2,
+                base_version: "0.0.0".into(),
+                created_at: "0".into(),
+                session_dir: state.run_dir.join("persistent/payload-drift-info"),
+                forked_from: None,
+                description: None,
+                suspended: false,
+                defunct: false,
+                last_error: None,
+                checkpoint_path: None,
+                env: None,
+            },
+        );
+    }
+
+    let Json(info) = handle_info(State(state), Path("payload-drift-info".into()))
+        .await
+        .unwrap();
+    assert_eq!(info.status, VmLifecycleState::Incompatible);
+    assert!(!info.can_resume);
+    assert!(info
+        .resume_blocked_reason
+        .as_deref()
+        .unwrap_or_default()
+        .contains("payload hash mismatch"));
 }
 
 #[tokio::test]
@@ -4462,7 +4555,13 @@ fn main_db_path_resolves_to_sessions_dir() {
 
 #[test]
 fn sandbox_info_new_defaults_telemetry_to_none() {
-    let info = SandboxInfo::new("test".into(), "code".into(), 1, "Running".into(), false);
+    let info = SandboxInfo::new(
+        "test".into(),
+        "code".into(),
+        1,
+        VmLifecycleState::Running,
+        false,
+    );
     assert_eq!(info.id, "test");
     assert_eq!(info.pid, 1);
     assert!(!info.persistent);
@@ -4475,7 +4574,13 @@ fn sandbox_info_new_defaults_telemetry_to_none() {
 
 #[test]
 fn sandbox_info_telemetry_fields_serialize_when_present() {
-    let mut info = SandboxInfo::new("test".into(), "code".into(), 1, "Running".into(), false);
+    let mut info = SandboxInfo::new(
+        "test".into(),
+        "code".into(),
+        1,
+        VmLifecycleState::Running,
+        false,
+    );
     info.total_input_tokens = Some(1000);
     info.total_estimated_cost = Some(0.42);
     info.model_call_count = Some(5);
@@ -4487,7 +4592,13 @@ fn sandbox_info_telemetry_fields_serialize_when_present() {
 
 #[test]
 fn sandbox_info_telemetry_fields_omitted_when_none() {
-    let info = SandboxInfo::new("test".into(), "code".into(), 1, "Running".into(), false);
+    let info = SandboxInfo::new(
+        "test".into(),
+        "code".into(),
+        1,
+        VmLifecycleState::Running,
+        false,
+    );
     let json = serde_json::to_string(&info).unwrap();
     assert!(!json.contains("total_input_tokens"));
     assert!(!json.contains("total_estimated_cost"));

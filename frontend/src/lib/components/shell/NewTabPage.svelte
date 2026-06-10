@@ -86,6 +86,7 @@
     Booting: 'bg-primary/60 text-primary-foreground',
     Stopped: 'bg-muted text-muted-foreground-1',
     Suspended: 'bg-warning text-warning-foreground',
+    Incompatible: 'bg-destructive text-destructive-foreground',
     Error: 'bg-destructive text-destructive-foreground',
   };
 
@@ -125,6 +126,10 @@
 
   async function handleStart(e: MouseEvent, vm: VmSummary) {
     e.stopPropagation();
+    if (!vm.can_resume) {
+      actionError = vm.resume_blocked_reason ?? `${vm.name ?? vm.id} cannot be resumed.`;
+      return;
+    }
     await vmStore.resume(vm.name ?? vm.id);
   }
 
@@ -344,8 +349,8 @@
                     <button type="button" class="size-7 inline-flex items-center justify-center rounded-lg text-muted-foreground-1 hover:text-foreground hover:bg-surface" onclick={(e: MouseEvent) => openDashModal(e, 'stop', vm)} aria-label="Stop" title="Stop">
                       <Stop size={16} />
                     </button>
-                  {:else if vm.status === 'Stopped' || vm.status === 'Suspended' || vm.status === 'Error'}
-                    <button type="button" class="size-7 inline-flex items-center justify-center rounded-lg text-muted-foreground-1 hover:text-primary hover:bg-surface" onclick={(e: MouseEvent) => handleStart(e, vm)} aria-label={vm.status === 'Suspended' ? 'Resume' : 'Start'} title={vm.status === 'Suspended' ? 'Resume' : 'Start'}>
+                  {:else if vm.status === 'Stopped' || vm.status === 'Suspended' || vm.status === 'Incompatible'}
+                    <button type="button" class="size-7 inline-flex items-center justify-center rounded-lg text-muted-foreground-1 hover:text-primary hover:bg-surface disabled:opacity-40 disabled:pointer-events-none" disabled={!vm.can_resume} onclick={(e: MouseEvent) => handleStart(e, vm)} aria-label={vm.status === 'Suspended' ? 'Resume' : 'Start'} title={vm.can_resume ? (vm.status === 'Suspended' ? 'Resume' : 'Start') : (vm.resume_blocked_reason ?? 'Cannot resume')}>
                       <Play size={16} />
                     </button>
                   {/if}

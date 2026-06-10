@@ -141,11 +141,12 @@
                 <Stop size={16} />
                 <span>Stop</span>
               </button>
-            {:else if activeVm?.status === 'Stopped' || activeVm?.status === 'Suspended' || activeVm?.status === 'Error'}
+            {:else if activeVm?.status === 'Stopped' || activeVm?.status === 'Suspended' || activeVm?.status === 'Incompatible'}
               <button
                 type="button"
                 class="w-full flex items-center gap-x-3 py-2 px-3 text-sm text-dropdown-item-foreground rounded-lg hover:bg-dropdown-item-hover disabled:opacity-40 disabled:pointer-events-none"
-                disabled={busy}
+                disabled={busy || !activeVm.can_resume}
+                title={activeVm.can_resume ? undefined : (activeVm.resume_blocked_reason ?? 'Cannot resume')}
                 onclick={async () => { if (activeVm) { await vmStore.resume(activeVm.name ?? activeVm.id); } menuOpen = false; }}
               >
                 <Play size={16} />

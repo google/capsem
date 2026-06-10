@@ -8,7 +8,12 @@ fn status_response_serializes() {
         service: "running".into(),
         gateway_version: "0.1.0".into(),
         vm_count: 1,
-        vms: vec![test_vm("abc123", Some("dev"), "running", true)],
+        vms: vec![test_vm(
+            "abc123",
+            Some("dev"),
+            VmLifecycleState::Running,
+            true,
+        )],
         resource_summary: Some(ResourceSummary {
             total_ram_mb: 2048,
             total_cpus: 2,
@@ -50,9 +55,9 @@ fn status_response_multiple_vms_resource_aggregation() {
         gateway_version: "0.1.0".into(),
         vm_count: 3,
         vms: vec![
-            test_vm("a", Some("dev"), "running", true),
-            test_vm("b", None, "running", false),
-            test_vm("c", Some("ci"), "stopped", true),
+            test_vm("a", Some("dev"), VmLifecycleState::Running, true),
+            test_vm("b", None, VmLifecycleState::Running, false),
+            test_vm("c", Some("ci"), VmLifecycleState::Stopped, true),
         ],
         resource_summary: Some(ResourceSummary {
             total_ram_mb: 6144,
@@ -75,7 +80,7 @@ fn status_response_multiple_vms_resource_aggregation() {
 
 #[test]
 fn vm_summary_name_null_when_absent() {
-    let vm = test_vm("x", None, "running", false);
+    let vm = test_vm("x", None, VmLifecycleState::Running, false);
     let json = serde_json::to_value(&vm).unwrap();
     assert!(json["name"].is_null());
     assert!(!json["persistent"].as_bool().unwrap());
@@ -94,12 +99,19 @@ fn list_response_deserializes() {
 
 #[test]
 fn list_response_handles_missing_optional_fields() {
-    let json = r#"{"sandboxes":[{"id":"abc","profile_id":"code","pid":123}]}"#;
+    let json = r#"{"sandboxes":[{"id":"abc","profile_id":"code","pid":123,"status":"Stopped"}]}"#;
     let list: ListResponse = serde_json::from_str(json).unwrap();
     assert_eq!(list.sessions[0].profile_id, "code");
     assert_eq!(list.sessions[0].ram_mb, None);
     assert_eq!(list.sessions[0].cpus, None);
     assert!(!list.sessions[0].persistent);
+}
+
+#[test]
+fn list_response_rejects_missing_lifecycle_state() {
+    let json = r#"{"sandboxes":[{"id":"abc","profile_id":"code","pid":123}]}"#;
+    let err = serde_json::from_str::<ListResponse>(json).err().unwrap();
+    assert!(err.to_string().contains("status"));
 }
 
 #[tokio::test]
@@ -167,11 +179,11 @@ async fn cache_starts_empty() {
 
 use crate::AppState;
 
-fn test_vm(id: &str, name: Option<&str>, status: &str, persistent: bool) -> VmSummary {
+fn test_vm(id: &str, name: Option<&str>, status: VmLifecycleState, persistent: bool) -> VmSummary {
     VmSummary {
         id: id.into(),
         name: name.map(|s| s.into()),
-        status: status.into(),
+        status,
         persistent,
         profile_id: "code".into(),
         uptime_secs: None,
@@ -185,6 +197,8 @@ fn test_vm(id: &str, name: Option<&str>, status: &str, persistent: bool) -> VmSu
         denied_requests: None,
         total_file_events: None,
         model_call_count: None,
+        can_resume: false,
+        resume_blocked_reason: None,
     }
 }
 
@@ -366,7 +380,7 @@ fn suspended_count_serializes_in_json() {
 
 #[test]
 fn vm_summary_includes_telemetry_when_present() {
-    let mut vm = test_vm("t1", None, "running", false);
+    let mut vm = test_vm("t1", None, VmLifecycleState::Running, false);
     vm.uptime_secs = Some(300);
     vm.total_input_tokens = Some(5000);
     vm.total_estimated_cost = Some(1.23);
@@ -378,7 +392,7 @@ fn vm_summary_includes_telemetry_when_present() {
 
 #[test]
 fn vm_summary_omits_absent_telemetry() {
-    let vm = test_vm("t2", None, "stopped", true);
+    let vm = test_vm("t2", None, VmLifecycleState::Stopped, true);
     let json = serde_json::to_value(&vm).unwrap();
     assert!(json.get("uptime_secs").is_none());
     assert!(json.get("total_input_tokens").is_none());

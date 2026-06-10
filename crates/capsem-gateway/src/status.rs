@@ -49,11 +49,20 @@ pub struct StatusResponse {
     pub assets: Option<AssetHealth>,
 }
 
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+pub enum VmLifecycleState {
+    Running,
+    Stopped,
+    Suspended,
+    Defunct,
+    Incompatible,
+}
+
 #[derive(Serialize, Clone)]
 pub struct VmSummary {
     pub id: String,
     pub name: Option<String>,
-    pub status: String,
+    pub status: VmLifecycleState,
     pub persistent: bool,
     pub profile_id: String,
     // Telemetry (present for running VMs, absent for stopped)
@@ -79,6 +88,10 @@ pub struct VmSummary {
     pub total_file_events: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model_call_count: Option<u64>,
+    #[serde(default)]
+    pub can_resume: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resume_blocked_reason: Option<String>,
 }
 
 #[derive(Serialize, Clone)]
@@ -119,7 +132,7 @@ pub async fn handle_status(State(state): State<Arc<AppState>>) -> Response {
         }
     }
 
-    let old_vms: Vec<(String, String)> = {
+    let old_vms: Vec<(String, VmLifecycleState)> = {
         let cache = state.status_cache.inner.read().await;
         cache
             .as_ref()
@@ -136,10 +149,7 @@ pub async fn handle_status(State(state): State<Arc<AppState>>) -> Response {
 
     // Detect VM state changes and broadcast events.
     for vm in &resp.vms {
-        let old_status = old_vms
-            .iter()
-            .find(|(id, _)| id == &vm.id)
-            .map(|(_, s)| s.as_str());
+        let old_status = old_vms.iter().find(|(id, _)| id == &vm.id).map(|(_, s)| *s);
         let changed = match old_status {
             Some(prev) => prev != vm.status,
             None => true, // new VM appeared
@@ -188,8 +198,7 @@ struct SessionInfo {
     profile_id: String,
     #[serde(default)]
     name: Option<String>,
-    #[serde(default)]
-    status: String,
+    status: VmLifecycleState,
     #[serde(default)]
     persistent: bool,
     #[serde(default)]
@@ -219,6 +228,10 @@ struct SessionInfo {
     total_file_events: Option<u64>,
     #[serde(default)]
     model_call_count: Option<u64>,
+    #[serde(default)]
+    can_resume: bool,
+    #[serde(default)]
+    resume_blocked_reason: Option<String>,
 }
 
 async fn fetch_status(state: &AppState) -> StatusResponse {
@@ -254,13 +267,12 @@ async fn fetch_status(state: &AppState) -> StatusResponse {
             total_cpus += cpus;
         }
 
-        let status_lower = sess.status.to_lowercase();
-        if status_lower.contains("running") {
-            running += 1;
-        } else if status_lower.contains("suspended") {
-            suspended += 1;
-        } else {
-            stopped += 1;
+        match sess.status {
+            VmLifecycleState::Running => running += 1,
+            VmLifecycleState::Suspended => suspended += 1,
+            VmLifecycleState::Stopped
+            | VmLifecycleState::Defunct
+            | VmLifecycleState::Incompatible => stopped += 1,
         }
 
         vms.push(VmSummary {
@@ -280,6 +292,8 @@ async fn fetch_status(state: &AppState) -> StatusResponse {
             denied_requests: sess.denied_requests,
             total_file_events: sess.total_file_events,
             model_call_count: sess.model_call_count,
+            can_resume: sess.can_resume,
+            resume_blocked_reason: sess.resume_blocked_reason.clone(),
         });
     }
 

@@ -1290,6 +1290,45 @@ impl ServiceState {
         validate_asset_file_pin("rootfs", &resolved.rootfs, &pins.rootfs)?;
         Ok(())
     }
+
+    fn persistent_entry_resume_state(
+        &self,
+        entry: &PersistentVmEntry,
+    ) -> (VmLifecycleState, bool, Option<String>) {
+        if entry.defunct {
+            return (VmLifecycleState::Defunct, false, entry.last_error.clone());
+        }
+
+        let profile = match self.profile_config(&entry.profile_id) {
+            Ok(profile) => profile,
+            Err(err) => {
+                return (
+                    VmLifecycleState::Incompatible,
+                    false,
+                    Some(format!(
+                        "profile '{}' unavailable for VM '{}': {err}",
+                        entry.profile_id, entry.name
+                    )),
+                );
+            }
+        };
+
+        match self.validate_profile_pins(
+            &profile,
+            &entry.profile_revision,
+            &entry.profile_payload_hash,
+            &entry.asset_pins,
+        ) {
+            Ok(()) => {
+                if entry.suspended {
+                    (VmLifecycleState::Suspended, true, None)
+                } else {
+                    (VmLifecycleState::Stopped, true, None)
+                }
+            }
+            Err(err) => (VmLifecycleState::Incompatible, false, Some(err.to_string())),
+        }
+    }
 }
 
 fn profile_asset_pins(profile: &ProfileConfigFile) -> Result<BootAssetPins> {
@@ -2400,7 +2439,7 @@ async fn handle_list(State(state): State<Arc<ServiceState>>) -> Json<ListRespons
                 i.id.clone(),
                 i.profile_id.clone(),
                 i.pid,
-                "Running".into(),
+                VmLifecycleState::Running,
                 i.persistent,
             );
             info.name = if i.persistent {
@@ -2413,6 +2452,7 @@ async fn handle_list(State(state): State<Arc<ServiceState>>) -> Json<ListRespons
             info.version = Some(i.base_version.clone());
             info.forked_from = i.forked_from.clone();
             info.uptime_secs = Some(i.start_time.elapsed().as_secs());
+            info.can_resume = false;
             enrich_telemetry(&mut info, &i.session_dir);
             sandboxes.push(info);
         }
@@ -2422,37 +2462,39 @@ async fn handle_list(State(state): State<Arc<ServiceState>>) -> Json<ListRespons
     // `Defunct` surfaces a boot failure so users see the problem in
     // `capsem list` instead of a misleading "Stopped" -- last_error
     // carries the tail of process.log for one-line diagnosis.
-    {
+    let inactive_persistent: Vec<PersistentVmEntry> = {
         let registry = state.persistent_registry.lock().unwrap();
         let instances = state.instances.lock().unwrap();
-        for entry in registry.list() {
-            if !instances.contains_key(&entry.name) {
-                let status = if entry.defunct {
-                    "Defunct"
-                } else if entry.suspended {
-                    "Suspended"
-                } else {
-                    "Stopped"
-                };
-                let mut info = SandboxInfo::new(
-                    entry.name.clone(),
-                    entry.profile_id.clone(),
-                    0,
-                    status.into(),
-                    true,
-                );
-                info.name = Some(entry.name.clone());
-                info.ram_mb = Some(entry.ram_mb);
-                info.cpus = Some(entry.cpus);
-                info.version = Some(entry.base_version.clone());
-                info.forked_from = entry.forked_from.clone();
-                info.description = entry.description.clone();
-                if entry.defunct {
-                    info.last_error = entry.last_error.clone();
-                }
-                sandboxes.push(info);
-            }
+        registry
+            .list()
+            .filter(|entry| !instances.contains_key(&entry.name))
+            .cloned()
+            .collect()
+    };
+    for entry in inactive_persistent {
+        let (status, can_resume, blocked_reason) = state.persistent_entry_resume_state(&entry);
+        let mut info = SandboxInfo::new(
+            entry.name.clone(),
+            entry.profile_id.clone(),
+            0,
+            status,
+            true,
+        );
+        info.name = Some(entry.name.clone());
+        info.ram_mb = Some(entry.ram_mb);
+        info.cpus = Some(entry.cpus);
+        info.version = Some(entry.base_version.clone());
+        info.forked_from = entry.forked_from.clone();
+        info.description = entry.description.clone();
+        info.can_resume = can_resume;
+        if can_resume {
+            info.resume_blocked_reason = None;
+        } else if entry.defunct {
+            info.last_error = blocked_reason;
+        } else {
+            info.resume_blocked_reason = blocked_reason;
         }
+        sandboxes.push(info);
     }
 
     // Check asset health
@@ -2504,7 +2546,7 @@ async fn handle_info(
                         i.id.clone(),
                         i.profile_id.clone(),
                         i.pid,
-                        "Running".into(),
+                        VmLifecycleState::Running,
                         i.persistent,
                     );
                     info.name = if i.persistent {
@@ -2517,6 +2559,7 @@ async fn handle_info(
                     info.version = Some(i.base_version.clone());
                     info.forked_from = i.forked_from.clone();
                     info.uptime_secs = Some(i.start_time.elapsed().as_secs());
+                    info.can_resume = false;
                     (Some(info), Some(i.session_dir.clone()))
                 }
                 None => (None, None),
@@ -2531,19 +2574,14 @@ async fn handle_info(
     // Check stopped/suspended/defunct persistent VMs
     {
         let registry = state.persistent_registry.lock().unwrap();
-        if let Some(entry) = registry.get(&id) {
-            let status = if entry.defunct {
-                "Defunct"
-            } else if entry.suspended {
-                "Suspended"
-            } else {
-                "Stopped"
-            };
+        if let Some(entry) = registry.get(&id).cloned() {
+            drop(registry);
+            let (status, can_resume, blocked_reason) = state.persistent_entry_resume_state(&entry);
             let mut info = SandboxInfo::new(
                 entry.name.clone(),
                 entry.profile_id.clone(),
                 0,
-                status.into(),
+                status,
                 true,
             );
             info.name = Some(entry.name.clone());
@@ -2552,8 +2590,13 @@ async fn handle_info(
             info.version = Some(entry.base_version.clone());
             info.forked_from = entry.forked_from.clone();
             info.description = entry.description.clone();
-            if entry.defunct {
-                info.last_error = entry.last_error.clone();
+            info.can_resume = can_resume;
+            if can_resume {
+                info.resume_blocked_reason = None;
+            } else if entry.defunct {
+                info.last_error = blocked_reason;
+            } else {
+                info.resume_blocked_reason = blocked_reason;
             }
             info.size_bytes =
                 capsem_core::auto_snapshot::sandbox_disk_usage(&entry.session_dir).ok();
@@ -2576,34 +2619,41 @@ async fn handle_vm_status(
         if let Some(i) = instances.get(&id) {
             return Ok(Json(api::VmStatusResponse {
                 id: i.id.clone(),
-                status: "Running".into(),
+                status: VmLifecycleState::Running,
                 pid: Some(i.pid),
                 persistent: i.persistent,
                 uptime_secs: Some(i.start_time.elapsed().as_secs()),
                 created_at: None,
                 last_error: None,
+                can_resume: false,
+                resume_blocked_reason: None,
             }));
         }
     }
 
     {
         let registry = state.persistent_registry.lock().unwrap();
-        if let Some(entry) = registry.get(&id) {
-            let status = if entry.defunct {
-                "Defunct"
-            } else if entry.suspended {
-                "Suspended"
-            } else {
-                "Stopped"
-            };
+        if let Some(entry) = registry.get(&id).cloned() {
+            drop(registry);
+            let (status, can_resume, blocked_reason) = state.persistent_entry_resume_state(&entry);
             return Ok(Json(api::VmStatusResponse {
                 id: entry.name.clone(),
-                status: status.into(),
+                status,
                 pid: None,
                 persistent: true,
                 uptime_secs: None,
                 created_at: Some(entry.created_at.clone()),
-                last_error: entry.last_error.clone(),
+                last_error: if entry.defunct {
+                    blocked_reason.clone()
+                } else {
+                    entry.last_error.clone()
+                },
+                can_resume,
+                resume_blocked_reason: if can_resume || entry.defunct {
+                    None
+                } else {
+                    blocked_reason
+                },
             }));
         }
     }

@@ -58,13 +58,34 @@ pub struct ForkResponse {
     pub size_bytes: u64,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VmLifecycleState {
+    Running,
+    Stopped,
+    Suspended,
+    Defunct,
+    Incompatible,
+}
+
+impl std::fmt::Display for VmLifecycleState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Running => f.write_str("Running"),
+            Self::Stopped => f.write_str("Stopped"),
+            Self::Suspended => f.write_str("Suspended"),
+            Self::Defunct => f.write_str("Defunct"),
+            Self::Incompatible => f.write_str("Incompatible"),
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug)]
 pub struct SessionInfo {
     pub id: String,
     #[serde(default)]
     pub name: Option<String>,
     pub pid: u32,
-    pub status: String,
+    pub status: VmLifecycleState,
     #[serde(default)]
     pub persistent: bool,
     #[serde(default)]
@@ -106,6 +127,10 @@ pub struct SessionInfo {
     /// crashed VM shows its own reason on screen.
     #[serde(default)]
     pub last_error: Option<String>,
+    #[serde(default)]
+    pub can_resume: bool,
+    #[serde(default)]
+    pub resume_blocked_reason: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]

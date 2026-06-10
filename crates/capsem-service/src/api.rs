@@ -64,6 +64,15 @@ pub struct ProvisionResponse {
     pub uds_path: Option<std::path::PathBuf>,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VmLifecycleState {
+    Running,
+    Stopped,
+    Suspended,
+    Defunct,
+    Incompatible,
+}
+
 #[derive(Serialize, Deserialize, Debug)]
 pub struct SandboxInfo {
     pub id: String,
@@ -71,7 +80,7 @@ pub struct SandboxInfo {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     pub pid: u32,
-    pub status: String,
+    pub status: VmLifecycleState,
     #[serde(default)]
     pub persistent: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -115,16 +124,30 @@ pub struct SandboxInfo {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model_call_count: Option<u64>,
     /// Short tail of `process.log` from the last failed boot. Populated
-    /// only when `status == "Defunct"`. Renders in `capsem list` /
+    /// only when `status == VmLifecycleState::Defunct`. Renders in `capsem list` /
     /// `capsem status` so a crashed VM tells the user *why* without
     /// requiring a separate `capsem logs <id>` round-trip.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_error: Option<String>,
+    /// True only when an inactive persistent VM can be started/resumed with
+    /// the currently installed profile and pinned assets.
+    #[serde(default)]
+    pub can_resume: bool,
+    /// Human-readable reason `can_resume` is false for an inactive persistent
+    /// VM, e.g. profile payload hash drift after an upgrade.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resume_blocked_reason: Option<String>,
 }
 
 impl SandboxInfo {
     /// Construct with only the core fields; all telemetry fields default to None.
-    pub fn new(id: String, profile_id: String, pid: u32, status: String, persistent: bool) -> Self {
+    pub fn new(
+        id: String,
+        profile_id: String,
+        pid: u32,
+        status: VmLifecycleState,
+        persistent: bool,
+    ) -> Self {
         Self {
             id,
             profile_id,
@@ -151,6 +174,8 @@ impl SandboxInfo {
             total_file_events: None,
             model_call_count: None,
             last_error: None,
+            can_resume: false,
+            resume_blocked_reason: None,
         }
     }
 }
@@ -158,7 +183,7 @@ impl SandboxInfo {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct VmStatusResponse {
     pub id: String,
-    pub status: String,
+    pub status: VmLifecycleState,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pid: Option<u32>,
     #[serde(default)]
@@ -169,6 +194,10 @@ pub struct VmStatusResponse {
     pub created_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_error: Option<String>,
+    #[serde(default)]
+    pub can_resume: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resume_blocked_reason: Option<String>,
 }
 
 #[derive(Deserialize, Debug, Default)]
@@ -692,14 +721,25 @@ mod tests {
         let r = ListResponse {
             sandboxes: vec![
                 {
-                    let mut s =
-                        SandboxInfo::new("a".into(), "code".into(), 100, "Running".into(), true);
+                    let mut s = SandboxInfo::new(
+                        "a".into(),
+                        "code".into(),
+                        100,
+                        VmLifecycleState::Running,
+                        true,
+                    );
                     s.name = Some("a".into());
                     s.ram_mb = Some(2048);
                     s.cpus = Some(2);
                     s
                 },
-                SandboxInfo::new("b".into(), "code".into(), 200, "Running".into(), false),
+                SandboxInfo::new(
+                    "b".into(),
+                    "code".into(),
+                    200,
+                    VmLifecycleState::Running,
+                    false,
+                ),
             ],
             asset_health: None,
         };
@@ -714,10 +754,24 @@ mod tests {
 
     #[test]
     fn sandbox_info_optional_fields_omitted() {
-        let s = SandboxInfo::new("x".into(), "code".into(), 1, "Running".into(), false);
+        let s = SandboxInfo::new(
+            "x".into(),
+            "code".into(),
+            1,
+            VmLifecycleState::Running,
+            false,
+        );
         let json = serde_json::to_string(&s).unwrap();
         assert!(!json.contains("ram_mb"));
         assert!(!json.contains("cpus"));
+    }
+
+    #[test]
+    fn sandbox_info_rejects_unknown_lifecycle_state() {
+        let json =
+            r#"{"id":"x","profile_id":"code","pid":1,"status":"HalfRestored","persistent":true}"#;
+        let err = serde_json::from_str::<SandboxInfo>(json).unwrap_err();
+        assert!(err.to_string().contains("unknown variant"));
     }
 
     // -----------------------------------------------------------------------
