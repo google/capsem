@@ -223,7 +223,7 @@ impl App {
             return AppAction::Consumed;
         }
         if self.resume_key_is_blocked(key) {
-            if let Some(reason) = self.active_resume_blocked_reason() {
+            if let Some(reason) = self.active_resume_blocked_reason().map(str::to_string) {
                 self.set_control_message(reason);
             }
             return AppAction::Consumed;
@@ -439,7 +439,7 @@ impl App {
         })
     }
 
-    fn active_resume_blocked_reason(&self) -> Option<&'static str> {
+    fn active_resume_blocked_reason(&self) -> Option<&str> {
         self.state.active_session().and_then(resume_blocked_reason)
     }
 
@@ -645,7 +645,23 @@ fn selected_profile_id(state: &AppState, index: usize) -> Option<String> {
         .map(|profile| profile.id.clone())
 }
 
-pub fn resume_blocked_reason(session: &crate::model::SessionSummary) -> Option<&'static str> {
+pub fn resume_blocked_reason(session: &crate::model::SessionSummary) -> Option<&str> {
+    if !matches!(
+        session.lifecycle,
+        crate::model::SessionLifecycle::Idle
+            | crate::model::SessionLifecycle::Suspended
+            | crate::model::SessionLifecycle::Failed
+    ) {
+        return None;
+    }
+    if !session.can_resume {
+        return Some(
+            session
+                .resume_blocked_reason
+                .as_deref()
+                .unwrap_or("cannot resume: VM state is not resumable"),
+        );
+    }
     let status = session.profile_status.as_deref()?.to_ascii_lowercase();
     if matches!(
         status.as_str(),

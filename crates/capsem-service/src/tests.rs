@@ -3648,6 +3648,86 @@ fn provision_persistent_rejects_duplicate_name() {
     assert!(err.contains("resume"), "should suggest resume, got: {err}");
 }
 
+#[tokio::test]
+async fn purge_default_removes_defunct_persistent_and_keeps_healthy_stopped() {
+    let dir = tempfile::tempdir().unwrap();
+    let state = make_asset_state(dir.path().join("assets"));
+    let defunct_dir = state.run_dir.join("persistent/defunct-vm");
+    let healthy_dir = state.run_dir.join("persistent/healthy-vm");
+    std::fs::create_dir_all(&defunct_dir).unwrap();
+    std::fs::create_dir_all(&healthy_dir).unwrap();
+    std::fs::write(defunct_dir.join("process.log"), "boot failed").unwrap();
+    std::fs::write(healthy_dir.join("process.log"), "stopped cleanly").unwrap();
+
+    {
+        let mut reg = state.persistent_registry.lock().unwrap();
+        reg.data.vms.insert(
+            "defunct-vm".into(),
+            PersistentVmEntry {
+                name: "defunct-vm".into(),
+                profile_id: "code".into(),
+                profile_revision: test_profile_revision(),
+                profile_payload_hash: test_profile_payload_hash(),
+                asset_pins: test_asset_pins(),
+                ram_mb: 2048,
+                cpus: 2,
+                base_version: "0.0.0".into(),
+                created_at: "0".into(),
+                session_dir: defunct_dir.clone(),
+                forked_from: None,
+                description: None,
+                suspended: false,
+                defunct: true,
+                last_error: Some("boot failed".into()),
+                checkpoint_path: None,
+                env: None,
+            },
+        );
+        reg.data.vms.insert(
+            "healthy-vm".into(),
+            PersistentVmEntry {
+                name: "healthy-vm".into(),
+                profile_id: "code".into(),
+                profile_revision: test_profile_revision(),
+                profile_payload_hash: test_profile_payload_hash(),
+                asset_pins: test_asset_pins(),
+                ram_mb: 2048,
+                cpus: 2,
+                base_version: "0.0.0".into(),
+                created_at: "0".into(),
+                session_dir: healthy_dir.clone(),
+                forked_from: None,
+                description: None,
+                suspended: false,
+                defunct: false,
+                last_error: None,
+                checkpoint_path: None,
+                env: None,
+            },
+        );
+    }
+
+    let app = build_service_router(Arc::clone(&state));
+    let (status, body) = route_request(
+        app,
+        axum::http::Method::POST,
+        "/purge",
+        Some(json!({ "all": false })),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["purged"], 1);
+    assert_eq!(body["persistent_purged"], 1);
+    assert_eq!(body["ephemeral_purged"], 0);
+
+    let registry = state.persistent_registry.lock().unwrap();
+    assert!(registry.get("defunct-vm").is_none());
+    assert!(registry.get("healthy-vm").is_some());
+    assert!(!defunct_dir.exists());
+    assert!(healthy_dir.exists());
+}
+
 #[test]
 fn provision_persistent_validates_name() {
     let state = make_test_state();

@@ -3,6 +3,8 @@
 
 // -- Stats bar (polled every 2s) ------------------------------------------
 
+export const MCP_USER_TOOL_CALL_WHERE = "method = 'tools/call' AND tool_name IS NOT NULL AND tool_name NOT LIKE 'local__snapshots_%'";
+
 export const MODEL_STATS_SQL = `
   SELECT
     COALESCE(SUM(input_tokens), 0) as total_input_tokens,
@@ -15,7 +17,7 @@ export const MODEL_STATS_SQL = `
 export const TOOL_COUNT_SQL = `
   SELECT
     (SELECT COUNT(*) FROM tool_calls WHERE origin = 'native')
-  + (SELECT COUNT(*) FROM mcp_calls WHERE tool_name IS NOT NULL) as cnt
+  + (SELECT COUNT(*) FROM mcp_calls WHERE ${MCP_USER_TOOL_CALL_WHERE}) as cnt
 `;
 
 // -- Models tab (trace viewer) --------------------------------------------
@@ -78,11 +80,11 @@ export const TRACE_TOOL_RESPONSES_SQL = `
 
 export const TOOLS_STATS_SQL = `
   SELECT
-    (SELECT COUNT(*) FROM tool_calls WHERE origin = 'native') + (SELECT COUNT(*) FROM mcp_calls) as total,
+    (SELECT COUNT(*) FROM tool_calls WHERE origin = 'native') + (SELECT COUNT(*) FROM mcp_calls WHERE ${MCP_USER_TOOL_CALL_WHERE}) as total,
     (SELECT COUNT(*) FROM tool_calls WHERE origin = 'native') as native,
-    (SELECT COUNT(*) FROM mcp_calls) as mcp,
-    (SELECT COUNT(*) FROM mcp_calls WHERE decision = 'allowed') as allowed,
-    (SELECT COUNT(*) FROM mcp_calls WHERE decision != 'allowed') as denied
+    (SELECT COUNT(*) FROM mcp_calls WHERE ${MCP_USER_TOOL_CALL_WHERE}) as mcp,
+    (SELECT COUNT(*) FROM mcp_calls WHERE ${MCP_USER_TOOL_CALL_WHERE} AND decision = 'allowed') as allowed,
+    (SELECT COUNT(*) FROM mcp_calls WHERE ${MCP_USER_TOOL_CALL_WHERE} AND decision != 'allowed') as denied
 `;
 
 export const TOOLS_TOP_TOOLS_SQL = `
@@ -94,7 +96,7 @@ export const TOOLS_TOP_TOOLS_SQL = `
     UNION ALL
     SELECT tool_name, COUNT(*) as cnt, 'mcp' as source
     FROM mcp_calls
-    WHERE tool_name IS NOT NULL
+    WHERE ${MCP_USER_TOOL_CALL_WHERE}
     GROUP BY tool_name
   )
   ORDER BY cnt DESC
@@ -104,6 +106,7 @@ export const TOOLS_TOP_TOOLS_SQL = `
 export const TOOLS_TOP_SERVERS_SQL = `
   SELECT server_name, COUNT(*) as cnt
   FROM mcp_calls
+  WHERE ${MCP_USER_TOOL_CALL_WHERE}
   GROUP BY server_name
   ORDER BY cnt DESC
   LIMIT 8
@@ -118,6 +121,7 @@ export const TOOLS_OVER_TIME_SQL = `
     UNION ALL
     SELECT timestamp, 'mcp' as source
     FROM mcp_calls
+    WHERE ${MCP_USER_TOOL_CALL_WHERE}
   ),
   numbered AS (
     SELECT source,
@@ -156,6 +160,7 @@ export const TOOLS_UNIFIED_SQL = `
            request_preview as arguments, response_preview,
            error_message, 'mcp' as source
     FROM mcp_calls
+    WHERE ${MCP_USER_TOOL_CALL_WHERE}
   )
   ORDER BY timestamp DESC
 `;
@@ -182,6 +187,7 @@ export const TOOLS_UNIFIED_SEARCH_SQL = `
            request_preview as arguments, response_preview,
            error_message, 'mcp' as source
     FROM mcp_calls
+    WHERE ${MCP_USER_TOOL_CALL_WHERE}
   )
   WHERE tool_name LIKE ? OR method LIKE ? OR server_name LIKE ? OR process_name LIKE ?
   ORDER BY timestamp DESC

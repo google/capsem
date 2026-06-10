@@ -862,6 +862,34 @@ fn list_format_json_returns_raw() {
     assert!(summary["snapshots"].is_array());
 }
 
+#[test]
+fn list_format_json_large_payload_is_not_prefixed_with_pagination_text() {
+    let (_tmp, session, mut sched) = setup();
+    let ws = session.join("workspace");
+
+    for i in 0..10 {
+        for j in 0..80 {
+            std::fs::write(
+                ws.join(format!("large_{i}_{j}.txt")),
+                format!("payload {i} {j}"),
+            )
+            .unwrap();
+        }
+        sched.take_snapshot().unwrap();
+    }
+
+    let args = serde_json::json!({"format": "json", "max_length": 200});
+    let resp = handle_list_snapshots(&args, &sched, &ws, Some(serde_json::json!(1)));
+    let text = extract_text(&resp);
+
+    assert!(
+        !text.starts_with("Content length:"),
+        "format=json must not be prefixed with prose pagination: {text}"
+    );
+    let summary: Value = serde_json::from_str(&text).expect("format=json should return valid JSON");
+    assert!(summary["snapshots"].as_array().unwrap().len() >= 10);
+}
+
 /// Contract test: verifies the exact response shape the frontend depends on.
 ///
 /// The frontend (api.ts:listSnapshots) calls callMcpTool('snapshots_list', {format:'json'})

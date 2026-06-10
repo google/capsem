@@ -600,6 +600,23 @@ fn print_session_info(info: &SessionInfo) {
     }
 }
 
+fn purge_summary_message(result: &PurgeResponse, all: bool) -> String {
+    if all {
+        return format!(
+            "[*] Purged {} sessions ({} persistent, {} temporary).",
+            result.purged, result.persistent_purged, result.ephemeral_purged
+        );
+    }
+    if result.persistent_purged > 0 {
+        format!(
+            "[*] Purged {} sessions ({} broken persistent, {} temporary).",
+            result.purged, result.persistent_purged, result.ephemeral_purged
+        )
+    } else {
+        format!("[*] Purged {} temporary sessions.", result.ephemeral_purged)
+    }
+}
+
 fn capsem_shell_tui_args(session: Option<&str>) -> Vec<String> {
     session
         .map(|session| vec!["--session".to_string(), session.to_string()])
@@ -1452,14 +1469,7 @@ async fn main() -> Result<()> {
             let req = PurgeRequest { all: *all };
             let resp: ApiResponse<PurgeResponse> = client.post("/purge", &req).await?;
             let result = resp.into_result()?;
-            if *all {
-                println!(
-                    "[*] Purged {} sessions ({} persistent, {} temporary).",
-                    result.purged, result.persistent_purged, result.ephemeral_purged
-                );
-            } else {
-                println!("[*] Purged {} temporary sessions.", result.ephemeral_purged);
-            }
+            println!("{}", purge_summary_message(&result, *all));
         }
         Commands::Session(SessionCommands::Info { session, json }) => {
             client::validate_id(session)?;
@@ -2254,6 +2264,32 @@ mod tests {
             Commands::Session(SessionCommands::Purge { all }) => assert!(all),
             _ => panic!("expected Purge --all"),
         }
+    }
+
+    #[test]
+    fn purge_summary_mentions_broken_persistent_for_default_purge() {
+        let result = PurgeResponse {
+            purged: 2,
+            persistent_purged: 1,
+            ephemeral_purged: 1,
+        };
+        assert_eq!(
+            purge_summary_message(&result, false),
+            "[*] Purged 2 sessions (1 broken persistent, 1 temporary)."
+        );
+    }
+
+    #[test]
+    fn purge_summary_keeps_temporary_only_message_when_no_defunct_persistent() {
+        let result = PurgeResponse {
+            purged: 3,
+            persistent_purged: 0,
+            ephemeral_purged: 3,
+        };
+        assert_eq!(
+            purge_summary_message(&result, false),
+            "[*] Purged 3 temporary sessions."
+        );
     }
 
     #[test]

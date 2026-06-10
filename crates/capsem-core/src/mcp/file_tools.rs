@@ -1044,18 +1044,17 @@ pub fn handle_list_snapshots(
     let entries = collect_snapshot_entries(scheduler);
     let (start_index, max_length, format) = extract_pagination_params(arguments);
 
-    let text = if format == "json" {
+    if format == "json" {
         let summary = serde_json::json!({
             "snapshots": entries,
             "auto_max": scheduler.max_auto(),
             "manual_max": scheduler.max_manual(),
             "manual_available": scheduler.available_manual_slots(),
         });
-        summary.to_string()
-    } else {
-        render_snapshots_table(&entries, scheduler.available_manual_slots())
-    };
+        return tool_ok(request_id, &summary.to_string());
+    }
 
+    let text = render_snapshots_table(&entries, scheduler.available_manual_slots());
     paginated_response(&text, start_index, max_length, request_id)
 }
 

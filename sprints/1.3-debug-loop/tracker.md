@@ -83,7 +83,8 @@
   tell whether AGY OAuth was intercepted, plugin activity is absent from VM
   stats, and supported credential types are not listed. Each plugin should
   expose structured info/status/capabilities/counters that the UI can render.
-- [ ] Implement bug 1 after user resumes coding: TDD over CLI, TUI, and purge.
+- [x] Implement bug 1 slice: TDD over CLI purge messaging, service purge of
+  defunct persistent VMs, and TUI resume gating from `can_resume`.
 - [ ] Implement bug 2 after user resumes coding: TDD over profile-root/guest
   shell behavior so `agy` launches with the required permission flag without
   hand edits inside the VM.
@@ -98,10 +99,10 @@
   supposed to represent, fix timestamp semantics if it is a snapshot, and rename
   or reshape the UI so it reflects the actual data contract rather than a vague
   audit label.
-- [ ] Implement bug 6 after user resumes coding: classify MCP events so
-  user/tool/resource activity is separated from internal platform operations,
-  health checks, snapshots, and diagnostics; make stats show the categories
-  explicitly instead of one inflated call count.
+- [x] Implement bug 6 slice: classify headline MCP stats so user-facing totals
+  count only user tool calls (`tools/call`) and exclude protocol handshakes,
+  `tools/list`, and builtin snapshot maintenance while raw rows remain in
+  session DB for forensics.
 - [ ] Implement bug 7 after user resumes coding: define snapshot UX/data
   contract as inventory vs delta vs evidence, add filters/summaries around
   changed/high-value files, and ensure raw thousands-of-files output is not the
@@ -117,11 +118,11 @@
 - [ ] Implement bug 10 after user resumes coding: inventory host VSOCK listener
   exposure, define the allowed guest/host VSOCK contract, and test that raw
   guest access cannot bypass audited service entry points.
-- [ ] Implement bug 11 after user resumes coding: make MCP pagination
-  structured JSON end-to-end, add large-response tests for snapshot and doctor,
-  and ensure parsers never receive prose-prefixed JSON. Root-cause requirement:
-  capture the exact unparseable payload, parser error, producer function, and
-  consumer boundary so we know why parsing fails instead of papering over it.
+- [x] Implement bug 11 slice: make snapshot MCP JSON responses protocol-valid
+  for large payloads by bypassing prose pagination for `format=json`, with a
+  large-response parser regression test. Root cause: `handle_list_snapshots`
+  prepended human pagination text before a JSON object, so consumers calling
+  `json.loads()` saw `Content length:` instead of `{`.
 - [ ] Implement bug 12 after user resumes coding: make profile selection
   route-backed and multi-profile aware in the UI, using select controls for the
   profile enum/list; add a real `co-work` profile fixture if needed to prevent
@@ -177,6 +178,13 @@
 
 - Current AGY VM is important evidence. Do not destroy it while diagnosing why
   stats are empty.
+- Copied live VM report from `code-mq8nrnzr` to
+  `sprints/1.3-debug-loop/evidence/capsem_security_assessment-code-mq8nrnzr.md`.
+- Live VM evidence before fixes: session DB had `model_calls=0`, `tool_calls=0`,
+  `mcp_calls=855`, `snapshot_events=8`, `substitution_events=0`,
+  `dns_events=76`, and `net_events=452`. MCP rows were mostly
+  `initialize`, `notifications/initialized`, and snapshot maintenance calls,
+  with only a handful of real tool invocations.
 - Root-cause hypotheses to verify later, not conclusions:
   - AGY may be reaching model/tool endpoints without passing through the
     current monitored proxy/MITM path.
@@ -256,8 +264,23 @@
 
 ## Coverage Ledger
 
-- Unit/contract: pending.
-- Functional: pending.
+- Unit/contract:
+  - `cargo test -p capsem-core mcp::file_tools::tests:: -- --nocapture`
+    passed; includes large snapshot JSON parser regression.
+  - `cargo test -p capsem-logger mcp_call_stats_counts_user_tool_calls_not_protocol_or_snapshot_noise -- --nocapture`
+    passed; proves backend MCP headline stats filter protocol/snapshot noise.
+  - `pnpm --dir frontend test -- --run frontend/src/lib/__tests__/mcp-sql.test.ts`
+    passed; package script ran the frontend suite and proves UI SQL uses the
+    same MCP user-call predicate for headline/tool-list queries.
+  - `cargo test -p capsem-service purge_default_removes_defunct_persistent_and_keeps_healthy_stopped -- --nocapture`
+    passed; proves default purge removes defunct persistent VMs and keeps
+    healthy stopped persistent VMs.
+  - `cargo test -p capsem-tui gateway_status_can_resume_false_blocks_tui_resume_even_when_profile_ready -- --nocapture`
+    passed; proves TUI does not offer resume when service says `can_resume=false`.
+  - `cargo test -p capsem purge_summary_ -- --nocapture` passed; proves CLI
+    purge output names broken persistent removals.
+- Functional: focused source tests passed; live install not restarted or killed
+  per evidence-preservation rule.
 - Adversarial: pending; must include AGY activity that bypasses model stats
   today.
 - E2E/VM: pending; must preserve current VM until destructive actions are

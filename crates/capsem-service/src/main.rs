@@ -7382,31 +7382,29 @@ async fn handle_purge(
         }
     }
 
-    // If --all, also purge stopped persistent VMs
-    if payload.all {
-        let stopped_names: Vec<String> = {
+    // Default purge removes stopped defunct persistent VMs. `--all` broadens
+    // that to every stopped persistent VM after CLI confirmation.
+    let stopped_names: Vec<String> = {
+        let registry = state.persistent_registry.lock().unwrap();
+        let instances = state.instances.lock().unwrap();
+        registry
+            .list()
+            .filter(|e| !instances.contains_key(&e.name))
+            .filter(|e| payload.all || e.defunct)
+            .map(|e| e.name.clone())
+            .collect()
+    };
+    for name in &stopped_names {
+        let session_dir = {
             let registry = state.persistent_registry.lock().unwrap();
-            let instances = state.instances.lock().unwrap();
-            registry
-                .list()
-                .filter(|e| !instances.contains_key(&e.name))
-                .map(|e| e.name.clone())
-                .collect()
+            registry.get(name).map(|e| e.session_dir.clone())
         };
-        for name in &stopped_names {
-            let session_dir = {
-                let registry = state.persistent_registry.lock().unwrap();
-                registry.get(name).map(|e| e.session_dir.clone())
-            };
-            if let Some(dir) = session_dir {
-                tokio::task::spawn_blocking(move || {
-                    let _ = std::fs::remove_dir_all(&dir);
-                });
-            }
-            let mut registry = state.persistent_registry.lock().unwrap();
-            let _ = registry.unregister(name);
-            persistent_purged += 1;
+        if let Some(dir) = session_dir {
+            let _ = tokio::task::spawn_blocking(move || std::fs::remove_dir_all(&dir)).await;
         }
+        let mut registry = state.persistent_registry.lock().unwrap();
+        let _ = registry.unregister(name);
+        persistent_purged += 1;
     }
 
     let purged = ephemeral_purged + persistent_purged;

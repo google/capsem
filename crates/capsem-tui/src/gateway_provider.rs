@@ -268,6 +268,8 @@ fn vm_response_to_summary(vm: VmSummary) -> SessionSummary {
             .or_else(|| vm.profile_status.clone())
             .unwrap_or_else(|| "default".to_string()),
         profile_status: vm.profile_status,
+        can_resume: vm.can_resume,
+        resume_blocked_reason: vm.resume_blocked_reason,
         branch: vm.profile_revision,
         persistent: vm.persistent,
         lifecycle,
@@ -565,6 +567,10 @@ struct VmSummary {
     profile_revision: Option<String>,
     #[serde(default)]
     profile_status: Option<String>,
+    #[serde(default)]
+    can_resume: bool,
+    #[serde(default)]
+    resume_blocked_reason: Option<String>,
     #[serde(default)]
     uptime_secs: Option<u64>,
     #[serde(default)]

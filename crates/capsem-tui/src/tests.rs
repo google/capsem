@@ -838,6 +838,37 @@ fn gateway_status_json_maps_to_tui_state() {
 }
 
 #[test]
+fn gateway_status_can_resume_false_blocks_tui_resume_even_when_profile_ready() {
+    let state = state_from_status_json_for_test(
+        r#"{
+            "service": "running",
+            "vms": [{
+                "id": "stale-vm",
+                "name": "Stale VM",
+                "status": "Stopped",
+                "persistent": true,
+                "profile_id": "code",
+                "profile_status": "current",
+                "can_resume": false,
+                "resume_blocked_reason": "profile payload hash drift"
+            }]
+        }"#,
+        std::time::Duration::from_millis(1),
+    )
+    .expect("parse service status");
+    let mut app = App::new(state);
+
+    let snapshot = render_app_snapshot(&app, 100, 24).expect("render non-resumable VM");
+    assert!(snapshot.contains("profile payload hash drift"));
+    assert!(!snapshot.contains("Press Enter to resume"));
+    assert_eq!(
+        app.handle_key(key(KeyCode::Char('r'), KeyModifiers::ALT)),
+        AppAction::Consumed
+    );
+    assert_eq!(app.pending_action(), None);
+}
+
+#[test]
 fn malformed_gateway_status_fails_state_mapping() {
     let error = state_from_status_json_for_test(
         r#"{"service":"running","vms":"not a list"}"#,

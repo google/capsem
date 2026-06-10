@@ -241,6 +241,9 @@ const MCP_CALL_COLUMNS_BASE: &str = "timestamp, server_name, method, tool_name, 
      policy_mode, policy_action, policy_rule, policy_reason,
      trace_id";
 
+const USER_MCP_CALL_FILTER: &str =
+    "method = 'tools/call' AND tool_name IS NOT NULL AND tool_name NOT LIKE 'local__snapshots_%'";
+
 /// Parse a model_calls row into (id, ModelCall). Column order must match MODEL_CALL_COLUMNS.
 fn read_model_call_row(row: &Row<'_>) -> rusqlite::Result<(i64, ModelCall)> {
     let ts_str: String = row.get(1)?;
@@ -1152,15 +1155,16 @@ impl DbReader {
 
     /// MCP tool usage grouped by tool_name with duration and response size.
     pub fn mcp_tool_usage(&self, limit: usize) -> rusqlite::Result<Vec<McpToolUsage>> {
-        let mut stmt = self.conn.prepare(
+        let sql = format!(
             "SELECT tool_name, server_name, COUNT(*) as cnt,
                     COALESCE(SUM(LENGTH(response_preview)), 0),
                     COALESCE(SUM(duration_ms), 0)
              FROM mcp_calls
-             WHERE tool_name IS NOT NULL
+             WHERE {USER_MCP_CALL_FILTER}
              GROUP BY tool_name
-             ORDER BY cnt DESC LIMIT ?1",
-        )?;
+             ORDER BY cnt DESC LIMIT ?1"
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
         let rows = stmt.query_map(params![limit as i64], |row| {
             Ok(McpToolUsage {
                 tool_name: row.get(0)?,
@@ -1436,16 +1440,18 @@ impl DbReader {
 
     /// Aggregate MCP call statistics. All aggregation done in SQL.
     pub fn mcp_call_stats(&self) -> rusqlite::Result<McpCallStats> {
-        let (total, allowed, warned, denied, errored) = self.conn.query_row(
+        let totals_sql = format!(
             "SELECT
                 COUNT(*),
                 COALESCE(SUM(CASE WHEN decision = 'allowed' THEN 1 ELSE 0 END), 0),
                 COALESCE(SUM(CASE WHEN decision = 'warned' THEN 1 ELSE 0 END), 0),
                 COALESCE(SUM(CASE WHEN decision = 'denied' THEN 1 ELSE 0 END), 0),
                 COALESCE(SUM(CASE WHEN decision = 'error' THEN 1 ELSE 0 END), 0)
-             FROM mcp_calls",
-            [],
-            |row| {
+             FROM mcp_calls
+             WHERE {USER_MCP_CALL_FILTER}"
+        );
+        let (total, allowed, warned, denied, errored) =
+            self.conn.query_row(&totals_sql, [], |row| {
                 Ok((
                     row.get::<_, i64>(0)? as u64,
                     row.get::<_, i64>(1)? as u64,
@@ -1453,18 +1459,19 @@ impl DbReader {
                     row.get::<_, i64>(3)? as u64,
                     row.get::<_, i64>(4)? as u64,
                 ))
-            },
-        )?;
+            })?;
 
-        let mut stmt = self.conn.prepare(
+        let by_server_sql = format!(
             "SELECT server_name,
                     COUNT(*) as cnt,
                     SUM(CASE WHEN decision = 'denied' THEN 1 ELSE 0 END),
                     SUM(CASE WHEN decision = 'warned' THEN 1 ELSE 0 END)
              FROM mcp_calls
+             WHERE {USER_MCP_CALL_FILTER}
              GROUP BY server_name
-             ORDER BY cnt DESC",
-        )?;
+             ORDER BY cnt DESC, server_name ASC"
+        );
+        let mut stmt = self.conn.prepare(&by_server_sql)?;
         let by_server = stmt.query_map([], |row| {
             Ok(McpServerCallCount {
                 server_name: row.get(0)?,
@@ -2209,6 +2216,33 @@ mod tests {
         assert_eq!(s.total_tool_calls, 0);
         assert_eq!(s.total_estimated_cost_usd, 0.0);
         assert!(s.total_usage_details.is_empty());
+    }
+
+    #[test]
+    fn mcp_call_stats_counts_user_tool_calls_not_protocol_or_snapshot_noise() {
+        let r = DbReader::open_in_memory().unwrap();
+        r.conn
+            .execute_batch(
+                "INSERT INTO mcp_calls (timestamp, server_name, method, tool_name, decision, duration_ms)
+                 VALUES
+                    ('2026-01-01T00:00:00Z', 'capsem', 'initialize', NULL, 'allowed', 1),
+                    ('2026-01-01T00:00:01Z', 'capsem', 'notifications/initialized', NULL, 'allowed', 1),
+                    ('2026-01-01T00:00:02Z', 'capsem', 'tools/list', NULL, 'allowed', 1),
+                    ('2026-01-01T00:00:03Z', 'capsem', 'tools/call', 'local__snapshots_changes', 'allowed', 4),
+                    ('2026-01-01T00:00:04Z', 'capsem', 'tools/call', 'local__fetch_http', 'allowed', 9),
+                    ('2026-01-01T00:00:05Z', 'github', 'tools/call', 'github__search', 'denied', 11);",
+            )
+            .unwrap();
+
+        let stats = r.mcp_call_stats().unwrap();
+        assert_eq!(stats.total, 2);
+        assert_eq!(stats.allowed, 1);
+        assert_eq!(stats.denied, 1);
+        assert_eq!(stats.by_server.len(), 2);
+        assert_eq!(stats.by_server[0].server_name, "capsem");
+        assert_eq!(stats.by_server[0].count, 1);
+        assert_eq!(stats.by_server[1].server_name, "github");
+        assert_eq!(stats.by_server[1].count, 1);
     }
 
     // -----------------------------------------------------------------------
