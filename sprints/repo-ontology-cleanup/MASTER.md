@@ -135,11 +135,12 @@ semantic routes that reflect backend enum fields with select boxes/toggles.
 
 Semantic profile routes are not allowed to edit profile files as invisible file
 I/O. Any route that mutates profile-owned files must go through one loaded
-`Profile` object. MCP, plugins, skills, default-rule edits, and future
+`Profile` object. MCP, plugins, skills, assets, default-rule edits, and future
 profile-owned config all use this same rail. `Profile` owns loading, path
-resolution, locking, hash verification, semantic mutation, save/reload, and
-mutation-ledger emission. Whether it internally uses smaller document/store
-helpers is an implementation detail, not an external contract.
+resolution, locking, hash verification, status/check/download, semantic
+mutation, save/reload, and mutation-ledger emission. Whether it internally uses
+smaller document/store helpers is an implementation detail, not an external
+contract.
 
 The center of gravity should be `Profile`, not scattered helpers. It represents
 `profile.toml` plus referenced sibling files (`enforcement.toml`,
@@ -147,21 +148,28 @@ The center of gravity should be `Profile`, not scattered helpers. It represents
 manifest, and future profile-owned files), and it can produce the effective
 read model for UI/TUI/runtime: MCP servers/tools with effective permissions,
 plugin states, skill states, compiled enforcement/detection rules, default
-rules, assets, and profile metadata.
+rules, asset readiness/download state, and profile metadata.
 
 Routes should call methods on `Profile`, for example
 `profile.set_mcp_tool_permission(server, tool, Ask)`, `profile.set_plugin_mode`,
-`profile.set_skill_enabled`, then `profile.save_and_reload()`. The object owns
-rule creation/update, ownership annotations, profile file hash updates,
-mutation-ledger writes, and reload invalidation. Routes must not duplicate that
-logic.
+`profile.set_skill_enabled`, `profile.status()`, `profile.check()`,
+`profile.download_assets()`, and `profile.save_and_reload()`. The object owns
+rule creation/update, ownership annotations, profile file hash updates, asset
+hash verification, asset download decisions/progress, mutation-ledger writes,
+and reload invalidation. Routes must not duplicate that logic.
+
+This is an invariant rail like `SecurityEvent`: if code needs profile truth, it
+goes through `Profile`. Service status, profile status, asset readiness,
+downloads, mutations, corp constraints, UI/TUI read models, forensic mutation
+records, and validation tests all meet there. That gives us one place to harden,
+benchmark, and refactor.
 
 Core shape:
 
 - `ProfileMutationRequest`: profile id, actor/source route, target, operation,
   value, optional expected profile/file hash;
 - `ProfileMutationTarget`: enum covering `mcp_server`, `mcp_tool`, `plugin`,
-  `skill`, `rule`, `profile_file`, and future targets;
+  `skill`, `asset`, `rule`, `profile_file`, and future targets;
 - `ProfileMutationCategory`: stable product category such as `mcp`, `plugin`,
   `skill`, `enforcement`, `detection`, `asset`, or `profile`;
 - target filename/path: the profile-owned file that will be mutated, for

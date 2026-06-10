@@ -99,12 +99,15 @@
   old/new hash and size, status, and error if any. No ad hoc route file edits
   and no side SQLite writes.
 - [ ] S1: Build the `Profile` object abstraction before wiring route
-  mutations. `Profile` owns load/path resolution/lock/verify/semantic
-  mutation/save/reload/ledger and represents `profile.toml` plus referenced
-  sibling files. Routes call semantic methods such as
+  mutations. `Profile` is the invariant rail for profile truth and owns
+  load/path resolution/lock/verify/status/check/download/semantic
+  mutation/save/reload/ledger/corp constraints. It represents `profile.toml`
+  plus referenced sibling files and assets. Routes call semantic methods such as
   `set_mcp_tool_permission`, `set_plugin_mode`, and `set_skill_enabled`;
-  routes must not parse/write profile files directly. Any smaller
-  document/store helpers are private implementation details.
+  asset routes call `status`, `check`, and `download_assets`; routes must not
+  parse/write profile files or duplicate asset readiness/download logic
+  directly. Any smaller document/store helpers are private implementation
+  details.
 - [ ] S1: Extend `SecurityRule` with optional typed ownership annotations for
   backend-managed semantic rules. Enforce uniqueness for MCP server/tool,
   plugin, and skill targets so routes update the one owned rule instead of
