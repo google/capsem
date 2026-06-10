@@ -56,6 +56,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Moved the code profile ledger to `config/profiles/code/profile.toml` and
   materialize generated/installed profiles with the same directory shape, so
   source and runtime config use one profile path contract.
+- Added profile-owned VM base-image OBOM evidence: materialized profiles can
+  pin `obom.cdx.json` with BLAKE3 hash, size, cdxgen generator metadata, and
+  the rootfs hash it describes, and `/profiles/{id}/info` plus
+  `/profiles/{id}/obom` expose that base-image-only contract.
 
 ### Added (kernel 7.0 + EROFS)
 - Added a stable-kernel upgrade path for guest builds: `kernel_branch = "7.0"`

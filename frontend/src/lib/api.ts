@@ -144,8 +144,31 @@ export interface ProfilesListResponse {
   profiles: ProfileSummary[];
 }
 
+export interface ProfileObomInfo {
+  profile_id: string;
+  current_arch: string;
+  scope: 'base_image';
+  format: string;
+  name: string;
+  url: string;
+  hash: string;
+  size: number;
+  generator: string;
+  generator_version: string;
+  rootfs_hash: string;
+  route: string;
+}
+
 export interface ProfileInfoResponse {
   profile: ProfileSummary;
+  obom?: ProfileObomInfo | null;
+}
+
+export interface ProfileObomResponse {
+  profile_id: string;
+  current_arch: string;
+  obom: ProfileObomInfo;
+  document?: unknown;
 }
 
 export interface ProfileValidateRequest {
@@ -805,6 +828,11 @@ export async function listProfiles(): Promise<ProfilesListResponse> {
 
 export async function getProfileInfo(profileId: string): Promise<ProfileInfoResponse> {
   const resp = await _get(`/profiles/${encodeURIComponent(profileId)}/info`);
+  return await resp.json();
+}
+
+export async function getProfileObom(profileId: string): Promise<ProfileObomResponse> {
+  const resp = await _get(`/profiles/${encodeURIComponent(profileId)}/obom`);
   return await resp.json();
 }
 

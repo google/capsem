@@ -89,6 +89,15 @@
   declared package input hashes, installed package names, installed versions,
   and local package/artifact hashes where available for apt, Python/uv, npm,
   and manual installers.
+- [ ] S3: Use `cdxgen/cdxgen` as the preferred OBOM generator (`obom` /
+  `cdxgen -t os`) for the produced Linux rootfs/VM image, and record OBOM path,
+  BLAKE3 hash, generator, and generator version in the profile/build evidence.
+- [x] S3: Add the profile OBOM contract and runtime API: profile TOML accepts
+  `obom.arch.<arch>` descriptors with BLAKE3 hash, size, generator metadata, and
+  service/gateway expose `/profiles/{id}/obom` plus `/profiles/{id}/info`.
+- [x] S3: Teach `capsem-admin profile materialize` to attach a pinned
+  `obom.cdx.json` when the asset manifest lists one; local OBOM documents are
+  served only after size and BLAKE3 verification.
 - [ ] S4: Documentation and skill cleanup.
 - [ ] S4: Update public docs and internal skills after ontology paths land;
   stale `guest/config` guidance is a release hold.

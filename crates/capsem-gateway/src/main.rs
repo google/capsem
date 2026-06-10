@@ -262,6 +262,7 @@ fn service_proxy_routes() -> Router<Arc<AppState>> {
         .route("/profiles/reload", post(proxy::handle_proxy))
         .route("/profiles/create", post(proxy::handle_proxy))
         .route("/profiles/{profile_id}/info", get(proxy::handle_proxy))
+        .route("/profiles/{profile_id}/obom", get(proxy::handle_proxy))
         .route("/profiles/{profile_id}/edit", patch(proxy::handle_proxy))
         .route("/profiles/{profile_id}/delete", delete(proxy::handle_proxy))
         .route("/profiles/{profile_id}/clone", post(proxy::handle_proxy))
@@ -564,6 +565,7 @@ mod tests {
             ("POST", "/profiles/reload"),
             ("POST", "/profiles/create"),
             ("GET", "/profiles/code/info"),
+            ("GET", "/profiles/code/obom"),
             ("PATCH", "/profiles/code/edit"),
             ("DELETE", "/profiles/code/delete"),
             ("POST", "/profiles/code/clone"),

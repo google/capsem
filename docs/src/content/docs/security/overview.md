@@ -34,7 +34,7 @@ Capsem sandboxes AI agents inside Linux VMs. The security model treats the guest
 | **Kernel hardening** | No modules, no debugfs, no IPv6, no swap, read-only rootfs | Reduces guest kernel attack surface |
 | **Network isolation** | Air-gapped NIC, DNS proxy, iptables, MITM proxy | DNS and HTTPS are funneled through audited host policy handlers |
 | **Filesystem sandboxing** | VirtioFS with path validation, resource limits | Guest confined to workspace directory |
-| **Build verification** | Code signing, notarization, SBOM | Host binary integrity |
+| **Build verification** | Code signing, notarization, SBOM, OBOM | Host binary and VM base-image integrity |
 
 ## Trust Boundaries
 

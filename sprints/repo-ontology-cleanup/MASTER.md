@@ -87,6 +87,12 @@ Build rule:
   package/artifact hashes when apt, Python/uv, npm, or a manual installer gives
   us enough local metadata to compute them. The release/debug answer must be
   "this is what is running in the VM", not "this is what the profile requested."
+- Preferred OBOM generator: `cdxgen/cdxgen` using its CycloneDX OBOM path
+  (`obom`, equivalent to `cdxgen -t os`) against the produced Linux rootfs or
+  image. Capsem can enrich that document with profile id, profile hash, asset
+  hash, build-ledger hash, and cdxgen version, but it must not invent a
+  parallel package inventory format unless cdxgen is unavailable in a local dev
+  smoke path.
 - The builder copies `config/profiles/<profile_id>/root/` into a stable seed
   path inside the rootfs, not directly into runtime `/root`.
 - `capsem-init` copies the seed into runtime `/` after tmpfs/overlay mounts are
@@ -250,6 +256,12 @@ Rule for this sprint: a path is allowed only if it is one of:
 - [ ] Build ledger records the actually installed apt/Python/npm/manual package
   set with names, versions, declared input hashes, and local package/artifact
   hashes where available.
+- [ ] Generate a CycloneDX OBOM with `cdxgen/cdxgen` (`obom` / `cdxgen -t os`)
+  for each produced profile/arch rootfs and include its path, hash, generator,
+  and generator version in the profile build ledger.
+- [x] Profile schema/API/admin materialization know how to carry the generated
+  OBOM: it is base-image scope only, has its own BLAKE3 hash, and records the
+  rootfs hash it describes.
 - [ ] Add an explicit release refresh/cache-bust path for npm/curl/apt tool
   installation.
 - [ ] Verify Codex, Claude, Gemini, and AGY versions in doctor output.

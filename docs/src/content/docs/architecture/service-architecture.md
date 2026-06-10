@@ -223,6 +223,7 @@ the root.
 | POST | `/profiles/{profile_id}/clone` | Clone a profile |
 | POST | `/profiles/{profile_id}/validate` | Validate a profile |
 | POST | `/profiles/{profile_id}/reload` | Reload one profile |
+| GET | `/profiles/{profile_id}/obom` | Base-image CycloneDX OBOM metadata and local document when installed |
 | POST | `/profiles/{profile_id}/enforcement/evaluate` | Evaluate a supplied security event against enforcement rules |
 | GET | `/profiles/{profile_id}/enforcement/info` | Enforcement file/config info |
 | GET | `/profiles/{profile_id}/enforcement/rules/list` | Compiled enforcement rules |

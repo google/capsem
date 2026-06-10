@@ -227,6 +227,33 @@ pub struct ProfilesListResponse {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct ProfileInfoResponse {
     pub profile: ProfileSummary,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub obom: Option<ProfileObomInfo>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct ProfileObomInfo {
+    pub profile_id: String,
+    pub current_arch: String,
+    pub scope: String,
+    pub format: String,
+    pub name: String,
+    pub url: String,
+    pub hash: String,
+    pub size: u64,
+    pub generator: String,
+    pub generator_version: String,
+    pub rootfs_hash: String,
+    pub route: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct ProfileObomResponse {
+    pub profile_id: String,
+    pub current_arch: String,
+    pub obom: ProfileObomInfo,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub document: Option<serde_json::Value>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]

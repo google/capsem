@@ -468,12 +468,53 @@ describe('api', () => {
           plugin_count: 1,
           mcp_server_count: 0,
         },
+        obom: {
+          profile_id: 'code',
+          current_arch: 'arm64',
+          scope: 'base_image',
+          format: 'cyclonedx-obom.v1',
+          name: 'obom.cdx.json',
+          url: 'file:///tmp/capsem/obom.cdx.json',
+          hash: `blake3:${'1'.repeat(64)}`,
+          size: 123,
+          generator: 'cdxgen',
+          generator_version: '11.0.0',
+          rootfs_hash: `blake3:${'2'.repeat(64)}`,
+          route: '/profiles/code/obom',
+        },
       };
       mockFetch.mockReturnValueOnce(jsonResponse(info));
       const result = await api.getProfileInfo('code');
       expect(result).toEqual(info);
       const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
       expect(call[0]).toContain('/profiles/code/info');
+    });
+
+    it('getProfileObom sends GET /profiles/{profile_id}/obom', async () => {
+      const response = {
+        profile_id: 'code',
+        current_arch: 'arm64',
+        obom: {
+          profile_id: 'code',
+          current_arch: 'arm64',
+          scope: 'base_image',
+          format: 'cyclonedx-obom.v1',
+          name: 'obom.cdx.json',
+          url: 'file:///tmp/capsem/obom.cdx.json',
+          hash: `blake3:${'1'.repeat(64)}`,
+          size: 123,
+          generator: 'cdxgen',
+          generator_version: '11.0.0',
+          rootfs_hash: `blake3:${'2'.repeat(64)}`,
+          route: '/profiles/code/obom',
+        },
+        document: { bomFormat: 'CycloneDX' },
+      };
+      mockFetch.mockReturnValueOnce(jsonResponse(response));
+      const result = await api.getProfileObom('code');
+      expect(result).toEqual(response);
+      const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
+      expect(call[0]).toContain('/profiles/code/obom');
     });
 
     it('validateProfile sends POST /profiles/{profile_id}/validate', async () => {

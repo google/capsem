@@ -943,6 +943,86 @@ async fn mounted_read_routes_reflect_profile_settings_corp_mcp_and_assets_contra
 }
 
 #[tokio::test]
+async fn profile_info_and_obom_route_expose_base_image_obom_hash() {
+    let dir = tempfile::tempdir().unwrap();
+    let profiles_dir = dir.path().join("profiles");
+    let profile_dir = profiles_dir.join("code");
+    std::fs::create_dir_all(&profile_dir).unwrap();
+    let obom_doc = json!({
+        "bomFormat": "CycloneDX",
+        "specVersion": "1.6",
+        "metadata": {
+            "component": {
+                "name": "capsem-code-rootfs",
+                "type": "operating-system"
+            }
+        },
+        "components": [
+            {"name": "bash", "version": "5.2", "type": "library"}
+        ]
+    });
+    let obom_bytes = serde_json::to_vec(&obom_doc).unwrap();
+    let obom_hash = blake3::hash(&obom_bytes).to_hex().to_string();
+    let obom_path = profile_dir.join("obom.cdx.json");
+    std::fs::write(&obom_path, &obom_bytes).unwrap();
+
+    let arch = capsem_core::net::policy_config::current_profile_arch().to_string();
+    let mut profile = ProfileConfigFile::builtin_code();
+    profile.rule_files.enforcement = None;
+    profile.rule_files.sigma = None;
+    profile.obom = Some(ProfileObomConfig {
+        format: "cyclonedx-obom.v1".to_string(),
+        arch: [(
+            arch.clone(),
+            ProfileObomDescriptor {
+                name: "obom.cdx.json".to_string(),
+                url: format!("file://{}", obom_path.display()),
+                hash: format!("blake3:{obom_hash}"),
+                size: obom_bytes.len() as u64,
+                generator: "cdxgen".to_string(),
+                generator_version: "11.0.0".to_string(),
+            },
+        )]
+        .into_iter()
+        .collect(),
+    });
+    std::fs::write(
+        profile_dir.join("profile.toml"),
+        toml::to_string(&profile).unwrap(),
+    )
+    .unwrap();
+    let _profiles_guard = EnvVarGuard::set("CAPSEM_PROFILES_DIR", &profiles_dir);
+
+    let state = make_test_state();
+    let app = build_service_router(state);
+
+    let (status, info) = route_request(
+        app.clone(),
+        axum::http::Method::GET,
+        "/profiles/code/info",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(info["obom"]["hash"], format!("blake3:{obom_hash}"));
+    assert_eq!(info["obom"]["scope"], "base_image");
+    assert_eq!(
+        info["obom"]["rootfs_hash"],
+        profile.assets.current_arch_assets().unwrap().rootfs.hash
+    );
+    assert_eq!(info["obom"]["route"], "/profiles/code/obom");
+
+    let (status, obom) =
+        route_request(app, axum::http::Method::GET, "/profiles/code/obom", None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(obom["profile_id"], "code");
+    assert_eq!(obom["current_arch"], arch);
+    assert_eq!(obom["obom"]["hash"], format!("blake3:{obom_hash}"));
+    assert_eq!(obom["obom"]["scope"], "base_image");
+    assert_eq!(obom["document"], obom_doc);
+}
+
+#[tokio::test]
 async fn mounted_corp_routes_validate_install_report_and_reload_inline_toml() {
     let _env_lock = SETTINGS_ENV_LOCK.lock().await;
 

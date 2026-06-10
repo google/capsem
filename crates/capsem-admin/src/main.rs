@@ -9,8 +9,8 @@ use std::{
 use anyhow::{anyhow, Context, Result};
 use capsem_core::asset_manager::ManifestV2;
 use capsem_core::net::policy_config::{
-    resolve_profile_rule_file_path, CompiledSecurityRule, ProfileConfigFile, SecurityRuleProfile,
-    SecurityRuleSet, SecurityRuleSource,
+    resolve_profile_rule_file_path, CompiledSecurityRule, ProfileConfigFile, ProfileObomConfig,
+    ProfileObomDescriptor, SecurityRuleProfile, SecurityRuleSet, SecurityRuleSource,
 };
 use clap::{Parser, Subcommand};
 use serde::{Deserialize, Serialize};
@@ -350,6 +350,7 @@ struct ProfileMaterializeReport {
     manifest: String,
     current_assets: String,
     materialized_assets: Vec<ProfileMaterializedAssetReport>,
+    materialized_obom: Vec<ProfileMaterializedObomReport>,
 }
 
 #[derive(Debug, Serialize)]
@@ -359,6 +360,18 @@ struct ProfileMaterializedAssetReport {
     url: String,
     hash: String,
     size: u64,
+}
+
+#[derive(Debug, Serialize)]
+struct ProfileMaterializedObomReport {
+    arch: String,
+    url: String,
+    hash: String,
+    size: u64,
+    generator: String,
+    generator_version: String,
+    rootfs_hash: String,
+    scope: &'static str,
 }
 
 #[derive(Debug, Serialize)]
@@ -898,6 +911,7 @@ fn materialize_profile_config(args: &ProfileMaterializeArgs) -> Result<ProfileMa
 
     let selected_arches = selected_profile_arches(&profile, args.arch.as_deref())?;
     let mut materialized_assets = Vec::new();
+    let mut materialized_obom = Vec::new();
     for arch in selected_arches {
         let manifest_assets = current_release.arches.get(&arch).ok_or_else(|| {
             anyhow!(
@@ -906,31 +920,42 @@ fn materialize_profile_config(args: &ProfileMaterializeArgs) -> Result<ProfileMa
                 manifest.assets.current
             )
         })?;
-        let profile_assets = profile
-            .assets
-            .arch
-            .get_mut(&arch)
-            .expect("arch came from selected_profile_arches");
-        materialize_profile_asset_descriptor(
+        let rootfs_hash = {
+            let profile_assets = profile
+                .assets
+                .arch
+                .get_mut(&arch)
+                .expect("arch came from selected_profile_arches");
+            materialize_profile_asset_descriptor(
+                &args.assets_dir,
+                &arch,
+                &mut profile_assets.kernel,
+                manifest_assets,
+                &mut materialized_assets,
+            )?;
+            materialize_profile_asset_descriptor(
+                &args.assets_dir,
+                &arch,
+                &mut profile_assets.initrd,
+                manifest_assets,
+                &mut materialized_assets,
+            )?;
+            materialize_profile_asset_descriptor(
+                &args.assets_dir,
+                &arch,
+                &mut profile_assets.rootfs,
+                manifest_assets,
+                &mut materialized_assets,
+            )?;
+            profile_assets.rootfs.hash.clone()
+        };
+        materialize_profile_obom_descriptor(
             &args.assets_dir,
             &arch,
-            &mut profile_assets.kernel,
             manifest_assets,
-            &mut materialized_assets,
-        )?;
-        materialize_profile_asset_descriptor(
-            &args.assets_dir,
-            &arch,
-            &mut profile_assets.initrd,
-            manifest_assets,
-            &mut materialized_assets,
-        )?;
-        materialize_profile_asset_descriptor(
-            &args.assets_dir,
-            &arch,
-            &mut profile_assets.rootfs,
-            manifest_assets,
-            &mut materialized_assets,
+            rootfs_hash,
+            &mut profile,
+            &mut materialized_obom,
         )?;
     }
 
@@ -986,6 +1011,7 @@ fn materialize_profile_config(args: &ProfileMaterializeArgs) -> Result<ProfileMa
         manifest: manifest_output.display().to_string(),
         current_assets: manifest.assets.current,
         materialized_assets,
+        materialized_obom,
     })
 }
 
@@ -1019,6 +1045,121 @@ fn materialize_profile_asset_descriptor(
         size: descriptor.size,
     });
     Ok(())
+}
+
+fn materialize_profile_obom_descriptor(
+    assets_dir: &Path,
+    arch: &str,
+    manifest_assets: &std::collections::HashMap<String, capsem_core::asset_manager::AssetEntry>,
+    rootfs_hash: String,
+    profile: &mut ProfileConfigFile,
+    reports: &mut Vec<ProfileMaterializedObomReport>,
+) -> Result<()> {
+    let Some(entry) = manifest_assets.get("obom.cdx.json") else {
+        return Ok(());
+    };
+    let check = check_local_asset(assets_dir, arch, "obom.cdx.json", &entry.hash, entry.size)?;
+    fail_if_local_asset_checks_failed("profile materialize OBOM check", &[check])?;
+    let obom_path = assets_dir.join(arch).join("obom.cdx.json");
+    let obom_path = obom_path
+        .canonicalize()
+        .with_context(|| format!("canonicalize {}", obom_path.display()))?;
+    let (generator, generator_version) = read_obom_generator(&obom_path)?;
+    let descriptor = ProfileObomDescriptor {
+        name: "obom.cdx.json".to_string(),
+        url: format!("file://{}", obom_path.display()),
+        hash: format!("blake3:{}", entry.hash),
+        size: entry.size,
+        generator: generator.clone(),
+        generator_version: generator_version.clone(),
+    };
+    profile
+        .obom
+        .get_or_insert_with(|| ProfileObomConfig {
+            format: "cyclonedx-obom.v1".to_string(),
+            arch: BTreeMap::new(),
+        })
+        .arch
+        .insert(arch.to_string(), descriptor.clone());
+    reports.push(ProfileMaterializedObomReport {
+        arch: arch.to_string(),
+        url: descriptor.url,
+        hash: descriptor.hash,
+        size: descriptor.size,
+        generator,
+        generator_version,
+        rootfs_hash,
+        scope: "base_image",
+    });
+    Ok(())
+}
+
+fn read_obom_generator(path: &Path) -> Result<(String, String)> {
+    let content = fs::read_to_string(path)
+        .with_context(|| format!("read CycloneDX OBOM {}", path.display()))?;
+    let document: serde_json::Value = serde_json::from_str(&content)
+        .with_context(|| format!("parse CycloneDX OBOM {}", path.display()))?;
+    let metadata = document
+        .get("metadata")
+        .ok_or_else(|| anyhow!("CycloneDX OBOM {} is missing metadata", path.display()))?;
+    let tools = metadata.get("tools").ok_or_else(|| {
+        anyhow!(
+            "CycloneDX OBOM {} is missing metadata.tools",
+            path.display()
+        )
+    })?;
+    let candidates: Vec<&serde_json::Value> = tools
+        .get("components")
+        .and_then(|components| components.as_array())
+        .map(|components| components.iter().collect())
+        .or_else(|| tools.as_array().map(|tools| tools.iter().collect()))
+        .unwrap_or_default();
+    let preferred = candidates
+        .iter()
+        .copied()
+        .find(|candidate| {
+            candidate
+                .get("name")
+                .and_then(|name| name.as_str())
+                .is_some_and(|name| name.eq_ignore_ascii_case("cdxgen"))
+        })
+        .or_else(|| {
+            candidates.iter().copied().find(|candidate| {
+                candidate
+                    .get("name")
+                    .and_then(|name| name.as_str())
+                    .is_some()
+                    && candidate
+                        .get("version")
+                        .and_then(|version| version.as_str())
+                        .is_some()
+            })
+        })
+        .ok_or_else(|| {
+            anyhow!(
+                "CycloneDX OBOM {} must record a generator name and version in metadata.tools",
+                path.display()
+            )
+        })?;
+    let name = preferred
+        .get("name")
+        .and_then(|name| name.as_str())
+        .ok_or_else(|| {
+            anyhow!(
+                "CycloneDX OBOM {} generator is missing name",
+                path.display()
+            )
+        })?;
+    let version = preferred
+        .get("version")
+        .and_then(|version| version.as_str())
+        .ok_or_else(|| {
+            anyhow!(
+                "CycloneDX OBOM {} generator is missing version",
+                path.display()
+            )
+        })?;
+    Ok((name.to_string(), version.to_string()))
 }
 
 fn copy_dir_recursive(source: &Path, destination: &Path) -> Result<()> {
@@ -2467,6 +2608,7 @@ decision = "block"
 
         assert_eq!(report.profile_id, "code");
         assert_eq!(report.materialized_assets.len(), 3);
+        assert_eq!(report.materialized_obom.len(), 1);
         assert!(output_root.join("settings.toml").is_file());
         assert!(output_root.join("corp.toml").is_file());
         assert!(output_root.join("assets/manifest.json").is_file());
@@ -2487,6 +2629,23 @@ decision = "block"
         );
         assert_eq!(arm64.initrd.size, b"initrd-arm64".len() as u64);
         assert_eq!(arm64.rootfs.name, "rootfs.erofs");
+        let obom = generated
+            .obom
+            .as_ref()
+            .expect("materialized profile has base-image OBOM")
+            .arch
+            .get("arm64")
+            .expect("arm64 OBOM");
+        assert!(obom.url.starts_with("file://"));
+        assert_eq!(
+            obom.hash,
+            format!(
+                "blake3:{}",
+                blake3::hash(test_obom_json().as_bytes()).to_hex()
+            )
+        );
+        assert_eq!(obom.generator, "cdxgen");
+        assert_eq!(obom.generator_version, "11.0.0");
 
         let validation =
             validate_profile(&generated_profile_path, Some(&output_root)).expect("valid output");
@@ -2572,9 +2731,11 @@ decision = "block"
         let kernel = format!("kernel-{arch}");
         let initrd = format!("initrd-{arch}");
         let rootfs = format!("rootfs-{arch}");
+        let obom = test_obom_json();
         fs::write(assets_dir.join("vmlinuz"), kernel.as_bytes()).expect("kernel");
         fs::write(assets_dir.join("initrd.img"), initrd.as_bytes()).expect("initrd");
         fs::write(assets_dir.join("rootfs.erofs"), rootfs.as_bytes()).expect("rootfs");
+        fs::write(assets_dir.join("obom.cdx.json"), obom.as_bytes()).expect("obom");
         let manifest_path = root.join("assets/manifest.json");
         fs::write(
             &manifest_path,
@@ -2593,7 +2754,8 @@ decision = "block"
           "{arch}": {{
             "vmlinuz": {{"hash": "{kernel_hash}", "size": {kernel_size}}},
             "initrd.img": {{"hash": "{initrd_hash}", "size": {initrd_size}}},
-            "rootfs.erofs": {{"hash": "{rootfs_hash}", "size": {rootfs_size}}}
+            "rootfs.erofs": {{"hash": "{rootfs_hash}", "size": {rootfs_size}}},
+            "obom.cdx.json": {{"hash": "{obom_hash}", "size": {obom_size}}}
           }}
         }}
       }}
@@ -2611,9 +2773,33 @@ decision = "block"
                 initrd_size = initrd.len(),
                 rootfs_hash = blake3::hash(rootfs.as_bytes()).to_hex(),
                 rootfs_size = rootfs.len(),
+                obom_hash = blake3::hash(obom.as_bytes()).to_hex(),
+                obom_size = obom.len(),
             ),
         )
         .expect("manifest");
         manifest_path
+    }
+
+    fn test_obom_json() -> String {
+        serde_json::json!({
+            "bomFormat": "CycloneDX",
+            "specVersion": "1.6",
+            "metadata": {
+                "tools": {
+                    "components": [
+                        {"name": "cdxgen", "version": "11.0.0", "type": "application"}
+                    ]
+                },
+                "component": {
+                    "name": "capsem-code-rootfs",
+                    "type": "operating-system"
+                }
+            },
+            "components": [
+                {"name": "bash", "version": "5.2", "type": "library"}
+            ]
+        })
+        .to_string()
     }
 }

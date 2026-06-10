@@ -10,9 +10,9 @@ use capsem_core::{
     mcp::policy::{McpManualServer, McpUserConfig},
     net::policy_config::{
         CompiledSecurityRule, DetectionLevel, ProfileAssetDescriptor, ProfileCatalog,
-        ProfileCatalogSource, ProfileConfigFile, ProviderRuleProfile, SecurityPluginConfig,
-        SecurityPluginMode, SecurityRule, SecurityRuleGroup, SecurityRuleProfile, SecurityRuleSet,
-        SecurityRuleSource, SettingsFile,
+        ProfileCatalogSource, ProfileConfigFile, ProfileObomConfig, ProfileObomDescriptor,
+        ProviderRuleProfile, SecurityPluginConfig, SecurityPluginMode, SecurityRule,
+        SecurityRuleGroup, SecurityRuleProfile, SecurityRuleSet, SecurityRuleSource, SettingsFile,
     },
     security_engine::{
         FileSecurityEvent, RuntimeSecurityEventType, SecurityActionRegistry, SecurityEmitError,
@@ -4405,7 +4405,105 @@ async fn handle_profile_info(
             &corp,
             effective_plugin_policy(&state, &manifest.id).len(),
         ),
+        obom: profile_obom_info(manifest),
     }))
+}
+
+fn profile_obom_info(profile: &ProfileConfigFile) -> Option<api::ProfileObomInfo> {
+    let obom = profile.obom.as_ref()?;
+    let current_arch = capsem_core::net::policy_config::current_profile_arch().to_string();
+    let descriptor = obom.current_arch_obom()?;
+    let rootfs_hash = profile
+        .assets
+        .current_arch_assets()
+        .map(|assets| assets.rootfs.hash.clone())?;
+    Some(api::ProfileObomInfo {
+        profile_id: profile.id.clone(),
+        current_arch,
+        scope: "base_image".to_string(),
+        format: obom.format.clone(),
+        name: descriptor.name.clone(),
+        url: descriptor.url.clone(),
+        hash: descriptor.hash.clone(),
+        size: descriptor.size,
+        generator: descriptor.generator.clone(),
+        generator_version: descriptor.generator_version.clone(),
+        rootfs_hash,
+        route: format!("/profiles/{}/obom", profile.id),
+    })
+}
+
+async fn handle_profile_obom(
+    Path(profile_id): Path<String>,
+) -> Result<Json<api::ProfileObomResponse>, AppError> {
+    let profile = profile_manifest_for_route(profile_id)?;
+    let obom = profile_obom_info(&profile).ok_or_else(|| {
+        AppError(
+            StatusCode::NOT_FOUND,
+            format!(
+                "profile {} has no OBOM for current architecture",
+                profile.id
+            ),
+        )
+    })?;
+    let document = if let Some(path) = obom.url.strip_prefix("file://") {
+        Some(read_local_profile_obom(StdPath::new(path), &obom)?)
+    } else {
+        None
+    };
+    Ok(Json(api::ProfileObomResponse {
+        profile_id: profile.id.clone(),
+        current_arch: obom.current_arch.clone(),
+        obom,
+        document,
+    }))
+}
+
+fn read_local_profile_obom(
+    path: &StdPath,
+    info: &api::ProfileObomInfo,
+) -> Result<serde_json::Value, AppError> {
+    let bytes = std::fs::read(path).map_err(|error| {
+        AppError(
+            StatusCode::NOT_FOUND,
+            format!("read profile OBOM {}: {error}", path.display()),
+        )
+    })?;
+    if bytes.len() as u64 != info.size {
+        return Err(AppError(
+            StatusCode::PRECONDITION_FAILED,
+            format!(
+                "profile OBOM size mismatch for {}: expected {}, got {}",
+                path.display(),
+                info.size,
+                bytes.len()
+            ),
+        ));
+    }
+    let actual_hash = blake3::hash(&bytes).to_hex().to_string();
+    let expected_hash = info.hash.strip_prefix("blake3:").ok_or_else(|| {
+        AppError(
+            StatusCode::PRECONDITION_FAILED,
+            format!("profile OBOM hash must use blake3:<hex>, got {}", info.hash),
+        )
+    })?;
+    if actual_hash != expected_hash {
+        return Err(AppError(
+            StatusCode::PRECONDITION_FAILED,
+            format!(
+                "profile OBOM hash mismatch for {}: expected {}, got {}",
+                path.display(),
+                expected_hash,
+                actual_hash
+            ),
+        ));
+    }
+    serde_json::from_slice(&bytes).map_err(|error| {
+        AppError(
+            StatusCode::PRECONDITION_FAILED,
+            format!("parse profile OBOM {}: {error}", path.display()),
+        )
+    })
 }
 
 fn profile_persistence_not_implemented(operation: &str) -> AppError {
@@ -7022,6 +7120,7 @@ fn build_service_router(state: Arc<ServiceState>) -> Router {
         .route("/profiles/reload", post(handle_profiles_reload))
         .route("/profiles/create", post(handle_profile_create))
         .route("/profiles/{profile_id}/info", get(handle_profile_info))
+        .route("/profiles/{profile_id}/obom", get(handle_profile_obom))
         .route("/profiles/{profile_id}/edit", patch(handle_profile_edit))
         .route(
             "/profiles/{profile_id}/delete",

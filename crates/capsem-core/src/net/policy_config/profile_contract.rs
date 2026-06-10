@@ -44,6 +44,8 @@ pub struct ProfileConfigFile {
     pub plugins: BTreeMap<String, SecurityPluginConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mcp: Option<crate::mcp::policy::McpUserConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub obom: Option<ProfileObomConfig>,
     #[serde(default)]
     pub skills: ProfileSkills,
 }
@@ -100,6 +102,24 @@ pub struct ProfileAssetDescriptor {
     pub size: u64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProfileObomConfig {
+    pub format: String,
+    pub arch: BTreeMap<String, ProfileObomDescriptor>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProfileObomDescriptor {
+    pub name: String,
+    pub url: String,
+    pub hash: String,
+    pub size: u64,
+    pub generator: String,
+    pub generator_version: String,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProfileVmDefaults {
@@ -149,6 +169,9 @@ impl ProfileConfigFile {
             }
         }
         self.assets.validate()?;
+        if let Some(obom) = &self.obom {
+            obom.validate()?;
+        }
         self.vm.validate()?;
         self.skills.validate()?;
         if let Some(mcp) = &self.mcp {
@@ -322,6 +345,50 @@ impl ProfileArchAssets {
             .validate(&format!("profile.assets.arch.{arch}.initrd"))?;
         self.rootfs
             .validate(&format!("profile.assets.arch.{arch}.rootfs"))?;
+        Ok(())
+    }
+}
+
+impl ProfileObomConfig {
+    fn validate(&self) -> Result<(), String> {
+        validate_non_empty("profile.obom.format", &self.format)?;
+        if self.format != "cyclonedx-obom.v1" {
+            return Err("profile.obom.format must be cyclonedx-obom.v1".to_string());
+        }
+        if self.arch.is_empty() {
+            return Err("profile.obom.arch must define at least one architecture".to_string());
+        }
+        for (arch, descriptor) in &self.arch {
+            validate_arch_key(arch)?;
+            descriptor.validate(&format!("profile.obom.arch.{arch}"))?;
+        }
+        Ok(())
+    }
+
+    pub fn current_arch_obom(&self) -> Option<&ProfileObomDescriptor> {
+        self.arch.get(current_profile_arch())
+    }
+}
+
+impl ProfileObomDescriptor {
+    fn validate(&self, field: &str) -> Result<(), String> {
+        validate_non_empty(&format!("{field}.name"), &self.name)?;
+        validate_non_empty(&format!("{field}.url"), &self.url)?;
+        if !(self.url.starts_with("https://") || self.url.starts_with("file://")) {
+            return Err(format!("{field}.url must use https:// or file://"));
+        }
+        if self.url.contains("..") || self.url.contains('\\') {
+            return Err(format!("{field}.url must not contain path traversal"));
+        }
+        validate_blake3_hash(&format!("{field}.hash"), &self.hash)?;
+        if self.size == 0 {
+            return Err(format!("{field}.size must be greater than 0"));
+        }
+        validate_non_empty(&format!("{field}.generator"), &self.generator)?;
+        validate_non_empty(
+            &format!("{field}.generator_version"),
+            &self.generator_version,
+        )?;
         Ok(())
     }
 }

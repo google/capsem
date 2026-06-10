@@ -63,9 +63,9 @@ xcrun stapler staple Capsem-$VERSION.pkg
 
 Stapling embeds the notarization ticket in the artifact so macOS can verify it offline.
 
-## SBOM
+## SBOM and OBOM
 
-A Software Bill of Materials is generated for every release using `cargo-sbom`:
+Host binaries publish a Software Bill of Materials using `cargo-sbom`:
 
 ```
 cargo sbom --output-format spdx_json_2_3 > capsem-sbom.spdx.json
@@ -78,6 +78,25 @@ cargo sbom --output-format spdx_json_2_3 > capsem-sbom.spdx.json
 | Published as | `capsem-sbom.spdx.json` in GitHub release |
 | Attestation | SBOM attested against DMG and deb artifacts |
 
+VM base images publish an Operations Bill of Materials as CycloneDX JSON. The
+preferred generator is `cdxgen` in OBOM mode (`obom`, equivalent to
+`cdxgen -t os`) against the produced Linux rootfs image or mounted rootfs
+directory.
+
+| Field | Value |
+|-------|-------|
+| Format | CycloneDX OBOM JSON |
+| Scope | Base Linux VM image only |
+| Excludes | User session mutations, workspace writes, and post-boot state |
+| Published as | `obom.cdx.json` with profile assets |
+| Integrity | BLAKE3 hash stored in the materialized profile |
+| Runtime API | `GET /profiles/{profile_id}/info` and `GET /profiles/{profile_id}/obom` |
+
+The profile OBOM descriptor records the OBOM file URL, BLAKE3 hash, size,
+generator, generator version, and the rootfs BLAKE3 hash it describes. Runtime
+routes expose the descriptor as profile evidence; local OBOM documents are
+served only after size and BLAKE3 verification.
+
 ## SLSA attestation
 
 Release artifacts receive [SLSA build provenance](https://slsa.dev/) attestation via `actions/attest-build-provenance@v4`:
@@ -89,6 +108,7 @@ Release artifacts receive [SLSA build provenance](https://slsa.dev/) attestation
 | `rootfs.erofs` (arm64) | Build provenance |
 | `rootfs.erofs` (x86_64) | Build provenance |
 | `.dmg`, `.deb` | SBOM (SPDX 2.3) |
+| `rootfs.erofs` | OBOM (CycloneDX JSON) |
 
 Attestations are published to the GitHub Attestations API and can be verified with `gh attestation verify`.
 

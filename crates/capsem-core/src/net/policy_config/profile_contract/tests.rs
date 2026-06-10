@@ -42,6 +42,17 @@ url = "https://example.invalid/arm64-rootfs.erofs"
 hash = "blake3:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
 size = 1
 
+[obom]
+format = "cyclonedx-obom.v1"
+
+[obom.arch.arm64]
+name = "obom.cdx.json"
+url = "https://example.invalid/arm64-obom.cdx.json"
+hash = "blake3:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+size = 1
+generator = "cdxgen"
+generator_version = "11.0.0"
+
 [vm]
 cpu_count = 6
 ram_gb = 8
@@ -96,6 +107,10 @@ paths = ["/root/.codex/skills/security/SKILL.md"]
     profile.validate().expect("profile contract validates");
     assert_eq!(profile.id, "developer");
     assert_eq!(profile.assets.arch["arm64"].rootfs.name, "rootfs.erofs");
+    assert_eq!(
+        profile.obom.as_ref().unwrap().arch["arm64"].generator,
+        "cdxgen"
+    );
     assert_eq!(profile.vm.cpu_count, 6);
     assert_eq!(
         profile.rule_files.enforcement.as_deref(),
@@ -340,6 +355,42 @@ fn profile_assets_reject_release_manifest_theater_and_build_knobs() {
     let error = toml::from_str::<ProfileConfigFile>(&bad_content_type)
         .expect_err("profile assets must not expose downloader content types");
     assert!(error.to_string().contains("content_type"), "{error}");
+}
+
+#[test]
+fn profile_obom_rejects_bad_hash_and_build_knobs() {
+    let profile = include_str!("../../../../../../config/profiles/code/profile.toml");
+    let with_obom = format!(
+        r#"{profile}
+
+[obom]
+format = "cyclonedx-obom.v1"
+
+[obom.arch.arm64]
+name = "obom.cdx.json"
+url = "https://example.invalid/arm64-obom.cdx.json"
+hash = "blake3:not-a-real-hash"
+size = 10
+generator = "cdxgen"
+generator_version = "11.0.0"
+"#
+    );
+    let parsed = toml::from_str::<ProfileConfigFile>(&with_obom).expect("obom profile parses");
+    let error = parsed.validate().expect_err("bad OBOM hash rejected");
+    assert!(error.contains("profile.obom.arch.arm64.hash"), "{error}");
+
+    let bad_format = with_obom.replace("format = \"cyclonedx-obom.v1\"", "format = \"spdx-json\"");
+    let parsed = toml::from_str::<ProfileConfigFile>(&bad_format).expect("bad format parses");
+    let error = parsed.validate().expect_err("bad OBOM format rejected");
+    assert!(error.contains("profile.obom.format"), "{error}");
+
+    let with_build_knob = with_obom.replace(
+        "generator_version = \"11.0.0\"\n",
+        "generator_version = \"11.0.0\"\ncompression = \"lz4hc\"\n",
+    );
+    let error = toml::from_str::<ProfileConfigFile>(&with_build_knob)
+        .expect_err("OBOM must not expose build knobs");
+    assert!(error.to_string().contains("compression"), "{error}");
 }
 
 #[test]
