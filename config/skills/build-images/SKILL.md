@@ -26,7 +26,7 @@ legacy input surface being burned during the repository ontology cleanup.
 ```
 config/
   host/                   Host/corp/settings source contracts
-  docker/                 Dockerfile/build templates (target location)
+  docker/                 Dockerfile/build templates
   profiles/<profile_id>/
     profile.toml          Profile ledger
     enforcement.toml      Profile enforcement rules
@@ -44,9 +44,8 @@ assets/                   Generated VM assets
 packages/                 Generated native packages
 ```
 
-Current transition note: some code still references `guest/config` and
-`src/capsem/builder/templates`. Treat those as cleanup targets, not places to
-add new behavior.
+Current transition note: some code still references `guest/config`. Treat that
+as cleanup target, not a place to add new behavior.
 
 ## CLI commands
 
@@ -105,8 +104,8 @@ must also record profile and profile-owned payload hashes.
 4. Run `just build-assets code` to rebuild the rootfs.
 5. Verify with `capsem-doctor` inside a booted VM.
 
-Do not edit generated Dockerfiles. Docker build templates belong under
-`config/docker/` once the ontology cleanup lands.
+Do not edit generated Dockerfiles. Docker build templates live under
+`config/docker/`.
 
 ## Adding a guest CLI/tool
 
@@ -126,13 +125,13 @@ files.
 
 ## Dockerfile templates
 
-Target location after ontology cleanup is `config/docker/`:
+Template location:
 - `Dockerfile.rootfs.j2` -- rootfs image (apt packages, Python packages, AI CLIs, diagnostics)
 - `Dockerfile.kernel.j2` -- kernel build (defconfig, modules, vmlinuz extraction)
 
 Templates use Jinja2 with variables from the admin-resolved image spec. The
-current checked-in location may still be `src/capsem/builder/templates/`; treat
-that as transition debt and include template hashes in build ledgers.
+builder backend renders them from `config/docker/`; include template hashes in
+build ledgers.
 
 ---
 

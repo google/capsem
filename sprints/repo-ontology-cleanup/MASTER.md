@@ -82,6 +82,11 @@ Build rule:
 - The package manifest must ship the profile ledger and its referenced files
   together with their hashes, so installed systems can report and verify the
   exact profile payload they run.
+- The build ledger must also record what actually lands in the VM: declared
+  package input hashes, installed package names, installed versions, and local
+  package/artifact hashes when apt, Python/uv, npm, or a manual installer gives
+  us enough local metadata to compute them. The release/debug answer must be
+  "this is what is running in the VM", not "this is what the profile requested."
 - The builder copies `config/profiles/<profile_id>/root/` into a stable seed
   path inside the rootfs, not directly into runtime `/root`.
 - `capsem-init` copies the seed into runtime `/` after tmpfs/overlay mounts are
@@ -157,7 +162,7 @@ Rule for this sprint: a path is allowed only if it is one of:
 ### S1: Profile-Ledger Image Input Contract
 
 - [ ] Move host config source into `config/host/`.
-- [ ] Move Dockerfile/build templates from `src/capsem/builder/templates/` to
+- [x] Move Dockerfile/build templates from `src/capsem/builder/templates/` to
   `config/docker/`.
 - [x] Move `config/profiles/code.toml` to `config/profiles/code/profile.toml`.
 - [ ] Extend/confirm profile schema owns all image-baked packages.
@@ -242,6 +247,9 @@ Rule for this sprint: a path is allowed only if it is one of:
   or AGY when a tool is not representable as apt/Python/npm package input.
 - [ ] Profile build spec maps those package files into apt, Python/uv, and
   Node/npm install steps, then runs `install.sh` as a hash-pinned profile input.
+- [ ] Build ledger records the actually installed apt/Python/npm/manual package
+  set with names, versions, declared input hashes, and local package/artifact
+  hashes where available.
 - [ ] Add an explicit release refresh/cache-bust path for npm/curl/apt tool
   installation.
 - [ ] Verify Codex, Claude, Gemini, and AGY versions in doctor output.

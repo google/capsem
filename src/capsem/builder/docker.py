@@ -22,7 +22,7 @@ from jinja2 import Environment, FileSystemLoader
 from capsem.builder.doctor import check_container_runtime
 from capsem.builder.models import ErofsConfig, GuestImageConfig, PackageManager
 
-TEMPLATES_DIR = Path(__file__).parent / "templates"
+TEMPLATES_DIR = Path(__file__).resolve().parents[3] / "config" / "docker"
 FALLBACK_KERNEL_VERSION = "7.0.11"
 DEFAULT_EROFS_UTILS_IMAGE = "debian:bookworm-slim"
 ZSTD_EROFS_UTILS_IMAGE = "debian:trixie-slim"

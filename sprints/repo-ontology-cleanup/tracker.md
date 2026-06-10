@@ -35,7 +35,7 @@
 - [x] S0: Freeze current dirty install-log/version-stamp work.
 - [x] S0: Add guardrail in active finalizing sprint.
 - [ ] S1: Move host config source to `config/host/`.
-- [ ] S1: Move Docker templates to `config/docker/`.
+- [x] S1: Move Docker templates to `config/docker/`.
 - [x] S1: Move `config/profiles/code.toml` to
   `config/profiles/code/profile.toml`.
 - [ ] S1: Define profile-owned package declarations for image-baked packages.
@@ -85,6 +85,10 @@
 - [ ] S2: Builder copies guest root seed into rootfs seed path.
 - [ ] S2: `capsem-init` projects seed into runtime `/`.
 - [ ] S3: Tool install refresh/version discipline.
+- [ ] S3: Build ledger exposes the packages actually running in the VM:
+  declared package input hashes, installed package names, installed versions,
+  and local package/artifact hashes where available for apt, Python/uv, npm,
+  and manual installers.
 - [ ] S4: Documentation and skill cleanup.
 - [ ] S4: Update public docs and internal skills after ontology paths land;
   stale `guest/config` guidance is a release hold.
