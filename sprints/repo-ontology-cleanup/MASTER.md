@@ -159,7 +159,7 @@ Rule for this sprint: a path is allowed only if it is one of:
 - [ ] Move host config source into `config/host/`.
 - [ ] Move Dockerfile/build templates from `src/capsem/builder/templates/` to
   `config/docker/`.
-- [ ] Move `config/profiles/code.toml` to `config/profiles/code/profile.toml`.
+- [x] Move `config/profiles/code.toml` to `config/profiles/code/profile.toml`.
 - [ ] Extend/confirm profile schema owns all image-baked packages.
 - [ ] Extend/confirm profile schema owns all MCP declarations.
 - [ ] Extend/confirm profile schema owns packaged root path under

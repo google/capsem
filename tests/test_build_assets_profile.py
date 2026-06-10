@@ -31,7 +31,8 @@ def test_build_assets_requires_profile_and_uses_capsem_admin() -> None:
     assert "profile id required" in block
     assert block.index('if [[ -z "$PROFILE_ARG" ]]') < block.index("just _install-tools")
     assert "cargo run -p capsem-admin -- image build" in block
-    assert '--profile "config/profiles/${PROFILE_ARG}.toml"' in block
+    assert '--profile "config/profiles/${PROFILE_ARG}/profile.toml"' in block
+    assert "${PROFILE_ARG#profile=}" not in block
     assert "uv run capsem-builder build guest/" not in block
 
 

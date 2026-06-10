@@ -36,7 +36,7 @@
 - [x] S0: Add guardrail in active finalizing sprint.
 - [ ] S1: Move host config source to `config/host/`.
 - [ ] S1: Move Docker templates to `config/docker/`.
-- [ ] S1: Move `config/profiles/code.toml` to
+- [x] S1: Move `config/profiles/code.toml` to
   `config/profiles/code/profile.toml`.
 - [ ] S1: Define profile-owned package declarations for image-baked packages.
 - [ ] S1: Define profile-owned MCP declarations.
@@ -199,6 +199,11 @@
 - Skill contract: `uv run capsem-builder validate-skills config/skills` and
   `uv run python -m pytest tests/test_skills.py -q` pass. The validator is
   Pydantic-backed and wired into local/CI gates.
+- Profile-directory contract: `cargo test -p capsem-core profile_contract -- --nocapture`,
+  `cargo test -p capsem-admin -- --nocapture`, `cargo test -p capsem-service
+  profile_catalog -- --nocapture`, and the focused package/install pytest set
+  pass after moving source and generated profiles to
+  `profiles/<id>/profile.toml`.
 - Functional: pending `capsem-admin image verify` and profile materialization.
 - Auditability: backend build-ledger tests prove JSONL emission for rendered
   Dockerfile/build-context hashes, rootfs tar, EROFS, kernel assets, and tool

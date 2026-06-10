@@ -356,9 +356,9 @@ fn profile_catalog_status_reports_directory_catalog_readiness() {
     let (state, dir) = make_test_state_with_tempdir();
     install_test_profile_assets(&state);
     let profiles_dir = dir.path().join("profiles");
-    std::fs::create_dir_all(&profiles_dir).unwrap();
+    std::fs::create_dir_all(profiles_dir.join("code")).unwrap();
     std::fs::write(
-        profiles_dir.join("code.toml"),
+        profiles_dir.join("code/profile.toml"),
         toml::to_string(&ProfileConfigFile::builtin_code()).unwrap(),
     )
     .unwrap();
@@ -408,11 +408,11 @@ fn profile_catalog_reload_rejects_invalid_directory_catalog() {
     let state = make_test_state();
     let dir = tempfile::tempdir().unwrap();
     let profiles_dir = dir.path().join("profiles");
-    std::fs::create_dir_all(&profiles_dir).unwrap();
+    std::fs::create_dir_all(profiles_dir.join("code")).unwrap();
     let mut profile = ProfileConfigFile::builtin_code();
     profile.id = "strict".to_string();
     std::fs::write(
-        profiles_dir.join("code.toml"),
+        profiles_dir.join("code/profile.toml"),
         toml::to_string(&profile).unwrap(),
     )
     .unwrap();

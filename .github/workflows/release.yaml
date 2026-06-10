@@ -264,7 +264,7 @@ jobs:
       - name: Materialize runtime config
         run: |
           cargo run -p capsem-admin -- profile materialize \
-            --profile config/profiles/code.toml \
+            --profile config/profiles/code/profile.toml \
             --config-root config \
             --manifest assets/manifest.json \
             --assets-dir assets \
@@ -468,7 +468,7 @@ jobs:
       - name: Materialize runtime config
         run: |
           cargo run -p capsem-admin -- profile materialize \
-            --profile config/profiles/code.toml \
+            --profile config/profiles/code/profile.toml \
             --config-root config \
             --manifest assets/manifest.json \
             --assets-dir assets \

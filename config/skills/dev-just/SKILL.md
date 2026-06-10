@@ -94,8 +94,8 @@ CI, and release:
 - Generated current-build runtime config lives in `target/config/`.
 - Current asset hashes from `assets/manifest.json` must be materialized into
   `target/config` by the same `capsem-admin`/just rail that CI runs. Do not
-  add a local-only patcher and do not hand-edit `config/profiles/*.toml` to
-  match a repacked local initrd.
+  add a local-only patcher and do not hand-edit
+  `config/profiles/<id>/profile.toml` to match a repacked local initrd.
 - Recipes that prove bootability (`shell`, `run-service`, `smoke`, `test`,
   `bench`, and install/package checks) must either run the shared materialize
   step first or depend on a recipe that does.

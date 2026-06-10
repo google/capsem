@@ -124,14 +124,14 @@ After `_pack-initrd` updates the manifest, `_materialize-config` runs
 target/config/
   settings.toml
   corp.toml
-  profiles/code.toml        # selected arch assets rewritten from manifest
+  profiles/code/profile.toml # selected arch assets rewritten from manifest
   profiles/code/*.toml|yaml # copied rule files
   assets/manifest.json
 ```
 
 The generated profile uses verified `file://` URLs for the active local arch.
-Checked-in `config/profiles/*.toml` stays source truth and must not be edited to
-match a local repacked initrd.
+Checked-in `config/profiles/<id>/profile.toml` stays source truth and must not
+be edited to match a local repacked initrd.
 
 ### Custom corp build manifest flow
 
@@ -234,9 +234,10 @@ Assets are verified at multiple points:
 | Before boot | `vm/config.rs` | `ConfigError::HashMismatch`, boot prevented |
 
 Both use BLAKE3 with 64-character hex format. In dev/test, expected hashes are
-copied from `assets/manifest.json` into `target/config/profiles/code.toml` by
-the shared `capsem-admin profile materialize` rail. Runtime then reads the
-generated profile, not the source profile.
+copied from `assets/manifest.json` into
+`target/config/profiles/code/profile.toml` by the shared
+`capsem-admin profile materialize` rail. Runtime then reads the generated
+profile, not the source profile.
 
 ## Per-Architecture Isolation
 

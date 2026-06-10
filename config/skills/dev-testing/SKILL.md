@@ -61,9 +61,9 @@ configuration from generated runtime configuration:
 - Tests that claim a current VM image boots must validate the generated profile
   under `target/config`, run the service with that profile directory, and boot
   through the normal profile-selected asset chain.
-- If a test mutates `config/profiles/*.toml`, `config/settings.toml`, or
-  `config/corp.toml` to match local build outputs, the test is proving the wrong
-  contract.
+- If a test mutates `config/profiles/<id>/profile.toml`,
+  `config/settings.toml`, or `config/corp.toml` to match local build outputs,
+  the test is proving the wrong contract.
 
 ## Parallel tests as dogfooding (n=4 is non-negotiable)
 

@@ -81,7 +81,7 @@ def _seed_config(config_dir: Path):
     """Drop a minimal materialized profile catalog."""
     profiles = config_dir / "profiles"
     (profiles / "code").mkdir(parents=True, exist_ok=True)
-    (profiles / "code.toml").write_text("id = \"code\"\n")
+    (profiles / "code" / "profile.toml").write_text("id = \"code\"\n")
     (profiles / "code" / "enforcement.toml").write_text("# enforcement\n")
 
 
@@ -130,7 +130,9 @@ def test_happy_path_adds_every_companion_binary(tmp_path):
         assert binary.stat().st_mode & 0o777 == 0o755, (
             f"{name} installed with mode {oct(binary.stat().st_mode & 0o777)}, expected 0o755"
         )
-    assert (extracted / "usr" / "share" / "capsem" / "profiles" / "code.toml").exists()
+    assert (
+        extracted / "usr" / "share" / "capsem" / "profiles" / "code" / "profile.toml"
+    ).exists()
 
 
 def test_postinst_script_is_included(tmp_path):

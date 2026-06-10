@@ -224,7 +224,7 @@ fn profile_config_validation_rejects_bad_identity_assets_and_vm_defaults() {
 #[test]
 fn checked_in_code_profile_parses_and_validates() {
     let profile = toml::from_str::<ProfileConfigFile>(include_str!(
-        "../../../../../../config/profiles/code.toml"
+        "../../../../../../config/profiles/code/profile.toml"
     ))
     .expect("checked-in code profile parses");
 
@@ -316,7 +316,7 @@ match = 'http.host == "example.com"'
 
 #[test]
 fn profile_assets_reject_release_manifest_theater_and_build_knobs() {
-    let profile = include_str!("../../../../../../config/profiles/code.toml");
+    let profile = include_str!("../../../../../../config/profiles/code/profile.toml");
     let bad_top_level = profile.replace(
         "refresh_policy = \"on_profile_refresh\"\n",
         "refresh_policy = \"on_profile_refresh\"\nfilesystem = \"erofs\"\n",
@@ -345,9 +345,10 @@ fn profile_assets_reject_release_manifest_theater_and_build_knobs() {
 #[test]
 fn profile_catalog_loads_directory_profiles_and_rejects_id_mismatch() {
     let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join("code")).unwrap();
     std::fs::write(
-        dir.path().join("code.toml"),
-        include_str!("../../../../../../config/profiles/code.toml"),
+        dir.path().join("code/profile.toml"),
+        include_str!("../../../../../../config/profiles/code/profile.toml"),
     )
     .unwrap();
 
@@ -357,10 +358,36 @@ fn profile_catalog_loads_directory_profiles_and_rejects_id_mismatch() {
     assert_eq!(catalog.profiles().count(), 1);
 
     std::fs::write(
-        dir.path().join("wrong.toml"),
-        include_str!("../../../../../../config/profiles/code.toml"),
+        dir.path().join("legacy-flat.toml"),
+        include_str!("../../../../../../config/profiles/code/profile.toml"),
+    )
+    .unwrap();
+    let catalog = ProfileCatalog::load_from_dir(dir.path()).expect("flat files are ignored");
+    assert_eq!(catalog.profiles().count(), 1);
+
+    std::fs::create_dir(dir.path().join("wrong")).unwrap();
+    std::fs::write(
+        dir.path().join("wrong/profile.toml"),
+        include_str!("../../../../../../config/profiles/code/profile.toml"),
     )
     .unwrap();
     let error = ProfileCatalog::load_from_dir(dir.path()).unwrap_err();
     assert!(error.contains("id mismatch"), "{error}");
+}
+
+#[test]
+fn profile_catalog_rejects_flat_only_profile_files() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("code.toml"),
+        include_str!("../../../../../../config/profiles/code/profile.toml"),
+    )
+    .unwrap();
+
+    let error = ProfileCatalog::load_from_dir(dir.path()).unwrap_err();
+
+    assert!(
+        error.contains("contains no profile directories with profile.toml"),
+        "{error}"
+    );
 }

@@ -76,8 +76,9 @@ Keep configuration ownership crisp during every sprint:
 - `target/config/` is generated runtime config for the current local build. It
   may include current asset hashes from `assets/manifest.json`, materialized
   profile files, copied rule files, and other build outputs.
-- Do not hand-edit checked-in `config/profiles/*.toml`, `config/settings.toml`,
-  or `config/corp.toml` just to match a local repacked initrd/rootfs/kernel.
+- Do not hand-edit checked-in `config/profiles/<id>/profile.toml`,
+  `config/settings.toml`, or `config/corp.toml` just to match a local repacked
+  initrd/rootfs/kernel.
   Bake or instantiate those values into `target/config/`, then validate and boot
   against `target/config`.
 - Tests and VM smoke that claim "the current build boots" must point the

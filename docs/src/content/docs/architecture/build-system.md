@@ -190,7 +190,7 @@ assets/
 target/
   config/
     assets/manifest.json
-    profiles/code.toml
+    profiles/code/profile.toml
 ```
 
 ## Build Pipeline

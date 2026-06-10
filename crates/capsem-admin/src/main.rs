@@ -15,7 +15,7 @@ use capsem_core::net::policy_config::{
 use clap::{Parser, Subcommand};
 use serde::{Deserialize, Serialize};
 
-const CODE_PROFILE_TEMPLATE: &str = include_str!("../../../config/profiles/code.toml");
+const CODE_PROFILE_TEMPLATE: &str = include_str!("../../../config/profiles/code/profile.toml");
 const SETTINGS_TEMPLATE: &str = include_str!("../../../config/settings.toml");
 
 #[derive(Debug, Parser)]
@@ -937,7 +937,8 @@ fn materialize_profile_config(args: &ProfileMaterializeArgs) -> Result<ProfileMa
     let output_profile_path = args
         .output_root
         .join("profiles")
-        .join(format!("{}.toml", profile.id));
+        .join(&profile.id)
+        .join("profile.toml");
     fs::create_dir_all(
         output_profile_path
             .parent()
@@ -1348,7 +1349,8 @@ fn materialize_image_workspace(args: &ImageWorkspaceArgs) -> Result<ImageWorkspa
     let workspace_config_root = workspace.join("config");
     let workspace_profile_path = workspace_config_root
         .join("profiles")
-        .join(format!("{}.toml", profile.id));
+        .join(&profile.id)
+        .join("profile.toml");
     let workspace_rules_root = workspace_config_root.join("profiles").join(&profile.id);
     fs::create_dir_all(
         workspace_profile_path
@@ -1814,6 +1816,25 @@ fn infer_config_root(profile_path: &Path) -> Result<PathBuf> {
             profile_path.display()
         )
     })?;
+    if profile_path
+        .file_name()
+        .is_some_and(|name| name == "profile.toml")
+        && parent
+            .parent()
+            .and_then(Path::file_name)
+            .is_some_and(|name| name == "profiles")
+    {
+        return parent
+            .parent()
+            .and_then(Path::parent)
+            .map(Path::to_path_buf)
+            .ok_or_else(|| {
+                anyhow!(
+                    "cannot infer config root from profile path {}",
+                    profile_path.display()
+                )
+            });
+    }
     if parent.file_name().is_some_and(|name| name == "profiles") {
         return parent.parent().map(Path::to_path_buf).ok_or_else(|| {
             anyhow!(
@@ -1838,7 +1859,7 @@ mod tests {
             .and_then(Path::parent)
             .expect("repo root");
         let config_root = repo_root.join("config");
-        let profile_path = config_root.join("profiles/code.toml");
+        let profile_path = config_root.join("profiles/code/profile.toml");
 
         let report =
             validate_profile(&profile_path, Some(&config_root)).expect("profile validates");
@@ -1898,7 +1919,7 @@ code = true
     #[test]
     fn init_writes_templates_and_refuses_overwrite_without_force() {
         let temp = tempfile::tempdir().expect("tempdir");
-        let profile_path = temp.path().join("profiles/code.toml");
+        let profile_path = temp.path().join("profiles/code/profile.toml");
         init_file_command(
             InitArgs {
                 output: profile_path.clone(),
@@ -1934,7 +1955,7 @@ code = true
             .and_then(Path::parent)
             .expect("repo root");
         let temp = tempfile::tempdir().expect("tempdir");
-        let profile_path = temp.path().join("code.toml");
+        let profile_path = temp.path().join("profile.toml");
         init_file_command(
             InitArgs {
                 output: profile_path.clone(),
@@ -2002,7 +2023,7 @@ decision = "block"
         )
         .expect("old policy file");
         fs::write(
-            config_root.join("code.toml"),
+            config_root.join("profiles/code/profile.toml"),
             r#"
 id = "code"
 name = "Code"
@@ -2038,8 +2059,11 @@ enforcement = "profiles/code/enforcement.toml"
         )
         .expect("profile");
 
-        let error = validate_profile(&config_root.join("code.toml"), Some(config_root))
-            .expect_err("old policy syntax rejected");
+        let error = validate_profile(
+            &config_root.join("profiles/code/profile.toml"),
+            Some(config_root),
+        )
+        .expect_err("old policy syntax rejected");
 
         assert!(
             error.to_string().contains("unknown field `policy`")
@@ -2113,7 +2137,7 @@ decision = "block"
     #[test]
     fn infers_config_root_for_profiles_directory() {
         let root = PathBuf::from("/tmp/capsem-config");
-        let path = root.join("profiles/code.toml");
+        let path = root.join("profiles/code/profile.toml");
         assert_eq!(infer_config_root(&path).unwrap(), root);
     }
 
@@ -2184,7 +2208,7 @@ decision = "block"
             descriptor.hash = format!("blake3:{}", blake3::hash(payload.as_bytes()).to_hex());
             descriptor.size = payload.len() as u64;
         }
-        let profile_path = temp.path().join("code.toml");
+        let profile_path = temp.path().join("profile.toml");
         fs::write(
             &profile_path,
             toml::to_string(&profile).expect("serialize profile"),
@@ -2273,7 +2297,7 @@ decision = "block"
         assets.initrd.size = initrd.len() as u64;
         assets.rootfs.hash = format!("blake3:{rootfs_hash}");
         assets.rootfs.size = rootfs.len() as u64;
-        let profile_path = temp.path().join("code.toml");
+        let profile_path = temp.path().join("profile.toml");
         fs::write(
             &profile_path,
             toml::to_string(&profile).expect("serialize profile"),
@@ -2312,7 +2336,7 @@ decision = "block"
             .and_then(Path::parent)
             .expect("repo root");
         let args = ImageBuildArgs {
-            profile: repo_root.join("config/profiles/code.toml"),
+            profile: repo_root.join("config/profiles/code/profile.toml"),
             config_root: repo_root.join("config"),
             guest_dir: repo_root.join("guest"),
             output: repo_root.join("assets"),
@@ -2353,7 +2377,7 @@ decision = "block"
             .and_then(Path::parent)
             .expect("repo root");
         let args = ImageBuildArgs {
-            profile: repo_root.join("config/profiles/code.toml"),
+            profile: repo_root.join("config/profiles/code/profile.toml"),
             config_root: repo_root.join("config"),
             guest_dir: repo_root.join("guest"),
             output: repo_root.join("assets"),
@@ -2383,7 +2407,7 @@ decision = "block"
             .expect("repo root");
         let temp = tempfile::tempdir().expect("tempdir");
         let args = ImageWorkspaceArgs {
-            profile: repo_root.join("config/profiles/code.toml"),
+            profile: repo_root.join("config/profiles/code/profile.toml"),
             config_root: repo_root.join("config"),
             guest_dir: repo_root.join("guest"),
             output: temp.path().join("workspace"),
@@ -2397,7 +2421,7 @@ decision = "block"
         assert_eq!(report.arches.len(), 1);
         assert_eq!(report.arches[0].arch, "arm64");
         assert_eq!(report.rule_files.len(), 2);
-        let workspace_profile = args.output.join("config/profiles/code.toml");
+        let workspace_profile = args.output.join("config/profiles/code/profile.toml");
         assert!(workspace_profile.is_file());
         assert!(args
             .output
@@ -2426,7 +2450,7 @@ decision = "block"
         let assets_dir = temp.path().join("assets");
         let manifest_path = write_test_assets_manifest(temp.path(), "arm64");
         let output_root = temp.path().join("target/config");
-        let source_profile = repo_root.join("config/profiles/code.toml");
+        let source_profile = repo_root.join("config/profiles/code/profile.toml");
         let original_source = fs::read_to_string(&source_profile).expect("read source profile");
 
         let report = materialize_profile_config(&ProfileMaterializeArgs {
@@ -2449,7 +2473,7 @@ decision = "block"
         assert!(output_root.join("profiles/code/enforcement.toml").is_file());
         assert!(output_root.join("profiles/code/detection.yaml").is_file());
 
-        let generated_profile_path = output_root.join("profiles/code.toml");
+        let generated_profile_path = output_root.join("profiles/code/profile.toml");
         let generated: ProfileConfigFile =
             toml::from_str(&fs::read_to_string(&generated_profile_path).expect("read generated"))
                 .expect("parse generated profile");
@@ -2485,7 +2509,7 @@ decision = "block"
         let manifest_path = write_test_assets_manifest(temp.path(), "arm64");
 
         let error = materialize_profile_config(&ProfileMaterializeArgs {
-            profile: repo_root.join("config/profiles/code.toml"),
+            profile: repo_root.join("config/profiles/code/profile.toml"),
             config_root: repo_root.join("config"),
             manifest: manifest_path,
             assets_dir: temp.path().join("assets"),

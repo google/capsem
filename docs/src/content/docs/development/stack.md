@@ -101,7 +101,7 @@ The initrd is a gzipped cpio archive that the kernel unpacks into RAM at boot. T
 4. Repacks with `cpio + gzip`
 5. Regenerates BLAKE3 checksums (`B3SUMS` + `manifest.json`)
 6. `_materialize-config` uses the updated manifest to generate
-   `target/config/profiles/code.toml`
+   `target/config/profiles/code/profile.toml`
 
 This is why `just run` is fast (~10s) -- it only rebuilds what changed, not the full rootfs.
 
@@ -169,7 +169,7 @@ Boot sequence: capsem-service spawns capsem-process, which loads the kernel + in
 The slow path (~10 min, first-time only). The [capsem-builder](/architecture/build-system/) Python CLI reads TOML configs from `guest/config/` and produces kernel + rootfs via Docker.
 
 ```bash
-cargo run -p capsem-admin -- image build --profile config/profiles/code.toml --config-root config --arch arm64
+cargo run -p capsem-admin -- image build --profile config/profiles/code/profile.toml --config-root config --arch arm64
 uv run capsem-builder validate guest/               # lint configs
 uv run capsem-builder doctor guest/                  # check prerequisites
 ```

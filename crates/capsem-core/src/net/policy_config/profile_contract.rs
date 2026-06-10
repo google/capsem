@@ -130,8 +130,10 @@ pub struct ProfileSkills {
 
 impl ProfileConfigFile {
     pub fn builtin_code() -> Self {
-        toml::from_str(include_str!("../../../../../config/profiles/code.toml"))
-            .expect("built-in code profile TOML must parse")
+        toml::from_str(include_str!(
+            "../../../../../config/profiles/code/profile.toml"
+        ))
+        .expect("built-in code profile TOML must parse")
     }
 
     pub fn validate(&self) -> Result<(), String> {
@@ -373,13 +375,11 @@ impl ProfileCatalog {
             let file_type = entry
                 .file_type()
                 .map_err(|error| format!("read profile file type: {error}"))?;
-            if !file_type.is_file() {
+            if !file_type.is_dir() {
                 continue;
             }
-            let path = entry.path();
-            if path.extension().and_then(|ext| ext.to_str()) != Some("toml") {
-                continue;
-            }
+            let profile_dir = entry.path();
+            let path = profile_dir.join("profile.toml");
             let content = fs::read_to_string(&path)
                 .map_err(|error| format!("read profile {}: {error}", path.display()))?;
             let profile: ProfileConfigFile = toml::from_str(&content)
@@ -387,24 +387,29 @@ impl ProfileCatalog {
             profile
                 .validate()
                 .map_err(|error| format!("validate profile {}: {error}", path.display()))?;
-            let stem = path
-                .file_stem()
-                .and_then(|stem| stem.to_str())
-                .ok_or_else(|| format!("profile file {} has no valid stem", path.display()))?;
-            if profile.id != stem {
+            let dir_name = profile_dir
+                .file_name()
+                .and_then(|name| name.to_str())
+                .ok_or_else(|| {
+                    format!(
+                        "profile directory {} has no valid directory name",
+                        profile_dir.display()
+                    )
+                })?;
+            if profile.id != dir_name {
                 return Err(format!(
-                    "profile file {} id mismatch: file stem is {stem}, profile id is {}",
+                    "profile file {} id mismatch: directory is {dir_name}, profile id is {}",
                     path.display(),
                     profile.id
                 ));
             }
             if profiles.insert(profile.id.clone(), profile).is_some() {
-                return Err(format!("duplicate profile id {stem}"));
+                return Err(format!("duplicate profile id {dir_name}"));
             }
         }
         if profiles.is_empty() {
             return Err(format!(
-                "profile directory {} contains no profile TOML files",
+                "profile directory {} contains no profile directories with profile.toml",
                 path.display()
             ));
         }
@@ -422,13 +427,7 @@ impl ProfileCatalog {
         }
         let installed = crate::paths::capsem_home().join("profiles");
         if installed.is_dir() {
-            return match Self::load_from_dir(&installed) {
-                Ok(catalog) => Ok(catalog),
-                Err(error) if error.contains("contains no profile TOML files") => {
-                    Ok(Self::builtin())
-                }
-                Err(error) => Err(error),
-            };
+            return Self::load_from_dir(&installed);
         }
         Ok(Self::builtin())
     }

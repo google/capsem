@@ -177,7 +177,7 @@ class TestInstalledLayoutContract:
 
     def test_installed_profile_catalog_exists(self, installed_layout):
         """Installed service must load materialized profiles, not compiled source fallback."""
-        profile = CAPSEM_DIR / "profiles" / "code.toml"
+        profile = CAPSEM_DIR / "profiles" / "code" / "profile.toml"
         assert profile.exists(), (
             f"materialized profile missing: {profile}\n"
             "without this, installed service falls back to compiled source profile pins"
@@ -188,7 +188,7 @@ class TestInstalledLayoutContract:
         """Profile-owned asset pins must match the installed asset manifest."""
         import platform
 
-        profile_path = CAPSEM_DIR / "profiles" / "code.toml"
+        profile_path = CAPSEM_DIR / "profiles" / "code" / "profile.toml"
         manifest_path = ASSETS_DIR / "manifest.json"
         if not manifest_path.exists():
             pytest.skip("no manifest.json")

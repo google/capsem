@@ -53,6 +53,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Moved the checked-in agent skill library to `config/skills/`, removed root
   skill symlink shims, and added a Pydantic-backed `capsem-builder
   validate-skills` gate that runs in local and CI test flows.
+- Moved the code profile ledger to `config/profiles/code/profile.toml` and
+  materialize generated/installed profiles with the same directory shape, so
+  source and runtime config use one profile path contract.
 
 ### Added (kernel 7.0 + EROFS)
 - Added a stable-kernel upgrade path for guest builds: `kernel_branch = "7.0"`
@@ -297,8 +300,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   explicitly (`code` profile) and to package/sign the full restored host binary
   set, including `capsem-admin`.
 - Replaced the temporary flat profile asset triplet with per-architecture
-  profile asset declarations. `config/profiles/code.toml` now parses as the
-  checked-in contract for EROFS/LZ4HC kernel, initrd, and rootfs assets with
+  profile asset declarations. `config/profiles/code/profile.toml` now parses as
+  the checked-in contract for EROFS/LZ4HC kernel, initrd, and rootfs assets with
   URL/hash/size metadata.
 - Made `/profiles/{profile_id}/assets/status` report the selected profile's
   current-architecture asset contract instead of a service-global asset guess,
@@ -377,8 +380,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fail explicitly until profile persistence lands.
 - Made profile MCP inventory profile-owned. `/profiles/{profile_id}/mcp/...`
   now reads the selected profile's MCP section instead of settings/corp MCP
-  sections, `config/profiles/code.toml` explicitly enables the real built-in
-  `local` MCP server, and unknown profile server ids fail closed.
+  sections, `config/profiles/code/profile.toml` explicitly enables the real
+  built-in `local` MCP server, and unknown profile server ids fail closed.
 - Added service-wide runtime ledger routes `/security/latest|status`,
   `/enforcement/latest|status`, and `/detection/latest|status`. These aggregate
   per-VM `session.db` security-rule ledger rows through `DbReader`; detection

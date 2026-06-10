@@ -44,7 +44,7 @@ def _write_fake_bins(root: Path) -> None:
 def _write_config(root: Path) -> Path:
     profiles = root / "profiles"
     (profiles / "code").mkdir(parents=True)
-    (profiles / "code.toml").write_text("id = \"code\"\n")
+    (profiles / "code" / "profile.toml").write_text("id = \"code\"\n")
     (profiles / "code" / "enforcement.toml").write_text("# enforcement\n")
     return root
 
@@ -103,7 +103,7 @@ def test_reinstall_updates_initrd_when_only_initrd_hash_changes(tmp_path: Path) 
         ["bash", str(SCRIPT), str(bin_src), str(assets_v1), str(config)], env=env, check=True
     )
     assert (capsem_home / "assets" / arch / initrd_v1).exists()
-    assert (capsem_home / "profiles" / "code.toml").exists()
+    assert (capsem_home / "profiles" / "code" / "profile.toml").exists()
 
     subprocess.run(
         ["bash", str(SCRIPT), str(bin_src), str(assets_v2), str(config)], env=env, check=True

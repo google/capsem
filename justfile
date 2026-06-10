@@ -247,7 +247,6 @@ build-kernel arch profile="":
     #!/bin/bash
     set -euo pipefail
     PROFILE_ARG="{{profile}}"
-    PROFILE_ARG="${PROFILE_ARG#profile=}"
     if [[ -z "$PROFILE_ARG" ]]; then
         echo "ERROR: profile id required. Use: just build-kernel {{arch}} code"
         exit 2
@@ -255,7 +254,7 @@ build-kernel arch profile="":
     just _install-tools
     CAPSEM_SKIP_ASSET_CHECK=1 just doctor
     cargo run -p capsem-admin -- image build \
-        --profile "config/profiles/${PROFILE_ARG}.toml" \
+        --profile "config/profiles/${PROFILE_ARG}/profile.toml" \
         --config-root config \
         --guest-dir guest \
         --output "{{assets_dir}}" \
@@ -269,7 +268,6 @@ build-rootfs arch profile="":
     #!/bin/bash
     set -euo pipefail
     PROFILE_ARG="{{profile}}"
-    PROFILE_ARG="${PROFILE_ARG#profile=}"
     if [[ -z "$PROFILE_ARG" ]]; then
         echo "ERROR: profile id required. Use: just build-rootfs {{arch}} code"
         exit 2
@@ -277,7 +275,7 @@ build-rootfs arch profile="":
     just _install-tools
     CAPSEM_SKIP_ASSET_CHECK=1 just doctor
     cargo run -p capsem-admin -- image build \
-        --profile "config/profiles/${PROFILE_ARG}.toml" \
+        --profile "config/profiles/${PROFILE_ARG}/profile.toml" \
         --config-root config \
         --guest-dir guest \
         --output "{{assets_dir}}" \
@@ -287,15 +285,12 @@ build-rootfs arch profile="":
     just _docker-gc
 
 # VM asset rebuild (kernel + rootfs). Profile is mandatory. Optional second arg
-# restricts to one arch. Accepts either `code` or `profile=code` for compatibility
-# with older notes.
+# restricts to one arch.
 build-assets profile="" arch="":
     #!/bin/bash
     set -euo pipefail
     PROFILE_ARG="{{profile}}"
-    PROFILE_ARG="${PROFILE_ARG#profile=}"
     ARCH_ARG="{{arch}}"
-    ARCH_ARG="${ARCH_ARG#arch=}"
     if [[ -z "$PROFILE_ARG" ]]; then
         echo "ERROR: profile id required. Use: just build-assets code [arm64|x86_64]"
         exit 2
@@ -304,7 +299,7 @@ build-assets profile="" arch="":
     just _clean-stale
     CAPSEM_SKIP_ASSET_CHECK=1 just doctor
     ARGS=(
-        --profile "config/profiles/${PROFILE_ARG}.toml"
+        --profile "config/profiles/${PROFILE_ARG}/profile.toml"
         --config-root config
         --guest-dir guest
         --output "{{assets_dir}}"
@@ -1458,7 +1453,7 @@ _materialize-config:
     [[ "$arch" == "arm64" ]] || arch="x86_64"
     echo "=== Materialize runtime config ==="
     cargo run -p capsem-admin -- profile materialize \
-        --profile "$ROOT/config/profiles/code.toml" \
+        --profile "$ROOT/config/profiles/code/profile.toml" \
         --config-root "$ROOT/config" \
         --manifest "$ROOT/{{assets_dir}}/manifest.json" \
         --assets-dir "$ROOT/{{assets_dir}}" \
