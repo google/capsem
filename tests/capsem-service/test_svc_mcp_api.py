@@ -102,16 +102,22 @@ class TestMcpToolsRefresh:
 
 class TestMcpApprove:
 
-    def test_approve_unknown_tool_rejected(self, client):
-        """Approving a tool that is not in the cache must 404."""
+    def test_tool_permission_mutation_records_rule_for_uncached_tool(self, client):
+        """Tool permission edits are profile rule mutations, not cache approvals."""
+        declared_server = "capsem"
         resp = client.patch(
-            f"/profiles/{PROFILE}/mcp/servers/{SERVER}/tools/not-a-real-tool/edit",
-            {"approved": True},
+            f"/profiles/{PROFILE}/mcp/servers/{declared_server}/tools/not-a-real-tool/edit",
+            {"action": "ask"},
         )
-        # 404 from AppError gives a body like {"error": "tool not found: ..."}.
-        assert resp is None or "error" in resp or "not found" in str(resp).lower(), (
-            f"unknown tool should 404: {resp}"
-        )
+        assert resp is not None, "tool permission mutation returned no body"
+        assert resp.get("profile_id") == PROFILE
+        assert resp.get("server_id") == declared_server
+        assert resp.get("tool_id") == "not-a-real-tool"
+        assert resp.get("action") == "ask"
+        mutation = resp.get("mutation") or {}
+        assert mutation.get("category") == "mcp"
+        assert mutation.get("operation") == "permission"
+        assert mutation.get("profile_id") == PROFILE
 
 
 class TestMcpCall:

@@ -149,6 +149,64 @@ else:
 PY
 }
 
+materialize_manifest_assets() {
+    local assets_view="${1:?materialize_manifest_assets <assets_view> <dst_assets> <local_assets_dir>}"
+    local dst_assets="${2:?materialize_manifest_assets <assets_view> <dst_assets> <local_assets_dir>}"
+    local local_assets_dir="${3:-}"
+    python3 - "$assets_view" "$dst_assets" "$local_assets_dir" <<'PY'
+import json
+import os
+import pathlib
+import shutil
+import sys
+
+assets_view = pathlib.Path(sys.argv[1])
+dst_assets = pathlib.Path(sys.argv[2])
+local_assets_dir = sys.argv[3]
+
+machine = os.uname().machine.lower()
+arch = "arm64" if machine in ("arm64", "aarch64") else "x86_64"
+manifest = json.loads((assets_view / "manifest.json").read_text())
+release_id = manifest["assets"]["current"]
+arch_assets = manifest["assets"]["releases"][release_id]["arches"].get(arch)
+if arch_assets is None:
+    print(f"  No {arch} assets in selected manifest; packaged manifest only")
+    raise SystemExit(0)
+
+arch_dir = assets_view / arch
+if not arch_dir.is_dir():
+    if local_assets_dir:
+        raise SystemExit(
+            f"ERROR: selected manifest references {arch} assets but {arch_dir} is missing"
+        )
+    print(f"  No local {arch} asset payload; packaged manifest only")
+    raise SystemExit(0)
+
+dst_arch = dst_assets / arch
+dst_arch.mkdir(parents=True, exist_ok=True)
+
+def hash_filename(logical_name: str, digest: str) -> str:
+    prefix = digest[:16]
+    if "." in logical_name:
+        stem, ext = logical_name.split(".", 1)
+        return f"{stem}-{prefix}.{ext}"
+    return f"{logical_name}-{prefix}"
+
+for logical_name, meta in sorted(arch_assets.items()):
+    hashed_name = hash_filename(logical_name, meta["hash"])
+    candidates = [arch_dir / hashed_name, arch_dir / logical_name]
+    source = next((path for path in candidates if path.is_file()), None)
+    if source is None:
+        searched = ", ".join(str(path) for path in candidates)
+        raise SystemExit(f"ERROR: missing package asset for {logical_name}; checked {searched}")
+    target = dst_arch / hashed_name
+    tmp = target.with_suffix(target.suffix + ".tmp")
+    shutil.copy2(source, tmp)
+    tmp.replace(target)
+    print(f"  Added asset: {arch}/{hashed_name}")
+PY
+}
+
 echo "=== Assembling .pkg payload ==="
 
 # Application bundle
@@ -190,7 +248,8 @@ if [ -n "$MANIFEST_PATH" ]; then
     materialize_manifest_input "$MANIFEST_PATH" "$ASSETS_VIEW/manifest.json"
     for arch_dir in "$ASSETS_DIR"/*; do
         [ -d "$arch_dir" ] || continue
-        ln -s "$arch_dir" "$ASSETS_VIEW/$(basename "$arch_dir")"
+        arch_abs="$(cd "$arch_dir" && pwd -P)"
+        ln -s "$arch_abs" "$ASSETS_VIEW/$(basename "$arch_dir")"
     done
 fi
 if [ ! -f "$ASSETS_VIEW/manifest.json" ]; then
@@ -199,6 +258,7 @@ if [ ! -f "$ASSETS_VIEW/manifest.json" ]; then
 fi
 install -m 0644 "$ASSETS_VIEW/manifest.json" "$SHARE_DIR/assets/manifest.json"
 write_manifest_origin "$SELECTED_MANIFEST_SOURCE" "$SHARE_DIR/assets/manifest-origin.json"
+materialize_manifest_assets "$ASSETS_VIEW" "$SHARE_DIR/assets" "$ASSETS_DIR"
 
 # Materialized profile catalog. This must be installed with the assets it pins;
 # otherwise the daemon falls back to compiled source profiles and can disagree

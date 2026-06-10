@@ -778,9 +778,8 @@ fn all_guest_binaries_in_dockerfile_rootfs() {
     let bins = parse_cargo_bin_names(&root.join("crates/capsem-agent/Cargo.toml"));
     assert!(!bins.is_empty(), "no [[bin]] entries found in capsem-agent");
 
-    let template =
-        std::fs::read_to_string(root.join("src/capsem/builder/templates/Dockerfile.rootfs.j2"))
-            .expect("cannot read Dockerfile.rootfs.j2");
+    let template = std::fs::read_to_string(root.join("config/docker/Dockerfile.rootfs.j2"))
+        .expect("cannot read Dockerfile.rootfs.j2");
 
     // The Jinja template uses a loop over guest_binaries to COPY each binary.
     // Verify the loop pattern exists -- the Python build context test

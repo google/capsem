@@ -34,6 +34,22 @@ use tracing::{error, info, warn, Instrument};
 
 mod startup;
 
+#[cfg(test)]
+thread_local! {
+    static TEST_PROFILE_DIR_OVERRIDE: std::cell::RefCell<Option<PathBuf>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+fn test_profile_dir_override() -> Option<PathBuf> {
+    TEST_PROFILE_DIR_OVERRIDE.with(|path| path.borrow().clone())
+}
+
+#[cfg(test)]
+fn set_test_profile_dir_override(path: Option<PathBuf>) -> Option<PathBuf> {
+    TEST_PROFILE_DIR_OVERRIDE.with(|cell| cell.replace(path))
+}
+
 use capsem_service::api;
 use capsem_service::api::*;
 use capsem_service::naming::{generate_tmp_name, validate_vm_name};
@@ -1200,10 +1216,11 @@ impl ServiceState {
 
     fn profile_config(&self, profile_id: &str) -> Result<ProfileConfigFile> {
         #[cfg(test)]
-        let catalog = if std::env::var_os("CAPSEM_PROFILES_DIR").is_none() {
-            ProfileCatalog::builtin()
+        let catalog = if let Some(path) = test_profile_dir_override() {
+            ProfileCatalog::load_from_dir(&path)
+                .map_err(|e| anyhow!("load profile catalog: {e}"))?
         } else {
-            ProfileCatalog::load_default().map_err(|e| anyhow!("load profile catalog: {e}"))?
+            ProfileCatalog::builtin()
         };
         #[cfg(not(test))]
         let catalog =
@@ -4308,16 +4325,25 @@ async fn handle_corp_reload(
 fn load_profile_catalog_for_service() -> Result<ProfileCatalog, AppError> {
     #[cfg(test)]
     {
-        if std::env::var_os("CAPSEM_PROFILES_DIR").is_none() {
-            return Ok(ProfileCatalog::builtin());
+        if let Some(path) = test_profile_dir_override() {
+            return ProfileCatalog::load_from_dir(&path).map_err(|error| {
+                AppError(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("failed to load profile catalog: {error}"),
+                )
+            });
         }
+        Ok(ProfileCatalog::builtin())
     }
-    ProfileCatalog::load_default().map_err(|error| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("failed to load profile catalog: {error}"),
-        )
-    })
+    #[cfg(not(test))]
+    {
+        ProfileCatalog::load_default().map_err(|error| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("failed to load profile catalog: {error}"),
+            )
+        })
+    }
 }
 
 fn profile_catalog_source_label(source: &ProfileCatalogSource) -> String {
@@ -5210,7 +5236,7 @@ async fn handle_profile_mcp_tool_edit(
         &target_key,
         "permission",
     );
-    let mut profile = profile_for_route(profile_id.clone()).map_err(|error| {
+    let mut profile = profile_for_route(profile_id.clone()).inspect_err(|error| {
         log_profile_mutation_route_rejected(
             "profile_mcp_tool_edit",
             &profile_id,
@@ -5219,7 +5245,6 @@ async fn handle_profile_mcp_tool_edit(
             "permission",
             &error.1,
         );
-        error
     })?;
     let summary = profile
         .set_mcp_tool_permission(&server_id, &tool_id, update.action, "service-api")
@@ -6183,7 +6208,7 @@ async fn handle_enforcement_rule_upsert(
                 .to_string(),
         ));
     }
-    let compiled = validate_single_user_profile_rule(&rule_id, &rule).map_err(|error| {
+    let compiled = validate_single_user_profile_rule(&rule_id, &rule).inspect_err(|error| {
         log_profile_mutation_route_rejected(
             "enforcement_rule_upsert",
             &profile_id,
@@ -6192,9 +6217,8 @@ async fn handle_enforcement_rule_upsert(
             "upsert",
             &error.1,
         );
-        error
     })?;
-    let mut profile = profile_for_route(profile_id.clone()).map_err(|error| {
+    let mut profile = profile_for_route(profile_id.clone()).inspect_err(|error| {
         log_profile_mutation_route_rejected(
             "enforcement_rule_upsert",
             &profile_id,
@@ -6203,7 +6227,6 @@ async fn handle_enforcement_rule_upsert(
             "upsert",
             &error.1,
         );
-        error
     })?;
     let summary = profile
         .upsert_profile_rule(&rule_id, rule.clone(), "service-api")
@@ -6268,7 +6291,7 @@ async fn handle_detection_rule_upsert(
                 .to_string(),
         ));
     }
-    let compiled = validate_single_user_profile_rule(&rule_id, &rule).map_err(|error| {
+    let compiled = validate_single_user_profile_rule(&rule_id, &rule).inspect_err(|error| {
         log_profile_mutation_route_rejected(
             "detection_rule_upsert",
             &profile_id,
@@ -6277,9 +6300,8 @@ async fn handle_detection_rule_upsert(
             "upsert",
             &error.1,
         );
-        error
     })?;
-    let mut profile = profile_for_route(profile_id.clone()).map_err(|error| {
+    let mut profile = profile_for_route(profile_id.clone()).inspect_err(|error| {
         log_profile_mutation_route_rejected(
             "detection_rule_upsert",
             &profile_id,
@@ -6288,7 +6310,6 @@ async fn handle_detection_rule_upsert(
             "upsert",
             &error.1,
         );
-        error
     })?;
     let summary = profile
         .upsert_profile_rule(&rule_id, rule.clone(), "service-api")
@@ -6323,7 +6344,7 @@ async fn handle_enforcement_rule_delete(
         &rule_id,
         "delete",
     );
-    let mut profile = profile_for_route(profile_id.clone()).map_err(|error| {
+    let mut profile = profile_for_route(profile_id.clone()).inspect_err(|error| {
         log_profile_mutation_route_rejected(
             "enforcement_rule_delete",
             &profile_id,
@@ -6332,7 +6353,6 @@ async fn handle_enforcement_rule_delete(
             "delete",
             &error.1,
         );
-        error
     })?;
     let summary = profile
         .delete_profile_rule(&rule_id, "service-api")
@@ -6371,7 +6391,7 @@ async fn handle_detection_rule_delete(
         &rule_id,
         "delete",
     );
-    let mut profile = profile_for_route(profile_id.clone()).map_err(|error| {
+    let mut profile = profile_for_route(profile_id.clone()).inspect_err(|error| {
         log_profile_mutation_route_rejected(
             "detection_rule_delete",
             &profile_id,
@@ -6380,7 +6400,6 @@ async fn handle_detection_rule_delete(
             "delete",
             &error.1,
         );
-        error
     })?;
     let summary = profile
         .delete_profile_rule(&rule_id, "service-api")

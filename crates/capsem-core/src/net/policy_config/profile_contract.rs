@@ -471,9 +471,8 @@ impl Profile {
             .profiles
             .rules
             .iter()
-            .filter_map(|(key, rule)| {
-                (rule.managed.as_ref() == Some(&managed)).then(|| key.clone())
-            })
+            .filter(|(_, rule)| rule.managed.as_ref() == Some(&managed))
+            .map(|(key, _)| key.clone())
             .collect::<Vec<_>>();
         if existing_keys.len() > 1 {
             return Err(format!(

@@ -398,7 +398,7 @@ async fn profile_asset_status_download_and_corruption_checks_use_profile_pins() 
     let arch = capsem_core::net::policy_config::current_profile_arch();
     let rootfs = &profile.assets.current_arch_assets().unwrap().rootfs;
     let rootfs_target = assets_dir
-        .join(&arch)
+        .join(arch)
         .join(capsem_core::asset_manager::hash_filename(
             &rootfs.name,
             rootfs.hash.strip_prefix("blake3:").unwrap(),
@@ -820,7 +820,7 @@ fn profile_catalog_status_reports_directory_catalog_readiness() {
     assert_eq!(status["profiles"][0]["id"], "code");
     assert_eq!(
         status["profiles"][0]["profile_payload_hash"],
-        profile_payload_hash(&profile.config()).unwrap()
+        profile_payload_hash(profile.config()).unwrap()
     );
     assert_eq!(
         status["profiles"][0]["missing_assets"]
@@ -4614,13 +4614,25 @@ struct SettingsEnvGuard {
 struct EnvVarGuard {
     key: &'static str,
     previous: Option<std::ffi::OsString>,
+    previous_test_profile_dir_override: Option<Option<PathBuf>>,
 }
 
 impl EnvVarGuard {
     fn set(key: &'static str, value: impl AsRef<std::ffi::OsStr>) -> Self {
         let previous = std::env::var_os(key);
+        let previous_test_profile_dir_override = if key == "CAPSEM_PROFILES_DIR" {
+            Some(super::set_test_profile_dir_override(Some(PathBuf::from(
+                value.as_ref(),
+            ))))
+        } else {
+            None
+        };
         std::env::set_var(key, value);
-        Self { key, previous }
+        Self {
+            key,
+            previous,
+            previous_test_profile_dir_override,
+        }
     }
 }
 
@@ -4630,6 +4642,9 @@ impl Drop for EnvVarGuard {
             std::env::set_var(self.key, previous);
         } else {
             std::env::remove_var(self.key);
+        }
+        if let Some(previous) = self.previous_test_profile_dir_override.take() {
+            super::set_test_profile_dir_override(previous);
         }
     }
 }

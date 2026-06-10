@@ -38,7 +38,7 @@ class TestSetupRoutesRemoved:
 class TestAssets:
 
     def test_assets_lists_three_expected_artifacts(self, client):
-        """Profile asset status enumerates vmlinuz, initrd.img, and rootfs."""
+        """Profile asset status enumerates hash-prefixed kernel/initrd/rootfs assets."""
         resp = client.get("/profiles/code/assets/status")
         assert resp is not None
         # Handler either returns {ready, downloading, asset_version, assets}
@@ -48,15 +48,27 @@ class TestAssets:
         assert isinstance(resp["assets"], list)
         if resp["assets"]:
             names = {a["name"] for a in resp["assets"]}
-            assert "vmlinuz" in names
-            assert "initrd.img" in names
-            rootfs_names = names - {"vmlinuz", "initrd.img"}
+            kernel_names = {
+                name
+                for name in names
+                if re.fullmatch(r"vmlinuz(?:-[a-f0-9]{16})?", name)
+            }
+            initrd_names = {
+                name
+                for name in names
+                if re.fullmatch(r"initrd(?:-[a-f0-9]{16})?\.img", name)
+            }
+            rootfs_names = {
+                name
+                for name in names
+                if re.fullmatch(r"rootfs(?:-[a-f0-9]{16})?\.erofs", name)
+            }
+            assert len(kernel_names) == 1, f"unexpected kernel assets: {names}"
+            assert len(initrd_names) == 1, f"unexpected initrd assets: {names}"
             assert len(rootfs_names) == 1, f"unexpected asset names: {names}"
-            rootfs_name = next(iter(rootfs_names))
-            assert re.fullmatch(
-                r"rootfs(?:-[a-f0-9]{16})?\.erofs",
-                rootfs_name,
-            ), f"unexpected rootfs asset name: {rootfs_name}"
+            assert names == kernel_names | initrd_names | rootfs_names, (
+                f"unexpected asset names: {names}"
+            )
             for asset in resp["assets"]:
                 assert asset["status"] in ("present", "missing")
 

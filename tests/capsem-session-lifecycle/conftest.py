@@ -12,7 +12,7 @@ from helpers.service import ServiceInstance, wait_exec_ready
 pytestmark = pytest.mark.session_lifecycle
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture
 def lifecycle_debug_upstream():
     if not DEBUG_UPSTREAM_BINARY.exists():
         pytest.skip(

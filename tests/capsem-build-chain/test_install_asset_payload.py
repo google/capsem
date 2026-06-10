@@ -27,8 +27,8 @@ def test_manifest_generation_public_path_is_capsem_admin() -> None:
     public_docs = [
         PROJECT_ROOT / "docs" / "src" / "content" / "docs" / "architecture" / "asset-pipeline.md",
         PROJECT_ROOT / "docs" / "src" / "content" / "docs" / "security" / "build-verification.md",
-        PROJECT_ROOT / "skills" / "asset-pipeline" / "SKILL.md",
-        PROJECT_ROOT / "skills" / "release-process" / "SKILL.md",
+        PROJECT_ROOT / "config" / "skills" / "asset-pipeline" / "SKILL.md",
+        PROJECT_ROOT / "config" / "skills" / "release-process" / "SKILL.md",
     ]
 
     assert "capsem-admin -- manifest generate" in justfile
@@ -61,6 +61,7 @@ def test_package_builders_move_selected_manifest_payload() -> None:
     assert 'install -m 0644 "$ASSETS_VIEW/manifest.json" "$SHARE_DIR/assets/manifest.json"' in build_pkg
     assert 'SELECTED_MANIFEST_SOURCE="$MANIFEST_PATH"' in build_pkg
     assert 'write_manifest_origin "$SELECTED_MANIFEST_SOURCE" "$SHARE_DIR/assets/manifest-origin.json"' in build_pkg
+    assert 'materialize_manifest_assets "$ASSETS_VIEW" "$SHARE_DIR/assets" "$ASSETS_DIR"' in build_pkg
     assert "sync-dev-assets.sh" not in build_pkg
     assert 'CONFIG_ROOT="${POSITIONAL[3]}"' in build_pkg
     assert 'ditto --norsrc --noextattr "$src" "$dst"' in build_pkg
@@ -95,6 +96,7 @@ def test_package_builders_move_selected_manifest_payload() -> None:
     assert 'cp "$ASSETS_VIEW/manifest.json" "$WORK_DIR/deb/usr/share/capsem/assets/manifest.json"' in repack_deb
     assert 'SELECTED_MANIFEST_SOURCE="$MANIFEST_PATH"' in repack_deb
     assert 'write_manifest_origin "$SELECTED_MANIFEST_SOURCE" "$WORK_DIR/deb/usr/share/capsem/assets/manifest-origin.json"' in repack_deb
+    assert 'materialize_manifest_assets "$ASSETS_VIEW" "$WORK_DIR/deb/usr/share/capsem/assets" "$ASSETS_DIR"' in repack_deb
     assert 'cp -R "$CONFIG_ROOT/profiles/." "$WORK_DIR/deb/usr/share/capsem/profiles/"' in repack_deb
     assert "sync-dev-assets.sh" not in repack_deb
     assert "capsem-admin" in repack_deb
