@@ -134,29 +134,22 @@ semantic routes that reflect backend enum fields with select boxes/toggles.
 ### Profile Mutation Abstraction And Ledger
 
 Semantic profile routes are not allowed to edit profile files as invisible file
-I/O. Any route that mutates profile-owned files must go through one generic
-backend profile document/store abstraction. MCP, plugins, skills, default-rule
-edits, and future profile-owned config all use this same rail. The service loads
-a coherent in-memory profile object, accepts a typed mutation request, resolves
-it to one profile-owned target, applies it through a target-specific adapter,
-and saves the profile ledger update plus mutation ledger event atomically enough
-that validation can never observe a silently accepted hash drift.
+I/O. Any route that mutates profile-owned files must go through one loaded
+`Profile` object. MCP, plugins, skills, default-rule edits, and future
+profile-owned config all use this same rail. `Profile` owns loading, path
+resolution, locking, hash verification, semantic mutation, save/reload, and
+mutation-ledger emission. Whether it internally uses smaller document/store
+helpers is an implementation detail, not an external contract.
 
-The center of gravity should be a loaded profile object, not scattered helpers:
+The center of gravity should be `Profile`, not scattered helpers. It represents
+`profile.toml` plus referenced sibling files (`enforcement.toml`,
+`detection.yaml`, `mcp.json`, plugin config, skills, package lists, root
+manifest, and future profile-owned files), and it can produce the effective
+read model for UI/TUI/runtime: MCP servers/tools with effective permissions,
+plugin states, skill states, compiled enforcement/detection rules, default
+rules, assets, and profile metadata.
 
-- `ProfileStore`: loads profiles from an installed/source profile root, owns
-  profile path resolution, locking, hash verification, save/reload, and mutation
-  ledger emission;
-- `ProfileDocument`: in-memory representation of `profile.toml` plus loaded
-  referenced sibling files (`enforcement.toml`, `detection.yaml`, `mcp.json`,
-  plugin config, skills, package lists, root manifest, and future profile-owned
-  files);
-- `ProfileMatrix`: effective read model derived from the document for UI/TUI and
-  runtime: MCP servers/tools with effective permissions, plugin states, skill
-  states, compiled enforcement/detection rules, default rules, assets, and
-  profile metadata.
-
-Routes should call methods on this object, for example
+Routes should call methods on `Profile`, for example
 `profile.set_mcp_tool_permission(server, tool, Ask)`, `profile.set_plugin_mode`,
 `profile.set_skill_enabled`, then `profile.save_and_reload()`. The object owns
 rule creation/update, ownership annotations, profile file hash updates,
