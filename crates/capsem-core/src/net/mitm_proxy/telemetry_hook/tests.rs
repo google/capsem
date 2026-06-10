@@ -186,6 +186,26 @@ fn non_llm_path_is_not_a_model_call() {
     assert!(mc.is_none());
 }
 
+#[test]
+fn agy_cloudcode_stream_generate_content_is_a_model_call() {
+    let mut req_ctx = anthropic_req_ctx();
+    req_ctx.domain = "daily-cloudcode-pa.googleapis.com".into();
+    req_ctx.process_name = Some("agy".into());
+    req_ctx.ai_provider = Some(ProviderKind::Google);
+    req_ctx.path = "/v1internal:streamGenerateContent".into();
+    req_ctx.request_body_stats = req_stats(b"");
+    let pricing = Arc::new(PricingTable::load());
+    let trace = Arc::new(Mutex::new(TraceState::new()));
+
+    let mc = maybe_build_model_call(&req_ctx, &empty_resp_stats(), &[], &pricing, &trace)
+        .expect("AGY Cloud Code streamGenerateContent should produce model telemetry");
+
+    assert_eq!(mc.provider, "google");
+    assert_eq!(mc.process_name.as_deref(), Some("agy"));
+    assert_eq!(mc.path, "/v1internal:streamGenerateContent");
+    assert!(mc.stream);
+}
+
 /// Non-AI provider returns no model call.
 #[test]
 fn non_ai_provider_is_not_a_model_call() {

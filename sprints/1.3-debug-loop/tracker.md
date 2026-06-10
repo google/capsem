@@ -91,6 +91,14 @@
 - [ ] Implement bug 3 after user resumes coding: TDD over AGY traffic/tool-call
   observability so stats reflect model/tool activity through the unified
   security-event/session DB path.
+  - [x] AGY model telemetry slice: live DB proved AGY sends model traffic to
+    `daily-cloudcode-pa.googleapis.com` on `/v1internal:streamGenerateContent`
+    and `/v1internal:generateContent`. Added that host as a Google protocol
+    alias and covered the telemetry path so AGY generation emits `ModelCall`
+    rows once the new service build runs.
+  - [ ] Remaining: prove AGY tool-call/activity semantics beyond model HTTP
+    rows, and verify against a rebuilt service/VM without destroying the current
+    evidence VM until approved.
 - [ ] Implement bug 4 after user resumes coding: prove broker capture/rewrite
   with a local hermetic flow, expose broker/plugin counters and recent evidence
   as first-class stats, and ensure UI/TUI do not bury it under generic process
@@ -283,6 +291,11 @@
     profile-wrapper contract and profile/image validation tests.
   - `cargo run -p capsem-admin -- profile check config/profiles/code/profile.toml --config-root config`
     passed after refreshing the `install.sh` profile hash pin.
+  - `cargo test -p capsem-core provider_defaults_build_settings_defined_endpoint_registry -- --nocapture`
+    passed; proves AGY Cloud Code host maps to Google protocol.
+  - `cargo test -p capsem-core agy_cloudcode_stream_generate_content_is_a_model_call -- --nocapture`
+    passed; proves AGY Cloud Code generation paths emit model telemetry when
+    provider metadata is present.
 - Functional: focused source tests passed; live install not restarted or killed
   per evidence-preservation rule.
 - Adversarial: pending; must include AGY activity that bypasses model stats

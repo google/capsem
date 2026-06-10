@@ -467,6 +467,10 @@ mode = "rewrite"
             Some(ModelProtocol::Google)
         );
         assert_eq!(
+            registry.protocol_for_host("daily-cloudcode-pa.googleapis.com"),
+            Some(ModelProtocol::Google)
+        );
+        assert_eq!(
             registry.protocol_for_host("127.0.0.1"),
             Some(ModelProtocol::Ollama)
         );

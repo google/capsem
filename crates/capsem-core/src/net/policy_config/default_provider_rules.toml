@@ -149,9 +149,9 @@ match = 'mcp.server.name.contains("anthropic") || mcp.server.name.contains("clau
 name = "Google AI"
 protocol = "google"
 url = "https://generativelanguage.googleapis.com/v1beta"
-aliases = ["generativelanguage.googleapis.com"]
+aliases = ["generativelanguage.googleapis.com", "daily-cloudcode-pa.googleapis.com"]
 listen_ports = [443]
-allowed_remote_targets = ["generativelanguage.googleapis.com:443"]
+allowed_remote_targets = ["generativelanguage.googleapis.com:443", "daily-cloudcode-pa.googleapis.com:443"]
 
 [ai.google.rules.http_gemini_api]
 name = "google_gemini_http_observed"
