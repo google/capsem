@@ -141,6 +141,13 @@ component_management:
         - type: project
           target: 80%
 
+    # Admin/profile tooling: manifest generation, profile materialization,
+    # image build orchestration, and release asset validation.
+    - component_id: admin
+      name: Admin
+      paths:
+        - crates/capsem-admin/src/**
+
     # CLI client: start, stop, exec, shell, list, status, delete.
     - component_id: cli
       name: CLI
@@ -167,6 +174,12 @@ component_management:
       statuses:
         - type: project
           target: 80%
+
+    # Terminal UI: profile/session control over the service API.
+    - component_id: tui
+      name: TUI
+      paths:
+        - crates/capsem-tui/src/**
 
     # System tray host: menu wiring, gateway client, icon rendering.
     - component_id: systray
@@ -197,6 +210,12 @@ component_management:
       name: Builder
       paths:
         - src/capsem/**
+
+    # Debug helper binaries used for upstream/service diagnostics.
+    - component_id: debug-upstream
+      name: Debug Upstream
+      paths:
+        - crates/capsem-debug-upstream/src/**
 
 ignore:
   - crates/*/tests/**

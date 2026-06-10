@@ -101,6 +101,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   runtime `/root`, point at the canonical Capsem MCP bridge where applicable,
   and do not contain obvious credential-shaped secrets. The arm64 code-profile
   EROFS rootfs and initrd pins were refreshed from the rebuilt assets.
+- Added a coverage-infra guard for release prep: PR Rust coverage now includes
+  every workspace crate across the macOS/Linux jobs, Codecov components map
+  each crate, and build-chain tests fail if a future crate is left out.
 
 ### Added (kernel 7.0 + EROFS)
 - Added a stable-kernel upgrade path for guest builds: `kernel_branch = "7.0"`

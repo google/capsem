@@ -250,6 +250,13 @@
   `capsem-admin image build` as the public rail. Added
   `tests/capsem-build-chain/test_active_docs_profile_contract.py` to fail if
   active docs/skills reintroduce retired builder/product-authoring guidance.
+- [x] Pre-S5: Coverage infrastructure audit.
+  Required before S5 benchmark/install gates: every workspace crate must be
+  included in PR `cargo llvm-cov` package lists and mapped in Codecov
+  components, with a build-chain guard that fails on future crate drift.
+  Proof: `uv run python -m pytest
+  tests/capsem-build-chain/test_coverage_infra_contract.py -q` and
+  `uv run ruff check tests/capsem-build-chain/test_coverage_infra_contract.py`.
 - [ ] S5: Verification gate.
 - [ ] S5: Full build gate: rebuild profile assets through the admin/just rail,
   including EROFS/LZ4HC rootfs.

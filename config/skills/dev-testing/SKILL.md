@@ -232,19 +232,30 @@ Composite recipe: `just test-vm` runs build-chain + guest + cleanup + codesign +
 
 ### Rust crate CI coverage
 
-| Crate | Tests | CI macOS | CI Linux | Smoke | Full |
-|-------|------:|:--------:|:--------:|:-----:|:----:|
-| capsem-core | ~1695 | Yes | Yes | No | Yes |
-| capsem-agent | ~71 | Yes | No | No | Yes |
-| capsem-logger | ~47 | Yes | Yes | No | Yes |
-| capsem-proto | ~132 | Yes | Yes | No | Yes |
-| capsem-gateway | ~38 | Yes | No | No | Yes |
-| capsem-service | ~109 | Yes | Yes | No | Yes |
-| capsem (CLI) | ~140 | Yes | Yes | No | Yes |
-| capsem-mcp | ~67 | Yes | Yes | No | Yes |
-| capsem-tray | ~47 | Yes | No | No | Yes |
-| capsem-process | ~62 | Yes | No | No | Yes |
-| capsem-app | ~35 | Check | No | No | Yes |
+| Crate | CI macOS coverage | CI Linux coverage | Notes |
+|-------|:-----------------:|:-----------------:|-------|
+| capsem | Yes | Yes | CLI client |
+| capsem-admin | Yes | Yes | Profile/materialization/image admin |
+| capsem-agent | Yes | Yes | In-VM agent binaries |
+| capsem-app | Yes | No | macOS/Tauri app shell |
+| capsem-core | Yes | Yes | Core engine, networking, VM, policy |
+| capsem-debug-upstream | Yes | Yes | Debug helper binary |
+| capsem-gateway | Yes | Yes | TCP-to-UDS gateway |
+| capsem-guard | Yes | Yes | Companion lifecycle guard |
+| capsem-logger | Yes | Yes | DB writer/logger |
+| capsem-mcp | Yes | Yes | MCP stdio server |
+| capsem-mcp-aggregator | Yes | Yes | MCP aggregator binary |
+| capsem-mcp-builtin | Yes | Yes | Builtin MCP binary |
+| capsem-process | Yes | Yes | VM process runner |
+| capsem-proto | Yes | Yes | Wire protocol |
+| capsem-service | Yes | Yes | Host service |
+| capsem-tray | Yes | No | macOS tray host |
+| capsem-tui | Yes | Yes | Terminal UI |
+
+Coverage infra is itself tested by
+`tests/capsem-build-chain/test_coverage_infra_contract.py`. That guard fails
+when a workspace crate is missing from PR `cargo llvm-cov` package lists or
+from the Codecov component map.
 
 ### Python integration suite tier map
 
