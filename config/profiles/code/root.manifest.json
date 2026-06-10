@@ -33,8 +33,8 @@
     },
     {
       "path": "root/.gemini/settings.json",
-      "hash": "blake3:104cd82833a46b8da38a4ab566c1c9dc404e2762a9e3aa72eb7b82343ca3de0f",
-      "size": 510
+      "hash": "blake3:4a21022ba945a84fba5ff5a81adcbe742a0d8ebcb383ec2a362866889d07b48e",
+      "size": 523
     },
     {
       "path": "root/.gemini/trustedFolders.json",

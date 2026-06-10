@@ -1,12 +1,17 @@
 """AI CLI installation and sandbox enforcement tests."""
 
+import json
 import os
+import re
 
 import pytest
 
 from conftest import run
 
 PUBLIC_NETWORK_SMOKE_ENV = "CAPSEM_RUN_PUBLIC_NETWORK_SMOKE"
+SECRET_PATTERN = re.compile(
+    r"(sk-[A-Za-z0-9_-]{20,}|ghp_[A-Za-z0-9_]{20,}|AIza[0-9A-Za-z_-]{20,})"
+)
 
 
 def _require_public_network_smoke(reason):
@@ -83,16 +88,42 @@ def test_gemini_api_key_no_duplicate():
         )
 
 
-@pytest.mark.parametrize("path", [
-    "/root/.gemini/settings.json",
-    "/root/.gemini/projects.json",
-    "/root/.gemini/trustedFolders.json",
-    "/root/.gemini/installation_id",
-])
-def test_gemini_config_not_preseeded(path):
-    """Tool-owned Gemini config must not be copied into the VM at boot."""
-    result = run(f"test ! -e {path}")
-    assert result.returncode == 0, f"stale Gemini config was preseeded: {path}"
+def _read_json(path):
+    result = run(f"cat {path}")
+    assert result.returncode == 0, f"missing profile-owned JSON {path}: {result.stderr}"
+    assert not SECRET_PATTERN.search(result.stdout), f"secret-like value found in {path}"
+    return json.loads(result.stdout)
+
+
+def test_gemini_profile_config_seeded_without_credentials():
+    """Profile-owned Gemini config must be projected at boot without secrets."""
+    settings = _read_json("/root/.gemini/settings.json")
+    assert settings["general"]["enableAutoUpdate"] is False
+    assert settings["general"]["enableAutoUpdateNotification"] is False
+    assert settings["privacy"]["usageStatisticsEnabled"] is False
+    assert settings["privacy"]["sessionRetention"] == "none"
+    assert settings["telemetry"]["enabled"] is False
+    assert settings["security"]["auth"]["selectedType"] == "gemini-api-key"
+    assert settings["security"]["folderTrust.enabled"] is False
+
+    projects = _read_json("/root/.gemini/projects.json")
+    assert projects["projects"]["/root"] == "root"
+
+    trusted = _read_json("/root/.gemini/trustedFolders.json")
+    assert trusted["/root"] == "TRUST_FOLDER"
+
+    installation_id = run("cat /root/.gemini/installation_id")
+    assert installation_id.returncode == 0
+    assert installation_id.stdout.strip()
+    assert not SECRET_PATTERN.search(installation_id.stdout)
+
+
+def test_antigravity_profile_config_seeded_without_credentials():
+    """Profile-owned Antigravity config must be projected at boot without secrets."""
+    settings = _read_json("/root/.antigravity/settings.json")
+    assert settings["colorScheme"] == "dark"
+    assert "/root" in settings["trustedWorkspaces"]
+    assert not SECRET_PATTERN.search(json.dumps(settings, sort_keys=True))
 
 
 def test_google_ai_domain_allowed():

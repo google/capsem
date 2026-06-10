@@ -88,6 +88,9 @@
   under `config/profiles/code/`.
 - [x] S2: Builder copies guest root seed into rootfs seed path.
 - [x] S2: `capsem-init` projects seed into runtime `/`.
+- [x] S2: In-VM diagnostics assert the projected profile-owned Gemini,
+  Antigravity, Claude, Codex, and MCP config files exist, use the profile MCP
+  bridge, and contain no obvious credential-shaped secrets.
 - [ ] S3: Tool install refresh/version discipline.
   Partial: profile-owned apt/Python/npm package files and `install.sh`
   materialize into the generated guest workspace and rootfs Docker context.
@@ -209,19 +212,37 @@
   from the profile before invoking `capsem-builder`. This is the transition
   rail; the backend still has a `guest_dir` argument and must be burned down to
   an explicit image spec in S1.
-- Real arm64 rootfs build slice:
+- Real arm64 rootfs/initrd build slice:
   `cargo run -p capsem-admin -- image build --profile
   config/profiles/code/profile.toml --config-root config --guest-dir guest
   --output assets --arch arm64 --template rootfs` succeeded through the
   profile-materialized workspace and produced EROFS/LZ4HC level 12
   `assets/arm64/rootfs.erofs` with BLAKE3
-  `07e615c6254400317ed9da735f7032ea737719b72a058f0a871d6a027b85e63e`, size
-  `862875648`. The profile asset pins were reconciled to the generated
-  manifest for arm64 `initrd.img` and `rootfs.erofs`.
+  `015b5d930eef2eacfb6b484adaf8abd83cd4fb2c0a4700c24fe696c9db595ba1`, size
+  `862875648`. `just _pack-initrd` then repacked diagnostics into
+  `assets/arm64/initrd.img` with BLAKE3
+  `7928dd872e09c33ca001f779d987cb7b71d3df8f3f9ed74ca68aeb5c38d1fb9f`, size
+  `2849956`. The profile asset pins were reconciled to the generated manifest
+  for arm64 `initrd.img` and `rootfs.erofs`.
+- Runtime projection gotcha: profile root files are baked into EROFS, but
+  `capsem-init` overlays diagnostics from initrd at boot for fast iteration.
+  Therefore profile-root changes require a rootfs rebuild, and diagnostic test
+  changes require `just _pack-initrd`; otherwise doctor may execute stale tests
+  against fresh profile files.
 - Installer proof: the first real Docker build failed because downloaded
   installer scripts were executed with `/bin/sh`; the profile `install.sh` now
   invokes them with Bash. The retry installed Claude Code `2.1.170` and
   Antigravity CLI `1.0.7` during the rootfs build.
+- VM proof: isolated dev service under `target/capsem-dev-home` booted the
+  rebuilt arm64 profile assets. `capsem status` reported Capsem
+  `1.3.1781050981`, assets manifest `2026.0609.18`, `1/1` profile ready, and
+  arm64 vmlinuz/initrd/rootfs all `ok`. `capsem doctor --fast` passed with
+  `286 passed, 23 skipped, 1 deselected in 27.04s`; log:
+  `target/capsem-dev-home/run/doctor-latest.log`.
+- Size/performance note for follow-up, not a blocker for this proof: because
+  the profile-root layer currently sits before Python/package-heavy Docker
+  layers, small profile-root edits can invalidate expensive image layers; NVM
+  and Python packages also include test/data trees that may be pruneable later.
 - Verification for this slice:
   - `cargo test -p capsem-core --lib -- --nocapture` passed with 1506 tests,
     1 ignored.
@@ -264,8 +285,11 @@
   proves mutated profile payload files are rejected and profile root manifests
   are verified. Remaining: checked-in credential sweep for
   `config/profiles/<profile_id>/root/`.
-- E2E/VM: pending real rebuilt-profile boot and `capsem-doctor` proof that
-  seeded files exist in runtime `/root`.
+- E2E/VM: isolated rebuilt-profile boot passed `capsem doctor --fast` with
+  `286 passed, 23 skipped, 1 deselected in 27.04s`. The doctor suite now proves
+  profile-owned Gemini, Antigravity, Claude, Codex, and MCP config files exist
+  in runtime `/root`, use the canonical `/run/capsem-mcp-server` bridge where
+  applicable, and contain no obvious credential-shaped secrets.
 - Asset build: arm64 rootfs rebuild through `capsem-admin image build` passed,
   and `cargo run -p capsem-admin -- image verify --profile
   config/profiles/code/profile.toml --config-root config --output assets

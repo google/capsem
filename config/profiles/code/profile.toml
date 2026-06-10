@@ -34,13 +34,13 @@ size = 8786432
 [assets.arch.arm64.initrd]
 name = "initrd.img"
 url = "https://github.com/google/capsem/releases/download/v1.0.1780954707/arm64-initrd.img"
-hash = "blake3:8790b331eb49c8762e40db441fdcdb0c22fada6002d34c69c9faa6a7febf20e7"
-size = 2849225
+hash = "blake3:7928dd872e09c33ca001f779d987cb7b71d3df8f3f9ed74ca68aeb5c38d1fb9f"
+size = 2849956
 
 [assets.arch.arm64.rootfs]
 name = "rootfs.erofs"
 url = "https://github.com/google/capsem/releases/download/v1.0.1780954707/arm64-rootfs.erofs"
-hash = "blake3:07e615c6254400317ed9da735f7032ea737719b72a058f0a871d6a027b85e63e"
+hash = "blake3:015b5d930eef2eacfb6b484adaf8abd83cd4fb2c0a4700c24fe696c9db595ba1"
 size = 862875648
 
 [assets.arch.x86_64.kernel]
@@ -97,7 +97,7 @@ size = 341
 
 [files.root_manifest]
 path = "profiles/code/root.manifest.json"
-hash = "blake3:055633d72709f8872104ca5ae3cf4b3fc66336659710114da5fa061e3221114d"
+hash = "blake3:d49c05e47e8f28fa7668b46346f1ba65e1efaaeae63042112cdbf2b909367034"
 size = 1518
 
 [plugins.credential_broker]

@@ -1,8 +1,8 @@
 {
   "homeDirectoryWarningDismissed": true,
   "general": {
-    "disableAutoUpdate": true,
-    "disableUpdateNag": true
+    "enableAutoUpdate": false,
+    "enableAutoUpdateNotification": false
   },
   "ui": {
     "hideTips": true,
