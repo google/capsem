@@ -56,9 +56,13 @@
   line:
   `0422a6ec` guest memory range validation and `45800223` offset-overflow
   guards are ported into current KVM memory/virtio-blk code.
-- [ ] S5: Boot rebuilt profile and run AGY/Antigravity in the guest. Do not
+- [x] S5: Boot rebuilt profile and run AGY/Antigravity in the guest. Do not
   raise VM RAM caps speculatively; capture the exact kernel/runtime failure and
   fix the specific kernel option if it still fails.
+  Proof, 2026-06-10: an isolated dev service using the freshly rebuilt local
+  profile/rootfs found `/usr/local/bin/agy` in the guest and `agy --version`
+  returned `1.0.7`. The earlier default `capsem run` failure was against stale
+  installed/user assets, not the rebuilt profile.
 - [ ] S1: Extend build record to include profile and profile-owned payload
   files after the profile ledger hash schema lands.
 - [x] Tooling: Add Ruff as a full-repository Python lint gate.
@@ -258,14 +262,116 @@
   tests/capsem-build-chain/test_coverage_infra_contract.py -q` and
   `uv run ruff check tests/capsem-build-chain/test_coverage_infra_contract.py`.
 - [ ] S5: Verification gate.
-- [ ] S5: Full build gate: rebuild profile assets through the admin/just rail,
+  Mostly green on 2026-06-10, but intentionally left open because the magic
+  inventory is still red. Remaining live old-path/product-config references
+  include `guest/config`, Python `GuestImageConfig`/`ai_providers`, and
+  `CAPSEM_USER_CONFIG`/`user.toml` in production-ish rails, tests, and docs.
+  This must be burned in S1 before the ontology sprint can close.
+
+## S5 Evidence, 2026-06-10
+
+- Build/profile evidence:
+  - `just build-assets code arm64` passed.
+  - Asset manifest is `assets.current = 2026.0610.11`,
+    `binaries.current = 1.3.1781050981`.
+  - Built Linux kernel asset is present for arm64:
+    `vmlinuz` BLAKE3
+    `559f986e3fed2b255e6d13030bbeb92d1fe585e88f7bdda39797ba356ba2e17f`.
+  - Built EROFS/LZ4HC profile image is present for arm64:
+    `rootfs.erofs` BLAKE3
+    `84f7971493028a9aa8a118ccb30f5e9ff90b6dc1b46fcc51dccf10d712a1d009`,
+    size `862875648`.
+  - Built initrd is present for arm64:
+    `initrd.img` BLAKE3
+    `c6bbd2f580032b1c60e32c94a7313cbed9a059253f574e269cd96f58faf671ea`.
+  - Built CycloneDX OBOM is present for arm64:
+    `obom.cdx.json` BLAKE3
+    `45e917cf3405060e2db2daf29bcf5a12dc7b40787f32e413eaf083dec71b626d`.
+  - `capsem-admin profile materialize`, `profile check`, and `image verify`
+    passed for the materialized profile; `image verify` passed for both arm64
+    and x86_64 manifest entries.
+
+- Focused contract tests:
+  - `cargo test -p capsem-core --lib
+    net::policy_config::profile_contract::tests` passed: 20 tests.
+  - `cargo test -p capsem-core --lib
+    net::policy_config::security_rule_profile::tests` passed: 29 tests.
+  - `uv run python -m pytest
+    tests/capsem-build-chain/test_active_docs_profile_contract.py
+    tests/capsem-build-chain/test_coverage_infra_contract.py
+    tests/test_docker.py -q` passed: 154 tests.
+  - `uv run python -m pytest tests/test_doctor.py
+    tests/test_justfile_contract.py tests/test_cli.py::TestDoctorCommand -q`
+    passed: 37 tests.
+  - `uv run python -m pytest tests/test_build_assets_profile.py
+    tests/capsem-build-chain/test_install_asset_payload.py
+    tests/capsem-build-chain/test_simulate_install_assets.py
+    tests/capsem-install/test_setup_removed.py
+    tests/capsem-install/test_installed_layout.py
+    tests/capsem-install/test_smoke.py -q` passed: 35 passed, 2 skipped.
+  - `cargo test -p capsem-admin -- image_verify materialize -- --nocapture`
+    passed: 4 tests.
+
+- End-to-end gates:
+  - `just smoke` passed in 233s. It covered `capsem-doctor --fast`,
+    injection scenarios, VM guest diagnostics, session ledger checks, MCP
+    ledger checks, network/security rows, main/session DB rollups, Python
+    integration tests, and suspend/resume durability.
+  - `just test` passed. Highlights: `cargo audit`, Ruff, `ty`, skill
+    validation, frontend check/test/build with 357 Vitest tests, cross-compile
+    agent checks, Rust security/logger/gateway rails, Python suite with
+    1400 passed and 71 skipped at 90.08% coverage, build-chain serial tests,
+    VM integration, benchmark baseline, and Docker/systemd install e2e with
+    39 passed and 22 skipped.
+  - Linux `.deb` build and validation passed; local Linux boot remains skipped
+    because this host cannot provide the Linux/KVM runtime. Linux team must run
+    the real boot gate.
+
+- Benchmark baselines generated:
+  - `benchmarks/capsem-bench/data_1.3.1781050981_arm64.json`:
+    scratch seq write/read `1789.0 MB/s` / `4202.3 MB/s`; rootfs seq read
+    `3428.1 MB/s`; rootfs random read `32908.7 IOPS`; CLI startup means:
+    Python `4.5 ms`, Node `26.0 ms`, Claude `138.7 ms`, Gemini `661.4 ms`,
+    Codex `80.5 ms`.
+  - `benchmarks/lifecycle/data_1.3.1781050981.json`: provision mean
+    `1053.2 ms`, exec mean `12.3 ms`, total mean `1139.7 ms`.
+  - `benchmarks/fork/data_1.3.1781050981.json`: fork mean `35.7 ms`,
+    boot-provision mean `976.4 ms`.
+  - `benchmarks/parallel/data_1.0.json`: 4 VM workers completed in
+    `31593.206 ms`.
+  - The capsem-bench HTTP/proxy throughput section is still explicitly skipped
+    unless a hermetic local MITM lab URL is supplied via
+    `CAPSEM_BENCH_MITM_LOCAL_BASE_URL`; that is not counted as green HTTP
+    performance proof.
+
+- Red inventory:
+  - `rg` audit still finds old ontology references outside `sprints/` and
+    generated directories, including `guest/config`, `GuestImageConfig`,
+    `ai_providers`, `CAPSEM_USER_CONFIG`, `CAPSEM_CORP_CONFIG`, and
+    `user.toml`.
+  - S5 therefore proves the rebuilt profile works and the broad gates pass, but
+    does not close the ontology sprint.
+- [x] S5: Full build gate: rebuild profile assets through the admin/just rail,
   including EROFS/LZ4HC rootfs.
+  Proof: `just build-assets code arm64` passed and produced manifest
+  `2026.0610.11` with arm64 kernel, initrd, EROFS/LZ4HC rootfs, and CycloneDX
+  OBOM entries.
 - [ ] S5: Package/install gate: build the real package and install through the
   package path with manifest override support, then verify service/UI readiness.
+  Partial: `just test` built and validated the Linux package and passed the
+  Docker/systemd package install e2e gate with 39 passed and 22 skipped. Open:
+  macOS package/UI readiness is not counted green here; the installed UI was
+  already observed stale/broken earlier and needs the install/package route
+  cleanup before release.
 - [ ] S5: Linux handoff gate: Linux CI/team must run KVM tests for restored
   guest-memory range/overflow hardening because macOS cannot compile/execute
   `hypervisor::kvm` without the Linux toolchain/runtime.
+  Partial: `.deb` build/validation passed locally through Docker; actual Linux
+  boot/runtime remains a Linux-team gate.
 - [ ] S5: Magic inventory gate.
+  Red: old ontology references remain outside sprint/generated paths:
+  `guest/config`, `GuestImageConfig`, `ai_providers`, `CAPSEM_USER_CONFIG`,
+  `CAPSEM_CORP_CONFIG`, and `user.toml`.
 - [ ] Changelog.
   Partial: profile-owned image payload pinning and S1-A/S1-B profile mutation
   rail service wiring are recorded under Unreleased.
