@@ -96,9 +96,10 @@ inputs, rendered rootfs package lists, profile root/install-script inputs, and
 EROFS config.
 
 The build ledger is a debug/retrace ledger for what went into the build. It is
-not the installed-package truth. Installed base-image components and package
-versions belong in the CycloneDX OBOM (`obom.cdx.json`) published with profile
-assets and exposed through `/profiles/{profile_id}/obom`.
+not the installed-package truth and is not the release inventory artifact.
+Installed base-image components and package versions belong in the CycloneDX
+OBOM (`obom.cdx.json`) published with profile assets and exposed through
+`/profiles/{profile_id}/obom`.
 
 ## Adding packages to the VM
 

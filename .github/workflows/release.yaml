@@ -96,23 +96,25 @@ jobs:
       - uses: astral-sh/setup-uv@v5
       - run: uv sync
       - uses: extractions/setup-just@v3
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+
+      - name: Install OBOM generator
+        run: |
+          npm install -g @cyclonedx/cdxgen@latest
+          cdxgen --version
 
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.rust-target }}
 
       - name: Build VM assets (kernel + rootfs)
+        env:
+          CAPSEM_CDXGEN_CMD: cdxgen
         run: |
           just build-kernel ${{ matrix.arch }} code
           just build-rootfs ${{ matrix.arch }} code
-
-      - name: Upload VM asset build ledger
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: vm-build-ledger-${{ matrix.arch }}
-          path: assets/${{ matrix.arch }}/build-ledger.log
-          if-no-files-found: ignore
 
       - uses: actions/upload-artifact@v7
         with:
@@ -751,6 +753,10 @@ jobs:
           ARM64_ROOTFS=$(du -h release-artifacts/arm64/rootfs.erofs 2>/dev/null | cut -f1 || echo "N/A")
           X86_ROOTFS=$(du -h release-artifacts/x86_64/rootfs.erofs 2>/dev/null | cut -f1 || echo "N/A")
           SBOM_PKGS=$(python3 -c "import json; d=json.load(open('release-artifacts/capsem-sbom.spdx.json')); print(len(d.get('packages',[])))" 2>/dev/null || echo "?")
+          ARM64_OBOM=$(du -h release-artifacts/arm64/obom.cdx.json 2>/dev/null | cut -f1 || echo "N/A")
+          X86_OBOM=$(du -h release-artifacts/x86_64/obom.cdx.json 2>/dev/null | cut -f1 || echo "N/A")
+          ARM64_OBOM_COMPONENTS=$(python3 -c "import json; d=json.load(open('release-artifacts/arm64/obom.cdx.json')); print(len(d.get('components',[])))" 2>/dev/null || echo "?")
+          X86_OBOM_COMPONENTS=$(python3 -c "import json; d=json.load(open('release-artifacts/x86_64/obom.cdx.json')); print(len(d.get('components',[])))" 2>/dev/null || echo "?")
 
           # Build artifact table rows for all debs (may be absent if Linux best-effort failed)
           LINUX_ROWS=""
@@ -776,12 +782,15 @@ jobs:
           | rootfs.erofs (x86_64) | $X86_ROOTFS |
           | manifest.json | BLAKE3 asset metadata |
           | capsem-sbom.spdx.json | $SBOM_PKGS packages |
+          | obom.cdx.json (arm64) | $ARM64_OBOM, $ARM64_OBOM_COMPONENTS components |
+          | obom.cdx.json (x86_64) | $X86_OBOM, $X86_OBOM_COMPONENTS components |
 
           ### Security
 
           - Apple codesigned (Developer ID), notarized + stapled (.pkg)
           - SLSA build provenance attested (pkg + deb + rootfs)
           - SBOM attested (SPDX 2.3, pkg)
+          - VM base-image OBOM published (CycloneDX, cdxgen, per arch)
           EOF
 
       - name: Create GitHub release
@@ -825,6 +834,12 @@ jobs:
             for f in release-artifacts/$arch/*; do
               [ -f "$f" ] || continue
               base=$(basename "$f")
+              case "$base" in
+                build-ledger.log|tool-versions.txt|B3SUMS)
+                  echo "Skipping debug-only $arch/$base from release upload"
+                  continue
+                  ;;
+              esac
               mv "$f" "release-artifacts/$arch/${arch}-${base}"
               gh release upload ${{ github.ref_name }} "release-artifacts/$arch/${arch}-${base}"
             done

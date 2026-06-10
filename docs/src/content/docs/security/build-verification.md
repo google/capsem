@@ -78,17 +78,16 @@ cargo sbom --output-format spdx_json_2_3 > capsem-sbom.spdx.json
 | Published as | `capsem-sbom.spdx.json` in GitHub release |
 | Attestation | SBOM attested against DMG and deb artifacts |
 
-VM base images publish an Operations Bill of Materials as CycloneDX JSON. The
-preferred generator is `cdxgen` in OBOM mode (`obom`, equivalent to
-`cdxgen -t os`) against the produced Linux rootfs image or mounted rootfs
-directory.
+VM base images publish an Operations Bill of Materials as CycloneDX JSON. CI
+generates it with `cdxgen -t os` against the exported Linux rootfs before EROFS
+cleanup, pins it in `manifest.json`, and publishes it with the profile assets.
 
 | Field | Value |
 |-------|-------|
 | Format | CycloneDX OBOM JSON |
 | Scope | Base Linux VM image only |
 | Excludes | User session mutations, workspace writes, and post-boot state |
-| Published as | `obom.cdx.json` with profile assets |
+| Published as | `<arch>-obom.cdx.json` with profile assets |
 | Integrity | BLAKE3 hash stored in the materialized profile |
 | Runtime API | `GET /profiles/{profile_id}/info` and `GET /profiles/{profile_id}/obom` |
 
@@ -97,11 +96,12 @@ generator, generator version, and the rootfs BLAKE3 hash it describes. Runtime
 routes expose the descriptor as profile evidence; local OBOM documents are
 served only after size and BLAKE3 verification.
 
-The per-architecture `build-ledger.log` is separate evidence. It records the
-build-debug inputs that produced the rootfs, including rendered Dockerfiles,
-build context hashes, EROFS settings, git/project version, profile root and
-install-script inputs, and declared package config. It does not claim installed
-package state; installed component names and versions come from the OBOM.
+The per-architecture `build-ledger.log` is separate debug evidence. It records
+the inputs that produced the rootfs, including rendered Dockerfiles, build
+context hashes, EROFS settings, git/project version, profile root and
+install-script inputs, and declared package config. It is not uploaded as the
+release inventory and must not claim installed package state; installed
+component names and versions come from the OBOM.
 
 ## SLSA attestation
 

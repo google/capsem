@@ -249,7 +249,7 @@ else
 fi
 
 section "Release Tools"
-for tool in gh openssl cargo-sbom; do
+for tool in gh openssl cargo-sbom cdxgen; do
     if command -v "$tool" &>/dev/null; then
         pass "$tool"
     else

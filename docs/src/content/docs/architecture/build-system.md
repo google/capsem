@@ -320,15 +320,16 @@ Step 10 and 11 ordering matters: curl installers run _after_ the `/root` cleanup
 ## Manifest, Build Ledger, and OBOM
 
 Every build produces `manifest.json` at the asset root. The manifest records
-asset hashes and compatibility. The per-arch `build-ledger.log` records debug
-evidence for the inputs that produced the assets. The CycloneDX OBOM records
-installed base-image components.
+asset hashes and compatibility, including the per-arch CycloneDX
+`obom.cdx.json`. The per-arch `build-ledger.log` records debug evidence for
+the inputs that produced the assets, but release uploads expose the OBOM as the
+installed-component truth.
 
 | Section | Source | Contents |
 |---------|--------|----------|
 | Assets | `b3sum` output | Filename, BLAKE3 hash, size in bytes |
-| Build ledger | build pipeline | Rendered Dockerfile/context hashes, profile/package inputs, EROFS settings |
-| OBOM | cdxgen | Installed base-image package/component names and versions |
+| Build ledger | build pipeline | Debug-only rendered Dockerfile/context hashes, profile/package inputs, EROFS settings |
+| OBOM | cdxgen | Published installed base-image package/component names and versions |
 
 The `audit` subcommand parses vulnerability scanner output and fails on CRITICAL or HIGH findings.
 

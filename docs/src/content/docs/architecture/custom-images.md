@@ -282,8 +282,9 @@ Use profile-owned package files for normal package managers:
 - `npm-packages.txt` for Node CLI packages
 - `install.sh` for manual installers that cannot be expressed as a package list
 
-The build ledger records these declared inputs. The OBOM records the installed
-base-image component names and versions after the rootfs is produced.
+The build ledger records these declared inputs for debugging. The CI/release
+asset rail publishes the CycloneDX OBOM, which records the installed base-image
+component names and versions after the rootfs is produced.
 
 :::caution[/root is runtime overlay state]
 Anything installed under `/root/` during the Docker build can be hidden at

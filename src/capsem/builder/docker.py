@@ -10,6 +10,7 @@ import datetime
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -28,6 +29,7 @@ DEFAULT_EROFS_UTILS_IMAGE = "debian:bookworm-slim"
 ZSTD_EROFS_UTILS_IMAGE = "debian:trixie-slim"
 BOOT_ASSETS = ("vmlinuz", "initrd.img")
 ROOTFS_ASSET_PREFERENCE = ("rootfs.erofs",)
+OBOM_ASSET = "obom.cdx.json"
 BUILD_LEDGER_NAME = "build-ledger.log"
 
 # Guest binaries COPY'd into the rootfs (cross-compiled Rust binaries).
@@ -739,6 +741,80 @@ def extract_tool_versions(
         _validate_tool_versions(result.stdout, config)
 
 
+def _cdxgen_command() -> list[str]:
+    """Return the configured cdxgen command.
+
+    CI and developer machines can pin this through CAPSEM_CDXGEN_CMD. The
+    default uses npm's package runner so the rootfs build does not depend on a
+    globally installed binary.
+    """
+    configured = os.environ.get("CAPSEM_CDXGEN_CMD", "npx --yes @cyclonedx/cdxgen@latest")
+    command = shlex.split(configured)
+    if not command:
+        raise RuntimeError("CAPSEM_CDXGEN_CMD must not be empty")
+    return command
+
+
+def _validate_cyclonedx_obom(path: Path) -> None:
+    """Validate the minimal OBOM contract consumed by capsem-admin/service."""
+    try:
+        document = json.loads(path.read_text())
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"cdxgen wrote invalid JSON OBOM at {path}: {exc}") from exc
+    if document.get("bomFormat") != "CycloneDX":
+        raise RuntimeError(f"OBOM {path} must be CycloneDX JSON")
+    metadata = document.get("metadata")
+    if not isinstance(metadata, dict):
+        raise RuntimeError(f"OBOM {path} is missing metadata")
+    tools = metadata.get("tools")
+    candidates: list[dict[str, Any]] = []
+    if isinstance(tools, dict) and isinstance(tools.get("components"), list):
+        candidates = [tool for tool in tools["components"] if isinstance(tool, dict)]
+    elif isinstance(tools, list):
+        candidates = [tool for tool in tools if isinstance(tool, dict)]
+    if not any(
+        str(tool.get("name", "")).lower() == "cdxgen" and str(tool.get("version", ""))
+        for tool in candidates
+    ):
+        raise RuntimeError(f"OBOM {path} must record cdxgen name and version in metadata.tools")
+
+
+def generate_cyclonedx_obom(rootfs_tar: Path, output_path: Path, *, repo_root: Path) -> Path:
+    """Generate a CycloneDX OS OBOM for the exported rootfs tar.
+
+    The build ledger records declared build inputs. This OBOM is the runtime
+    inventory for what actually ended up in the base image.
+    """
+    import tempfile
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_parent = repo_root / "target" / "tmp"
+    tmp_parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="capsem-obom-", dir=tmp_parent) as tmp:
+        rootfs_dir = Path(tmp) / "rootfs"
+        rootfs_dir.mkdir()
+        run_cmd([
+            "tar",
+            "--exclude=dev/*",
+            "--exclude=proc/*",
+            "--exclude=sys/*",
+            "-xf",
+            str(rootfs_tar),
+            "-C",
+            str(rootfs_dir),
+        ])
+        run_cmd([
+            *_cdxgen_command(),
+            "-t",
+            "os",
+            "-o",
+            str(output_path),
+            str(rootfs_dir),
+        ])
+    _validate_cyclonedx_obom(output_path)
+    return output_path
+
+
 def _blake3_hex(path: Path) -> str:
     """Compute BLAKE3 hash of a file, returning the hex digest."""
     import blake3
@@ -980,6 +1056,8 @@ def generate_checksums(output_dir: Path, version: str) -> Path:
             all_files.append(f"{arch_name}/{rootfs_name}")
         elif any((arch_dir / filename).is_file() for filename in BOOT_ASSETS):
             raise FileNotFoundError(f"{arch_dir / 'rootfs.erofs'}")
+        if (arch_dir / OBOM_ASSET).is_file():
+            all_files.append(f"{arch_name}/{OBOM_ASSET}")
 
     if not all_files:
         # Flat layout fallback
@@ -990,6 +1068,8 @@ def generate_checksums(output_dir: Path, version: str) -> Path:
             all_files.append(rootfs_name)
         elif all_files:
             raise FileNotFoundError(f"{output_dir / 'rootfs.erofs'}")
+        if (output_dir / OBOM_ASSET).is_file():
+            all_files.append(OBOM_ASSET)
 
     # Compute BLAKE3 hashes using Python blake3 library.
     b3sums_lines = []
@@ -1325,6 +1405,17 @@ def build_image(
                     "utils_image": erofs_utils_image_for(erofs_compression),
                 },
                 "outputs": [erofs_entry],
+            })
+            print("Generating CycloneDX OBOM...")
+            obom_path = arch_output / OBOM_ASSET
+            generate_cyclonedx_obom(tar_path, obom_path, repo_root=repo_root)
+            obom_entry = _file_ledger_entry(obom_path, base=arch_output)
+            _append_build_ledger(arch_output, {
+                "stage": "rootfs.obom",
+                "inputs": build_inputs,
+                "intermediates": [tar_entry],
+                "generator": "cdxgen",
+                "outputs": [obom_entry],
             })
             tar_path.unlink(missing_ok=True)
 

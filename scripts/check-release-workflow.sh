@@ -15,6 +15,7 @@ echo "Tools:"
 command -v cargo >/dev/null && pass "cargo" || fail "cargo not found"
 cargo tauri --version >/dev/null 2>&1 && pass "cargo-tauri" || fail "cargo-tauri not found (cargo install tauri-cli)"
 cargo sbom --help >/dev/null 2>&1 && pass "cargo-sbom" || fail "cargo-sbom not found (cargo install cargo-sbom)"
+command -v cdxgen >/dev/null && pass "cdxgen" || fail "cdxgen not found (npm install -g @cyclonedx/cdxgen)"
 
 # --- Tauri key format ---
 echo ""

@@ -74,3 +74,15 @@ def test_release_workflow_uses_same_config_materializer() -> None:
     assert workflow.count("cargo run -p capsem-admin -- profile materialize") >= 2
     assert "--output-root target/config" in workflow
     assert "--manifest assets/manifest.json" in workflow
+
+
+def test_release_workflow_publishes_obom_not_debug_build_ledger() -> None:
+    workflow = (PROJECT_ROOT / ".github/workflows/release.yaml").read_text()
+
+    assert "npm install -g @cyclonedx/cdxgen@latest" in workflow
+    assert "CAPSEM_CDXGEN_CMD: cdxgen" in workflow
+    assert "obom.cdx.json (arm64)" in workflow
+    assert "obom.cdx.json (x86_64)" in workflow
+    assert "VM base-image OBOM published" in workflow
+    assert "vm-build-ledger-" not in workflow
+    assert "Skipping debug-only $arch/$base from release upload" in workflow

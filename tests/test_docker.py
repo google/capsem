@@ -35,6 +35,7 @@ from capsem.builder.docker import (
     extract_tool_versions,
     extract_kernel_assets,
     generate_build_context,
+    generate_cyclonedx_obom,
     generate_checksums,
     get_project_version,
     is_ci,
@@ -1061,8 +1062,47 @@ class TestBuildLedger:
         assert "installed_packages" not in record
         assert "installed_versions" not in record
 
+    @patch("capsem.builder.docker.run_cmd")
+    def test_generate_cyclonedx_obom_extracts_rootfs_and_runs_cdxgen(self, mock_run, tmp_path, monkeypatch):
+        repo_root = tmp_path
+        (repo_root / "target" / "tmp").mkdir(parents=True)
+        rootfs_tar = tmp_path / "rootfs.tar"
+        rootfs_tar.write_bytes(b"tar")
+        output = tmp_path / "assets" / "arm64" / "obom.cdx.json"
+        monkeypatch.setenv("CAPSEM_CDXGEN_CMD", "cdxgen")
+
+        def fake_run(cmd, **_kwargs):
+            if cmd[0] == "cdxgen":
+                output.write_text(json.dumps({
+                    "bomFormat": "CycloneDX",
+                    "metadata": {
+                        "tools": {
+                            "components": [
+                                {"name": "cdxgen", "version": "11.0.0"}
+                            ]
+                        }
+                    },
+                    "components": [],
+                }))
+            return MagicMock(stdout="")
+
+        mock_run.side_effect = fake_run
+
+        result = generate_cyclonedx_obom(rootfs_tar, output, repo_root=repo_root)
+
+        assert result == output
+        tar_cmd = mock_run.call_args_list[0][0][0]
+        assert tar_cmd[0] == "tar"
+        assert "--exclude=dev/*" in tar_cmd
+        assert "-xf" in tar_cmd
+        assert str(rootfs_tar) in tar_cmd
+        cdxgen_cmd = mock_run.call_args_list[1][0][0]
+        assert cdxgen_cmd[:4] == ["cdxgen", "-t", "os", "-o"]
+        assert cdxgen_cmd[4] == str(output)
+
     @patch("capsem.builder.docker.remove_image")
     @patch("capsem.builder.docker.extract_tool_versions")
+    @patch("capsem.builder.docker.generate_cyclonedx_obom")
     @patch("capsem.builder.docker.create_erofs")
     @patch("capsem.builder.docker.export_container_fs")
     @patch("capsem.builder.docker.docker_build")
@@ -1077,6 +1117,7 @@ class TestBuildLedger:
         _mock_docker_build,
         mock_export,
         mock_create_erofs,
+        mock_generate_obom,
         mock_extract_versions,
         _mock_remove,
         real_config,
@@ -1098,12 +1139,26 @@ class TestBuildLedger:
         def fake_erofs(_runtime, _tar_path, output_path, *_args):
             output_path.write_bytes(b"erofs")
 
+        def fake_obom(_tar_path, output_path, **_kwargs):
+            output_path.write_text(json.dumps({
+                "bomFormat": "CycloneDX",
+                "metadata": {
+                    "tools": {
+                        "components": [
+                            {"name": "cdxgen", "version": "11.0.0"}
+                        ]
+                    }
+                },
+                "components": [],
+            }))
+
         def fake_versions(_runtime, _tag, _platform, output_dir, _config):
             (output_dir / "tool-versions.txt").write_text("codex=1.0.0\n")
 
         mock_cross_compile.side_effect = fake_cross_compile
         mock_export.side_effect = fake_export
         mock_create_erofs.side_effect = fake_erofs
+        mock_generate_obom.side_effect = fake_obom
         mock_extract_versions.side_effect = fake_versions
 
         build_image(
@@ -1122,6 +1177,7 @@ class TestBuildLedger:
             "rootfs.config_inputs",
             "rootfs.export",
             "rootfs.erofs",
+            "rootfs.obom",
             "rootfs.tool_versions",
         ]
         config_record = records[0]
@@ -1137,6 +1193,9 @@ class TestBuildLedger:
         }
         assert erofs_record["outputs"][0]["path"] == "rootfs.erofs"
         assert erofs_record["inputs"]["build_context"]["hash"]
+        obom_record = records[3]
+        assert obom_record["generator"] == "cdxgen"
+        assert obom_record["outputs"][0]["path"] == "obom.cdx.json"
 
     @patch("capsem.builder.docker.remove_image")
     @patch("capsem.builder.docker.extract_kernel_assets")
@@ -1459,6 +1518,32 @@ class TestGenerateChecksums:
             assert "/" not in filename
             assert len(entry["hash"]) == 64  # blake3 hex digest
             assert entry["size"] > 0
+
+    def test_manifest_includes_obom_when_rootfs_build_emits_it(self, tmp_path):
+        """CycloneDX OBOM is pinned as a profile asset, not replaced by build-ledger."""
+        arm64 = tmp_path / "arm64"
+        arm64.mkdir()
+        (arm64 / "vmlinuz").write_bytes(b"kernel")
+        (arm64 / "initrd.img").write_bytes(b"initrd")
+        (arm64 / "rootfs.erofs").write_bytes(b"rootfs")
+        (arm64 / "obom.cdx.json").write_text(json.dumps({
+            "bomFormat": "CycloneDX",
+            "metadata": {
+                "tools": {
+                    "components": [
+                        {"name": "cdxgen", "version": "11.0.0"}
+                    ]
+                }
+            },
+        }))
+
+        generate_checksums(tmp_path, "0.13.0")
+
+        manifest = json.loads((tmp_path / "manifest.json").read_text())
+        asset_version = manifest["assets"]["current"]
+        arm64_entries = manifest["assets"]["releases"][asset_version]["arches"]["arm64"]
+        assert "obom.cdx.json" in arm64_entries
+        assert "build-ledger.log" not in arm64_entries
 
     def test_manifest_flat_fallback(self, tmp_path):
         """Flat layout (no arch subdirs) still populates an arches entry."""
