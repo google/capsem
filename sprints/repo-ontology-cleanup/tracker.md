@@ -81,6 +81,20 @@
   in `just test`, `just smoke`, and CI alongside Ruff/ty.
 - [ ] S1: Restrict or replace old config env overrides (`CAPSEM_USER_CONFIG`,
   `CAPSEM_CORP_CONFIG`).
+- [ ] S1: Run systematic `user.toml` burn audit across code, tests, docs,
+  skills, and sprint fixtures. Every `user.toml`, `UserConfig`, and
+  `CAPSEM_USER_CONFIG` reference must be deleted, renamed to `settings.toml`,
+  moved to profile/corp ownership, or explicitly confined to test/dev-only
+  helpers. Production profile routes must not read or write `user.toml`.
+- [ ] S1: Replace rule-leaking UI/TUI mutation paths with semantic profile
+  facade routes. MCP server/tool, plugin, and skill controls send enum/state
+  edits; backend owns translation into profile-owned enforcement, plugin, skill,
+  or MCP files. Normal UI/TUI controls must not ship raw rule TOML over routes.
+- [ ] S1: Add the MCP permission litmus test: changing the `capsem` server's
+  `fetch_http` tool to `ask` through the profile MCP tool edit route writes or
+  updates the profile enforcement rule, returns `effective_action = "ask"` from
+  the tool list, and does not mutate `mcp.json`, `settings.toml`, or any
+  `user.toml` path.
 - [ ] S1: Update code/tests/docs/skills; remove old-path fallbacks.
 - [x] S2: Add guest root seed and move CLI config files into real files.
 - [x] S2: Add `mcp.json`, `apt-packages.txt`,
@@ -137,6 +151,14 @@
 - User correction: there are no AI providers. MCP lives in profile or it does
   not exist. Packages baked into the image belong to the profile. Root seed
   files live under the profile, not `config/guest`.
+- User correction: `user.toml` must burn. User preferences are
+  `settings.toml`; profile behavior is profile-owned; corp constraints are
+  corp-owned. The current profile enforcement handlers still load/write the old
+  settings/user shape internally and must be corrected in S1.
+- User correction: UI/TUI must mutate MCP server/tool permissions through
+  semantic profile routes. The backend translates simple enum/state edits into
+  profile-owned rules/config; do not expose the raw rule system to common UI/TUI
+  controls and do not add compound clever routes.
 - Security correction: path-only references such as `rule_files.enforcement =
   "profiles/code/enforcement.toml"` are not enough. The profile ledger must bind
   referenced files by blake3, and admin/doctor/service/package install must be

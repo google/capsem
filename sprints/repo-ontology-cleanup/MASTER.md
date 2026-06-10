@@ -102,6 +102,50 @@ Build rule:
 - No credentials are checked into this tree. Credential values still belong to
   the credential broker/keychain path.
 
+## Route Permission Facade Contract
+
+The UI, TUI, and external clients do not author raw security-rule TOML when the
+operation is a first-class product action such as "ask before this MCP tool",
+"disable this MCP server", "enable this plugin", or "disable this skill".
+Those clients call semantic profile routes. The backend owns the translation
+from semantic mutation to profile-owned files.
+
+Litmus example: to make the Capsem MCP `fetch_http` tool ask, the UI/TUI calls
+a profile MCP tool edit route with `permission = "ask"` or `action = "ask"`.
+The backend validates the server/tool exists for that profile, writes or updates
+the profile enforcement rule in that profile's enforcement file, reloads or
+invalidates the compiled profile rule set, and returns the effective tool state.
+The UI/TUI never parses `mcp.json` plus `enforcement.toml`, never writes raw
+TOML rules for this common action, and never stores the change in
+`settings.toml` or legacy `user.toml`.
+
+The same facade pattern applies to:
+
+- MCP server permission/status mutation;
+- MCP tool permission mutation;
+- plugin enable/disable/mode/detection-level mutation;
+- skill enable/disable mutation when skill editing lands.
+
+The route remains specific and boring: no compound clever route, no generic
+"ship the rule system to the frontend" API. Raw enforcement/detection rule
+endpoints may exist for expert/admin rule authoring, but product UI controls use
+semantic routes that reflect backend enum fields with select boxes/toggles.
+
+## `user.toml` Burn Contract
+
+`user.toml` is legacy naming and must not survive S1. It confuses the ownership
+model: user UI/app preferences are `settings.toml`, profile behavior is
+`profile.toml` plus pinned profile files, and corp constraints/reporting are
+`corp.toml`.
+
+S1 must include a systematic audit of every `user.toml`, `UserConfig`, and
+`CAPSEM_USER_CONFIG` reference across code, tests, docs, skills, and sprint
+fixtures. Each reference must be deleted, renamed to `settings.toml`, moved to
+profile/corp ownership, or explicitly limited to an internal test fixture before
+S1 can close. The final gate is a grep/audit that proves no production path can
+read or write `user.toml`, and profile-scoped routes do not call a
+`user_config_path` equivalent.
+
 ## Current Inventory Summary
 
 | Current Path | Used? | Current Meaning | Problem | Target |
@@ -213,6 +257,22 @@ Rule for this sprint: a path is allowed only if it is one of:
   developer shims or remove/move them.
 - [ ] Classify `CAPSEM_USER_CONFIG` and `CAPSEM_CORP_CONFIG` as test/dev-only
   or replace them with contract-consistent profile/corp roots.
+- [ ] Run a systematic `user.toml` burn audit across code, tests, docs, skills,
+  and sprint fixtures. Close every production reference by renaming to
+  `settings.toml`, moving behavior to profile/corp, or deleting the legacy path.
+  S1 cannot close while a production path can read/write `user.toml` or while
+  profile-scoped routes call `user_config_path`.
+- [ ] Replace profile MCP/server/tool mutation internals with semantic
+  permission facade routes: UI/TUI sends enum changes such as `ask`, `allow`,
+  `block`, `enabled`, or plugin mode/detection-level; backend translates those
+  into profile-owned enforcement/plugin/skill/MCP files. Do not expose raw rule
+  authoring to normal UI/TUI controls.
+- [ ] Add route-level tests for the MCP litmus: `PUT/PATCH
+  /profiles/{profile_id}/mcp/servers/{server_id}/tools/{tool_id}/edit` changing
+  `fetch_http` to `ask` persists the proper profile enforcement rule, reloads
+  the effective rule inventory, and the subsequent tool list reports
+  `effective_action = "ask"` without touching `settings.toml`, `user.toml`, or
+  `mcp.json` decision fields.
 - [ ] Keep `target/config/` as generated runtime config.
 - [ ] Remove path fallbacks to old locations once tests are green.
 
