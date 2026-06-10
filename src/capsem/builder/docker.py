@@ -83,7 +83,11 @@ def _rootfs_context(config: GuestImageConfig, arch_name: str) -> dict[str, Any]:
 
     npm_packages: list[str] = []
     npm_prefix = "/opt/ai-clis"
+    if "npm" in config.package_sets:
+        npm_packages.extend(config.package_sets["npm"].packages)
     curl_installs: list[str] = []
+    if "curl" in config.package_sets:
+        curl_installs.extend(config.package_sets["curl"].packages)
     for provider in config.ai_providers.values():
         if provider.enabled and provider.install:
             if provider.install.manager == PackageManager.NPM:
@@ -103,6 +107,8 @@ def _rootfs_context(config: GuestImageConfig, arch_name: str) -> dict[str, Any]:
         "npm_prefix": npm_prefix,
         "curl_installs": curl_installs,
         "guest_binaries": GUEST_BINARIES,
+        "profile_root_seed": config.profile_root_seed,
+        "profile_install_script": config.profile_install_script,
     }
 
 
@@ -1004,6 +1010,7 @@ def prepare_build_context(
     **kwargs: Any,
 ) -> Path:
     """Write rendered Dockerfile and copy required files into a build context."""
+    guest_dir = Path(config.guest_dir_path) if config.guest_dir_path else repo_root / "guest"
     # Render Dockerfile
     dockerfile_content = render_dockerfile(template_name, config, arch_name, **kwargs)
     dockerfile_path = context_dir / "Dockerfile"
@@ -1015,7 +1022,7 @@ def prepare_build_context(
             str(repo_root / "security" / "keys" / "capsem-ca.crt"),
             str(context_dir / "capsem-ca.crt"),
         )
-        artifacts = repo_root / "guest" / "artifacts"
+        artifacts = guest_dir / "artifacts"
         for name in ("capsem-bashrc", "banner.txt", "tips.txt"):
             shutil.copy2(
                 str(artifacts / name),
@@ -1036,19 +1043,37 @@ def prepare_build_context(
             src = artifacts / name
             if src.is_dir():
                 shutil.copytree(str(src), str(context_dir / name), dirs_exist_ok=True)
+        if config.profile_root_seed:
+            if not config.profile_root_seed_path:
+                raise FileNotFoundError("profile_root_seed_path")
+            profile_root = Path(config.profile_root_seed_path)
+            if not profile_root.is_dir():
+                raise FileNotFoundError(profile_root)
+            shutil.copytree(
+                str(profile_root),
+                str(context_dir / "profile-root"),
+                dirs_exist_ok=True,
+            )
+        if config.profile_install_script:
+            if not config.profile_install_script_path:
+                raise FileNotFoundError("profile_install_script_path")
+            profile_install = Path(config.profile_install_script_path)
+            if not profile_install.is_file():
+                raise FileNotFoundError(profile_install)
+            shutil.copy2(str(profile_install), str(context_dir / "profile-install.sh"))
         # Agent binaries (if they exist in context already from cross_compile_agent)
         # They may have been copied to context_dir by the pipeline before this call
 
     elif "kernel" in template_name:
         # Defconfig -- preserve directory structure for COPY {{ arch.defconfig }}
         arch = config.build.architectures[arch_name]
-        defconfig_src = repo_root / "guest" / "config" / arch.defconfig
+        defconfig_src = guest_dir / "config" / arch.defconfig
         defconfig_dst = context_dir / arch.defconfig
         defconfig_dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(str(defconfig_src), str(defconfig_dst))
         # capsem-init
         shutil.copy2(
-            str(repo_root / "guest" / "artifacts" / "capsem-init"),
+            str(guest_dir / "artifacts" / "capsem-init"),
             str(context_dir / "capsem-init"),
         )
 

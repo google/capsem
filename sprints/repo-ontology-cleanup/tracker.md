@@ -38,13 +38,17 @@
 - [x] S1: Move Docker templates to `config/docker/`.
 - [x] S1: Move `config/profiles/code.toml` to
   `config/profiles/code/profile.toml`.
-- [ ] S1: Define profile-owned package declarations for image-baked packages.
-- [ ] S1: Define profile-owned MCP declarations.
-- [ ] S1: Define profile-owned packaged root under
+- [x] S1: Define profile-owned package declarations for image-baked packages.
+- [x] S1: Define profile-owned MCP declarations.
+- [x] S1: Define profile-owned packaged root under
   `config/profiles/<profile_id>/root/`.
-- [ ] S1: Define hash-pinned profile file references for enforcement,
+- [x] S1: Define hash-pinned profile file references for enforcement,
   detection, MCP, packages, manual installer script, root, and tips.
 - [ ] S1: Remove vague `guest_dir` as product config authority.
+  Partial: `capsem-admin image build` now materializes
+  `target/image-workspace/<profile_id>/guest` from the profile before invoking
+  the backend, but the Python backend still accepts a guest directory and must
+  be demoted to an explicit image spec in a later slice.
 - [x] S1: Emit backend/CI build record with hashes for rendered Dockerfile,
   build context, rootfs tar, final EROFS, kernel assets, tool-version output,
   compression settings, git revision, and project version.
@@ -78,13 +82,17 @@
 - [ ] S1: Restrict or replace old config env overrides (`CAPSEM_USER_CONFIG`,
   `CAPSEM_CORP_CONFIG`).
 - [ ] S1: Update code/tests/docs/skills; remove old-path fallbacks.
-- [ ] S2: Add guest root seed and move AI config files into real files.
-- [ ] S2: Add `mcp.json`, `apt-packages.txt`,
+- [x] S2: Add guest root seed and move CLI config files into real files.
+- [x] S2: Add `mcp.json`, `apt-packages.txt`,
   `python-requirements.txt`, `npm-packages.txt`, `install.sh`, and `tips.txt`
   under `config/profiles/code/`.
-- [ ] S2: Builder copies guest root seed into rootfs seed path.
-- [ ] S2: `capsem-init` projects seed into runtime `/`.
+- [x] S2: Builder copies guest root seed into rootfs seed path.
+- [x] S2: `capsem-init` projects seed into runtime `/`.
 - [ ] S3: Tool install refresh/version discipline.
+  Partial: profile-owned apt/Python/npm package files and `install.sh`
+  materialize into the generated guest workspace and rootfs Docker context.
+  Open: installed version/hash ledger and real AGY/Codex/Claude/Gemini VM
+  proof.
 - [ ] S3: Build ledger exposes the packages actually running in the VM:
   declared package input hashes, installed package names, installed versions,
   and local package/artifact hashes where available for apt, Python/uv, npm,
@@ -111,6 +119,7 @@
   `hypervisor::kvm` without the Linux toolchain/runtime.
 - [ ] S5: Magic inventory gate.
 - [ ] Changelog.
+  Partial: profile-owned image payload pinning is recorded under Unreleased.
 - [ ] Commit.
 
 ## Notes
@@ -190,6 +199,16 @@
   change. It is a guest-kernel/runtime option issue to diagnose from a real
   rebuilt-profile boot with `capsem exec` once profile/root/package inputs are
   rebuilt.
+- Profile payload slice: `config/profiles/code/profile.toml` now pins MCP,
+  package lists, manual installer script, tips, and `root.manifest.json` by
+  BLAKE3/size. `root.manifest.json` pins every packaged guest-root file.
+  `capsem-admin profile check` verifies both layers and rejects path escape,
+  bad hash scheme, zero-size, and mutated payloads.
+- Generated image workspace slice: `capsem-admin image build` now validates the
+  source profile and materializes `target/image-workspace/<profile_id>/guest`
+  from the profile before invoking `capsem-builder`. This is the transition
+  rail; the backend still has a `guest_dir` argument and must be burned down to
+  an explicit image spec in S1.
 - Verification for this slice:
   - `cargo test -p capsem-core --lib -- --nocapture` passed with 1506 tests,
     1 ignored.
@@ -204,9 +223,10 @@
 
 ## Coverage Ledger
 
-- Unit/contract: pending path resolver, profile file hash tests, MCP JSON parser
-  tests, package file parser tests, and profile-root parser tests. Restored KVM
-  memory tests exist in `memory.rs`/`virtio_blk.rs` but are Linux-only.
+- Unit/contract: `cargo test -p capsem-core profile_contract -- --nocapture`
+  proves profile file refs parse, serde/validate, and reject absolute paths,
+  traversal, bad hash schemes, and zero-size pins. Restored KVM memory tests
+  exist in `memory.rs`/`virtio_blk.rs` but are Linux-only.
 - Tooling: `uv run ruff check .` and `uv run ty check src/capsem` are the
   current Python quality gates.
 - Skill contract: `uv run capsem-builder validate-skills config/skills` and
@@ -217,16 +237,22 @@
   profile_catalog -- --nocapture`, and the focused package/install pytest set
   pass after moving source and generated profiles to
   `profiles/<id>/profile.toml`.
-- Functional: pending `capsem-admin image verify` and profile materialization.
+- Functional: `cargo run -p capsem-admin -- profile check
+  config/profiles/code/profile.toml --config-root config --arch arm64 --json`
+  reports every profile payload and packaged-root file with matching
+  BLAKE3/size. `cargo test -p capsem-admin
+  image_workspace_materializes_self_contained_profile_config -- --nocapture`
+  proves image workspace materialization.
 - Auditability: backend build-ledger tests prove JSONL emission for rendered
   Dockerfile/build-context hashes, rootfs tar, EROFS, kernel assets, and tool
   versions. Pending: profile/payload hash records once profile hash schema
   lands.
-- Adversarial: pending tests rejecting old paths/fallbacks, checked-in
-  credentials in `config/profiles/<profile_id>/root/`, and mutated profile
-  sibling files whose blake3 no longer matches.
-- E2E/VM: pending `capsem-doctor` proof that seeded files exist in runtime
-  `/root`.
+- Adversarial: `cargo test -p capsem-admin profile_check -- --nocapture`
+  proves mutated profile payload files are rejected and profile root manifests
+  are verified. Remaining: checked-in credential sweep for
+  `config/profiles/<profile_id>/root/`.
+- E2E/VM: pending real rebuilt-profile boot and `capsem-doctor` proof that
+  seeded files exist in runtime `/root`.
 - Linux/KVM: local macOS cannot execute KVM tests. Attempted
   `cargo check -p capsem-core --target x86_64-unknown-linux-gnu`, blocked
   because the target is not installed; attempted
@@ -235,5 +261,6 @@
   `aws-lc-sys`). Linux CI/team must run this gate.
 - Telemetry: not directly touched unless doctor/status output changes.
 - Performance: tool refresh may affect image build time; runtime should not add
-  hot-path latency.
+  hot-path latency. `uv run python -m pytest tests/test_docker.py -q` passes
+  with 148 backend builder/context tests and no Docker execution.
 - Missing/deferred: none accepted yet.

@@ -1,0 +1,50 @@
+{
+  "format": "capsem.profile-root.v1",
+  "files": [
+    {
+      "path": "root/.antigravity/settings.json",
+      "hash": "blake3:908708b4f57d80de8f4005dd9ff577f73421b04ab44149120285b6c798cce212",
+      "size": 148
+    },
+    {
+      "path": "root/.claude.json",
+      "hash": "blake3:72cffdfb37c41367018d13de7d2bb5c267f960437fcf9a29a0fe8bd33dbe572d",
+      "size": 334
+    },
+    {
+      "path": "root/.claude/settings.json",
+      "hash": "blake3:202e424564e073ee2ae36fe1cda983d35b26fe329172cb27c143f0aaf22cf0a6",
+      "size": 134
+    },
+    {
+      "path": "root/.codex/config.toml",
+      "hash": "blake3:ff995858bdcca58a03fa9e3b559e6343443d4df96defca98078543c6674bb305",
+      "size": 56
+    },
+    {
+      "path": "root/.gemini/installation_id",
+      "hash": "blake3:5a70807784783b42a4e973003b6117a81666411dd5cb4c0ae52bee01baae2cdd",
+      "size": 52
+    },
+    {
+      "path": "root/.gemini/projects.json",
+      "hash": "blake3:12d1884de84d3717377da1e2e4b6df3011b27aa54f32f39415625b6405330baf",
+      "size": 44
+    },
+    {
+      "path": "root/.gemini/settings.json",
+      "hash": "blake3:104cd82833a46b8da38a4ab566c1c9dc404e2762a9e3aa72eb7b82343ca3de0f",
+      "size": 510
+    },
+    {
+      "path": "root/.gemini/trustedFolders.json",
+      "hash": "blake3:2497a7bede84b29c0cbdb604ce4597d17637f61a3d37a8d9445d4c3757b46963",
+      "size": 30
+    },
+    {
+      "path": "root/.mcp.json",
+      "hash": "blake3:44dbee07dcb89910a47cd195f6b324d51260b2f4e34a13a8bd85e2e5039ea67b",
+      "size": 90
+    }
+  ]
+}

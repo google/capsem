@@ -238,6 +238,18 @@ fi
 # Must happen after /root is mounted (scratch disk or tmpfs).
 mkdir -p /newroot/root/.local/bin
 
+# Project profile-owned seed files into the writable runtime root.
+# The image stores them under /usr/local/share/capsem/profile-root because
+# rootfs /root is hidden by the runtime workspace mount above.
+if [ -d /newroot/usr/local/share/capsem/profile-root ]; then
+    echo "[capsem-init] projecting profile root seed..."
+    cp -a /newroot/usr/local/share/capsem/profile-root/. /newroot/ || {
+        echo "[capsem-init] FATAL: cannot project profile root seed"
+        exit 1
+    }
+    boot_mark "profile_root_seed"
+fi
+
 # Remove legacy HTTP sources.list if present (belt-and-suspenders).
 # The rootfs already has HTTPS-only debian.sources from the Docker build.
 rm -f /newroot/etc/apt/sources.list

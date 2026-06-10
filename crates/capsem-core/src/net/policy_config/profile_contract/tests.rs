@@ -62,6 +62,21 @@ scratch_disk_size_gb = 32
 enforcement = "rules/enforcement.toml"
 sigma = "rules/detection.yaml"
 
+[files.mcp]
+path = "profiles/developer/mcp.json"
+hash = "blake3:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+size = 1
+
+[files.apt_packages]
+path = "profiles/developer/apt-packages.txt"
+hash = "blake3:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+size = 1
+
+[files.root_manifest]
+path = "profiles/developer/root.manifest.json"
+hash = "blake3:1111111111111111111111111111111111111111111111111111111111111111"
+size = 1
+
 [default.http]
 name = "default_http"
 action = "allow"
@@ -120,6 +135,14 @@ paths = ["/root/.codex/skills/security/SKILL.md"]
         profile.rule_files.sigma.as_deref(),
         Some("rules/detection.yaml")
     );
+    assert_eq!(
+        profile
+            .files
+            .mcp
+            .as_ref()
+            .map(|descriptor| descriptor.path.as_str()),
+        Some("profiles/developer/mcp.json")
+    );
     assert!(profile.default.contains_key("http"));
     assert!(profile.profiles.rules.contains_key("skill_loaded"));
     assert!(profile.ai.contains_key("openai"));
@@ -128,6 +151,58 @@ paths = ["/root/.codex/skills/security/SKILL.md"]
         profile.mcp.unwrap().server_enabled.get("local").copied(),
         Some(true)
     );
+}
+
+#[test]
+fn profile_file_refs_reject_unpinned_or_escape_paths() {
+    let base = r#"
+id = "developer"
+name = "Developer"
+description = "Developer profile"
+revision = "2026.06.09.1"
+refresh_policy = "24h"
+
+[files.mcp]
+path = "profiles/developer/mcp.json"
+hash = "blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+size = 1
+"#;
+    parse_profile(base)
+        .validate()
+        .expect("valid profile file ref");
+
+    let absolute = base.replace(
+        "path = \"profiles/developer/mcp.json\"",
+        "path = \"/etc/passwd\"",
+    );
+    assert!(parse_profile(&absolute)
+        .validate()
+        .unwrap_err()
+        .contains("config-root-relative"));
+
+    let traversal = base.replace(
+        "path = \"profiles/developer/mcp.json\"",
+        "path = \"profiles/developer/../corp.toml\"",
+    );
+    assert!(parse_profile(&traversal)
+        .validate()
+        .unwrap_err()
+        .contains("path traversal"));
+
+    let bad_hash = base.replace(
+        "blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    );
+    assert!(parse_profile(&bad_hash)
+        .validate()
+        .unwrap_err()
+        .contains("blake3"));
+
+    let zero_size = base.replace("size = 1", "size = 0");
+    assert!(parse_profile(&zero_size)
+        .validate()
+        .unwrap_err()
+        .contains("size"));
 }
 
 #[test]

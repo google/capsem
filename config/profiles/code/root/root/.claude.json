@@ -1,0 +1,15 @@
+{
+  "hasCompletedOnboarding": true,
+  "hasTrustDialogAccepted": true,
+  "hasTrustDialogHooksAccepted": true,
+  "shiftEnterKeyBindingInstalled": true,
+  "theme": "dark",
+  "numStartups": 1,
+  "projects": {
+    "/root": {
+      "allowedTools": [],
+      "hasTrustDialogAccepted": true,
+      "projectOnboardingSeenCount": 1
+    }
+  }
+}

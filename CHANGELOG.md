@@ -60,6 +60,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pin `obom.cdx.json` with BLAKE3 hash, size, cdxgen generator metadata, and
   the rootfs hash it describes, and `/profiles/{id}/info` plus
   `/profiles/{id}/obom` expose that base-image-only contract.
+- Added profile-owned image payload pinning for the code profile: MCP config,
+  apt/Python/npm package lists, manual install script, tips, and packaged
+  guest-root seed files are now declared from `profile.toml` with BLAKE3/size
+  pins. `capsem-admin profile check` verifies those pins plus the root seed
+  manifest, and `capsem-admin image build` materializes a self-contained
+  generated guest workspace before invoking the backend builder.
 
 ### Added (kernel 7.0 + EROFS)
 - Added a stable-kernel upgrade path for guest builds: `kernel_branch = "7.0"`

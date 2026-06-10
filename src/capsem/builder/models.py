@@ -401,9 +401,14 @@ class GuestImageConfig(BaseModel):
 
     build: BuildConfig
     manifest: ImageManifestConfig | None = None
+    guest_dir_path: str | None = None
     ai_providers: dict[str, AiProviderConfig] = Field(default_factory=dict)
     package_sets: dict[str, PackageSetConfig] = Field(default_factory=dict)
     mcp_servers: dict[str, McpServerConfig] = Field(default_factory=dict)
     web_security: WebSecurityConfig = Field(default_factory=WebSecurityConfig)
     vm_resources: VmResourcesConfig = Field(default_factory=VmResourcesConfig)
     vm_environment: VmEnvironmentConfig = Field(default_factory=VmEnvironmentConfig)
+    profile_root_seed: bool = False
+    profile_root_seed_path: str | None = None
+    profile_install_script: bool = False
+    profile_install_script_path: str | None = None

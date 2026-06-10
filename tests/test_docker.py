@@ -67,6 +67,34 @@ def rendered_x86(real_config):
     return render_dockerfile("Dockerfile.rootfs.j2", real_config, "x86_64")
 
 
+@pytest.fixture
+def generated_profile_guest(tmp_path):
+    guest = tmp_path / "guest"
+    config = guest / "config"
+    (config / "packages").mkdir(parents=True)
+    shutil.copy2(PROJECT_ROOT / "guest" / "config" / "build.toml", config / "build.toml")
+    (config / "packages" / "apt.toml").write_text(
+        '[apt]\nname = "System Packages"\nmanager = "apt"\ninstall_cmd = "apt-get install -y --no-install-recommends"\npackages = ["curl"]\n'
+    )
+    (config / "packages" / "python.toml").write_text(
+        '[python]\nname = "Python Packages"\nmanager = "uv"\ninstall_cmd = "uv pip install --system --break-system-packages"\npackages = ["pytest"]\n'
+    )
+    (config / "packages" / "npm.toml").write_text(
+        '[npm]\nname = "Node Packages"\nmanager = "npm"\ninstall_cmd = "npm install -g --prefix /opt/ai-clis"\npackages = ["@openai/codex"]\n'
+    )
+    artifacts = guest / "artifacts"
+    artifacts.mkdir()
+    (artifacts / "capsem-bashrc").write_text("echo capsem\n")
+    (artifacts / "banner.txt").write_text("capsem\n")
+    (artifacts / "tips.txt").write_text("tip\n")
+    (guest / "profile-root" / "root" / ".codex").mkdir(parents=True)
+    (guest / "profile-root" / "root" / ".codex" / "config.toml").write_text(
+        '[mcp_servers.capsem]\ncommand = "/run/capsem-mcp-server"\n'
+    )
+    (guest / "profile-install.sh").write_text("#!/bin/sh\nexit 0\n")
+    return load_guest_config(guest)
+
+
 # ---------------------------------------------------------------------------
 # Rootfs: basic rendering
 # ---------------------------------------------------------------------------
@@ -445,6 +473,15 @@ class TestGenerateBuildContext:
         ctx = generate_build_context("Dockerfile.rootfs.j2", real_config, "arm64")
         assert "@google/gemini-cli" in ctx["npm_packages"]
         assert "@openai/codex" in ctx["npm_packages"]
+
+    def test_rootfs_npm_packages_can_come_from_profile_package_set(self, generated_profile_guest):
+        ctx = generate_build_context("Dockerfile.rootfs.j2", generated_profile_guest, "arm64")
+        assert generated_profile_guest.ai_providers == {}
+        assert ctx["npm_packages"] == ["@openai/codex"]
+        rendered = render_dockerfile("Dockerfile.rootfs.j2", generated_profile_guest, "arm64")
+        assert "@openai/codex" in rendered
+        assert "profile-install.sh" in rendered
+        assert "profile-root/" in rendered
 
     def test_rootfs_curl_installs(self, real_config):
         ctx = generate_build_context("Dockerfile.rootfs.j2", real_config, "arm64")
@@ -1267,6 +1304,22 @@ class TestPrepareBuildContext:
         assert (context_dir / "kernel" / "defconfig.arm64").is_file()
         assert (context_dir / "capsem-init").is_file()
 
+    def test_rootfs_context_copies_profile_root_and_install_script(
+        self, generated_profile_guest, tmp_path
+    ):
+        context_dir = tmp_path / "ctx"
+        context_dir.mkdir()
+        prepare_build_context(
+            generated_profile_guest,
+            "arm64",
+            "Dockerfile.rootfs.j2",
+            context_dir,
+            PROJECT_ROOT,
+        )
+        assert (context_dir / "profile-install.sh").is_file()
+        assert (context_dir / "profile-root/root/.codex/config.toml").is_file()
+        assert (context_dir / "tips.txt").read_text() == "tip\n"
+
     def test_rootfs_dockerfile_content(self, real_config, tmp_path):
         context_dir = tmp_path / "ctx"
         context_dir.mkdir()
@@ -1654,12 +1707,19 @@ class TestPrepareBuildContextArtifacts:
         (bench / "disk.py").write_text("# disk bench")
         return repo
 
+    def fake_guest_config(self, real_config, fake_repo):
+        """Point the backend image spec at the fake guest workspace."""
+        return real_config.model_copy(
+            update={"guest_dir_path": str(fake_repo / "guest")}
+        )
+
     def test_missing_rootfs_artifact_silently_skipped(self, real_config, fake_repo, tmp_path):
         # Remove one ROOTFS_SCRIPT from fake repo
         (fake_repo / "guest" / "artifacts" / "snapshots").unlink()
         ctx = tmp_path / "ctx"
         ctx.mkdir()
-        prepare_build_context(real_config, "arm64", "Dockerfile.rootfs.j2", ctx, fake_repo)
+        config = self.fake_guest_config(real_config, fake_repo)
+        prepare_build_context(config, "arm64", "Dockerfile.rootfs.j2", ctx, fake_repo)
         assert not (ctx / "snapshots").exists()
         # Other artifacts still copied
         assert (ctx / "capsem-doctor").is_file()
@@ -1668,7 +1728,8 @@ class TestPrepareBuildContextArtifacts:
     def test_all_rootfs_artifacts_copied_when_present(self, real_config, fake_repo, tmp_path):
         ctx = tmp_path / "ctx"
         ctx.mkdir()
-        prepare_build_context(real_config, "arm64", "Dockerfile.rootfs.j2", ctx, fake_repo)
+        config = self.fake_guest_config(real_config, fake_repo)
+        prepare_build_context(config, "arm64", "Dockerfile.rootfs.j2", ctx, fake_repo)
         for name in ROOTFS_SCRIPTS:
             assert (ctx / name).is_file(), f"{name} not copied to build context"
 
@@ -1676,14 +1737,16 @@ class TestPrepareBuildContextArtifacts:
         shutil.rmtree(fake_repo / "guest" / "artifacts" / "diagnostics")
         ctx = tmp_path / "ctx"
         ctx.mkdir()
-        prepare_build_context(real_config, "arm64", "Dockerfile.rootfs.j2", ctx, fake_repo)
+        config = self.fake_guest_config(real_config, fake_repo)
+        prepare_build_context(config, "arm64", "Dockerfile.rootfs.j2", ctx, fake_repo)
         assert not (ctx / "diagnostics").exists()
 
     def test_missing_bench_pkg_dir_no_crash(self, real_config, fake_repo, tmp_path):
         shutil.rmtree(fake_repo / "guest" / "artifacts" / "capsem_bench")
         ctx = tmp_path / "ctx"
         ctx.mkdir()
-        prepare_build_context(real_config, "arm64", "Dockerfile.rootfs.j2", ctx, fake_repo)
+        config = self.fake_guest_config(real_config, fake_repo)
+        prepare_build_context(config, "arm64", "Dockerfile.rootfs.j2", ctx, fake_repo)
         assert not (ctx / "capsem_bench").exists()
 
 

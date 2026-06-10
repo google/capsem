@@ -114,15 +114,22 @@ def load_guest_config(guest_dir: Path) -> GuestImageConfig:
         pydantic.ValidationError: If any TOML file fails validation.
     """
     config_dir = guest_dir / "config"
+    profile_root = guest_dir / "profile-root"
+    profile_install = guest_dir / "profile-install.sh"
     return GuestImageConfig(
         build=_load_build(config_dir),
         manifest=_load_manifest(config_dir),
+        guest_dir_path=str(guest_dir),
         ai_providers=_load_ai_providers(config_dir),
         package_sets=_load_package_sets(config_dir),
         mcp_servers=_load_mcp_servers(config_dir),
         web_security=_load_web_security(config_dir),
         vm_resources=_load_vm_resources(config_dir),
         vm_environment=_load_vm_environment(config_dir),
+        profile_root_seed=profile_root.is_dir(),
+        profile_root_seed_path=str(profile_root) if profile_root.is_dir() else None,
+        profile_install_script=profile_install.is_file(),
+        profile_install_script_path=str(profile_install) if profile_install.is_file() else None,
     )
 
 

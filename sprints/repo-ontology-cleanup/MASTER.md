@@ -171,11 +171,11 @@ Rule for this sprint: a path is allowed only if it is one of:
 - [x] Move Dockerfile/build templates from `src/capsem/builder/templates/` to
   `config/docker/`.
 - [x] Move `config/profiles/code.toml` to `config/profiles/code/profile.toml`.
-- [ ] Extend/confirm profile schema owns all image-baked packages.
-- [ ] Extend/confirm profile schema owns all MCP declarations.
-- [ ] Extend/confirm profile schema owns packaged root path under
+- [x] Extend/confirm profile schema owns all image-baked packages.
+- [x] Extend/confirm profile schema owns all MCP declarations.
+- [x] Extend/confirm profile schema owns packaged root path under
   `config/profiles/<profile_id>/root/`.
-- [ ] Extend profile schema with hash-pinned file references for enforcement,
+- [x] Extend profile schema with hash-pinned file references for enforcement,
   detection, MCP, `apt-packages.txt`, `python-requirements.txt`,
   `npm-packages.txt`, `install.sh`, packaged root, and tips.
 - [ ] Replace `capsem-admin --guest-dir guest` with explicit admin-resolved
@@ -235,23 +235,24 @@ Rule for this sprint: a path is allowed only if it is one of:
 
 ### S2: Guest Root Seed Contract
 
-- [ ] Add `config/profiles/code/root/`.
-- [ ] Move Codex, Claude, Gemini config file contents out of inline TOML and
+- [x] Add `config/profiles/code/root/`.
+- [x] Move Codex, Claude, Gemini config file contents out of inline TOML and
   into real files under `config/profiles/code/root/root/...`.
-- [ ] Add Antigravity/AGY only after current install source is verified.
-- [ ] Add `config/profiles/code/tips.txt` and remove profile tips from global
+- [x] Add Antigravity/AGY profile config seed; current install source still
+  requires real image build verification.
+- [x] Add `config/profiles/code/tips.txt` and remove profile tips from global
   guest artifacts.
-- [ ] Builder copies the seed into rootfs under a non-runtime seed path.
-- [ ] `capsem-init` projects the seed into runtime `/` after tmpfs/overlay setup.
+- [x] Builder copies the seed into rootfs under a non-runtime seed path.
+- [x] `capsem-init` projects the seed into runtime `/` after tmpfs/overlay setup.
 - [ ] Doctor verifies the expected files exist in the VM.
 
 ### S3: Tool Install And Refresh Discipline
 
-- [ ] Replace legacy AI-provider config with profile-owned package files:
+- [x] Replace legacy AI-provider config with profile-owned package files:
   `apt-packages.txt`, `python-requirements.txt`, and `npm-packages.txt`.
-- [ ] Add profile-owned `install.sh` for manual shell installers such as Claude
+- [x] Add profile-owned `install.sh` for manual shell installers such as Claude
   or AGY when a tool is not representable as apt/Python/npm package input.
-- [ ] Profile build spec maps those package files into apt, Python/uv, and
+- [x] Profile build spec maps those package files into apt, Python/uv, and
   Node/npm install steps, then runs `install.sh` as a hash-pinned profile input.
 - [ ] Build ledger records the actually installed apt/Python/npm/manual package
   set with names, versions, declared input hashes, and local package/artifact

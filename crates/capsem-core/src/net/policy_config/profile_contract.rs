@@ -46,6 +46,8 @@ pub struct ProfileConfigFile {
     pub mcp: Option<crate::mcp::policy::McpUserConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub obom: Option<ProfileObomConfig>,
+    #[serde(default, skip_serializing_if = "ProfileFileReferences::is_empty")]
+    pub files: ProfileFileReferences,
     #[serde(default)]
     pub skills: ProfileSkills,
 }
@@ -120,6 +122,33 @@ pub struct ProfileObomDescriptor {
     pub generator_version: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProfileFileReferences {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mcp: Option<ProfileFileDescriptor>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub apt_packages: Option<ProfileFileDescriptor>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub python_requirements: Option<ProfileFileDescriptor>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub npm_packages: Option<ProfileFileDescriptor>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub install: Option<ProfileFileDescriptor>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tips: Option<ProfileFileDescriptor>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub root_manifest: Option<ProfileFileDescriptor>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProfileFileDescriptor {
+    pub path: String,
+    pub hash: String,
+    pub size: u64,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProfileVmDefaults {
@@ -172,6 +201,7 @@ impl ProfileConfigFile {
         if let Some(obom) = &self.obom {
             obom.validate()?;
         }
+        self.files.validate()?;
         self.vm.validate()?;
         self.skills.validate()?;
         if let Some(mcp) = &self.mcp {
@@ -393,6 +423,64 @@ impl ProfileObomDescriptor {
     }
 }
 
+impl ProfileFileReferences {
+    pub fn is_empty(&self) -> bool {
+        self.mcp.is_none()
+            && self.apt_packages.is_none()
+            && self.python_requirements.is_none()
+            && self.npm_packages.is_none()
+            && self.install.is_none()
+            && self.tips.is_none()
+            && self.root_manifest.is_none()
+    }
+
+    fn validate(&self) -> Result<(), String> {
+        for (field, descriptor) in [
+            ("profile.files.mcp", self.mcp.as_ref()),
+            ("profile.files.apt_packages", self.apt_packages.as_ref()),
+            (
+                "profile.files.python_requirements",
+                self.python_requirements.as_ref(),
+            ),
+            ("profile.files.npm_packages", self.npm_packages.as_ref()),
+            ("profile.files.install", self.install.as_ref()),
+            ("profile.files.tips", self.tips.as_ref()),
+            ("profile.files.root_manifest", self.root_manifest.as_ref()),
+        ] {
+            if let Some(descriptor) = descriptor {
+                descriptor.validate(field)?;
+            }
+        }
+        Ok(())
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (&'static str, &ProfileFileDescriptor)> {
+        [
+            ("mcp", self.mcp.as_ref()),
+            ("apt_packages", self.apt_packages.as_ref()),
+            ("python_requirements", self.python_requirements.as_ref()),
+            ("npm_packages", self.npm_packages.as_ref()),
+            ("install", self.install.as_ref()),
+            ("tips", self.tips.as_ref()),
+            ("root_manifest", self.root_manifest.as_ref()),
+        ]
+        .into_iter()
+        .filter_map(|(kind, descriptor)| descriptor.map(|descriptor| (kind, descriptor)))
+    }
+}
+
+impl ProfileFileDescriptor {
+    fn validate(&self, field: &str) -> Result<(), String> {
+        validate_non_empty(&format!("{field}.path"), &self.path)?;
+        validate_relative_profile_path(&format!("{field}.path"), &self.path)?;
+        validate_blake3_hash(&format!("{field}.hash"), &self.hash)?;
+        if self.size == 0 {
+            return Err(format!("{field}.size must be greater than 0"));
+        }
+        Ok(())
+    }
+}
+
 impl ProfileAssetDescriptor {
     fn validate(&self, field: &str) -> Result<(), String> {
         validate_non_empty(&format!("{field}.name"), &self.name)?;
@@ -409,6 +497,19 @@ impl ProfileAssetDescriptor {
         }
         Ok(())
     }
+}
+
+fn validate_relative_profile_path(field: &str, value: &str) -> Result<(), String> {
+    if value.starts_with('/') || value.starts_with("file://") {
+        return Err(format!("{field} must be a config-root-relative path"));
+    }
+    if value.contains("..") || value.contains('\\') {
+        return Err(format!("{field} must not contain path traversal"));
+    }
+    if value.trim() != value || value.is_empty() {
+        return Err(format!("{field} must not be empty or padded"));
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, PartialEq)]

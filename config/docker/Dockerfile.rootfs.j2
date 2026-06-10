@@ -41,6 +41,11 @@ RUN npm install -g --prefix {{ npm_prefix }} \
 ENV PATH="{{ npm_prefix }}/bin:$PATH"
 {% endif %}
 
+{% if profile_install_script %}
+COPY profile-install.sh /tmp/profile-install.sh
+RUN chmod 555 /tmp/profile-install.sh && /tmp/profile-install.sh && rm -f /tmp/profile-install.sh
+{% endif %}
+
 # Install MITM CA certificate into system trust store
 # (copied into build context by capsem-builder before docker build)
 COPY capsem-ca.crt /usr/local/share/ca-certificates/capsem-ca.crt
@@ -61,6 +66,10 @@ RUN chmod 555 /usr/local/bin/{{ binary }}
 COPY capsem-bashrc /etc/capsem-bashrc
 COPY banner.txt /etc/capsem-banner.txt
 COPY tips.txt /etc/capsem-tips.txt
+{% if profile_root_seed %}
+COPY profile-root/ /usr/local/share/capsem/profile-root/
+RUN chmod -R go-rwx /usr/local/share/capsem/profile-root
+{% endif %}
 
 {% if python_packages %}
 # Common Python packages (pre-installed so they're available immediately).

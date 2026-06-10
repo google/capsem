@@ -65,6 +65,41 @@ size = 933675008
 enforcement = "profiles/code/enforcement.toml"
 sigma = "profiles/code/detection.yaml"
 
+[files.mcp]
+path = "profiles/code/mcp.json"
+hash = "blake3:44dbee07dcb89910a47cd195f6b324d51260b2f4e34a13a8bd85e2e5039ea67b"
+size = 90
+
+[files.apt_packages]
+path = "profiles/code/apt-packages.txt"
+hash = "blake3:2371ed38190aca157a69164ddc03beb05ace3aac244d14155b0b85f506763259"
+size = 226
+
+[files.python_requirements]
+path = "profiles/code/python-requirements.txt"
+hash = "blake3:75f08961e8fdfcfcf91719744847a2fbb202ca3f9c092e6c35e9c8842f816b00"
+size = 117
+
+[files.npm_packages]
+path = "profiles/code/npm-packages.txt"
+hash = "blake3:28a0ccfa0a3cc7187c226b4412b73a5fec2549b6ac19e0ef6da148b1884262bf"
+size = 33
+
+[files.install]
+path = "profiles/code/install.sh"
+hash = "blake3:2b4728feb21043baf27945cbc8bda62183752d23d1f0a726f703f1ac0865bb27"
+size = 686
+
+[files.tips]
+path = "profiles/code/tips.txt"
+hash = "blake3:ab1b0d469403862ddee1fe82ee09f0263daa6277816acc5e708efeb46f67d924"
+size = 341
+
+[files.root_manifest]
+path = "profiles/code/root.manifest.json"
+hash = "blake3:055633d72709f8872104ca5ae3cf4b3fc66336659710114da5fa061e3221114d"
+size = 1518
+
 [plugins.credential_broker]
 mode = "rewrite"
 detection_level = "informational"

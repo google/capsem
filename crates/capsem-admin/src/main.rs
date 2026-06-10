@@ -336,6 +336,7 @@ struct ProfileCheckReport {
     ok: bool,
     validation: ProfileValidationReport,
     assets: Vec<LocalAssetCheckReport>,
+    profile_files: Vec<LocalAssetCheckReport>,
 }
 
 #[derive(Debug, Serialize)]
@@ -762,7 +763,29 @@ fn image_plan_command(args: ImageBuildArgs) -> Result<()> {
 }
 
 fn image_build_command(args: ImageBuildArgs) -> Result<()> {
-    let plan = image_build_plan(&args)?;
+    let source_profile = load_profile(&args.profile)?;
+    let workspace = PathBuf::from("target")
+        .join("image-workspace")
+        .join(&source_profile.id);
+    let workspace_report = materialize_image_workspace(&ImageWorkspaceArgs {
+        profile: args.profile.clone(),
+        config_root: args.config_root.clone(),
+        guest_dir: args.guest_dir.clone(),
+        output: workspace,
+        arch: args.arch.clone(),
+        json: true,
+    })?;
+    let plan = image_build_plan(&ImageBuildArgs {
+        profile: PathBuf::from(&workspace_report.profile_path),
+        config_root: PathBuf::from(&workspace_report.config_root),
+        guest_dir: PathBuf::from(&workspace_report.workspace).join("guest"),
+        output: args.output.clone(),
+        arch: args.arch.clone(),
+        template: args.template,
+        clean: args.clean,
+        dry_run: args.dry_run,
+        json: args.json,
+    })?;
     if args.dry_run {
         print_image_build_plan(&plan, args.json)?;
         return Ok(());
@@ -844,6 +867,10 @@ fn validate_profile(path: &Path, config_root: Option<&Path>) -> Result<ProfileVa
 fn check_profile(args: &ProfileCheckArgs) -> Result<ProfileCheckReport> {
     let validation = validate_profile(&args.path, args.config_root.as_deref())?;
     let profile = load_profile(&args.path)?;
+    let config_root = match &args.config_root {
+        Some(root) => root.clone(),
+        None => infer_config_root(&args.path)?,
+    };
     let mut assets = Vec::new();
     let arches = selected_profile_arches(&profile, args.arch.as_deref())?;
     for arch in arches {
@@ -869,12 +896,94 @@ fn check_profile(args: &ProfileCheckArgs) -> Result<ProfileCheckReport> {
         }
     }
     fail_if_local_asset_checks_failed("profile file:// asset pin check", &assets)?;
+    let profile_files = check_profile_payload_files(&profile, &config_root)?;
+    fail_if_local_asset_checks_failed("profile payload file pin check", &profile_files)?;
     Ok(ProfileCheckReport {
         schema: "capsem.admin.profile_check.v1",
         ok: true,
         validation,
         assets,
+        profile_files,
     })
+}
+
+fn check_profile_payload_files(
+    profile: &ProfileConfigFile,
+    config_root: &Path,
+) -> Result<Vec<LocalAssetCheckReport>> {
+    let mut reports = Vec::new();
+    for (kind, descriptor) in profile.files.iter() {
+        let path = config_root.join(&descriptor.path);
+        reports.push(check_exact_local_asset(
+            &path,
+            "profile",
+            kind,
+            normalized_blake3(&descriptor.hash)?,
+            descriptor.size,
+        )?);
+        if kind == "root_manifest" {
+            reports.extend(check_profile_root_manifest(&path)?);
+        }
+    }
+    Ok(reports)
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProfileRootManifest {
+    format: String,
+    files: Vec<ProfileRootManifestFile>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProfileRootManifestFile {
+    path: String,
+    hash: String,
+    size: u64,
+}
+
+fn check_profile_root_manifest(path: &Path) -> Result<Vec<LocalAssetCheckReport>> {
+    let content = fs::read_to_string(path)
+        .with_context(|| format!("read profile root manifest {}", path.display()))?;
+    let manifest: ProfileRootManifest = serde_json::from_str(&content)
+        .with_context(|| format!("parse profile root manifest {}", path.display()))?;
+    if manifest.format != "capsem.profile-root.v1" {
+        return Err(anyhow!(
+            "profile root manifest {} has unsupported format {}",
+            path.display(),
+            manifest.format
+        ));
+    }
+    if manifest.files.is_empty() {
+        return Err(anyhow!(
+            "profile root manifest {} must list at least one file",
+            path.display()
+        ));
+    }
+    let root_dir = path
+        .parent()
+        .ok_or_else(|| anyhow!("profile root manifest has no parent: {}", path.display()))?
+        .join("root");
+    let mut reports = Vec::new();
+    for entry in manifest.files {
+        validate_relative_manifest_path("profile root manifest file", &entry.path)?;
+        if entry.size == 0 {
+            return Err(anyhow!(
+                "profile root manifest {} entry {} has zero size",
+                path.display(),
+                entry.path
+            ));
+        }
+        reports.push(check_exact_local_asset(
+            &root_dir.join(&entry.path),
+            "profile-root",
+            &entry.path,
+            normalized_blake3(&entry.hash)?,
+            entry.size,
+        )?);
+    }
+    Ok(reports)
 }
 
 fn materialize_profile_config(args: &ProfileMaterializeArgs) -> Result<ProfileMaterializeReport> {
@@ -1471,6 +1580,12 @@ fn verify_image_outputs(args: &ImageVerifyArgs) -> Result<ImageVerifyReport> {
 }
 
 fn materialize_image_workspace(args: &ImageWorkspaceArgs) -> Result<ImageWorkspaceReport> {
+    check_profile(&ProfileCheckArgs {
+        path: args.profile.clone(),
+        config_root: Some(args.config_root.clone()),
+        arch: args.arch.clone(),
+        json: true,
+    })?;
     let profile = load_profile(&args.profile)?;
     profile
         .validate()
@@ -1488,6 +1603,7 @@ fn materialize_image_workspace(args: &ImageWorkspaceArgs) -> Result<ImageWorkspa
 
     let workspace = &args.output;
     let workspace_config_root = workspace.join("config");
+    let workspace_guest_dir = workspace.join("guest");
     let workspace_profile_path = workspace_config_root
         .join("profiles")
         .join(&profile.id)
@@ -1522,6 +1638,12 @@ fn materialize_image_workspace(args: &ImageWorkspaceArgs) -> Result<ImageWorkspa
         "sigma",
         &mut rule_files,
     )?;
+    materialize_profile_guest_inputs(
+        &profile,
+        &args.config_root,
+        &args.guest_dir,
+        &workspace_guest_dir,
+    )?;
 
     let copied_validation =
         validate_profile(&workspace_profile_path, Some(&workspace_config_root))?;
@@ -1536,7 +1658,7 @@ fn materialize_image_workspace(args: &ImageWorkspaceArgs) -> Result<ImageWorkspa
     let plan = image_build_plan(&ImageBuildArgs {
         profile: workspace_profile_path.clone(),
         config_root: workspace_config_root.clone(),
-        guest_dir: args.guest_dir.clone(),
+        guest_dir: workspace_guest_dir.clone(),
         output: workspace.join("assets"),
         arch: args.arch.clone(),
         template: ImageBuildTemplate::All,
@@ -1571,6 +1693,138 @@ fn materialize_image_workspace(args: &ImageWorkspaceArgs) -> Result<ImageWorkspa
     )
     .with_context(|| format!("write {}", workspace.join("workspace.json").display()))?;
     Ok(report)
+}
+
+fn materialize_profile_guest_inputs(
+    profile: &ProfileConfigFile,
+    config_root: &Path,
+    source_guest_dir: &Path,
+    workspace_guest_dir: &Path,
+) -> Result<()> {
+    let source_config = source_guest_dir.join("config");
+    let workspace_config = workspace_guest_dir.join("config");
+    fs::create_dir_all(&workspace_config)
+        .with_context(|| format!("create {}", workspace_config.display()))?;
+    for relative in ["build.toml", "manifest.toml"] {
+        let source = source_config.join(relative);
+        let destination = workspace_config.join(relative);
+        fs::copy(&source, &destination)
+            .with_context(|| format!("copy {} to {}", source.display(), destination.display()))?;
+    }
+    copy_dir_recursive(
+        &source_config.join("kernel"),
+        &workspace_config.join("kernel"),
+    )?;
+    copy_dir_recursive(
+        &source_guest_dir.join("artifacts"),
+        &workspace_guest_dir.join("artifacts"),
+    )?;
+
+    let packages_dir = workspace_config.join("packages");
+    fs::create_dir_all(&packages_dir)
+        .with_context(|| format!("create {}", packages_dir.display()))?;
+    if let Some(descriptor) = profile.files.apt_packages.as_ref() {
+        let packages = read_profile_package_lines(&config_root.join(&descriptor.path))?;
+        write_profile_package_toml(
+            &packages_dir.join("apt.toml"),
+            "apt",
+            "System Packages",
+            "apt",
+            "apt-get install -y --no-install-recommends",
+            &packages,
+        )?;
+    }
+    if let Some(descriptor) = profile.files.python_requirements.as_ref() {
+        let packages = read_profile_package_lines(&config_root.join(&descriptor.path))?;
+        write_profile_package_toml(
+            &packages_dir.join("python.toml"),
+            "python",
+            "Python Packages",
+            "uv",
+            "uv pip install --system --break-system-packages",
+            &packages,
+        )?;
+    }
+    if let Some(descriptor) = profile.files.npm_packages.as_ref() {
+        let packages = read_profile_package_lines(&config_root.join(&descriptor.path))?;
+        write_profile_package_toml(
+            &packages_dir.join("npm.toml"),
+            "npm",
+            "Node Packages",
+            "npm",
+            "npm install -g --prefix /opt/ai-clis",
+            &packages,
+        )?;
+    }
+    if let Some(descriptor) = profile.files.install.as_ref() {
+        let source = config_root.join(&descriptor.path);
+        let destination = workspace_guest_dir.join("profile-install.sh");
+        fs::copy(&source, &destination)
+            .with_context(|| format!("copy {} to {}", source.display(), destination.display()))?;
+    }
+    if let Some(descriptor) = profile.files.tips.as_ref() {
+        let source = config_root.join(&descriptor.path);
+        let artifacts_dir = workspace_guest_dir.join("artifacts");
+        fs::create_dir_all(&artifacts_dir)
+            .with_context(|| format!("create {}", artifacts_dir.display()))?;
+        fs::copy(&source, artifacts_dir.join("tips.txt"))
+            .with_context(|| format!("copy profile tips {}", source.display()))?;
+    }
+    if let Some(descriptor) = profile.files.root_manifest.as_ref() {
+        let manifest_path = config_root.join(&descriptor.path);
+        let source_root = manifest_path
+            .parent()
+            .ok_or_else(|| anyhow!("profile root manifest has no parent"))?
+            .join("root");
+        copy_dir_recursive(&source_root, &workspace_guest_dir.join("profile-root"))?;
+    }
+    Ok(())
+}
+
+fn read_profile_package_lines(path: &Path) -> Result<Vec<String>> {
+    let content = fs::read_to_string(path)
+        .with_context(|| format!("read package list {}", path.display()))?;
+    let packages = content
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .map(ToOwned::to_owned)
+        .collect::<Vec<_>>();
+    if packages.is_empty() {
+        return Err(anyhow!("package list {} is empty", path.display()));
+    }
+    Ok(packages)
+}
+
+fn write_profile_package_toml(
+    path: &Path,
+    key: &str,
+    name: &str,
+    manager: &str,
+    install_cmd: &str,
+    packages: &[String],
+) -> Result<()> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| anyhow!("package TOML path has no parent: {}", path.display()))?;
+    fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
+    let packages = packages
+        .iter()
+        .map(|package| format!("    {package:?}"))
+        .collect::<Vec<_>>()
+        .join(",\n");
+    let content = format!(
+        r#"[{key}]
+name = {name:?}
+manager = {manager:?}
+install_cmd = {install_cmd:?}
+packages = [
+{packages},
+]
+"#
+    );
+    fs::write(path, content).with_context(|| format!("write {}", path.display()))?;
+    Ok(())
 }
 
 fn copy_profile_rule_file(
@@ -1720,6 +1974,21 @@ fn normalized_blake3(value: &str) -> Result<&str> {
     value
         .strip_prefix("blake3:")
         .ok_or_else(|| anyhow!("expected blake3:<hash>, got {value}"))
+}
+
+fn validate_relative_manifest_path(field: &str, value: &str) -> Result<()> {
+    if value.is_empty()
+        || value.starts_with('/')
+        || value.starts_with("file://")
+        || value.contains("..")
+        || value.contains('\\')
+        || value.trim() != value
+    {
+        return Err(anyhow!(
+            "{field} must be a relative path without traversal: {value}"
+        ));
+    }
+    Ok(())
 }
 
 fn print_image_build_plan(plan: &ImageBuildPlan, json: bool) -> Result<()> {
@@ -2335,6 +2604,7 @@ decision = "block"
         let mut profile = ProfileConfigFile::builtin_code();
         profile.rule_files.enforcement = None;
         profile.rule_files.sigma = None;
+        profile.files = Default::default();
         profile.assets.arch.retain(|arch, _| arch == "arm64");
         let arch_assets = profile.assets.arch.get_mut("arm64").expect("arm64 assets");
         for descriptor in [
@@ -2374,6 +2644,119 @@ decision = "block"
             .assets
             .iter()
             .all(|asset| asset.blake3_ok == Some(true)));
+        assert!(report.profile_files.is_empty());
+    }
+
+    #[test]
+    fn profile_check_verifies_profile_payload_file_hashes_and_root_manifest() {
+        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let repo_root = manifest_dir
+            .parent()
+            .and_then(Path::parent)
+            .expect("repo root");
+        let profile_path = repo_root.join("config/profiles/code/profile.toml");
+
+        let report = check_profile(&ProfileCheckArgs {
+            path: profile_path,
+            config_root: Some(repo_root.join("config")),
+            arch: Some("arm64".to_string()),
+            json: true,
+        })
+        .expect("checked-in profile payload hashes validate");
+
+        assert!(report
+            .profile_files
+            .iter()
+            .any(|file| file.logical_name == "mcp"));
+        assert!(report
+            .profile_files
+            .iter()
+            .any(|file| file.logical_name == "root/.codex/config.toml"));
+        assert!(report.profile_files.iter().all(|file| file.present));
+        assert!(report
+            .profile_files
+            .iter()
+            .all(|file| file.size_ok == Some(true)));
+        assert!(report
+            .profile_files
+            .iter()
+            .all(|file| file.blake3_ok == Some(true)));
+    }
+
+    #[test]
+    fn profile_check_rejects_mutated_profile_payload_file() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let config_root = temp.path().join("config");
+        let profile_dir = config_root.join("profiles/code");
+        fs::create_dir_all(&profile_dir).expect("profile dir");
+        fs::write(profile_dir.join("mcp.json"), "{}\n").expect("mcp");
+        let mut profile = ProfileConfigFile::builtin_code();
+        profile.rule_files.enforcement = None;
+        profile.rule_files.sigma = None;
+        profile.assets.arch.retain(|arch, _| arch == "arm64");
+        profile.files = Default::default();
+        profile.files.mcp = Some(capsem_core::net::policy_config::ProfileFileDescriptor {
+            path: "profiles/code/mcp.json".to_string(),
+            hash: format!("blake3:{}", blake3::hash(b"not the file\n").to_hex()),
+            size: b"not the file\n".len() as u64,
+        });
+        let profile_path = profile_dir.join("profile.toml");
+        fs::write(&profile_path, toml::to_string(&profile).unwrap()).expect("profile");
+
+        let error = check_profile(&ProfileCheckArgs {
+            path: profile_path,
+            config_root: Some(config_root),
+            arch: Some("arm64".to_string()),
+            json: true,
+        })
+        .expect_err("mutated payload hash rejected");
+        assert!(error.to_string().contains("profile payload file pin check"));
+    }
+
+    #[test]
+    fn profile_check_rejects_profile_root_manifest_escape_paths() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let config_root = temp.path().join("config");
+        let profile_dir = config_root.join("profiles/code");
+        fs::create_dir_all(&profile_dir).expect("profile dir");
+        let root_manifest = r#"{
+  "format": "capsem.profile-root.v1",
+  "files": [
+    {
+      "path": "../outside",
+      "hash": "blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "size": 1
+    }
+  ]
+}
+"#;
+        fs::write(profile_dir.join("root.manifest.json"), root_manifest).expect("root manifest");
+        let mut profile = ProfileConfigFile::builtin_code();
+        profile.rule_files.enforcement = None;
+        profile.rule_files.sigma = None;
+        profile.assets.arch.retain(|arch, _| arch == "arm64");
+        profile.files = Default::default();
+        profile.files.root_manifest =
+            Some(capsem_core::net::policy_config::ProfileFileDescriptor {
+                path: "profiles/code/root.manifest.json".to_string(),
+                hash: format!("blake3:{}", blake3::hash(root_manifest.as_bytes()).to_hex()),
+                size: root_manifest.len() as u64,
+            });
+        let profile_path = profile_dir.join("profile.toml");
+        fs::write(&profile_path, toml::to_string(&profile).unwrap()).expect("profile");
+
+        let error = check_profile(&ProfileCheckArgs {
+            path: profile_path,
+            config_root: Some(config_root),
+            arch: Some("arm64".to_string()),
+            json: true,
+        })
+        .expect_err("root manifest escape rejected");
+
+        assert!(
+            error.to_string().contains("profile root manifest file"),
+            "{error:#}"
+        );
     }
 
     #[test]
@@ -2574,6 +2957,30 @@ decision = "block"
             .is_file());
         assert!(args.output.join("build-plan.json").is_file());
         assert!(args.output.join("workspace.json").is_file());
+        assert!(args.output.join("guest/config/packages/apt.toml").is_file());
+        assert!(args
+            .output
+            .join("guest/config/packages/python.toml")
+            .is_file());
+        assert!(args.output.join("guest/config/packages/npm.toml").is_file());
+        assert!(args.output.join("guest/profile-install.sh").is_file());
+        assert!(args
+            .output
+            .join("guest/profile-root/root/.codex/config.toml")
+            .is_file());
+        assert!(args.output.join("guest/artifacts/tips.txt").is_file());
+        let build_plan: serde_json::Value =
+            serde_json::from_slice(&fs::read(args.output.join("build-plan.json")).unwrap())
+                .unwrap();
+        assert!(build_plan["commands"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|command| command["argv"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|arg| arg == args.output.join("guest").display().to_string().as_str())));
 
         let copied = validate_profile(&workspace_profile, Some(&args.output.join("config")))
             .expect("copied workspace profile validates");
