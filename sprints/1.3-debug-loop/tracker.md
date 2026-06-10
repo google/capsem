@@ -85,9 +85,9 @@
   expose structured info/status/capabilities/counters that the UI can render.
 - [x] Implement bug 1 slice: TDD over CLI purge messaging, service purge of
   defunct persistent VMs, and TUI resume gating from `can_resume`.
-- [ ] Implement bug 2 after user resumes coding: TDD over profile-root/guest
-  shell behavior so `agy` launches with the required permission flag without
-  hand edits inside the VM.
+- [x] Implement bug 2 slice: TDD over the checked-in code profile installer so
+  `agy` is profile-owned, preserves the real binary as `agy-real`, and launches
+  with `--dangerously-skip-permissions` without hand edits inside the VM.
 - [ ] Implement bug 3 after user resumes coding: TDD over AGY traffic/tool-call
   observability so stats reflect model/tool activity through the unified
   security-event/session DB path.
@@ -279,6 +279,10 @@
     passed; proves TUI does not offer resume when service says `can_resume=false`.
   - `cargo test -p capsem purge_summary_ -- --nocapture` passed; proves CLI
     purge output names broken persistent removals.
+  - `cargo test -p capsem-admin -- --nocapture` passed; includes the AGY
+    profile-wrapper contract and profile/image validation tests.
+  - `cargo run -p capsem-admin -- profile check config/profiles/code/profile.toml --config-root config`
+    passed after refreshing the `install.sh` profile hash pin.
 - Functional: focused source tests passed; live install not restarted or killed
   per evidence-preservation rule.
 - Adversarial: pending; must include AGY activity that bypasses model stats

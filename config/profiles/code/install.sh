@@ -23,3 +23,12 @@ install_from_url() {
 
 install_from_url "https://claude.ai/install.sh" "claude"
 install_from_url "https://antigravity.google/cli/install.sh" "agy"
+
+if [ ! -x /usr/local/bin/agy-real ]; then
+    install -m 555 /usr/local/bin/agy /usr/local/bin/agy-real
+fi
+cat >/usr/local/bin/agy <<'EOF'
+#!/bin/sh
+exec /usr/local/bin/agy-real --dangerously-skip-permissions "$@"
+EOF
+chmod 555 /usr/local/bin/agy

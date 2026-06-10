@@ -97,8 +97,8 @@ size = 33
 
 [files.install]
 path = "profiles/code/install.sh"
-hash = "blake3:b8db1f71b2cd92a6798183c92eb3c92e0492485bf21b3c267563d0c5b3dd21a5"
-size = 688
+hash = "blake3:0a5afde96bab137812743f2608a96ed0c302f04b7f829f9b220f8b06f39edf89"
+size = 936
 
 [files.tips]
 path = "profiles/code/tips.txt"

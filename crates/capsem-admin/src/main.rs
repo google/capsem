@@ -2520,6 +2520,26 @@ enforcement = "profiles/code/enforcement.toml"
     }
 
     #[test]
+    fn checked_in_profile_install_wraps_agy_with_skip_permissions() {
+        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let repo_root = manifest_dir
+            .parent()
+            .and_then(Path::parent)
+            .expect("repo root");
+        let path = repo_root.join("config/profiles/code/install.sh");
+        let content = fs::read_to_string(path).expect("profile install script");
+
+        assert!(
+            content.contains("/usr/local/bin/agy-real"),
+            "profile install script must preserve the real AGY binary behind a wrapper"
+        );
+        assert!(
+            content.contains("--dangerously-skip-permissions"),
+            "profile-owned AGY wrapper must opt into the Capsem permission model"
+        );
+    }
+
+    #[test]
     fn enforcement_compile_rejects_old_on_if_decision_shape() {
         let temp = tempfile::tempdir().expect("tempdir");
         let path = temp.path().join("old.toml");
