@@ -16,7 +16,7 @@ from capsem.builder.doctor import (
     check_container_clock,
     check_container_runtime,
     check_cross_target,
-    check_guest_config,
+    check_profile_contract,
     check_rust_toolchain,
     check_source_files,
     format_results,
@@ -237,46 +237,55 @@ class TestCheckContainerClock:
 
 
 # ---------------------------------------------------------------------------
-# Guest config check
+# Profile/admin rail check
 # ---------------------------------------------------------------------------
 
 
-class TestCheckGuestConfig:
-    def test_valid_config(self, tmp_path):
-        config = tmp_path / "config"
-        config.mkdir()
-        (config / "build.toml").write_text(
-            '[build]\ncompression = "zstd"\ncompression_level = 15\n'
-            "[build.architectures.arm64]\n"
-            'base_image = "debian:bookworm-slim"\n'
-            'docker_platform = "linux/arm64"\n'
-            'rust_target = "aarch64-unknown-linux-musl"\n'
-            'kernel_branch = "6.6"\n'
-            'kernel_image = "arch/arm64/boot/Image"\n'
-            'defconfig = "kernel/defconfig.arm64"\n'
-            "node_major = 24\n"
-        )
-        result = check_guest_config(tmp_path)
+class TestCheckProfileContract:
+    @patch("capsem.builder.doctor.subprocess.run")
+    def test_profile_contract_uses_capsem_admin_profile_check(self, mock_run, tmp_path):
+        config_root = tmp_path / "config"
+        profile = config_root / "profiles" / "code" / "profile.toml"
+        profile.parent.mkdir(parents=True)
+        profile.write_text('id = "code"\n')
+        mock_run.return_value = MagicMock(stdout='{"ok":true,"profile_id":"code"}', returncode=0)
+
+        result = check_profile_contract(profile, config_root)
+
         assert result.passed is True
-        assert "1 architecture" in result.detail
+        assert "code" in result.detail
+        mock_run.assert_called_once()
+        argv = mock_run.call_args.args[0]
+        assert argv[:6] == [
+            "cargo",
+            "run",
+            "-p",
+            "capsem-admin",
+            "--",
+            "profile",
+        ]
+        assert "check" in argv
+        assert str(profile) in argv
+        assert "--config-root" in argv
+        assert str(config_root) in argv
+        assert "--json" in argv
 
-    def test_missing_build_toml(self, tmp_path):
-        config = tmp_path / "config"
-        config.mkdir()
-        result = check_guest_config(tmp_path)
-        assert result.passed is False
-        assert "build.toml" in result.detail
+    @patch("capsem.builder.doctor.subprocess.run")
+    def test_profile_contract_reports_capsem_admin_failure(self, mock_run, tmp_path):
+        config_root = tmp_path / "config"
+        profile = config_root / "profiles" / "code" / "profile.toml"
+        profile.parent.mkdir(parents=True)
+        profile.write_text('id = "code"\n')
+        mock_run.return_value = MagicMock(
+            stdout="",
+            stderr="profile payload file pin check failed",
+            returncode=1,
+        )
 
-    def test_no_config_dir(self, tmp_path):
-        result = check_guest_config(tmp_path)
-        assert result.passed is False
+        result = check_profile_contract(profile, config_root)
 
-    def test_invalid_toml(self, tmp_path):
-        config = tmp_path / "config"
-        config.mkdir()
-        (config / "build.toml").write_text("invalid [[ toml")
-        result = check_guest_config(tmp_path)
         assert result.passed is False
+        assert "profile payload file pin check failed" in result.detail
 
 
 # ---------------------------------------------------------------------------
@@ -455,21 +464,22 @@ class TestRunAllChecks:
     @patch("capsem.builder.doctor.check_rust_toolchain")
     @patch("capsem.builder.doctor.check_cross_target")
     @patch("capsem.builder.doctor.check_b3sum")
-    @patch("capsem.builder.doctor.check_guest_config")
+    @patch("capsem.builder.doctor.check_profile_contract")
     @patch("capsem.builder.doctor.check_source_files")
     def test_composes_all(
-        self, mock_src, mock_guest, mock_b3, mock_cross, mock_rust,
+        self, mock_src, mock_profile, mock_b3, mock_cross, mock_rust,
         mock_clock, mock_resources, mock_runtime,
     ):
-        for mock in [mock_src, mock_guest, mock_b3, mock_rust, mock_runtime]:
+        for mock in [mock_src, mock_profile, mock_b3, mock_rust, mock_runtime]:
             mock.return_value = CheckResult(name="x", passed=True, detail="ok")
         mock_cross.return_value = CheckResult(name="x", passed=True, detail="ok")
         mock_resources.return_value = None
         mock_clock.return_value = None
-        results = run_all_checks(Path("guest"), Path("."))
+        results = run_all_checks(Path("."), profile_id="code")
         # At minimum: runtime + rust + arm64 target + x86_64 target + b3sum + config + source
         assert len(results) >= 7
         assert all(r.passed for r in results)
+        mock_profile.assert_called_once()
 
     @patch("capsem.builder.doctor.check_container_runtime")
     @patch("capsem.builder.doctor.check_container_resources")
@@ -477,21 +487,21 @@ class TestRunAllChecks:
     @patch("capsem.builder.doctor.check_rust_toolchain")
     @patch("capsem.builder.doctor.check_cross_target")
     @patch("capsem.builder.doctor.check_b3sum")
-    @patch("capsem.builder.doctor.check_guest_config")
+    @patch("capsem.builder.doctor.check_profile_contract")
     @patch("capsem.builder.doctor.check_source_files")
     def test_counts_failures(
-        self, mock_src, mock_guest, mock_b3, mock_cross, mock_rust,
+        self, mock_src, mock_profile, mock_b3, mock_cross, mock_rust,
         mock_clock, mock_resources, mock_runtime,
     ):
         mock_runtime.return_value = CheckResult(
             name="container-runtime", passed=False, detail="missing", fix="install"
         )
-        for mock in [mock_src, mock_guest, mock_b3, mock_rust]:
+        for mock in [mock_src, mock_profile, mock_b3, mock_rust]:
             mock.return_value = CheckResult(name="x", passed=True, detail="ok")
         mock_cross.return_value = CheckResult(name="x", passed=True, detail="ok")
         mock_resources.return_value = None
         mock_clock.return_value = None
-        results = run_all_checks(Path("guest"), Path("."))
+        results = run_all_checks(Path("."), profile_id="code")
         failures = [r for r in results if not r.passed]
         assert len(failures) >= 1
 

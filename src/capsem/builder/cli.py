@@ -42,14 +42,21 @@ def cli(ctx: click.Context) -> None:
 
 
 @cli.command()
-@click.argument("guest_dir", default="guest", type=click.Path(exists=False))
-def doctor(guest_dir: str) -> None:
-    """Check build prerequisites (container runtime, Rust, tools)."""
+@click.option("--profile", "profile_id", default="code", show_default=True,
+              help="Profile id whose ledger should be checked.")
+@click.option("--config-root", default="config", show_default=True,
+              type=click.Path(exists=False),
+              help="Config root containing profiles and rule files.")
+def doctor(profile_id: str, config_root: str) -> None:
+    """Check build prerequisites and the profile/admin contract."""
     from capsem.builder.doctor import format_results, run_all_checks
 
-    guest_path = Path(guest_dir)
     repo_root = Path.cwd()
-    results = run_all_checks(guest_path, repo_root)
+    results = run_all_checks(
+        repo_root,
+        profile_id=profile_id,
+        config_root=Path(config_root),
+    )
     click.echo(format_results(results))
     failures = [r for r in results if not r.passed]
     if failures:

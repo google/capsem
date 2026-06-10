@@ -50,7 +50,7 @@ fn fake_capsem_home() -> TempDir {
     write(&home.join("run/gateway.pid"), b"12345");
     write(&home.join("run/gateway.port"), b"19222");
     write(
-        &home.join("user.toml"),
+        &home.join("settings.toml"),
         br#"[provider.anthropic]
 api_key = "sk-ant-real-secret-here-very-long-string"
 endpoint = "https://api.anthropic.com"
@@ -80,17 +80,23 @@ fn bundle_happy_path_writes_tar_gz_with_manifest() {
 }
 
 #[test]
-fn bundle_redacts_secrets_in_user_toml() {
+fn bundle_redacts_secrets_in_settings_toml() {
     let _g = ENV_LOCK.lock().unwrap();
     let _dir = fake_capsem_home();
     let out = crate::support_bundle::run(None, 0, false, false).unwrap();
     let entries = read_tar_entries(&out);
 
-    let user_toml_entry = entries
+    let settings_toml_entry = entries
         .iter()
-        .find(|(p, _)| p.ends_with("config/user.toml"))
-        .expect("config/user.toml should be in bundle");
-    let text = std::str::from_utf8(&user_toml_entry.1).unwrap();
+        .find(|(p, _)| p.ends_with("config/settings.toml"))
+        .expect("config/settings.toml should be in bundle");
+    assert!(
+        entries
+            .iter()
+            .all(|(p, _)| !p.ends_with("config/user.toml")),
+        "support bundle must not preserve user.toml as a config contract"
+    );
+    let text = std::str::from_utf8(&settings_toml_entry.1).unwrap();
     assert!(
         !text.contains("sk-ant-real-secret-here-very-long-string"),
         "secret leaked: {text}"
@@ -110,11 +116,11 @@ fn bundle_no_redact_keeps_secrets() {
     let out = crate::support_bundle::run(None, 0, false, true /*no_redact*/).unwrap();
     let entries = read_tar_entries(&out);
 
-    let user_toml_entry = entries
+    let settings_toml_entry = entries
         .iter()
-        .find(|(p, _)| p.ends_with("config/user.toml"))
+        .find(|(p, _)| p.ends_with("config/settings.toml"))
         .unwrap();
-    let text = std::str::from_utf8(&user_toml_entry.1).unwrap();
+    let text = std::str::from_utf8(&settings_toml_entry.1).unwrap();
     assert!(
         text.contains("sk-ant-real-secret-here-very-long-string"),
         "no-redact should preserve: {text}"

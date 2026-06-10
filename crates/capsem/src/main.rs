@@ -398,7 +398,7 @@ enum MiscCommands {
     /// info into a single redacted tar.gz for bug reports.
     ///
     /// Default output: `~/.capsem/support/capsem-support-<ts>-<host>.tar.gz`.
-    /// Secrets in user.toml/corp.toml and bearer tokens in log lines are
+    /// Secrets in settings.toml/corp.toml and bearer tokens in log lines are
     /// stripped by default. The bundle excludes rootfs.img unless
     /// `--include-rootfs` is passed.
     #[command(alias = "debug")]
@@ -738,46 +738,10 @@ async fn check_service_health() -> Result<Vec<String>> {
         _ => issues.push("Gateway files not found (no token/port files)".into()),
     }
 
-    if let Some(assets_dir) = capsem_core::asset_manager::default_assets_dir() {
-        let manifest_path = assets_dir.join("manifest.json");
-        match std::fs::read_to_string(&manifest_path)
-            .ok()
-            .and_then(|c| capsem_core::asset_manager::ManifestV2::from_json(&c).ok())
-        {
-            Some(m) => {
-                let arch = if cfg!(target_arch = "aarch64") {
-                    "arm64"
-                } else {
-                    "x86_64"
-                };
-                match m.resolve(env!("CARGO_PKG_VERSION"), arch, &assets_dir) {
-                    Ok(resolved) => {
-                        if !resolved.kernel.exists() {
-                            issues.push(format!(
-                                "Kernel asset is MISSING: {}",
-                                resolved.kernel.display()
-                            ));
-                        }
-                        if !resolved.initrd.exists() {
-                            issues.push(format!(
-                                "Initrd asset is MISSING: {}",
-                                resolved.initrd.display()
-                            ));
-                        }
-                        if !resolved.rootfs.exists() {
-                            issues.push(format!(
-                                "Rootfs asset is MISSING: {}",
-                                resolved.rootfs.display()
-                            ));
-                        }
-                    }
-                    Err(e) => issues.push(format!("Failed to resolve assets: {}", e)),
-                }
-            }
-            None => issues.push("Manifest file not found in assets directory".into()),
-        }
-    } else {
-        issues.push("Assets directory not found".into());
+    let status_client = client::UdsClient::new(sock, false);
+    match service_json(&status_client, "/profiles/status").await {
+        Some(profile_status) => issues.extend(profile_status_issues(&profile_status)),
+        None => issues.push("Profile status unavailable from service".into()),
     }
 
     Ok(issues)
@@ -792,11 +756,14 @@ async fn service_json(client: &UdsClient, path: &str) -> Option<serde_json::Valu
         .ok()
 }
 
-fn print_profiles_status(status: &serde_json::Value) {
+fn profile_status_summary_lines(status: &serde_json::Value) -> Vec<String> {
+    let mut lines = Vec::new();
     let source = status["source"].as_str().unwrap_or("unknown");
     let profile_count = status["profile_count"].as_u64().unwrap_or(0);
     let ready_count = status["ready_count"].as_u64().unwrap_or(0);
-    println!("Profiles:  {ready_count}/{profile_count} ready ({source})");
+    lines.push(format!(
+        "Profiles:  {ready_count}/{profile_count} ready ({source})"
+    ));
     if let Some(manifest) = status["asset_manifest"].as_object() {
         let origin = manifest
             .get("origin")
@@ -806,48 +773,48 @@ fn print_profiles_status(status: &serde_json::Value) {
             .get("path")
             .and_then(|value| value.as_str())
             .unwrap_or("-");
-        println!("Manifest:  {origin} ({path})");
+        lines.push(format!("Manifest:  {origin} ({path})"));
         if let Some(source) = manifest
             .get("origin_source")
             .and_then(|value| value.as_str())
         {
-            println!("  source:  {source}");
+            lines.push(format!("  source:  {source}"));
         }
         if let Some(packaged_at) = manifest.get("packaged_at").and_then(|value| value.as_str()) {
-            println!("  built:   {packaged_at}");
+            lines.push(format!("  built:   {packaged_at}"));
         }
         if let Some(refreshed_at) = manifest
             .get("refreshed_at")
             .and_then(|value| value.as_str())
         {
-            println!("  refresh: {refreshed_at}");
+            lines.push(format!("  refresh: {refreshed_at}"));
         }
         if let Some(validation_status) = manifest
             .get("validation_status")
             .and_then(|value| value.as_str())
         {
-            println!("  status:  {validation_status}");
+            lines.push(format!("  status:  {validation_status}"));
         }
         if let Some(error) = manifest
             .get("validation_error")
             .and_then(|value| value.as_str())
         {
-            println!("  error:   {error}");
+            lines.push(format!("  error:   {error}"));
         }
         if let Some(hash) = manifest.get("blake3").and_then(|value| value.as_str()) {
-            println!("  hash:    blake3:{hash}");
+            lines.push(format!("  hash:    blake3:{hash}"));
         }
         if let Some(current) = manifest
             .get("assets_current")
             .and_then(|value| value.as_str())
         {
-            println!("  assets:  {current}");
+            lines.push(format!("  assets:  {current}"));
         }
         if let Some(current) = manifest
             .get("binaries_current")
             .and_then(|value| value.as_str())
         {
-            println!("  binary:  {current}");
+            lines.push(format!("  binary:  {current}"));
         }
     }
     if let Some(profiles) = status["profiles"].as_array() {
@@ -867,12 +834,83 @@ fn print_profiles_status(status: &serde_json::Value) {
                 })
                 .unwrap_or_default();
             let readiness = if ready { "ready" } else { "not-ready" };
-            println!("  - {id}: {name} ({readiness}, arch {arch}, hash {hash})");
+            lines.push(format!(
+                "  - {id}: {name} ({readiness}, arch {arch}, hash {hash})"
+            ));
             if !missing.is_empty() {
-                println!("    missing: {}", missing.join(", "));
+                lines.push(format!("    missing: {}", missing.join(", ")));
             }
         }
     }
+    lines
+}
+
+fn print_profiles_status(status: &serde_json::Value) {
+    for line in profile_status_summary_lines(status) {
+        println!("{line}");
+    }
+}
+
+fn profile_status_issues(status: &serde_json::Value) -> Vec<String> {
+    let mut issues = Vec::new();
+    if status["profile_count"].as_u64().unwrap_or(0) == 0 {
+        issues.push("No profiles are installed".to_string());
+        return issues;
+    }
+    if let Some(profiles) = status["profiles"].as_array() {
+        for profile in profiles {
+            if profile["ready"].as_bool().unwrap_or(false) {
+                continue;
+            }
+            let id = profile["id"].as_str().unwrap_or("unknown");
+            let missing_assets = profile["missing_assets"]
+                .as_array()
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(|item| item.as_str())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            let invalid_assets = profile["invalid_assets"]
+                .as_array()
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(|item| item.as_str())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            let invalid_files = profile["invalid_files"]
+                .as_array()
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(|item| item.as_str())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            let mut detail = Vec::new();
+            if !missing_assets.is_empty() {
+                detail.push(format!("missing assets: {}", missing_assets.join(", ")));
+            }
+            if !invalid_assets.is_empty() {
+                detail.push(format!("invalid assets: {}", invalid_assets.join(", ")));
+            }
+            if !invalid_files.is_empty() {
+                detail.push(format!(
+                    "invalid profile files: {}",
+                    invalid_files.join(", ")
+                ));
+            }
+            if detail.is_empty() {
+                issues.push(format!("Profile {id} is not ready"));
+            } else {
+                issues.push(format!("Profile {id} is not ready ({})", detail.join("; ")));
+            }
+        }
+    }
+    issues
 }
 
 fn print_corp_status(info: &serde_json::Value) {
@@ -1097,48 +1135,6 @@ async fn main() -> Result<()> {
                 match service_json(&status_client, "/corp/info").await {
                     Some(corp_info) => print_corp_status(&corp_info),
                     None => println!("Corp:      unavailable"),
-                }
-            }
-
-            // Show asset info from manifest
-            if let Some(assets_dir) = capsem_core::asset_manager::default_assets_dir() {
-                let manifest_path = assets_dir.join("manifest.json");
-                match std::fs::read_to_string(&manifest_path)
-                    .ok()
-                    .and_then(|c| capsem_core::asset_manager::ManifestV2::from_json(&c).ok())
-                {
-                    Some(m) => {
-                        let arch = if cfg!(target_arch = "aarch64") {
-                            "arm64"
-                        } else {
-                            "x86_64"
-                        };
-                        println!("Assets:    {} ({})", m.assets.current, arch);
-                        match m.resolve(env!("CARGO_PKG_VERSION"), arch, &assets_dir) {
-                            Ok(resolved) => {
-                                let k = if resolved.kernel.exists() {
-                                    "ok"
-                                } else {
-                                    "MISSING"
-                                };
-                                let i = if resolved.initrd.exists() {
-                                    "ok"
-                                } else {
-                                    "MISSING"
-                                };
-                                let r = if resolved.rootfs.exists() {
-                                    "ok"
-                                } else {
-                                    "MISSING"
-                                };
-                                println!("  kernel:  {} ({})", resolved.kernel.display(), k);
-                                println!("  initrd:  {} ({})", resolved.initrd.display(), i);
-                                println!("  rootfs:  {} ({})", resolved.rootfs.display(), r);
-                            }
-                            Err(e) => println!("  resolve: {}", e),
-                        }
-                    }
-                    None => println!("Assets:    no manifest found"),
                 }
             }
 
@@ -2583,6 +2579,69 @@ mod tests {
     #[test]
     fn cli_default_profile_is_real_code_profile() {
         assert_eq!(DEFAULT_PROFILE_ID, "code");
+    }
+
+    #[test]
+    fn status_asset_lines_are_derived_from_profiles_status_payload() {
+        let payload = serde_json::json!({
+            "source": "installed",
+            "profile_count": 1,
+            "ready_count": 1,
+            "asset_manifest": {
+                "origin": "package",
+                "path": "/tmp/manifest.json",
+                "blake3": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "assets_current": "2026.0609.1",
+                "binaries_current": "1.3.0"
+            },
+            "profiles": [
+                {
+                    "id": "code",
+                    "name": "Code",
+                    "ready": true,
+                    "current_arch": "arm64",
+                    "profile_payload_hash": "bbbbbbbbbbbb",
+                    "missing_assets": []
+                }
+            ]
+        });
+
+        let lines = profile_status_summary_lines(&payload);
+
+        assert!(lines
+            .iter()
+            .any(|line| line == "Profiles:  1/1 ready (installed)"));
+        assert!(lines
+            .iter()
+            .any(|line| line == "Manifest:  package (/tmp/manifest.json)"));
+        assert!(lines.iter().any(|line| line == "  assets:  2026.0609.1"));
+        assert!(lines
+            .iter()
+            .any(|line| line == "  - code: Code (ready, arch arm64, hash bbbbbbbbbbbb)"));
+    }
+
+    #[test]
+    fn health_issues_are_derived_from_profiles_status_payload() {
+        let payload = serde_json::json!({
+            "profile_count": 1,
+            "profiles": [
+                {
+                    "id": "code",
+                    "ready": false,
+                    "missing_assets": ["initrd.img"],
+                    "invalid_assets": ["rootfs.erofs"],
+                    "invalid_files": ["profiles/code/enforcement.toml"]
+                }
+            ]
+        });
+
+        let issues = profile_status_issues(&payload);
+
+        assert_eq!(issues.len(), 1);
+        assert!(issues[0].contains("Profile code is not ready"));
+        assert!(issues[0].contains("missing assets: initrd.img"));
+        assert!(issues[0].contains("invalid assets: rootfs.erofs"));
+        assert!(issues[0].contains("invalid profile files: profiles/code/enforcement.toml"));
     }
 
     #[test]

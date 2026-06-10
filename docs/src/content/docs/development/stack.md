@@ -171,7 +171,7 @@ The slow path (~10 min, first-time only). The [capsem-builder](/architecture/bui
 ```bash
 cargo run -p capsem-admin -- image build --profile config/profiles/code/profile.toml --config-root config --arch arm64
 uv run capsem-builder validate guest/               # lint configs
-uv run capsem-builder doctor guest/                  # check prerequisites
+uv run capsem-builder doctor --profile code --config-root config # check prerequisites and profile
 ```
 
 ### Container runtime

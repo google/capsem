@@ -127,6 +127,17 @@
   `profile_enforcement_list_uses_profile_files_and_corp_not_user_settings`,
   `enforcement_rule_endpoints_add_delete_reload_and_reject_invalid_rules_atomically`,
   and `route_authored_detection_rule_triggers_runtime_ledger_and_latest_routes`.
+- [x] S1-C: Clean admin/doctor/Justfile/CLI status-debug rails. Public build,
+  diagnostics, status, and debug paths must use profile/admin/service
+  infrastructure, not direct `guest/config`, direct asset-manifest reads, or
+  legacy `user.toml` support-bundle contracts. Required proof: capsem-admin
+  profile/workspace tests, builder doctor tests, capsem CLI/support-bundle
+  tests, Justfile audit, and focused status/debug checks. Proof:
+  `cargo test -p capsem-admin -- --nocapture`, `cargo test -p capsem --bin
+  capsem -- --nocapture`, `uv run python -m pytest tests/test_doctor.py
+  tests/test_justfile_contract.py tests/test_cli.py::TestDoctorCommand -q`,
+  and grep audit for legacy `--guest-dir`
+  / direct manifest reads in the touched rails.
 - [ ] S1: Replace rule-leaking UI/TUI mutation paths with semantic profile
   facade routes. MCP server/tool, plugin, and skill controls send enum/state
   edits; backend owns translation into profile-owned enforcement, plugin, skill,
@@ -422,6 +433,20 @@
   BLAKE3/size. `cargo test -p capsem-admin
   image_workspace_materializes_self_contained_profile_config -- --nocapture`
   proves image workspace materialization.
+- S1-C: `cargo test -p capsem-admin -- --nocapture` passed with 24 tests,
+  proving checked-in profile validation, payload/root-manifest pin checks,
+  self-contained image workspace materialization, EROFS/LZ4HC planning, and
+  profile materialization from manifests.
+- S1-C: `uv run python -m pytest tests/test_doctor.py
+  tests/test_justfile_contract.py tests/test_cli.py::TestDoctorCommand -q`
+  passed with 37 tests. Builder doctor now delegates profile validation to
+  `capsem-admin profile check`, rejects positional `guest/`, and the Justfile
+  guard proves public asset recipes no longer pass `--guest-dir` or call
+  `capsem-builder build guest`.
+- S1-C: `cargo test -p capsem --bin capsem -- --nocapture` passed with 172
+  tests. `capsem status` and default health derive profile/asset readiness from
+  `/profiles/status`; support bundles collect `settings.toml`, corp metadata,
+  and diagnostics without preserving `config/user.toml`.
 - Auditability: backend build-ledger tests prove JSONL emission for rendered
   Dockerfile/build-context hashes, rootfs tar, EROFS, kernel assets, and tool
   versions. Pending: profile/payload hash records once profile hash schema

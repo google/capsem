@@ -168,7 +168,7 @@ uv run capsem-builder validate guest/           # lint all configs
 uv run capsem-builder inspect guest/            # show resolved config summary
 uv run capsem-builder build guest/ --arch arm64 # build for arm64
 uv run capsem-builder build guest/ --dry-run    # preview Dockerfiles
-uv run capsem-builder doctor guest/             # check prerequisites
+uv run capsem-builder doctor --profile code --config-root config # check prerequisites and profile
 ```
 
 ## Further reading

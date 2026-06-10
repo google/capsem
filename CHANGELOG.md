@@ -76,6 +76,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   enforcement rules and profile mutation ledger rows, and enforcement/detection
   route listing and authoring compile from profile files plus corp overlays
   without reading or writing user settings.
+- Cleaned the admin/doctor/status/debug rails so diagnostics follow the profile
+  contract: builder doctor delegates profile validation to `capsem-admin
+  profile check`, Justfile asset builds no longer pass legacy guest-config
+  knobs, `capsem status`/default health read profile readiness from the service,
+  and support bundles collect `settings.toml`/corp diagnostics without
+  preserving `user.toml` as a config contract.
 - Updated in-VM diagnostics to validate that the profile-owned Gemini,
   Antigravity, Claude, Codex, and MCP config files are actually projected into
   runtime `/root`, point at the canonical Capsem MCP bridge where applicable,

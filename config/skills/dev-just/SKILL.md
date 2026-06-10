@@ -154,7 +154,7 @@ sh bootstrap.sh   # Installs deps + runs doctor fix
 The capsem-builder Python package provides config-driven image building:
 
 ```bash
-uv run capsem-builder doctor guest/       # Check build prerequisites
+uv run capsem-builder doctor --profile code --config-root config # Check prerequisites and profile
 uv run capsem-builder validate guest/     # Lint guest config
 uv run capsem-builder build guest/ --dry-run   # Preview rendered Dockerfiles
 uv run capsem-builder build guest/ --arch arm64 # Build for arm64

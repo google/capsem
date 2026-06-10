@@ -802,19 +802,31 @@ class TestEdgeCases:
 class TestDoctorCommand:
     """Tests for the doctor command."""
 
-    def test_doctor_runs(self):
+    def test_doctor_runs_profile_contract(self):
         """Doctor command runs and produces output."""
+        from unittest.mock import patch
+
+        from capsem.builder.doctor import CheckResult
+
         runner = CliRunner()
-        result = runner.invoke(cli, ["doctor", "guest/"])
-        # May pass or fail depending on environment, but should not crash
+        with patch("capsem.builder.doctor.run_all_checks") as mock:
+            mock.return_value = [
+                CheckResult(name="profile-contract", passed=True, detail="profile code")
+            ]
+            result = runner.invoke(cli, ["doctor", "--profile", "code", "--config-root", "config"])
+
+        assert result.exit_code == 0
         assert "capsem-builder doctor" in result.output
         assert "passed" in result.output
+        mock.assert_called_once()
+        assert mock.call_args.kwargs["profile_id"] == "code"
 
-    def test_doctor_nonexistent_dir(self, tmp_path):
-        """Doctor with nonexistent guest dir shows config failure."""
+    def test_doctor_rejects_positional_guest_dir(self):
+        """Doctor must not accept a positional guest config directory."""
         runner = CliRunner()
-        result = runner.invoke(cli, ["doctor", str(tmp_path / "nope")])
-        assert "FAIL" in result.output
+        result = runner.invoke(cli, ["doctor", "guest/"])
+        assert result.exit_code != 0
+        assert "unexpected extra argument" in result.output.lower()
 
 
 # ---------------------------------------------------------------------------

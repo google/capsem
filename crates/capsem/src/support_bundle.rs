@@ -11,7 +11,7 @@
 //! host/run-snapshot/{service.pid,gateway.pid,gateway.port}
 //! sessions/<id>/{session.db,serial.log,process.log,metadata.json,...}
 //! assets/manifest.json                   # ~/.capsem/assets/manifest.json
-//! config/{user.toml,corp.toml}           # secrets redacted
+//! config/{settings.toml,corp.toml}       # secrets redacted
 //! system/{version.json,os.txt,proxy.json,dmesg.log,mitm-ca-fingerprint.txt}
 //! ```
 //!
@@ -351,7 +351,7 @@ pub fn run_with_opts(opts: Opts) -> Result<PathBuf> {
     }
 
     // -- configs (redacted) --
-    for name in ["user.toml", "corp.toml", "corp-source.json"] {
+    for name in ["settings.toml", "corp.toml", "corp-source.json"] {
         let path = home.join(name);
         let entry_path = format!("{bundle_root}/config/{name}");
         if let Ok(text) = fs::read_to_string(&path) {

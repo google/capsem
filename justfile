@@ -256,7 +256,6 @@ build-kernel arch profile="":
     cargo run -p capsem-admin -- image build \
         --profile "config/profiles/${PROFILE_ARG}/profile.toml" \
         --config-root config \
-        --guest-dir guest \
         --output "{{assets_dir}}" \
         --arch "{{arch}}" \
         --template kernel \
@@ -277,7 +276,6 @@ build-rootfs arch profile="":
     cargo run -p capsem-admin -- image build \
         --profile "config/profiles/${PROFILE_ARG}/profile.toml" \
         --config-root config \
-        --guest-dir guest \
         --output "{{assets_dir}}" \
         --arch "{{arch}}" \
         --template rootfs \
@@ -301,7 +299,6 @@ build-assets profile="" arch="":
     ARGS=(
         --profile "config/profiles/${PROFILE_ARG}/profile.toml"
         --config-root config
-        --guest-dir guest
         --output "{{assets_dir}}"
         --clean
     )
