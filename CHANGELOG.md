@@ -30,6 +30,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added a `capsem debug` CLI alias for redacted support bundles and expanded
   `capsem status` with profile catalog readiness and corp config
   presence/source/hash information when the service is running.
+- Updated package installation diagnostics: macOS and Linux package scripts now
+  write a durable `~/.capsem/logs/install.log`, package builders accept local
+  paths plus `file://`, `http://`, and `https://` manifest overrides, and
+  service status reports the installed manifest hash and package provenance.
 - Added a route-backed frontend debug snapshot:
   `window.__capsemDebug.snapshot()` now returns frontend version/log context,
   websocket tail, gateway status, profile catalog status, and corp info for

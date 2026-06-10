@@ -1,7 +1,7 @@
 #!/bin/bash
 # build-pkg.sh -- Build a macOS .pkg installer from Tauri output + companion binaries.
 #
-# Usage: build-pkg.sh [--manifest manifest.json] <app_path> <bin_dir> <assets_dir> <config_root> <version> [signing_identity]
+# Usage: build-pkg.sh [--manifest manifest.json|file://...|http://...|https://...] <app_path> <bin_dir> <assets_dir> <config_root> <version> [signing_identity]
 #
 # Arguments:
 #   app_path          Path to signed Capsem.app (from Tauri build)
@@ -10,7 +10,7 @@
 #   config_root       Materialized runtime config root (usually target/config)
 #   version           Version string (e.g. "0.16.1")
 #   signing_identity  Optional: Developer ID Installer identity for productsign
-#   --manifest        Optional manifest to package instead of <assets_dir>/manifest.json.
+#   --manifest        Optional local/remote manifest to package instead of <assets_dir>/manifest.json.
 #
 # Output: Capsem-<version>.pkg in the current directory
 #
@@ -27,7 +27,7 @@ set -euo pipefail
 export COPYFILE_DISABLE=1
 
 usage() {
-    echo "usage: build-pkg.sh [--manifest manifest.json] <app_path> <bin_dir> <assets_dir> <config_root> <version> [signing_identity]" >&2
+    echo "usage: build-pkg.sh [--manifest manifest.json|file://...|http://...|https://...] <app_path> <bin_dir> <assets_dir> <config_root> <version> [signing_identity]" >&2
 }
 
 MANIFEST_PATH=""
@@ -103,15 +103,49 @@ import datetime
 import json
 import pathlib
 import sys
+import urllib.parse
+import urllib.request
 
-source = pathlib.Path(sys.argv[1]).resolve()
+raw_source = sys.argv[1]
 dst = pathlib.Path(sys.argv[2])
+parsed = urllib.parse.urlparse(raw_source)
+if parsed.scheme in ("http", "https"):
+    source = raw_source
+elif parsed.scheme == "file":
+    source = str(pathlib.Path(urllib.request.url2pathname(parsed.path)).resolve())
+else:
+    source = str(pathlib.Path(raw_source).resolve())
 dst.write_text(json.dumps({
     "schema": "capsem.manifest_origin.v1",
     "origin": "package",
-    "source": str(source),
+    "source": source,
     "packaged_at": datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
 }, sort_keys=True) + "\n")
+PY
+}
+
+materialize_manifest_input() {
+    local manifest_source="${1:?materialize_manifest_input <manifest_source> <dst>}"
+    local dst="${2:?materialize_manifest_input <manifest_source> <dst>}"
+    python3 - "$manifest_source" "$dst" <<'PY'
+import pathlib
+import sys
+import urllib.parse
+import urllib.request
+
+source = sys.argv[1]
+dst = pathlib.Path(sys.argv[2])
+parsed = urllib.parse.urlparse(source)
+
+if parsed.scheme in ("http", "https"):
+    with urllib.request.urlopen(source, timeout=60) as response:
+        dst.write_bytes(response.read())
+elif parsed.scheme == "file":
+    dst.write_bytes(pathlib.Path(urllib.request.url2pathname(parsed.path)).read_bytes())
+elif parsed.scheme:
+    raise SystemExit(f"unsupported manifest URL scheme: {parsed.scheme}")
+else:
+    dst.write_bytes(pathlib.Path(source).read_bytes())
 PY
 }
 
@@ -150,14 +184,10 @@ mkdir -p "$SHARE_DIR/assets"
 ASSETS_VIEW="$ASSETS_DIR"
 SELECTED_MANIFEST_SOURCE="$ASSETS_DIR/manifest.json"
 if [ -n "$MANIFEST_PATH" ]; then
-    if [ ! -f "$MANIFEST_PATH" ]; then
-        echo "ERROR: manifest not found: $MANIFEST_PATH" >&2
-        exit 1
-    fi
     SELECTED_MANIFEST_SOURCE="$MANIFEST_PATH"
     ASSETS_VIEW="$WORK_DIR/assets-view"
     mkdir -p "$ASSETS_VIEW"
-    install -m 0644 "$MANIFEST_PATH" "$ASSETS_VIEW/manifest.json"
+    materialize_manifest_input "$MANIFEST_PATH" "$ASSETS_VIEW/manifest.json"
     for arch_dir in "$ASSETS_DIR"/*; do
         [ -d "$arch_dir" ] || continue
         ln -s "$arch_dir" "$ASSETS_VIEW/$(basename "$arch_dir")"

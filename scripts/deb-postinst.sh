@@ -25,21 +25,27 @@ fi
 
 USER_HOME=$(eval echo "~$TARGET_USER")
 CAPSEM_DIR="$USER_HOME/.capsem"
+INSTALL_LOG="$CAPSEM_DIR/logs/install.log"
 
 # Create user-level directory layout
-mkdir -p "$CAPSEM_DIR/bin" "$CAPSEM_DIR/assets" "$CAPSEM_DIR/run"
+mkdir -p "$CAPSEM_DIR/bin" "$CAPSEM_DIR/assets" "$CAPSEM_DIR/run" "$CAPSEM_DIR/logs"
+touch "$INSTALL_LOG"
+chown -R "$TARGET_USER:$(id -gn "$TARGET_USER")" "$CAPSEM_DIR/logs"
+exec > >(tee -a "$INSTALL_LOG") 2>&1
+echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=start user=$TARGET_USER"
 
-# Copy package-provided assets, if present. Local dev packages include the
-# current-arch payload; release packages may provide only a manifest and let
-# the service reconcile assets independently.
+# Copy package-provided assets, if present. Packages provide the selected
+# manifest and its provenance; the service reconciles asset payloads from it.
 if [ -d "/usr/share/capsem/assets" ]; then
     cp -R /usr/share/capsem/assets/. "$CAPSEM_DIR/assets/" 2>/dev/null || true
+    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=assets_copied"
 fi
 
 if [ -d "/usr/share/capsem/profiles" ]; then
     rm -rf "$CAPSEM_DIR/profiles"
     mkdir -p "$CAPSEM_DIR/profiles"
     cp -R /usr/share/capsem/profiles/. "$CAPSEM_DIR/profiles/" 2>/dev/null || true
+    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=profiles_copied"
 fi
 
 # Symlink system binaries into user dir
@@ -58,6 +64,8 @@ TARGET_UID=$(id -u "$TARGET_USER")
 XDG_DIR="/run/user/$TARGET_UID"
 if command -v systemctl >/dev/null 2>&1; then
     su "$TARGET_USER" -c "XDG_RUNTIME_DIR=$XDG_DIR $CAPSEM_DIR/bin/capsem install" 2>/dev/null || true
+    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=service_install_invoked"
 fi
 
+echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=complete"
 exit 0

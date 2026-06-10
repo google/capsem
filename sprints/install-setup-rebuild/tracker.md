@@ -164,19 +164,19 @@
   version ordering is not a safety mechanism.
 - Decision: package builders shape the authoritative manifest for the package.
   By default it comes from the build assets; corp/dev can override it with
-  `--manifest <path>`. The selected manifest is copied into the package payload
-  and then into `~/.capsem/assets/manifest.json` by postinstall. It is not a
-  post-install side channel.
+  `--manifest <path|file://|http://|https://>`. The selected manifest is copied
+  into the package payload and then into `~/.capsem/assets/manifest.json` by
+  postinstall. It is not a post-install side channel.
 - Completed slice: macOS package builds now include `pkg-scripts/preinstall`.
   It stops old Capsem service processes, kills stale `capsem-app`, removes the
   old `/Applications/Capsem.app`, and removes package-owned
   `/usr/local/share/capsem` before payload install. Package replacement and
   downgrade no longer depend on PackageKit version ordering.
 - Completed slice: `scripts/build-pkg.sh` and `scripts/repack-deb.sh` accept
-  `--manifest <path>` as the corp/dev override for the package manifest view,
-  and preserve package versions instead of appending build timestamps. Local
-  install, Docker install, and CI release workflows now pass the manifest
-  explicitly.
+  `--manifest <path|file://|http://|https://>` as the corp/dev override for the
+  package manifest view, and preserve package versions instead of appending
+  build timestamps. Local install, Docker install, and CI release workflows now
+  pass the manifest explicitly.
 - Completed slice: `just install` now builds the package with the explicit
   `--manifest` override and materialized profile `file://` asset descriptors.
   Local dev assets are copied by the normal profile asset reconciliation path

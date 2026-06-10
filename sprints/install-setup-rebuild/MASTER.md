@@ -249,8 +249,11 @@ Implemented:
 - `just install` no longer invokes `scripts/sync-dev-assets.sh` after
   Installer.app or `dpkg` returns.
 - macOS and Linux packages always move one selected manifest into the package
-  payload. `--manifest` is the only corp/dev override; asset-mode environment
-  variables are burned.
+  payload. `--manifest` accepts local paths plus `file://`, `http://`, and
+  `https://` URLs as the corp/dev override; asset-mode environment variables
+  are burned.
+- macOS and Linux package scripts write durable install diagnostics to
+  `~/.capsem/logs/install.log`.
 - macOS and Linux postinstall copy any package-provided assets into the
   installed asset directory as part of the package install path.
 - Asset copy scripts skip nested directories inside `assets/<arch>/`, so a

@@ -33,9 +33,13 @@ def test_package_builders_move_selected_manifest_payload() -> None:
     assert "export COPYFILE_DISABLE=1" in build_pkg
     assert "--manifest" in build_pkg
     assert 'MANIFEST_PATH="${2:?--manifest requires a path}"' in build_pkg
+    assert "materialize_manifest_input" in build_pkg
+    assert 'parsed.scheme in ("http", "https")' in build_pkg
+    assert "urllib.request.urlopen(source, timeout=60)" in build_pkg
+    assert "unsupported manifest URL scheme" in build_pkg
     assert '--version "$VERSION"' in build_pkg
     assert "PKG_VERSION" not in build_pkg
-    assert 'install -m 0644 "$MANIFEST_PATH" "$ASSETS_VIEW/manifest.json"' in build_pkg
+    assert 'materialize_manifest_input "$MANIFEST_PATH" "$ASSETS_VIEW/manifest.json"' in build_pkg
     assert 'install -m 0644 "$ASSETS_VIEW/manifest.json" "$SHARE_DIR/assets/manifest.json"' in build_pkg
     assert 'SELECTED_MANIFEST_SOURCE="$MANIFEST_PATH"' in build_pkg
     assert 'write_manifest_origin "$SELECTED_MANIFEST_SOURCE" "$SHARE_DIR/assets/manifest-origin.json"' in build_pkg
@@ -53,14 +57,20 @@ def test_package_builders_move_selected_manifest_payload() -> None:
     assert "rm -rf /Applications/Capsem.app" in pkg_preinstall
     assert "rm -rf /usr/local/share/capsem" in pkg_preinstall
     assert "pkill -9 -x capsem-app" in pkg_preinstall
+    assert 'INSTALL_LOG="$CAPSEM_DIR/logs/install.log"' in pkg_preinstall
+    assert 'exec > >(tee -a "$INSTALL_LOG") 2>&1' in pkg_preinstall
 
     assert "CAPSEM_DEB_ASSET_MODE" not in repack_deb
     assert "ASSET_MODE=" not in repack_deb
     assert "export COPYFILE_DISABLE=1" in repack_deb
     assert 'CONFIG_ROOT="${POSITIONAL[2]}"' in repack_deb
     assert "--manifest" in repack_deb
+    assert "materialize_manifest_input" in repack_deb
+    assert 'parsed.scheme in ("http", "https")' in repack_deb
+    assert "urllib.request.urlopen(source, timeout=60)" in repack_deb
+    assert "unsupported manifest URL scheme" in repack_deb
     assert "BUILD_TS=" not in repack_deb
-    assert 'cp "$MANIFEST_PATH" "$ASSETS_VIEW/manifest.json"' in repack_deb
+    assert 'materialize_manifest_input "$MANIFEST_PATH" "$ASSETS_VIEW/manifest.json"' in repack_deb
     assert 'cp "$ASSETS_VIEW/manifest.json" "$WORK_DIR/deb/usr/share/capsem/assets/manifest.json"' in repack_deb
     assert 'SELECTED_MANIFEST_SOURCE="$MANIFEST_PATH"' in repack_deb
     assert 'write_manifest_origin "$SELECTED_MANIFEST_SOURCE" "$WORK_DIR/deb/usr/share/capsem/assets/manifest-origin.json"' in repack_deb
@@ -71,6 +81,8 @@ def test_package_builders_move_selected_manifest_payload() -> None:
     assert "/usr/share/capsem/assets" in deb_postinst
     assert "/usr/share/capsem/profiles" in deb_postinst
     assert 'cp -R /usr/share/capsem/assets/. "$CAPSEM_DIR/assets/"' in deb_postinst
+    assert 'INSTALL_LOG="$CAPSEM_DIR/logs/install.log"' in deb_postinst
+    assert 'exec > >(tee -a "$INSTALL_LOG") 2>&1' in deb_postinst
     assert "capsem-admin" in deb_postinst
     assert "capsem-tui" in deb_postinst
 
@@ -83,6 +95,9 @@ def test_macos_postinstall_adds_capsem_bin_to_fish_path() -> None:
     assert "grep -qF 'fish_add_path --path \"$HOME/.capsem/bin\"'" in postinstall
     assert 'cp -R "$PKG_SHARE/assets/"* "$CAPSEM_DIR/assets/"' in postinstall
     assert "pkill -x capsem-app" in postinstall
+    assert 'INSTALL_LOG="$CAPSEM_DIR/logs/install.log"' in postinstall
+    assert 'exec > >(tee -a "$INSTALL_LOG") 2>&1' in postinstall
+    assert "event=readiness_poll" in postinstall
 
 
 def test_release_workflow_uses_profile_asset_rail_and_full_host_binary_set() -> None:

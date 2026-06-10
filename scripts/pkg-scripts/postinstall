@@ -24,6 +24,12 @@ fi
 PKG_SHARE="/usr/local/share/capsem"
 USER_HOME=$(eval echo "~$USER")
 CAPSEM_DIR="$USER_HOME/.capsem"
+INSTALL_LOG="$CAPSEM_DIR/logs/install.log"
+mkdir -p "$CAPSEM_DIR/logs"
+touch "$INSTALL_LOG"
+chown -R "$USER" "$CAPSEM_DIR/logs"
+exec > >(tee -a "$INSTALL_LOG") 2>&1
+echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=postinstall event=start user=$USER pkg_share=$PKG_SHARE"
 
 # Create user-level directory layout. Remove stale asset symlinks from dev
 # installs so this package never writes through to an old worktree.
@@ -35,6 +41,7 @@ elif [ -e "$CAPSEM_DIR/assets" ] && [ ! -d "$CAPSEM_DIR/assets" ]; then
 fi
 mkdir -p "$CAPSEM_DIR/assets"
 chown -R "$USER" "$CAPSEM_DIR"
+echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=postinstall event=layout_ready capsem_dir=$CAPSEM_DIR"
 
 # Copy companion binaries from pkg payload
 for bin in capsem capsem-service capsem-process capsem-tui capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-gateway capsem-tray capsem-admin; do
@@ -44,17 +51,20 @@ for bin in capsem capsem-service capsem-process capsem-tui capsem-mcp capsem-mcp
         chmod 755 "$CAPSEM_DIR/bin/$bin"
     fi
 done
+echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=postinstall event=binaries_copied"
 
 # Codesign all binaries with virtualization entitlements
 if [ -f "$PKG_SHARE/entitlements.plist" ]; then
     for bin in "$CAPSEM_DIR/bin"/capsem*; do
         codesign --sign - --entitlements "$PKG_SHARE/entitlements.plist" --force "$bin" 2>/dev/null || true
     done
+    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=postinstall event=binaries_codesigned"
 fi
 
 # Copy assets (manifest + versioned dir)
 if [ -d "$PKG_SHARE/assets" ]; then
     cp -R "$PKG_SHARE/assets/"* "$CAPSEM_DIR/assets/" 2>/dev/null || true
+    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=postinstall event=assets_copied"
 fi
 
 # Copy the materialized profile catalog and its rule files. Profiles pin the
@@ -64,6 +74,7 @@ if [ -d "$PKG_SHARE/profiles" ]; then
     rm -rf "$CAPSEM_DIR/profiles"
     mkdir -p "$CAPSEM_DIR/profiles"
     cp -R "$PKG_SHARE/profiles/." "$CAPSEM_DIR/profiles/"
+    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=postinstall event=profiles_copied"
 fi
 
 # Fix ownership (we ran as root)
@@ -94,13 +105,16 @@ chown -R "$USER" "$USER_HOME/.config/fish"
 # exposed through the service/UI rather than a setup side effect.
 if ! su "$USER" -c "$CAPSEM_DIR/bin/capsem install" 2>/dev/null; then
     echo "capsem: service registration failed" >&2
+    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=postinstall event=service_registration_failed"
     exit 1
 fi
+echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=postinstall event=service_registered"
 
 READY=0
 STATUS_OUTPUT=""
 for _ in $(seq 1 30); do
     STATUS_OUTPUT=$(su "$USER" -c "$CAPSEM_DIR/bin/capsem status" 2>/dev/null || true)
+    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=postinstall event=readiness_poll attempt=$_"
     if echo "$STATUS_OUTPUT" | grep -q "Service:   ok" \
         && echo "$STATUS_OUTPUT" | grep -q "Gateway:   ok"; then
         READY=1
@@ -117,6 +131,7 @@ if [ "$READY" -eq 1 ] && [ "$(uname)" = "Darwin" ] && [ -d "/Applications/Capsem
     # skipped or cached frontend talking to the freshly installed daemon.
     pkill -x capsem-app 2>/dev/null || true
     su "$USER" -c "open /Applications/Capsem.app" 2>/dev/null || true
+    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=postinstall event=gui_opened"
 elif [ "$READY" -eq 1 ] && [ "$(uname)" = "Linux" ]; then
     if [ -n "${DISPLAY:-}" ] || [ -n "${WAYLAND_DISPLAY:-}" ]; then
         if command -v capsem-app >/dev/null 2>&1; then
@@ -127,7 +142,9 @@ elif [ "$READY" -eq 1 ] && [ "$(uname)" = "Linux" ]; then
 elif [ "$READY" -ne 1 ]; then
     echo "capsem: service is not ready after install" >&2
     echo "$STATUS_OUTPUT" >&2
+    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=postinstall event=service_not_ready"
     exit 1
 fi
 
+echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=postinstall event=complete"
 exit 0
