@@ -46,6 +46,7 @@ assets/
 |---------|-------------|
 | `just build-assets code [arch]` | Full profile-derived build: kernel + rootfs + checksums |
 | `just shell` / `just exec "CMD"` | Repack initrd, materialize runtime config, sign, boot |
+| `capsem-admin manifest generate assets` | Generate `assets/manifest.json` from an asset directory |
 | `capsem-admin profile materialize` | Generate `target/config` from source `config/` plus `assets/manifest.json` |
 | `capsem-builder build guest/ --arch arm64 --template rootfs` | Build one template for one arch |
 
@@ -99,14 +100,22 @@ Key points:
 - **Hashes are BLAKE3**, 64 lowercase hex characters. Format is validated by `asset_manager.rs`; non-format-2 manifests are rejected.
 - **Compatibility is explicit.** `min_binary` on an asset release and `min_assets` on a binary release define the allowed pairings for upgrades and downloads.
 
-### Two manifest producers
+### Manifest producer
 
-| Producer | Used by | When |
-|----------|---------|------|
-| `docker.py:generate_checksums()` | `just build-assets code [arch]` | After full image builds |
-| `scripts/gen_manifest.py` | `just _pack-initrd` | After injecting updated guest binaries into initrd |
+`capsem-admin manifest generate <assets_dir>` is the public and supported
+manifest producer. It points at an asset directory, computes BLAKE3 hashes and
+sizes for every built architecture, writes `B3SUMS`, writes
+`<assets_dir>/manifest.json`, and reports the manifest in admin-readable JSON
+when `--json` is passed.
 
-Both emit the same format-2 schema. `scripts/create_hash_assets.py` then creates `<stem>-<hex16>.<ext>` hardlinks so the dev layout matches the content-addressable names used by the installed layout.
+`just build-assets`, `just _pack-initrd`, CI, release packaging, and corp
+custom builds must all use this admin rail. The lower-level builder code is an
+implementation detail behind `capsem-admin`; docs and automation should not call
+manifest generator internals directly.
+
+After manifest generation, `scripts/create_hash_assets.py` creates
+`<stem>-<hex16>.<ext>` hardlinks so the dev layout matches the
+content-addressable names used by the installed layout.
 
 After `_pack-initrd` updates the manifest, `_materialize-config` runs
 `capsem-admin profile materialize` and writes:
@@ -123,6 +132,27 @@ target/config/
 The generated profile uses verified `file://` URLs for the active local arch.
 Checked-in `config/profiles/*.toml` stays source truth and must not be edited to
 match a local repacked initrd.
+
+### Custom corp build manifest flow
+
+Corporate/custom asset builds use the same sequence as release:
+
+```bash
+capsem-admin manifest generate /path/to/assets --version 1.3.corp.1 --json
+capsem-admin manifest verify /path/to/assets/manifest.json --json
+bash scripts/build-pkg.sh \
+  --manifest /path/to/assets/manifest.json \
+  target/release/bundle/macos/Capsem.app \
+  target/release \
+  /path/to/assets \
+  target/config \
+  1.3.corp.1
+```
+
+The package copies that selected manifest into its payload and writes
+`manifest-origin.json`. Installed service status exposes the manifest path,
+BLAKE3 hash, origin, and source so corp can debug exactly which manifest a
+machine is using.
 
 ## Runtime Hash Verification
 

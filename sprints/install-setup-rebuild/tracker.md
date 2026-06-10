@@ -167,6 +167,10 @@
   `--manifest <path|file://|http://|https://>`. The selected manifest is copied
   into the package payload and then into `~/.capsem/assets/manifest.json` by
   postinstall. It is not a post-install side channel.
+- Decision: `capsem-admin manifest generate <assets_dir>` is the only
+  documented manifest producer. Just recipes, release docs, and corp custom
+  build docs point to admin; lower-level builder/Python generation remains an
+  implementation detail behind admin, not a public or package path.
 - Completed slice: macOS package builds now include `pkg-scripts/preinstall`.
   It stops old Capsem service processes, kills stale `capsem-app`, removes the
   old `/Applications/Capsem.app`, and removes package-owned
@@ -177,6 +181,10 @@
   package manifest view, and preserve package versions instead of appending
   build timestamps. Local install, Docker install, and CI release workflows now
   pass the manifest explicitly.
+- Completed slice: `_pack-initrd` regenerates manifests through
+  `capsem-admin manifest generate "$ASSETS" --version "$VERSION"` and tests
+  prove the public admin command produces the v2 manifest format from an asset
+  directory.
 - Completed slice: `just install` now builds the package with the explicit
   `--manifest` override and materialized profile `file://` asset descriptors.
   Local dev assets are copied by the normal profile asset reconciliation path

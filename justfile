@@ -1426,19 +1426,12 @@ _pack-initrd:
     mv "$TMP" "$INITRD"
     rm -rf "$WORKDIR"
     cd "$ROOT"
-    # Regenerate checksums -- handle per-arch and flat layouts
     ASSETS="$ROOT/{{assets_dir}}"
-    if [ -f "$ASSETS/$arch/vmlinuz" ]; then
-        rootfs="$arch/rootfs.erofs"
-        [ -f "$ASSETS/$rootfs" ] || rootfs="$arch/rootfs.squashfs"
-        (cd "$ASSETS" && b3sum "$arch/vmlinuz" "$arch/initrd.img" "$rootfs" > B3SUMS)
-    else
-        rootfs="rootfs.erofs"
-        [ -f "$ASSETS/$rootfs" ] || rootfs="rootfs.squashfs"
-        (cd "$ASSETS" && b3sum vmlinuz initrd.img "$rootfs" > B3SUMS)
-    fi
-    # Generate manifest.json from B3SUMS + file sizes
-    python3 "$ROOT/scripts/gen_manifest.py" "$ASSETS" "$ROOT/Cargo.toml"
+    # Generate B3SUMS + manifest.json through the same admin rail used by
+    # corp/release builds. The Python builder generator is an internal
+    # implementation detail, never a public install/package path.
+    VERSION=$(grep '^version' "$ROOT/Cargo.toml" | head -1 | sed 's/.*"\(.*\)"/\1/')
+    cargo run -p capsem-admin -- manifest generate "$ASSETS" --version "$VERSION"
     # Create hash-named copies so dev layout matches installed layout.
     python3 "$ROOT/scripts/create_hash_assets.py" "$ASSETS"
     # Force cargo to re-run build.rs so it picks up new manifest hashes

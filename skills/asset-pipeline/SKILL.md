@@ -35,7 +35,7 @@ The manifest tracks both with compatibility ranges (`min_binary`, `min_assets`).
 | Installed assets | `~/.capsem/assets/{name}-{hash16}.{ext}` (flat, hash-based) |
 | Manifest | `assets/manifest.json` |
 | Checksums | `assets/B3SUMS` |
-| Manifest regenerator | `scripts/gen_manifest.py` |
+| Manifest generator | `capsem-admin manifest generate <assets_dir>` |
 | Asset types + cleanup | `crates/capsem-core/src/asset_manager.rs` |
 | Hash extraction for build.rs | `crates/capsem-core/src/manifest_compat.rs` |
 
@@ -74,7 +74,11 @@ The manifest tracks both with compatibility ranges (`min_binary`, `min_assets`).
 }
 ```
 
-Two producers: `docker.py:generate_checksums()` (full build) and `scripts/gen_manifest.py` (initrd repack). Both produce v2 format.
+Public producer: `capsem-admin manifest generate <assets_dir>`.
+`just build-assets`, `_pack-initrd`, CI, release packaging, and corp custom
+builds must all use this admin rail. Lower-level Python/builder code is an
+implementation detail behind admin and should not appear in user-facing docs or
+just recipes.
 
 ## Disk Layouts
 

@@ -22,6 +22,24 @@ def test_just_install_does_not_sync_assets_after_installer() -> None:
     assert "pkill -9 -x capsem-app" in install_body
 
 
+def test_manifest_generation_public_path_is_capsem_admin() -> None:
+    justfile = (PROJECT_ROOT / "justfile").read_text()
+    public_docs = [
+        PROJECT_ROOT / "docs" / "src" / "content" / "docs" / "architecture" / "asset-pipeline.md",
+        PROJECT_ROOT / "docs" / "src" / "content" / "docs" / "security" / "build-verification.md",
+        PROJECT_ROOT / "skills" / "asset-pipeline" / "SKILL.md",
+        PROJECT_ROOT / "skills" / "release-process" / "SKILL.md",
+    ]
+
+    assert "capsem-admin -- manifest generate" in justfile
+    assert "scripts/gen_manifest.py" not in justfile
+    assert '(cd "$ASSETS" && b3sum' not in justfile
+    for path in public_docs:
+        text = path.read_text()
+        assert "capsem-admin manifest generate" in text
+        assert "scripts/gen_manifest.py" not in text
+
+
 def test_package_builders_move_selected_manifest_payload() -> None:
     build_pkg = (PROJECT_ROOT / "scripts" / "build-pkg.sh").read_text()
     repack_deb = (PROJECT_ROOT / "scripts" / "repack-deb.sh").read_text()

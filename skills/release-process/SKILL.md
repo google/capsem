@@ -202,7 +202,7 @@ Keep a Changelog format in `CHANGELOG.md`. Every user-visible change gets an ent
 Binary and asset versions are **orthogonal**:
 
 - **Binary**: `1.0.{unix_timestamp}` -- auto-stamped by `just _stamp-version` on every `just install` and `just cut-release`
-- **Assets**: `YYYY.MMDD.patch` -- auto-derived by `gen_manifest.py` from the build date
+- **Assets**: `YYYY.MMDD.patch` -- auto-derived by `capsem-admin manifest generate <assets_dir>` from the build date
 
 Three files hold the binary version (kept in sync by `_stamp-version`): `Cargo.toml` (workspace), `crates/capsem-app/tauri.conf.json`, `pyproject.toml`.
 

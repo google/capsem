@@ -34,6 +34,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   write a durable `~/.capsem/logs/install.log`, package builders accept local
   paths plus `file://`, `http://`, and `https://` manifest overrides, and
   service status reports the installed manifest hash and package provenance.
+- Made `capsem-admin manifest generate <assets_dir>` the documented manifest
+  production rail for local, release, and corp custom builds; package builders
+  consume the selected manifest but no longer document or rely on direct
+  generator internals.
 - Added a route-backed frontend debug snapshot:
   `window.__capsemDebug.snapshot()` now returns frontend version/log context,
   websocket tail, gateway status, profile catalog status, and corp info for

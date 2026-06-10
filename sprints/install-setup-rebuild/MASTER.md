@@ -252,6 +252,9 @@ Implemented:
   payload. `--manifest` accepts local paths plus `file://`, `http://`, and
   `https://` URLs as the corp/dev override; asset-mode environment variables
   are burned.
+- Manifest production is documented and tested through
+  `capsem-admin manifest generate <assets_dir>`, including corp custom builds.
+  Direct generator internals are not a public package/install path.
 - macOS and Linux package scripts write durable install diagnostics to
   `~/.capsem/logs/install.log`.
 - macOS and Linux postinstall copy any package-provided assets into the

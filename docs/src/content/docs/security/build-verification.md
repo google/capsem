@@ -99,11 +99,16 @@ The checked-in profile is materialized into `target/config/` before runtime, so
 the service boots from a generated profile whose asset URLs, hashes, and sizes
 come directly from `assets/manifest.json`.
 
+`assets/manifest.json` is generated through `capsem-admin manifest generate
+<assets_dir>`. Release automation, local packaging, and corp custom builds use
+that same admin command; lower-level manifest generation internals are not a
+supported public path.
+
 ### Verification flow
 
 ```mermaid
 graph TD
-    A["Build<br/>generate_checksums()"] --> B["manifest.json<br/>(BLAKE3 hashes + sizes)"]
+    A["Build assets<br/>capsem-admin manifest generate"] --> B["manifest.json<br/>(BLAKE3 hashes + sizes)"]
     B --> C["Release<br/>SBOM + provenance attestations"]
     C --> D["Download<br/>profile/corp selected URL"]
     D --> E["Verify hashes<br/>BLAKE3 per-file check"]
@@ -171,6 +176,18 @@ allows the asset service to download assets for any supported version.
 It is published with the release alongside SBOM and provenance attestations.
 Runtime trust comes from profile/corp-selected URLs plus BLAKE3 verification of
 the downloaded bytes.
+
+For a custom corp package, generate and verify the manifest from the built asset
+directory before packaging:
+
+```bash
+capsem-admin manifest generate /path/to/assets --version 1.3.corp.1 --json
+capsem-admin manifest verify /path/to/assets/manifest.json --json
+bash scripts/build-pkg.sh --manifest /path/to/assets/manifest.json ...
+```
+
+The installer moves that manifest into the installed service asset directory,
+and status reports the installed manifest hash plus package provenance.
 
 ## Supply chain controls
 
