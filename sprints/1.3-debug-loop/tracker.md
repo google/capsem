@@ -177,6 +177,16 @@
     workspace, including symlinked `auto_snapshots` paths. Capture and compact
     tests prove live workspace entries/hash do not change.
     Proof: `cargo test -p capsem-core auto_snapshot:: -- --nocapture`.
+  - [x] Restore symlink escape rail slice: `snapshots_revert` now rejects
+    snapshot parent symlinks that would make restore read outside checkpoint
+    storage, skips no-op comparisons for live symlinks, and reads regular
+    restore sources with no-follow semantics. Tests prove the old
+    symlink-outside pull-in shape is rejected, live final symlinks are replaced
+    without touching targets, and snapshot symlinks are restored as symlinks
+    rather than copied target bytes.
+    Proof: `cargo test -p capsem-core
+    mcp::file_tools::tests::revert_file_ -- --nocapture`; `cargo test -p
+    capsem-core mcp::file_tools::tests:: -- --nocapture`.
   - [ ] Remaining: inspect live VM/session DB evidence for the files the user
     observed and attribute them to AGY/process/file events without deleting the
     current VM evidence.
@@ -524,6 +534,12 @@
   - `cargo test -p capsem-core auto_snapshot:: -- --nocapture` passed; proves
     snapshot capture/compaction do not mutate live workspace entries and
     rejects snapshot storage symlinked into the workspace.
+  - `cargo test -p capsem-core mcp::file_tools::tests::revert_file_ -- --nocapture`
+    passed; proves restore rejects snapshot parent symlink escapes and does
+    not pull outside target bytes through symlink paths.
+  - `cargo test -p capsem-core mcp::file_tools::tests:: -- --nocapture`
+    passed; full snapshot MCP file-tools suite remains green after restore
+    symlink hardening.
   - `cargo test -p capsem-logger mcp_call_stats_counts_user_tool_calls_not_protocol_or_snapshot_noise -- --nocapture`
     passed; proves backend MCP headline stats filter protocol/snapshot noise.
   - `pnpm --dir frontend test -- --run frontend/src/lib/__tests__/mcp-sql.test.ts`

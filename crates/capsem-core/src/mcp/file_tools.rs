@@ -10,6 +10,7 @@
 //! The guest sees changes immediately via VirtioFS.
 
 use std::collections::HashMap;
+use std::io::Read;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::SystemTime;
@@ -299,6 +300,77 @@ fn parse_checkpoint(cp: &str) -> Result<usize, String> {
     cp.strip_prefix("cp-")
         .and_then(|s| s.parse::<usize>().ok())
         .ok_or_else(|| format!("invalid checkpoint ID: {cp:?}"))
+}
+
+fn checked_child_path(
+    root: &Path,
+    relative_path: &str,
+    label: &str,
+) -> Result<std::path::PathBuf, String> {
+    let root = root
+        .canonicalize()
+        .map_err(|e| format!("failed to resolve {label} root: {e}"))?;
+    let rel = Path::new(relative_path);
+    if let Some(parent) = rel.parent() {
+        let mut current = root.clone();
+        for component in parent.components() {
+            let std::path::Component::Normal(name) = component else {
+                return Err(format!("{label} path has invalid component"));
+            };
+            current.push(name);
+            match std::fs::symlink_metadata(&current) {
+                Ok(meta) if meta.file_type().is_symlink() => {
+                    return Err(format!(
+                        "{label} parent contains symlink: {}",
+                        current.display()
+                    ));
+                }
+                Ok(meta) if !meta.is_dir() => {
+                    return Err(format!(
+                        "{label} parent is not a directory: {}",
+                        current.display()
+                    ));
+                }
+                Ok(_) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => break,
+                Err(e) => {
+                    return Err(format!(
+                        "failed to inspect {label} parent {}: {e}",
+                        current.display()
+                    ));
+                }
+            }
+        }
+    }
+    Ok(root.join(rel))
+}
+
+fn read_regular_file_no_follow(path: &Path, label: &str) -> Result<Vec<u8>, String> {
+    let meta =
+        std::fs::symlink_metadata(path).map_err(|e| format!("failed to inspect {label}: {e}"))?;
+    if meta.file_type().is_symlink() {
+        return Err(format!("{label} is a symlink"));
+    }
+    if !meta.is_file() {
+        return Err(format!("{label} is not a regular file"));
+    }
+
+    #[cfg(unix)]
+    let mut file = {
+        use std::os::unix::fs::OpenOptionsExt;
+        std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NOFOLLOW)
+            .open(path)
+            .map_err(|e| format!("failed to open {label} without following symlinks: {e}"))?
+    };
+    #[cfg(not(unix))]
+    let mut file = std::fs::File::open(path).map_err(|e| format!("failed to open {label}: {e}"))?;
+
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)
+        .map_err(|e| format!("failed to read {label}: {e}"))?;
+    Ok(bytes)
 }
 
 /// Validate a snapshot name: alphanumeric + underscore + hyphen, 1-64 chars.
@@ -679,9 +751,12 @@ pub fn handle_revert_file_with_security_event(
         } else {
             // Auto-select: scan snapshots newest-first, find first containing the file.
             let snapshots = scheduler.list_snapshots();
-            let found = snapshots
-                .iter()
-                .find(|s| s.workspace_path.join(&path_str).symlink_metadata().is_ok());
+            let found = snapshots.iter().find(|s| {
+                checked_child_path(&s.workspace_path, &path_str, "snapshot source")
+                    .ok()
+                    .and_then(|p| p.symlink_metadata().ok())
+                    .is_some()
+            });
             match found {
                 Some(s) => (s.slot, format!("cp-{}", s.slot)),
                 None => {
@@ -708,28 +783,14 @@ pub fn handle_revert_file_with_security_event(
         }
     };
 
-    let snap_file = snap.workspace_path.clone().join(&path_str);
-    let current_file = workspace_root.join(&path_str);
-
-    // Check for path escape: verify the target path stays within the workspace.
-    // Use the parent dir (which must exist) for canonicalization since the file
-    // itself may not exist yet (deleted file being restored).
-    if let Some(parent) = current_file.parent() {
-        if let (Ok(resolved_parent), Ok(resolved_root)) =
-            (parent.canonicalize(), workspace_root.canonicalize())
-        {
-            if !resolved_parent.starts_with(&resolved_root) {
-                return (
-                    JsonRpcResponse::err(
-                        request_id,
-                        -32602,
-                        "path resolves outside workspace (symlink escape)",
-                    ),
-                    None,
-                );
-            }
-        }
-    }
+    let snap_file = match checked_child_path(&snap.workspace_path, &path_str, "snapshot source") {
+        Ok(path) => path,
+        Err(e) => return (JsonRpcResponse::err(request_id, -32602, e), None),
+    };
+    let current_file = match checked_child_path(workspace_root, &path_str, "workspace target") {
+        Ok(path) => path,
+        Err(e) => return (JsonRpcResponse::err(request_id, -32602, e), None),
+    };
 
     // Use symlink_metadata to detect presence without following symlinks.
     let snap_exists = snap_file.symlink_metadata().is_ok();
@@ -738,14 +799,19 @@ pub fn handle_revert_file_with_security_event(
         .symlink_metadata()
         .map(|m| m.file_type().is_symlink())
         .unwrap_or(false);
+    let current_is_symlink = current_file
+        .symlink_metadata()
+        .map(|m| m.file_type().is_symlink())
+        .unwrap_or(false);
 
     let action;
     // Check if file already matches snapshot (no-op): same content AND same permissions.
-    // Skip no-op check for symlinks (comparing link targets is handled below).
-    if snap_exists && current_exists && !snap_is_symlink {
-        if let (Ok(snap_bytes), Ok(cur_bytes)) =
-            (std::fs::read(&snap_file), std::fs::read(&current_file))
-        {
+    // Skip no-op check for symlinks so comparisons never follow a link target.
+    if snap_exists && current_exists && !snap_is_symlink && !current_is_symlink {
+        if let (Ok(snap_bytes), Ok(cur_bytes)) = (
+            read_regular_file_no_follow(&snap_file, "snapshot source"),
+            read_regular_file_no_follow(&current_file, "workspace target"),
+        ) {
             let same_perms = match (snap_file.metadata(), current_file.metadata()) {
                 (Ok(sm), Ok(cm)) => {
                     use std::os::unix::fs::PermissionsExt;
@@ -831,14 +897,14 @@ pub fn handle_revert_file_with_security_event(
             // fsync on the new file and its parent dir flushes metadata to
             // the VirtioFS host so the guest sees the correct size.
             let _ = std::fs::remove_file(&current_file);
-            let snap_data = match std::fs::read(&snap_file) {
+            let snap_data = match read_regular_file_no_follow(&snap_file, "snapshot source") {
                 Ok(d) => d,
                 Err(e) => {
                     return (
                         JsonRpcResponse::err(
                             request_id,
                             -32603,
-                            format!("failed to read snapshot file: {e}"),
+                            format!("failed to read snapshot file safely: {e}"),
                         ),
                         None,
                     );

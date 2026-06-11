@@ -281,6 +281,110 @@ fn revert_file_deletes_created_file() {
     assert_eq!(result["checkpoint"], "cp-0");
 }
 
+#[cfg(unix)]
+#[test]
+fn revert_file_rejects_snapshot_parent_symlink_escape() {
+    let (tmp, session, mut sched) = setup();
+    let outside = tmp.path().join("outside");
+    std::fs::create_dir_all(&outside).unwrap();
+    std::fs::write(outside.join("secret.txt"), "external secret").unwrap();
+
+    sched.take_snapshot().unwrap();
+    std::os::unix::fs::symlink(&outside, session.join("auto_snapshots/0/workspace/escape"))
+        .unwrap();
+
+    let args = serde_json::json!({"path": "escape/secret.txt", "checkpoint": "cp-0"});
+    let resp = handle_revert_file(
+        &args,
+        &sched,
+        &session.join("workspace"),
+        Some(serde_json::json!(1)),
+        None,
+    );
+
+    let err = resp.error.expect("symlink escape must be rejected");
+    assert!(
+        err.message
+            .contains("snapshot source parent contains symlink"),
+        "unexpected error: {}",
+        err.message
+    );
+    assert!(
+        !session.join("workspace/escape").exists(),
+        "restore must not materialize escaped snapshot content into workspace"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn revert_file_replaces_live_final_symlink_without_touching_target() {
+    let (tmp, session, mut sched) = setup();
+    let outside = tmp.path().join("outside.txt");
+    std::fs::write(&outside, "outside secret").unwrap();
+    std::fs::write(session.join("workspace/safe.txt"), "snapshot data").unwrap();
+    sched.take_snapshot().unwrap();
+
+    std::fs::remove_file(session.join("workspace/safe.txt")).unwrap();
+    std::os::unix::fs::symlink(&outside, session.join("workspace/safe.txt")).unwrap();
+
+    let args = serde_json::json!({"path": "safe.txt", "checkpoint": "cp-0"});
+    let resp = handle_revert_file(
+        &args,
+        &sched,
+        &session.join("workspace"),
+        Some(serde_json::json!(1)),
+        None,
+    );
+
+    assert!(resp.error.is_none(), "restore failed: {:?}", resp.error);
+    assert_eq!(std::fs::read_to_string(&outside).unwrap(), "outside secret");
+    assert!(
+        !session
+            .join("workspace/safe.txt")
+            .symlink_metadata()
+            .unwrap()
+            .file_type()
+            .is_symlink(),
+        "workspace file should be restored as a regular file"
+    );
+    assert_eq!(
+        std::fs::read_to_string(session.join("workspace/safe.txt")).unwrap(),
+        "snapshot data"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn revert_file_restores_snapshot_symlink_without_pulling_target_bytes() {
+    let (tmp, session, mut sched) = setup();
+    let outside = tmp.path().join("outside.txt");
+    std::fs::write(&outside, "outside secret").unwrap();
+    std::os::unix::fs::symlink(&outside, session.join("workspace/link.txt")).unwrap();
+    sched.take_snapshot().unwrap();
+
+    std::fs::remove_file(session.join("workspace/link.txt")).unwrap();
+    let args = serde_json::json!({"path": "link.txt", "checkpoint": "cp-0"});
+    let resp = handle_revert_file(
+        &args,
+        &sched,
+        &session.join("workspace"),
+        Some(serde_json::json!(1)),
+        None,
+    );
+
+    assert!(resp.error.is_none(), "restore failed: {:?}", resp.error);
+    let restored = session.join("workspace/link.txt");
+    assert!(
+        restored
+            .symlink_metadata()
+            .unwrap()
+            .file_type()
+            .is_symlink(),
+        "snapshot symlink should remain a symlink, not copied target bytes"
+    );
+    assert_eq!(std::fs::read_link(restored).unwrap(), outside);
+}
+
 #[test]
 fn revert_file_rejects_path_traversal() {
     let (_tmp, session, mut sched) = setup();

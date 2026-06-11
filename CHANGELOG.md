@@ -38,6 +38,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the live workspace. Regression tests prove snapshot capture/compaction leave
   live workspace entries unchanged and reject symlinked storage back into the
   workspace.
+- Hardened `snapshots_revert` against symlink escape/pull-in regressions:
+  restore now rejects symlinked parent components in checkpoint storage, avoids
+  following live workspace symlinks during no-op checks, and reads regular
+  snapshot sources with no-follow file opens. Regression tests cover the old
+  “symlink out of workspace, pull outside file bytes into restore” class.
 - Clarified the VM Stats process tab by separating command execution rows from
   audit-port process observations, removing the vague “Process Audit Events”
   label from the user-facing table.
