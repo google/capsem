@@ -39,4 +39,14 @@ describe('ProfilePage route contract', () => {
     expect(source).toContain('{#if !rule.enabled}');
     expect(source).toContain('Disabled</span>');
   });
+
+  it('groups default rules separately from profile and corp rules', () => {
+    expect(source).toContain('defaultEnforcementRules');
+    expect(source).toContain('customEnforcementRules');
+    expect(source).toContain('defaultDetectionRules');
+    expect(source).toContain('customDetectionRules');
+    expect(source).toContain('Default rules');
+    expect(source).toContain('Profile and corp rules');
+    expect(source).toContain('rule.default_rule');
+  });
 });

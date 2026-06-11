@@ -207,7 +207,7 @@
   Proof: `cargo test -p capsem-service plugin -- --nocapture`; `pnpm --dir
   frontend test -- --run frontend/src/lib/__tests__/plugin-section-contract.test.ts
   frontend/src/lib/__tests__/api.test.ts`; `pnpm --dir frontend check`.
-- [ ] Implement bug 15 after user resumes coding: apply the same contract-backed
+- [x] Implement bug 15 slice: apply the same contract-backed
   visual language to MCP and rules: grey out disabled MCP servers/tools/resources
   and disabled rules, group default rules visibly without making them a separate
   engine, and use consistent icons/select boxes/toggles for enum/boolean
@@ -229,6 +229,12 @@
     Proof: `cargo test -p capsem-core
     disabled_rules_remain_inventory_but_do_not_match -- --nocapture`;
     `cargo test -p capsem-service rules -- --nocapture`; frontend proof below.
+  - [x] Default-rule grouping slice: Profile enforcement/detection rule lists
+    are grouped from `rule.default_rule` into default rules and profile/corp
+    rules without adding another endpoint or rule engine.
+    Proof: `pnpm --dir frontend test -- --run
+    frontend/src/lib/__tests__/profile-page-contract.test.ts`; `pnpm --dir
+    frontend check`.
 - [x] Implement bug 16 slice: make MCP source/lifecycle display respect the
   existing route contract. The profile route exposes `local` as
   `source = builtin` with `running = false` because it is static Capsem-owned
@@ -530,6 +536,9 @@
   - `pnpm --dir frontend test -- --run frontend/src/lib/__tests__/profile-page-contract.test.ts frontend/src/lib/__tests__/mcp-section-contract.test.ts`
     passed; proves Profile/MCP UI rows render typed policy metadata and disabled
     state from backend fields.
+  - `pnpm --dir frontend test -- --run frontend/src/lib/__tests__/profile-page-contract.test.ts`
+    passed after default grouping; proves Profile rule lists group from
+    `rule.default_rule` rather than a second policy path.
   - `pnpm --dir frontend test -- --run frontend/src/lib/__tests__/api.test.ts`
     passed; proves frontend API helpers understand plugin detail routes and
     the credential broker detail endpoint.

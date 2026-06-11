@@ -113,6 +113,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added an explicit `enabled` field to the security rule contract. Disabled
   rules remain visible in profile enforcement/detection inventories but are
   skipped by `SecurityRuleSet` evaluation and rendered inactive in the UI.
+- Grouped Profile enforcement and detection rule lists into `default_rule`
+  and profile/corp sections so built-in catchalls are visible without creating
+  a second rule engine.
 - Cleaned the admin/doctor/status/debug rails so diagnostics follow the profile
   contract: builder doctor delegates profile validation to `capsem-admin
   profile check`, Justfile asset builds no longer pass legacy guest-config
