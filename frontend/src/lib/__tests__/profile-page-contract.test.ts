@@ -13,4 +13,11 @@ describe('ProfilePage route contract', () => {
     expect(source).not.toContain("key: 'policy'");
     expect(source).not.toContain("label: 'Policy'");
   });
+
+  it('renders profile asset status from the typed status route instead of raw JSON', () => {
+    expect(source).toContain('getAssetsStatus');
+    expect(source).toContain('assetStatusLabel');
+    expect(source).not.toContain('getProfileAssetsInfo');
+    expect(source).not.toContain('JSON.stringify(assetsInfo');
+  });
 });

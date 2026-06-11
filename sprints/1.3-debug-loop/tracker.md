@@ -247,10 +247,14 @@
   `cargo test -p capsem-service
   profile_mcp_tool_edit_writes_profile_rule_and_mutation_ledger --
   --nocapture`; frontend test/check commands above.
-- [ ] Implement bug 21 after user resumes coding: expose/render per-profile
-  asset readiness as a checklist: asset name/kind, resolved source, expected
-  hash, local path/status, downloaded/verified/missing/error state, and action
-  where applicable.
+- [x] Implement bug 21 slice: render per-profile asset readiness as a
+  checklist instead of raw JSON. Profile UI now uses
+  `/profiles/{profile_id}/assets/status`, displays manifest source/hash, VM
+  assets, profile files, verified/missing/invalid/downloading state, paths, and
+  size details.
+  Proof: `pnpm --dir frontend test -- --run
+  frontend/src/lib/__tests__/profile-page-contract.test.ts`; `pnpm --dir
+  frontend check`.
 - [ ] Implement bug 22 after user resumes coding: reshape overview to show
   profile capability/readiness: available surfaces, enabled plugins, credential
   broker status and credential reference list, plus blockers that prevent using
@@ -505,7 +509,8 @@
     profile ids, and no longer expose unsupported server edit/delete helpers.
   - `pnpm --dir frontend test -- --run frontend/src/lib/__tests__/profile-page-contract.test.ts`
     passed; proves the Profile UI exposes enforcement and detection as
-    first-class tabs instead of a generic policy tab.
+    first-class tabs instead of a generic policy tab, and renders typed asset
+    status rows instead of raw JSON.
   - `uv run python -m pytest tests/test_config.py -q` passed; proves the
     generated frontend mock settings data includes the MCP permission fields
     from the checked-in generator.

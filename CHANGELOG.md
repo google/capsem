@@ -100,6 +100,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Split the Profile UI's retired generic `Policy` section into explicit
   `Enforcement` and `Detection` route-backed tabs, with a frontend contract
   test guarding against reintroducing the old policy tab.
+- Replaced the Profile UI's raw asset JSON dump with a route-backed asset
+  checklist that shows manifest status, VM assets, profile files, verified/
+  missing/invalid/downloading state, paths, and size details from
+  `/profiles/{profile_id}/assets/status`.
 - Cleaned the admin/doctor/status/debug rails so diagnostics follow the profile
   contract: builder doctor delegates profile validation to `capsem-admin
   profile check`, Justfile asset builds no longer pass legacy guest-config

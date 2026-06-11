@@ -1,8 +1,16 @@
 /** Per-asset status in GET /profiles/{profile_id}/assets/status response. */
 export interface AssetEntry {
   name: string;
+  kind?: string;
+  arch?: string;
   path?: string;
-  status: 'present' | 'missing' | 'corrupted' | 'downloading';
+  status: 'present' | 'missing' | 'invalid' | 'corrupted' | 'downloading';
+  present?: boolean;
+  valid?: boolean;
+  expected_hash?: string;
+  expected_size?: number;
+  actual_hash?: string | null;
+  actual_size?: number | null;
 }
 
 export interface AssetManifestStatus {
@@ -27,6 +35,11 @@ export interface AssetStatusResponse {
   downloading: boolean;
   manifest?: AssetManifestStatus;
   assets: AssetEntry[];
+  files?: AssetEntry[];
+  invalid_assets?: unknown[];
+  invalid_files?: unknown[];
+  missing_assets?: unknown[];
+  errors?: string[];
   asset_version?: string;
   current_asset?: string;
   bytes_done?: number;

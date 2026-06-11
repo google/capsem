@@ -3,7 +3,7 @@
   import {
     listProfiles,
     getProfileInfo,
-    getProfileAssetsInfo,
+    getAssetsStatus,
     listEnforcementRules,
     listDetectionRules,
     type EnforcementRuleInfo,
@@ -12,10 +12,14 @@
   } from '../../api';
   import McpSection from '../settings/McpSection.svelte';
   import PluginSection from '../settings/PluginSection.svelte';
+  import type { AssetEntry, AssetStatusResponse } from '../../types/assets';
   import Shield from 'phosphor-svelte/lib/Shield';
   import Plugs from 'phosphor-svelte/lib/Plugs';
   import HardDrives from 'phosphor-svelte/lib/HardDrives';
   import IdentificationCard from 'phosphor-svelte/lib/IdentificationCard';
+  import CheckCircle from 'phosphor-svelte/lib/CheckCircle';
+  import CircleNotch from 'phosphor-svelte/lib/CircleNotch';
+  import WarningCircle from 'phosphor-svelte/lib/WarningCircle';
 
   type Section = 'overview' | 'enforcement' | 'detection' | 'plugins' | 'mcp' | 'assets';
   let activeSection = $state<Section>('overview');
@@ -24,7 +28,7 @@
   let loading = $state(true);
   let error = $state<string | null>(null);
   let profile = $state<ProfileInfoResponse | null>(null);
-  let assetsInfo = $state<unknown>(null);
+  let assetsInfo = $state<AssetStatusResponse | null>(null);
   let enforcementRules = $state<EnforcementRuleInfo[]>([]);
   let detectionRules = $state<EnforcementRuleInfo[]>([]);
 
@@ -63,7 +67,7 @@
     try {
       const [profileResult, assetsResult, enforcementResult, detectionResult] = await Promise.all([
         getProfileInfo(activeProfileId),
-        getProfileAssetsInfo(activeProfileId),
+        getAssetsStatus(activeProfileId),
         listEnforcementRules(activeProfileId),
         listDetectionRules(activeProfileId),
       ]);
@@ -91,6 +95,35 @@
 
   function sourceLabel(rule: EnforcementRuleInfo): string {
     return `${rule.source}${rule.default_rule ? ' default' : ''}`;
+  }
+
+  function assetStatusLabel(asset: AssetEntry): string {
+    if (asset.status === 'present') return 'Verified';
+    if (asset.status === 'downloading') return 'Downloading';
+    if (asset.status === 'missing') return 'Missing';
+    return 'Invalid';
+  }
+
+  function assetStatusClass(asset: AssetEntry): string {
+    if (asset.status === 'present') return 'text-primary bg-primary/10';
+    if (asset.status === 'downloading') return 'text-muted-foreground-1 bg-muted';
+    return 'text-destructive-foreground bg-destructive/10';
+  }
+
+  function assetTitle(asset: AssetEntry): string {
+    return asset.kind ?? asset.name;
+  }
+
+  function formatBytes(bytes?: number | null): string {
+    if (!bytes || bytes <= 0) return '--';
+    const units = ['B', 'KB', 'MB', 'GB'];
+    let value = bytes;
+    let unit = 0;
+    while (value >= 1024 && unit < units.length - 1) {
+      value /= 1024;
+      unit += 1;
+    }
+    return `${value.toFixed(unit === 0 ? 0 : 1)} ${units[unit]}`;
   }
 </script>
 
@@ -225,7 +258,95 @@
           <McpSection {profileId} />
         {:else if activeSection === 'assets'}
           <h2 class="text-xl font-medium text-foreground mb-6">Assets</h2>
-          <pre class="bg-card border border-card-line rounded-xl p-4 text-xs text-foreground overflow-auto">{JSON.stringify(assetsInfo, null, 2)}</pre>
+          {#if assetsInfo}
+            <div class="space-y-4">
+              <div class="bg-card border border-card-line rounded-xl p-4">
+                <div class="flex items-center justify-between gap-x-4">
+                  <div>
+                    <p class="text-sm font-medium text-foreground">Profile asset readiness</p>
+                    <p class="text-xs text-muted-foreground-1 mt-1">
+                      {assetsInfo.ready ? 'All required assets and profile files are verified.' : 'One or more required assets or profile files need attention.'}
+                    </p>
+                  </div>
+                  <span class="inline-flex items-center gap-x-1.5 rounded-full px-2.5 py-1 text-xs font-medium {assetsInfo.ready ? 'bg-primary/10 text-primary' : 'bg-destructive/10 text-destructive-foreground'}">
+                    {#if assetsInfo.downloading}
+                      <CircleNotch size={14} class="animate-spin" />
+                      Downloading
+                    {:else if assetsInfo.ready}
+                      <CheckCircle size={14} />
+                      Ready
+                    {:else}
+                      <WarningCircle size={14} />
+                      Attention
+                    {/if}
+                  </span>
+                </div>
+                {#if assetsInfo.manifest}
+                  <div class="mt-4 grid gap-3 text-xs sm:grid-cols-2">
+                    <div>
+                      <p class="text-muted-foreground-1">Manifest</p>
+                      <p class="font-mono text-foreground truncate">{assetsInfo.manifest.origin_source ?? assetsInfo.manifest.origin}</p>
+                    </div>
+                    <div>
+                      <p class="text-muted-foreground-1">Hash</p>
+                      <p class="font-mono text-foreground truncate">{assetsInfo.manifest.blake3 ?? '--'}</p>
+                    </div>
+                  </div>
+                {/if}
+              </div>
+
+              <section>
+                <h3 class="text-xs font-semibold text-foreground uppercase tracking-wider mb-2">VM assets</h3>
+                <div class="bg-card border border-card-line rounded-xl divide-y divide-card-divider">
+                  {#each assetsInfo.assets as asset (`${asset.arch ?? ''}:${asset.kind ?? asset.name}`)}
+                    <div class="p-4 flex items-start gap-x-3">
+                      {#if asset.status === 'present'}
+                        <CheckCircle size={18} class="text-primary shrink-0 mt-0.5" />
+                      {:else if asset.status === 'downloading'}
+                        <CircleNotch size={18} class="text-muted-foreground-1 animate-spin shrink-0 mt-0.5" />
+                      {:else}
+                        <WarningCircle size={18} class="text-destructive-foreground shrink-0 mt-0.5" />
+                      {/if}
+                      <div class="min-w-0 flex-1">
+                        <div class="flex items-center justify-between gap-x-3">
+                          <p class="text-sm font-medium text-foreground truncate">{assetTitle(asset)}</p>
+                          <span class="rounded-full px-2 py-0.5 text-xs shrink-0 {assetStatusClass(asset)}">{assetStatusLabel(asset)}</span>
+                        </div>
+                        <p class="text-xs text-muted-foreground-1 font-mono truncate mt-1">{asset.path ?? asset.name}</p>
+                        <p class="text-[11px] text-muted-foreground-2 mt-1">
+                          Expected {formatBytes(asset.expected_size)} · actual {formatBytes(asset.actual_size)}
+                        </p>
+                      </div>
+                    </div>
+                  {/each}
+                </div>
+              </section>
+
+              {#if assetsInfo.files && assetsInfo.files.length > 0}
+                <section>
+                  <h3 class="text-xs font-semibold text-foreground uppercase tracking-wider mb-2">Profile files</h3>
+                  <div class="bg-card border border-card-line rounded-xl divide-y divide-card-divider">
+                    {#each assetsInfo.files as file (file.kind ?? file.path ?? file.name)}
+                      <div class="p-4 flex items-start gap-x-3">
+                        {#if file.status === 'present'}
+                          <CheckCircle size={18} class="text-primary shrink-0 mt-0.5" />
+                        {:else}
+                          <WarningCircle size={18} class="text-destructive-foreground shrink-0 mt-0.5" />
+                        {/if}
+                        <div class="min-w-0 flex-1">
+                          <div class="flex items-center justify-between gap-x-3">
+                            <p class="text-sm font-medium text-foreground truncate">{assetTitle(file)}</p>
+                            <span class="rounded-full px-2 py-0.5 text-xs shrink-0 {assetStatusClass(file)}">{assetStatusLabel(file)}</span>
+                          </div>
+                          <p class="text-xs text-muted-foreground-1 font-mono truncate mt-1">{file.path ?? file.name}</p>
+                        </div>
+                      </div>
+                    {/each}
+                  </div>
+                </section>
+              {/if}
+            </div>
+          {/if}
         {/if}
       </div>
     {/if}
