@@ -100,6 +100,9 @@
     `functionCall` response parts now produce first-party `tool_calls` with
     deterministic synthetic `gemini_<name>_<index>` IDs matching the Google
     `functionResponse` request-parser shape.
+  - [x] Stats trace visibility slice: frontend trace SQL no longer hides
+    model traces whose token totals are zero or unavailable, so AGY/tool-only
+    activity remains inspectable once model rows exist.
   - [ ] Remaining: prove AGY tool-call/activity semantics beyond model HTTP
     rows, and verify against a rebuilt service/VM without destroying the current
     evidence VM until approved.
@@ -330,6 +333,12 @@
   - `cargo test -p capsem-core --lib net::interpreters::google_interpreter::tests:: -- --nocapture`
     passed after one transient local code-sign wrapper retry; proves streaming
     Google tool calls use the same deterministic synthetic ID shape.
+  - `pnpm --dir frontend test -- --run frontend/src/lib/__tests__/mcp-sql.test.ts`
+    passed after a red failure on the old token-only trace filter; proves model
+    trace SQL does not hide zero-token/tool-only traces.
+  - `pnpm --dir frontend test -- --run frontend/src/lib/__tests__/api.test.ts frontend/src/lib/__tests__/mcp-store.test.ts`
+    passed as a focused frontend regression around API/MCP consumers after the
+    trace visibility change.
   - `cargo test -p capsem-core --lib http_body_detector_finds_google_oauth -- --nocapture`
     passed; proves Google OAuth JSON and form token exchanges are recognized
     and redacted by the credential broker.

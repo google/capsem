@@ -48,7 +48,6 @@ export const TRACES_SQL = `
   FROM top_traces t
   JOIN model_calls mc ON mc.trace_id = t.trace_id
   GROUP BY t.trace_id
-  HAVING total_input_tokens + total_output_tokens > 0
   ORDER BY t.max_id DESC
 `;
 
