@@ -208,7 +208,7 @@
     tests/capsem-session-lifecycle/test_db_exists.py
     tests/capsem-session-lifecycle/test_multiple_events.py
     tests/capsem-session/test_cross_table.py -q`.
-- [ ] Implement bug 8 after user resumes coding: non-destructively trace file
+- [x] Implement bug 8 after user resumes coding: non-destructively trace file
   provenance from paths, mtimes, process/security logs, and session DB evidence;
   prove whether snapshot is read-only or mutating the workspace; then add a
   regression test that snapshot cannot create workspace files unless explicitly
@@ -233,9 +233,16 @@
     Proof: `cargo test -p capsem-core
     mcp::file_tools::tests::revert_file_ -- --nocapture`; `cargo test -p
     capsem-core mcp::file_tools::tests:: -- --nocapture`.
-  - [ ] Remaining: inspect live VM/session DB evidence for the files the user
-    observed and attribute them to AGY/process/file events without deleting the
-    current VM evidence.
+  - [x] Live evidence attribution slice: read-only inspection of the current
+    AGY evidence VM showed the noisy files are guest workspace config/cache
+    writes, mostly `.claude/plugins/...` marketplace activity and AGY/Gemini
+    config/log files. `fs_events` attributed 659 created and 66 deleted rows to
+    `.claude`, with audit records for `/usr/local/bin/claude
+    --dangerously-skip-permissions`, `rg`, `dpkg`, and `git`. The stale
+    pre-burn `snapshot_events` table in that old DB had one auto row with no
+    file-event range, and the current code no longer creates or reads that table
+    for snapshot state. Proof: read-only `sqlite3` inspection of
+    `/Users/elie/.capsem/run/persistent/code-mq8jcb45/session.db`.
 - [ ] Implement bug 9 after user resumes coding: design and test DNS policy as
   first-class enforcement, including deny/ask/default DNS rules, DNS query
   length/entropy/rate guards, and ledger evidence for suspicious query payloads.
