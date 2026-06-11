@@ -89,6 +89,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   enforcement rules and profile mutation ledger rows, and enforcement/detection
   route listing and authoring compile from profile files plus corp overlays
   without reading or writing user settings.
+- Made MCP tool permissions round-trip through the same profile enforcement
+  contract: tool list responses now include the effective `allow`/`ask`/`block`
+  action and source rule, the frontend edits tools with `{ action }` instead of
+  the retired `{ approved: true }` cache shape, and unsupported server
+  add/toggle/delete controls are no longer exposed in the MCP UI.
 - Cleaned the admin/doctor/status/debug rails so diagnostics follow the profile
   contract: builder doctor delegates profile validation to `capsem-admin
   profile check`, Justfile asset builds no longer pass legacy guest-config

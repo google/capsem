@@ -27,8 +27,8 @@ const mockServers: McpServerInfo[] = [
 ];
 
 const mockTools: McpToolInfo[] = [
-  { namespaced_name: 'builtin__http_get', original_name: 'http_get', description: 'HTTP GET', server_name: 'builtin', annotations: { title: null, read_only_hint: true, destructive_hint: false, idempotent_hint: true, open_world_hint: true }, pin_hash: 'abc', approved: true, pin_changed: false },
-  { namespaced_name: 'external__search', original_name: 'search', description: 'Search', server_name: 'external', annotations: null, pin_hash: 'def', approved: false, pin_changed: true },
+  { namespaced_name: 'builtin__http_get', original_name: 'http_get', description: 'HTTP GET', server_name: 'builtin', annotations: { title: null, read_only_hint: true, destructive_hint: false, idempotent_hint: true, open_world_hint: true }, pin_hash: 'abc', approved: true, pin_changed: false, permission_action: 'allow', permission_source: 'default' },
+  { namespaced_name: 'external__search', original_name: 'search', description: 'Search', server_name: 'external', annotations: null, pin_hash: 'def', approved: false, pin_changed: true, permission_action: 'ask', permission_source: 'profile_managed' },
 ];
 
 vi.mock('../api', () => ({
@@ -36,10 +36,7 @@ vi.mock('../api', () => ({
   getMcpTools: vi.fn(async (_profileId: string, serverId: string) =>
     mockTools.filter((tool) => tool.server_name === serverId)
   ),
-  updateMcpServer: vi.fn(async () => {}),
-  upsertMcpServer: vi.fn(async () => {}),
-  deleteMcpServer: vi.fn(async () => {}),
-  approveMcpTool: vi.fn(async () => {}),
+  updateMcpToolPermission: vi.fn(async () => {}),
   refreshMcpTools: vi.fn(async () => {}),
 }));
 
@@ -81,38 +78,19 @@ describe('mcpStore', () => {
     expect(mcpStore.runningCount).toBe(1);
   });
 
-  it('toggleServer calls API and reloads', async () => {
-    await mcpStore.load('co-work');
-    await mcpStore.toggleServer('builtin', false);
-    const { updateMcpServer } = await import('../api');
-    expect(updateMcpServer).toHaveBeenCalledWith('co-work', 'builtin', { enabled: false });
-  });
-
-  it('addServer calls API and reloads', async () => {
-    await mcpStore.load('co-work');
-    await mcpStore.addServer('new-srv', 'http://new', { 'X-H': 'v' });
-    const { upsertMcpServer } = await import('../api');
-    expect(upsertMcpServer).toHaveBeenCalledWith('co-work', 'new-srv', 'http://new', { 'X-H': 'v' });
-  });
-
-  it('removeServer calls API and reloads', async () => {
-    await mcpStore.load('co-work');
-    await mcpStore.removeServer('external');
-    const { deleteMcpServer } = await import('../api');
-    expect(deleteMcpServer).toHaveBeenCalledWith('co-work', 'external');
-  });
-
-  it('does not expose retired policy mutation methods', () => {
+  it('does not expose retired policy or unsupported server mutation methods', () => {
     expect('setGlobalPolicy' in mcpStore).toBe(false);
     expect('setDefaultPermission' in mcpStore).toBe(false);
-    expect('setToolPermission' in mcpStore).toBe(false);
+    expect('toggleServer' in mcpStore).toBe(false);
+    expect('addServer' in mcpStore).toBe(false);
+    expect('removeServer' in mcpStore).toBe(false);
   });
 
-  it('approveTool calls API and reloads', async () => {
+  it('setToolPermission calls the profile-backed rule API and reloads', async () => {
     await mcpStore.load('co-work');
-    await mcpStore.approveTool('builtin__http_get');
-    const { approveMcpTool } = await import('../api');
-    expect(approveMcpTool).toHaveBeenCalledWith('co-work', 'builtin', 'http_get');
+    await mcpStore.setToolPermission('builtin__http_get', 'ask');
+    const { updateMcpToolPermission } = await import('../api');
+    expect(updateMcpToolPermission).toHaveBeenCalledWith('co-work', 'builtin', 'http_get', 'ask');
   });
 
   it('refresh with server calls API', async () => {
@@ -138,6 +116,6 @@ describe('mcpStore', () => {
   });
 
   it('requires an explicit profile before mutating MCP config', async () => {
-    await expect(mcpStore.toggleServer('builtin', false)).rejects.toThrow('profile id');
+    await expect(mcpStore.setToolPermission(mockTools[0], 'block')).rejects.toThrow('profile id');
   });
 });

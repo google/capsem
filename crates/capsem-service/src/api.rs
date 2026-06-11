@@ -508,6 +508,8 @@ pub struct McpToolInfoResponse {
     pub pin_hash: Option<String>,
     pub approved: bool,
     pub pin_changed: bool,
+    pub permission_action: capsem_core::net::policy_config::SecurityRuleAction,
+    pub permission_source: String,
 }
 
 #[derive(Serialize, Deserialize, Debug)]

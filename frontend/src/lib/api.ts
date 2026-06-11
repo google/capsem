@@ -21,6 +21,7 @@ import type {
   DownloadProgress,
   McpServerInfo,
   McpToolInfo,
+  ToolPermission,
   VmStateResponse,
   FileListResponse,
   FileContentResult,
@@ -150,12 +151,6 @@ export interface CredentialBrokerInfo {
   inventory: BrokeredCredentialStatus[];
   grants: CredentialBrokerGrantStatus;
   corp_constraints: CredentialBrokerCorpConstraint[];
-}
-
-export interface McpServerEditRequest {
-  url?: string;
-  headers?: Record<string, string>;
-  enabled?: boolean;
 }
 
 export interface ProfileSummary {
@@ -422,10 +417,6 @@ async function _post(path: string, body?: unknown): Promise<Response> {
 
 async function _patch(path: string, body?: unknown): Promise<Response> {
   return _request('PATCH', path, body);
-}
-
-async function _put(path: string, body?: unknown): Promise<Response> {
-  return _request('PUT', path, body);
 }
 
 async function _delete(path: string): Promise<Response> {
@@ -1077,40 +1068,6 @@ export async function getCredentialBrokerInfo(profileId: string): Promise<Creden
 
 // -- MCP config --
 
-/** Add or replace an MCP server in a profile. */
-export async function upsertMcpServer(
-  profileId: string,
-  serverId: string,
-  url: string,
-  headers: Record<string, string>,
-): Promise<McpServerInfo> {
-  const resp = await _put(
-    `/profiles/${encodeURIComponent(profileId)}/mcp/servers/${encodeURIComponent(serverId)}/edit`,
-    { url, headers, enabled: true } satisfies McpServerEditRequest,
-  );
-  return await resp.json();
-}
-
-/** Enable/disable or otherwise update an MCP server in a profile. */
-export async function updateMcpServer(
-  profileId: string,
-  serverId: string,
-  update: McpServerEditRequest,
-): Promise<McpServerInfo> {
-  const resp = await _put(
-    `/profiles/${encodeURIComponent(profileId)}/mcp/servers/${encodeURIComponent(serverId)}/edit`,
-    update,
-  );
-  return await resp.json();
-}
-
-/** Remove an MCP server from a profile. */
-export async function deleteMcpServer(profileId: string, serverId: string): Promise<void> {
-  await _delete(
-    `/profiles/${encodeURIComponent(profileId)}/mcp/servers/${encodeURIComponent(serverId)}/delete`,
-  );
-}
-
 // -- MCP runtime --
 
 /** List configured MCP servers with tool counts (runtime). */
@@ -1146,15 +1103,16 @@ export async function refreshMcpTools(profileId: string, serverId: string): Prom
   );
 }
 
-/** Edit MCP tool mechanics such as cache approval. */
-export async function approveMcpTool(
+/** Edit MCP tool permission through the profile enforcement rule ledger. */
+export async function updateMcpToolPermission(
   profileId: string,
   serverId: string,
   toolId: string,
+  action: ToolPermission,
 ): Promise<void> {
   await _patch(
     `/profiles/${encodeURIComponent(profileId)}/mcp/servers/${encodeURIComponent(serverId)}/tools/${encodeURIComponent(toolId)}/edit`,
-    { approved: true },
+    { action },
   );
 }
 

@@ -865,6 +865,8 @@ def generate_mock_ts(
         lines.append("    pin_hash: null,")
         lines.append("    approved: true,")
         lines.append("    pin_changed: false,")
+        lines.append("    permission_action: 'allow',")
+        lines.append("    permission_source: 'default',")
         lines.append("  },")
     lines.append("];")
     lines.append("")

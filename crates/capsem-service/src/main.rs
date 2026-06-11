@@ -5268,15 +5268,27 @@ async fn handle_profile_mcp_server_tools(
             "MCP server id must not be empty".to_string(),
         ));
     }
-    ensure_profile_mcp_server(profile_id, &server_id)?;
+    ensure_profile_mcp_server(profile_id.clone(), &server_id)?;
+    let profile = profile_for_route(profile_id)?;
     use capsem_core::mcp::load_tool_cache;
 
     let cache = load_tool_cache();
-    let resp: Vec<api::McpToolInfoResponse> = cache
+    let resp: Result<Vec<api::McpToolInfoResponse>, AppError> = cache
         .iter()
         .filter(|entry| entry.server_name == server_id)
         .map(|entry| {
-            api::McpToolInfoResponse {
+            let permission = profile
+                .mcp_tool_permission(&server_id, &entry.original_name)
+                .map_err(|error| {
+                    AppError(
+                        StatusCode::BAD_REQUEST,
+                        format!(
+                            "resolve MCP tool permission {}/{}: {error}",
+                            server_id, entry.original_name
+                        ),
+                    )
+                })?;
+            Ok(api::McpToolInfoResponse {
                 namespaced_name: entry.namespaced_name.clone(),
                 original_name: entry.original_name.clone(),
                 description: entry.description.clone(),
@@ -5285,10 +5297,12 @@ async fn handle_profile_mcp_server_tools(
                 pin_hash: Some(entry.pin_hash.clone()),
                 approved: entry.approved,
                 pin_changed: false, // Would need live catalog comparison.
-            }
+                permission_action: permission.action,
+                permission_source: permission.source,
+            })
         })
         .collect();
-    Ok(Json(serde_json::to_value(resp).unwrap_or_default()))
+    Ok(Json(serde_json::to_value(resp?).unwrap_or_default()))
 }
 
 /// POST /profiles/:profile_id/mcp/servers/:server_id/refresh -- refresh one server's tool discovery.

@@ -412,37 +412,10 @@ describe('api', () => {
       await api.init();
     });
 
-    it('updateMcpServer sends PUT /profiles/{profile_id}/mcp/servers/{server_id}/edit', async () => {
-      mockFetch.mockReturnValueOnce(jsonResponse({ name: 'my-server', enabled: true }));
-      await api.updateMcpServer('code', 'my-server', { enabled: true });
-      const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
-      expect(call[0]).toContain('/profiles/code/mcp/servers/my-server/edit');
-      expect(call[1].method).toBe('PUT');
-      expect(JSON.parse(call[1].body)).toEqual({ enabled: true });
-    });
-
-    it('upsertMcpServer sends route payload with url, enabled, and non-secret headers', async () => {
-      mockFetch.mockReturnValueOnce(jsonResponse({ name: 'srv', enabled: true }));
-      await api.upsertMcpServer('code', 'srv', 'http://x', { 'X-Trace': 'val' });
-      const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
-      expect(call[0]).toContain('/profiles/code/mcp/servers/srv/edit');
-      expect(call[1].method).toBe('PUT');
-      const body = JSON.parse(call[1].body);
-      expect(body.url).toBe('http://x');
-      expect(body.enabled).toBe(true);
-      expect(body.headers).toEqual({ 'X-Trace': 'val' });
-      expect(Object.keys(body).some((key) => key.includes('bearer_token'))).toBe(false);
-    });
-
-    it('deleteMcpServer sends DELETE /profiles/{profile_id}/mcp/servers/{server_id}/delete', async () => {
-      mockFetch.mockReturnValueOnce(jsonResponse({ ok: true }));
-      await api.deleteMcpServer('code', 'old-srv');
-      const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
-      expect(call[0]).toContain('/profiles/code/mcp/servers/old-srv/delete');
-      expect(call[1].method).toBe('DELETE');
-    });
-
     it('does not expose retired MCP policy or settings mutators', () => {
+      expect('updateMcpServer' in api).toBe(false);
+      expect('upsertMcpServer' in api).toBe(false);
+      expect('deleteMcpServer' in api).toBe(false);
       expect('getMcpPolicy' in api).toBe(false);
       expect('setMcpGlobalPolicy' in api).toBe(false);
       expect('setMcpDefaultPermission' in api).toBe(false);
@@ -920,18 +893,18 @@ describe('api', () => {
       expect(call[0]).toContain('/profiles/code/mcp/servers/my-server/refresh');
     });
 
-    it('approveMcpTool sends PATCH /profiles/{profile_id}/mcp/servers/{server_id}/tools/{tool_id}/edit', async () => {
+    it('updateMcpToolPermission sends PATCH /profiles/{profile_id}/mcp/servers/{server_id}/tools/{tool_id}/edit', async () => {
       mockFetch
         .mockReturnValueOnce(jsonResponse({ ok: true, version: '1.0.0', service_socket: '/tmp/s' }))
         .mockReturnValueOnce(jsonResponse({ token: 'tok' }));
       await api.init();
 
       mockFetch.mockReturnValueOnce(jsonResponse(null));
-      await api.approveMcpTool('code', 'local', 'bash');
+      await api.updateMcpToolPermission('code', 'local', 'bash', 'ask');
       const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
       expect(call[0]).toContain('/profiles/code/mcp/servers/local/tools/bash/edit');
       expect(call[1].method).toBe('PATCH');
-      expect(JSON.parse(call[1].body)).toEqual({ approved: true });
+      expect(JSON.parse(call[1].body)).toEqual({ action: 'ask' });
     });
 
     it('callMcpTool sends POST /profiles/{profile_id}/mcp/servers/{server_id}/tools/{tool_id}/call', async () => {

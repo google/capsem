@@ -393,6 +393,13 @@ fn profile_download_assets_uses_file_url_same_status_path() {
 fn profile_mcp_tool_permission_mutation_updates_rule_and_pin() {
     let fixture = ProfileFixture::new();
     let mut profile = Profile::load_from_dir(fixture.profile_dir()).expect("profile loads");
+    let initial = profile
+        .mcp_tool_permission("capsem", "fetch_http")
+        .expect("default MCP permission resolves");
+    assert_eq!(initial.action, SecurityRuleAction::Allow);
+    assert_eq!(initial.source, "default");
+    assert_eq!(initial.rule_id.as_deref(), Some("default.mcp"));
+
     let old_pin = profile
         .config()
         .files
@@ -418,6 +425,16 @@ fn profile_mcp_tool_permission_mutation_updates_rule_and_pin() {
     assert_ne!(summary.new_hash, old_pin);
 
     let reloaded = Profile::load_from_dir(fixture.profile_dir()).expect("profile reloads");
+    let permission = reloaded
+        .mcp_tool_permission("capsem", "fetch_http")
+        .expect("managed MCP permission resolves");
+    assert_eq!(permission.action, SecurityRuleAction::Ask);
+    assert_eq!(permission.source, "profile_managed");
+    assert_eq!(
+        permission.rule_id.as_deref(),
+        Some("profiles.rules.mcp_capsem_fetch_http_permission")
+    );
+
     let new_pin = reloaded
         .config()
         .files
@@ -764,6 +781,13 @@ action = "allow"
 priority = "default"
 reason = "Default allow HTTP."
 match = 'has(http.host)'
+
+[default.mcp]
+name = "mcp"
+action = "allow"
+priority = "default"
+reason = "Default allow MCP."
+match = 'has(mcp.server.name)'
 "#,
         )
         .unwrap();

@@ -467,19 +467,32 @@ async fn profile_mcp_tool_edit_writes_profile_rule_and_mutation_ledger() {
     let dir = tempfile::tempdir().unwrap();
     let (config_root, _) = install_file_asset_profile_fixture(&dir);
     let _profiles_guard = EnvVarGuard::set("CAPSEM_PROFILES_DIR", config_root.join("profiles"));
+    let _home_guard = EnvVarGuard::set("CAPSEM_HOME", dir.path());
+    capsem_core::mcp::save_tool_cache(&[capsem_core::mcp::ToolCacheEntry {
+        namespaced_name: "local__fetch_http".to_string(),
+        original_name: "fetch_http".to_string(),
+        description: Some("Fetch HTTP".to_string()),
+        server_name: "local".to_string(),
+        annotations: None,
+        pin_hash: "tool-pin".to_string(),
+        first_seen: "2026-06-10T00:00:00Z".to_string(),
+        last_seen: "2026-06-10T00:00:00Z".to_string(),
+        approved: true,
+    }])
+    .expect("write test MCP tool cache");
     let state = make_asset_state(dir.path().join("assets"));
     let app = build_service_router(Arc::clone(&state));
 
     let (status, edited) = route_request(
-        app,
+        app.clone(),
         axum::http::Method::PATCH,
-        "/profiles/code/mcp/servers/capsem/tools/fetch_http/edit",
+        "/profiles/code/mcp/servers/local/tools/fetch_http/edit",
         Some(json!({ "action": "ask" })),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{edited}");
     assert_eq!(edited["profile_id"], "code");
-    assert_eq!(edited["server_id"], "capsem");
+    assert_eq!(edited["server_id"], "local");
     assert_eq!(edited["tool_id"], "fetch_http");
     assert_eq!(edited["action"], "ask");
     assert_eq!(edited["mutation"]["category"], "mcp");
@@ -492,7 +505,7 @@ async fn profile_mcp_tool_edit_writes_profile_rule_and_mutation_ledger() {
     let rule = rule_profile
         .profiles
         .rules
-        .get("mcp_capsem_fetch_http_permission")
+        .get("mcp_local_fetch_http_permission")
         .expect("profile-managed MCP permission rule");
     assert_eq!(
         rule.action,
@@ -500,7 +513,7 @@ async fn profile_mcp_tool_edit_writes_profile_rule_and_mutation_ledger() {
     );
     assert_eq!(
         rule.condition,
-        r#"mcp.server.name == "capsem" && mcp.tool_call.name == "fetch_http""#
+        r#"mcp.server.name == "local" && mcp.tool_call.name == "fetch_http""#
     );
 
     let profile: ProfileConfigFile = toml::from_str(
@@ -535,11 +548,23 @@ async fn profile_mcp_tool_edit_writes_profile_rule_and_mutation_ledger() {
             "code",
             "mcp",
             "mcp_tool",
-            "capsem/fetch_http",
+            "local/fetch_http",
             "permission",
             "applied"
         ])
     );
+
+    let (status, tools) = route_request(
+        app,
+        axum::http::Method::GET,
+        "/profiles/code/mcp/servers/local/tools/list",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{tools}");
+    assert_eq!(tools[0]["namespaced_name"], "local__fetch_http");
+    assert_eq!(tools[0]["permission_action"], "ask");
+    assert_eq!(tools[0]["permission_source"], "profile_managed");
 }
 
 #[test]

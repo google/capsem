@@ -2,13 +2,10 @@
   import { onMount } from 'svelte';
   import { slide } from 'svelte/transition';
   import { mcpStore } from '../../stores/mcp.svelte.ts';
-  import type { McpServerInfo, McpToolInfo } from '../../types';
+  import type { McpServerInfo, McpToolInfo, ToolPermission } from '../../types';
   import ArrowClockwise from 'phosphor-svelte/lib/ArrowClockwise';
   import CaretDown from 'phosphor-svelte/lib/CaretDown';
-  import Plus from 'phosphor-svelte/lib/Plus';
-  import Trash from 'phosphor-svelte/lib/Trash';
   import WarningCircle from 'phosphor-svelte/lib/WarningCircle';
-  import X from 'phosphor-svelte/lib/X';
 
   let { profileId } = $props<{ profileId: string }>();
   let servers = $derived(mcpStore.servers);
@@ -34,14 +31,7 @@
     expandedGroups = next;
   }
 
-  // --- Add server form ---
-  let showAddForm = $state(false);
-  let newName = $state('');
-  let newUrl = $state('');
-  let newHeaders = $state<{ key: string; value: string }[]>([]);
   let saving = $state(false);
-
-  let canAdd = $derived(newName.trim().length > 0 && newUrl.trim().length > 0);
 
   onMount(() => {
     if (profileId) {
@@ -57,60 +47,11 @@
     }
   });
 
-  function resetForm() {
-    newName = '';
-    newUrl = '';
-    newHeaders = [];
-    showAddForm = false;
-  }
-
-  function addHeader() {
-    newHeaders = [...newHeaders, { key: '', value: '' }];
-  }
-
-  function removeHeader(index: number) {
-    newHeaders = newHeaders.filter((_, i) => i !== index);
-  }
-
-  async function addServer() {
-    if (!canAdd) return;
+  async function setToolPermission(tool: McpToolInfo, action: ToolPermission) {
     saving = true;
     actionError = null;
     try {
-      const headers: Record<string, string> = {};
-      for (const h of newHeaders) {
-        if (h.key.trim()) headers[h.key.trim()] = h.value;
-      }
-      await mcpStore.addServer(
-        newName.trim(),
-        newUrl.trim(),
-        headers,
-      );
-      resetForm();
-    } catch (err) {
-      actionError = String(err instanceof Error ? err.message : err);
-    } finally {
-      saving = false;
-    }
-  }
-
-  async function removeServer(name: string) {
-    saving = true;
-    actionError = null;
-    try {
-      await mcpStore.removeServer(name);
-    } catch (err) {
-      actionError = String(err instanceof Error ? err.message : err);
-    } finally {
-      saving = false;
-    }
-  }
-
-  async function toggleServer(name: string, currentlyEnabled: boolean) {
-    saving = true;
-    actionError = null;
-    try {
-      await mcpStore.toggleServer(name, !currentlyEnabled);
+      await mcpStore.setToolPermission(tool, action);
     } catch (err) {
       actionError = String(err instanceof Error ? err.message : err);
     } finally {
@@ -142,7 +83,22 @@
           {#if tool.description}
             <p class="text-xs text-muted-foreground-1 mt-1">{tool.description}</p>
           {/if}
+          <p class="text-[10px] text-muted-foreground-2 mt-1">
+            Permission source: {tool.permission_source}
+          </p>
         </div>
+        <label class="sr-only" for={`mcp-permission-${tool.namespaced_name}`}>Permission for {tool.original_name}</label>
+        <select
+          id={`mcp-permission-${tool.namespaced_name}`}
+          class="shrink-0 rounded-lg border border-line-2 bg-layer px-2 py-1 text-xs text-foreground disabled:opacity-50"
+          value={tool.permission_action}
+          disabled={saving}
+          onchange={(event) => setToolPermission(tool, event.currentTarget.value as ToolPermission)}
+        >
+          <option value="allow">Allow</option>
+          <option value="ask">Ask</option>
+          <option value="block">Block</option>
+        </select>
       </div>
     {/each}
   </div>
@@ -205,24 +161,6 @@
                 <CaretDown size={14} class="text-muted-foreground-1 transition-transform duration-300 shrink-0 {isExpanded ? 'rotate-180' : ''}" />
               {/if}
             </button>
-            <div class="flex items-center gap-x-2 shrink-0 ml-2">
-              <button
-                type="button"
-                class="relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200
-                  {server.enabled ? 'bg-primary' : 'bg-muted'}
-                  {server.source === 'corp' ? 'opacity-50 cursor-not-allowed' : ''}"
-                role="switch"
-                aria-label="{server.enabled ? 'Disable' : 'Enable'} {server.name}"
-                aria-checked={server.enabled}
-                disabled={server.source === 'corp' || saving}
-                onclick={() => toggleServer(server.name, server.enabled)}
-              >
-                <span
-                  class="pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow transition duration-200
-                    {server.enabled ? 'translate-x-4' : 'translate-x-0'}"
-                ></span>
-              </button>
-            </div>
           </div>
           {#if server.has_auth_credential && !isExpanded}
             <div class="px-4 pb-3">
@@ -239,128 +177,10 @@
 
   <!-- External Servers -->
   <div>
-    <div class="flex items-center justify-between mb-2">
-      <h3 class="text-xs font-semibold text-foreground uppercase tracking-wider">External Servers</h3>
-      {#if !showAddForm}
-        <button
-          type="button"
-          class="py-1.5 px-3 inline-flex items-center gap-x-1.5 text-xs font-medium rounded-lg bg-primary text-primary-foreground hover:bg-primary-hover transition-colors"
-          onclick={() => showAddForm = true}
-        >
-          <Plus size={14} />
-          Add server
-        </button>
-      {/if}
-    </div>
-
-    <!-- Add server form -->
-    {#if showAddForm}
-      <div class="bg-card border border-card-line rounded-xl mb-3">
-        <div class="flex items-center justify-between px-4 py-3 border-b border-card-divider">
-          <span class="text-sm font-semibold text-foreground">New server</span>
-          <button
-            type="button"
-            class="p-1 rounded-md text-muted-foreground-1 hover:text-foreground hover:bg-muted-hover transition-colors"
-            onclick={resetForm}
-          >
-            <X size={16} />
-          </button>
-        </div>
-        <div class="p-4 space-y-4">
-          <!-- Name -->
-          <div>
-            <label for="mcp-name" class="text-xs font-medium text-foreground block mb-1">Name</label>
-            <input
-              id="mcp-name"
-              type="text"
-              class="w-full py-2 px-3 text-sm font-mono rounded-lg border border-line-2 bg-layer text-foreground focus:outline-hidden focus:border-primary"
-              placeholder="my-server"
-              bind:value={newName}
-            />
-          </div>
-          <!-- URL -->
-          <div>
-            <label for="mcp-url" class="text-xs font-medium text-foreground block mb-1">URL</label>
-            <input
-              id="mcp-url"
-              type="url"
-              class="w-full py-2 px-3 text-sm font-mono rounded-lg border border-line-2 bg-layer text-foreground focus:outline-hidden focus:border-primary"
-              placeholder="https://mcp.example.com/v1"
-              bind:value={newUrl}
-            />
-          </div>
-          <!-- Custom headers -->
-          <div>
-            <div class="flex items-center justify-between mb-1">
-              <span class="text-xs font-medium text-foreground">
-                Custom headers <span class="text-muted-foreground-1 font-normal">(optional)</span>
-              </span>
-              <button
-                type="button"
-                class="text-xs text-primary hover:text-primary-hover transition-colors"
-                onclick={addHeader}
-              >
-                + Add header
-              </button>
-            </div>
-            {#each newHeaders as header, i (i)}
-              <div class="flex items-center gap-x-2 mb-2">
-                <input
-                  type="text"
-                  class="flex-1 py-2 px-3 text-sm font-mono rounded-lg border border-line-2 bg-layer text-foreground focus:outline-hidden focus:border-primary"
-                  placeholder="Header-Name"
-                  bind:value={header.key}
-                />
-                <span class="text-muted-foreground-1 text-sm">:</span>
-                <input
-                  type="text"
-                  class="flex-1 py-2 px-3 text-sm font-mono rounded-lg border border-line-2 bg-layer text-foreground focus:outline-hidden focus:border-primary"
-                  placeholder="value"
-                  bind:value={header.value}
-                />
-                <button
-                  type="button"
-                  class="p-1.5 rounded-md text-muted-foreground-1 hover:text-foreground hover:bg-muted-hover transition-colors"
-                  onclick={() => removeHeader(i)}
-                >
-                  <X size={14} />
-                </button>
-              </div>
-            {/each}
-          </div>
-          <!-- Actions -->
-          <div class="flex items-center justify-end gap-x-2 pt-2">
-            <button
-              type="button"
-              class="py-2 px-4 text-sm font-medium rounded-lg border border-line-2 bg-layer text-foreground hover:bg-layer-hover transition-colors"
-              onclick={resetForm}
-            >
-              Cancel
-            </button>
-            <button
-              type="button"
-              class="py-2 px-4 text-sm font-medium rounded-lg bg-primary text-primary-foreground hover:bg-primary-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              disabled={!canAdd || saving}
-              onclick={addServer}
-            >
-              Add Server
-            </button>
-          </div>
-        </div>
-      </div>
-    {/if}
-
     <!-- Server list -->
-    {#if userServers.length === 0 && !showAddForm}
+    {#if userServers.length === 0}
       <div class="bg-card border border-card-line rounded-xl p-6 text-center">
         <p class="text-sm text-muted-foreground-1">No external MCP servers configured.</p>
-        <button
-          type="button"
-          class="mt-2 text-sm text-primary hover:text-primary-hover transition-colors"
-          onclick={() => showAddForm = true}
-        >
-          Add your first server
-        </button>
       </div>
     {:else}
       {#each userServers as server (server.name)}
@@ -392,35 +212,6 @@
                 <CaretDown size={14} class="text-muted-foreground-1 transition-transform duration-300 shrink-0 {isExpanded ? 'rotate-180' : ''}" />
               {/if}
             </button>
-            <div class="flex items-center gap-x-2 shrink-0 ml-2">
-              <button
-                type="button"
-                class="relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200
-                  {server.enabled ? 'bg-primary' : 'bg-muted'}
-                  {server.source === 'corp' ? 'opacity-50 cursor-not-allowed' : ''}"
-                role="switch"
-                aria-label="{server.enabled ? 'Disable' : 'Enable'} {server.name}"
-                aria-checked={server.enabled}
-                disabled={server.source === 'corp' || saving}
-                onclick={() => toggleServer(server.name, server.enabled)}
-              >
-                <span
-                  class="pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow transition duration-200
-                    {server.enabled ? 'translate-x-4' : 'translate-x-0'}"
-                ></span>
-              </button>
-              {#if server.source !== 'corp'}
-                <button
-                  type="button"
-                  class="p-1.5 rounded-md text-muted-foreground-1 hover:text-destructive-foreground hover:bg-muted-hover transition-colors"
-                  title="Remove server"
-                  disabled={saving}
-                  onclick={() => removeServer(server.name)}
-                >
-                  <Trash size={14} />
-                </button>
-              {/if}
-            </div>
           </div>
           {#if server.url && !isExpanded}
             <div class="px-4 pb-3">

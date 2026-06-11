@@ -240,6 +240,13 @@ pub struct ProfileMutationSummary {
     pub new_size: u64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct McpToolPermissionStatus {
+    pub action: SecurityRuleAction,
+    pub source: String,
+    pub rule_id: Option<String>,
+}
+
 impl ProfileMutationSummary {
     pub fn into_logger_event(
         self,
@@ -548,6 +555,51 @@ impl Profile {
         })
     }
 
+    pub fn mcp_tool_permission(
+        &self,
+        server: &str,
+        tool: &str,
+    ) -> Result<McpToolPermissionStatus, String> {
+        validate_profile_target("mcp server", server)?;
+        validate_profile_target("mcp tool", tool)?;
+        self.ensure_mcp_server_known(server)?;
+
+        let (_, _, _, _, rules) = self.load_verified_enforcement_rules()?;
+        let managed = SecurityRuleManagedTarget::McpTool {
+            server: server.to_string(),
+            tool: tool.to_string(),
+            operation: SecurityRuleManagedOperation::Permission,
+        };
+        let matches = rules
+            .profiles
+            .rules
+            .iter()
+            .filter(|(_, rule)| rule.managed.as_ref() == Some(&managed))
+            .collect::<Vec<_>>();
+        if matches.len() > 1 {
+            return Err(format!(
+                "enforcement file has duplicate managed target {}",
+                managed.identity_key()
+            ));
+        }
+        if let Some((rule_id, rule)) = matches.first() {
+            return mcp_permission_action(rule.action).map(|action| McpToolPermissionStatus {
+                action,
+                source: "profile_managed".to_string(),
+                rule_id: Some(format!("profiles.rules.{rule_id}")),
+            });
+        }
+
+        let default = rules.default.get("mcp").ok_or_else(|| {
+            "default.mcp rule is required for MCP permission readback".to_string()
+        })?;
+        mcp_permission_action(default.action).map(|action| McpToolPermissionStatus {
+            action,
+            source: "default".to_string(),
+            rule_id: Some("default.mcp".to_string()),
+        })
+    }
+
     pub fn upsert_profile_rule(
         &mut self,
         rule_id: &str,
@@ -795,6 +847,17 @@ impl Profile {
     }
 
     fn ensure_mcp_server_known(&self, server: &str) -> Result<(), String> {
+        if server == "local"
+            && self
+                .config
+                .mcp
+                .as_ref()
+                .and_then(|mcp| mcp.server_enabled.get("local"))
+                .copied()
+                .unwrap_or(false)
+        {
+            return Ok(());
+        }
         let descriptor =
             self.config.files.mcp.as_ref().ok_or_else(|| {
                 "profile.files.mcp is required to mutate MCP permissions".to_string()
@@ -813,6 +876,18 @@ impl Profile {
                 descriptor.path
             ))
         }
+    }
+}
+
+fn mcp_permission_action(action: SecurityRuleAction) -> Result<SecurityRuleAction, String> {
+    match action {
+        SecurityRuleAction::Allow | SecurityRuleAction::Ask | SecurityRuleAction::Block => {
+            Ok(action)
+        }
+        other => Err(format!(
+            "MCP tool permission action must be allow, ask, or block, got {}",
+            other.as_str()
+        )),
     }
 }
 

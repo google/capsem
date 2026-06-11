@@ -233,6 +233,8 @@ export interface McpToolInfo {
   pin_hash: string | null;
   approved: boolean;
   pin_changed: boolean;
+  permission_action: ToolPermission;
+  permission_source: string;
 }
 
 /** Per-tool permission decision. */

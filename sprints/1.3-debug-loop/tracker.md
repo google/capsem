@@ -210,10 +210,15 @@
   vocabulary (`builtin` vs external/server-backed), make the UI display that
   exact contract, and prevent builtin/static MCP entries from being shown as
   stopped servers unless there is a real stopped process.
-- [ ] Implement bug 17 after user resumes coding: either implement profile
-  persistence for MCP server/tool edits through the profile object/mutation
-  ledger, or remove/disable the edit affordance and route until it is real; add
-  tests so UI cannot expose unsupported 501 edit paths.
+- [x] Implement bug 17 slice: remove unsupported MCP server add/toggle/delete
+  affordances and frontend helpers that hit the deliberate 501 server edit
+  routes. The MCP UI now only exposes route-backed operations that exist:
+  server/tool list, refresh, and per-tool permission mutation.
+  Proof: `pnpm --dir frontend test -- --run
+  frontend/src/lib/__tests__/api.test.ts
+  frontend/src/lib/__tests__/mcp-store.test.ts`; `pnpm --dir frontend check`;
+  frontend hardcode scan only finds the burned server helpers in negative
+  tests.
 - [ ] Implement bug 18 after user resumes coding: create shared row/icon
   semantics for disabled entries across plugins, MCP, enforcement rules, and
   detection rules: grey/inactive styling for disabled state, plus policy/mode
@@ -222,10 +227,17 @@
   as a visible, editable rule/policy selector where allowed by profile/corp
   constraints; test that changing the selector mutates the same rule contract
   used by enforcement, not a separate MCP policy field.
-- [ ] Implement bug 20 after user resumes coding: add route/UI support for
-  per-tool MCP overrides backed by specific enforcement rules, with tests for
-  precedence over the default MCP rule and no reintroduction of a separate MCP
-  decision engine.
+- [x] Implement bug 20 slice: per-tool MCP overrides are now backed by
+  profile-managed enforcement rules. `Profile::mcp_tool_permission` reads the
+  default MCP rule or the managed override from pinned enforcement TOML,
+  `/profiles/{profile_id}/mcp/servers/{server_id}/tools/list` returns
+  `permission_action` and `permission_source`, and the UI renders a select box
+  for `allow`/`ask`/`block`.
+  Proof: `cargo test -p capsem-core
+  profile_mcp_tool_permission_mutation_updates_rule_and_pin -- --nocapture`;
+  `cargo test -p capsem-service
+  profile_mcp_tool_edit_writes_profile_rule_and_mutation_ledger --
+  --nocapture`; frontend test/check commands above.
 - [ ] Implement bug 21 after user resumes coding: expose/render per-profile
   asset readiness as a checklist: asset name/kind, resolved source, expected
   hash, local path/status, downloaded/verified/missing/error state, and action
@@ -469,6 +481,19 @@
     passed; proves frontend API helpers understand plugin detail routes and
     the credential broker detail endpoint.
   - `pnpm --dir frontend check` passed with zero Svelte/TypeScript warnings.
+  - `cargo test -p capsem-core profile_mcp_tool_permission_mutation_updates_rule_and_pin -- --nocapture`
+    passed; proves MCP tool permission readback resolves the real default MCP
+    rule first, then the profile-managed rule after mutation, while preserving
+    profile file pins.
+  - `cargo test -p capsem-service profile_mcp_tool_edit_writes_profile_rule_and_mutation_ledger -- --nocapture`
+    passed; proves the route mutation writes the profile mutation ledger and
+    `tools/list` returns the effective `permission_action`/`permission_source`.
+  - `pnpm --dir frontend test -- --run frontend/src/lib/__tests__/api.test.ts frontend/src/lib/__tests__/mcp-store.test.ts`
+    passed; proves frontend MCP clients send `{ action }`, require explicit
+    profile ids, and no longer expose unsupported server edit/delete helpers.
+  - `uv run python -m pytest tests/test_config.py -q` passed; proves the
+    generated frontend mock settings data includes the MCP permission fields
+    from the checked-in generator.
   - `cargo test -p capsem-core provider_detection_promotes_unknown_host_by_canonical_model_path -- --nocapture`
     passed; proves canonical OpenAI/Anthropic/Google model paths promote
     unknown hosts into typed model protocol detection.
