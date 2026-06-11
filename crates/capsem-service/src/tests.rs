@@ -2072,6 +2072,69 @@ async fn profile_plugin_endpoint_matrix_dynamically_controls_enforcement_evaluat
 }
 
 #[tokio::test]
+async fn credential_broker_plugin_runtime_reports_session_db_substitutions() {
+    let state = make_test_state();
+    let app = build_service_router(Arc::clone(&state));
+    let dir = tempfile::tempdir().unwrap();
+    let session_dir = dir.path().join("sessions").join("broker-vm");
+    std::fs::create_dir_all(&session_dir).unwrap();
+    insert_fake_instance_with_session_dir(
+        &state,
+        "broker-vm",
+        std::process::id(),
+        session_dir.clone(),
+    );
+
+    let writer = capsem_logger::DbWriter::open(&session_dir.join("session.db"), 16).unwrap();
+    writer
+        .write(capsem_logger::WriteOp::SubstitutionEvent(
+            capsem_logger::SubstitutionEvent {
+                event_id: Some("abc123def456".to_string()),
+                timestamp: std::time::SystemTime::now(),
+                material_class: "credential".to_string(),
+                source: "http.body.response.$.access_token".to_string(),
+                event_type: Some("http.response".to_string()),
+                algorithm: "blake3".to_string(),
+                substitution_ref:
+                    "credential:blake3:1111111111111111111111111111111111111111111111111111111111111111"
+                        .to_string(),
+                outcome: "substituted".to_string(),
+                provider: Some("google".to_string()),
+                confidence: Some(1.0),
+                trace_id: None,
+                context_json: Some(r#"{"domain":"oauth2.googleapis.com"}"#.to_string()),
+            },
+        ))
+        .await;
+    writer.shutdown_blocking();
+
+    let (status, list) = route_request(
+        app,
+        axum::http::Method::GET,
+        "/profiles/code/plugins/list",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{list}");
+    let broker = list["plugins"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|plugin| plugin["id"] == "credential_broker")
+        .expect("credential broker plugin is listed");
+    assert_eq!(broker["runtime"]["event_count"], 1);
+    assert_eq!(broker["runtime"]["rewrite_count"], 1);
+    assert_eq!(
+        broker["runtime"]["brokered_credentials"][0]["credential_ref"],
+        "credential:blake3:1111111111111111111111111111111111111111111111111111111111111111"
+    );
+    assert_eq!(
+        broker["runtime"]["brokered_credentials"][0]["provider"],
+        "google"
+    );
+}
+
+#[tokio::test]
 async fn enforcement_rule_endpoints_add_delete_reload_and_reject_invalid_rules_atomically() {
     let _env_lock = SETTINGS_ENV_LOCK.lock().await;
 

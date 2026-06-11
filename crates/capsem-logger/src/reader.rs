@@ -224,6 +224,16 @@ pub struct SecurityRuleStats {
     pub by_rule: Vec<SecurityRuleStatsByRule>,
 }
 
+/// Brokered credential references regenerated from substitution_events.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct BrokeredCredentialStat {
+    pub provider: Option<String>,
+    pub credential_ref: String,
+    pub observed_count: u64,
+    pub substituted_count: u64,
+    pub last_seen: Option<String>,
+}
+
 /// Shared SQL column list for model_calls SELECT queries.
 const MODEL_CALL_COLUMNS_BASE: &str = "id, timestamp, provider, model, process_name, pid,
      method, path, stream,
@@ -750,6 +760,30 @@ impl DbReader {
             by_event_type,
             by_rule,
         })
+    }
+
+    /// Aggregate credential-broker runtime state from the session DB only.
+    pub fn brokered_credential_stats(&self) -> rusqlite::Result<Vec<BrokeredCredentialStat>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT provider, substitution_ref, COUNT(*),
+                    SUM(CASE WHEN outcome = 'substituted' THEN 1 ELSE 0 END),
+                    MAX(timestamp)
+             FROM substitution_events
+             WHERE material_class = 'credential'
+             GROUP BY provider, substitution_ref
+             ORDER BY MAX(timestamp) DESC
+             LIMIT 100",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok(BrokeredCredentialStat {
+                provider: row.get(0)?,
+                credential_ref: row.get(1)?,
+                observed_count: row.get::<_, i64>(2)? as u64,
+                substituted_count: row.get::<_, i64>(3)? as u64,
+                last_seen: row.get(4)?,
+            })
+        })?;
+        rows.collect()
     }
 
     /// Count net events by decision: returns (total, allowed, denied).

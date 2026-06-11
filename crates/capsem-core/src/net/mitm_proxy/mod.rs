@@ -69,6 +69,8 @@ pub type UpstreamTlsConfig = rustls::ClientConfig;
 
 /// Maximum bytes to buffer when peeking at the TLS ClientHello.
 const MAX_HELLO_SIZE: usize = 16384;
+const AI_BODY_PREVIEW: usize = 64 * 1024;
+const CREDENTIAL_BODY_PREVIEW: usize = 16 * 1024;
 
 static FIRST_NETWORK_READY_EMITTED: AtomicBool = AtomicBool::new(false);
 
@@ -187,6 +189,25 @@ fn ai_provider_for_target(
 
 fn provider_label(provider: Option<ProviderKind>) -> &'static str {
     provider.map(|provider| provider.as_str()).unwrap_or("none")
+}
+
+fn body_preview_cap(
+    ai_provider: Option<ProviderKind>,
+    domain: &str,
+    path: &str,
+    log_bodies: bool,
+    max_body: usize,
+) -> usize {
+    if ai_provider.is_some() {
+        return AI_BODY_PREVIEW.max(if log_bodies { max_body } else { 0 });
+    }
+    if log_bodies {
+        return max_body;
+    }
+    if crate::credential_broker::is_http_body_credential_candidate(domain, path) {
+        return CREDENTIAL_BODY_PREVIEW;
+    }
+    0
 }
 
 #[derive(Clone, Debug, Default)]
@@ -1233,14 +1254,7 @@ async fn handle_request(
     // Track request body (boxed for consistent sender type across requests).
     // Always capture AI provider request bodies for telemetry parsing
     // (model name, tool results, etc.) regardless of log_bodies setting.
-    const AI_BODY_PREVIEW: usize = 64 * 1024;
-    let req_max_preview = if ai_provider.is_some() {
-        AI_BODY_PREVIEW.max(if log_bodies { max_body } else { 0 })
-    } else if log_bodies {
-        max_body
-    } else {
-        0
-    };
+    let req_max_preview = body_preview_cap(ai_provider, domain, &path, log_bodies, max_body);
     let req_stats = Arc::new(Mutex::new(BodyStats {
         bytes: 0,
         preview: Vec::new(),
@@ -1718,15 +1732,10 @@ async fn handle_request(
 
     // Pick the response-side preview cap. AI provider bodies always
     // capture at least AI_BODY_PREVIEW so non-streaming usage parsing
-    // works even when log_bodies is off. Non-AI bodies follow the
-    // log_bodies / max_body_capture policy.
-    let resp_max_preview = if ai_provider.is_some() {
-        AI_BODY_PREVIEW.max(if log_bodies { max_body } else { 0 })
-    } else if log_bodies {
-        max_body
-    } else {
-        0
-    };
+    // works even when log_bodies is off. Credential broker exchange
+    // candidates get a smaller bounded preview for capture/redaction.
+    // Other non-AI bodies follow the log_bodies / max_body_capture policy.
+    let resp_max_preview = body_preview_cap(ai_provider, domain, &path, log_bodies, max_body);
 
     let should_evaluate_model_response =
         ai_provider.is_some_and(|provider| is_llm_api_path(provider, &path));
@@ -1947,4 +1956,55 @@ async fn handle_request(
 
     let response = hyper::Response::from_parts(resp_parts, chunk_dispatched.boxed());
     Ok(response)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn body_preview_cap_captures_oauth_broker_candidates_without_body_logging() {
+        assert_eq!(
+            body_preview_cap(None, "oauth2.googleapis.com", "/token", false, 0),
+            CREDENTIAL_BODY_PREVIEW
+        );
+        assert_eq!(
+            body_preview_cap(
+                None,
+                "api.github.com",
+                "/login/oauth/access_token",
+                false,
+                0
+            ),
+            CREDENTIAL_BODY_PREVIEW
+        );
+    }
+
+    #[test]
+    fn body_preview_cap_keeps_unrelated_non_ai_bodies_off_without_body_logging() {
+        assert_eq!(
+            body_preview_cap(
+                None,
+                "daily-cloudcode-pa.googleapis.com",
+                "/v1internal:streamGenerateContent",
+                false,
+                0
+            ),
+            0
+        );
+    }
+
+    #[test]
+    fn body_preview_cap_keeps_ai_capture_independent_from_body_logging() {
+        assert_eq!(
+            body_preview_cap(
+                Some(ProviderKind::Google),
+                "daily-cloudcode-pa.googleapis.com",
+                "/v1internal:streamGenerateContent",
+                false,
+                0
+            ),
+            AI_BODY_PREVIEW
+        );
+    }
 }

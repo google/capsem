@@ -5650,6 +5650,33 @@ fn service_session_dirs(state: &ServiceState) -> Vec<(String, PathBuf)> {
     sessions.into_iter().collect()
 }
 
+fn profile_session_dirs(state: &ServiceState, profile_id: &str) -> Vec<(String, PathBuf)> {
+    let mut sessions = BTreeMap::new();
+    {
+        let instances = state.instances.lock().unwrap();
+        for (id, info) in instances
+            .iter()
+            .filter(|(_, info)| info.profile_id == profile_id)
+        {
+            sessions.insert(id.clone(), info.session_dir.clone());
+        }
+    }
+    {
+        let registry = state.persistent_registry.lock().unwrap();
+        for (id, entry) in registry
+            .data
+            .vms
+            .iter()
+            .filter(|(_, entry)| entry.profile_id == profile_id)
+        {
+            sessions
+                .entry(id.clone())
+                .or_insert_with(|| entry.session_dir.clone());
+        }
+    }
+    sessions.into_iter().collect()
+}
+
 fn is_detection_rule_event(event: &capsem_logger::SecurityRuleEvent) -> bool {
     event.detection_level != capsem_logger::SecurityDetectionLevel::None
 }
@@ -5885,6 +5912,7 @@ fn plugin_info_for(
         .unwrap()
         .get(&scope.profile_id)
         .is_some_and(|policy| policy.contains_key(plugin_id));
+    let runtime = plugin_runtime_status(state, &scope.profile_id, plugin_id, config);
     Ok(PluginInfo {
         id: plugin_id.to_string(),
         config,
@@ -5894,12 +5922,17 @@ fn plugin_info_for(
         description: catalog_entry.description,
         stage: catalog_entry.stage,
         version: catalog_entry.version,
-        runtime: plugin_runtime_status(plugin_id, config),
+        runtime,
     })
 }
 
-fn plugin_runtime_status(_plugin_id: &str, config: SecurityPluginConfig) -> PluginRuntimeStatus {
-    PluginRuntimeStatus {
+fn plugin_runtime_status(
+    state: &ServiceState,
+    profile_id: &str,
+    plugin_id: &str,
+    config: SecurityPluginConfig,
+) -> PluginRuntimeStatus {
+    let mut status = PluginRuntimeStatus {
         enabled: config.mode != SecurityPluginMode::Disable,
         event_count: 0,
         detection_count: 0,
@@ -5907,7 +5940,66 @@ fn plugin_runtime_status(_plugin_id: &str, config: SecurityPluginConfig) -> Plug
         rewrite_count: 0,
         last_error: None,
         brokered_credentials: Vec::new(),
+    };
+    if plugin_id == "credential_broker" {
+        hydrate_credential_broker_runtime(state, profile_id, &mut status);
     }
+    status
+}
+
+fn hydrate_credential_broker_runtime(
+    state: &ServiceState,
+    profile_id: &str,
+    status: &mut PluginRuntimeStatus,
+) {
+    let mut credentials: BTreeMap<(Option<String>, String), BrokeredCredentialStatus> =
+        BTreeMap::new();
+    for (vm_id, session_dir) in profile_session_dirs(state, profile_id) {
+        let db_path = session_dir.join("session.db");
+        if !db_path.exists() {
+            continue;
+        }
+        let reader = match capsem_logger::DbReader::open(&db_path) {
+            Ok(reader) => reader,
+            Err(error) => {
+                status.last_error = Some(format!("failed to open session DB for {vm_id}: {error}"));
+                continue;
+            }
+        };
+        let rows = match reader.brokered_credential_stats() {
+            Ok(rows) => rows,
+            Err(error) => {
+                status.last_error = Some(format!(
+                    "failed to read credential broker rows for {vm_id}: {error}"
+                ));
+                continue;
+            }
+        };
+        for row in rows {
+            status.event_count += row.observed_count;
+            status.rewrite_count += row.substituted_count;
+            let key = (row.provider.clone(), row.credential_ref.clone());
+            credentials
+                .entry(key)
+                .and_modify(|existing| {
+                    existing.observed_count += row.observed_count;
+                    existing.substituted_count += row.substituted_count;
+                    if row.last_seen.as_deref() > existing.last_seen.as_deref() {
+                        existing.last_seen = row.last_seen.clone();
+                    }
+                })
+                .or_insert(BrokeredCredentialStatus {
+                    provider: row.provider,
+                    credential_ref: row.credential_ref,
+                    observed_count: row.observed_count,
+                    substituted_count: row.substituted_count,
+                    last_seen: row.last_seen,
+                });
+        }
+    }
+    let mut values: Vec<_> = credentials.into_values().collect();
+    values.sort_by(|left, right| right.last_seen.cmp(&left.last_seen));
+    status.brokered_credentials = values;
 }
 
 async fn handle_profile_plugins(

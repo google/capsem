@@ -103,6 +103,16 @@
   with a local hermetic flow, expose broker/plugin counters and recent evidence
   as first-class stats, and ensure UI/TUI do not bury it under generic process
   activity.
+  - [x] Credential broker OAuth/runtime slice: live DB proved AGY OAuth traffic
+    hit `oauth2.googleapis.com/token` but body previews were empty and
+    `substitution_events=0`. Added Google OAuth JSON/form credential detection,
+    broker-owned credential-candidate preview caps for MITM request/response
+    bodies, and profile plugin runtime status derived from session DB
+    `substitution_events` via `capsem-logger::DbReader`.
+  - [ ] Remaining: verify against a rebuilt service/VM without destroying the
+    current evidence VM, expose richer credential-broker capability/status in
+    the UI/VM stats, and add a hermetic OAuth/broker flow once the local HTTP
+    test server is in the next-gen testing harness.
 - [ ] Implement bug 5 after user resumes coding: define what process audit is
   supposed to represent, fix timestamp semantics if it is a snapshot, and rename
   or reshape the UI so it reflects the actual data contract rather than a vague
@@ -207,6 +217,11 @@
     the running profile.
   - Credential broker events may be emitted as generic process/file evidence
     instead of first-class broker/plugin security evidence.
+  - Verified root cause for AGY OAuth broker silence: non-AI OAuth request and
+    response body preview caps were zero when `log_bodies=false`, so the broker
+    never saw the `oauth2.googleapis.com/token` body. Runtime plugin status was
+    also a placeholder that always returned zero counters even if broker rows
+    existed in session DB.
   - Process audit may be rendering snapshot collection time for every row
     rather than per-process start time or per-event emission time.
   - Process audit may be mixing inventory/snapshot data with security-event
@@ -296,6 +311,25 @@
   - `cargo test -p capsem-core agy_cloudcode_stream_generate_content_is_a_model_call -- --nocapture`
     passed; proves AGY Cloud Code generation paths emit model telemetry when
     provider metadata is present.
+  - `cargo test -p capsem-core --lib http_body_detector_finds_google_oauth -- --nocapture`
+    passed; proves Google OAuth JSON and form token exchanges are recognized
+    and redacted by the credential broker.
+  - `cargo test -p capsem-core --lib http_body_credential_candidate_is_limited_to_known_exchange_paths -- --nocapture`
+    passed; proves broker-owned body preview enablement stays scoped to known
+    credential exchange paths.
+  - `cargo test -p capsem-core --lib net::mitm_proxy::tests:: -- --nocapture`
+    passed; proves OAuth broker candidates get bounded body previews while
+    unrelated non-AI HTTP stays at zero preview when body logging is off.
+  - `cargo test -p capsem-core --lib net::mitm_proxy::telemetry_hook::tests:: -- --nocapture`
+    passed; proves telemetry still emits/redacts broker substitution events and
+    AGY Cloud Code model telemetry.
+  - `cargo test -p capsem-service credential_broker_plugin_runtime_reports_session_db_substitutions -- --nocapture`
+    passed; proves `/profiles/{profile_id}/plugins/list` reports credential
+    broker counters and refs from session DB substitution ledger rows.
+  - `cargo test -p capsem-service profile_plugin_endpoint_matrix_dynamically_controls_enforcement_evaluation -- --nocapture`
+    passed after one transient local code-sign wrapper retry; proves the plugin
+    endpoint matrix still controls enforcement evaluation.
+  - `cargo check -p capsem-core -p capsem-logger -p capsem-service` passed.
 - Functional: focused source tests passed; live install not restarted or killed
   per evidence-preservation rule.
 - Adversarial: pending; must include AGY activity that bypasses model stats

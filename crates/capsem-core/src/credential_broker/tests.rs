@@ -106,6 +106,60 @@ fn http_body_detector_finds_github_token_exchange_and_redacts_body() {
 }
 
 #[test]
+fn http_body_detector_finds_google_oauth_json_response_without_token_prefix() {
+    let body = br#"{"access_token":"ya29.live-access-token","refresh_token":"1//live-refresh-token","expires_in":3599}"#;
+    let found = detect_http_body_credentials("oauth2.googleapis.com", "/token", "response", body);
+
+    assert_eq!(found.len(), 2);
+    assert!(found
+        .iter()
+        .all(|obs| obs.provider == CredentialProvider::Google));
+    assert!(found
+        .iter()
+        .any(|obs| obs.source == "http.body.response.$.access_token"));
+    assert!(found
+        .iter()
+        .any(|obs| obs.source == "http.body.response.$.refresh_token"));
+
+    let redacted = String::from_utf8(redact_observed_credentials_in_bytes(body, &found)).unwrap();
+    assert!(redacted.contains("credential:blake3:"));
+    assert!(!redacted.contains("ya29.live-access-token"));
+    assert!(!redacted.contains("1//live-refresh-token"));
+}
+
+#[test]
+fn http_body_detector_finds_google_oauth_form_request() {
+    let body = b"grant_type=authorization_code&code=4%2F0AfJohXsecret&client_id=public-client";
+    let found = detect_http_body_credentials("oauth2.googleapis.com", "/token", "request", body);
+
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].provider, CredentialProvider::Google);
+    assert_eq!(found[0].raw_value, "4/0AfJohXsecret");
+    assert_eq!(found[0].source, "http.body.request.form.code");
+
+    let redacted = String::from_utf8(redact_observed_credentials_in_bytes(body, &found)).unwrap();
+    assert!(redacted.contains("credential:blake3:"));
+    assert!(!redacted.contains("4/0AfJohXsecret"));
+}
+
+#[test]
+fn http_body_credential_candidate_is_limited_to_known_exchange_paths() {
+    assert!(is_http_body_credential_candidate(
+        "oauth2.googleapis.com",
+        "/token"
+    ));
+    assert!(is_http_body_credential_candidate(
+        "api.github.com",
+        "/login/oauth/access_token"
+    ));
+    assert!(!is_http_body_credential_candidate(
+        "daily-cloudcode-pa.googleapis.com",
+        "/v1internal:streamGenerateContent"
+    ));
+    assert!(!is_http_body_credential_candidate("example.com", "/token"));
+}
+
+#[test]
 fn substitution_is_domain_separated_by_provider() {
     let raw = "shared-token";
     let github = substitute_credential_value(CredentialProvider::Github, raw);

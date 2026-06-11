@@ -220,13 +220,20 @@ pub fn detect_http_body_credentials(
     let Ok(text) = std::str::from_utf8(body) else {
         return Vec::new();
     };
-    let Ok(json) = serde_json::from_str::<serde_json::Value>(text) else {
-        return Vec::new();
-    };
 
     let mut found = Vec::new();
-    collect_json_credentials(domain, path, direction, "$", &json, &mut found);
+    if let Ok(json) = serde_json::from_str::<serde_json::Value>(text) {
+        collect_json_credentials(domain, path, direction, "$", &json, &mut found);
+        return found;
+    }
+
+    collect_form_credentials(domain, path, direction, text, &mut found);
     found
+}
+
+pub fn is_http_body_credential_candidate(domain: &str, path: &str) -> bool {
+    (domain.ends_with("googleapis.com") && (path.contains("/token") || path.contains("oauth")))
+        || (domain.ends_with("github.com") && path.contains("oauth"))
 }
 
 pub fn substitute_credential_value(provider: CredentialProvider, raw_value: &str) -> String {
@@ -246,6 +253,10 @@ pub fn redact_observed_credentials_in_bytes(
     let mut redacted = text.to_string();
     for observation in observations {
         redacted = redacted.replace(&observation.raw_value, &observation.credential_ref());
+        let encoded = percent_encode_query_value(&observation.raw_value);
+        if encoded != observation.raw_value {
+            redacted = redacted.replace(&encoded, &observation.credential_ref());
+        }
     }
     redacted.into_bytes()
 }
@@ -530,7 +541,7 @@ fn collect_json_credentials(
             for (key, child) in map {
                 let child_path = format!("{json_path}.{key}");
                 if let Some(raw) = child.as_str() {
-                    if let Some(provider) = provider_for_token(domain, key, raw.trim()) {
+                    if let Some(provider) = provider_for_body_field(domain, path, key, raw.trim()) {
                         out.push(CredentialObservation {
                             provider,
                             raw_value: raw.trim().to_string(),
@@ -559,6 +570,82 @@ fn collect_json_credentials(
         }
         _ => {}
     }
+}
+
+fn collect_form_credentials(
+    domain: &str,
+    path: &str,
+    direction: &str,
+    text: &str,
+    out: &mut Vec<CredentialObservation>,
+) {
+    if !text.contains('=') {
+        return;
+    }
+    for part in text.split('&') {
+        let Some((key, value)) = part.split_once('=') else {
+            continue;
+        };
+        let Ok(raw) = percent_decode(value) else {
+            continue;
+        };
+        let raw = raw.trim();
+        if raw.is_empty() {
+            continue;
+        }
+        if let Some(provider) = provider_for_body_field(domain, path, key, raw) {
+            out.push(CredentialObservation {
+                provider,
+                raw_value: raw.to_string(),
+                source: format!("http.body.{direction}.form.{key}"),
+                event_type: Some(format!("http.{direction}")),
+                confidence: 1.0,
+                trace_id: None,
+                context_json: Some(format!(
+                    r#"{{"domain":"{}","path":"{}","form_key":"{}","direction":"{}"}}"#,
+                    json_escape(domain),
+                    json_escape(path),
+                    json_escape(key),
+                    json_escape(direction)
+                )),
+            });
+        }
+    }
+}
+
+fn provider_for_body_field(
+    domain: &str,
+    path: &str,
+    field_name: &str,
+    value: &str,
+) -> Option<CredentialProvider> {
+    provider_for_oauth_field(domain, path, field_name, value)
+        .or_else(|| provider_for_token(domain, field_name, value))
+}
+
+fn provider_for_oauth_field(
+    domain: &str,
+    path: &str,
+    field_name: &str,
+    value: &str,
+) -> Option<CredentialProvider> {
+    if value.trim().is_empty() {
+        return None;
+    }
+    let field = field_name.to_ascii_lowercase();
+    if !matches!(
+        field.as_str(),
+        "access_token" | "refresh_token" | "id_token" | "code" | "device_code" | "client_secret"
+    ) {
+        return None;
+    }
+    if domain.ends_with("googleapis.com") && is_http_body_credential_candidate(domain, path) {
+        return Some(CredentialProvider::Google);
+    }
+    if domain.ends_with("github.com") && is_http_body_credential_candidate(domain, path) {
+        return Some(CredentialProvider::Github);
+    }
+    None
 }
 
 fn bearer_value(value: &str) -> Option<&str> {
