@@ -193,10 +193,13 @@
   - [x] TUI/CLI proof: status and shell/profile selection paths list both
     profile-backed options and do not synthesize defaults.
     Proof: `cargo test -p capsem-tui gateway_provider_ -- --nocapture`.
-- [ ] Implement bug 13 after user resumes coding: burn/rename the generic
-  `Policy` UI surface and replace it with route-backed enforcement, detection,
-  and plugin views that list rules/plugins from the contract, show source files
-  and defaults, and expose allowed edits with enum/select/toggle controls.
+- [x] Implement bug 13 slice: burn the Profile UI's generic `Policy` tab and
+  split it into first-class `Enforcement` and `Detection` tabs backed by the
+  existing profile rule routes. Plugins remain a separate plugin route surface.
+  Proof: `pnpm --dir frontend test -- --run
+  frontend/src/lib/__tests__/profile-page-contract.test.ts`; `pnpm --dir
+  frontend check`; frontend source scan only finds old policy names in negative
+  tests.
 - [ ] Implement bug 14 after user resumes coding: default dummy plugins to
   disabled, render disabled plugins as inactive/greyed out, and add consistent
   iconography for ask/block/pass-or-allow/rewrite/disable modes using the
@@ -500,6 +503,9 @@
   - `pnpm --dir frontend test -- --run frontend/src/lib/__tests__/api.test.ts frontend/src/lib/__tests__/mcp-store.test.ts`
     passed; proves frontend MCP clients send `{ action }`, require explicit
     profile ids, and no longer expose unsupported server edit/delete helpers.
+  - `pnpm --dir frontend test -- --run frontend/src/lib/__tests__/profile-page-contract.test.ts`
+    passed; proves the Profile UI exposes enforcement and detection as
+    first-class tabs instead of a generic policy tab.
   - `uv run python -m pytest tests/test_config.py -q` passed; proves the
     generated frontend mock settings data includes the MCP permission fields
     from the checked-in generator.

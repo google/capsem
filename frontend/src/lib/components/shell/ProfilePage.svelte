@@ -17,7 +17,7 @@
   import HardDrives from 'phosphor-svelte/lib/HardDrives';
   import IdentificationCard from 'phosphor-svelte/lib/IdentificationCard';
 
-  type Section = 'overview' | 'policy' | 'plugins' | 'mcp' | 'assets';
+  type Section = 'overview' | 'enforcement' | 'detection' | 'plugins' | 'mcp' | 'assets';
   let activeSection = $state<Section>('overview');
   let profiles = $state<ProfileSummary[]>([]);
   let profileId = $state('');
@@ -30,7 +30,8 @@
 
   const navItems: { key: Section; label: string; icon: typeof Shield }[] = [
     { key: 'overview', label: 'Overview', icon: IdentificationCard },
-    { key: 'policy', label: 'Policy', icon: Shield },
+    { key: 'enforcement', label: 'Enforcement', icon: Shield },
+    { key: 'detection', label: 'Detection', icon: Shield },
     { key: 'plugins', label: 'Plugins', icon: Plugs },
     { key: 'mcp', label: 'MCP', icon: Plugs },
     { key: 'assets', label: 'Assets', icon: HardDrives },
@@ -180,49 +181,43 @@
               </div>
             </div>
           </div>
-        {:else if activeSection === 'policy'}
-          <h2 class="text-xl font-medium text-foreground mb-6">Policy</h2>
-          <div class="grid grid-cols-2 gap-6">
-            <section>
-              <h3 class="text-xs font-semibold text-foreground uppercase tracking-wider mb-2">Enforcement</h3>
-              <div class="bg-card border border-card-line rounded-xl divide-y divide-card-divider">
-                {#each enforcementRules as rule (rule.rule_id)}
-                  <div class="p-4">
-                    <div class="flex items-start justify-between gap-x-3">
-                      <div class="min-w-0">
-                        <p class="text-sm font-medium text-foreground truncate">{rule.name}</p>
-                        {#if rule.reason}
-                          <p class="text-xs text-muted-foreground-1 mt-0.5 line-clamp-2">{rule.reason}</p>
-                        {/if}
-                      </div>
-                      <span class="text-xs px-2 py-0.5 rounded-full bg-muted text-muted-foreground-1 shrink-0">{rule.action}</span>
-                    </div>
-                    <p class="text-[11px] text-muted-foreground-2 mt-2 font-mono truncate">{rule.rule_id}</p>
-                    <p class="text-[11px] text-muted-foreground-2 mt-1">{sourceLabel(rule)} · priority {rule.priority}</p>
+        {:else if activeSection === 'enforcement'}
+          <h2 class="text-xl font-medium text-foreground mb-6">Enforcement</h2>
+          <div class="bg-card border border-card-line rounded-xl divide-y divide-card-divider">
+            {#each enforcementRules as rule (rule.rule_id)}
+              <div class="p-4">
+                <div class="flex items-start justify-between gap-x-3">
+                  <div class="min-w-0">
+                    <p class="text-sm font-medium text-foreground truncate">{rule.name}</p>
+                    {#if rule.reason}
+                      <p class="text-xs text-muted-foreground-1 mt-0.5 line-clamp-2">{rule.reason}</p>
+                    {/if}
                   </div>
-                {/each}
+                  <span class="text-xs px-2 py-0.5 rounded-full bg-muted text-muted-foreground-1 shrink-0">{rule.action}</span>
+                </div>
+                <p class="text-[11px] text-muted-foreground-2 mt-2 font-mono truncate">{rule.rule_id}</p>
+                <p class="text-[11px] text-muted-foreground-2 mt-1">{sourceLabel(rule)} · priority {rule.priority}</p>
               </div>
-            </section>
-            <section>
-              <h3 class="text-xs font-semibold text-foreground uppercase tracking-wider mb-2">Detection</h3>
-              <div class="bg-card border border-card-line rounded-xl divide-y divide-card-divider">
-                {#each detectionRules as rule (rule.rule_id)}
-                  <div class="p-4">
-                    <div class="flex items-start justify-between gap-x-3">
-                      <div class="min-w-0">
-                        <p class="text-sm font-medium text-foreground truncate">{rule.name}</p>
-                        {#if rule.reason}
-                          <p class="text-xs text-muted-foreground-1 mt-0.5 line-clamp-2">{rule.reason}</p>
-                        {/if}
-                      </div>
-                      <span class="text-xs px-2 py-0.5 rounded-full bg-muted text-muted-foreground-1 shrink-0">{rule.detection_level ?? 'none'}</span>
-                    </div>
-                    <p class="text-[11px] text-muted-foreground-2 mt-2 font-mono truncate">{rule.rule_id}</p>
-                    <p class="text-[11px] text-muted-foreground-2 mt-1">{sourceLabel(rule)} · priority {rule.priority}</p>
+            {/each}
+          </div>
+        {:else if activeSection === 'detection'}
+          <h2 class="text-xl font-medium text-foreground mb-6">Detection</h2>
+          <div class="bg-card border border-card-line rounded-xl divide-y divide-card-divider">
+            {#each detectionRules as rule (rule.rule_id)}
+              <div class="p-4">
+                <div class="flex items-start justify-between gap-x-3">
+                  <div class="min-w-0">
+                    <p class="text-sm font-medium text-foreground truncate">{rule.name}</p>
+                    {#if rule.reason}
+                      <p class="text-xs text-muted-foreground-1 mt-0.5 line-clamp-2">{rule.reason}</p>
+                    {/if}
                   </div>
-                {/each}
+                  <span class="text-xs px-2 py-0.5 rounded-full bg-muted text-muted-foreground-1 shrink-0">{rule.detection_level ?? 'none'}</span>
+                </div>
+                <p class="text-[11px] text-muted-foreground-2 mt-2 font-mono truncate">{rule.rule_id}</p>
+                <p class="text-[11px] text-muted-foreground-2 mt-1">{sourceLabel(rule)} · priority {rule.priority}</p>
               </div>
-            </section>
+            {/each}
           </div>
         {:else if activeSection === 'plugins'}
           <PluginSection {profileId} />

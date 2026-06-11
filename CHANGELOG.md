@@ -97,6 +97,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Clarified MCP builtin display semantics: the profile-owned `local` Capsem MCP
   entry is rendered as built-in capability, not as a stopped external server,
   and frontend runtime counts exclude static builtin MCP entries.
+- Split the Profile UI's retired generic `Policy` section into explicit
+  `Enforcement` and `Detection` route-backed tabs, with a frontend contract
+  test guarding against reintroducing the old policy tab.
 - Cleaned the admin/doctor/status/debug rails so diagnostics follow the profile
   contract: builder doctor delegates profile validation to `capsem-admin
   profile check`, Justfile asset builds no longer pass legacy guest-config
