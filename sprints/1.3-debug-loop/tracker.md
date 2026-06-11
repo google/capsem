@@ -85,8 +85,8 @@
   expose structured info/status/capabilities/counters that the UI can render.
   Plugins may also expose typed route-backed detail surfaces for custom UI
   panels when generic counters are not enough; credential broker needs such a
-  panel for inventory, grants, capture/replay evidence, and profile/fork
-  exposure.
+  panel for inventory, per-profile/per-VM grants, capture/replay evidence, and
+  profile/fork exposure.
 - [x] Capture bug 24: AI provider detection is host/registry-biased and misses
   unknown-domain OpenAI/Gemini/Claude-compatible traffic. Bounded
   request/response sniffing should detect protocol shape, emit
@@ -96,8 +96,10 @@
 - [x] Capture bug 25: brokered credentials are not yet a complete next-VM reuse
   loop. The broker should accumulate credentials over time as an opaque
   credential vault, then expose only allowed credential capabilities/refs to
-  each profile or forked VM. AGY/Gemini/Claude/Codex auth replay/refresh is one
-  consumer of that vault, not a guest config-writing shortcut.
+  each profile or forked VM. Corp config can constrain the broker plugin, such
+  as disallowing selected OAuth providers or flows. AGY/Gemini/Claude/Codex
+  auth replay/refresh is one consumer of that vault, not a guest config-writing
+  shortcut.
 - [x] Implement bug 1 slice: TDD over CLI purge messaging, service purge of
   defunct persistent VMs, and TUI resume gating from `can_resume`.
 - [x] Implement bug 2 slice: TDD over the checked-in code profile installer so
@@ -214,7 +216,8 @@
   status, counters, last activity, recent evidence links, and optional typed
   detail routes for plugin-specific UI. Render the generic contract in plugin
   UI/VM stats, and add a credential-broker-specific route/panel for inventory,
-  grants, capture/replay evidence, and profile/fork exposure.
+  grant editing/visibility per profile and VM, corp-denied provider/flow
+  constraints, capture/replay evidence, and profile/fork exposure.
 - [ ] Implement bug 24 after user resumes coding: add TDD for unknown-domain AI
   protocol sniffing and rogue/custom endpoint detection. The fix must use
   bounded request/response previews, set first-party `model.provider` on the
@@ -224,11 +227,14 @@
 - [ ] Implement bug 25 after user resumes coding: complete broker reuse across
   VM lifecycles. Add broker inventory and grant semantics so accumulated
   credential refs can be exposed per profile and inherited/limited by forked
-  VMs. Add broker/provider adapters that recognize repeated auth/token-refresh
-  dances from observed request shape, satisfy or replay the exchange host-side
-  only when the active profile/fork has the credential capability, and add an
-  AGY/Google OAuth e2e showing a second VM can reuse a valid brokered exchange
-  without exposing raw secrets or requiring a user-facing OAuth dance.
+  VMs, with explicit controls to turn credential use on/off for a profile or
+  VM. Add corp plugin constraints that can disallow selected OAuth providers or
+  flows. Add broker/provider adapters that recognize repeated
+  auth/token-refresh dances from observed request shape, satisfy or replay the
+  exchange host-side only when the active profile/fork has the credential
+  capability and corp constraints permit it, and add an AGY/Google OAuth e2e
+  showing a second VM can reuse a valid brokered exchange without exposing raw
+  secrets or requiring a user-facing OAuth dance.
 - [ ] Broker/provider hardening lane dependency: bugs 4, 23, 24, and 25 must be
   validated together. Provider on/off is only trustworthy when provider
   detection, profile enforcement, broker capture/replay, and plugin/broker
@@ -272,14 +278,14 @@
   - Broker capture and replay are currently separate primitives: Keychain/test
     storage plus `credential:blake3:<hash>` refs exist, and some HTTP/MCP
     paths can rehydrate refs when explicitly configured. What is missing is the
-    broker ledger between them: accumulated credential inventory, per-profile
-    and per-fork exposure/grants, and structured evidence for why a credential
-    was or was not available to a VM.
+    broker ledger between them: accumulated credential inventory, per-profile,
+    per-VM, and per-fork exposure/grants, corp plugin constraints, and
+    structured evidence for why a credential was or was not available to a VM.
   - For AGY/Google OAuth specifically, the missing adapter is not a guest
     config file; it is a broker-owned request-shape adapter that recognizes the
     captured dance and satisfies the token/refresh exchange at the host boundary
-    with structured logging after profile/fork grants and provider enforcement
-    allow it.
+    with structured logging after profile/fork/VM grants, corp broker
+    constraints, and provider enforcement allow it.
   - Spike shape for bug 25: launch AGY, capture the exact OAuth/token requests
     and responses, add the minimal host-side replay/refresh adapter, then retry
     AGY in a fresh VM and prove the guest no longer requires a user-facing auth
