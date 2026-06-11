@@ -344,25 +344,25 @@ mod tests {
     use crate::net::policy_config::{SecurityRuleProfile, SecurityRuleSource};
 
     struct EnvGuard {
-        old_user: Option<String>,
+        old_home_override: Option<String>,
         old_home: Option<String>,
         old_store: Option<String>,
     }
 
     impl EnvGuard {
         fn install(
-            user_config: &std::path::Path,
+            capsem_home: &std::path::Path,
             home: &std::path::Path,
             test_store: &std::path::Path,
         ) -> Self {
-            let old_user = std::env::var("CAPSEM_USER_CONFIG").ok();
+            let old_home_override = std::env::var("CAPSEM_HOME").ok();
             let old_home = std::env::var("HOME").ok();
             let old_store = std::env::var(crate::credential_broker::TEST_STORE_ENV).ok();
-            std::env::set_var("CAPSEM_USER_CONFIG", user_config);
+            std::env::set_var("CAPSEM_HOME", capsem_home);
             std::env::set_var("HOME", home);
             std::env::set_var(crate::credential_broker::TEST_STORE_ENV, test_store);
             Self {
-                old_user,
+                old_home_override,
                 old_home,
                 old_store,
             }
@@ -371,9 +371,9 @@ mod tests {
 
     impl Drop for EnvGuard {
         fn drop(&mut self) {
-            match &self.old_user {
-                Some(v) => std::env::set_var("CAPSEM_USER_CONFIG", v),
-                None => std::env::remove_var("CAPSEM_USER_CONFIG"),
+            match &self.old_home_override {
+                Some(v) => std::env::set_var("CAPSEM_HOME", v),
+                None => std::env::remove_var("CAPSEM_HOME"),
             }
             match &self.old_home {
                 Some(v) => std::env::set_var("HOME", v),
@@ -599,9 +599,9 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let db_path = dir.path().join("session.db");
         let env_path = dir.path().join(".env");
-        let user_config = dir.path().join("user.toml");
+        let capsem_home = dir.path().join("capsem-home");
         let test_store = dir.path().join("credential-store.json");
-        let _guard = EnvGuard::install(&user_config, dir.path(), &test_store);
+        let _guard = EnvGuard::install(&capsem_home, dir.path(), &test_store);
         std::fs::write(&env_path, "OPENAI_API_KEY=sk-env-secret\n").unwrap();
 
         let db = DbWriter::open(&db_path, 64).unwrap();

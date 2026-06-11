@@ -1,22 +1,19 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use super::provider_profile::ProviderDiscoveryPatch;
 use super::types::{McpServerDef, McpTransport, PolicySource};
 use super::{
-    setting_id_owner, validate_stored_setting_contract, ConfigOwner, SettingValue, SettingsFile,
+    setting_id_owner, validate_corp_toml_contract, validate_settings_toml_contract,
+    validate_stored_setting_contract, ConfigOwner, SettingValue, SettingsFile,
 };
 
 // ---------------------------------------------------------------------------
 // File I/O
 // ---------------------------------------------------------------------------
 
-/// User config path: `<capsem_home>/user.toml` (overridable via CAPSEM_USER_CONFIG)
-pub fn user_config_path() -> Option<std::path::PathBuf> {
-    if let Ok(path) = std::env::var("CAPSEM_USER_CONFIG") {
-        return Some(std::path::PathBuf::from(path));
-    }
-    crate::paths::capsem_home_opt().map(|h| h.join("user.toml"))
+/// Local UI settings path: `<capsem_home>/settings.toml`.
+pub fn settings_config_path() -> Option<std::path::PathBuf> {
+    crate::paths::capsem_home_opt().map(|h| h.join("settings.toml"))
 }
 
 /// Corporate config path: returns the first available corp config path.
@@ -76,6 +73,22 @@ pub fn load_settings_file(path: &Path) -> Result<SettingsFile, String> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(SettingsFile::default()),
         Err(e) => Err(format!("failed to read {}: {}", path.display(), e)),
     }
+}
+
+/// Load a local UI/application settings file and reject profile-owned behavior.
+pub fn load_local_settings_file(path: &Path) -> Result<SettingsFile, String> {
+    let file = load_settings_file(path)?;
+    validate_settings_toml_contract(&file)
+        .map_err(|e| format!("failed to validate {}: {e}", path.display()))?;
+    Ok(file)
+}
+
+/// Load a corporate constraint file and reject UI preferences.
+pub fn load_corp_settings_file(path: &Path) -> Result<SettingsFile, String> {
+    let file = load_settings_file(path)?;
+    validate_corp_toml_contract(&file)
+        .map_err(|e| format!("failed to validate {}: {e}", path.display()))?;
+    Ok(file)
 }
 
 fn reject_retired_mcp_policy_keys(path: &Path, content: &str) -> Result<(), String> {
@@ -288,14 +301,14 @@ pub fn write_settings_file(path: &Path, file: &SettingsFile) -> Result<(), Strin
     std::fs::write(path, content).map_err(|e| format!("failed to write {}: {}", path.display(), e))
 }
 
-/// Load both settings files from standard locations.
+/// Load local UI settings and corp constraints from standard locations.
 ///
 /// Corp config merges all available paths (system + user-provisioned).
 /// First path wins per-key (/etc/capsem/corp.toml overrides ~/.capsem/corp.toml).
-pub fn load_settings_files() -> (SettingsFile, SettingsFile) {
-    let user = match user_config_path() {
-        Some(path) => load_settings_file(&path).unwrap_or_else(|e| {
-            tracing::warn!("user settings: {e}");
+pub fn load_settings_and_corp_files() -> (SettingsFile, SettingsFile) {
+    let settings = match settings_config_path() {
+        Some(path) => load_local_settings_file(&path).unwrap_or_else(|e| {
+            tracing::warn!("local settings: {e}");
             SettingsFile::default()
         }),
         None => SettingsFile::default(),
@@ -303,7 +316,7 @@ pub fn load_settings_files() -> (SettingsFile, SettingsFile) {
 
     let mut corp = SettingsFile::default();
     for path in corp_config_paths() {
-        match load_settings_file(&path) {
+        match load_corp_settings_file(&path) {
             Ok(file) => {
                 // First path wins per-key: only insert if not already present
                 for (id, entry) in file.settings {
@@ -342,12 +355,12 @@ pub fn load_settings_files() -> (SettingsFile, SettingsFile) {
         }
     }
 
-    (user, corp)
+    (settings, corp)
 }
 
-/// Write user settings to ~/.capsem/user.toml.
-pub fn write_user_settings(file: &SettingsFile) -> Result<(), String> {
-    let path = user_config_path().ok_or("HOME not set")?;
+/// Write local UI settings to `<capsem_home>/settings.toml`.
+pub fn write_local_settings(file: &SettingsFile) -> Result<(), String> {
+    let path = settings_config_path().ok_or("HOME not set")?;
     write_settings_file(&path, file)
 }
 
@@ -356,29 +369,10 @@ pub fn can_write_corp_settings() -> bool {
     false
 }
 
-/// Load the merged MCP user config (user + corp).
-/// Corp fields override user fields.
-pub fn load_mcp_user_config() -> crate::mcp::policy::McpUserConfig {
-    let (user, corp) = load_settings_files();
-    let user_mcp = user.mcp.unwrap_or_default();
-    let _corp_mcp = corp.mcp.unwrap_or_default();
-    // Note: merging is done at policy evaluation time via to_policy().
-    // This returns the user's config; corp is loaded separately.
-    user_mcp
-}
-
 /// Load the corp MCP config.
 pub fn load_mcp_corp_config() -> crate::mcp::policy::McpUserConfig {
-    let (_, corp) = load_settings_files();
+    let (_, corp) = load_settings_and_corp_files();
     corp.mcp.unwrap_or_default()
-}
-
-/// Save MCP user config to user.toml without clobbering settings.
-pub fn save_mcp_user_config(mcp: &crate::mcp::policy::McpUserConfig) -> Result<(), String> {
-    let path = user_config_path().ok_or("HOME not set")?;
-    let mut file = load_settings_file(&path)?;
-    file.mcp = Some(mcp.clone());
-    write_settings_file(&path, &file)
 }
 
 // ---------------------------------------------------------------------------
@@ -498,9 +492,9 @@ fn parse_mcp_section_json(json_str: &str, source: PolicySource) -> Vec<McpServer
     servers
 }
 
-/// Load and merge MCP server definitions from defaults, user, and corp configs.
+/// Load and merge MCP server definitions from defaults and corp configs.
 ///
-/// Resolution: corp > user > defaults (per key). Corp entries are corp_locked.
+/// Resolution: corp > defaults (per key). Corp entries are corp_locked.
 pub fn load_mcp_servers() -> Vec<McpServerDef> {
     use super::registry::DEFAULTS_JSON;
 
@@ -511,24 +505,15 @@ pub fn load_mcp_servers() -> Vec<McpServerDef> {
         by_key.insert(s.key.clone(), s);
     }
 
-    // 2. User overrides
-    let user_toml = match user_config_path() {
-        Some(path) => std::fs::read_to_string(&path).unwrap_or_default(),
-        None => String::new(),
-    };
-    for s in parse_mcp_section(&user_toml, PolicySource::User) {
-        by_key.insert(s.key.clone(), s);
-    }
-
-    // 3. Corp overrides (highest priority, corp_locked)
+    // 2. Corp overrides (highest priority, corp_locked)
     let corp_toml = std::fs::read_to_string(corp_config_path()).unwrap_or_default();
     for mut s in parse_mcp_section(&corp_toml, PolicySource::Corp) {
         s.corp_locked = true;
         by_key.insert(s.key.clone(), s);
     }
 
-    // Also mark defaults/user entries as corp_locked if corp has the same key
-    // (already handled by overwrite above -- corp entry replaces user/default)
+    // Also mark defaults as corp_locked if corp has the same key (already
+    // handled by overwrite above -- corp entry replaces default).
 
     let mut servers: Vec<McpServerDef> = by_key.into_values().collect();
     servers.sort_by(|a, b| a.key.cmp(&b.key));
@@ -541,8 +526,8 @@ pub fn load_mcp_servers() -> Vec<McpServerDef> {
 
 /// Load the unified settings response (tree + issues) in one call.
 pub fn load_settings_response() -> super::types::SettingsResponse {
-    let (user, corp) = load_settings_files();
-    let resolved = super::resolver::resolve_settings(&user, &corp);
+    let (settings, corp) = load_settings_and_corp_files();
+    let resolved = super::resolver::resolve_settings(&settings, &corp);
     let mcp_servers = load_mcp_servers();
     super::types::SettingsResponse {
         tree: super::tree::build_settings_tree_with_mcp(&resolved, &mcp_servers),
@@ -574,65 +559,24 @@ pub fn batch_update_settings(
 pub fn batch_update_settings_json(
     changes: &HashMap<String, serde_json::Value>,
 ) -> Result<Vec<String>, String> {
-    batch_update_config_json_with_provider_discoveries(changes, &[], ConfigOwner::Settings)
+    batch_update_settings_json_inner(changes)
 }
 
-pub fn batch_update_profile_settings(
-    changes: &HashMap<String, SettingValue>,
-) -> Result<Vec<String>, String> {
-    let mut raw = HashMap::new();
-    for (id, value) in changes {
-        let json = serde_json::to_value(value)
-            .map_err(|e| format!("failed to encode setting {id}: {e}"))?;
-        raw.insert(id.clone(), json);
-    }
-    batch_update_profile_settings_json(&raw)
-}
-
-pub fn batch_update_profile_settings_json(
+fn batch_update_settings_json_inner(
     changes: &HashMap<String, serde_json::Value>,
-) -> Result<Vec<String>, String> {
-    batch_update_config_json_with_provider_discoveries(changes, &[], ConfigOwner::Profile)
-}
-
-pub fn batch_update_profile_settings_with_provider_discoveries(
-    changes: &HashMap<String, SettingValue>,
-    provider_discoveries: &[ProviderDiscoveryPatch],
-) -> Result<Vec<String>, String> {
-    let mut raw = HashMap::new();
-    for (id, value) in changes {
-        let json = serde_json::to_value(value)
-            .map_err(|e| format!("failed to encode setting {id}: {e}"))?;
-        raw.insert(id.clone(), json);
-    }
-    batch_update_config_json_with_provider_discoveries(
-        &raw,
-        provider_discoveries,
-        ConfigOwner::Profile,
-    )
-}
-
-fn batch_update_config_json_with_provider_discoveries(
-    changes: &HashMap<String, serde_json::Value>,
-    provider_discoveries: &[ProviderDiscoveryPatch],
-    owner: ConfigOwner,
 ) -> Result<Vec<String>, String> {
     use super::registry::setting_definitions;
 
-    if changes.is_empty() && provider_discoveries.is_empty() {
+    if changes.is_empty() {
         return Ok(vec![]);
     }
 
-    let user_path = user_config_path().ok_or("HOME not set")?;
+    let settings_path = settings_config_path().ok_or("HOME not set")?;
     let corp_path = corp_config_path();
-    let mut user_file = load_settings_file(&user_path)?;
-    let corp_file = load_settings_file(&corp_path)?;
+    let mut settings_file = load_local_settings_file(&settings_path)?;
+    let corp_file = load_corp_settings_file(&corp_path)?;
     let defs = setting_definitions();
     let mut setting_changes = HashMap::new();
-
-    if !provider_discoveries.is_empty() && owner != ConfigOwner::Profile {
-        return Err("settings.toml cannot write provider discovery records".to_string());
-    }
 
     // Validate all changes upfront
     let mut errors = Vec::new();
@@ -661,10 +605,10 @@ fn batch_update_config_json_with_provider_discoveries(
         }
 
         let actual_owner = setting_id_owner(id);
-        if actual_owner != owner {
+        if actual_owner != ConfigOwner::Settings {
             errors.push(format!(
                 "{} update cannot write {}-owned setting: {id}",
-                owner.as_str(),
+                ConfigOwner::Settings.as_str(),
                 actual_owner.as_str()
             ));
             continue;
@@ -687,11 +631,11 @@ fn batch_update_config_json_with_provider_discoveries(
         return Err(errors.join("; "));
     }
 
-    // All valid -- write to user.toml
+    // All valid -- write to local settings.toml
     let now = crate::session::now_iso();
     let mut applied = Vec::new();
     for (id, value) in setting_changes {
-        user_file.settings.insert(
+        settings_file.settings.insert(
             id.clone(),
             super::types::SettingEntry {
                 value,
@@ -700,19 +644,8 @@ fn batch_update_config_json_with_provider_discoveries(
         );
         applied.push(id.clone());
     }
-    for patch in provider_discoveries {
-        patch
-            .discovery
-            .validate(&format!("ai.{}.discovery", patch.provider_id))?;
-        user_file
-            .ai
-            .entry(patch.provider_id.clone())
-            .or_default()
-            .discovery = Some(patch.discovery.clone());
-        applied.push(format!("ai.{}.discovery", patch.provider_id));
-    }
 
-    write_settings_file(&user_path, &user_file)?;
+    write_settings_file(&settings_path, &settings_file)?;
     applied.sort();
     Ok(applied)
 }

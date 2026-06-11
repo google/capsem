@@ -531,9 +531,8 @@ fn credential_broker_plugin_uses_matched_security_rule_metadata() {
     let _lock = crate::credential_broker::TEST_ENV_LOCK.blocking_lock();
     let tmp = tempfile::tempdir().unwrap();
     let store_path = tmp.path().join("broker-store.json");
-    let user_path = tmp.path().join("user.toml");
     let _store_guard = EnvVarGuard::set(crate::credential_broker::TEST_STORE_ENV, &store_path);
-    let _user_guard = EnvVarGuard::set("CAPSEM_USER_CONFIG", &user_path);
+    let _user_guard = EnvVarGuard::set("CAPSEM_HOME", tmp.path());
     let emitter = Arc::new(RecordingEmitter::new());
     let registry =
         SecurityActionRegistry::with_builtin_actions().with_plugin_policy(BTreeMap::from([(
@@ -2415,7 +2414,7 @@ fn brokered_anthropic_header_event() -> (
     let tmp = tempfile::tempdir().unwrap();
     let store_path = tmp.path().join("broker-store.jsonl");
     let store_guard = EnvVarGuard::set(crate::credential_broker::TEST_STORE_ENV, &store_path);
-    let user_config_guard = EnvVarGuard::set("CAPSEM_USER_CONFIG", tmp.path().join("user.toml"));
+    let user_config_guard = EnvVarGuard::set("CAPSEM_HOME", tmp.path());
     let raw = "sk-ant-materialize-secret";
     let brokered = broker_observed_credential(&CredentialObservation {
         provider: CredentialProvider::Anthropic,

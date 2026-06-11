@@ -5,10 +5,7 @@ use capsem_logger::{credential_reference, DbWriter, SubstitutionEvent, CREDENTIA
 use tracing::warn;
 
 use crate::net::ai_traffic::provider::ProviderKind;
-use crate::net::policy_config::{
-    batch_update_profile_settings_with_provider_discoveries, ProviderDiscovery,
-    ProviderDiscoveryPatch, SecurityRuleSet,
-};
+use crate::net::policy_config::SecurityRuleSet;
 use crate::security_engine::RuntimeSecurityEventType;
 
 #[cfg(target_os = "macos")]
@@ -47,14 +44,6 @@ impl CredentialProvider {
         }
     }
 
-    pub fn ai_provider_id(self) -> Option<&'static str> {
-        match self {
-            Self::Anthropic => Some("anthropic"),
-            Self::Google => Some("google"),
-            Self::OpenAi => Some("openai"),
-            Self::Github | Self::Mcp => None,
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -108,15 +97,6 @@ pub fn broker_observed_credential(
         &credential_ref,
         &observation.raw_value,
     )?;
-    let changes = HashMap::new();
-    let provider_discoveries = observation
-        .provider
-        .ai_provider_id()
-        .map(|provider_id| observation.provider_discovery_patch(provider_id, &credential_ref))
-        .transpose()?
-        .into_iter()
-        .collect::<Vec<_>>();
-    batch_update_profile_settings_with_provider_discoveries(&changes, &provider_discoveries)?;
     Ok(BrokeredCredential {
         provider: observation.provider,
         credential_ref,
@@ -184,31 +164,6 @@ pub fn parse_env_credentials(source_path: &str, content: &str) -> Vec<Credential
             })
         })
         .collect()
-}
-
-impl CredentialObservation {
-    fn provider_discovery_patch(
-        &self,
-        provider_id: &str,
-        credential_ref: &str,
-    ) -> Result<ProviderDiscoveryPatch, String> {
-        let event_type = self
-            .event_type
-            .as_deref()
-            .and_then(|event_type| RuntimeSecurityEventType::try_from(event_type).ok())
-            .map(|event_type| event_type.as_str().to_string());
-        ProviderDiscoveryPatch::for_builtin_provider(
-            provider_id,
-            ProviderDiscovery {
-                observed_at: crate::session::now_iso(),
-                source: self.source.clone(),
-                event_type,
-                confidence: self.confidence,
-                credential_ref: Some(credential_ref.to_string()),
-                trace_id: self.trace_id.clone(),
-            },
-        )
-    }
 }
 
 pub fn detect_http_credential(

@@ -90,12 +90,6 @@ fn bundle_redacts_secrets_in_settings_toml() {
         .iter()
         .find(|(p, _)| p.ends_with("config/settings.toml"))
         .expect("config/settings.toml should be in bundle");
-    assert!(
-        entries
-            .iter()
-            .all(|(p, _)| !p.ends_with("config/user.toml")),
-        "support bundle must not preserve user.toml as a config contract"
-    );
     let text = std::str::from_utf8(&settings_toml_entry.1).unwrap();
     assert!(
         !text.contains("sk-ant-real-secret-here-very-long-string"),

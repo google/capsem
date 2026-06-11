@@ -21,6 +21,7 @@ import os
 import re
 import selectors
 import signal
+import shutil
 import shlex
 import sqlite3
 import subprocess
@@ -70,7 +71,7 @@ def _gemini_api_key() -> Optional[str]:
     if google_key:
         return google_key
 
-    user_toml = Path.home() / ".capsem" / "user.toml"
+    user_toml = Path.home() / ".capsem" / "settings.toml"
     if user_toml.exists():
         with open(user_toml) as f:
             for line in f:
@@ -246,21 +247,24 @@ def _kill_dev_service() -> None:
 
 
 def _start_service_with_test_config(
-    assets_dir: str, user_config: str, corp_config: str
+    assets_dir: str, settings_config: str, corp_config: str
 ) -> subprocess.Popen:
     """Spawn `capsem-service --foreground` with test config env vars.
 
-    The service forwards CAPSEM_{USER,CORP}_CONFIG to each `capsem-process`
-    it spawns, so the per-VM network policy picks up `example.com`
-    and the other overrides from `config/integration-test-user.toml`.
+    The service and each `capsem-process` share CAPSEM_HOME, so the per-VM
+    runtime policy picks up `example.com` and the other overrides from
+    `config/integration-test-settings.toml`.
     """
     project_root = Path(__file__).resolve().parent.parent
     service_bin = project_root / "target/debug/capsem-service"
     process_bin = project_root / "target/debug/capsem-process"
+    test_home = project_root / "target/integration-capsem-home"
+    test_home.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(project_root / settings_config, test_home / "settings.toml")
 
     env = {
         **os.environ,
-        "CAPSEM_USER_CONFIG": str(project_root / user_config),
+        "CAPSEM_HOME": str(test_home),
         "CAPSEM_CORP_CONFIG": str(project_root / corp_config),
         "RUST_LOG": "capsem=info",
     }
@@ -313,23 +317,23 @@ def run_vm(binary: str, assets_dir: str) -> tuple[str, int, bool]:
         **os.environ,
         "CAPSEM_ASSETS_DIR": assets_dir,
         "RUST_LOG": "capsem=warn",
-        "CAPSEM_USER_CONFIG": "config/integration-test-user.toml",
+        "CAPSEM_HOME": str(Path("target/integration-capsem-home").resolve()),
         "CAPSEM_CORP_CONFIG": "config/integration-test-corp.toml",
     }
 
     google_key = _gemini_api_key()
     debug_proc = None
 
-    # Restart the dev service with CAPSEM_{USER,CORP}_CONFIG in its env so
-    # the policy rules from `config/integration-test-user.toml` actually
+    # Restart the dev service with CAPSEM_HOME/CAPSEM_CORP_CONFIG in its env so
+    # the policy rules from `config/integration-test-settings.toml` actually
     # reach the VM. Without this, the service inherits whatever env
     # `_ensure-service` was launched with (usually nothing), and the
-    # per-VM policy falls back to `~/.capsem/user.toml` -- which is the
-    # user's real config, not the isolated test config.
+    # per-VM policy falls back to the developer's real CAPSEM_HOME instead of
+    # the isolated test config.
     _kill_dev_service()
     service_proc = _start_service_with_test_config(
         assets_dir,
-        "config/integration-test-user.toml",
+        "config/integration-test-settings.toml",
         "config/integration-test-corp.toml",
     )
 
@@ -1025,14 +1029,14 @@ def check_persistence(binary: str, assets_dir: str) -> bool:
         **os.environ,
         "CAPSEM_ASSETS_DIR": assets_dir,
         "RUST_LOG": "capsem=warn",
-        "CAPSEM_USER_CONFIG": "config/integration-test-user.toml",
+        "CAPSEM_HOME": str(Path("target/integration-capsem-home").resolve()),
         "CAPSEM_CORP_CONFIG": "config/integration-test-corp.toml",
     }
 
     _kill_dev_service()
     service_proc = _start_service_with_test_config(
         assets_dir,
-        "config/integration-test-user.toml",
+        "config/integration-test-settings.toml",
         "config/integration-test-corp.toml",
     )
     try:

@@ -1,13 +1,10 @@
-/// Generic typed settings system with corp override.
+/// Generic typed UI settings system with corp constraints.
 ///
 /// Each setting has an id, name, description, type, category, default value,
-/// and optional `enabled_by` pointer to a parent toggle. Settings are stored
-/// in TOML files at:
-///   - User: ~/.capsem/user.toml
-///   - Corporate: /etc/capsem/corp.toml
+/// and optional `enabled_by` pointer to a parent toggle. Local UI settings are
+/// stored in `settings.toml`. Corporate constraints live in `corp.toml`.
 ///
-/// Merge semantics: corp settings override user settings per-key.
-/// User can only write user.toml. Corp file is read-only (MDM-distributed).
+/// Merge semantics: corp settings override local settings per-key.
 use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap};
 
@@ -435,7 +432,7 @@ pub struct SettingsFile {
     /// Runtime plugin policy (`[plugins]`).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub plugins: BTreeMap<String, super::security_rule_profile::SecurityPluginConfig>,
-    /// MCP server configuration (optional section in user.toml / corp.toml).
+    /// MCP server configuration (optional section in profile/corp TOML).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mcp: Option<crate::mcp::policy::McpUserConfig>,
 }
@@ -568,7 +565,7 @@ pub fn default_true() -> bool {
     true
 }
 
-/// A declarative MCP server definition from defaults.toml, user.toml, or corp.toml.
+/// A declarative MCP server definition from defaults, profile, or corp TOML.
 ///
 /// MCP servers are auto-injected into AI agent config files (Claude, Gemini, Codex)
 /// at boot time. Enterprises can add servers via corp.toml.

@@ -5,8 +5,8 @@ use serde::{Deserialize, Serialize};
 use crate::net::ai_traffic::provider::ModelProtocol;
 
 use super::{
-    CompiledSecurityRule, ProviderDiscovery, SecurityRuleProfile, SecurityRuleProvider,
-    SecurityRuleSet, SecurityRuleSource,
+    CompiledSecurityRule, SecurityRuleProfile, SecurityRuleProvider, SecurityRuleSet,
+    SecurityRuleSource,
 };
 
 const DEFAULT_PROVIDER_RULES_TOML: &str = include_str!("default_provider_rules.toml");
@@ -14,34 +14,6 @@ const REQUIRED_BUILTIN_PLUGINS: &[&str] = &["credential_broker"];
 const REQUIRED_DEFAULT_RULE_KEYS: &[&str] = &["http", "dns", "mcp", "model", "file", "process"];
 
 pub type AiProviderProfile = SecurityRuleProvider;
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct ProviderDiscoveryPatch {
-    pub provider_id: String,
-    pub discovery: ProviderDiscovery,
-}
-
-impl ProviderDiscoveryPatch {
-    pub fn for_builtin_provider(
-        provider_id: impl Into<String>,
-        discovery: ProviderDiscovery,
-    ) -> Result<Self, String> {
-        let provider_id = provider_id.into();
-        if !ProviderRuleProfile::builtin_defaults()
-            .ai
-            .contains_key(&provider_id)
-        {
-            return Err(format!(
-                "provider discovery only supports configured provider '{provider_id}'"
-            ));
-        }
-        discovery.validate(&format!("ai.{provider_id}.discovery"))?;
-        Ok(Self {
-            provider_id,
-            discovery,
-        })
-    }
-}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModelEndpoint {

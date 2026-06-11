@@ -46,6 +46,83 @@ fn write_then_load_roundtrip() {
 }
 
 #[test]
+fn load_local_settings_file_rejects_profile_behavior() {
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(
+        tmp.path(),
+        r#"
+[settings."vm.resources.cpu_count"]
+value = 8
+modified = "2026-06-11T00:00:00Z"
+"#,
+    )
+    .unwrap();
+
+    let error = load_local_settings_file(tmp.path()).expect_err("profile behavior rejected");
+    assert!(error.contains("owned by profile"), "{error}");
+}
+
+#[test]
+fn load_local_settings_file_accepts_ui_preferences() {
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(
+        tmp.path(),
+        r#"
+[settings."appearance.dark_mode"]
+value = true
+modified = "2026-06-11T00:00:00Z"
+"#,
+    )
+    .unwrap();
+
+    let file = load_local_settings_file(tmp.path()).expect("ui settings load");
+    assert!(file.settings.contains_key("appearance.dark_mode"));
+}
+
+#[test]
+fn load_corp_settings_file_rejects_ui_preferences() {
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(
+        tmp.path(),
+        r#"
+[settings."app.auto_update"]
+value = true
+modified = "2026-06-11T00:00:00Z"
+"#,
+    )
+    .unwrap();
+
+    let error = load_corp_settings_file(tmp.path()).expect_err("ui setting rejected");
+    assert!(error.contains("owned by settings"), "{error}");
+}
+
+#[test]
+fn load_corp_settings_file_accepts_constraints() {
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(
+        tmp.path(),
+        r#"
+refresh_interval_hours = 24
+
+[settings."vm.resources.cpu_count"]
+value = 8
+modified = "2026-06-11T00:00:00Z"
+
+[corp.rules.block_example]
+name = "block_example"
+action = "block"
+priority = -10
+match = 'http.host == "example.invalid"'
+"#,
+    )
+    .unwrap();
+
+    let file = load_corp_settings_file(tmp.path()).expect("corp constraints load");
+    assert!(file.settings.contains_key("vm.resources.cpu_count"));
+    assert!(file.corp.rules.contains_key("block_example"));
+}
+
+#[test]
 fn settings_file_parses_rule_file_references() {
     let file: SettingsFile = toml::from_str(
         r#"
@@ -76,7 +153,7 @@ sigma_output_endpoint = "https://security.example.invalid/capsem/sigma"
 #[test]
 fn load_referenced_enforcement_rules_resolves_relative_to_settings_file() {
     let dir = tempfile::tempdir().unwrap();
-    let settings_path = dir.path().join("user.toml");
+    let settings_path = dir.path().join("settings.toml");
     let rules_dir = dir.path().join("profiles").join("base");
     std::fs::create_dir_all(&rules_dir).unwrap();
     std::fs::write(
@@ -112,7 +189,7 @@ enforcement = "profiles/base/enforcement.toml"
 #[test]
 fn load_referenced_sigma_rules_resolves_relative_to_settings_file() {
     let dir = tempfile::tempdir().unwrap();
-    let settings_path = dir.path().join("user.toml");
+    let settings_path = dir.path().join("settings.toml");
     let rules_dir = dir.path().join("profiles").join("base");
     std::fs::create_dir_all(&rules_dir).unwrap();
     std::fs::write(
@@ -203,24 +280,26 @@ fn can_write_corp_settings_always_false() {
     assert!(!can_write_corp_settings());
 }
 
-/// Env-var resolution tests run serially in a single test to avoid races
-/// with other tests mutating the same process-global env vars under
-/// parallel execution.
+/// Env-var resolution tests run serially in a single test to avoid races with
+/// other tests mutating the same process-global env vars under parallel
+/// execution.
 #[test]
 fn env_var_path_resolution() {
     let _guard = crate::credential_broker::TEST_ENV_LOCK.blocking_lock();
 
     // Snapshot prior values so we can restore them at the end.
-    let prev_user = std::env::var("CAPSEM_USER_CONFIG").ok();
+    let prev_home_override = std::env::var("CAPSEM_HOME").ok();
     let prev_corp = std::env::var("CAPSEM_CORP_CONFIG").ok();
 
-    // User override via env.
-    std::env::set_var("CAPSEM_USER_CONFIG", "/tmp/custom-user.toml");
+    // Local settings are rooted by CAPSEM_HOME.
+    std::env::set_var("CAPSEM_HOME", "/tmp/custom-capsem-home");
     assert_eq!(
-        user_config_path(),
-        Some(std::path::PathBuf::from("/tmp/custom-user.toml"))
+        settings_config_path(),
+        Some(std::path::PathBuf::from(
+            "/tmp/custom-capsem-home/settings.toml"
+        ))
     );
-    std::env::remove_var("CAPSEM_USER_CONFIG");
+    std::env::remove_var("CAPSEM_HOME");
 
     // Corp override via env.
     std::env::set_var("CAPSEM_CORP_CONFIG", "/tmp/custom-corp.toml");
@@ -237,9 +316,9 @@ fn env_var_path_resolution() {
     );
 
     // Restore any prior values.
-    match prev_user {
-        Some(v) => std::env::set_var("CAPSEM_USER_CONFIG", v),
-        None => std::env::remove_var("CAPSEM_USER_CONFIG"),
+    match prev_home_override {
+        Some(v) => std::env::set_var("CAPSEM_HOME", v),
+        None => std::env::remove_var("CAPSEM_HOME"),
     }
     match prev_corp {
         Some(v) => std::env::set_var("CAPSEM_CORP_CONFIG", v),
@@ -248,12 +327,14 @@ fn env_var_path_resolution() {
 }
 
 #[test]
-fn load_settings_files_preserves_direct_corp_rule_groups_from_env_config() {
+fn load_settings_and_corp_files_preserves_direct_corp_rule_groups_from_env_config() {
     let _guard = crate::credential_broker::TEST_ENV_LOCK.blocking_lock();
     let tmp = tempfile::tempdir().unwrap();
-    let user_path = tmp.path().join("user.toml");
+    let settings_home = tmp.path().join("capsem-home");
+    let settings_path = settings_home.join("settings.toml");
     let corp_path = tmp.path().join("corp.toml");
-    std::fs::write(&user_path, "").unwrap();
+    std::fs::create_dir_all(&settings_home).unwrap();
+    std::fs::write(&settings_path, "").unwrap();
     std::fs::write(
         &corp_path,
         r#"
@@ -271,14 +352,14 @@ mode = "rewrite"
     )
     .unwrap();
 
-    let prev_user = std::env::var("CAPSEM_USER_CONFIG").ok();
+    let prev_home_override = std::env::var("CAPSEM_HOME").ok();
     let prev_corp = std::env::var("CAPSEM_CORP_CONFIG").ok();
-    std::env::set_var("CAPSEM_USER_CONFIG", &user_path);
+    std::env::set_var("CAPSEM_HOME", &settings_home);
     std::env::set_var("CAPSEM_CORP_CONFIG", &corp_path);
-    let (_, corp) = load_settings_files();
-    match prev_user {
-        Some(v) => std::env::set_var("CAPSEM_USER_CONFIG", v),
-        None => std::env::remove_var("CAPSEM_USER_CONFIG"),
+    let (_, corp) = load_settings_and_corp_files();
+    match prev_home_override {
+        Some(v) => std::env::set_var("CAPSEM_HOME", v),
+        None => std::env::remove_var("CAPSEM_HOME"),
     }
     match prev_corp {
         Some(v) => std::env::set_var("CAPSEM_CORP_CONFIG", v),
@@ -287,11 +368,11 @@ mode = "rewrite"
 
     assert!(
         corp.corp.rules.contains_key("block_local_deny_target"),
-        "direct corp rules must not be dropped by load_settings_files"
+        "direct corp rules must not be dropped by load_settings_and_corp_files"
     );
     assert!(
         corp.plugins.contains_key("credential_broker"),
-        "corp plugin policy must not be dropped by load_settings_files"
+        "corp plugin policy must not be dropped by load_settings_and_corp_files"
     );
 }
 
@@ -342,7 +423,7 @@ default_tool_permission = "warn"
 local__echo = "block"
 "#,
     ] {
-        let path = dir.path().join("user.toml");
+        let path = dir.path().join("settings.toml");
         std::fs::write(&path, retired).unwrap();
         let error = load_settings_file(&path).unwrap_err();
         assert!(

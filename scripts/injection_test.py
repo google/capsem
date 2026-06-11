@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """End-to-end boot-config test for non-secret settings materialization.
 
-Each scenario writes a temporary user.toml (and optionally corp.toml), boots the VM
+Each scenario writes a temporary settings.toml (and optionally corp.toml), boots the VM
 with `capsem-doctor -k injection`, and checks the exit code. The in-VM tests read
 /tmp/capsem-injection-manifest.json to verify the emitted boot env/files are
 well-formed.
@@ -55,7 +55,7 @@ class Results:
 # -- Scenario definitions --
 # Each scenario is a dict with:
 #   name: human-readable label
-#   user_toml: TOML string for CAPSEM_USER_CONFIG
+#   settings_toml: TOML string for <CAPSEM_HOME>/settings.toml
 #   corp_toml: optional TOML string for CAPSEM_CORP_CONFIG (None = no corp override)
 #
 # Runtime AI credentials are intentionally absent here. Provider access and
@@ -66,7 +66,7 @@ SCENARIOS = [
     {
         "name": "git_identity",
         "description": "Non-secret git identity and repository toggles materialize cleanly",
-        "user_toml": """\
+        "settings_toml": """\
 [settings]
 "repository.providers.github.allow" = { value = true, modified = "2026-01-01T00:00:00Z" }
 "repository.providers.gitlab.allow" = { value = true, modified = "2026-01-01T00:00:00Z" }
@@ -78,7 +78,7 @@ SCENARIOS = [
     {
         "name": "broker_refs_not_boot_secrets",
         "description": "Brokered repository credential references are accepted but not materialized as raw boot secrets",
-        "user_toml": """\
+        "settings_toml": """\
 [settings]
 "repository.providers.github.allow" = { value = true, modified = "2026-01-01T00:00:00Z" }
 "repository.providers.github.token" = { value = "credential:blake3:1111111111111111111111111111111111111111111111111111111111111111", modified = "2026-01-01T00:00:00Z" }
@@ -90,7 +90,7 @@ SCENARIOS = [
     {
         "name": "empty_tokens",
         "description": "Repository providers on with empty tokens -- no credential file should be emitted",
-        "user_toml": """\
+        "settings_toml": """\
 [settings]
 "repository.providers.github.allow" = { value = true, modified = "2026-01-01T00:00:00Z" }
 "repository.providers.github.token" = { value = "", modified = "2026-01-01T00:00:00Z" }
@@ -102,7 +102,7 @@ SCENARIOS = [
     {
         "name": "corp_rule_file",
         "description": "Corp rule config loads without resurrecting settings-owned AI provider toggles",
-        "user_toml": """\
+        "settings_toml": """\
 [settings]
 "repository.git.identity.author_name" = { value = "Corp Test User", modified = "2026-01-01T00:00:00Z" }
 """,
@@ -130,12 +130,11 @@ def run_scenario(
     print(f"\n{BOLD}--- Scenario: {name} ---{RESET}")
     print(f"  {DIM}{scenario['description']}{RESET}")
 
-    # Write temporary user.toml.
-    user_file = tempfile.NamedTemporaryFile(
-        mode="w", suffix=".toml", prefix=f"capsem-injection-{name}-user-", delete=False,
-    )
-    user_file.write(scenario["user_toml"])
-    user_file.close()
+    # Write temporary settings.toml inside an isolated Capsem home.
+    capsem_home = tempfile.TemporaryDirectory(prefix=f"capsem-injection-{name}-home-")
+    settings_path = os.path.join(capsem_home.name, "settings.toml")
+    with open(settings_path, "w") as settings_file:
+        settings_file.write(scenario["settings_toml"])
 
     # Write temporary corp.toml if specified.
     corp_path = None
@@ -151,7 +150,7 @@ def run_scenario(
         **os.environ,
         "CAPSEM_ASSETS_DIR": assets_dir,
         "RUST_LOG": "capsem=warn",
-        "CAPSEM_USER_CONFIG": user_file.name,
+        "CAPSEM_HOME": capsem_home.name,
     }
     if corp_path:
         env["CAPSEM_CORP_CONFIG"] = corp_path

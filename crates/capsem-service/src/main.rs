@@ -89,7 +89,6 @@ const PROCESS_ENV_ALLOWLIST: &[&str] = &[
     "USER",
     "TMPDIR",
     "CAPSEM_HOME",
-    "CAPSEM_USER_CONFIG",
     "CAPSEM_CORP_CONFIG",
     // Tunable: bounded MITM MCP endpoint in-flight handler cap.
     "CAPSEM_MCP_INFLIGHT",
@@ -767,10 +766,8 @@ impl ServiceState {
 
         // Clear inherited env to prevent API key/token leakage, then
         // re-add only the minimal set needed for the process to function.
-        // CAPSEM_{USER,CORP}_CONFIG are forwarded so the child loads the
-        // same settings tree as the service (tests rely on this to route
-        // policy through an isolated test config without touching the
-        // real ~/.capsem/user.toml).
+        // CAPSEM_HOME and CAPSEM_CORP_CONFIG are forwarded so the child loads
+        // the same settings/corp contract as the service.
         child_cmd.env_clear();
         for key in PROCESS_ENV_ALLOWLIST {
             if let Ok(val) = std::env::var(key) {
@@ -1071,10 +1068,8 @@ impl ServiceState {
 
         // Clear inherited env to prevent API key/token leakage, then
         // re-add only the minimal set needed for the process to function.
-        // CAPSEM_{USER,CORP}_CONFIG are forwarded so the child loads the
-        // same settings tree as the service (tests rely on this to route
-        // policy through an isolated test config without touching the
-        // real ~/.capsem/user.toml).
+        // CAPSEM_HOME and CAPSEM_CORP_CONFIG are forwarded so the child loads
+        // the same settings/corp contract as the service.
         child_cmd.env_clear();
         for key in PROCESS_ENV_ALLOWLIST {
             if let Ok(val) = std::env::var(key) {
@@ -1316,6 +1311,22 @@ impl ServiceState {
         pinned_profile_payload_hash: &str,
         pins: &BootAssetPins,
     ) -> Result<()> {
+        self.validate_profile_identity_and_pins(
+            profile,
+            profile_revision,
+            pinned_profile_payload_hash,
+            pins,
+        )?;
+        self.validate_profile_asset_files(profile, pins)
+    }
+
+    fn validate_profile_identity_and_pins(
+        &self,
+        profile: &ProfileConfigFile,
+        profile_revision: &str,
+        pinned_profile_payload_hash: &str,
+        pins: &BootAssetPins,
+    ) -> Result<()> {
         if profile.revision != profile_revision {
             return Err(anyhow!(
                 "profile '{}' revision mismatch: VM pinned '{}', current '{}'",
@@ -1342,6 +1353,14 @@ impl ServiceState {
                 current
             ));
         }
+        Ok(())
+    }
+
+    fn validate_profile_asset_files(
+        &self,
+        profile: &ProfileConfigFile,
+        pins: &BootAssetPins,
+    ) -> Result<()> {
         let resolved = self.resolve_profile_asset_paths(profile)?;
         validate_asset_file_pin("kernel", &resolved.kernel, &pins.kernel)?;
         validate_asset_file_pin("initrd", &resolved.initrd, &pins.initrd)?;
@@ -1371,20 +1390,24 @@ impl ServiceState {
             }
         };
 
-        match self.validate_profile_pins(
+        if let Err(err) = self.validate_profile_identity_and_pins(
             &profile,
             &entry.profile_revision,
             &entry.profile_payload_hash,
             &entry.asset_pins,
         ) {
-            Ok(()) => {
-                if entry.suspended {
-                    (VmLifecycleState::Suspended, true, None)
-                } else {
-                    (VmLifecycleState::Stopped, true, None)
-                }
-            }
-            Err(err) => (VmLifecycleState::Incompatible, false, Some(err.to_string())),
+            return (VmLifecycleState::Incompatible, false, Some(err.to_string()));
+        }
+
+        let status = if entry.suspended {
+            VmLifecycleState::Suspended
+        } else {
+            VmLifecycleState::Stopped
+        };
+
+        match self.validate_profile_asset_files(&profile, &entry.asset_pins) {
+            Ok(()) => (status, true, None),
+            Err(err) => (status, false, Some(err.to_string())),
         }
     }
 }
@@ -4730,7 +4753,7 @@ async fn handle_profiles_list(
     State(state): State<Arc<ServiceState>>,
 ) -> Result<Json<api::ProfilesListResponse>, AppError> {
     let catalog = load_profile_catalog_for_service()?;
-    let (user, corp) = capsem_core::net::policy_config::load_settings_files();
+    let (user, corp) = capsem_core::net::policy_config::load_settings_and_corp_files();
     let profiles = catalog
         .profiles()
         .map(|profile| {
@@ -4774,7 +4797,7 @@ async fn handle_profile_info(
             format!("profile not found: {profile_id}"),
         )
     })?;
-    let (user, corp) = capsem_core::net::policy_config::load_settings_files();
+    let (user, corp) = capsem_core::net::policy_config::load_settings_and_corp_files();
     Ok(Json(api::ProfileInfoResponse {
         profile: build_profile_summary(
             manifest,
@@ -6587,7 +6610,7 @@ async fn handle_enforcement_info(
     Path(profile_id): Path<String>,
 ) -> Result<Json<api::EnforcementInfoResponse>, AppError> {
     let profile_id = validate_profile_route_id(profile_id)?;
-    let (_, corp) = capsem_core::net::policy_config::load_settings_files();
+    let (_, corp) = capsem_core::net::policy_config::load_settings_and_corp_files();
     let rules = list_enforcement_rules_for_profile(&profile_id, &corp)?;
     Ok(Json(enforcement_info_for_rules(profile_id, &rules)))
 }
@@ -6596,7 +6619,7 @@ async fn handle_detection_info(
     Path(profile_id): Path<String>,
 ) -> Result<Json<api::DetectionInfoResponse>, AppError> {
     let profile_id = validate_profile_route_id(profile_id)?;
-    let (_, corp) = capsem_core::net::policy_config::load_settings_files();
+    let (_, corp) = capsem_core::net::policy_config::load_settings_and_corp_files();
     let rules = list_detection_rules_for_profile(&profile_id, &corp)?;
     Ok(Json(enforcement_info_for_rules(profile_id, &rules)))
 }
@@ -6605,7 +6628,7 @@ async fn handle_enforcement_rules_list(
     Path(profile_id): Path<String>,
 ) -> Result<Json<api::EnforcementRuleListResponse>, AppError> {
     let profile_id = validate_profile_route_id(profile_id)?;
-    let (_, corp) = capsem_core::net::policy_config::load_settings_files();
+    let (_, corp) = capsem_core::net::policy_config::load_settings_and_corp_files();
     Ok(Json(api::EnforcementRuleListResponse {
         rules: list_enforcement_rules_for_profile(&profile_id, &corp)?,
         profile_id,
@@ -6616,7 +6639,7 @@ async fn handle_detection_rules_list(
     Path(profile_id): Path<String>,
 ) -> Result<Json<api::DetectionRuleListResponse>, AppError> {
     let profile_id = validate_profile_route_id(profile_id)?;
-    let (_, corp) = capsem_core::net::policy_config::load_settings_files();
+    let (_, corp) = capsem_core::net::policy_config::load_settings_and_corp_files();
     Ok(Json(api::DetectionRuleListResponse {
         rules: list_detection_rules_for_profile(&profile_id, &corp)?,
         profile_id,
@@ -7991,7 +8014,7 @@ async fn handle_run(
                     );
                 }
                 let file_events = reader.file_event_count().unwrap_or(0);
-                let mcp_calls = reader.mcp_call_stats().map(|s| s.total).unwrap_or(0);
+                let mcp_calls = reader.raw_mcp_call_count().unwrap_or(0);
                 let _ = idx.update_session_summary(&id, 0, 0, 0.0, 0, mcp_calls, file_events);
             }
         }

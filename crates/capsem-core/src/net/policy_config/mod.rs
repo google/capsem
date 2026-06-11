@@ -1,13 +1,10 @@
-//! Generic typed settings system with corp override.
+//! Generic typed UI settings system with corp constraints.
 //!
 //! Each setting has an id, name, description, type, category, default value,
-//! and optional `enabled_by` pointer to a parent toggle. Settings are stored
-//! in TOML files at:
-//!   - User: ~/.capsem/user.toml
-//!   - Corporate: /etc/capsem/corp.toml
+//! and optional `enabled_by` pointer to a parent toggle. Local UI settings are
+//! stored in `settings.toml`. Corporate constraints live in `corp.toml`.
 //!
-//! Merge semantics: corp settings override user settings per-key.
-//! User can only write user.toml. Corp file is read-only (MDM-distributed).
+//! Merge semantics: corp settings override local settings per-key.
 
 mod builder;
 mod condition;

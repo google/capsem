@@ -69,13 +69,14 @@ match = 'http.host == "api.anthropic.com"'
 fn brokered_header_event() -> (SecurityEvent, tempfile::TempDir, Vec<EnvVarGuard>) {
     let tmp = tempfile::tempdir().unwrap();
     let store_path = tmp.path().join("broker-store.json");
-    let user_config = tmp.path().join("user.toml");
+    let capsem_home = tmp.path().join("capsem-home");
     let corp_config = tmp.path().join("corp.toml");
-    std::fs::write(&user_config, "").unwrap();
+    std::fs::create_dir_all(&capsem_home).unwrap();
+    std::fs::write(capsem_home.join("settings.toml"), "").unwrap();
     std::fs::write(&corp_config, "").unwrap();
     let guards = vec![
         EnvVarGuard::set(TEST_STORE_ENV, store_path.as_os_str()),
-        EnvVarGuard::set("CAPSEM_USER_CONFIG", user_config.as_os_str()),
+        EnvVarGuard::set("CAPSEM_HOME", capsem_home.as_os_str()),
         EnvVarGuard::set("CAPSEM_CORP_CONFIG", corp_config.as_os_str()),
     ];
     let brokered = broker_observed_credential(&CredentialObservation {
@@ -109,13 +110,14 @@ fn brokered_header_event() -> (SecurityEvent, tempfile::TempDir, Vec<EnvVarGuard
 fn brokered_mcp_auth_ref() -> (String, tempfile::TempDir, Vec<EnvVarGuard>) {
     let tmp = tempfile::tempdir().unwrap();
     let store_path = tmp.path().join("broker-store.json");
-    let user_config = tmp.path().join("user.toml");
+    let capsem_home = tmp.path().join("capsem-home");
     let corp_config = tmp.path().join("corp.toml");
-    std::fs::write(&user_config, "").unwrap();
+    std::fs::create_dir_all(&capsem_home).unwrap();
+    std::fs::write(capsem_home.join("settings.toml"), "").unwrap();
     std::fs::write(&corp_config, "").unwrap();
     let guards = vec![
         EnvVarGuard::set(TEST_STORE_ENV, store_path.as_os_str()),
-        EnvVarGuard::set("CAPSEM_USER_CONFIG", user_config.as_os_str()),
+        EnvVarGuard::set("CAPSEM_HOME", capsem_home.as_os_str()),
         EnvVarGuard::set("CAPSEM_CORP_CONFIG", corp_config.as_os_str()),
     ];
     let brokered = broker_observed_credential(&CredentialObservation {

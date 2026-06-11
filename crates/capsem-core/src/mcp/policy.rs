@@ -8,7 +8,7 @@ use crate::mcp::types::McpAuthConfig;
 // MCP server config (stored under [mcp])
 // ---------------------------------------------------------------------------
 
-/// MCP configuration from user.toml or corp.toml `[mcp]` sections.
+/// MCP configuration from profile or corp `[mcp]` sections.
 ///
 /// This is server discovery/configuration only. MCP allow/ask/block decisions
 /// are security rules over canonical MCP security events.

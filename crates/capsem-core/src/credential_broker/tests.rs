@@ -1,25 +1,25 @@
 use super::*;
 
 struct EnvGuard {
-    old_user: Option<String>,
+    old_home_override: Option<String>,
     old_home: Option<String>,
     old_store: Option<String>,
 }
 
 impl EnvGuard {
     fn install(
-        user_config: &std::path::Path,
+        capsem_home: &std::path::Path,
         home: &std::path::Path,
         test_store: &std::path::Path,
     ) -> Self {
-        let old_user = std::env::var("CAPSEM_USER_CONFIG").ok();
+        let old_home_override = std::env::var("CAPSEM_HOME").ok();
         let old_home = std::env::var("HOME").ok();
         let old_store = std::env::var(TEST_STORE_ENV).ok();
-        std::env::set_var("CAPSEM_USER_CONFIG", user_config);
+        std::env::set_var("CAPSEM_HOME", capsem_home);
         std::env::set_var("HOME", home);
         std::env::set_var(TEST_STORE_ENV, test_store);
         Self {
-            old_user,
+            old_home_override,
             old_home,
             old_store,
         }
@@ -28,9 +28,9 @@ impl EnvGuard {
 
 impl Drop for EnvGuard {
     fn drop(&mut self) {
-        match &self.old_user {
-            Some(v) => std::env::set_var("CAPSEM_USER_CONFIG", v),
-            None => std::env::remove_var("CAPSEM_USER_CONFIG"),
+        match &self.old_home_override {
+            Some(v) => std::env::set_var("CAPSEM_HOME", v),
+            None => std::env::remove_var("CAPSEM_HOME"),
         }
         match &self.old_home {
             Some(v) => std::env::set_var("HOME", v),
@@ -173,9 +173,9 @@ fn substitution_is_domain_separated_by_provider() {
 fn broker_stores_secret_without_writing_user_settings() {
     let _lock = TEST_ENV_LOCK.blocking_lock();
     let dir = tempfile::tempdir().unwrap();
-    let user_config = dir.path().join("user.toml");
+    let capsem_home = dir.path().join("capsem-home");
     let test_store = dir.path().join("credential-store.json");
-    let _guard = EnvGuard::install(&user_config, dir.path(), &test_store);
+    let _guard = EnvGuard::install(&capsem_home, dir.path(), &test_store);
 
     let obs = CredentialObservation {
         provider: CredentialProvider::Github,
@@ -195,7 +195,7 @@ fn broker_stores_secret_without_writing_user_settings() {
     );
 
     assert!(
-        !user_config.exists(),
+        !capsem_home.join("settings.toml").exists(),
         "credential broker must not create settings files for credential refs"
     );
 
@@ -212,9 +212,9 @@ fn broker_stores_secret_without_writing_user_settings() {
 fn replay_availability_requires_resolvable_broker_secret() {
     let _lock = TEST_ENV_LOCK.blocking_lock();
     let dir = tempfile::tempdir().unwrap();
-    let user_config = dir.path().join("user.toml");
+    let capsem_home = dir.path().join("capsem-home");
     let test_store = dir.path().join("credential-store.json");
-    let _guard = EnvGuard::install(&user_config, dir.path(), &test_store);
+    let _guard = EnvGuard::install(&capsem_home, dir.path(), &test_store);
 
     let missing = credential_reference("google", "not-stored");
     assert!(!broker_reference_replay_available(Some("google"), &missing));

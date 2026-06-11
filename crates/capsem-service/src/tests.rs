@@ -14,7 +14,6 @@ fn process_env_allowlist_forwards_mcp_timeout_knobs() {
     );
 
     for key in [
-        "CAPSEM_USER_CONFIG",
         "CAPSEM_CORP_CONFIG",
         "CAPSEM_MCP_DEFAULT_TIMEOUT_SECS",
         "CAPSEM_MCP_TOOL_CALL_TIMEOUT_SECS",
@@ -5324,7 +5323,7 @@ async fn handle_stats_returns_global_data() {
 // -----------------------------------------------------------------------
 
 struct SettingsEnvGuard {
-    previous_user: Option<std::ffi::OsString>,
+    previous_home_override: Option<std::ffi::OsString>,
     previous_corp: Option<std::ffi::OsString>,
 }
 
@@ -5397,10 +5396,10 @@ impl Drop for TestBuiltinMcpBinaryGuard {
 
 impl Drop for SettingsEnvGuard {
     fn drop(&mut self) {
-        if let Some(previous_user) = self.previous_user.take() {
-            std::env::set_var("CAPSEM_USER_CONFIG", previous_user);
+        if let Some(previous_home_override) = self.previous_home_override.take() {
+            std::env::set_var("CAPSEM_HOME", previous_home_override);
         } else {
-            std::env::remove_var("CAPSEM_USER_CONFIG");
+            std::env::remove_var("CAPSEM_HOME");
         }
 
         if let Some(previous_corp) = self.previous_corp.take() {
@@ -5412,10 +5411,10 @@ impl Drop for SettingsEnvGuard {
 }
 
 fn install_empty_settings_env(dir: &tempfile::TempDir) -> (SettingsEnvGuard, PathBuf, PathBuf) {
-    let user_path = dir.path().join("user.toml");
+    let settings_path = dir.path().join("settings.toml");
     let corp_path = dir.path().join("corp.toml");
     capsem_core::net::policy_config::write_settings_file(
-        &user_path,
+        &settings_path,
         &capsem_core::net::policy_config::SettingsFile::default(),
     )
     .unwrap();
@@ -5426,12 +5425,12 @@ fn install_empty_settings_env(dir: &tempfile::TempDir) -> (SettingsEnvGuard, Pat
     .unwrap();
 
     let guard = SettingsEnvGuard {
-        previous_user: std::env::var_os("CAPSEM_USER_CONFIG"),
+        previous_home_override: std::env::var_os("CAPSEM_HOME"),
         previous_corp: std::env::var_os("CAPSEM_CORP_CONFIG"),
     };
-    std::env::set_var("CAPSEM_USER_CONFIG", &user_path);
+    std::env::set_var("CAPSEM_HOME", dir.path());
     std::env::set_var("CAPSEM_CORP_CONFIG", &corp_path);
-    (guard, user_path, corp_path)
+    (guard, settings_path, corp_path)
 }
 
 #[tokio::test]

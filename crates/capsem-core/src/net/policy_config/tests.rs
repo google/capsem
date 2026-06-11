@@ -315,16 +315,16 @@ fn can_write_corp_is_always_false() {
 }
 
 #[test]
-fn write_user_settings_creates_file() {
+fn write_local_settings_creates_file() {
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("test_user.toml");
+    let path = dir.path().join("test_settings.toml");
     let file = file_with(vec![("vm.resources.log_bodies", SettingValue::Bool(true))]);
     write_settings_file(&path, &file).unwrap();
     assert!(path.exists());
 }
 
 #[test]
-fn write_user_settings_roundtrip() {
+fn write_local_settings_roundtrip() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("roundtrip.toml");
     let file = file_with(vec![
@@ -342,7 +342,7 @@ fn write_user_settings_roundtrip() {
 }
 
 #[test]
-fn write_user_settings_preserves_other_settings() {
+fn write_local_settings_preserves_other_settings() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("preserve.toml");
     let mut file = file_with(vec![
@@ -742,14 +742,14 @@ fn invalid_toml_returns_error() {
 
 #[test]
 fn parse_real_user_toml_format() {
-    // This is the exact format a real user.toml has on disk.
+    // This is the exact format a real settings.toml has on disk.
     let toml_str = r#"
 [settings]
 "ai.google.api_key" = { value = "AIzaSyTest1234", modified = "2026-02-25T00:00:00Z" }
 "ai.anthropic.allow" = { value = true, modified = "2026-02-25T00:00:00Z" }
 "ai.anthropic.api_key" = { value = "sk-ant-test-key", modified = "2026-02-25T00:00:00Z" }
 "#;
-    let file: SettingsFile = toml::from_str(toml_str).expect("should parse real user.toml format");
+    let file: SettingsFile = toml::from_str(toml_str).expect("should parse real settings.toml format");
     assert_eq!(file.settings.len(), 3);
     assert_eq!(
         file.settings["ai.google.api_key"].value,
@@ -1193,9 +1193,9 @@ fn api_key_not_materialized_when_toggle_on() {
 fn brokered_api_key_ref_stays_out_of_guest_env() {
     let _lock = crate::credential_broker::TEST_ENV_LOCK.blocking_lock();
     let dir = tempfile::tempdir().unwrap();
-    let user_path = dir.path().join("user.toml");
+    let user_path = dir.path().join("settings.toml");
     let store_path = dir.path().join("credential-store.json");
-    let _user_guard = EnvVarGuard::set("CAPSEM_USER_CONFIG", &user_path);
+    let _settings_home_guard = EnvVarGuard::set("CAPSEM_HOME", dir.path());
     let _home_guard = EnvVarGuard::set("HOME", dir.path());
     let _store_guard = EnvVarGuard::set(crate::credential_broker::TEST_STORE_ENV, &store_path);
 
@@ -1208,28 +1208,34 @@ fn brokered_api_key_ref_stays_out_of_guest_env() {
         trace_id: None,
         context_json: None,
     };
-    crate::credential_broker::broker_observed_credential(&obs).unwrap();
-    let user = load_settings_file(&user_path).unwrap();
-    assert!(!user.settings.contains_key("ai.anthropic.api_key"));
-    let resolved = resolve_settings(&user, &empty_file());
+    let brokered = crate::credential_broker::broker_observed_credential(&obs).unwrap();
+    assert!(
+        !user_path.exists(),
+        "credential broker must not write settings.toml for Anthropic discovery"
+    );
+    let resolved = resolve_settings(&empty_file(), &empty_file());
     let gc = settings_to_guest_config(&resolved);
     let env = gc.env.unwrap_or_default();
 
     assert!(!env.contains_key("ANTHROPIC_API_KEY"));
-    let user_toml = std::fs::read_to_string(&user_path).unwrap();
-    assert!(user_toml.contains("[ai.anthropic.discovery]"));
-    assert!(user_toml.contains("credential_ref = \"credential:blake3:"));
-    assert!(!user_toml.contains("sk-ant-keychain-env"));
-    assert!(!user_toml.contains("ai.anthropic.api_key"));
+    assert_eq!(
+        crate::credential_broker::resolve_broker_reference_for_provider(
+            crate::credential_broker::CredentialProvider::Anthropic,
+            &brokered.credential_ref,
+        )
+        .unwrap()
+        .as_deref(),
+        Some("sk-ant-keychain-env")
+    );
 }
 
 #[test]
 fn brokered_google_api_key_ref_stays_out_of_guest_env() {
     let _lock = crate::credential_broker::TEST_ENV_LOCK.blocking_lock();
     let dir = tempfile::tempdir().unwrap();
-    let user_path = dir.path().join("user.toml");
+    let user_path = dir.path().join("settings.toml");
     let store_path = dir.path().join("credential-store.json");
-    let _user_guard = EnvVarGuard::set("CAPSEM_USER_CONFIG", &user_path);
+    let _settings_home_guard = EnvVarGuard::set("CAPSEM_HOME", dir.path());
     let _home_guard = EnvVarGuard::set("HOME", dir.path());
     let _store_guard = EnvVarGuard::set(crate::credential_broker::TEST_STORE_ENV, &store_path);
 
@@ -1242,29 +1248,35 @@ fn brokered_google_api_key_ref_stays_out_of_guest_env() {
         trace_id: None,
         context_json: None,
     };
-    crate::credential_broker::broker_observed_credential(&obs).unwrap();
-    let user = load_settings_file(&user_path).unwrap();
-    assert!(!user.settings.contains_key("ai.google.api_key"));
-    let resolved = resolve_settings(&user, &empty_file());
+    let brokered = crate::credential_broker::broker_observed_credential(&obs).unwrap();
+    assert!(
+        !user_path.exists(),
+        "credential broker must not write settings.toml for Google discovery"
+    );
+    let resolved = resolve_settings(&empty_file(), &empty_file());
     let gc = settings_to_guest_config(&resolved);
     let env = gc.env.unwrap_or_default();
 
     assert!(!env.contains_key("GEMINI_API_KEY"));
     assert!(!env.contains_key("GOOGLE_API_KEY"));
-    let user_toml = std::fs::read_to_string(&user_path).unwrap();
-    assert!(user_toml.contains("[ai.google.discovery]"));
-    assert!(user_toml.contains("credential_ref = \"credential:blake3:"));
-    assert!(!user_toml.contains("AIza-keychain-env"));
-    assert!(!user_toml.contains("ai.google.api_key"));
+    assert_eq!(
+        crate::credential_broker::resolve_broker_reference_for_provider(
+            crate::credential_broker::CredentialProvider::Google,
+            &brokered.credential_ref,
+        )
+        .unwrap()
+        .as_deref(),
+        Some("AIza-keychain-env")
+    );
 }
 
 #[test]
-fn brokered_openai_key_writes_provider_discovery_without_raw_secret() {
+fn brokered_openai_key_does_not_write_settings_or_raw_secret() {
     let _lock = crate::credential_broker::TEST_ENV_LOCK.blocking_lock();
     let dir = tempfile::tempdir().unwrap();
-    let user_path = dir.path().join("user.toml");
+    let user_path = dir.path().join("settings.toml");
     let store_path = dir.path().join("credential-store.json");
-    let _user_guard = EnvVarGuard::set("CAPSEM_USER_CONFIG", &user_path);
+    let _settings_home_guard = EnvVarGuard::set("CAPSEM_HOME", dir.path());
     let _home_guard = EnvVarGuard::set("HOME", dir.path());
     let _store_guard = EnvVarGuard::set(crate::credential_broker::TEST_STORE_ENV, &store_path);
 
@@ -1279,41 +1291,31 @@ fn brokered_openai_key_writes_provider_discovery_without_raw_secret() {
     };
 
     let brokered = crate::credential_broker::broker_observed_credential(&obs).unwrap();
-    let loaded = load_settings_file(&user_path).unwrap();
+    assert!(brokered.credential_ref.starts_with("credential:blake3:"));
     assert!(
-        !loaded.settings.contains_key("ai.openai.api_key"),
-        "credential broker must not materialize broker refs into settings"
+        !user_path.exists(),
+        "credential broker must not create settings.toml for provider discovery"
     );
-
-    let discovery = loaded
-        .ai
-        .get("openai")
-        .and_then(|provider| provider.discovery.as_ref())
-        .expect("OpenAI discovery record should be written");
-    assert_eq!(discovery.source, "http.header.authorization");
-    assert_eq!(discovery.event_type.as_deref(), Some("http.request"));
-    assert_eq!(discovery.confidence, 0.95);
-    assert_eq!(discovery.trace_id.as_deref(), Some("trace-discovery"));
     assert_eq!(
-        discovery.credential_ref.as_deref(),
-        Some(brokered.credential_ref.as_str())
+        crate::credential_broker::resolve_broker_reference_for_provider(
+            crate::credential_broker::CredentialProvider::OpenAi,
+            &brokered.credential_ref,
+        )
+        .unwrap()
+        .as_deref(),
+        Some("sk-openai-discovery-secret")
     );
-
-    let user_toml = std::fs::read_to_string(&user_path).unwrap();
-    assert!(user_toml.contains("[ai.openai.discovery]"));
-    assert!(user_toml.contains("credential_ref = \"credential:blake3:"));
-    assert!(!user_toml.contains("sk-openai-discovery-secret"));
 }
 
 #[test]
-fn brokered_provider_discovery_does_not_write_corp_locked_credential_setting() {
+fn brokered_provider_discovery_does_not_mutate_settings() {
     let _lock = crate::credential_broker::TEST_ENV_LOCK.blocking_lock();
     let dir = tempfile::tempdir().unwrap();
-    let user_path = dir.path().join("user.toml");
+    let user_path = dir.path().join("settings.toml");
     let store_path = dir.path().join("credential-store.json");
     write_settings_file(&user_path, &SettingsFile::default()).unwrap();
 
-    let _user_guard = EnvVarGuard::set("CAPSEM_USER_CONFIG", &user_path);
+    let _settings_home_guard = EnvVarGuard::set("CAPSEM_HOME", dir.path());
     let _home_guard = EnvVarGuard::set("HOME", dir.path());
     let _store_guard = EnvVarGuard::set(crate::credential_broker::TEST_STORE_ENV, &store_path);
 
@@ -1339,12 +1341,8 @@ fn brokered_provider_discovery_does_not_write_corp_locked_credential_setting() {
         "credential setting must never be written by the broker"
     );
     assert!(
-        loaded
-            .ai
-            .get("openai")
-            .and_then(|provider| provider.discovery.as_ref())
-            .is_some(),
-        "provider discovery should still be recorded"
+        loaded.ai.is_empty(),
+        "provider discovery belongs to broker/plugin status, not settings.toml"
     );
 }
 
@@ -2057,7 +2055,7 @@ fn all_env_vars_metadata_refers_to_text_settings() {
 
 #[test]
 fn settings_rejects_blocked_env_var() {
-    // guest.env.LD_PRELOAD in user.toml should be silently dropped.
+    // guest.env.LD_PRELOAD in settings.toml should be silently dropped.
     let user = file_with(vec![(
         "guest.env.LD_PRELOAD",
         SettingValue::Text("/evil/lib.so".into()),
@@ -3268,17 +3266,17 @@ fn with_temp_configs<F: FnOnce(&std::path::Path, &std::path::Path)>(
     let _guard = crate::credential_broker::TEST_ENV_LOCK.blocking_lock();
 
     let dir = tempfile::tempdir().unwrap();
-    let user_path = dir.path().join("user.toml");
+    let user_path = dir.path().join("settings.toml");
     let corp_path = dir.path().join("corp.toml");
     let user_file = file_with(user_entries);
     let corp_file = file_with(corp_entries);
     loader::write_settings_file(&user_path, &user_file).unwrap();
     loader::write_settings_file(&corp_path, &corp_file).unwrap();
     // Point env vars to temp files
-    std::env::set_var("CAPSEM_USER_CONFIG", &user_path);
+    std::env::set_var("CAPSEM_HOME", dir.path());
     std::env::set_var("CAPSEM_CORP_CONFIG", &corp_path);
     f(&user_path, &corp_path);
-    std::env::remove_var("CAPSEM_USER_CONFIG");
+    std::env::remove_var("CAPSEM_HOME");
     std::env::remove_var("CAPSEM_CORP_CONFIG");
 }
 
@@ -3286,63 +3284,41 @@ fn with_temp_configs<F: FnOnce(&std::path::Path, &std::path::Path)>(
 fn batch_update_accepts_valid_changes() {
     with_temp_configs(vec![], vec![], |_, _| {
         let mut changes = HashMap::new();
-        changes.insert(
-            SETTING_GITHUB_TOKEN.to_string(),
-            SettingValue::Text(
-                "credential:blake3:1111111111111111111111111111111111111111111111111111111111111111"
-                    .into(),
-            ),
-        );
-        let result = loader::batch_update_profile_settings(&changes);
+        changes.insert("appearance.dark_mode".to_string(), SettingValue::Bool(true));
+        let result = loader::batch_update_settings(&changes);
         assert!(result.is_ok(), "valid changes should succeed: {:?}", result);
         let applied = result.unwrap();
-        assert_eq!(applied, vec![SETTING_GITHUB_TOKEN]);
+        assert_eq!(applied, vec!["appearance.dark_mode"]);
     });
 }
 
 #[test]
-fn batch_update_rejects_corp_locked() {
-    with_temp_configs(
-        vec![],
-        vec![(SETTING_GITHUB_ALLOW, SettingValue::Bool(false))],
-        |_, _| {
-            let mut changes = HashMap::new();
-            changes.insert(SETTING_GITHUB_ALLOW.to_string(), SettingValue::Bool(true));
-            let result = loader::batch_update_profile_settings(&changes);
-            assert!(result.is_err());
-            assert!(result.unwrap_err().contains("corp-locked"));
-        },
-    );
+fn batch_update_rejects_profile_behavior_settings() {
+    with_temp_configs(vec![], vec![], |_, _| {
+        let mut changes = HashMap::new();
+        changes.insert(SETTING_GITHUB_ALLOW.to_string(), SettingValue::Bool(true));
+        let result = loader::batch_update_settings(&changes);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("profile-owned setting"));
+    });
 }
 
 #[test]
 fn batch_update_rejects_mixed_batch_atomically() {
-    with_temp_configs(
-        vec![],
-        vec![(SETTING_GITHUB_ALLOW, SettingValue::Bool(false))],
-        |user_path, _| {
-            let mut changes = HashMap::new();
-            // One valid change
-            changes.insert(
-                SETTING_GITHUB_TOKEN.to_string(),
-                SettingValue::Text(
-                    "credential:blake3:1111111111111111111111111111111111111111111111111111111111111111"
-                        .into(),
-                ),
-            );
-            // One corp-locked change
-            changes.insert(SETTING_GITHUB_ALLOW.to_string(), SettingValue::Bool(true));
-            let result = loader::batch_update_profile_settings(&changes);
-            assert!(result.is_err(), "mixed batch should be rejected");
+    with_temp_configs(vec![], vec![], |user_path, _| {
+        let mut changes = HashMap::new();
+        changes.insert("appearance.dark_mode".to_string(), SettingValue::Bool(true));
+        changes.insert(SETTING_GITHUB_ALLOW.to_string(), SettingValue::Bool(true));
+        let result = loader::batch_update_settings(&changes);
+        assert!(result.is_err(), "mixed batch should be rejected");
 
-            // Verify nothing was written (atomic rejection)
-            let file = loader::load_settings_file(user_path).unwrap();
-            assert!(
-                !file.settings.contains_key(SETTING_GITHUB_TOKEN),
-                "valid change should NOT be written when batch is rejected"
-            );
-        },
-    );
+        // Verify nothing was written (atomic rejection)
+        let file = loader::load_settings_file(user_path).unwrap();
+        assert!(
+            file.settings.is_empty(),
+            "valid UI setting should NOT be written when batch is rejected"
+        );
+    });
 }
 
 #[test]
@@ -3390,15 +3366,19 @@ fn batch_update_rejects_retired_web_decision_setting_ids() {
 }
 
 #[test]
-fn batch_update_allows_dynamic_guest_env() {
+fn batch_update_rejects_dynamic_guest_env() {
     with_temp_configs(vec![], vec![], |_, _| {
         let mut changes = HashMap::new();
         changes.insert(
             "guest.env.MY_VAR".to_string(),
             SettingValue::Text("hello".into()),
         );
-        let result = loader::batch_update_profile_settings(&changes);
-        assert!(result.is_ok(), "dynamic guest.env.* should be allowed");
+        let result = loader::batch_update_settings(&changes);
+        assert!(
+            result.is_err(),
+            "dynamic guest.env.* belongs to profile/bootstrap, not settings"
+        );
+        assert!(result.unwrap_err().contains("profile-owned setting"));
     });
 }
 
@@ -3988,7 +3968,7 @@ fn retired_web_decision_settings_are_not_resolved() {
 #[test]
 fn merged_from_missing_user_toml() {
     let dir = tempfile::tempdir().unwrap();
-    let nonexistent = dir.path().join("missing_user.toml");
+    let nonexistent = dir.path().join("missing_settings.toml");
     let user = load_settings_file(&nonexistent).unwrap_or_default();
     let m = MergedPolicies::from_files(&user, &empty_file());
     // Should produce valid defaults without panicking
@@ -4133,10 +4113,7 @@ priority = 10
 fn batch_update_settings_json_rejects_old_policy_rule_shape_atomically() {
     with_temp_configs(vec![], vec![], |user_path, _| {
         let mut changes = HashMap::new();
-        changes.insert(
-            SETTING_GITHUB_TOKEN.to_string(),
-            serde_json::json!("credential:blake3:0000000000000000000000000000000000000000000000000000000000000000"),
-        );
+        changes.insert("appearance.dark_mode".to_string(), serde_json::json!(true));
         changes.insert(
             "policy.http.block_openai_github".to_string(),
             serde_json::json!({
@@ -4147,7 +4124,7 @@ fn batch_update_settings_json_rejects_old_policy_rule_shape_atomically() {
             }),
         );
 
-        let error = loader::batch_update_profile_settings_json(&changes)
+        let error = loader::batch_update_settings_json(&changes)
             .expect_err("old policy writes must reject");
         assert!(
             error.contains("unknown setting: policy.http.block_openai_github"),
@@ -4156,7 +4133,7 @@ fn batch_update_settings_json_rejects_old_policy_rule_shape_atomically() {
         let loaded = loader::load_settings_file(user_path).unwrap();
         assert!(
             loaded.settings.is_empty(),
-            "batch rejection must leave the settings file unchanged"
+            "batch rejection must leave settings.toml unchanged"
         );
     });
 }
@@ -4273,7 +4250,7 @@ credential_ref = "sk-raw-secret"
 #[test]
 fn tool_config_sources_are_rejected_from_settings_files() {
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("user.toml");
+    let path = dir.path().join("settings.toml");
     std::fs::write(
         &path,
         r#"
@@ -4341,7 +4318,7 @@ inferred_endpoint_ref = "openai"
 
     for (name, toml_text) in cases {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("user.toml");
+        let path = dir.path().join("settings.toml");
         std::fs::write(&path, toml_text).unwrap();
         let error = load_settings_file(&path).expect_err("tool_config_sources is retired");
         assert!(error.contains("tool_config_sources"), "{name}: {error}");
@@ -4391,7 +4368,7 @@ fn batch_update_settings_rejects_raw_provider_credentials_atomically() {
             serde_json::json!("sk-raw-openai"),
         );
 
-        let result = loader::batch_update_profile_settings_json(&changes);
+        let result = loader::batch_update_settings_json(&changes);
         let error = result.expect_err("retired API key writes must be rejected");
         assert!(error.contains("unknown setting"), "{error}");
         let loaded = loader::load_settings_file(user_path).unwrap();
@@ -4471,15 +4448,18 @@ fn integration_corp_rule_beats_profile_default_allow_for_deny_target() {
         .and_then(std::path::Path::parent)
         .expect("capsem-core lives under crates/");
     let _guard = crate::credential_broker::TEST_ENV_LOCK.blocking_lock();
-    let _user_config = EnvVarGuard::set(
-        "CAPSEM_USER_CONFIG",
-        root.join("config/integration-test-user.toml"),
-    );
+    let capsem_home = tempfile::tempdir().unwrap();
+    std::fs::copy(
+        root.join("config/integration-test-settings.toml"),
+        capsem_home.path().join("settings.toml"),
+    )
+    .unwrap();
+    let _settings_home = EnvVarGuard::set("CAPSEM_HOME", capsem_home.path());
     let _corp_config = EnvVarGuard::set(
         "CAPSEM_CORP_CONFIG",
         root.join("config/integration-test-corp.toml"),
     );
-    let (user, corp) = load_settings_files();
+    let (user, corp) = load_settings_and_corp_files();
     let policies = MergedPolicies::from_files(&user, &corp);
     let event = serde_json::json!({
         "http": {
@@ -4566,7 +4546,7 @@ match = 'http.host == "llm.internal.example"'
 #[test]
 fn load_settings_file_merges_referenced_sigma_into_security_rules() {
     let dir = tempfile::tempdir().unwrap();
-    let settings_path = dir.path().join("user.toml");
+    let settings_path = dir.path().join("settings.toml");
     std::fs::write(
         dir.path().join("detection.yaml"),
         r#"
@@ -4723,7 +4703,7 @@ fn load_settings_response_does_not_expose_provider_status() {
     let _guard = crate::credential_broker::TEST_ENV_LOCK.blocking_lock();
 
     let dir = tempfile::tempdir().unwrap();
-    let user_path = dir.path().join("user.toml");
+    let user_path = dir.path().join("settings.toml");
     let corp_path = dir.path().join("corp.toml");
     std::fs::write(
         &user_path,
@@ -4750,7 +4730,7 @@ match = 'http.host.matches("(^|.*\.)openai\.com$")'
 "#,
     )
     .unwrap();
-    let _user_config = EnvVarGuard::set("CAPSEM_USER_CONFIG", &user_path);
+    let _settings_home = EnvVarGuard::set("CAPSEM_HOME", dir.path());
     let _corp_config = EnvVarGuard::set("CAPSEM_CORP_CONFIG", &corp_path);
 
     let serialized =
@@ -4774,11 +4754,11 @@ fn load_settings_response_exposes_settings_tree_only() {
     let _guard = crate::credential_broker::TEST_ENV_LOCK.blocking_lock();
 
     let dir = tempfile::tempdir().unwrap();
-    let user_path = dir.path().join("user.toml");
+    let user_path = dir.path().join("settings.toml");
     let corp_path = dir.path().join("corp.toml");
     write_settings_file(&user_path, &SettingsFile::default()).unwrap();
     write_settings_file(&corp_path, &SettingsFile::default()).unwrap();
-    let _user_config = EnvVarGuard::set("CAPSEM_USER_CONFIG", &user_path);
+    let _settings_home = EnvVarGuard::set("CAPSEM_HOME", dir.path());
     let _corp_config = EnvVarGuard::set("CAPSEM_CORP_CONFIG", &corp_path);
 
     let serialized =

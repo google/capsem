@@ -301,9 +301,9 @@ async fn run_async_main_loop(
 
     // Load settings files once and derive everything from them before any
     // producer starts emitting security events.
-    let (user_sf, corp_sf) = capsem_core::net::policy_config::load_settings_files();
+    let (user_sf, corp_sf) = capsem_core::net::policy_config::load_settings_and_corp_files();
     let merged = capsem_core::net::policy_config::MergedPolicies::from_files(&user_sf, &corp_sf);
-    let user_config_path = capsem_core::net::policy_config::user_config_path()
+    let settings_config_path = capsem_core::net::policy_config::settings_config_path()
         .map(|path| path.display().to_string())
         .unwrap_or_else(|| "none".to_string());
     let corp_config_paths = capsem_core::net::policy_config::corp_config_paths()
@@ -317,7 +317,7 @@ async fn run_async_main_loop(
         .map(|rule| rule.rule_id.as_str())
         .collect::<Vec<_>>();
     info!(
-        user_config_path = %user_config_path,
+        settings_config_path = %settings_config_path,
         corp_config_paths = ?corp_config_paths,
         security_rule_count = security_rule_ids.len(),
         security_rule_ids = ?security_rule_ids,
