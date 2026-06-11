@@ -49,4 +49,15 @@ describe('ProfilePage route contract', () => {
     expect(source).toContain('Profile and corp rules');
     expect(source).toContain('rule.default_rule');
   });
+
+  it('overview renders profile surfaces and broker-visible credentials from routes', () => {
+    expect(source).toContain('getCredentialBrokerInfo');
+    expect(source).toContain('profileSurfaces');
+    expect(source).toContain('profile.profile.availability.web');
+    expect(source).toContain('profile.profile.availability.shell');
+    expect(source).toContain('profile.profile.availability.mobile');
+    expect(source).toContain('Available surfaces');
+    expect(source).toContain('Broker-visible credentials');
+    expect(source).toContain('credentialBrokerInfo?.inventory');
+  });
 });

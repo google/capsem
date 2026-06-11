@@ -54,6 +54,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pasteable bug reports.
 - Updated the session UI to display each VM's backend-provided `profile_id` and
   replaced hard-coded About runtime/kernel claims with live diagnostic status.
+- Updated the Profile overview to render route-backed surface availability
+  (web, shell, mobile) and broker-visible credential inventory/grant status, so
+  profile readiness is visible before users dig into Plugins or raw stats.
 - Moved the checked-in agent skill library to `config/skills/`, removed root
   skill symlink shims, and added a Pydantic-backed `capsem-builder
   validate-skills` gate that runs in local and CI test flows.

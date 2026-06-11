@@ -299,6 +299,16 @@
   profile capability/readiness: available surfaces, enabled plugins, credential
   broker status and credential reference list, plus blockers that prevent using
   a surface.
+  - [x] Profile overview surfaces/credentials slice: Profile UI now renders
+    web/shell/mobile availability from `profile.profile.availability` and
+    broker-visible credential inventory/grant state from the credential broker
+    detail route.
+    Proof: `pnpm --dir frontend test -- --run
+    frontend/src/lib/__tests__/profile-page-contract.test.ts`; `pnpm --dir
+    frontend check`.
+  - [ ] Remaining: add explicit surface blockers/readiness reasons and enabled
+    plugin summary into the overview without duplicating the plugin or asset
+    tabs.
 - [ ] Implement bug 23 after user resumes coding: define and wire a plugin info
   contract for each plugin: name, description, version, mode, pre/post phase,
   supported event families, supported credential kinds/providers where relevant,
@@ -603,6 +613,11 @@
     frontend/src/lib/__tests__/api.test.ts
     frontend/src/lib/__tests__/plugin-section-contract.test.ts` passed; proves
     frontend types and Plugin UI render plugin-owned capability metadata.
+  - `pnpm --dir frontend test -- --run
+    frontend/src/lib/__tests__/profile-page-contract.test.ts` passed after the
+    Profile overview update; proves overview reads route-backed surface
+    availability and broker-visible credential inventory instead of inventing
+    profile status text.
   - `pnpm --dir frontend test -- --run frontend/src/lib/__tests__/profile-page-contract.test.ts`
     passed; proves the Profile UI exposes enforcement and detection as
     first-class tabs instead of a generic policy tab, and renders typed asset

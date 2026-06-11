@@ -3,9 +3,11 @@
   import {
     listProfiles,
     getProfileInfo,
+    getCredentialBrokerInfo,
     getAssetsStatus,
     listEnforcementRules,
     listDetectionRules,
+    type CredentialBrokerInfo,
     type EnforcementRuleInfo,
     type ProfileInfoResponse,
     type ProfileSummary,
@@ -27,12 +29,14 @@
   import WarningCircle from 'phosphor-svelte/lib/WarningCircle';
 
   type Section = 'overview' | 'enforcement' | 'detection' | 'plugins' | 'mcp' | 'assets';
+  type SurfaceInfo = { label: string; enabled: boolean };
   let activeSection = $state<Section>('overview');
   let profiles = $state<ProfileSummary[]>([]);
   let profileId = $state('');
   let loading = $state(true);
   let error = $state<string | null>(null);
   let profile = $state<ProfileInfoResponse | null>(null);
+  let credentialBrokerInfo = $state<CredentialBrokerInfo | null>(null);
   let assetsInfo = $state<AssetStatusResponse | null>(null);
   let enforcementRules = $state<EnforcementRuleInfo[]>([]);
   let detectionRules = $state<EnforcementRuleInfo[]>([]);
@@ -40,6 +44,11 @@
   let customEnforcementRules = $derived(enforcementRules.filter((rule) => !rule.default_rule));
   let defaultDetectionRules = $derived(detectionRules.filter((rule) => rule.default_rule));
   let customDetectionRules = $derived(detectionRules.filter((rule) => !rule.default_rule));
+  let profileSurfaces = $derived<SurfaceInfo[]>(profile ? [
+    { label: 'Web', enabled: profile.profile.availability.web },
+    { label: 'Shell', enabled: profile.profile.availability.shell },
+    { label: 'Mobile', enabled: profile.profile.availability.mobile },
+  ] : []);
 
   const navItems: { key: Section; label: string; icon: typeof Shield }[] = [
     { key: 'overview', label: 'Overview', icon: IdentificationCard },
@@ -142,13 +151,15 @@
   async function loadProfile(activeProfileId: string) {
     error = null;
     try {
-      const [profileResult, assetsResult, enforcementResult, detectionResult] = await Promise.all([
+      const [profileResult, credentialResult, assetsResult, enforcementResult, detectionResult] = await Promise.all([
         getProfileInfo(activeProfileId),
+        getCredentialBrokerInfo(activeProfileId),
         getAssetsStatus(activeProfileId),
         listEnforcementRules(activeProfileId),
         listDetectionRules(activeProfileId),
       ]);
       profile = profileResult;
+      credentialBrokerInfo = credentialResult;
       assetsInfo = assetsResult;
       enforcementRules = enforcementResult.rules;
       detectionRules = detectionResult.rules;
@@ -201,6 +212,14 @@
       unit += 1;
     }
     return `${value.toFixed(unit === 0 ? 0 : 1)} ${units[unit]}`;
+  }
+
+  function surfaceEnabled(enabled: boolean): string {
+    return enabled ? 'Available' : 'Disabled';
+  }
+
+  function surfaceClass(enabled: boolean): string {
+    return enabled ? 'text-primary bg-primary/10' : 'text-muted-foreground-2 bg-muted/40';
   }
 </script>
 
@@ -343,6 +362,50 @@
                 <p class="text-xs text-muted-foreground-1">MCP</p>
                 <p class="text-lg font-semibold text-foreground">{profile.profile.mcp_server_count}</p>
               </div>
+            </div>
+            <div class="p-4">
+              <p class="text-sm font-medium text-foreground mb-3">Available surfaces</p>
+              <div class="grid gap-3 sm:grid-cols-3">
+                {#each profileSurfaces as surface (surface.label)}
+                  <div class="rounded-lg border border-line-2 p-3">
+                    <div class="flex items-center justify-between gap-x-2">
+                      <p class="text-sm text-foreground">{surface.label}</p>
+                      <span class={`rounded-full px-2 py-0.5 text-xs ${surfaceClass(surface.enabled)}`}>
+                        {surfaceEnabled(surface.enabled)}
+                      </span>
+                    </div>
+                  </div>
+                {/each}
+              </div>
+            </div>
+            <div class="p-4">
+              <div class="flex items-center justify-between gap-x-4 mb-3">
+                <div>
+                  <p class="text-sm font-medium text-foreground">Broker-visible credentials</p>
+                  <p class="text-xs text-muted-foreground-1 mt-0.5">
+                    Profile broker grant: {credentialBrokerInfo?.grants.profile_enabled ? 'enabled' : 'disabled'}
+                  </p>
+                </div>
+                <span class="rounded-full px-2 py-0.5 text-xs bg-muted text-muted-foreground-1">
+                  {credentialBrokerInfo?.inventory.length ?? 0} credential{credentialBrokerInfo?.inventory.length === 1 ? '' : 's'}
+                </span>
+              </div>
+              {#if credentialBrokerInfo && credentialBrokerInfo.inventory.length > 0}
+                <div class="divide-y divide-card-divider rounded-lg border border-line-2">
+                  {#each credentialBrokerInfo.inventory.slice(0, 5) as credential (credential.credential_ref)}
+                    <div class="grid grid-cols-[minmax(0,1fr)_5rem_5rem] gap-x-3 p-3 text-xs">
+                      <div class="min-w-0">
+                        <p class="font-mono text-foreground truncate">{credential.credential_ref}</p>
+                        <p class="text-muted-foreground-2 truncate">{credential.provider ?? 'unknown'} · {credential.last_seen ?? 'never'}</p>
+                      </div>
+                      <p class="text-muted-foreground-1">{credential.observed_count} seen</p>
+                      <p class="text-muted-foreground-1">{credential.substituted_count} used</p>
+                    </div>
+                  {/each}
+                </div>
+              {:else}
+                <p class="text-xs text-muted-foreground-1">No brokered credentials recorded for this profile.</p>
+              {/if}
             </div>
           </div>
         {:else if activeSection === 'enforcement'}
