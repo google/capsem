@@ -103,6 +103,12 @@ export interface PluginRuntimeStatus {
   brokered_credentials: BrokeredCredentialStatus[];
 }
 
+export interface PluginCapabilities {
+  event_families: string[];
+  credential_providers: string[];
+  credential_sources: string[];
+}
+
 export interface PluginDetailRoute {
   id: string;
   label: string;
@@ -119,6 +125,7 @@ export interface PluginInfo {
   description: string;
   stage: PluginStage;
   version: string;
+  capabilities: PluginCapabilities;
   runtime: PluginRuntimeStatus;
   detail_routes: PluginDetailRoute[];
 }

@@ -231,6 +231,13 @@ struct PluginRuntimeStatus {
     brokered_credentials: Vec<BrokeredCredentialStatus>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+struct PluginCapabilities {
+    event_families: Vec<&'static str>,
+    credential_providers: Vec<&'static str>,
+    credential_sources: Vec<&'static str>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 struct BrokeredCredentialStatus {
     provider: Option<String>,
@@ -264,6 +271,7 @@ struct PluginInfo {
     description: &'static str,
     stage: PluginStage,
     version: &'static str,
+    capabilities: PluginCapabilities,
     runtime: PluginRuntimeStatus,
     detail_routes: Vec<PluginDetailRoute>,
 }
@@ -6049,9 +6057,43 @@ fn plugin_info_for(
         description: catalog_entry.description,
         stage: catalog_entry.stage,
         version: catalog_entry.version,
+        capabilities: plugin_capabilities(plugin_id),
         runtime,
         detail_routes,
     })
+}
+
+fn plugin_capabilities(plugin_id: &str) -> PluginCapabilities {
+    match plugin_id {
+        "credential_broker" => PluginCapabilities {
+            event_families: vec!["http", "file", "mcp"],
+            credential_providers: capsem_core::credential_broker::CredentialProvider::all()
+                .iter()
+                .map(|provider| provider.as_str())
+                .collect(),
+            credential_sources: vec![
+                "http.authorization",
+                "http.body.oauth_token",
+                "file.env",
+                "mcp.auth_reference",
+            ],
+        },
+        "dummy_pre_eicar" => PluginCapabilities {
+            event_families: vec!["http", "model", "file", "mcp"],
+            credential_providers: Vec::new(),
+            credential_sources: Vec::new(),
+        },
+        "dummy_post_allow" => PluginCapabilities {
+            event_families: vec!["http", "model", "file", "mcp"],
+            credential_providers: Vec::new(),
+            credential_sources: Vec::new(),
+        },
+        _ => PluginCapabilities {
+            event_families: Vec::new(),
+            credential_providers: Vec::new(),
+            credential_sources: Vec::new(),
+        },
+    }
 }
 
 fn plugin_detail_routes(plugin_id: &str, scope: &PluginScope) -> Vec<PluginDetailRoute> {

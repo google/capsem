@@ -22,4 +22,12 @@ describe('PluginSection route contract', () => {
     expect(source).toContain('bg-muted/20 opacity-70');
     expect(source).toContain("label: 'Disabled'");
   });
+
+  it('renders plugin-owned capabilities including broker providers and sources', () => {
+    expect(source).toContain('plugin.capabilities.event_families');
+    expect(source).toContain('Supported providers');
+    expect(source).toContain('plugin.capabilities.credential_providers.join');
+    expect(source).toContain('Credential sources');
+    expect(source).toContain('plugin.capabilities.credential_sources.join');
+  });
 });

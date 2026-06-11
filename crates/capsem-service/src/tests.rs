@@ -2228,6 +2228,23 @@ async fn profile_plugin_endpoint_matrix_dynamically_controls_enforcement_evaluat
         .expect("built-in plugin list must include credential_broker");
     assert_eq!(broker.stage, PluginStage::PreAndPost);
     assert_eq!(broker.version, "1");
+    assert_eq!(
+        broker.capabilities.event_families,
+        vec!["http", "file", "mcp"]
+    );
+    assert_eq!(
+        broker.capabilities.credential_providers,
+        vec!["anthropic", "google", "openai", "github", "mcp"]
+    );
+    assert_eq!(
+        broker.capabilities.credential_sources,
+        vec![
+            "http.authorization",
+            "http.body.oauth_token",
+            "file.env",
+            "mcp.auth_reference"
+        ]
+    );
     assert_eq!(broker.detail_routes.len(), 1);
     assert_eq!(broker.detail_routes[0].id, "credential_broker_credentials");
     assert_eq!(
@@ -2255,6 +2272,7 @@ async fn profile_plugin_endpoint_matrix_dynamically_controls_enforcement_evaluat
     assert_eq!(info.scope.profile_id, "code");
     assert_eq!(info.stage, PluginStage::Preprocess);
     assert_eq!(info.version, "1");
+    assert!(info.capabilities.credential_providers.is_empty());
     assert!(
         info.detail_routes.is_empty(),
         "debug plugins do not get custom UI routes"

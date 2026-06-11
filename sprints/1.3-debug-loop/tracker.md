@@ -311,9 +311,19 @@
     custom detail routes, and credential broker exposes
     `/profiles/{profile_id}/plugins/credential_broker/credentials/info` for
     broker inventory plus the initial grant/corp-constraint surface.
-  - [ ] Remaining: render the credential-broker-specific panel in the UI,
-    implement grant mutation/constraints, and connect those grants to broker
-    replay/substitution decisions.
+  - [x] Plugin capability UI slice: `PluginInfo` now carries plugin-owned
+    capability metadata, and the credential broker reports watched event
+    families, supported providers (`anthropic`, `google`, `openai`, `github`,
+    `mcp`), and concrete credential source shapes (`http.authorization`,
+    `http.body.oauth_token`, `file.env`, `mcp.auth_reference`). The Plugin UI
+    renders those fields next to broker inventory/counters.
+    Proof: `cargo test -p capsem-service plugin -- --nocapture`; `pnpm --dir
+    frontend test -- --run frontend/src/lib/__tests__/api.test.ts
+    frontend/src/lib/__tests__/plugin-section-contract.test.ts`; `pnpm --dir
+    frontend check`.
+  - [ ] Remaining: add route-backed grant mutation/corp constraints, connect
+    those grants to broker replay/substitution decisions, and surface broker
+    activity in VM stats with recent evidence links.
 - [ ] Implement bug 24 after user resumes coding: add TDD for unknown-domain AI
   protocol sniffing and rogue/custom endpoint detection. The fix must use
   bounded request/response previews, set first-party `model.provider` on the
@@ -530,6 +540,10 @@
     passed after a transient local code-sign wrapper retry; proves the
     credential broker exposes a plugin-owned detail route for inventory and the
     initial grant surface.
+  - `cargo test -p capsem-service plugin -- --nocapture` passed after plugin
+    capabilities were added; proves plugin list/info expose broker-owned
+    capability metadata including event families, supported providers, and
+    credential source shapes.
   - `cargo test -p capsem-service plugin -- --nocapture` passed; proves debug
     dummy plugins are disabled by default, only affect evaluation when
     explicitly enabled, and plugin route updates still control the same
@@ -585,6 +599,10 @@
     frontend/src/lib/__tests__/mcp-section-contract.test.ts` passed; proves the
     default MCP selector is route-backed and tied to `default.mcp` instead of
     local UI policy state.
+  - `pnpm --dir frontend test -- --run
+    frontend/src/lib/__tests__/api.test.ts
+    frontend/src/lib/__tests__/plugin-section-contract.test.ts` passed; proves
+    frontend types and Plugin UI render plugin-owned capability metadata.
   - `pnpm --dir frontend test -- --run frontend/src/lib/__tests__/profile-page-contract.test.ts`
     passed; proves the Profile UI exposes enforcement and detection as
     first-class tabs instead of a generic policy tab, and renders typed asset

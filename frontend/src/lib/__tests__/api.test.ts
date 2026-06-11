@@ -752,6 +752,16 @@ describe('api', () => {
             description: 'captures observed credentials',
             stage: 'pre_and_post',
             version: '1',
+            capabilities: {
+              event_families: ['http', 'file', 'mcp'],
+              credential_providers: ['anthropic', 'google', 'openai', 'github', 'mcp'],
+              credential_sources: [
+                'http.authorization',
+                'http.body.oauth_token',
+                'file.env',
+                'mcp.auth_reference',
+              ],
+            },
             runtime: {
               enabled: true,
               event_count: 0,
@@ -789,6 +799,11 @@ describe('api', () => {
         description: 'debug plugin',
         stage: 'preprocess',
         version: '1',
+        capabilities: {
+          event_families: ['http', 'model', 'file', 'mcp'],
+          credential_providers: [],
+          credential_sources: [],
+        },
         runtime: {
           enabled: true,
           event_count: 1,

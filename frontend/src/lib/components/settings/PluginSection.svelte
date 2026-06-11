@@ -198,6 +198,15 @@
             <p class="text-[11px] text-muted-foreground-2 mt-1">
               {STAGE_LABELS[plugin.stage]} · v{plugin.version}
             </p>
+            {#if plugin.capabilities.event_families.length > 0}
+              <div class="mt-2 flex flex-wrap gap-1">
+                {#each plugin.capabilities.event_families as family (family)}
+                  <span class="rounded-full border border-line-2 bg-muted/40 px-1.5 py-0.5 text-[10px] text-muted-foreground-1">
+                    {family}
+                  </span>
+                {/each}
+              </div>
+            {/if}
           </div>
 
           <div class="min-w-0 text-xs text-muted-foreground-1">
@@ -257,6 +266,21 @@
             {:else if brokerLoading && !credentialBrokerInfo}
               <p class="mt-3 text-xs text-muted-foreground-1">Loading broker details...</p>
             {:else if credentialBrokerInfo}
+              <div class="grid grid-cols-2 gap-3 mt-4">
+                <div class="rounded-md border border-line-2 p-3">
+                  <p class="text-[11px] uppercase tracking-wide text-muted-foreground-2">Supported providers</p>
+                  <p class="mt-2 text-xs text-foreground">
+                    {plugin.capabilities.credential_providers.join(', ') || 'none'}
+                  </p>
+                </div>
+                <div class="rounded-md border border-line-2 p-3">
+                  <p class="text-[11px] uppercase tracking-wide text-muted-foreground-2">Credential sources</p>
+                  <p class="mt-2 text-xs text-foreground">
+                    {plugin.capabilities.credential_sources.join(', ') || 'none'}
+                  </p>
+                </div>
+              </div>
+
               <div class="grid grid-cols-3 gap-3 mt-4">
                 <div class="rounded-md border border-line-2 p-3">
                   <p class="text-[11px] uppercase tracking-wide text-muted-foreground-2">Inventory</p>
