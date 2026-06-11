@@ -83,6 +83,17 @@
   tell whether AGY OAuth was intercepted, plugin activity is absent from VM
   stats, and supported credential types are not listed. Each plugin should
   expose structured info/status/capabilities/counters that the UI can render.
+- [x] Capture bug 24: AI provider detection is host/registry-biased and misses
+  unknown-domain OpenAI/Gemini/Claude-compatible traffic. Bounded
+  request/response sniffing should detect protocol shape, emit
+  `model.provider` plus `http.host`, and a default/high-signal detection rule
+  should flag `model.provider == "<provider>"` when the host is not a known or
+  profile/corp-declared endpoint.
+- [x] Capture bug 25: brokered credentials are not yet a complete next-VM reuse
+  loop. Capture can store opaque credential refs and upstream substitution can
+  rehydrate refs, but AGY/Gemini/Claude/Codex config is not automatically seeded
+  with those refs for the next VM, so OAuth/login dances may repeat even after
+  the broker captured a usable credential.
 - [x] Implement bug 1 slice: TDD over CLI purge messaging, service purge of
   defunct persistent VMs, and TUI resume gating from `can_resume`.
 - [x] Implement bug 2 slice: TDD over the checked-in code profile installer so
@@ -198,6 +209,17 @@
   supported event families, supported credential kinds/providers where relevant,
   status, counters, last activity, and recent evidence links; render this in the
   plugin UI and VM stats.
+- [ ] Implement bug 24 after user resumes coding: add TDD for unknown-domain AI
+  protocol sniffing and rogue/custom endpoint detection. The fix must use
+  bounded request/response previews, set first-party `model.provider` on the
+  same security event as `http.host`, preserve declared custom endpoint support,
+  and add adversarial tests proving unknown-domain OpenAI/Gemini/Claude shapes
+  are detected without allowing unbounded body capture or host-only bypasses.
+- [ ] Implement bug 25 after user resumes coding: complete broker reuse across
+  VM lifecycles. Add provider/tool adapters that write only opaque broker refs
+  into profile-owned guest config, prove HTTP and MCP reinjection use those refs
+  without exposing raw secrets, and add an AGY/Google OAuth e2e showing a second
+  VM does not redo the OAuth dance when a valid brokered ref exists.
 
 ## Notes
 
@@ -215,6 +237,11 @@
     current monitored proxy/MITM path.
   - AGY may use a provider/request shape our model parser does not classify
     yet.
+  - Unknown-domain AI-compatible traffic currently needs a declared
+    profile/corp model endpoint before the MITM treats it as model traffic.
+    That means a private or rogue OpenAI/Gemini/Claude-compatible endpoint can
+    remain ordinary HTTP unless future sniffing promotes the event to
+    first-party model telemetry and detection.
   - AGY tool activity may be local-process or MCP-shaped activity that is not
     being converted into first-party model/tool-call events.
   - Stats UI may be reading stale counters/routes even if session DB events
@@ -229,6 +256,11 @@
     never saw the `oauth2.googleapis.com/token` body. Runtime plugin status was
     also a placeholder that always returned zero counters even if broker rows
     existed in session DB.
+  - Broker capture and broker substitution are currently separate primitives:
+    Keychain/test storage plus `credential:blake3:<hash>` refs exist, and HTTP
+    upstream/MCP auth can rehydrate refs when config already carries them. What
+    is missing is the profile-owned adapter that seeds future VM/tool config
+    from captured refs, especially for AGY/Google OAuth.
   - Process audit may be rendering snapshot collection time for every row
     rather than per-process start time or per-event emission time.
   - Process audit may be mixing inventory/snapshot data with security-event
@@ -361,7 +393,9 @@
 - Functional: focused source tests passed; live install not restarted or killed
   per evidence-preservation rule.
 - Adversarial: pending; must include AGY activity that bypasses model stats
-  today.
+  today, plus unknown-domain OpenAI/Gemini/Claude-compatible traffic that is
+  detected by bounded protocol-shape sniffing and flagged when the endpoint is
+  not known or profile/corp-declared.
 - E2E/VM: pending; must preserve current VM until destructive actions are
   explicitly approved.
 - Telemetry/observability: pending; AGY model/tool activity must be visible
