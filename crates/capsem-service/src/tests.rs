@@ -1688,6 +1688,7 @@ match = 'file.import.content.contains("EICAR")'
 #[tokio::test]
 async fn mounted_mcp_routes_are_profile_scoped_mechanics_only() {
     let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+    let _builtin_guard = ensure_test_builtin_mcp_binary();
 
     let dir = tempfile::tempdir().unwrap();
     let (_env_guard, user_path, _) = install_empty_settings_env(&dir);
@@ -1724,6 +1725,18 @@ async fn mounted_mcp_routes_are_profile_scoped_mechanics_only() {
         .unwrap()
         .iter()
         .any(|server| server["name"] == "settings-only"));
+    let local = servers
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|server| server["name"] == "local")
+        .expect("profile route should expose Capsem-owned local builtin MCP");
+    assert_eq!(local["source"], "builtin");
+    assert_eq!(local["enabled"], true);
+    assert_eq!(
+        local["running"], false,
+        "builtin MCP list entries are static profile capability, not live server lifecycle"
+    );
 
     let (status, mcp_info) = route_request(
         app.clone(),
@@ -4974,6 +4987,27 @@ struct EnvVarGuard {
     previous_test_profile_dir_override: Option<Option<PathBuf>>,
 }
 
+struct TestBuiltinMcpBinaryGuard {
+    path: PathBuf,
+    remove_on_drop: bool,
+}
+
+fn ensure_test_builtin_mcp_binary() -> TestBuiltinMcpBinaryGuard {
+    let path = std::env::current_exe()
+        .expect("test binary path")
+        .parent()
+        .expect("test binary parent")
+        .join("capsem-mcp-builtin");
+    let remove_on_drop = !path.exists();
+    if remove_on_drop {
+        std::fs::write(&path, "#!/bin/sh\n").expect("write test builtin MCP binary placeholder");
+    }
+    TestBuiltinMcpBinaryGuard {
+        path,
+        remove_on_drop,
+    }
+}
+
 impl EnvVarGuard {
     fn set(key: &'static str, value: impl AsRef<std::ffi::OsStr>) -> Self {
         let previous = std::env::var_os(key);
@@ -5002,6 +5036,14 @@ impl Drop for EnvVarGuard {
         }
         if let Some(previous) = self.previous_test_profile_dir_override.take() {
             super::set_test_profile_dir_override(previous);
+        }
+    }
+}
+
+impl Drop for TestBuiltinMcpBinaryGuard {
+    fn drop(&mut self) {
+        if self.remove_on_drop {
+            let _ = std::fs::remove_file(&self.path);
         }
     }
 }

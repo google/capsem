@@ -206,10 +206,16 @@
   and disabled rules, group default rules visibly without making them a separate
   engine, and use consistent icons/select boxes/toggles for enum/boolean
   controls.
-- [ ] Implement bug 16 after user resumes coding: define MCP source/lifecycle
-  vocabulary (`builtin` vs external/server-backed), make the UI display that
-  exact contract, and prevent builtin/static MCP entries from being shown as
-  stopped servers unless there is a real stopped process.
+- [x] Implement bug 16 slice: make MCP source/lifecycle display respect the
+  existing route contract. The profile route exposes `local` as
+  `source = builtin` with `running = false` because it is static Capsem-owned
+  capability, not an external stopped server. The MCP UI now renders builtin
+  entries as `Built-in`/`Disabled`, and frontend runtime counts exclude builtin
+  entries.
+  Proof: `cargo test -p capsem-service
+  mounted_mcp_routes_are_profile_scoped_mechanics_only -- --nocapture`;
+  `pnpm --dir frontend test -- --run
+  frontend/src/lib/__tests__/mcp-store.test.ts`; `pnpm --dir frontend check`.
 - [x] Implement bug 17 slice: remove unsupported MCP server add/toggle/delete
   affordances and frontend helpers that hit the deliberate 501 server edit
   routes. The MCP UI now only exposes route-backed operations that exist:
@@ -488,6 +494,9 @@
   - `cargo test -p capsem-service profile_mcp_tool_edit_writes_profile_rule_and_mutation_ledger -- --nocapture`
     passed; proves the route mutation writes the profile mutation ledger and
     `tools/list` returns the effective `permission_action`/`permission_source`.
+  - `cargo test -p capsem-service mounted_mcp_routes_are_profile_scoped_mechanics_only -- --nocapture`
+    passed; proves profile MCP routes expose the Capsem-owned local MCP entry
+    as `source = builtin`, not as a settings-owned or live external runtime.
   - `pnpm --dir frontend test -- --run frontend/src/lib/__tests__/api.test.ts frontend/src/lib/__tests__/mcp-store.test.ts`
     passed; proves frontend MCP clients send `{ action }`, require explicit
     profile ids, and no longer expose unsupported server edit/delete helpers.

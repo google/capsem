@@ -94,6 +94,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   action and source rule, the frontend edits tools with `{ action }` instead of
   the retired `{ approved: true }` cache shape, and unsupported server
   add/toggle/delete controls are no longer exposed in the MCP UI.
+- Clarified MCP builtin display semantics: the profile-owned `local` Capsem MCP
+  entry is rendered as built-in capability, not as a stopped external server,
+  and frontend runtime counts exclude static builtin MCP entries.
 - Cleaned the admin/doctor/status/debug rails so diagnostics follow the profile
   contract: builder doctor delegates profile validation to `capsem-admin
   profile check`, Justfile asset builds no longer pass legacy guest-config

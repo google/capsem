@@ -31,7 +31,7 @@ class McpStore {
   totalTools = $derived(this.tools.length);
 
   /** Number of running servers. */
-  runningCount = $derived(this.servers.filter((s) => s.running).length);
+  runningCount = $derived(this.servers.filter((s) => s.source !== 'builtin' && s.running).length);
 
   private activeProfileId(): string {
     if (!this.profileId) throw new Error('MCP profile id is not loaded');

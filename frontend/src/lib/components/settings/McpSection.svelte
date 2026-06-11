@@ -133,7 +133,6 @@
     <div>
       <h3 class="text-xs font-semibold text-foreground uppercase tracking-wider mb-2">Built-in</h3>
       {#each builtinServers as server (server.name)}
-        {@const runtime = runtimeByName.get(server.name)}
         {@const tools = mcpStore.toolsByServer[server.name] ?? []}
         {@const isExpanded = expandedGroups.has(server.name)}
         <div class="bg-card border border-card-line rounded-xl mb-3 overflow-hidden">
@@ -145,13 +144,11 @@
             >
               <span class="text-sm font-semibold text-foreground font-mono truncate">{server.name}</span>
               <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-muted text-muted-foreground-1 shrink-0">{server.is_stdio ? 'stdio' : 'http'}</span>
-              {#if runtime}
-                <span class="flex items-center gap-x-1 text-[10px] px-1.5 py-0.5 rounded-full shrink-0
-                  {runtime.running ? 'bg-primary/10 text-primary' : 'bg-muted text-muted-foreground-1'}">
-                  <span class="size-1.5 rounded-full {runtime.running ? 'bg-primary' : 'bg-muted-foreground-1'}"></span>
-                  {runtime.running ? 'Running' : 'Stopped'}
-                </span>
-              {/if}
+              <span class="flex items-center gap-x-1 text-[10px] px-1.5 py-0.5 rounded-full shrink-0
+                {server.enabled ? 'bg-primary/10 text-primary' : 'bg-muted text-muted-foreground-1'}">
+                <span class="size-1.5 rounded-full {server.enabled ? 'bg-primary' : 'bg-muted-foreground-1'}"></span>
+                {server.enabled ? 'Built-in' : 'Disabled'}
+              </span>
               {#if tools.length > 0}
                 <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-muted text-muted-foreground-1 shrink-0">
                   {tools.length} tool{tools.length === 1 ? '' : 's'}
