@@ -709,9 +709,6 @@ async fn run_async_main_loop(
 /// via length-prefixed MessagePack frames on stdin/stdout.
 ///
 /// Frame format: [4 bytes big-endian payload length] [N bytes msgpack]
-///
-/// If the aggregator binary is not found (dev builds), falls back to an in-process
-/// mock that returns empty results.
 async fn spawn_mcp_aggregator(
     servers: &[capsem_core::mcp::types::McpServerDef],
     session_dir: &Path,
@@ -723,47 +720,8 @@ async fn spawn_mcp_aggregator(
 
     let (client, mut rx) = AggregatorClient::channel(64);
 
-    // Find the aggregator binary next to our own binary.
     let exe_path = std::env::current_exe()?;
-    let bin_dir = exe_path.parent().unwrap_or(std::path::Path::new("."));
-    let aggregator_bin = bin_dir.join("capsem-mcp-aggregator");
-
-    if !aggregator_bin.exists() {
-        // Dev fallback: no aggregator binary. Return a client with an empty mock driver.
-        info!(
-            "aggregator binary not found at {}, using empty stub",
-            aggregator_bin.display()
-        );
-        tokio::spawn(async move {
-            while let Some((req, resp_tx)) = rx.recv().await {
-                let body = match req.method {
-                    AggregatorMethod::ListServers => AggregatorResult::Servers { servers: vec![] },
-                    AggregatorMethod::ListTools => AggregatorResult::Tools { tools: vec![] },
-                    AggregatorMethod::ListResources => {
-                        AggregatorResult::Resources { resources: vec![] }
-                    }
-                    AggregatorMethod::ListPrompts => AggregatorResult::Prompts { prompts: vec![] },
-                    AggregatorMethod::CallTool { name, .. } => AggregatorResult::Error {
-                        error: format!("aggregator not available: {name}"),
-                    },
-                    AggregatorMethod::ReadResource { uri, .. } => AggregatorResult::Error {
-                        error: format!("aggregator not available: {uri}"),
-                    },
-                    AggregatorMethod::GetPrompt { name, .. } => AggregatorResult::Error {
-                        error: format!("aggregator not available: {name}"),
-                    },
-                    AggregatorMethod::Refresh { .. } | AggregatorMethod::Shutdown => {
-                        AggregatorResult::Ok { ok: true }
-                    }
-                };
-                capsem_core::try_send!(
-                    "aggregator_response",
-                    resp_tx.send(AggregatorResponse { id: req.id, body })
-                );
-            }
-        });
-        return Ok(client);
-    }
+    let aggregator_bin = resolve_mcp_aggregator_binary(&exe_path)?;
 
     // Dedicated stderr log for the aggregator -- keeps its JSON tracing
     // stream out of the parent's process.log. 0o600 to match the
@@ -887,6 +845,31 @@ async fn spawn_mcp_aggregator(
     });
 
     Ok(client)
+}
+
+fn resolve_mcp_aggregator_binary(exe_path: &Path) -> Result<PathBuf> {
+    let bin_dir = exe_path.parent().unwrap_or(std::path::Path::new("."));
+    let mut candidates = vec![bin_dir.join("capsem-mcp-aggregator")];
+    if bin_dir.file_name().and_then(|name| name.to_str()) == Some("deps") {
+        if let Some(target_debug) = bin_dir.parent() {
+            candidates.push(target_debug.join("capsem-mcp-aggregator"));
+        }
+    }
+
+    for candidate in &candidates {
+        if candidate.exists() {
+            return Ok(candidate.clone());
+        }
+    }
+
+    let searched = candidates
+        .iter()
+        .map(|path| path.display().to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    anyhow::bail!(
+        "required MCP aggregator binary capsem-mcp-aggregator is missing; searched: {searched}"
+    )
 }
 
 #[cfg(test)]
@@ -1182,5 +1165,29 @@ mod tests {
         let session = PathBuf::from("/tmp/some-session");
         let log = aggregator_log_path(&session);
         assert_eq!(log, session.join("mcp-aggregator.stderr.log"));
+    }
+
+    #[test]
+    fn missing_mcp_aggregator_fails_loud_instead_of_empty_stub() {
+        let dir = tempfile::tempdir().unwrap();
+        let fake_exe = dir.path().join("capsem-process");
+        let error = resolve_mcp_aggregator_binary(&fake_exe)
+            .expect_err("missing aggregator binary must not resolve");
+        assert!(
+            error.to_string().contains("capsem-mcp-aggregator"),
+            "error should name the missing component: {error:#}"
+        );
+    }
+
+    #[test]
+    fn mcp_aggregator_resolver_supports_cargo_test_deps_layout() {
+        let dir = tempfile::tempdir().unwrap();
+        let deps = dir.path().join("deps");
+        std::fs::create_dir_all(&deps).unwrap();
+        let aggregator = dir.path().join("capsem-mcp-aggregator");
+        std::fs::write(&aggregator, "").unwrap();
+
+        let resolved = resolve_mcp_aggregator_binary(&deps.join("capsem-process-test")).unwrap();
+        assert_eq!(resolved, aggregator);
     }
 }

@@ -400,6 +400,23 @@ pub fn run_with_opts(opts: Opts) -> Result<PathBuf> {
         });
     }
 
+    // -- runtime boundary/debug contract --
+    {
+        let entry_path = format!("{bundle_root}/system/runtime-boundary.json");
+        let boundary = runtime_boundary_debug_contract();
+        let bytes = serde_json::to_vec_pretty(&boundary)?;
+        let len = bytes.len() as u64;
+        add_bytes(&mut tar, &entry_path, &bytes)?;
+        sections.push(Section {
+            path: entry_path,
+            kind: "json",
+            bytes: Some(len),
+            missing: false,
+            reason: None,
+            truncated_to_last_bytes: None,
+        });
+    }
+
     // -- system info --
     {
         let version_json = serde_json::json!({
@@ -781,6 +798,67 @@ fn host_label() -> String {
         .chars()
         .take(32)
         .collect()
+}
+
+fn runtime_boundary_debug_contract() -> serde_json::Value {
+    let host_vsock_services: Vec<_> = capsem_core::capsem_proto::host_vsock_services()
+        .iter()
+        .map(|service| {
+            serde_json::json!({
+                "service": service.as_str(),
+                "port": service.port(),
+            })
+        })
+        .collect();
+
+    serde_json::json!({
+        "version": env!("CARGO_PKG_VERSION"),
+        "host_vsock_services": host_vsock_services,
+        "closed_raw_vsock_ports": [
+            {
+                "port": 5003,
+                "reason": "retired_mcp_raw_port",
+            },
+            {
+                "port": 11434,
+                "reason": "guest_tcp_ollama_must_use_mitm_redirect",
+            },
+            {
+                "port": 3128,
+                "reason": "guest_tcp_proxy_must_use_mitm_redirect",
+            },
+            {
+                "port": 8080,
+                "reason": "guest_tcp_proxy_must_use_mitm_redirect",
+            }
+        ],
+        "debug_routes": [
+            "/version",
+            "/status",
+            "/triage",
+            "/panics",
+            "/host-logs/{name}",
+            "/vms/{id}/status",
+            "/vms/{id}/info",
+            "/vms/{id}/logs",
+            "/vms/{id}/history",
+            "/vms/{id}/security/latest",
+            "/vms/{id}/security/status",
+            "/vms/{id}/detection/latest",
+            "/vms/{id}/detection/status",
+            "/vms/{id}/enforcement/latest",
+            "/vms/{id}/enforcement/status",
+            "/profiles/status",
+            "/profiles/list",
+            "/profiles/{profile_id}/info",
+            "/profiles/{profile_id}/assets/status",
+            "/profiles/{profile_id}/plugins/info",
+            "/profiles/{profile_id}/plugins/{plugin_id}/info",
+            "/profiles/{profile_id}/plugins/credential_broker/credentials/info",
+            "/profiles/{profile_id}/mcp/info",
+            "/profiles/{profile_id}/mcp/servers/list"
+        ],
+    })
 }
 
 fn hostname() -> String {

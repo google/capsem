@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use capsem_core::{read_control_msg, write_control_msg, VsockConnection};
 use capsem_proto::ipc::{FileBoundaryAction, ProcessToService, ServiceToProcess};
-use capsem_proto::{GuestToHost, HostToGuest};
+use capsem_proto::{GuestToHost, HostToGuest, HostVsockService};
 use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -819,15 +819,15 @@ fn dispatch_aux_connection(
     ctrl_tx: &mpsc::Sender<ServiceToProcess>,
     vm_id: &str,
 ) {
-    match conn.port {
-        capsem_core::VSOCK_PORT_SNI_PROXY => {
+    match HostVsockService::from_port(conn.port) {
+        Some(HostVsockService::SniProxy) => {
             let config = Arc::clone(mitm_config);
             tokio::spawn(async move {
                 capsem_core::net::mitm_proxy::handle_connection(conn.fd, config).await;
                 drop(conn);
             });
         }
-        capsem_proto::VSOCK_PORT_DNS_PROXY => {
+        Some(HostVsockService::DnsProxy) => {
             // T3.2 -- one envelope round-trip per vsock connection.
             // The agent opens a fresh conn per query (UDP datagram or
             // TCP DNS query), writes a length-framed `DnsRequest`,
@@ -847,7 +847,7 @@ fn dispatch_aux_connection(
                 serve_dns_session(conn, handler, db_for_dns, security_rules).await;
             });
         }
-        capsem_core::VSOCK_PORT_EXEC => {
+        Some(HostVsockService::Exec) => {
             let js = Arc::clone(job_store);
             std::thread::spawn(move || {
                 let mut file = match clone_fd(conn.fd) {
@@ -891,7 +891,7 @@ fn dispatch_aux_connection(
                 drop(conn);
             });
         }
-        capsem_proto::VSOCK_PORT_AUDIT => {
+        Some(HostVsockService::Audit) => {
             let db_clone = Arc::clone(db);
             let security_rules = security_rules.read().unwrap().clone();
             std::thread::spawn(move || {
@@ -946,7 +946,7 @@ fn dispatch_aux_connection(
                 drop(conn);
             });
         }
-        capsem_core::VSOCK_PORT_LIFECYCLE => {
+        Some(HostVsockService::Lifecycle) => {
             let itx = ipc_tx.clone();
             let ctx = ctrl_tx.clone();
             let id = vm_id.to_string();
@@ -989,8 +989,21 @@ fn dispatch_aux_connection(
                 drop(conn);
             });
         }
+        Some(HostVsockService::Control | HostVsockService::Terminal) => {
+            warn!(
+                target: "ipc",
+                port = conn.port,
+                service = HostVsockService::from_port(conn.port).map(HostVsockService::as_str),
+                "vsock dispatch: control/terminal service reached auxiliary dispatcher; connection ignored"
+            );
+        }
         other => {
-            warn!(target: "ipc", port = other, "vsock dispatch: unknown port; auxiliary connection ignored");
+            warn!(
+                target: "ipc",
+                port = conn.port,
+                service = ?other.map(HostVsockService::as_str),
+                "vsock dispatch: unknown port; auxiliary connection ignored"
+            );
         }
     }
 }
@@ -1487,20 +1500,22 @@ enum VsockPortKind {
     SniProxy,
     Exec,
     Lifecycle,
+    Audit,
     DnsProxy,
     Unknown,
 }
 
 #[cfg(test)]
 fn classify_vsock_port(port: u32) -> VsockPortKind {
-    match port {
-        capsem_core::VSOCK_PORT_TERMINAL => VsockPortKind::Terminal,
-        capsem_core::VSOCK_PORT_CONTROL => VsockPortKind::Control,
-        capsem_core::VSOCK_PORT_SNI_PROXY => VsockPortKind::SniProxy,
-        capsem_core::VSOCK_PORT_EXEC => VsockPortKind::Exec,
-        capsem_core::VSOCK_PORT_LIFECYCLE => VsockPortKind::Lifecycle,
-        capsem_proto::VSOCK_PORT_DNS_PROXY => VsockPortKind::DnsProxy,
-        _ => VsockPortKind::Unknown,
+    match HostVsockService::from_port(port) {
+        Some(HostVsockService::Terminal) => VsockPortKind::Terminal,
+        Some(HostVsockService::Control) => VsockPortKind::Control,
+        Some(HostVsockService::SniProxy) => VsockPortKind::SniProxy,
+        Some(HostVsockService::Exec) => VsockPortKind::Exec,
+        Some(HostVsockService::Lifecycle) => VsockPortKind::Lifecycle,
+        Some(HostVsockService::Audit) => VsockPortKind::Audit,
+        Some(HostVsockService::DnsProxy) => VsockPortKind::DnsProxy,
+        None => VsockPortKind::Unknown,
     }
 }
 

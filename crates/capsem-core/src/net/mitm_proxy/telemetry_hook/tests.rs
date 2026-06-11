@@ -82,6 +82,7 @@ fn anthropic_req_ctx() -> TelemetryRequestContext {
         domain: "api.anthropic.com".into(),
         process_name: Some("agent".into()),
         ai_provider: Some(ProviderKind::Anthropic),
+        model_traffic: true,
         method: "POST".into(),
         path: "/v1/messages".into(),
         query: None,
@@ -179,6 +180,7 @@ fn head_request_is_not_a_model_call() {
 fn non_llm_path_is_not_a_model_call() {
     let mut req_ctx = anthropic_req_ctx();
     req_ctx.path = "/v1/models".into();
+    req_ctx.model_traffic = false;
     let pricing = Arc::new(PricingTable::load());
     let trace = Arc::new(Mutex::new(TraceState::new()));
 

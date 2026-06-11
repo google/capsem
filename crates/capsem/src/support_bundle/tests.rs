@@ -174,3 +174,40 @@ fn bundle_marks_missing_files_in_manifest() {
         .expect("gateway.log section missing");
     assert_eq!(gateway_section["missing"], true);
 }
+
+#[test]
+fn bundle_includes_runtime_boundary_debug_contract() {
+    let _g = ENV_LOCK.lock().unwrap();
+    let _dir = fake_capsem_home();
+    let out = crate::support_bundle::run(None, 0, false, false).unwrap();
+    let entries = read_tar_entries(&out);
+
+    let boundary_entry = entries
+        .iter()
+        .find(|(p, _)| p.ends_with("system/runtime-boundary.json"))
+        .expect("runtime boundary debug contract should be in bundle");
+    let boundary: serde_json::Value = serde_json::from_slice(&boundary_entry.1).unwrap();
+    let services = boundary["host_vsock_services"].as_array().unwrap();
+    assert!(
+        services
+            .iter()
+            .any(|s| s["service"] == "audit" && s["port"] == 5006),
+        "audit VSOCK service must be first-party in debug output: {boundary}"
+    );
+    assert!(
+        boundary["closed_raw_vsock_ports"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|p| p["port"] == 5003 && p["reason"] == "retired_mcp_raw_port"),
+        "retired raw MCP port must be called out as closed: {boundary}"
+    );
+    assert!(
+        boundary["debug_routes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|route| route == "/triage"),
+        "debug route inventory should include /triage: {boundary}"
+    );
+}

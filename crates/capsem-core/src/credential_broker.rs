@@ -134,6 +134,32 @@ pub fn resolve_broker_reference_for_provider(
     load_credential_secret(provider, credential_ref).map(Some)
 }
 
+pub fn broker_reference_replay_available(provider: Option<&str>, credential_ref: &str) -> bool {
+    let Some(provider) = provider.and_then(credential_provider_from_str) else {
+        return CredentialProvider::all().iter().copied().any(|provider| {
+            resolve_broker_reference_for_provider(provider, credential_ref)
+                .ok()
+                .flatten()
+                .is_some()
+        });
+    };
+    resolve_broker_reference_for_provider(provider, credential_ref)
+        .ok()
+        .flatten()
+        .is_some()
+}
+
+fn credential_provider_from_str(provider: &str) -> Option<CredentialProvider> {
+    match provider {
+        "anthropic" => Some(CredentialProvider::Anthropic),
+        "google" => Some(CredentialProvider::Google),
+        "openai" => Some(CredentialProvider::OpenAi),
+        "github" => Some(CredentialProvider::Github),
+        "mcp" => Some(CredentialProvider::Mcp),
+        _ => None,
+    }
+}
+
 pub fn keychain_account(provider: CredentialProvider, credential_ref: &str) -> String {
     format!("{}:{credential_ref}", provider.as_str())
 }

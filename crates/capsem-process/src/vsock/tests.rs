@@ -45,6 +45,22 @@ fn classify_lifecycle_port() {
 }
 
 #[test]
+fn classify_audit_port() {
+    assert_eq!(
+        classify_vsock_port(capsem_proto::VSOCK_PORT_AUDIT),
+        VsockPortKind::Audit
+    );
+}
+
+#[test]
+fn classify_dns_proxy_port() {
+    assert_eq!(
+        classify_vsock_port(capsem_proto::VSOCK_PORT_DNS_PROXY),
+        VsockPortKind::DnsProxy
+    );
+}
+
+#[test]
 fn classify_unknown_port() {
     assert_eq!(classify_vsock_port(99999), VsockPortKind::Unknown);
 }

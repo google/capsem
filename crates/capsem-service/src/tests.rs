@@ -2588,6 +2588,10 @@ async fn credential_broker_plugin_runtime_reports_session_db_substitutions() {
         broker["runtime"]["brokered_credentials"][0]["provider"],
         "google"
     );
+    assert_eq!(
+        broker["runtime"]["brokered_credentials"][0]["replay_available"], false,
+        "DB evidence alone must not imply the broker can replay the credential"
+    );
 }
 
 #[tokio::test]

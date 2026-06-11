@@ -19,11 +19,8 @@ use crate::net::mitm_proxy;
 use crate::net::policy_config;
 use crate::{
     decode_guest_msg, encode_host_msg, GuestToHost, HostToGuest, VirtioFsShare, MAX_FRAME_SIZE,
-    VSOCK_PORT_CONTROL, VSOCK_PORT_EXEC, VSOCK_PORT_LIFECYCLE, VSOCK_PORT_SNI_PROXY,
-    VSOCK_PORT_TERMINAL,
 };
 use capsem_logger::DbWriter;
-use capsem_proto::{VSOCK_PORT_AUDIT, VSOCK_PORT_DNS_PROXY};
 
 use super::registry::SandboxNetworkState;
 
@@ -231,21 +228,6 @@ pub fn boot_vm(
     };
     info!("[boot-audit] VmConfig built successfully");
 
-    let vsock_ports = [
-        VSOCK_PORT_CONTROL,
-        VSOCK_PORT_TERMINAL,
-        VSOCK_PORT_SNI_PROXY,
-        VSOCK_PORT_LIFECYCLE,
-        VSOCK_PORT_EXEC,
-        VSOCK_PORT_AUDIT,
-        // T3.2 -- DNS proxy. capsem-dns-proxy in the guest opens a
-        // fresh vsock conn to (HOST_CID, 5007) per query. Without
-        // this entry the host has no listener; the kernel rejects
-        // the connect, which surfaces as "Connection reset by peer
-        // (os error 104)" in the agent's forward_query_blocking.
-        VSOCK_PORT_DNS_PROXY,
-    ];
-
     info!("[boot-audit] calling hypervisor boot");
     let boot_span = debug_span!(
         target: "capsem.launch",
@@ -255,9 +237,9 @@ pub fn boot_vm(
     let (vm, vsock_rx) = {
         let _span = boot_span.clone().entered();
         #[cfg(target_os = "macos")]
-        let result = AppleVzHypervisor.boot(&config, &vsock_ports);
+        let result = AppleVzHypervisor.boot(&config, capsem_proto::host_vsock_ports());
         #[cfg(target_os = "linux")]
-        let result = KvmHypervisor.boot(&config, &vsock_ports);
+        let result = KvmHypervisor.boot(&config, capsem_proto::host_vsock_ports());
         match result {
             Ok(value) => {
                 boot_span.record("status", "ok");

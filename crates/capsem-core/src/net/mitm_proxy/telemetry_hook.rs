@@ -55,6 +55,7 @@ pub struct TelemetryRequestContext {
     pub domain: String,
     pub process_name: Option<String>,
     pub ai_provider: Option<ProviderKind>,
+    pub model_traffic: bool,
     pub method: String,
     pub path: String,
     pub query: Option<String>,
@@ -385,7 +386,9 @@ pub fn maybe_build_model_call(
     trace_state: &Arc<Mutex<TraceState>>,
 ) -> Option<ModelCall> {
     let provider = req_ctx.ai_provider?;
-    if req_ctx.method == "HEAD" || !is_llm_api_path(provider, &req_ctx.path) {
+    if req_ctx.method == "HEAD"
+        || !(req_ctx.model_traffic || is_llm_api_path(provider, &req_ctx.path))
+    {
         return None;
     }
     let duration_ms = req_ctx.start_time.elapsed().as_millis() as u64;

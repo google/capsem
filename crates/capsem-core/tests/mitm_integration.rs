@@ -791,6 +791,75 @@ async fn mitm_proxy_plain_http_post_forwards_body_and_records_bytes_sent() {
     );
 }
 
+#[tokio::test]
+async fn mitm_proxy_plain_http_unknown_openai_shape_emits_model_call() {
+    let req_body = br#"{"model":"gpt-4.1","messages":[{"role":"user","content":"hello from private gateway"}]}"#;
+    let req_body_len = req_body.len();
+
+    let received: Arc<std::sync::Mutex<Vec<u8>>> = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let received_for_serve = Arc::clone(&received);
+
+    let (upstream_port, upstream_task) = spawn_fake_upstream(move |mut sock| {
+        Box::pin(async move {
+            let bytes = read_http11_request(&mut sock).await;
+            *received_for_serve.lock().unwrap() = bytes.clone();
+            let body = br#"{"id":"chatcmpl-test","object":"chat.completion","model":"gpt-4.1","choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":5,"completion_tokens":2,"total_tokens":7}}"#;
+            let resp = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            sock.write_all(resp.as_bytes()).await.unwrap();
+            sock.write_all(body).await.unwrap();
+            sock.flush().await.unwrap();
+            let _ = sock.shutdown().await;
+            bytes
+        })
+    })
+    .await;
+
+    let (config, db) = make_proxy_config_full(&["127.0.0.1"], &[], false, &[80, upstream_port]);
+    let (proxy_task, proxy_addr) = spawn_proxy(config).await;
+
+    let req_head = format!(
+        "POST /private/model-gateway HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        upstream_port, req_body_len,
+    );
+    let mut tcp = tokio::net::TcpStream::connect(proxy_addr).await.unwrap();
+    tcp.write_all(req_head.as_bytes()).await.unwrap();
+    tcp.write_all(req_body).await.unwrap();
+    tcp.flush().await.unwrap();
+    let mut resp_buf = Vec::new();
+    let _ = tcp.read_to_end(&mut resp_buf).await;
+    drop(tcp);
+
+    upstream_task.await.unwrap();
+    proxy_task.await.unwrap();
+    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+    let recv = received.lock().unwrap().clone();
+    let recv_str = std::str::from_utf8(&recv).unwrap_or("");
+    assert!(
+        recv_str.contains(r#""hello from private gateway""#),
+        "upstream did not receive the original private-gateway request body: {recv_str:?}"
+    );
+
+    let reader = db.reader().unwrap();
+    let model_calls = reader.recent_model_calls(10).unwrap();
+    assert_eq!(
+        model_calls.len(),
+        1,
+        "private gateway must emit one ModelCall"
+    );
+    let call = &model_calls[0].1;
+    assert_eq!(call.provider, "openai");
+    assert_eq!(call.model.as_deref(), Some("gpt-4.1"));
+    assert_eq!(call.path, "/private/model-gateway");
+    assert_eq!(call.status_code, Some(200));
+    assert_eq!(call.request_bytes, req_body_len as u64);
+    assert_eq!(call.input_tokens, Some(5));
+    assert_eq!(call.output_tokens, Some(2));
+}
+
 /// T2.2: a chunked-transfer-encoding response from upstream is
 /// streamed through the proxy frame-by-frame (the ChunkDispatchBody
 /// runs the sync ChunkHook chain on every chunk). Verifies

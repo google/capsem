@@ -57,6 +57,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added a `capsem debug` CLI alias for redacted support bundles and expanded
   `capsem status` with profile catalog readiness and corp config
   presence/source/hash information when the service is running.
+- Expanded `capsem debug` support bundles with a machine-readable runtime
+  boundary contract covering first-party host VSOCK services, explicitly closed
+  raw ports, and diagnostic/status routes for bug reports.
 - Updated package installation diagnostics: macOS and Linux package scripts now
   write a durable `~/.capsem/logs/install.log`, package builders accept local
   paths plus `file://`, `http://`, and `https://` manifest overrides, and
@@ -169,6 +172,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added a coverage-infra guard for release prep: PR Rust coverage now includes
   every workspace crate across the macOS/Linux jobs, Codecov components map
   each crate, and build-chain tests fail if a future crate is left out.
+- Hardened AGY/manual-loop diagnostics: missing `capsem-mcp-aggregator` now
+  fails loud instead of returning an empty MCP tool stub, unknown private
+  model gateways are promoted from bounded JSON protocol shape while preserving
+  the original HTTP body, broker credential inventory reports whether a stored
+  reference is actually replayable, and boot/dispatch consume one typed host
+  VSOCK service registry.
 
 ### Added (kernel 7.0 + EROFS)
 - Added a stable-kernel upgrade path for guest builds: `kernel_branch = "7.0"`

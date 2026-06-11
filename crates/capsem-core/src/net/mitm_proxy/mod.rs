@@ -196,6 +196,93 @@ fn ai_provider_for_target_or_path(
         .or_else(|| route_provider(path).map(|(provider, _)| provider))
 }
 
+fn ai_provider_for_body_preview(body: &[u8]) -> Option<ProviderKind> {
+    if body.len() > AI_BODY_PREVIEW {
+        return None;
+    }
+    let json: serde_json::Value = serde_json::from_slice(body).ok()?;
+    let obj = json.as_object()?;
+    let model = obj.get("model").and_then(|value| value.as_str());
+    let has_messages = obj
+        .get("messages")
+        .and_then(|value| value.as_array())
+        .is_some();
+    let has_google_contents = obj
+        .get("contents")
+        .and_then(|value| value.as_array())
+        .is_some()
+        || obj.contains_key("generationConfig")
+        || obj.contains_key("safetySettings");
+
+    if has_google_contents || model.is_some_and(is_google_model_name) {
+        return Some(ProviderKind::Google);
+    }
+    if model.is_some_and(is_anthropic_model_name)
+        || (has_messages && obj.contains_key("max_tokens"))
+    {
+        return Some(ProviderKind::Anthropic);
+    }
+    if model.is_some_and(is_openai_model_name)
+        || obj.contains_key("input")
+        || obj.contains_key("response_format")
+        || obj.contains_key("stream_options")
+        || (has_messages && obj.contains_key("tools"))
+    {
+        return Some(ProviderKind::OpenAi);
+    }
+    None
+}
+
+fn should_sniff_unknown_model_body(
+    ai_provider: Option<ProviderKind>,
+    method: &http::Method,
+    headers: &http::HeaderMap,
+) -> bool {
+    if ai_provider.is_some() {
+        return false;
+    }
+    if !matches!(
+        *method,
+        http::Method::POST | http::Method::PUT | http::Method::PATCH
+    ) {
+        return false;
+    }
+    let is_json = headers
+        .get(http::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .map(|value| value.to_ascii_lowercase().contains("json"))
+        .unwrap_or(false);
+    if !is_json {
+        return false;
+    }
+    let Some(len) = headers
+        .get(http::header::CONTENT_LENGTH)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<usize>().ok())
+    else {
+        return false;
+    };
+    len <= AI_BODY_PREVIEW
+}
+
+fn is_openai_model_name(model: &str) -> bool {
+    let model = model.to_ascii_lowercase();
+    model.starts_with("gpt-")
+        || model.starts_with("o1")
+        || model.starts_with("o3")
+        || model.starts_with("o4")
+        || model.starts_with("chatgpt-")
+}
+
+fn is_anthropic_model_name(model: &str) -> bool {
+    model.to_ascii_lowercase().starts_with("claude-")
+}
+
+fn is_google_model_name(model: &str) -> bool {
+    let model = model.to_ascii_lowercase();
+    model.starts_with("gemini-") || model.starts_with("models/gemini-")
+}
+
 fn provider_label(provider: Option<ProviderKind>) -> &'static str {
     provider.map(|provider| provider.as_str()).unwrap_or("none")
 }
@@ -818,23 +905,25 @@ async fn handle_request(
     // fires `NetEvent` (+ `ModelCall`) on body completion. Used by
     // every response path that doesn't reach upstream (deny,
     // websocket-deny, 502).
-    let seal_with_telemetry =
-        |inner: ProxyBoxBody, req_ctx: TelemetryRequestContext| -> ProxyBoxBody {
-            let dispatched = body::ChunkDispatchBody::new(
-                inner,
-                Arc::clone(&config.pipeline),
-                hooks::ConnMeta {
-                    domain: domain.to_string(),
-                    process_name: process_name.clone(),
-                    port: upstream_port,
-                    protocol,
-                    ai_provider,
-                },
-                crate::telemetry::ambient_capsem_trace_id(),
-            )
-            .seed::<Option<TelemetryRequestContext>>(Some(req_ctx));
-            dispatched.boxed()
-        };
+    let seal_with_telemetry = |inner: ProxyBoxBody,
+                               req_ctx: TelemetryRequestContext,
+                               conn_ai_provider: Option<ProviderKind>|
+     -> ProxyBoxBody {
+        let dispatched = body::ChunkDispatchBody::new(
+            inner,
+            Arc::clone(&config.pipeline),
+            hooks::ConnMeta {
+                domain: domain.to_string(),
+                process_name: process_name.clone(),
+                port: upstream_port,
+                protocol,
+                ai_provider: conn_ai_provider,
+            },
+            crate::telemetry::ambient_capsem_trace_id(),
+        )
+        .seed::<Option<TelemetryRequestContext>>(Some(req_ctx));
+        dispatched.boxed()
+    };
 
     if is_upgrade {
         let original_headers = parts.headers.clone();
@@ -856,6 +945,7 @@ async fn handle_request(
                 domain: domain.to_string(),
                 process_name: process_name.clone(),
                 ai_provider,
+                model_traffic: false,
                 method: method.clone(),
                 path: path.clone(),
                 query: query.clone(),
@@ -881,7 +971,7 @@ async fn handle_request(
                 .boxed();
             hyper::Response::builder()
                 .status(http::StatusCode::BAD_GATEWAY)
-                .body(seal_with_telemetry(body, req_ctx))
+                .body(seal_with_telemetry(body, req_ctx, ai_provider))
                 .unwrap()
         };
 
@@ -1020,6 +1110,7 @@ async fn handle_request(
             domain: domain.to_string(),
             process_name: process_name.clone(),
             ai_provider,
+            model_traffic: false,
             method: method.clone(),
             path: path.clone(),
             query: query.clone(),
@@ -1047,7 +1138,7 @@ async fn handle_request(
 
         return Ok(hyper::Response::from_parts(
             resp_parts,
-            seal_with_telemetry(empty_body, req_ctx),
+            seal_with_telemetry(empty_body, req_ctx, ai_provider),
         ));
     }
 
@@ -1071,6 +1162,7 @@ async fn handle_request(
             domain: domain.to_string(),
             process_name: process_name.clone(),
             ai_provider,
+            model_traffic: false,
             method: method.to_string(),
             path: path.to_string(),
             query: query.clone(),
@@ -1096,7 +1188,7 @@ async fn handle_request(
             .boxed();
         hyper::Response::builder()
             .status(502)
-            .body(seal_with_telemetry(deny_body, req_ctx))
+            .body(seal_with_telemetry(deny_body, req_ctx, ai_provider))
             .unwrap()
     };
 
@@ -1165,6 +1257,7 @@ async fn handle_request(
             domain: domain.to_string(),
             process_name: process_name.clone(),
             ai_provider,
+            model_traffic: false,
             method: method.clone(),
             path: path.clone(),
             query: query.clone(),
@@ -1190,7 +1283,7 @@ async fn handle_request(
             .boxed();
         return Ok(hyper::Response::builder()
             .status(403)
-            .body(seal_with_telemetry(deny_body, req_ctx))
+            .body(seal_with_telemetry(deny_body, req_ctx, ai_provider))
             .unwrap());
     }
     actions_span.record("decision", "allow");
@@ -1236,6 +1329,7 @@ async fn handle_request(
             domain: domain.to_string(),
             process_name: process_name.clone(),
             ai_provider,
+            model_traffic: false,
             method: method.clone(),
             path: path.clone(),
             query: query.clone(),
@@ -1261,54 +1355,119 @@ async fn handle_request(
             .boxed();
         return Ok(hyper::Response::builder()
             .status(403)
-            .body(seal_with_telemetry(deny_body, req_ctx))
+            .body(seal_with_telemetry(deny_body, req_ctx, ai_provider))
             .unwrap());
+    }
+
+    enum RequestBodySource {
+        Incoming(hyper::body::Incoming),
+        Collected(Bytes),
+    }
+
+    let mut effective_ai_provider = ai_provider;
+    let mut sniffed_model_request = false;
+    let mut request_body_source = RequestBodySource::Incoming(req_body);
+    if should_sniff_unknown_model_body(effective_ai_provider, &original_method, &original_headers) {
+        let sniff_span = tracing::debug_span!(
+            target: "capsem.mitm",
+            "mitm_unknown_model_body_sniff",
+            protocol = protocol.label(),
+            host = domain,
+            path = path.as_str(),
+            provider = tracing::field::Empty,
+            status = tracing::field::Empty,
+        );
+        if let RequestBodySource::Incoming(body) = request_body_source {
+            let collected = match http_body_util::Limited::new(body, AI_BODY_PREVIEW)
+                .collect()
+                .instrument(sniff_span.clone())
+                .await
+            {
+                Ok(collected) => collected,
+                Err(error) => {
+                    sniff_span.record("status", "error");
+                    return Ok(make_502(
+                        &error,
+                        &method,
+                        &path,
+                        &query,
+                        &req_hdrs,
+                        start_time,
+                        &request_security_decision,
+                    ));
+                }
+            };
+            let body_bytes = collected.to_bytes();
+            if let Some(provider) = ai_provider_for_body_preview(&body_bytes) {
+                effective_ai_provider = Some(provider);
+                sniffed_model_request = true;
+                sniff_span.record("provider", provider.as_str());
+                sniff_span.record("status", "ok");
+                tracing::info!(
+                    target: "capsem.mitm",
+                    host = domain,
+                    path,
+                    provider = provider.as_str(),
+                    body_bytes = body_bytes.len(),
+                    "unknown model endpoint promoted from bounded body shape"
+                );
+            } else {
+                sniff_span.record("status", "no_match");
+            }
+            request_body_source = RequestBodySource::Collected(body_bytes);
+        }
     }
 
     // Track request body (boxed for consistent sender type across requests).
     // Always capture AI provider request bodies for telemetry parsing
     // (model name, tool results, etc.) regardless of log_bodies setting.
-    let req_max_preview = body_preview_cap(ai_provider, domain, &path, log_bodies, max_body);
+    let req_max_preview =
+        body_preview_cap(effective_ai_provider, domain, &path, log_bodies, max_body);
     let req_stats = Arc::new(Mutex::new(BodyStats {
         bytes: 0,
         preview: Vec::new(),
         max_preview: req_max_preview,
     }));
 
-    let should_evaluate_model_request =
-        ai_provider.is_some_and(|provider| is_llm_api_path(provider, &path));
+    let should_evaluate_model_request = sniffed_model_request
+        || effective_ai_provider.is_some_and(|provider| is_llm_api_path(provider, &path));
     let upstream_req_body: ProxyBoxBody = if should_evaluate_model_request {
         let model_request_span = tracing::debug_span!(
             target: "capsem.mitm",
             spans::MITM_SECURITY_ACTIONS,
             protocol = protocol.label(),
-            provider = provider_label(ai_provider),
+            provider = provider_label(effective_ai_provider),
             decision = tracing::field::Empty,
             status = tracing::field::Empty,
             error_kind = tracing::field::Empty,
         );
-        let collected = match http_body_util::Limited::new(req_body, 100 * 1024 * 1024)
-            .collect()
-            .instrument(model_request_span.clone())
-            .await
-        {
-            Ok(collected) => collected,
-            Err(error) => {
-                model_request_span.record("decision", "error");
-                model_request_span.record("status", "error");
-                model_request_span.record("error_kind", "collect_model_request_body");
-                return Ok(make_502(
-                    &error,
-                    &method,
-                    &path,
-                    &query,
-                    &req_hdrs,
-                    start_time,
-                    &request_security_decision,
-                ));
+        let body_bytes = match request_body_source {
+            RequestBodySource::Collected(body_bytes) => body_bytes,
+            RequestBodySource::Incoming(body) => {
+                let collected = match http_body_util::Limited::new(body, 100 * 1024 * 1024)
+                    .collect()
+                    .instrument(model_request_span.clone())
+                    .await
+                {
+                    Ok(collected) => collected,
+                    Err(error) => {
+                        model_request_span.record("decision", "error");
+                        model_request_span.record("status", "error");
+                        model_request_span.record("error_kind", "collect_model_request_body");
+                        return Ok(make_502(
+                            &error,
+                            &method,
+                            &path,
+                            &query,
+                            &req_hdrs,
+                            start_time,
+                            &request_security_decision,
+                        ));
+                    }
+                };
+                collected.to_bytes()
             }
         };
-        let body_bytes = collected.to_bytes();
         let mut body_for_upstream = body_bytes.clone();
         {
             let mut st = req_stats.lock().expect("req body stats lock");
@@ -1317,7 +1476,7 @@ async fn handle_request(
             st.preview.extend_from_slice(&body_bytes[..to_copy]);
         }
 
-        if let Some(provider) = ai_provider {
+        if let Some(provider) = effective_ai_provider {
             let request_meta =
                 crate::net::ai_traffic::request_parser::parse_request(provider, &body_bytes);
             let model_event = model_security_event(
@@ -1373,7 +1532,8 @@ async fn handle_request(
                 let req_ctx = TelemetryRequestContext {
                     domain: domain.to_string(),
                     process_name: process_name.clone(),
-                    ai_provider,
+                    ai_provider: effective_ai_provider,
+                    model_traffic: true,
                     method: method.clone(),
                     path: path.clone(),
                     query: query.clone(),
@@ -1399,7 +1559,11 @@ async fn handle_request(
                     .boxed();
                 return Ok(hyper::Response::builder()
                     .status(403)
-                    .body(seal_with_telemetry(deny_body, req_ctx))
+                    .body(seal_with_telemetry(
+                        deny_body,
+                        req_ctx,
+                        effective_ai_provider,
+                    ))
                     .unwrap());
             }
             model_request_span.record("decision", "allow");
@@ -1430,7 +1594,22 @@ async fn handle_request(
             .map_err(|never| -> anyhow::Error { match never {} })
             .boxed()
     } else {
-        TrackedBody::new(req_body, Arc::clone(&req_stats), 100 * 1024 * 1024).boxed()
+        match request_body_source {
+            RequestBodySource::Collected(body_bytes) => {
+                {
+                    let mut st = req_stats.lock().expect("req body stats lock");
+                    st.bytes = body_bytes.len() as u64;
+                    let to_copy = st.max_preview.min(body_bytes.len());
+                    st.preview.extend_from_slice(&body_bytes[..to_copy]);
+                }
+                Full::new(body_bytes)
+                    .map_err(|never| -> anyhow::Error { match never {} })
+                    .boxed()
+            }
+            RequestBodySource::Incoming(body) => {
+                TrackedBody::new(body, Arc::clone(&req_stats), 100 * 1024 * 1024).boxed()
+            }
+        }
     };
 
     // Try to reuse a cached upstream sender, or create a new
@@ -1441,7 +1620,7 @@ async fn handle_request(
         target: "capsem.mitm",
         spans::MITM_UPSTREAM_PREPARE,
         protocol = protocol.label(),
-        provider = provider_label(ai_provider),
+        provider = provider_label(effective_ai_provider),
         decision = tracing::field::Empty,
         status = tracing::field::Empty,
         error_kind = tracing::field::Empty,
@@ -1681,7 +1860,7 @@ async fn handle_request(
         target: "capsem.mitm",
         spans::MITM_UPSTREAM_SEND,
         protocol = protocol.label(),
-        provider = provider_label(ai_provider),
+        provider = provider_label(effective_ai_provider),
         decision = tracing::field::Empty,
         status = tracing::field::Empty,
         error_kind = tracing::field::Empty,
@@ -1749,17 +1928,18 @@ async fn handle_request(
     // works even when log_bodies is off. Credential broker exchange
     // candidates get a smaller bounded preview for capture/redaction.
     // Other non-AI bodies follow the log_bodies / max_body_capture policy.
-    let resp_max_preview = body_preview_cap(ai_provider, domain, &path, log_bodies, max_body);
+    let resp_max_preview =
+        body_preview_cap(effective_ai_provider, domain, &path, log_bodies, max_body);
 
-    let should_evaluate_model_response =
-        ai_provider.is_some_and(|provider| is_llm_api_path(provider, &path));
+    let should_evaluate_model_response = sniffed_model_request
+        || effective_ai_provider.is_some_and(|provider| is_llm_api_path(provider, &path));
 
     let resp_body: ProxyBoxBody = if should_evaluate_model_response {
         let model_response_span = tracing::debug_span!(
             target: "capsem.mitm",
             spans::MITM_SECURITY_ACTIONS,
             protocol = protocol.label(),
-            provider = provider_label(ai_provider),
+            provider = provider_label(effective_ai_provider),
             decision = tracing::field::Empty,
             status = tracing::field::Empty,
             error_kind = tracing::field::Empty,
@@ -1803,7 +1983,7 @@ async fn handle_request(
             }
         };
 
-        if let Some(provider) = ai_provider {
+        if let Some(provider) = effective_ai_provider {
             let request_preview = {
                 let st = req_stats.lock().expect("req body stats lock");
                 st.preview.clone()
@@ -1863,7 +2043,8 @@ async fn handle_request(
                 let req_ctx = TelemetryRequestContext {
                     domain: domain.to_string(),
                     process_name: process_name.clone(),
-                    ai_provider,
+                    ai_provider: effective_ai_provider,
+                    model_traffic: true,
                     method,
                     path,
                     query,
@@ -1889,7 +2070,11 @@ async fn handle_request(
                     .boxed();
                 return Ok(hyper::Response::builder()
                     .status(403)
-                    .body(seal_with_telemetry(deny_body, req_ctx))
+                    .body(seal_with_telemetry(
+                        deny_body,
+                        req_ctx,
+                        effective_ai_provider,
+                    ))
                     .unwrap());
             }
             model_response_span.record("decision", "allow");
@@ -1919,7 +2104,8 @@ async fn handle_request(
     let req_ctx = TelemetryRequestContext {
         domain: domain.to_string(),
         process_name: process_name.clone(),
-        ai_provider,
+        ai_provider: effective_ai_provider,
+        model_traffic: should_evaluate_model_response,
         method,
         path,
         query,
@@ -1954,7 +2140,7 @@ async fn handle_request(
             process_name: process_name.clone(),
             port: upstream_port,
             protocol,
-            ai_provider,
+            ai_provider: effective_ai_provider,
         },
         crate::telemetry::ambient_capsem_trace_id(),
     )
@@ -2002,6 +2188,76 @@ mod tests {
             ),
             Some(ProviderKind::Google)
         );
+    }
+
+    #[test]
+    fn provider_detection_promotes_unknown_host_by_bounded_body_shape() {
+        assert_eq!(
+            ai_provider_for_body_preview(
+                br#"{"model":"gpt-4.1","messages":[{"role":"user","content":"hi"}]}"#
+            ),
+            Some(ProviderKind::OpenAi)
+        );
+        assert_eq!(
+            ai_provider_for_body_preview(
+                br#"{"model":"claude-3-5-sonnet","max_tokens":128,"messages":[{"role":"user","content":"hi"}]}"#
+            ),
+            Some(ProviderKind::Anthropic)
+        );
+        assert_eq!(
+            ai_provider_for_body_preview(
+                br#"{"model":"gemini-2.5-pro","contents":[{"parts":[{"text":"hi"}]}]}"#
+            ),
+            Some(ProviderKind::Google)
+        );
+    }
+
+    #[test]
+    fn provider_detection_body_shape_ignores_oversized_or_irrelevant_bodies() {
+        let mut oversized = vec![b' '; AI_BODY_PREVIEW + 1];
+        oversized.extend_from_slice(
+            br#"{"model":"gpt-4.1","messages":[{"role":"user","content":"hi"}]}"#,
+        );
+        assert_eq!(ai_provider_for_body_preview(&oversized), None);
+        assert_eq!(ai_provider_for_body_preview(br#"{"hello":"world"}"#), None);
+    }
+
+    #[test]
+    fn unknown_model_body_sniffing_is_json_and_length_bounded() {
+        let mut headers = http::HeaderMap::new();
+        headers.insert(
+            http::header::CONTENT_TYPE,
+            http::HeaderValue::from_static("application/json"),
+        );
+        headers.insert(
+            http::header::CONTENT_LENGTH,
+            http::HeaderValue::from_static("128"),
+        );
+        assert!(should_sniff_unknown_model_body(
+            None,
+            &http::Method::POST,
+            &headers
+        ));
+        assert!(!should_sniff_unknown_model_body(
+            Some(ProviderKind::OpenAi),
+            &http::Method::POST,
+            &headers
+        ));
+        headers.insert(
+            http::header::CONTENT_LENGTH,
+            http::HeaderValue::from_str(&(AI_BODY_PREVIEW + 1).to_string()).unwrap(),
+        );
+        assert!(!should_sniff_unknown_model_body(
+            None,
+            &http::Method::POST,
+            &headers
+        ));
+        headers.remove(http::header::CONTENT_LENGTH);
+        assert!(!should_sniff_unknown_model_body(
+            None,
+            &http::Method::POST,
+            &headers
+        ));
     }
 
     #[test]

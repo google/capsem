@@ -207,3 +207,38 @@ fn broker_stores_secret_without_writing_user_settings() {
     );
     assert!(!brokered.credential_ref.contains("github_pat_store_me"));
 }
+
+#[test]
+fn replay_availability_requires_resolvable_broker_secret() {
+    let _lock = TEST_ENV_LOCK.blocking_lock();
+    let dir = tempfile::tempdir().unwrap();
+    let user_config = dir.path().join("user.toml");
+    let test_store = dir.path().join("credential-store.json");
+    let _guard = EnvGuard::install(&user_config, dir.path(), &test_store);
+
+    let missing = credential_reference("google", "not-stored");
+    assert!(!broker_reference_replay_available(Some("google"), &missing));
+
+    let brokered = broker_observed_credential(&CredentialObservation {
+        provider: CredentialProvider::Google,
+        raw_value: "ya29.refresh-token".to_string(),
+        source: "http.body.response.$.refresh_token".to_string(),
+        event_type: Some("http.response".to_string()),
+        confidence: 1.0,
+        trace_id: Some("trace-oauth".to_string()),
+        context_json: None,
+    })
+    .unwrap();
+    assert!(broker_reference_replay_available(
+        Some("google"),
+        &brokered.credential_ref
+    ));
+    assert!(broker_reference_replay_available(
+        None,
+        &brokered.credential_ref
+    ));
+    assert!(!broker_reference_replay_available(
+        Some("openai"),
+        &brokered.credential_ref
+    ));
+}

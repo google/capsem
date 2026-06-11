@@ -244,6 +244,7 @@ struct BrokeredCredentialStatus {
     credential_ref: String,
     observed_count: u64,
     substituted_count: u64,
+    replay_available: bool,
     last_seen: Option<String>,
 }
 
@@ -6246,11 +6247,17 @@ fn hydrate_credential_broker_runtime(
             status.event_count += row.observed_count;
             status.rewrite_count += row.substituted_count;
             let key = (row.provider.clone(), row.credential_ref.clone());
+            let replay_available =
+                capsem_core::credential_broker::broker_reference_replay_available(
+                    row.provider.as_deref(),
+                    &row.credential_ref,
+                );
             credentials
                 .entry(key)
                 .and_modify(|existing| {
                     existing.observed_count += row.observed_count;
                     existing.substituted_count += row.substituted_count;
+                    existing.replay_available |= replay_available;
                     if row.last_seen.as_deref() > existing.last_seen.as_deref() {
                         existing.last_seen = row.last_seen.clone();
                     }
@@ -6260,6 +6267,7 @@ fn hydrate_credential_broker_runtime(
                     credential_ref: row.credential_ref,
                     observed_count: row.observed_count,
                     substituted_count: row.substituted_count,
+                    replay_available,
                     last_seen: row.last_seen,
                 });
         }
