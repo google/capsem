@@ -5906,7 +5906,7 @@ fn plugin_catalog() -> BTreeMap<String, PluginCatalogEntry> {
             "dummy_pre_eicar".to_string(),
             PluginCatalogEntry {
                 description: "debug preprocess plugin that blocks harmless EICAR test content",
-                default_config: default_plugin_config(SecurityPluginMode::Rewrite),
+                default_config: default_plugin_config(SecurityPluginMode::Disable),
                 stage: PluginStage::Preprocess,
                 version: "1",
             },
@@ -5916,7 +5916,7 @@ fn plugin_catalog() -> BTreeMap<String, PluginCatalogEntry> {
             PluginCatalogEntry {
                 description:
                     "debug postprocess plugin that requests allow to prove block is absolute",
-                default_config: default_plugin_config(SecurityPluginMode::Allow),
+                default_config: default_plugin_config(SecurityPluginMode::Disable),
                 stage: PluginStage::Postprocess,
                 version: "1",
             },
@@ -6164,16 +6164,17 @@ fn update_plugin_for_scope(
     scope: PluginScope,
     update: PluginUpdate,
 ) -> Result<Json<PluginInfo>, AppError> {
-    if !plugin_catalog().contains_key(&plugin_id) {
+    let catalog = plugin_catalog();
+    let Some(catalog_entry) = catalog.get(&plugin_id).copied() else {
         return Err(AppError(
             StatusCode::NOT_FOUND,
             format!("unknown plugin: {plugin_id}"),
         ));
-    }
+    };
     let mut config = effective_plugin_policy(state, &scope.profile_id)
         .get(&plugin_id)
         .copied()
-        .unwrap_or_else(|| default_plugin_config(SecurityPluginMode::Allow));
+        .unwrap_or(catalog_entry.default_config);
     if let Some(mode) = update.mode {
         config.mode = mode;
     }

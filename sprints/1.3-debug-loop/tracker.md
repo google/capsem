@@ -200,10 +200,13 @@
   frontend/src/lib/__tests__/profile-page-contract.test.ts`; `pnpm --dir
   frontend check`; frontend source scan only finds old policy names in negative
   tests.
-- [ ] Implement bug 14 after user resumes coding: default dummy plugins to
+- [x] Implement bug 14 slice: default dummy plugins to
   disabled, render disabled plugins as inactive/greyed out, and add consistent
   iconography for ask/block/pass-or-allow/rewrite/disable modes using the
   plugin contract values rather than UI-invented labels.
+  Proof: `cargo test -p capsem-service plugin -- --nocapture`; `pnpm --dir
+  frontend test -- --run frontend/src/lib/__tests__/plugin-section-contract.test.ts
+  frontend/src/lib/__tests__/api.test.ts`; `pnpm --dir frontend check`.
 - [ ] Implement bug 15 after user resumes coding: apply the same contract-backed
   visual language to MCP and rules: grey out disabled MCP servers/tools/resources
   and disabled rules, group default rules visibly without making them a separate
@@ -490,6 +493,13 @@
     passed after a transient local code-sign wrapper retry; proves the
     credential broker exposes a plugin-owned detail route for inventory and the
     initial grant surface.
+  - `cargo test -p capsem-service plugin -- --nocapture` passed; proves debug
+    dummy plugins are disabled by default, only affect evaluation when
+    explicitly enabled, and plugin route updates still control the same
+    SecurityEvent evaluation path.
+  - `pnpm --dir frontend test -- --run frontend/src/lib/__tests__/plugin-section-contract.test.ts frontend/src/lib/__tests__/api.test.ts`
+    passed; proves plugin UI mode labels/icons are derived from the typed enum
+    and disabled plugins stay visible but inactive.
   - `pnpm --dir frontend test -- --run frontend/src/lib/__tests__/api.test.ts`
     passed; proves frontend API helpers understand plugin detail routes and
     the credential broker detail endpoint.

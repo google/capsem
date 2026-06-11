@@ -1626,8 +1626,26 @@ match = 'file.import.content.contains("EICAR")'
         .unwrap()
         .iter()
         .any(|plugin| plugin["id"] == "dummy_pre_eicar"));
+    let dummy_pre = list["plugins"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|plugin| plugin["id"] == "dummy_pre_eicar")
+        .expect("dummy_pre_eicar listed");
+    assert_eq!(dummy_pre["config"]["mode"], "disable");
+    assert_eq!(dummy_pre["runtime"]["enabled"], false);
 
     let (status, enabled) = route_request(
+        app.clone(),
+        axum::http::Method::PATCH,
+        "/profiles/code/plugins/dummy_pre_eicar/edit",
+        Some(json!({ "mode": "rewrite" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(enabled["config"]["mode"], "rewrite");
+
+    let (status, enabled_eval) = route_request(
         app.clone(),
         axum::http::Method::POST,
         "/profiles/code/enforcement/evaluate",
@@ -1635,7 +1653,7 @@ match = 'file.import.content.contains("EICAR")'
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(enabled["event"]["decision"]["effective"], "block");
+    assert_eq!(enabled_eval["event"]["decision"]["effective"], "block");
 
     let (status, disabled) = route_request(
         app.clone(),
@@ -1983,6 +2001,29 @@ async fn profile_plugin_endpoint_matrix_dynamically_controls_enforcement_evaluat
             .any(|plugin| plugin.id == "dummy_pre_eicar"),
         "built-in plugin list must include dummy_pre_eicar"
     );
+    let dummy_pre = list
+        .plugins
+        .iter()
+        .find(|plugin| plugin.id == "dummy_pre_eicar")
+        .expect("dummy_pre_eicar exists");
+    assert_eq!(
+        dummy_pre.config.mode,
+        capsem_core::net::policy_config::SecurityPluginMode::Disable,
+        "debug plugins must be opt-in test fixtures, not active product defaults"
+    );
+    assert_eq!(dummy_pre.default_config.mode, dummy_pre.config.mode);
+    assert!(!dummy_pre.runtime.enabled);
+    let dummy_post = list
+        .plugins
+        .iter()
+        .find(|plugin| plugin.id == "dummy_post_allow")
+        .expect("dummy_post_allow exists");
+    assert_eq!(
+        dummy_post.config.mode,
+        capsem_core::net::policy_config::SecurityPluginMode::Disable,
+        "postprocess debug plugin must also be opt-in"
+    );
+    assert!(!dummy_post.runtime.enabled);
     let broker = list
         .plugins
         .iter()
@@ -2021,11 +2062,11 @@ async fn profile_plugin_endpoint_matrix_dynamically_controls_enforcement_evaluat
         info.detail_routes.is_empty(),
         "debug plugins do not get custom UI routes"
     );
-    assert!(info.runtime.enabled);
+    assert!(!info.runtime.enabled);
     assert!(info.runtime.brokered_credentials.is_empty());
     assert_eq!(
         info.config.mode,
-        capsem_core::net::policy_config::SecurityPluginMode::Rewrite
+        capsem_core::net::policy_config::SecurityPluginMode::Disable
     );
     assert_eq!(
         info.config.detection_level,
@@ -2033,29 +2074,77 @@ async fn profile_plugin_endpoint_matrix_dynamically_controls_enforcement_evaluat
     );
 
     let request = EnforcementEvaluateRequest::eicar_fixture();
+    let Json(default_disabled) = handle_enforcement_evaluate(
+        State(Arc::clone(&state)),
+        Path("code".to_string()),
+        Json(request.clone()),
+    )
+    .await
+    .expect("default-disabled plugin evaluates");
+    let default_disabled_event = serde_json::to_value(&default_disabled.event).unwrap();
+    assert_eq!(default_disabled_event["decision"]["effective"], "allow");
+    let default_disabled_detections = default_disabled_event["detections"].as_array().unwrap();
+    assert!(default_disabled_detections.iter().any(|detection| {
+        detection["source"] == "rule" && detection["rule_id"] == "profiles.rules.eicar"
+    }));
+    assert!(!default_disabled_detections.iter().any(|detection| {
+        detection["source"] == "plugin" && detection["plugin_id"] == "dummy_pre_eicar"
+    }));
+    assert!(!default_disabled_detections.iter().any(|detection| {
+        detection["source"] == "plugin" && detection["plugin_id"] == "dummy_post_allow"
+    }));
+    assert!(
+        default_disabled_event.get("http").is_some(),
+        "wire DTO must expose every first-party root, even when null"
+    );
+
+    let Json(enabled_pre) = handle_profile_plugin_update(
+        State(Arc::clone(&state)),
+        Path(("code".to_string(), "dummy_pre_eicar".to_string())),
+        Json(PluginUpdate {
+            mode: Some(capsem_core::net::policy_config::SecurityPluginMode::Rewrite),
+            detection_level: None,
+        }),
+    )
+    .await
+    .expect("enable pre plugin");
+    assert_eq!(
+        enabled_pre.config.mode,
+        capsem_core::net::policy_config::SecurityPluginMode::Rewrite
+    );
+    assert!(enabled_pre.runtime.enabled);
+    let Json(enabled_post) = handle_profile_plugin_update(
+        State(Arc::clone(&state)),
+        Path(("code".to_string(), "dummy_post_allow".to_string())),
+        Json(PluginUpdate {
+            mode: Some(capsem_core::net::policy_config::SecurityPluginMode::Allow),
+            detection_level: None,
+        }),
+    )
+    .await
+    .expect("enable post plugin");
+    assert_eq!(
+        enabled_post.config.mode,
+        capsem_core::net::policy_config::SecurityPluginMode::Allow
+    );
+    assert!(enabled_post.runtime.enabled);
+
     let Json(enabled) = handle_enforcement_evaluate(
         State(Arc::clone(&state)),
         Path("code".to_string()),
         Json(request.clone()),
     )
     .await
-    .expect("enabled plugin evaluates");
+    .expect("explicitly enabled plugin evaluates");
     let enabled_event = serde_json::to_value(&enabled.event).unwrap();
     assert_eq!(enabled_event["decision"]["effective"], "block");
     let enabled_detections = enabled_event["detections"].as_array().unwrap();
-    assert!(enabled_detections.iter().any(|detection| {
-        detection["source"] == "rule" && detection["rule_id"] == "profiles.rules.eicar"
-    }));
     assert!(enabled_detections.iter().any(|detection| {
         detection["source"] == "plugin" && detection["plugin_id"] == "dummy_pre_eicar"
     }));
     assert!(enabled_detections.iter().any(|detection| {
         detection["source"] == "plugin" && detection["plugin_id"] == "dummy_post_allow"
     }));
-    assert!(
-        enabled_event.get("http").is_some(),
-        "wire DTO must expose every first-party root, even when null"
-    );
 
     let Json(disabled) = handle_profile_plugin_update(
         State(Arc::clone(&state)),

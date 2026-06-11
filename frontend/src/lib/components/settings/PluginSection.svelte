@@ -7,6 +7,11 @@
     PluginListResponse,
     PluginMode,
   } from '../../api';
+  import CheckCircle from 'phosphor-svelte/lib/CheckCircle';
+  import HandPalm from 'phosphor-svelte/lib/HandPalm';
+  import PencilSimple from 'phosphor-svelte/lib/PencilSimple';
+  import Prohibit from 'phosphor-svelte/lib/Prohibit';
+  import XCircle from 'phosphor-svelte/lib/XCircle';
 
   const MODES: { value: PluginMode; label: string }[] = [
     { value: 'allow', label: 'Allow' },
@@ -23,6 +28,44 @@
     { value: 'high', label: 'High' },
     { value: 'critical', label: 'Critical' },
   ];
+
+  const MODE_META: Record<PluginMode, { label: string; icon: typeof CheckCircle; tone: string }> = {
+    allow: {
+      label: 'Allow',
+      icon: CheckCircle,
+      tone: 'text-primary border-primary/30 bg-primary/10',
+    },
+    ask: {
+      label: 'Ask',
+      icon: HandPalm,
+      tone: 'text-warning border-warning/30 bg-warning/10',
+    },
+    block: {
+      label: 'Block',
+      icon: Prohibit,
+      tone: 'text-destructive-foreground border-destructive/30 bg-destructive/10',
+    },
+    rewrite: {
+      label: 'Rewrite',
+      icon: PencilSimple,
+      tone: 'text-primary border-primary/30 bg-primary/10',
+    },
+    disable: {
+      label: 'Disabled',
+      icon: XCircle,
+      tone: 'text-muted-foreground-2 border-line-2 bg-muted/40',
+    },
+  };
+
+  const STAGE_LABELS = {
+    preprocess: 'Preprocess',
+    postprocess: 'Postprocess',
+    pre_and_post: 'Pre + post',
+  };
+
+  function pluginModeMeta(mode: PluginMode) {
+    return MODE_META[mode];
+  }
 
   let { profileId } = $props<{ profileId: string }>();
 
@@ -134,11 +177,16 @@
 
   <div class="bg-card border border-card-line rounded-xl divide-y divide-card-divider">
     {#each response.plugins as plugin (plugin.id)}
-      <div class="p-4 {plugin.config.mode === 'disable' ? 'opacity-65' : ''}">
+      {@const modeMeta = pluginModeMeta(plugin.config.mode)}
+      <div class="p-4 {plugin.config.mode === 'disable' ? 'bg-muted/20 opacity-70' : ''}">
         <div class="grid grid-cols-[minmax(0,1fr)_minmax(10rem,14rem)_10rem_12rem] items-center gap-x-4">
           <div class="min-w-0">
             <div class="flex items-center gap-x-2">
               <p class="text-sm font-medium text-foreground truncate">{plugin.id}</p>
+              <span class={`inline-flex items-center gap-x-1 rounded-full border px-2 py-0.5 text-[11px] font-medium ${modeMeta.tone}`}>
+                <modeMeta.icon size={12} weight="fill" />
+                {modeMeta.label}
+              </span>
               {#if plugin.overridden}
                 <span class="text-[11px] uppercase tracking-wide text-primary">Overridden</span>
               {/if}
@@ -147,7 +195,9 @@
               {/if}
             </div>
             <p class="text-xs text-muted-foreground-1 mt-0.5 line-clamp-2">{plugin.description}</p>
-            <p class="text-[11px] text-muted-foreground-2 mt-1">{plugin.stage} · v{plugin.version}</p>
+            <p class="text-[11px] text-muted-foreground-2 mt-1">
+              {STAGE_LABELS[plugin.stage]} · v{plugin.version}
+            </p>
           </div>
 
           <div class="min-w-0 text-xs text-muted-foreground-1">
