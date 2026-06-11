@@ -20,4 +20,16 @@ describe('ProfilePage route contract', () => {
     expect(source).not.toContain('getProfileAssetsInfo');
     expect(source).not.toContain('JSON.stringify(assetsInfo');
   });
+
+  it('renders rule actions and detection levels with typed metadata instead of raw grey pills', () => {
+    expect(source).toContain('const ACTION_META: Record<SecurityRuleAction');
+    expect(source).toContain("allow:");
+    expect(source).toContain("ask:");
+    expect(source).toContain("block:");
+    expect(source).toContain("rewrite:");
+    expect(source).toContain('const DETECTION_META: Record<SecurityRuleDetectionLevel');
+    expect(source).toContain('<meta.icon');
+    expect(source).not.toContain('{rule.action}</span>');
+    expect(source).not.toContain("{rule.detection_level ?? 'none'}</span>");
+  });
 });

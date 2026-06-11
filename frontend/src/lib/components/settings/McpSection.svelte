@@ -5,6 +5,9 @@
   import type { McpServerInfo, McpToolInfo, ToolPermission } from '../../types';
   import ArrowClockwise from 'phosphor-svelte/lib/ArrowClockwise';
   import CaretDown from 'phosphor-svelte/lib/CaretDown';
+  import CheckCircle from 'phosphor-svelte/lib/CheckCircle';
+  import HandPalm from 'phosphor-svelte/lib/HandPalm';
+  import Prohibit from 'phosphor-svelte/lib/Prohibit';
   import WarningCircle from 'phosphor-svelte/lib/WarningCircle';
 
   let { profileId } = $props<{ profileId: string }>();
@@ -13,6 +16,28 @@
   let builtinServers = $derived(servers.filter(s => s.source === 'builtin'));
   let actionError = $state<string | null>(null);
   let loadedProfileId = $state<string | null>(null);
+
+  const PERMISSION_META: Record<ToolPermission, { label: string; icon: typeof CheckCircle; tone: string }> = {
+    allow: {
+      label: 'Allow',
+      icon: CheckCircle,
+      tone: 'text-primary border-primary/30 bg-primary/10',
+    },
+    ask: {
+      label: 'Ask',
+      icon: HandPalm,
+      tone: 'text-warning border-warning/30 bg-warning/10',
+    },
+    block: {
+      label: 'Block',
+      icon: Prohibit,
+      tone: 'text-destructive-foreground border-destructive/30 bg-destructive/10',
+    },
+  };
+
+  function permissionMeta(action: ToolPermission) {
+    return PERMISSION_META[action];
+  }
 
   // Runtime status lookup by server name
   let runtimeByName = $derived.by(() => {
@@ -64,6 +89,7 @@
 {#snippet toolList(tools: McpToolInfo[])}
   <div transition:slide={{ duration: 300 }} class="divide-y divide-card-divider border-t border-card-divider">
     {#each tools as tool (tool.namespaced_name)}
+      {@const meta = permissionMeta(tool.permission_action)}
       <div class="px-4 py-3 flex items-start justify-between gap-x-3">
         <div class="min-w-0">
           <div class="flex items-center gap-x-2 flex-wrap">
@@ -87,18 +113,24 @@
             Permission source: {tool.permission_source}
           </p>
         </div>
-        <label class="sr-only" for={`mcp-permission-${tool.namespaced_name}`}>Permission for {tool.original_name}</label>
-        <select
-          id={`mcp-permission-${tool.namespaced_name}`}
-          class="shrink-0 rounded-lg border border-line-2 bg-layer px-2 py-1 text-xs text-foreground disabled:opacity-50"
-          value={tool.permission_action}
-          disabled={saving}
-          onchange={(event) => setToolPermission(tool, event.currentTarget.value as ToolPermission)}
-        >
-          <option value="allow">Allow</option>
-          <option value="ask">Ask</option>
-          <option value="block">Block</option>
-        </select>
+        <div class="flex shrink-0 items-center gap-x-2">
+          <span class={`inline-flex items-center gap-x-1 rounded-full border px-2 py-0.5 text-xs font-medium ${meta.tone}`}>
+            <meta.icon size={12} weight="fill" />
+            {meta.label}
+          </span>
+          <label class="sr-only" for={`mcp-permission-${tool.namespaced_name}`}>Permission for {tool.original_name}</label>
+          <select
+            id={`mcp-permission-${tool.namespaced_name}`}
+            class="rounded-lg border border-line-2 bg-layer px-2 py-1 text-xs text-foreground disabled:opacity-50"
+            value={tool.permission_action}
+            disabled={saving}
+            onchange={(event) => setToolPermission(tool, event.currentTarget.value as ToolPermission)}
+          >
+            <option value="allow">Allow</option>
+            <option value="ask">Ask</option>
+            <option value="block">Block</option>
+          </select>
+        </div>
       </div>
     {/each}
   </div>
@@ -135,7 +167,7 @@
       {#each builtinServers as server (server.name)}
         {@const tools = mcpStore.toolsByServer[server.name] ?? []}
         {@const isExpanded = expandedGroups.has(server.name)}
-        <div class="bg-card border border-card-line rounded-xl mb-3 overflow-hidden">
+        <div class="bg-card border border-card-line rounded-xl mb-3 overflow-hidden {server.enabled ? '' : 'opacity-70 bg-muted/20'}">
           <div class="flex items-center justify-between px-4 py-3">
             <button
               type="button"
@@ -184,7 +216,7 @@
         {@const runtime = runtimeByName.get(server.name)}
         {@const tools = mcpStore.toolsByServer[server.name] ?? []}
         {@const isExpanded = expandedGroups.has(server.name)}
-        <div class="bg-card border border-card-line rounded-xl mb-3 overflow-hidden">
+        <div class="bg-card border border-card-line rounded-xl mb-3 overflow-hidden {server.enabled ? '' : 'opacity-70 bg-muted/20'}">
           <div class="flex items-center justify-between px-4 py-3">
             <button
               type="button"

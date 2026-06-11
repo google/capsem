@@ -9,6 +9,8 @@
     type EnforcementRuleInfo,
     type ProfileInfoResponse,
     type ProfileSummary,
+    type SecurityRuleAction,
+    type SecurityRuleDetectionLevel,
   } from '../../api';
   import McpSection from '../settings/McpSection.svelte';
   import PluginSection from '../settings/PluginSection.svelte';
@@ -19,6 +21,9 @@
   import IdentificationCard from 'phosphor-svelte/lib/IdentificationCard';
   import CheckCircle from 'phosphor-svelte/lib/CheckCircle';
   import CircleNotch from 'phosphor-svelte/lib/CircleNotch';
+  import HandPalm from 'phosphor-svelte/lib/HandPalm';
+  import PencilSimple from 'phosphor-svelte/lib/PencilSimple';
+  import Prohibit from 'phosphor-svelte/lib/Prohibit';
   import WarningCircle from 'phosphor-svelte/lib/WarningCircle';
 
   type Section = 'overview' | 'enforcement' | 'detection' | 'plugins' | 'mcp' | 'assets';
@@ -40,6 +45,74 @@
     { key: 'mcp', label: 'MCP', icon: Plugs },
     { key: 'assets', label: 'Assets', icon: HardDrives },
   ];
+
+  const ACTION_META: Record<SecurityRuleAction, { label: string; icon: typeof CheckCircle; tone: string }> = {
+    allow: {
+      label: 'Allow',
+      icon: CheckCircle,
+      tone: 'text-primary border-primary/30 bg-primary/10',
+    },
+    ask: {
+      label: 'Ask',
+      icon: HandPalm,
+      tone: 'text-warning border-warning/30 bg-warning/10',
+    },
+    block: {
+      label: 'Block',
+      icon: Prohibit,
+      tone: 'text-destructive-foreground border-destructive/30 bg-destructive/10',
+    },
+    preprocess: {
+      label: 'Preprocess',
+      icon: PencilSimple,
+      tone: 'text-primary border-primary/30 bg-primary/10',
+    },
+    rewrite: {
+      label: 'Rewrite',
+      icon: PencilSimple,
+      tone: 'text-primary border-primary/30 bg-primary/10',
+    },
+    postprocess: {
+      label: 'Postprocess',
+      icon: PencilSimple,
+      tone: 'text-primary border-primary/30 bg-primary/10',
+    },
+  };
+
+  const DETECTION_META: Record<SecurityRuleDetectionLevel | 'none', { label: string; tone: string }> = {
+    none: {
+      label: 'None',
+      tone: 'text-muted-foreground-2 border-line-2 bg-muted/40',
+    },
+    informational: {
+      label: 'Informational',
+      tone: 'text-muted-foreground-1 border-line-2 bg-muted/40',
+    },
+    low: {
+      label: 'Low',
+      tone: 'text-primary border-primary/30 bg-primary/10',
+    },
+    medium: {
+      label: 'Medium',
+      tone: 'text-warning border-warning/30 bg-warning/10',
+    },
+    high: {
+      label: 'High',
+      tone: 'text-destructive-foreground border-destructive/30 bg-destructive/10',
+    },
+    critical: {
+      label: 'Critical',
+      tone: 'text-destructive-foreground border-destructive/40 bg-destructive/15',
+    },
+  };
+
+  function actionMeta(action: SecurityRuleAction) {
+    return ACTION_META[action];
+  }
+
+  function detectionMeta(level: SecurityRuleDetectionLevel | undefined) {
+    return DETECTION_META[level ?? 'none'];
+  }
 
   onMount(() => {
     void load();
@@ -218,6 +291,7 @@
           <h2 class="text-xl font-medium text-foreground mb-6">Enforcement</h2>
           <div class="bg-card border border-card-line rounded-xl divide-y divide-card-divider">
             {#each enforcementRules as rule (rule.rule_id)}
+              {@const meta = actionMeta(rule.action)}
               <div class="p-4">
                 <div class="flex items-start justify-between gap-x-3">
                   <div class="min-w-0">
@@ -226,7 +300,10 @@
                       <p class="text-xs text-muted-foreground-1 mt-0.5 line-clamp-2">{rule.reason}</p>
                     {/if}
                   </div>
-                  <span class="text-xs px-2 py-0.5 rounded-full bg-muted text-muted-foreground-1 shrink-0">{rule.action}</span>
+                  <span class={`inline-flex items-center gap-x-1 rounded-full border px-2 py-0.5 text-xs font-medium shrink-0 ${meta.tone}`}>
+                    <meta.icon size={12} weight="fill" />
+                    {meta.label}
+                  </span>
                 </div>
                 <p class="text-[11px] text-muted-foreground-2 mt-2 font-mono truncate">{rule.rule_id}</p>
                 <p class="text-[11px] text-muted-foreground-2 mt-1">{sourceLabel(rule)} · priority {rule.priority}</p>
@@ -237,6 +314,7 @@
           <h2 class="text-xl font-medium text-foreground mb-6">Detection</h2>
           <div class="bg-card border border-card-line rounded-xl divide-y divide-card-divider">
             {#each detectionRules as rule (rule.rule_id)}
+              {@const meta = detectionMeta(rule.detection_level)}
               <div class="p-4">
                 <div class="flex items-start justify-between gap-x-3">
                   <div class="min-w-0">
@@ -245,7 +323,10 @@
                       <p class="text-xs text-muted-foreground-1 mt-0.5 line-clamp-2">{rule.reason}</p>
                     {/if}
                   </div>
-                  <span class="text-xs px-2 py-0.5 rounded-full bg-muted text-muted-foreground-1 shrink-0">{rule.detection_level ?? 'none'}</span>
+                  <span class={`inline-flex items-center gap-x-1 rounded-full border px-2 py-0.5 text-xs font-medium shrink-0 ${meta.tone}`}>
+                    <WarningCircle size={12} weight="fill" />
+                    {meta.label}
+                  </span>
                 </div>
                 <p class="text-[11px] text-muted-foreground-2 mt-2 font-mono truncate">{rule.rule_id}</p>
                 <p class="text-[11px] text-muted-foreground-2 mt-1">{sourceLabel(rule)} · priority {rule.priority}</p>

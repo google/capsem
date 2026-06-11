@@ -107,6 +107,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Disabled debug-only dummy plugins by default and updated the plugin UI to
   show enum-backed mode badges/icons for allow, ask, block, rewrite, and
   disabled states without hiding inactive plugins.
+- Updated the Profile rule lists and MCP tool list to use the same
+  enum-backed visual language for allow/ask/block/rewrite/detection levels,
+  while keeping MCP tool permission changes on the route-backed selector.
 - Cleaned the admin/doctor/status/debug rails so diagnostics follow the profile
   contract: builder doctor delegates profile validation to `capsem-admin
   profile check`, Justfile asset builds no longer pass legacy guest-config

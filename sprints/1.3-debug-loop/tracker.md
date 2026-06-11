@@ -212,6 +212,18 @@
   and disabled rules, group default rules visibly without making them a separate
   engine, and use consistent icons/select boxes/toggles for enum/boolean
   controls.
+  - [x] Route-backed UI iconography slice: Profile enforcement/detection rows
+    now render typed action/detection metadata instead of raw grey pills, and
+    MCP tools show allow/ask/block permission badges while preserving the
+    selector as the only mutation control. Disabled MCP servers are greyed from
+    `server.enabled`.
+    Proof: `pnpm --dir frontend test -- --run
+    frontend/src/lib/__tests__/profile-page-contract.test.ts
+    frontend/src/lib/__tests__/mcp-section-contract.test.ts
+    frontend/src/lib/__tests__/plugin-section-contract.test.ts
+    frontend/src/lib/__tests__/mcp-store.test.ts`; `pnpm --dir frontend check`.
+  - [ ] Remaining: disabled rule rows need a backend rule enabled/disabled
+    contract field before the UI can render disabled rules without guessing.
 - [x] Implement bug 16 slice: make MCP source/lifecycle display respect the
   existing route contract. The profile route exposes `local` as
   `source = builtin` with `running = false` because it is static Capsem-owned
@@ -235,6 +247,10 @@
   semantics for disabled entries across plugins, MCP, enforcement rules, and
   detection rules: grey/inactive styling for disabled state, plus policy/mode
   icon from the underlying enum.
+  - [x] Plugin and MCP parts covered by bug 14 and bug 15 UI iconography
+    slices.
+  - [ ] Remaining: enforcement/detection disabled-rule rendering needs a
+    first-party disabled state in the rule DTO.
 - [ ] Implement bug 19 after user resumes coding: expose the default MCP rule
   as a visible, editable rule/policy selector where allowed by profile/corp
   constraints; test that changing the selector mutates the same rule contract
