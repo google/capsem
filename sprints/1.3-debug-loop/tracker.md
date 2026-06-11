@@ -120,9 +120,14 @@
   - [x] Stats trace visibility slice: frontend trace SQL no longer hides
     model traces whose token totals are zero or unavailable, so AGY/tool-only
     activity remains inspectable once model rows exist.
-  - [ ] Remaining: prove AGY tool-call/activity semantics beyond model HTTP
-    rows, and verify against a rebuilt service/VM without destroying the current
-    evidence VM until approved.
+  - [x] Ledger proof slice: AGY Google `functionCall` responses now have a
+    regression that builds the telemetry `ModelCall`, writes it through the
+    real session DB writer, and proves `session_stats`, `tool_usage_frequency`,
+    and `tool_calls_for` expose the tool row the UI consumes. Proof:
+    `cargo test -p capsem-core agy_google_tool_call_survives_into_session_stats
+    -- --nocapture`.
+  - [ ] Remaining: verify against a rebuilt service/VM without destroying the
+    current evidence VM until approved.
 - [ ] Implement bug 4 after user resumes coding: prove broker capture/rewrite
   with a local hermetic flow, expose broker/plugin counters and recent evidence
   as first-class stats, and ensure UI/TUI do not bury it under generic process

@@ -248,6 +248,61 @@ fn google_non_streaming_function_call_is_logged_as_model_tool_call() {
     );
 }
 
+#[test]
+fn agy_google_tool_call_survives_into_session_stats() {
+    let mut req_ctx = anthropic_req_ctx();
+    req_ctx.domain = "daily-cloudcode-pa.googleapis.com".into();
+    req_ctx.process_name = Some("agy".into());
+    req_ctx.ai_provider = Some(ProviderKind::Google);
+    req_ctx.path = "/v1internal:generateContent".into();
+    req_ctx.request_body_stats =
+        req_stats(br#"{"contents":[{"role":"user","parts":[{"text":"search"}]}]}"#);
+    let response = br#"{
+        "candidates": [{
+            "content": {"parts": [{"functionCall": {"name": "search_web", "args": {"query": "capsem"}}}]},
+            "finishReason": "STOP"
+        }],
+        "modelVersion": "gemini-3.1-pro-preview-customtools",
+        "usageMetadata": {"promptTokenCount": 7, "candidatesTokenCount": 3}
+    }"#;
+    let resp_stats = TelemetryResponseStats {
+        bytes: response.len() as u64,
+        preview: response.to_vec(),
+        max_preview: response.len(),
+    };
+    let pricing = Arc::new(PricingTable::load());
+    let trace = Arc::new(Mutex::new(TraceState::new()));
+    let model_call = maybe_build_model_call(&req_ctx, &resp_stats, &[], &pricing, &trace)
+        .expect("AGY Google generateContent should produce model telemetry");
+
+    let tmp = tempfile::tempdir().unwrap();
+    let db_path = tmp.path().join("session.db");
+    let writer = capsem_logger::DbWriter::open(&db_path, 8).unwrap();
+    writer.write_blocking(capsem_logger::WriteOp::ModelCall(model_call));
+    writer.shutdown_blocking();
+
+    let reader = capsem_logger::DbReader::open(&db_path).unwrap();
+    let stats = reader.session_stats().unwrap();
+    assert_eq!(stats.model_call_count, 1);
+    assert_eq!(stats.total_tool_calls, 1);
+
+    let usage = reader.tool_usage_frequency(10).unwrap();
+    assert_eq!(usage.len(), 1);
+    assert_eq!(usage[0].tool_name, "search_web");
+    assert_eq!(usage[0].count, 1);
+
+    let calls = reader.recent_model_calls(1).unwrap();
+    assert_eq!(calls.len(), 1);
+    let tool_rows = reader.tool_calls_for(calls[0].0).unwrap();
+    assert_eq!(tool_rows.len(), 1);
+    assert_eq!(tool_rows[0].call_id, "gemini_search_web_0");
+    assert_eq!(tool_rows[0].tool_name, "search_web");
+    assert_eq!(
+        tool_rows[0].arguments.as_deref(),
+        Some(r#"{"query":"capsem"}"#)
+    );
+}
+
 /// Non-AI provider returns no model call.
 #[test]
 fn non_ai_provider_is_not_a_model_call() {
