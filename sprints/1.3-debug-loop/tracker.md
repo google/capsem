@@ -222,6 +222,10 @@
   provider response to the guest, and add an AGY/Google OAuth e2e showing a
   second VM does not redo the user-facing OAuth dance when a valid brokered
   exchange exists.
+- [ ] Broker/provider hardening lane dependency: bugs 4, 23, 24, and 25 must be
+  validated together. Provider on/off is only trustworthy when provider
+  detection, profile enforcement, broker capture/replay, and plugin/broker
+  runtime evidence all agree on the same security-event ledger.
 
 ## Notes
 
@@ -268,6 +272,9 @@
     and responses, add the minimal host-side replay/refresh adapter, then retry
     AGY in a fresh VM and prove the guest no longer requires a user-facing auth
     dance while raw secrets never enter guest config.
+  - Broker replay is also the enforcement point for profile provider toggles:
+    if a profile blocks or asks for a provider, the broker must not silently
+    replay credentials for that provider outside the same rule decision path.
   - Process audit may be rendering snapshot collection time for every row
     rather than per-process start time or per-event emission time.
   - Process audit may be mixing inventory/snapshot data with security-event
