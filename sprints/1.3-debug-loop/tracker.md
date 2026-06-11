@@ -154,10 +154,19 @@
   count only user tool calls (`tools/call`) and exclude protocol handshakes,
   `tools/list`, and builtin snapshot maintenance while raw rows remain in
   session DB for forensics.
-- [ ] Implement bug 7 after user resumes coding: define snapshot UX/data
-  contract as inventory vs delta vs evidence, add filters/summaries around
-  changed/high-value files, and ensure raw thousands-of-files output is not the
-  default user-facing state.
+- [x] Implement bug 7 slice: keep hypervisor snapshot internals out of generic
+  Stats surfaces while preserving explicit MCP access for AI/tool callers.
+  - [x] Snapshot visibility boundary: Stats no longer exposes a standalone
+    Snapshot tab or reads `snapshot_events`; explicit snapshot MCP invocations
+    still show up as MCP calls, and raw DB inspection remains available for
+    forensics.
+  - [x] Compact snapshot MCP table: `snapshots_list` defaults to
+    created/edited/deleted summary counts and only returns full per-file
+    changes when the MCP caller passes `include_changes=true`.
+  - Proof: `cargo test -p capsem-core
+    mcp::file_tools::tests::list_ -- --nocapture`; `pnpm --dir frontend test
+    -- --run frontend/src/lib/__tests__/stats-view-contract.test.ts`; `pnpm
+    --dir frontend check`.
 - [ ] Implement bug 8 after user resumes coding: non-destructively trace file
   provenance from paths, mtimes, process/security logs, and session DB evidence;
   prove whether snapshot is read-only or mutating the workspace; then add a
@@ -495,6 +504,15 @@
 - Unit/contract:
   - `cargo test -p capsem-core mcp::file_tools::tests:: -- --nocapture`
     passed; includes large snapshot JSON parser regression.
+  - `cargo test -p capsem-core mcp::file_tools::tests::list_ -- --nocapture`
+    passed; proves `snapshots_list` defaults to compact
+    created/edited/deleted counts and requires `include_changes=true` for full
+    per-file diffs.
+  - `pnpm --dir frontend test -- --run frontend/src/lib/__tests__/stats-view-contract.test.ts`
+    passed; package script ran the frontend suite and proves Stats does not
+    expose a generic Snapshot tab/query.
+  - `pnpm --dir frontend check` passed; Astro and Svelte checks have 0 errors
+    and 0 warnings after removing the Snapshot tab.
   - `cargo test -p capsem-logger mcp_call_stats_counts_user_tool_calls_not_protocol_or_snapshot_noise -- --nocapture`
     passed; proves backend MCP headline stats filter protocol/snapshot noise.
   - `pnpm --dir frontend test -- --run frontend/src/lib/__tests__/mcp-sql.test.ts`

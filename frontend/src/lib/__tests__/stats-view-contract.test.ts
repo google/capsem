@@ -16,3 +16,12 @@ describe('StatsView process contract', () => {
     expect(source).not.toContain("type: 'process audit'");
   });
 });
+
+describe('StatsView snapshot boundary', () => {
+  it('does not expose hypervisor snapshots as a generic stats tab', () => {
+    expect(source).not.toContain("id: 'snapshots'");
+    expect(source).not.toContain('snapshot_events');
+    expect(source).not.toContain('Snapshot Events');
+    expect(source).toContain("id: 'mcp'");
+  });
+});

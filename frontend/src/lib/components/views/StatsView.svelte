@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import * as api from '../../api';
   import type { InspectResponse } from '../../types/gateway';
-  import { formatBytes, formatDuration, formatTime, fmtAge, truncate } from '../../format';
+  import { formatBytes, formatDuration, formatTime, truncate } from '../../format';
   import { getShikiHighlighter, resolveShikiTheme, ensureShikiLang, ensureShikiTheme, type ShikiHighlighter } from '../../shiki.ts';
   import { themeStore } from '../../stores/theme.svelte.ts';
   import { tabStore } from '../../stores/tabs.svelte.ts';
@@ -16,14 +16,13 @@
   import Globe from 'phosphor-svelte/lib/Globe';
   import FileText from 'phosphor-svelte/lib/FileText';
   import ShieldCheck from 'phosphor-svelte/lib/ShieldCheck';
-  import ClockCounterClockwise from 'phosphor-svelte/lib/ClockCounterClockwise';
   import Database from 'phosphor-svelte/lib/Database';
   import Terminal from 'phosphor-svelte/lib/Terminal';
   import DotsThreeCircle from 'phosphor-svelte/lib/DotsThreeCircle';
 
   let { vmId }: { vmId: string } = $props();
 
-  type StatsTab = 'model' | 'mcp' | 'http' | 'dns' | 'files' | 'process' | 'security' | 'snapshots';
+  type StatsTab = 'model' | 'mcp' | 'http' | 'dns' | 'files' | 'process' | 'security';
   type DetailSelection = { type: string; data: Record<string, unknown> };
   type Row = Record<string, any>;
 
@@ -43,7 +42,6 @@
   let processRows = $state<Row[]>([]);
   let auditRows = $state<Row[]>([]);
   let substitutionRows = $state<Row[]>([]);
-  let snapshotRows = $state<Row[]>([]);
   let securityLatest = $state<api.SecurityRuleEvent[]>([]);
   let detectionLatest = $state<api.SecurityRuleEvent[]>([]);
   let enforcementLatest = $state<api.SecurityRuleEvent[]>([]);
@@ -131,7 +129,6 @@
         processEventRows,
         auditEventRows,
         substitutionEventRows,
-        snapshotEventRows,
         secLatest,
         secStatus,
         detLatest,
@@ -193,11 +190,6 @@
                FROM substitution_events
                ORDER BY id DESC
                LIMIT 100`),
-        query(`SELECT event_id, timestamp, slot, origin, name, files_count,
-                 start_fs_event_id, stop_fs_event_id, trace_id
-               FROM snapshot_events
-               ORDER BY id DESC
-               LIMIT 100`),
         api.getVmSecurityLatest(vmId, 200),
         api.getVmSecurityStatus(vmId),
         api.getVmDetectionLatest(vmId, 200),
@@ -212,7 +204,6 @@
       processRows = processEventRows;
       auditRows = auditEventRows;
       substitutionRows = substitutionEventRows;
-      snapshotRows = snapshotEventRows;
       securityLatest = secLatest;
       securityStatus = secStatus;
       detectionLatest = detLatest;
@@ -253,7 +244,6 @@
     { id: 'files', label: 'Files', icon: FileText },
     { id: 'process', label: 'Process', icon: Terminal },
     { id: 'security', label: 'Security', icon: ShieldCheck },
-    { id: 'snapshots', label: 'Snapshots', icon: ClockCounterClockwise },
   ];
 </script>
 
@@ -481,21 +471,6 @@
           </StatsEventList>
         </div>
 
-      {:else if activeTab === 'snapshots'}
-        <div class="grid grid-cols-3 gap-3 mb-6">
-          <MetricCard label="Snapshots" value={snapshotRows.length.toLocaleString()} />
-          <MetricCard label="Manual" value={snapshotRows.filter(row => text(row.origin) === 'manual').length.toLocaleString()} />
-          <MetricCard label="Auto" value={snapshotRows.filter(row => text(row.origin) === 'auto').length.toLocaleString()} />
-        </div>
-        <StatsEventList title="Snapshot Events" rows={snapshotRows} columns={['Age', 'Slot', 'Origin', 'Name', 'Files']} onrow={(row) => detail = { type: 'snapshot', data: row }}>
-          {#snippet children(row: any)}
-            <td class="px-4 py-2 text-muted-foreground">{fmtAge(row.timestamp)}</td>
-            <td class="px-4 py-2 text-foreground">cp-{row.slot}</td>
-            <td class="px-4 py-2"><StatsBadge value={text(row.origin)} /></td>
-            <td class="px-4 py-2 text-foreground">{row.name ?? ''}</td>
-            <td class="px-4 py-2 text-right text-muted-foreground">{row.files_count ?? 0}</td>
-          {/snippet}
-        </StatsEventList>
       {/if}
     </div>
   </main>

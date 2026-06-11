@@ -25,8 +25,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stop/start, fork, and delete without temporary-vs-persistent UI branches.
 - Rebuilt the VM Stats tab around the current session database and VM-scoped
   ledger routes. It now surfaces Model, MCP, HTTP, DNS, Files, Process,
-  Security, and Snapshot evidence, links directly to raw session DB inspection,
-  and uses DB-backed security/detection/enforcement rows for forensic details.
+  and Security evidence, links directly to raw session DB inspection, and uses
+  DB-backed security/detection/enforcement rows for forensic details. Hypervisor
+  snapshot internals no longer appear as a generic Stats tab; explicit snapshot
+  MCP calls still surface through MCP activity and raw `snapshot_events` remain
+  available through DB inspection.
+- Compact `snapshots_list` output now defaults to created/edited/deleted counts
+  so AI-facing MCP responses stay small; callers must pass
+  `include_changes=true` to request full per-file snapshot diffs.
 - Clarified the VM Stats process tab by separating command execution rows from
   audit-port process observations, removing the vague “Process Audit Events”
   label from the user-facing table.

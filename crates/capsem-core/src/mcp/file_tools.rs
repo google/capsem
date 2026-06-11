@@ -100,6 +100,10 @@ pub fn file_tool_defs() -> Vec<McpToolDef> {
                         "type": "string",
                         "enum": ["text", "json"],
                         "description": "Output format: 'text' (default) for a compact table, 'json' for machine-readable JSON."
+                    },
+                    "include_changes": {
+                        "type": "boolean",
+                        "description": "Include full per-file change arrays. Defaults to false; compact created/edited/deleted counts are always returned."
                     }
                 }
             }),
@@ -929,8 +933,7 @@ pub fn handle_revert_file_with_security_event(
     )
 }
 
-/// Summarize changes as compact "+N, ~N, -N" string.
-fn format_change_summary(changes: &[Value]) -> String {
+fn change_counts(changes: &[Value]) -> (u32, u32, u32) {
     let mut created = 0u32;
     let mut modified = 0u32;
     let mut deleted = 0u32;
@@ -942,21 +945,17 @@ fn format_change_summary(changes: &[Value]) -> String {
             _ => {}
         }
     }
-    let mut parts = Vec::new();
-    if created > 0 {
-        parts.push(format!("+{created}"));
-    }
-    if modified > 0 {
-        parts.push(format!("~{modified}"));
-    }
-    if deleted > 0 {
-        parts.push(format!("-{deleted}"));
-    }
-    if parts.is_empty() {
-        "(none)".into()
-    } else {
-        parts.join(", ")
-    }
+    (created, modified, deleted)
+}
+
+fn change_summary_value(changes: &[Value]) -> Value {
+    let (created, edited, deleted) = change_counts(changes);
+    serde_json::json!({
+        "created": created,
+        "edited": edited,
+        "deleted": deleted,
+        "total": created + edited + deleted,
+    })
 }
 
 /// Render snapshot list as a text table.
@@ -966,8 +965,8 @@ fn render_snapshots_table(entries: &[serde_json::Value], manual_available: usize
         entries.len(),
         manual_available,
     );
-    out.push_str("Checkpoint  Origin  Name            Age          Hash          Files  Changes\n");
-    out.push_str("----------------------------------------------------------------------------\n");
+    out.push_str("Checkpoint  Origin  Name            Age          Hash          Files  Created  Edited  Deleted\n");
+    out.push_str("----------------------------------------------------------------------------------------------\n");
     for e in entries {
         let cp = e["checkpoint"].as_str().unwrap_or("-");
         let origin = e["origin"].as_str().unwrap_or("-");
@@ -978,24 +977,28 @@ fn render_snapshots_table(entries: &[serde_json::Value], manual_available: usize
             .map(|h| &h[..h.len().min(12)])
             .unwrap_or("-");
         let files = e["files_count"].as_u64().unwrap_or(0);
-        let changes = e["changes"].as_array().map(|a| a.as_slice()).unwrap_or(&[]);
-        let summary = format_change_summary(changes);
+        let summary = &e["changes_summary"];
         out.push_str(&format!(
-            "{:<12}{:<8}{:<16}{:<13}{:<14}{:<7}{}\n",
+            "{:<12}{:<8}{:<16}{:<13}{:<14}{:<7}{:<9}{:<8}{}\n",
             cp,
             origin,
             truncate_path(name, 15),
             age,
             hash,
             files,
-            summary,
+            summary["created"].as_u64().unwrap_or(0),
+            summary["edited"].as_u64().unwrap_or(0),
+            summary["deleted"].as_u64().unwrap_or(0),
         ));
     }
     out
 }
 
 /// Collect snapshot entries as JSON values (for both text and json rendering).
-fn collect_snapshot_entries(scheduler: &AutoSnapshotScheduler) -> Vec<serde_json::Value> {
+fn collect_snapshot_entries(
+    scheduler: &AutoSnapshotScheduler,
+    include_changes: bool,
+) -> Vec<serde_json::Value> {
     let mut snapshots = scheduler.list_snapshots();
     // list_snapshots returns newest-first; reverse to walk oldest-first.
     snapshots.reverse();
@@ -1012,7 +1015,7 @@ fn collect_snapshot_entries(scheduler: &AutoSnapshotScheduler) -> Vec<serde_json
 
         let changes = compute_changes_vs_previous(&snap_files, &prev_files);
 
-        entries.push(serde_json::json!({
+        let mut entry = serde_json::json!({
             "checkpoint": format!("cp-{}", s.slot),
             "slot": s.slot,
             "origin": origin,
@@ -1020,8 +1023,12 @@ fn collect_snapshot_entries(scheduler: &AutoSnapshotScheduler) -> Vec<serde_json
             "hash": s.hash,
             "age": age_string(s.timestamp),
             "files_count": snap_files.len(),
-            "changes": changes,
-        }));
+            "changes_summary": change_summary_value(&changes),
+        });
+        if include_changes {
+            entry["changes"] = Value::Array(changes);
+        }
+        entries.push(entry);
 
         prev_files = snap_files;
     }
@@ -1041,7 +1048,11 @@ pub fn handle_list_snapshots(
     _workspace_root: &Path,
     request_id: Option<Value>,
 ) -> JsonRpcResponse {
-    let entries = collect_snapshot_entries(scheduler);
+    let include_changes = arguments
+        .get("include_changes")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let entries = collect_snapshot_entries(scheduler, include_changes);
     let (start_index, max_length, format) = extract_pagination_params(arguments);
 
     if format == "json" {
