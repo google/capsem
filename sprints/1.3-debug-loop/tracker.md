@@ -90,10 +90,10 @@
   should flag `model.provider == "<provider>"` when the host is not a known or
   profile/corp-declared endpoint.
 - [x] Capture bug 25: brokered credentials are not yet a complete next-VM reuse
-  loop. Capture can store opaque credential refs, but AGY/Gemini/Claude/Codex
-  auth flows are not yet satisfied by a broker-owned host-side replay/refresh
-  path, so OAuth/login dances may repeat even after the broker captured the
-  exchange needed to refresh or complete them.
+  loop. The broker should accumulate credentials over time as an opaque
+  credential vault, then expose only allowed credential capabilities/refs to
+  each profile or forked VM. AGY/Gemini/Claude/Codex auth replay/refresh is one
+  consumer of that vault, not a guest config-writing shortcut.
 - [x] Implement bug 1 slice: TDD over CLI purge messaging, service purge of
   defunct persistent VMs, and TUI resume gating from `can_resume`.
 - [x] Implement bug 2 slice: TDD over the checked-in code profile installer so
@@ -216,12 +216,13 @@
   and add adversarial tests proving unknown-domain OpenAI/Gemini/Claude shapes
   are detected without allowing unbounded body capture or host-only bypasses.
 - [ ] Implement bug 25 after user resumes coding: complete broker reuse across
-  VM lifecycles. Add broker/provider adapters that recognize a repeated
-  auth/token-refresh dance from the observed request shape, satisfy or replay
-  the exchange host-side using broker-held secrets, return only the expected
-  provider response to the guest, and add an AGY/Google OAuth e2e showing a
-  second VM does not redo the user-facing OAuth dance when a valid brokered
-  exchange exists.
+  VM lifecycles. Add broker inventory and grant semantics so accumulated
+  credential refs can be exposed per profile and inherited/limited by forked
+  VMs. Add broker/provider adapters that recognize repeated auth/token-refresh
+  dances from observed request shape, satisfy or replay the exchange host-side
+  only when the active profile/fork has the credential capability, and add an
+  AGY/Google OAuth e2e showing a second VM can reuse a valid brokered exchange
+  without exposing raw secrets or requiring a user-facing OAuth dance.
 - [ ] Broker/provider hardening lane dependency: bugs 4, 23, 24, and 25 must be
   validated together. Provider on/off is only trustworthy when provider
   detection, profile enforcement, broker capture/replay, and plugin/broker
@@ -264,17 +265,23 @@
     existed in session DB.
   - Broker capture and replay are currently separate primitives: Keychain/test
     storage plus `credential:blake3:<hash>` refs exist, and some HTTP/MCP
-    paths can rehydrate refs when explicitly configured. What is missing for
-    AGY/Google OAuth is not a guest config file; it is a broker-owned
-    request-shape adapter that recognizes the captured dance and satisfies the
-    token/refresh exchange at the host boundary with structured logging.
+    paths can rehydrate refs when explicitly configured. What is missing is the
+    broker ledger between them: accumulated credential inventory, per-profile
+    and per-fork exposure/grants, and structured evidence for why a credential
+    was or was not available to a VM.
+  - For AGY/Google OAuth specifically, the missing adapter is not a guest
+    config file; it is a broker-owned request-shape adapter that recognizes the
+    captured dance and satisfies the token/refresh exchange at the host boundary
+    with structured logging after profile/fork grants and provider enforcement
+    allow it.
   - Spike shape for bug 25: launch AGY, capture the exact OAuth/token requests
     and responses, add the minimal host-side replay/refresh adapter, then retry
     AGY in a fresh VM and prove the guest no longer requires a user-facing auth
     dance while raw secrets never enter guest config.
-  - Broker replay is also the enforcement point for profile provider toggles:
-    if a profile blocks or asks for a provider, the broker must not silently
-    replay credentials for that provider outside the same rule decision path.
+  - Broker exposure/replay is also the enforcement point for profile provider
+    toggles: if a profile blocks or asks for a provider, the broker must not
+    silently expose or replay credentials for that provider outside the same
+    rule decision path.
   - Process audit may be rendering snapshot collection time for every row
     rather than per-process start time or per-event emission time.
   - Process audit may be mixing inventory/snapshot data with security-event
