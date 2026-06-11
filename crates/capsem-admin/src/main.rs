@@ -1135,11 +1135,43 @@ fn check_profile_payload_files(
             normalized_blake3(&descriptor.hash)?,
             descriptor.size,
         )?);
+        validate_profile_payload_semantics(kind, &path)?;
         if kind == "root_manifest" {
             reports.extend(check_profile_root_manifest(&path)?);
         }
     }
     Ok(reports)
+}
+
+fn validate_profile_payload_semantics(kind: &str, path: &Path) -> Result<()> {
+    match kind {
+        "mcp" => validate_profile_mcp_file(path),
+        "apt_packages" | "python_requirements" | "npm_packages" => {
+            read_profile_package_lines(path).map(|_| ())
+        }
+        _ => Ok(()),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProfileMcpJsonConfig {
+    #[serde(rename = "mcpServers")]
+    mcp_servers: BTreeMap<String, serde_json::Value>,
+}
+
+fn validate_profile_mcp_file(path: &Path) -> Result<()> {
+    let content = fs::read_to_string(path)
+        .with_context(|| format!("read profile MCP config {}", path.display()))?;
+    let config: ProfileMcpJsonConfig = serde_json::from_str(&content)
+        .with_context(|| format!("parse profile MCP config {}", path.display()))?;
+    if config.mcp_servers.is_empty() {
+        return Err(anyhow!(
+            "profile MCP config {} must declare at least one server",
+            path.display()
+        ));
+    }
+    Ok(())
 }
 
 #[derive(Debug, Deserialize)]
@@ -1212,7 +1244,9 @@ fn materialize_profile_config(args: &ProfileMaterializeArgs) -> Result<ProfileMa
         fs::remove_dir_all(&args.output_root)
             .with_context(|| format!("remove {}", args.output_root.display()))?;
     }
-    copy_dir_recursive(&args.config_root, &args.output_root)?;
+    if !args.output_root.exists() {
+        copy_dir_recursive(&args.config_root, &args.output_root)?;
+    }
 
     let manifest = load_manifest(&args.manifest)?;
     let current_release = manifest
@@ -1852,6 +1886,7 @@ fn materialize_image_workspace(args: &ImageWorkspaceArgs) -> Result<ImageWorkspa
         "sigma",
         &mut rule_files,
     )?;
+    copy_profile_descriptor_files(&profile, &args.config_root, &workspace_config_root)?;
     materialize_profile_guest_inputs(
         &profile,
         &args.config_root,
@@ -1859,13 +1894,17 @@ fn materialize_image_workspace(args: &ImageWorkspaceArgs) -> Result<ImageWorkspa
         &workspace_guest_dir,
     )?;
 
-    let copied_validation =
-        validate_profile(&workspace_profile_path, Some(&workspace_config_root))?;
-    if copied_validation.profile_id != profile.id {
+    let copied_check = check_profile(&ProfileCheckArgs {
+        path: workspace_profile_path.clone(),
+        config_root: Some(workspace_config_root.clone()),
+        arch: args.arch.clone(),
+        json: true,
+    })?;
+    if copied_check.validation.profile_id != profile.id {
         return Err(anyhow!(
             "workspace profile id drifted: expected {}, got {}",
             profile.id,
-            copied_validation.profile_id
+            copied_check.validation.profile_id
         ));
     }
 
@@ -1907,6 +1946,41 @@ fn materialize_image_workspace(args: &ImageWorkspaceArgs) -> Result<ImageWorkspa
     )
     .with_context(|| format!("write {}", workspace.join("workspace.json").display()))?;
     Ok(report)
+}
+
+fn copy_profile_descriptor_files(
+    profile: &ProfileConfigFile,
+    source_config_root: &Path,
+    destination_config_root: &Path,
+) -> Result<()> {
+    for (kind, descriptor) in profile.files.iter() {
+        validate_relative_manifest_path("profile file descriptor path", &descriptor.path)?;
+        let source = source_config_root.join(&descriptor.path);
+        let destination = destination_config_root.join(&descriptor.path);
+        if let Some(parent) = destination.parent() {
+            fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
+        }
+        fs::copy(&source, &destination).with_context(|| {
+            format!(
+                "copy profile {kind} {} to {}",
+                source.display(),
+                destination.display()
+            )
+        })?;
+
+        if kind == "root_manifest" {
+            let source_root = source
+                .parent()
+                .ok_or_else(|| anyhow!("profile root manifest has no parent"))?
+                .join("root");
+            let destination_root = destination
+                .parent()
+                .ok_or_else(|| anyhow!("workspace profile root manifest has no parent"))?
+                .join("root");
+            copy_dir_recursive(&source_root, &destination_root)?;
+        }
+    }
+    Ok(())
 }
 
 fn materialize_profile_guest_inputs(
@@ -2990,7 +3064,11 @@ decision = "block"
         let config_root = temp.path().join("config");
         let profile_dir = config_root.join("profiles/code");
         fs::create_dir_all(&profile_dir).expect("profile dir");
-        fs::write(profile_dir.join("mcp.json"), "{}\n").expect("mcp");
+        fs::write(
+            profile_dir.join("mcp.json"),
+            r#"{"mcpServers":{"capsem":{"command":"/run/capsem-mcp-server"}}}"#,
+        )
+        .expect("mcp");
         let mut profile = ProfileConfigFile::builtin_code();
         profile.rule_files.enforcement = None;
         profile.rule_files.sigma = None;
@@ -3012,6 +3090,74 @@ decision = "block"
         })
         .expect_err("mutated payload hash rejected");
         assert!(error.to_string().contains("profile payload file pin check"));
+    }
+
+    #[test]
+    fn profile_check_rejects_malformed_profile_mcp_file_even_when_hash_matches() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let config_root = temp.path().join("config");
+        let profile_dir = config_root.join("profiles/code");
+        fs::create_dir_all(&profile_dir).expect("profile dir");
+        let mcp = "{ definitely not json";
+        fs::write(profile_dir.join("mcp.json"), mcp).expect("mcp");
+        let mut profile = ProfileConfigFile::builtin_code();
+        profile.rule_files.enforcement = None;
+        profile.rule_files.sigma = None;
+        profile.assets.arch.retain(|arch, _| arch == "arm64");
+        profile.files = Default::default();
+        profile.files.mcp = Some(capsem_core::net::policy_config::ProfileFileDescriptor {
+            path: "profiles/code/mcp.json".to_string(),
+            hash: format!("blake3:{}", blake3::hash(mcp.as_bytes()).to_hex()),
+            size: mcp.len() as u64,
+        });
+        let profile_path = profile_dir.join("profile.toml");
+        fs::write(&profile_path, toml::to_string(&profile).unwrap()).expect("profile");
+
+        let error = check_profile(&ProfileCheckArgs {
+            path: profile_path,
+            config_root: Some(config_root),
+            arch: Some("arm64".to_string()),
+            json: true,
+        })
+        .expect_err("malformed MCP config rejected");
+
+        assert!(
+            format!("{error:#}").contains("parse profile MCP config"),
+            "{error:#}"
+        );
+    }
+
+    #[test]
+    fn profile_check_rejects_empty_profile_package_file_even_when_hash_matches() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let config_root = temp.path().join("config");
+        let profile_dir = config_root.join("profiles/code");
+        fs::create_dir_all(&profile_dir).expect("profile dir");
+        let packages = "# intentionally empty\n";
+        fs::write(profile_dir.join("python-requirements.txt"), packages).expect("packages");
+        let mut profile = ProfileConfigFile::builtin_code();
+        profile.rule_files.enforcement = None;
+        profile.rule_files.sigma = None;
+        profile.assets.arch.retain(|arch, _| arch == "arm64");
+        profile.files = Default::default();
+        profile.files.python_requirements =
+            Some(capsem_core::net::policy_config::ProfileFileDescriptor {
+                path: "profiles/code/python-requirements.txt".to_string(),
+                hash: format!("blake3:{}", blake3::hash(packages.as_bytes()).to_hex()),
+                size: packages.len() as u64,
+            });
+        let profile_path = profile_dir.join("profile.toml");
+        fs::write(&profile_path, toml::to_string(&profile).unwrap()).expect("profile");
+
+        let error = check_profile(&ProfileCheckArgs {
+            path: profile_path,
+            config_root: Some(config_root),
+            arch: Some("arm64".to_string()),
+            json: true,
+        })
+        .expect_err("empty package file rejected");
+
+        assert!(format!("{error:#}").contains("package list"), "{error:#}");
     }
 
     #[test]
@@ -3283,9 +3429,15 @@ decision = "block"
                 .iter()
                 .any(|arg| arg == args.output.join("guest").display().to_string().as_str())));
 
-        let copied = validate_profile(&workspace_profile, Some(&args.output.join("config")))
-            .expect("copied workspace profile validates");
-        assert_eq!(copied.profile_id, "code");
+        let copied = check_profile(&ProfileCheckArgs {
+            path: workspace_profile,
+            config_root: Some(args.output.join("config")),
+            arch: None,
+            json: true,
+        })
+        .expect("copied workspace profile validates and owns every pinned payload");
+        assert_eq!(copied.validation.profile_id, "code");
+        assert!(copied.profile_files.iter().all(|file| file.present));
     }
 
     #[test]
@@ -3363,6 +3515,74 @@ decision = "block"
             original_source,
             "materialization must not mutate checked-in source profile"
         );
+    }
+
+    #[test]
+    fn profile_materialize_preserves_previous_profiles_in_same_output_catalog() {
+        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let repo_root = manifest_dir
+            .parent()
+            .and_then(Path::parent)
+            .expect("repo root");
+        let temp = tempfile::tempdir().expect("tempdir");
+        let assets_dir = temp.path().join("assets");
+        let manifest_path = write_test_assets_manifest(temp.path(), "arm64");
+        let output_root = temp.path().join("target/config");
+        let config_root = repo_root.join("config");
+
+        materialize_profile_config(&ProfileMaterializeArgs {
+            profile: config_root.join("profiles/co-work/profile.toml"),
+            config_root: config_root.clone(),
+            manifest: manifest_path.clone(),
+            assets_dir: assets_dir.clone(),
+            output_root: output_root.clone(),
+            arch: Some("arm64".to_string()),
+            clean: true,
+            json: true,
+        })
+        .expect("materialize co-work");
+
+        materialize_profile_config(&ProfileMaterializeArgs {
+            profile: config_root.join("profiles/code/profile.toml"),
+            config_root,
+            manifest: manifest_path,
+            assets_dir,
+            output_root: output_root.clone(),
+            arch: Some("arm64".to_string()),
+            clean: false,
+            json: true,
+        })
+        .expect("materialize code");
+
+        for profile_id in ["co-work", "code"] {
+            let generated_profile_path = output_root
+                .join("profiles")
+                .join(profile_id)
+                .join("profile.toml");
+            let generated: ProfileConfigFile = toml::from_str(
+                &fs::read_to_string(&generated_profile_path).expect("read generated profile"),
+            )
+            .expect("generated profile parses");
+            let arm64 = generated.assets.arch.get("arm64").expect("arm64 assets");
+            assert_eq!(
+                arm64.kernel.hash,
+                format!("blake3:{}", blake3::hash(b"kernel-arm64").to_hex()),
+                "{profile_id} kernel pin must remain generated"
+            );
+            assert_eq!(
+                arm64.initrd.hash,
+                format!("blake3:{}", blake3::hash(b"initrd-arm64").to_hex()),
+                "{profile_id} initrd pin must remain generated"
+            );
+            assert_eq!(
+                arm64.rootfs.hash,
+                format!("blake3:{}", blake3::hash(b"rootfs-arm64").to_hex()),
+                "{profile_id} rootfs pin must remain generated"
+            );
+            assert!(arm64.kernel.url.starts_with("file://"));
+            assert!(arm64.initrd.url.starts_with("file://"));
+            assert!(arm64.rootfs.url.starts_with("file://"));
+        }
     }
 
     #[test]

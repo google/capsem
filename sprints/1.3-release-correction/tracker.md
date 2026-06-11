@@ -33,6 +33,13 @@ below pass. Manual credentials are not the debugger.
 - [ ] Proof: linter covers corp, settings, profile catalog, profile files,
   rules, detection YAML, MCP config, plugins, assets, manifest, OBOM pins, and
   bootstrap root files.
+  - 2026-06-11 progress: `capsem-admin profile check` now verifies copied
+    workspace profiles with the same strict payload/hash/root-manifest rail as
+    source profiles, rejects malformed pinned `mcp.json` even when its
+    BLAKE3/size match, and rejects empty pinned package files through the same
+    parser used by image workspace generation. Remaining S1 work: make
+    profile catalog/corp semantic checks equally explicit before closing this
+    checklist.
 
 ## S2. Materialization, Assets, VM Resources
 
@@ -207,6 +214,13 @@ below pass. Manual credentials are not the debugger.
   helper symbols were removed. A broad `cargo test -p capsem-core policy_config`
   invocation tried to run the signed `mitm_integration` wrapper and failed at
   local codesign; the equivalent `--lib` policy-config proof is green.
+- S1 admin/materialization proof: `cargo test -p capsem-admin -- --nocapture`
+  passes after adding a failing/green check for malformed profile-owned MCP
+  JSON and requiring generated image workspaces to pass `profile check` rather
+  than parse-only validation.
+- S1 package proof: `cargo test -p capsem-admin
+  profile_check_rejects_empty_profile_package_file_even_when_hash_matches --
+  --nocapture` passes; the full capsem-admin suite is now 29/29 green.
 - `code-mq9ymjb2` shows apt/mandb permission and guest ENOSPC evidence.
 - `code-mq9x5edq` shows AGY OAuth token reached guest disk; broker must own it.
 - `code-mq9ye61s` shows Claude install/bootstrap and streaming failures.
