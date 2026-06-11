@@ -9,7 +9,7 @@ use crate::net::policy_config::{
 };
 use capsem_logger::{
     AuditEvent, Decision, DnsEvent, ExecEvent, ExecEventComplete, FileAction, FileEvent, McpCall,
-    ModelCall, NetEvent, SnapshotEvent, SubstitutionEvent, WriteOp,
+    ModelCall, NetEvent, SubstitutionEvent, WriteOp,
 };
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -853,16 +853,14 @@ fn runtime_security_event_type_roundtrips_and_maps_family() {
 }
 
 #[test]
-fn runtime_security_event_families_mark_credential_and_snapshot_as_ledger_only() {
+fn runtime_security_event_families_mark_only_credential_as_ledger_only() {
     use RuntimeSecurityEventFamily::*;
 
     let cel_roots = crate::net::policy_config::SECURITY_EVENT_CEL_ROOTS
         .iter()
         .copied()
         .collect::<std::collections::BTreeSet<_>>();
-    let families = [
-        Http, Model, Mcp, Dns, File, Process, Credential, Snapshot, Security,
-    ];
+    let families = [Http, Model, Mcp, Dns, File, Process, Credential, Security];
 
     for family in families {
         assert_eq!(
@@ -873,7 +871,7 @@ fn runtime_security_event_families_mark_credential_and_snapshot_as_ledger_only()
         );
         assert_eq!(
             family.is_ledger_only(),
-            matches!(family, Credential | Snapshot),
+            matches!(family, Credential),
             "{} ledger-only marker drifted",
             family.as_str()
         );
@@ -881,15 +879,11 @@ fn runtime_security_event_families_mark_credential_and_snapshot_as_ledger_only()
 }
 
 #[test]
-fn runtime_security_event_types_keep_credential_and_snapshot_ledger_only() {
+fn runtime_security_event_types_keep_only_credential_ledger_only() {
     for event_type in RuntimeSecurityEventType::ALL {
         assert_eq!(
             event_type.uses_ledger_only_family(),
-            matches!(
-                event_type,
-                RuntimeSecurityEventType::CredentialSubstitution
-                    | RuntimeSecurityEventType::SnapshotEvent
-            ),
+            matches!(event_type, RuntimeSecurityEventType::CredentialSubstitution),
             "{} ledger-only classification drifted",
             event_type.as_str()
         );
@@ -933,7 +927,6 @@ fn runtime_security_event_from_logger_write_maps_all_write_ops() {
             file_write_with_action(FileAction::Exported, Some(credential_ref)),
             RuntimeSecurityEventType::FileExport,
         ),
-        (snapshot_write(), RuntimeSecurityEventType::SnapshotEvent),
         (
             exec_write(Some(credential_ref)),
             RuntimeSecurityEventType::ProcessExec,
@@ -960,9 +953,7 @@ fn runtime_security_event_from_logger_write_maps_all_write_ops() {
         let event = RuntimeSecurityEvent::from_logger_write(write);
         assert_eq!(event.event_type, expected_type);
         assert_eq!(event.event_family, expected_type.family());
-        if expected_type != RuntimeSecurityEventType::SnapshotEvent
-            && expected_type != RuntimeSecurityEventType::ProcessExecComplete
-        {
+        if expected_type != RuntimeSecurityEventType::ProcessExecComplete {
             assert_eq!(event.credential_ref.as_deref(), Some(credential_ref));
         }
     }
@@ -2116,45 +2107,6 @@ match = 'process.exec.id == "42" && process.exec.exit_code == "0" && process.exe
 }
 
 #[tokio::test]
-async fn emit_snapshot_security_write_and_rules_does_not_emit_fake_root_rules() {
-    let tmp = tempfile::tempdir().unwrap();
-    let db_path = tmp.path().join("session.db");
-    let writer = capsem_logger::DbWriter::open(&db_path, 16).unwrap();
-    let rules = SecurityRuleSet::new(Vec::new());
-
-    let event_id = emit_snapshot_security_write_and_rules(
-        &writer,
-        &rules,
-        SnapshotEvent {
-            event_id: None,
-            timestamp: SystemTime::now(),
-            slot: 1,
-            origin: "auto".to_string(),
-            name: None,
-            files_count: 3,
-            start_fs_event_id: 0,
-            stop_fs_event_id: 10,
-            trace_id: Some("trace_snapshot".to_string()),
-        },
-    )
-    .await
-    .expect("snapshot event must receive id");
-    writer.shutdown_blocking();
-
-    let conn = rusqlite::Connection::open(&db_path).unwrap();
-    let snapshot_event_id: String = conn
-        .query_row("SELECT event_id FROM snapshot_events", [], |row| row.get(0))
-        .unwrap();
-    let rule_count: i64 = conn
-        .query_row("SELECT COUNT(*) FROM security_rule_events", [], |row| {
-            row.get(0)
-        })
-        .unwrap();
-    assert_eq!(snapshot_event_id, event_id.as_str());
-    assert_eq!(rule_count, 0);
-}
-
-#[tokio::test]
 async fn emit_substitution_security_write_and_rules_keeps_ref_without_fake_root() {
     let tmp = tempfile::tempdir().unwrap();
     let db_path = tmp.path().join("session.db");
@@ -2360,20 +2312,6 @@ fn file_write_with_action(action: FileAction, credential_ref: Option<&str>) -> W
         size: Some(1),
         trace_id: Some("trace".to_string()),
         credential_ref: credential_ref.map(str::to_string),
-    })
-}
-
-fn snapshot_write() -> WriteOp {
-    WriteOp::SnapshotEvent(SnapshotEvent {
-        event_id: None,
-        timestamp: SystemTime::now(),
-        slot: 0,
-        origin: "auto".to_string(),
-        name: None,
-        files_count: 0,
-        start_fs_event_id: 0,
-        stop_fs_event_id: 0,
-        trace_id: Some("trace".to_string()),
     })
 }
 

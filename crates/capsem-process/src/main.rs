@@ -18,7 +18,6 @@ use tokio::net::UnixListener;
 use tokio::sync::{broadcast, mpsc, Mutex};
 use tracing::{error, info, warn};
 
-use helpers::query_max_fs_event_id;
 use job_store::JobStore;
 use mcp_runtime::McpRuntime;
 use vsock::VsockOptions;
@@ -399,29 +398,15 @@ async fn run_async_main_loop(
     // Defer initial snapshot to background -- workspace is empty at boot, no need to block.
     {
         let sched = Arc::clone(&scheduler);
-        let db_snap = Arc::clone(&db);
-        let security_rules_snap = Arc::clone(&security_rules);
         tokio::spawn(async move {
             let mut s = sched.lock().await;
             if let Ok(slot) = s.take_snapshot() {
-                let stop_id = query_max_fs_event_id(&db_snap);
-                let rules = security_rules_snap.read().unwrap().clone();
-                capsem_core::security_engine::emit_snapshot_security_write_and_rules(
-                    &db_snap,
-                    &rules,
-                    capsem_logger::SnapshotEvent {
-                        event_id: None,
-                        timestamp: slot.timestamp,
-                        slot: slot.slot,
-                        origin: "auto".into(),
-                        name: None,
-                        files_count: slot.files_count,
-                        start_fs_event_id: 0,
-                        stop_fs_event_id: stop_id,
-                        trace_id: capsem_core::telemetry::ambient_capsem_trace_id(),
-                    },
-                )
-                .await;
+                info!(
+                    slot = slot.slot,
+                    files_count = slot.files_count,
+                    origin = "auto",
+                    "auto snapshot captured"
+                );
             }
         });
     }
@@ -524,12 +509,8 @@ async fn run_async_main_loop(
         Arc::clone(&plugin_policy),
     ));
 
-    let db_clone = Arc::clone(&db);
     let sched_clone = Arc::clone(&scheduler);
-    let security_rules_snap = Arc::clone(&security_rules);
-    let initial_stop = query_max_fs_event_id(&db_clone);
     tokio::spawn(async move {
-        let mut last_stop = initial_stop;
         let mut tick = tokio::time::interval(std::time::Duration::from_secs(snap_interval));
         tick.tick().await;
         loop {
@@ -545,25 +526,12 @@ async fn run_async_main_loop(
             .await;
             match result {
                 Ok(Ok(slot)) => {
-                    let stop_id = query_max_fs_event_id(&db_clone);
-                    let rules = security_rules_snap.read().unwrap().clone();
-                    capsem_core::security_engine::emit_snapshot_security_write_and_rules(
-                        &db_clone,
-                        &rules,
-                        capsem_logger::SnapshotEvent {
-                            event_id: None,
-                            timestamp: slot.timestamp,
-                            slot: slot.slot,
-                            origin: "auto".into(),
-                            name: None,
-                            files_count: slot.files_count,
-                            start_fs_event_id: last_stop,
-                            stop_fs_event_id: stop_id,
-                            trace_id: capsem_core::telemetry::ambient_capsem_trace_id(),
-                        },
-                    )
-                    .await;
-                    last_stop = stop_id;
+                    info!(
+                        slot = slot.slot,
+                        files_count = slot.files_count,
+                        origin = "auto",
+                        "auto snapshot captured"
+                    );
                 }
                 Ok(Err(e)) => tracing::warn!("auto-snapshot failed: {e}"),
                 Err(e) => tracing::warn!("auto-snapshot task panicked: {e}"),
@@ -712,6 +680,7 @@ async fn run_async_main_loop(
         let job_c = Arc::clone(&job_store);
         let net_c = Arc::clone(&net_state);
         let mcp_c = Arc::clone(&mcp_runtime);
+        let sched_c = Arc::clone(&scheduler);
         let ready_c = Arc::clone(&vm_ready);
 
         tokio::spawn(async move {
@@ -723,6 +692,7 @@ async fn run_async_main_loop(
                 job_c,
                 net_c,
                 mcp_c,
+                sched_c,
                 ready_c,
             )
             .await

@@ -16,7 +16,7 @@ const SECURITY_DECISION_CHECK: &str = "CHECK (previous_decision IN ('allow', 'as
 const SECURITY_DECISION_STAGE_CHECK: &str =
     "CHECK (stage IN ('preprocess', 'rule', 'rewrite', 'postprocess', 'ask_resolution'))";
 const SECURITY_EVENT_TYPE_CHECK: &str =
-    "CHECK (event_type IN ('http.request', 'model.call', 'mcp.tool_call', 'mcp.tool_list', 'mcp.event', 'dns.query', 'file.event', 'file.import', 'file.export', 'process.exec', 'process.exec_complete', 'process.audit', 'credential.substitution', 'snapshot.event', 'security.rule', 'security.ask'))";
+    "CHECK (event_type IN ('http.request', 'model.call', 'mcp.tool_call', 'mcp.tool_list', 'mcp.event', 'dns.query', 'file.event', 'file.import', 'file.export', 'process.exec', 'process.exec_complete', 'process.audit', 'credential.substitution', 'security.rule', 'security.ask'))";
 const SECURITY_EVENT_ID_CHECK: &str =
     "CHECK (length(event_id) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]')";
 
@@ -165,21 +165,6 @@ pub const CREATE_SCHEMA: &str = "
     CREATE INDEX IF NOT EXISTS idx_fs_events_path
         ON fs_events(path);
 
-    CREATE TABLE IF NOT EXISTS snapshot_events (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        event_id TEXT NOT NULL DEFAULT (lower(hex(randomblob(6)))) CHECK (length(event_id) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
-        timestamp TEXT NOT NULL,
-        slot INTEGER NOT NULL,
-        origin TEXT NOT NULL,
-        name TEXT,
-        files_count INTEGER DEFAULT 0,
-        start_fs_event_id INTEGER DEFAULT 0,
-        stop_fs_event_id INTEGER DEFAULT 0,
-        trace_id TEXT
-    );
-    CREATE INDEX IF NOT EXISTS idx_snapshot_events_timestamp
-        ON snapshot_events(timestamp);
-
     CREATE TABLE IF NOT EXISTS exec_events (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         event_id TEXT NOT NULL DEFAULT (lower(hex(randomblob(6)))) CHECK (length(event_id) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
@@ -294,7 +279,7 @@ pub const CREATE_SCHEMA: &str = "
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         timestamp_unix_ms INTEGER NOT NULL,
         event_id TEXT NOT NULL CHECK (length(event_id) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
-        event_type TEXT NOT NULL CHECK (event_type IN ('http.request', 'model.call', 'mcp.tool_call', 'mcp.tool_list', 'mcp.event', 'dns.query', 'file.event', 'file.import', 'file.export', 'process.exec', 'process.exec_complete', 'process.audit', 'credential.substitution', 'snapshot.event', 'security.rule', 'security.ask')),
+        event_type TEXT NOT NULL CHECK (event_type IN ('http.request', 'model.call', 'mcp.tool_call', 'mcp.tool_list', 'mcp.event', 'dns.query', 'file.event', 'file.import', 'file.export', 'process.exec', 'process.exec_complete', 'process.audit', 'credential.substitution', 'security.rule', 'security.ask')),
         rule_id TEXT NOT NULL,
         rule_action TEXT NOT NULL CHECK (rule_action IN ('allow', 'ask', 'block', 'preprocess', 'rewrite', 'postprocess')),
         detection_level TEXT NOT NULL DEFAULT 'none' CHECK (detection_level IN ('none', 'informational', 'low', 'medium', 'high', 'critical')),
@@ -315,7 +300,7 @@ pub const CREATE_SCHEMA: &str = "
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         timestamp_unix_ms INTEGER NOT NULL,
         event_id TEXT NOT NULL CHECK (length(event_id) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
-        event_type TEXT NOT NULL CHECK (event_type IN ('http.request', 'model.call', 'mcp.tool_call', 'mcp.tool_list', 'mcp.event', 'dns.query', 'file.event', 'file.import', 'file.export', 'process.exec', 'process.exec_complete', 'process.audit', 'credential.substitution', 'snapshot.event', 'security.rule', 'security.ask')),
+        event_type TEXT NOT NULL CHECK (event_type IN ('http.request', 'model.call', 'mcp.tool_call', 'mcp.tool_list', 'mcp.event', 'dns.query', 'file.event', 'file.import', 'file.export', 'process.exec', 'process.exec_complete', 'process.audit', 'credential.substitution', 'security.rule', 'security.ask')),
         stage TEXT NOT NULL CHECK (stage IN ('preprocess', 'rule', 'rewrite', 'postprocess', 'ask_resolution')),
         actor TEXT NOT NULL,
         rule_id TEXT,
@@ -339,7 +324,7 @@ pub const CREATE_SCHEMA: &str = "
         timestamp_unix_ms INTEGER NOT NULL,
         ask_id TEXT NOT NULL CHECK (length(ask_id) = 12 AND ask_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
         event_id TEXT NOT NULL CHECK (length(event_id) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
-        event_type TEXT NOT NULL CHECK (event_type IN ('http.request', 'model.call', 'mcp.tool_call', 'mcp.tool_list', 'mcp.event', 'dns.query', 'file.event', 'file.import', 'file.export', 'process.exec', 'process.exec_complete', 'process.audit', 'credential.substitution', 'snapshot.event', 'security.rule', 'security.ask')),
+        event_type TEXT NOT NULL CHECK (event_type IN ('http.request', 'model.call', 'mcp.tool_call', 'mcp.tool_list', 'mcp.event', 'dns.query', 'file.event', 'file.import', 'file.export', 'process.exec', 'process.exec_complete', 'process.audit', 'credential.substitution', 'security.rule', 'security.ask')),
         rule_id TEXT NOT NULL,
         rule_name TEXT NOT NULL,
         status TEXT NOT NULL CHECK (status IN ('pending', 'approved', 'denied')),
@@ -483,20 +468,8 @@ pub fn migrate(conn: &Connection) {
         CREATE INDEX IF NOT EXISTS idx_fs_events_timestamp ON fs_events(timestamp);
         CREATE INDEX IF NOT EXISTS idx_fs_events_path ON fs_events(path);",
     );
-    // Add snapshot_events table if not present (for DBs created before this feature).
-    let _ = conn.execute_batch(
-        "CREATE TABLE IF NOT EXISTS snapshot_events (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            timestamp TEXT NOT NULL,
-            slot INTEGER NOT NULL,
-            origin TEXT NOT NULL,
-            name TEXT,
-            files_count INTEGER DEFAULT 0,
-            start_fs_event_id INTEGER DEFAULT 0,
-            stop_fs_event_id INTEGER DEFAULT 0
-        );
-        CREATE INDEX IF NOT EXISTS idx_snapshot_events_timestamp ON snapshot_events(timestamp);",
-    );
+    // Snapshot metadata is host recovery state, not session.db activity.
+    let _ = conn.execute_batch("DROP TABLE IF EXISTS snapshot_events;");
     // Add exec_events table if not present (for DBs created before this feature).
     let _ = conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS exec_events (
@@ -593,7 +566,6 @@ pub fn migrate(conn: &Connection) {
         "mcp_calls",
         "net_events",
         "fs_events",
-        "snapshot_events",
         "tool_calls",
         "tool_responses",
         "audit_events",
@@ -631,7 +603,6 @@ pub fn migrate(conn: &Connection) {
         "model_calls",
         "mcp_calls",
         "fs_events",
-        "snapshot_events",
         "exec_events",
         "dns_events",
         "audit_events",
@@ -972,7 +943,6 @@ mod tests {
             "model_calls",
             "mcp_calls",
             "fs_events",
-            "snapshot_events",
             "exec_events",
             "dns_events",
             "audit_events",
@@ -1437,27 +1407,40 @@ mod tests {
     }
 
     #[test]
-    fn create_tables_includes_snapshot_events() {
+    fn create_tables_keeps_snapshots_out_of_session_db() {
         let conn = Connection::open_in_memory().unwrap();
         create_tables(&conn).unwrap();
-        conn.execute(
-            "INSERT INTO snapshot_events (timestamp, slot, origin, name, files_count, start_fs_event_id, stop_fs_event_id)
-             VALUES ('2026-01-01T00:00:00Z', 0, 'auto', NULL, 14, 0, 5)",
-            [],
-        )
-        .unwrap();
-        let (slot, origin, files_count, start_id, stop_id): (i64, String, i64, i64, i64) = conn
+        let count: i64 = conn
             .query_row(
-                "SELECT slot, origin, files_count, start_fs_event_id, stop_fs_event_id FROM snapshot_events",
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='snapshot_events'",
                 [],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+                |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(slot, 0);
-        assert_eq!(origin, "auto");
-        assert_eq!(files_count, 14);
-        assert_eq!(start_id, 0);
-        assert_eq!(stop_id, 5);
+        assert_eq!(
+            count, 0,
+            "snapshots are host recovery state; session.db is the user/security activity ledger"
+        );
+    }
+
+    #[test]
+    fn security_event_type_check_rejects_snapshot_event() {
+        let conn = Connection::open_in_memory().unwrap();
+        create_tables(&conn).unwrap();
+        let result = conn.execute(
+            "INSERT INTO security_rule_events (
+                timestamp_unix_ms, event_id, event_type, rule_id, rule_name,
+                rule_action, detection_level, provider, rule_snapshot, event_payload
+             ) VALUES (
+                1, 'abcdef123456', 'snapshot.event', 'profiles.rules.snapshot',
+                'snapshot', 'allow', 'none', 'profiles', '{}', '{}'
+             )",
+            [],
+        );
+        assert!(
+            result.is_err(),
+            "snapshot.event must not be a security-event type"
+        );
     }
 
     #[test]
@@ -1531,27 +1514,5 @@ mod tests {
                 .unwrap();
             assert_eq!(count, 1, "missing index {idx}");
         }
-    }
-
-    #[test]
-    fn migrate_snapshot_events_idempotent() {
-        let conn = Connection::open_in_memory().unwrap();
-        create_tables(&conn).unwrap();
-        migrate(&conn);
-        migrate(&conn);
-        conn.execute(
-            "INSERT INTO snapshot_events (timestamp, slot, origin, files_count, start_fs_event_id, stop_fs_event_id)
-             VALUES ('2026-01-01T00:00:00Z', 5, 'manual', 20, 10, 25)",
-            [],
-        )
-        .unwrap();
-        let origin: String = conn
-            .query_row(
-                "SELECT origin FROM snapshot_events WHERE slot = 5",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(origin, "manual");
     }
 }

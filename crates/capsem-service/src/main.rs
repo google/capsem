@@ -2721,6 +2721,88 @@ async fn handle_vm_status(
     ))
 }
 
+async fn handle_vm_snapshots_status(
+    State(state): State<Arc<ServiceState>>,
+    Path(id): Path<String>,
+) -> Result<Json<capsem_proto::ipc::SnapshotStatus>, AppError> {
+    if let Some(uds_path) = {
+        let instances = state.instances.lock().unwrap();
+        instances.get(&id).map(|instance| instance.uds_path.clone())
+    } {
+        let request_id = state.job_counter.fetch_add(1, Ordering::SeqCst);
+        let response = send_ipc_command(
+            &uds_path,
+            ServiceToProcess::SnapshotStatus { id: request_id },
+            Some(5),
+        )
+        .await
+        .map_err(|error| AppError(StatusCode::BAD_GATEWAY, error))?;
+        return match response {
+            ProcessToService::SnapshotStatusResult {
+                id: response_id,
+                status,
+            } if response_id == request_id => Ok(Json(status)),
+            other => Err(AppError(
+                StatusCode::BAD_GATEWAY,
+                format!("unexpected snapshot status IPC response: {other:?}"),
+            )),
+        };
+    }
+
+    let session_dir = resolve_session_dir(&state, &id)?;
+    Ok(Json(snapshot_status_from_session_dir(&session_dir)))
+}
+
+async fn handle_vm_snapshots_list(
+    State(state): State<Arc<ServiceState>>,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let Json(status) = handle_vm_snapshots_status(State(state), Path(id)).await?;
+    Ok(Json(serde_json::json!({
+        "total": status.total,
+        "snapshots": status.snapshots,
+    })))
+}
+
+fn snapshot_status_from_session_dir(
+    session_dir: &std::path::Path,
+) -> capsem_proto::ipc::SnapshotStatus {
+    let scheduler = capsem_core::auto_snapshot::AutoSnapshotScheduler::new(
+        session_dir.to_path_buf(),
+        10,
+        12,
+        std::time::Duration::from_secs(300),
+    );
+    let snapshots = scheduler.list_snapshots();
+    let auto_count = snapshots
+        .iter()
+        .filter(|slot| slot.origin == capsem_core::auto_snapshot::SnapshotOrigin::Auto)
+        .count();
+    let manual_count = snapshots.len().saturating_sub(auto_count);
+    let snapshots = snapshots
+        .into_iter()
+        .map(|slot| capsem_proto::ipc::SnapshotSlotStatus {
+            checkpoint: format!("cp-{}", slot.slot),
+            slot: slot.slot,
+            origin: match slot.origin {
+                capsem_core::auto_snapshot::SnapshotOrigin::Auto => "auto",
+                capsem_core::auto_snapshot::SnapshotOrigin::Manual => "manual",
+            }
+            .to_string(),
+            name: slot.name,
+            timestamp: humantime::format_rfc3339(slot.timestamp).to_string(),
+            hash: slot.hash,
+        })
+        .collect();
+    capsem_proto::ipc::SnapshotStatus {
+        total: auto_count + manual_count,
+        auto_count,
+        manual_count,
+        manual_available: scheduler.available_manual_slots(),
+        snapshots,
+    }
+}
+
 async fn handle_vm_edit(
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
@@ -7921,6 +8003,11 @@ fn build_service_router(state: Arc<ServiceState>) -> Router {
         .route("/vms/list", get(handle_list))
         .route("/vms/{id}/info", get(handle_info))
         .route("/vms/{id}/status", get(handle_vm_status))
+        .route(
+            "/vms/{id}/snapshots/status",
+            get(handle_vm_snapshots_status),
+        )
+        .route("/vms/{id}/snapshots/list", get(handle_vm_snapshots_list))
         .route("/vms/{id}/edit", patch(handle_vm_edit))
         .route("/vms/{id}/logs", get(handle_logs))
         .route("/vms/{id}/inspect", post(handle_inspect))

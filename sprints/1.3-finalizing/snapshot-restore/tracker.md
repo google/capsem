@@ -1026,16 +1026,26 @@ recorded as evidence, not replayed as code.
   snapshot parser/rule contract is deliberately designed later. Workspace
   snapshot operations remain MCP/tool/runtime mechanics for 1.3.
 - [x] Remove `Credential` and `Snapshot` from `RuntimeSecurityEventFamily`,
-  `RuntimeSecurityEventType`, logger DB event-type checks, or keep them
-  explicitly documented as ledger-only emitted types. `SecurityEvent`,
-  `SerializableSecurityEvent`, `SECURITY_EVENT_CEL_ROOTS`, CEL coverage tests,
-  and default rules no longer expose fake credential/snapshot object roots.
-  Decision: keep `credential.substitution` and `snapshot.event` as typed
-  ledger-only event families because substitution and snapshot lifecycle rows
-  are real forensic rows, but they are not CEL object roots. Proof:
-  `cargo test -p capsem-core --lib runtime_security_event_families_mark_credential_and_snapshot_as_ledger_only -- --nocapture`;
-  `cargo test -p capsem-core --lib runtime_security_event_types_keep_credential_and_snapshot_ledger_only -- --nocapture`;
-  `cargo test -p capsem-core --lib security_event_cel_rejects_credential_and_snapshot_roots -- --nocapture`.
+  `RuntimeSecurityEventType`, logger DB event-type checks, and CEL roots.
+  `SecurityEvent`, `SerializableSecurityEvent`, `SECURITY_EVENT_CEL_ROOTS`, CEL
+  coverage tests, and default rules no longer expose fake credential/snapshot
+  object roots.
+  Decision: keep `credential.substitution` as the only ledger-only runtime
+  event family. Burn `snapshot.event` completely: host snapshot state is
+  hypervisor/recovery state, not a session.db activity row. Running VM snapshot
+  status is exposed through capsem-process in-memory IPC and VM-scoped snapshot
+  routes; stopped VM status reconstructs from that VM's snapshot metadata only
+  when explicitly requested. Proof:
+  `cargo test -p capsem-core runtime_security_event_ -- --nocapture`;
+  `cargo test -p capsem-logger --lib -- --nocapture`;
+  `cargo test -p capsem-proto snapshot_status -- --nocapture`;
+  `cargo test -p capsem-process classify_snapshot_status_is_job_query -- --nocapture`;
+  `cargo test -p capsem-service snapshot_status_from_session_dir_reads_snapshot_metadata_without_db -- --nocapture`;
+  `cargo test -p capsem-mcp inspect_schema_has_all_tables -- --nocapture`;
+  `pnpm --dir frontend test -- --run frontend/src/lib/__tests__/api.test.ts frontend/src/lib/__tests__/stats-view-contract.test.ts`;
+  `pnpm --dir frontend check`;
+  `cargo build -p capsem-service -p capsem-process -p capsem-gateway -p capsem-tray -p capsem-mcp-builtin`;
+  `uv run python -m pytest tests/capsem-session-lifecycle/test_db_schema.py tests/capsem-session-lifecycle/test_db_exists.py tests/capsem-session-lifecycle/test_multiple_events.py tests/capsem-session/test_cross_table.py -q`.
   Programmatic hunt locations:
   `crates/capsem-core/src/security_engine/mod.rs`,
   `crates/capsem-core/src/security_engine/tests.rs`,

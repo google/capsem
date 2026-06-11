@@ -12,7 +12,6 @@ EXPECTED_SCHEMAS = {
     "tool_responses": ["call_id", "is_error"],
     "mcp_calls": ["method", "decision"],
     "fs_events": ["action", "path"],
-    "snapshot_events": ["origin", "slot"],
 }
 
 
@@ -30,3 +29,10 @@ class TestDbSchema:
             assert col in cols, (
                 f"Table {table} missing column '{col}' (has: {cols})"
             )
+
+    def test_snapshot_events_table_absent(self, lifecycle_db):
+        """Snapshots are host recovery state, not session.db activity."""
+        rows = lifecycle_db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='snapshot_events'"
+        ).fetchall()
+        assert rows == []

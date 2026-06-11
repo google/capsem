@@ -1156,6 +1156,35 @@ export async function callMcpTool(
   return await resp.json();
 }
 
+export interface SnapshotSlotStatus {
+  checkpoint: string;
+  slot: number;
+  origin: 'auto' | 'manual' | string;
+  name?: string | null;
+  timestamp: string;
+  hash?: string | null;
+}
+
+export interface SnapshotStatusResponse {
+  total: number;
+  auto_count: number;
+  manual_count: number;
+  manual_available: number;
+  snapshots: SnapshotSlotStatus[];
+}
+
+/** Get VM recovery snapshot state through the service route, never session.db. */
+export async function getVmSnapshotStatus(vmId: string): Promise<SnapshotStatusResponse> {
+  const resp = await _get(`/vms/${encodeURIComponent(vmId)}/snapshots/status`);
+  return await resp.json();
+}
+
+/** Get the VM recovery snapshot list through the service route. */
+export async function listVmSnapshots(vmId: string): Promise<{ total: number; snapshots: SnapshotSlotStatus[] }> {
+  const resp = await _get(`/vms/${encodeURIComponent(vmId)}/snapshots/list`);
+  return await resp.json();
+}
+
 // -- Assets --
 
 import type { AssetStatusResponse } from './types/assets';

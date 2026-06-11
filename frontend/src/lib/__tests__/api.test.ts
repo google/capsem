@@ -962,6 +962,41 @@ describe('api', () => {
       const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
       expect(call[0]).toContain('/profiles/code/mcp/servers/local/tools/bash/call');
     });
+
+    it('getVmSnapshotStatus reads the snapshot route instead of session SQL', async () => {
+      mockFetch
+        .mockReturnValueOnce(jsonResponse({ ok: true, version: '1.0.0', service_socket: '/tmp/s' }))
+        .mockReturnValueOnce(jsonResponse({ token: 'tok' }));
+      await api.init();
+
+      mockFetch.mockReturnValueOnce(jsonResponse({
+        total: 1,
+        auto_count: 1,
+        manual_count: 0,
+        manual_available: 12,
+        snapshots: [{ checkpoint: 'cp-0', slot: 0, origin: 'auto', timestamp: 'unix:1' }],
+      }));
+      const result = await api.getVmSnapshotStatus('code-1');
+      expect(result.total).toBe(1);
+      const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
+      expect(call[0]).toContain('/vms/code-1/snapshots/status');
+    });
+
+    it('listVmSnapshots reads the snapshot list route', async () => {
+      mockFetch
+        .mockReturnValueOnce(jsonResponse({ ok: true, version: '1.0.0', service_socket: '/tmp/s' }))
+        .mockReturnValueOnce(jsonResponse({ token: 'tok' }));
+      await api.init();
+
+      mockFetch.mockReturnValueOnce(jsonResponse({
+        total: 1,
+        snapshots: [{ checkpoint: 'cp-0', slot: 0, origin: 'auto', timestamp: 'unix:1' }],
+      }));
+      const result = await api.listVmSnapshots('code-1');
+      expect(result.snapshots[0].checkpoint).toBe('cp-0');
+      const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
+      expect(call[0]).toContain('/vms/code-1/snapshots/list');
+    });
   });
 
   // ---- VM state ----

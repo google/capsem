@@ -10,8 +10,8 @@ pub use events::{
     ExecEventComplete, FileAction, FileEvent, McpCall, ModelCall, NetEvent, ProfileMutationEvent,
     ProfileMutationStatus, SecurityAskEvent, SecurityAskPending, SecurityAskStatus,
     SecurityDecision, SecurityDecisionEvent, SecurityDecisionStage, SecurityDetectionLevel,
-    SecurityRuleAction, SecurityRuleEvent, SnapshotEvent, SubstitutionEvent, ToolCallEntry,
-    ToolResponseEntry, CREDENTIAL_REF_PREFIX,
+    SecurityRuleAction, SecurityRuleEvent, SubstitutionEvent, ToolCallEntry, ToolResponseEntry,
+    CREDENTIAL_REF_PREFIX,
 };
 pub use reader::{
     validate_select_only, DbReader, DomainCount, FileEventStats, HistoryCounts, HistoryEntry,

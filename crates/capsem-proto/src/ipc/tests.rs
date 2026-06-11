@@ -229,6 +229,37 @@ fn exec_result_nonzero_exit() {
 }
 
 #[test]
+fn snapshot_status_roundtrip() {
+    let msg = ProcessToService::SnapshotStatusResult {
+        id: 7,
+        status: super::SnapshotStatus {
+            total: 1,
+            auto_count: 1,
+            manual_count: 0,
+            manual_available: 12,
+            snapshots: vec![super::SnapshotSlotStatus {
+                checkpoint: "cp-0".into(),
+                slot: 0,
+                origin: "auto".into(),
+                name: None,
+                timestamp: "2026-06-11T00:00:00Z".into(),
+                hash: None,
+            }],
+        },
+    };
+    let bytes = serde_json::to_vec(&msg).unwrap();
+    let msg2: ProcessToService = serde_json::from_slice(&bytes).unwrap();
+    match msg2 {
+        ProcessToService::SnapshotStatusResult { id, status } => {
+            assert_eq!(id, 7);
+            assert_eq!(status.total, 1);
+            assert_eq!(status.snapshots[0].checkpoint, "cp-0");
+        }
+        _ => panic!("wrong variant"),
+    }
+}
+
+#[test]
 fn write_file_result_success() {
     let msg = ProcessToService::WriteFileResult {
         id: 5,

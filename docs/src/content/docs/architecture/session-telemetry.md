@@ -102,17 +102,8 @@ erDiagram
         text path
         int size
     }
-    snapshot_events {
-        int id PK
-        int slot
-        text origin
-        int start_fs_event_id
-        int stop_fs_event_id
-    }
-
     model_calls ||--o{ tool_calls : "has"
     model_calls ||--o{ tool_responses : "has"
-    snapshot_events }o--o{ fs_events : "references range"
     net_events ||--o{ security_rule_events : "event_id"
     mcp_calls ||--o{ security_rule_events : "event_id"
     dns_events ||--o{ security_rule_events : "event_id"
@@ -367,21 +358,14 @@ File system changes in the workspace (tracked by VirtioFS).
 | `size` | INTEGER | File size in bytes |
 | `trace_id` | TEXT | Cross-table correlation ID |
 
-### snapshot_events
+### Snapshot State
 
-Automatic and manual workspace snapshots.
-
-| Column | Type | Description |
-|--------|------|-------------|
-| `id` | INTEGER PK | Auto-increment |
-| `timestamp` | TEXT | ISO 8601 |
-| `slot` | INTEGER | Ring buffer slot (0-11 for auto) |
-| `origin` | TEXT | `auto` or `manual` |
-| `name` | TEXT | Optional snapshot name |
-| `files_count` | INTEGER | Files in snapshot |
-| `start_fs_event_id` | INTEGER | First fs_event in range |
-| `stop_fs_event_id` | INTEGER | Last fs_event in range |
-| `trace_id` | TEXT | Cross-table correlation ID |
+Automatic and manual workspace snapshot state is not a session DB table.
+Snapshots are host recovery state, exposed through VM-scoped snapshot routes.
+Running VMs answer from the `capsem-process` in-memory scheduler over IPC;
+stopped VMs reconstruct status from that VM's snapshot metadata only when a
+snapshot route is requested. Explicit snapshot MCP calls remain visible as MCP
+activity, and file restores remain visible as `fs_events`.
 
 ## Data flow
 
@@ -395,6 +379,7 @@ graph LR
         AUDIT["Guest audit stream<br/>(vsock:5006)"]
         FS["VirtioFS<br/>(file watcher)"]
         SNAP["Snapshot scheduler"]
+        SNAPAPI["VM snapshot routes<br/>/vms/{id}/snapshots/*"]
     end
 
     subgraph "Writer Pipeline"
@@ -409,7 +394,7 @@ graph LR
     EXEC -->|"WriteOp::ExecEvent<br/>WriteOp::ExecEventComplete"| CH
     AUDIT -->|"WriteOp::AuditEvent"| CH
     FS -->|"WriteOp::FileEvent"| CH
-    SNAP -->|"WriteOp::SnapshotEvent"| CH
+    SNAP -->|"in-memory IPC status"| SNAPAPI
     CH --> WT
     WT --> DB
 ```
@@ -424,7 +409,6 @@ graph LR
 | `WriteOp::ExecEvent` / `ExecEventComplete` | Service exec path | `exec_events` |
 | `WriteOp::AuditEvent` | Guest audit stream | `audit_events` |
 | `WriteOp::FileEvent` | VirtioFS watcher | `fs_events` |
-| `WriteOp::SnapshotEvent` | Snapshot scheduler | `snapshot_events` |
 | `WriteOp::DnsEvent` | DNS proxy | `dns_events` |
 | `WriteOp::SecurityRuleEvent` | Security engine | `security_rule_events` |
 | `WriteOp::SecurityAskEvent` | Security engine | `security_ask_events` |
@@ -590,7 +574,7 @@ state from profile config or live rules. It reads protocol tables through
 | Files | `fs_events` |
 | Process | `exec_events`, `audit_events`, `substitution_events` |
 | Security | `/vms/{id}/security/latest`, `/vms/{id}/security/status`, `/vms/{id}/detection/latest`, `/vms/{id}/enforcement/latest` |
-| Snapshots | `snapshot_events` |
+| Snapshots | `/vms/{id}/snapshots/status`, `/vms/{id}/snapshots/list` |
 
 The **Inspector** tab is the raw read-only SQL escape hatch for forensics. Its
 presets point at current session tables such as `security_rule_events`,

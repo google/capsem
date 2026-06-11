@@ -8,7 +8,7 @@ use uuid::Uuid;
 use crate::events::{
     AuditEvent, DnsEvent, ExecEvent, ExecEventComplete, FileEvent, McpCall, ModelCall, NetEvent,
     ProfileMutationEvent, SecurityAskEvent, SecurityDecisionEvent, SecurityRuleEvent,
-    SnapshotEvent, SubstitutionEvent,
+    SubstitutionEvent,
 };
 use crate::schema;
 
@@ -55,7 +55,6 @@ pub enum WriteOp {
     ModelCall(ModelCall),
     McpCall(McpCall),
     FileEvent(FileEvent),
-    SnapshotEvent(SnapshotEvent),
     ExecEvent(ExecEvent),
     ExecEventComplete(ExecEventComplete),
     AuditEvent(AuditEvent),
@@ -77,7 +76,6 @@ impl WriteOp {
             WriteOp::ModelCall(event) => ensure_option_event_id(&mut event.event_id),
             WriteOp::McpCall(event) => ensure_option_event_id(&mut event.event_id),
             WriteOp::FileEvent(event) => ensure_option_event_id(&mut event.event_id),
-            WriteOp::SnapshotEvent(event) => ensure_option_event_id(&mut event.event_id),
             WriteOp::ExecEvent(event) => ensure_option_event_id(&mut event.event_id),
             WriteOp::AuditEvent(event) => ensure_option_event_id(&mut event.event_id),
             WriteOp::DnsEvent(event) => ensure_option_event_id(&mut event.event_id),
@@ -96,7 +94,6 @@ impl WriteOp {
             WriteOp::ModelCall(event) => event.event_id.as_deref(),
             WriteOp::McpCall(event) => event.event_id.as_deref(),
             WriteOp::FileEvent(event) => event.event_id.as_deref(),
-            WriteOp::SnapshotEvent(event) => event.event_id.as_deref(),
             WriteOp::ExecEvent(event) => event.event_id.as_deref(),
             WriteOp::AuditEvent(event) => event.event_id.as_deref(),
             WriteOp::DnsEvent(event) => event.event_id.as_deref(),
@@ -414,7 +411,6 @@ fn execute_batch(conn: &Connection, batch: &[WriteOp]) -> rusqlite::Result<()> {
             WriteOp::ModelCall(m) => insert_model_call(&tx, m)?,
             WriteOp::McpCall(c) => insert_mcp_call(&tx, c)?,
             WriteOp::FileEvent(f) => insert_file_event(&tx, f)?,
-            WriteOp::SnapshotEvent(s) => insert_snapshot_event(&tx, s)?,
             WriteOp::ExecEvent(e) => insert_exec_event(&tx, e)?,
             WriteOp::ExecEventComplete(c) => update_exec_event(&tx, c)?,
             WriteOp::AuditEvent(a) => insert_audit_event(&tx, a)?,
@@ -618,29 +614,6 @@ fn insert_mcp_call(conn: &Connection, call: &McpCall) -> rusqlite::Result<()> {
             call.policy_reason,
             call.trace_id,
             call.credential_ref,
-        ],
-    )?;
-    Ok(())
-}
-
-fn insert_snapshot_event(conn: &Connection, event: &SnapshotEvent) -> rusqlite::Result<()> {
-    let timestamp = humantime::format_rfc3339(event.timestamp).to_string();
-    conn.execute(
-        "INSERT INTO snapshot_events (
-            event_id, timestamp, slot, origin, name, files_count,
-            start_fs_event_id, stop_fs_event_id, trace_id
-         )
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-        params![
-            event.event_id.clone().unwrap_or_else(new_event_id),
-            timestamp,
-            event.slot as i64,
-            event.origin,
-            event.name,
-            event.files_count as i64,
-            event.start_fs_event_id,
-            event.stop_fs_event_id,
-            event.trace_id,
         ],
     )?;
     Ok(())

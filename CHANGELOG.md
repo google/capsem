@@ -28,8 +28,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and Security evidence, links directly to raw session DB inspection, and uses
   DB-backed security/detection/enforcement rows for forensic details. Hypervisor
   snapshot internals no longer appear as a generic Stats tab; explicit snapshot
-  MCP calls still surface through MCP activity and raw `snapshot_events` remain
-  available through DB inspection.
+  MCP calls still surface through MCP activity, but host snapshot state is no
+  longer written to or exposed from `session.db`.
+- Added VM-scoped snapshot status/list routes backed by the running
+  `capsem-process` in-memory snapshot scheduler. Stopped VMs reconstruct
+  snapshot status from that VM's snapshot metadata only when requested, and
+  migrated session databases drop the old `snapshot_events` table.
 - Compact `snapshots_list` output now defaults to created/edited/deleted counts
   so AI-facing MCP responses stay small; callers must pass
   `include_changes=true` to request full per-file snapshot diffs.
@@ -519,11 +523,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   now fail closed before settings are written.
 - Added strict CEL validation against first-party `SecurityEvent` roots
   (`http`, `dns`, `mcp`, `model`, `file`, `process`, and `security`) so stale
-  callback-local fields fail before rules persist. Credential substitution and
-  snapshot lifecycle writes remain ledger event types, not fake CEL roots.
+  callback-local fields fail before rules persist. Credential substitution
+  remains a ledger event type, while snapshot lifecycle state is host recovery
+  state exposed through VM snapshot routes rather than CEL roots or
+  `session.db`.
 - Added typed runtime-family markers for first-party CEL roots versus
-  ledger-only `credential.substitution`/`snapshot.event` rows, with regression
-  tests tying the markers to `SECURITY_EVENT_CEL_ROOTS`.
+  ledger-only `credential.substitution` rows, with regression tests tying the
+  markers to `SECURITY_EVENT_CEL_ROOTS`.
 - Replaced legacy `[profiles.defaults.*]` rule authoring with the visible
   `[default.<domain>]` contract. Default rules still compile into ordinary late
   CEL rules under `profiles.rules.default_<domain>`, and the old namespace is
@@ -2449,10 +2455,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed (observability)
 - **W6 trace_id wiring completed across capsem-logger / capsem-core /
   capsem-process.** The `trace_id` column on `net_events`, `mcp_calls`,
-  `tool_calls`, `tool_responses`, `fs_events`, `snapshot_events`, and
+  `tool_calls`, `tool_responses`, `fs_events`, and
   `audit_events` is now populated end-to-end. Write-side: every event
   emitter (`mitm_proxy`, `mcp/{gateway,builtin_tools,file_tools}`,
-  `fs_monitor`, `capsem-process`'s snapshot/audit paths) calls
+  `fs_monitor`, and `capsem-process` audit paths) calls
   `capsem_core::telemetry::ambient_capsem_trace_id()`. INSERT statements
   in `writer.rs` now include the new column. `tool_calls.trace_id` and
   `tool_responses.trace_id` fall back to the parent `model_calls.trace_id`
@@ -2528,7 +2534,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   doesn't lose context that pre-dates the trace propagation.
 
 - **`trace_id TEXT` column on every event table.** Added to
-  `mcp_calls`, `net_events`, `fs_events`, `snapshot_events`,
+  `mcp_calls`, `net_events`, `fs_events`,
   `tool_calls`, `tool_responses`, `audit_events` (model_calls and
   exec_events already had it). Indexes added on each. Fresh DBs get
   the column from `CREATE_SCHEMA`; existing DBs get it via
@@ -5131,7 +5137,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - **Cross-arch Docker builds fail on macOS** -- Docker's legacy builder shared intermediate layer cache across `--platform` values, causing arm64 layers to be reused for x86_64 builds. Fixed by requiring Docker BuildKit (buildx), which properly includes platform in cache keys. Added buildx to `just doctor` and `scripts/bootstrap.sh`.
-- **Snapshots tab shows nothing during long sessions** -- the tab called `callMcpTool('snapshots_list')` once on mount, never refreshed, and failed silently if the MCP gateway wasn't wired yet. Replaced with SQL queries against a new `snapshot_events` table in `session.db`, consistent with all other stats tabs. Each snapshot event stores a self-contained `(start_fs_event_id, stop_fs_event_id]` range for efficient per-snapshot change counts via `fs_events` cross-reference.
+- **Snapshots tab shows nothing during long sessions** -- the tab called `callMcpTool('snapshots_list')` once on mount, never refreshed, and failed silently if the MCP gateway wasn't wired yet. An intermediate implementation used SQL rows, but the current 1.3 contract supersedes that: snapshot state is exposed through VM snapshot routes and is not stored in `session.db`.
 - **Symlink loop hangs app on startup** -- `disk_usage_bytes()` used `is_dir()` / `metadata()` which follow symlinks. A `.venv/lib64 -> lib` relative symlink in session workspaces caused infinite recursion, hanging the app at boot. Fixed to use `symlink_metadata()` throughout. Added regression tests for symlink loops, absolute escapes, and real session timing.
 - **Wizard flashes briefly on app launch** -- the setup wizard appeared for one frame before settings finished loading. Added `!settingsStore.loading` guard to prevent the wizard from rendering until settings are fully resolved.
 - **KVM boot path compile errors** -- `vm/boot.rs` referenced `rootfs_path()` and `virtiofs_share()` methods that were renamed. Fixed to use `disk_path()` and `virtio_fs_share()`.

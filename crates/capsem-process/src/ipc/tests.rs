@@ -182,3 +182,11 @@ fn classify_resume_unexpected() {
         IpcAction::Unexpected
     );
 }
+
+#[test]
+fn classify_snapshot_status_is_job_query() {
+    assert_eq!(
+        classify_ipc_message(&ServiceToProcess::SnapshotStatus { id: 1 }),
+        IpcAction::Job
+    );
+}

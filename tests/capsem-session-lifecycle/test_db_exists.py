@@ -11,7 +11,6 @@ EXPECTED_TABLES = [
     "tool_responses",
     "mcp_calls",
     "fs_events",
-    "snapshot_events",
 ]
 
 
@@ -23,7 +22,7 @@ def test_db_exists_after_boot(lifecycle_env):
 
 
 def test_all_tables_present(lifecycle_db):
-    """session.db has all 7 expected tables."""
+    """session.db has all expected activity tables."""
     tables = [
         r[0] for r in lifecycle_db.execute(
             "SELECT name FROM sqlite_master WHERE type='table'"
@@ -31,3 +30,4 @@ def test_all_tables_present(lifecycle_db):
     ]
     for table in EXPECTED_TABLES:
         assert table in tables, f"Missing table: {table} (found: {tables})"
+    assert "snapshot_events" not in tables

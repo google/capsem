@@ -62,6 +62,8 @@ pub enum ServiceToProcess {
     McpListTools { id: u64 },
     /// Tell MCP aggregator to reconnect all servers with fresh config.
     McpRefreshTools { id: u64 },
+    /// Query process-owned, in-memory VM snapshot state.
+    SnapshotStatus { id: u64 },
     /// Call an MCP tool via the aggregator subprocess.
     ///
     /// `arguments_json` is the JSON-serialized argument object. We send it as
@@ -135,6 +137,8 @@ pub enum ProcessToService {
         success: bool,
         error: Option<String>,
     },
+    /// Response to SnapshotStatus.
+    SnapshotStatusResult { id: u64, status: SnapshotStatus },
     /// Response to McpCallTool. `result_json` is a JSON-serialized
     /// `serde_json::Value`, wrapped for the same bincode reason as
     /// `McpCallTool::arguments_json`.
@@ -165,6 +169,28 @@ pub struct McpToolStatus {
     pub description: Option<String>,
     pub server_name: String,
     pub annotations: Option<serde_json::Value>,
+}
+
+/// Host-side VM recovery snapshot status. This is not session.db/security
+/// activity; running VMs report it from capsem-process memory and stopped VMs
+/// may reconstruct it from the session snapshot metadata.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct SnapshotStatus {
+    pub total: usize,
+    pub auto_count: usize,
+    pub manual_count: usize,
+    pub manual_available: usize,
+    pub snapshots: Vec<SnapshotSlotStatus>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct SnapshotSlotStatus {
+    pub checkpoint: String,
+    pub slot: usize,
+    pub origin: String,
+    pub name: Option<String>,
+    pub timestamp: String,
+    pub hash: Option<String>,
 }
 
 #[cfg(test)]

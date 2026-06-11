@@ -9,7 +9,7 @@ use capsem_logger::{
     SecurityAskPending, SecurityAskStatus, SecurityDecision as LoggedSecurityDecision,
     SecurityDecisionEvent, SecurityDecisionStage as LoggedSecurityDecisionStage,
     SecurityDetectionLevel as LoggedDetectionLevel, SecurityRuleAction as LoggedRuleAction,
-    SecurityRuleEvent, SnapshotEvent, SubstitutionEvent, WriteOp,
+    SecurityRuleEvent, SubstitutionEvent, WriteOp,
 };
 use serde::Serialize;
 use serde_json::json;
@@ -38,7 +38,6 @@ pub enum RuntimeSecurityEventFamily {
     File,
     Process,
     Credential,
-    Snapshot,
     Security,
 }
 
@@ -52,7 +51,6 @@ impl RuntimeSecurityEventFamily {
             RuntimeSecurityEventFamily::File => "file",
             RuntimeSecurityEventFamily::Process => "process",
             RuntimeSecurityEventFamily::Credential => "credential",
-            RuntimeSecurityEventFamily::Snapshot => "snapshot",
             RuntimeSecurityEventFamily::Security => "security",
         }
     }
@@ -71,10 +69,7 @@ impl RuntimeSecurityEventFamily {
     }
 
     pub const fn is_ledger_only(self) -> bool {
-        matches!(
-            self,
-            RuntimeSecurityEventFamily::Credential | RuntimeSecurityEventFamily::Snapshot
-        )
+        matches!(self, RuntimeSecurityEventFamily::Credential)
     }
 }
 
@@ -95,7 +90,6 @@ pub enum RuntimeSecurityEventType {
     ProcessExecComplete,
     ProcessAudit,
     CredentialSubstitution,
-    SnapshotEvent,
     SecurityRule,
     SecurityAsk,
 }
@@ -115,7 +109,6 @@ impl RuntimeSecurityEventType {
         Self::ProcessExecComplete,
         Self::ProcessAudit,
         Self::CredentialSubstitution,
-        Self::SnapshotEvent,
         Self::SecurityRule,
         Self::SecurityAsk,
     ];
@@ -135,7 +128,6 @@ impl RuntimeSecurityEventType {
             RuntimeSecurityEventType::ProcessExecComplete => "process.exec_complete",
             RuntimeSecurityEventType::ProcessAudit => "process.audit",
             RuntimeSecurityEventType::CredentialSubstitution => "credential.substitution",
-            RuntimeSecurityEventType::SnapshotEvent => "snapshot.event",
             RuntimeSecurityEventType::SecurityRule => "security.rule",
             RuntimeSecurityEventType::SecurityAsk => "security.ask",
         }
@@ -158,7 +150,6 @@ impl RuntimeSecurityEventType {
             RuntimeSecurityEventType::CredentialSubstitution => {
                 RuntimeSecurityEventFamily::Credential
             }
-            RuntimeSecurityEventType::SnapshotEvent => RuntimeSecurityEventFamily::Snapshot,
             RuntimeSecurityEventType::SecurityRule => RuntimeSecurityEventFamily::Security,
             RuntimeSecurityEventType::SecurityAsk => RuntimeSecurityEventFamily::Security,
         }
@@ -183,7 +174,6 @@ impl RuntimeSecurityEventType {
             "process.exec_complete" => Ok(Self::ProcessExecComplete),
             "process.audit" => Ok(Self::ProcessAudit),
             "credential.substitution" => Ok(Self::CredentialSubstitution),
-            "snapshot.event" => Ok(Self::SnapshotEvent),
             "security.rule" => Ok(Self::SecurityRule),
             "security.ask" => Ok(Self::SecurityAsk),
             other => Err(SecurityEventTypeParseError {
@@ -202,7 +192,6 @@ impl RuntimeSecurityEventType {
                 _ => Self::McpEvent,
             },
             WriteOp::FileEvent(event) => runtime_file_event_type(event.action),
-            WriteOp::SnapshotEvent(_) => Self::SnapshotEvent,
             WriteOp::ExecEvent(_) => Self::ProcessExec,
             WriteOp::ExecEventComplete(_) => Self::ProcessExecComplete,
             WriteOp::AuditEvent(_) => Self::ProcessAudit,
@@ -640,28 +629,6 @@ pub fn emit_process_audit_security_write_and_rules_blocking(
     Some(event_id)
 }
 
-pub async fn emit_snapshot_security_write_and_rules(
-    db: &DbWriter,
-    rules: &SecurityRuleSet,
-    event: SnapshotEvent,
-) -> Option<SecurityEventId> {
-    let security_event = security_event_from_snapshot_event(&event);
-    let event_id = emit_security_write(db, WriteOp::SnapshotEvent(event)).await?;
-    if let Err(error) = emit_matching_security_rules(
-        db,
-        event_id.clone(),
-        RuntimeSecurityEventType::SnapshotEvent,
-        rules,
-        &security_event,
-        current_unix_ms(),
-    )
-    .await
-    {
-        tracing::warn!(error = %error, "failed to emit snapshot security rule ledger rows");
-    }
-    Some(event_id)
-}
-
 pub async fn emit_substitution_security_write_and_rules(
     db: &DbWriter,
     rules: &SecurityRuleSet,
@@ -728,14 +695,6 @@ pub fn security_event_from_audit_event(event: &AuditEvent) -> SecurityEvent {
             stderr: None,
         },
     );
-    match event.trace_id.clone() {
-        Some(trace_id) => security_event.with_trace_id(trace_id),
-        None => security_event,
-    }
-}
-
-pub fn security_event_from_snapshot_event(event: &SnapshotEvent) -> SecurityEvent {
-    let security_event = SecurityEvent::new(RuntimeSecurityEventType::SnapshotEvent);
     match event.trace_id.clone() {
         Some(trace_id) => security_event.with_trace_id(trace_id),
         None => security_event,
@@ -1512,7 +1471,6 @@ fn logger_write_credential_ref(op: &WriteOp) -> Option<String> {
         WriteOp::ModelCall(event) => event.credential_ref.clone(),
         WriteOp::McpCall(event) => event.credential_ref.clone(),
         WriteOp::FileEvent(event) => event.credential_ref.clone(),
-        WriteOp::SnapshotEvent(_) => None,
         WriteOp::ExecEvent(event) => event.credential_ref.clone(),
         WriteOp::ExecEventComplete(_) => None,
         WriteOp::AuditEvent(event) => event.credential_ref.clone(),
@@ -1531,7 +1489,6 @@ fn logger_write_trace_id(op: &WriteOp) -> Option<String> {
         WriteOp::ModelCall(event) => event.trace_id.clone(),
         WriteOp::McpCall(event) => event.trace_id.clone(),
         WriteOp::FileEvent(event) => event.trace_id.clone(),
-        WriteOp::SnapshotEvent(event) => event.trace_id.clone(),
         WriteOp::ExecEvent(event) => event.trace_id.clone(),
         WriteOp::ExecEventComplete(_) => None,
         WriteOp::AuditEvent(event) => event.trace_id.clone(),

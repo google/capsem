@@ -29,6 +29,42 @@ fn process_env_allowlist_forwards_mcp_timeout_knobs() {
 }
 
 #[test]
+fn snapshot_status_from_session_dir_reads_snapshot_metadata_without_db() {
+    let dir = tempfile::tempdir().unwrap();
+    let session = dir.path();
+    std::fs::create_dir_all(session.join("workspace")).unwrap();
+    std::fs::create_dir_all(session.join("system")).unwrap();
+    std::fs::create_dir_all(session.join("auto_snapshots")).unwrap();
+    std::fs::write(session.join("workspace/hello.txt"), "hello").unwrap();
+
+    let mut scheduler = capsem_core::auto_snapshot::AutoSnapshotScheduler::new(
+        session.to_path_buf(),
+        10,
+        12,
+        std::time::Duration::from_secs(300),
+    );
+    scheduler.take_snapshot().unwrap();
+    scheduler.take_named_snapshot("manual_check").unwrap();
+
+    let status = snapshot_status_from_session_dir(session);
+    assert_eq!(status.total, 2);
+    assert_eq!(status.auto_count, 1);
+    assert_eq!(status.manual_count, 1);
+    assert_eq!(status.manual_available, 11);
+    assert!(status
+        .snapshots
+        .iter()
+        .any(|snapshot| snapshot.origin == "manual"
+            && snapshot.name.as_deref() == Some("manual_check")));
+
+    let db_path = session.join("session.db");
+    assert!(
+        !db_path.exists(),
+        "snapshot route backing must not require session.db"
+    );
+}
+
+#[test]
 fn find_orphan_capsem_pids_matches_capsem_process_under_run_dir() {
     let run_dir = PathBuf::from("/var/folders/XY/T/capsem-test-abc");
     let ps = "\

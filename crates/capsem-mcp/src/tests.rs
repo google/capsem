@@ -658,10 +658,13 @@ fn inspect_schema_has_all_tables() {
         "tool_responses",
         "mcp_calls",
         "fs_events",
-        "snapshot_events",
     ] {
         assert!(schema.contains(table), "Missing table in schema: {table}");
     }
+    assert!(
+        !schema.contains("CREATE TABLE IF NOT EXISTS snapshot_events"),
+        "hypervisor snapshot state must not be part of session.db activity"
+    );
 }
 
 // -----------------------------------------------------------------------

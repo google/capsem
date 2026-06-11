@@ -63,6 +63,7 @@ def test_session_db_readable_during_vm_run(lifecycle_env, lifecycle_db):
     ).fetchall()
     table_names = [t["name"] for t in tables]
 
-    expected = ["net_events", "fs_events", "snapshot_events"]
+    expected = ["net_events", "fs_events"]
     for name in expected:
         assert name in table_names, f"Missing table {name} during live read"
+    assert "snapshot_events" not in table_names

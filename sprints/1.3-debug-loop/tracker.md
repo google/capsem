@@ -158,15 +158,39 @@
   Stats surfaces while preserving explicit MCP access for AI/tool callers.
   - [x] Snapshot visibility boundary: Stats no longer exposes a standalone
     Snapshot tab or reads `snapshot_events`; explicit snapshot MCP invocations
-    still show up as MCP calls, and raw DB inspection remains available for
-    forensics.
+    still show up as MCP calls, but host snapshot state is no longer a
+    session.db/security-event table.
+  - [x] Snapshot ledger burn: `snapshot_events`, `snapshot.event`,
+    `SnapshotEvent`, and the `Snapshot` runtime security-event family were
+    removed from the logger/security-engine contract. New and migrated
+    databases reject/destroy the old table so hypervisor recovery state cannot
+    masquerade as user/security activity.
+  - [x] Route-backed snapshot state: `/vms/{vm_id}/snapshots/status` and
+    `/vms/{vm_id}/snapshots/list` read the running VM's in-memory
+    `capsem-process` scheduler over IPC. Stopped VM inspection reconstructs
+    from that VM's snapshot metadata only on demand; no session DB fallback.
   - [x] Compact snapshot MCP table: `snapshots_list` defaults to
     created/edited/deleted summary counts and only returns full per-file
     changes when the MCP caller passes `include_changes=true`.
   - Proof: `cargo test -p capsem-core
-    mcp::file_tools::tests::list_ -- --nocapture`; `pnpm --dir frontend test
-    -- --run frontend/src/lib/__tests__/stats-view-contract.test.ts`; `pnpm
-    --dir frontend check`.
+    mcp::file_tools::tests::list_ -- --nocapture`; `cargo test -p
+    capsem-logger --lib -- --nocapture`; `cargo test -p capsem-proto
+    snapshot_status -- --nocapture`; `cargo test -p capsem-process
+    classify_snapshot_status_is_job_query -- --nocapture`; `cargo test -p
+    capsem-service snapshot_status_from_session_dir_reads_snapshot_metadata_without_db
+    -- --nocapture`; `cargo test -p capsem-core runtime_security_event_ --
+    --nocapture`; `cargo test -p capsem-mcp inspect_schema_has_all_tables --
+    --nocapture`; `pnpm --dir frontend test -- --run
+    frontend/src/lib/__tests__/api.test.ts
+    frontend/src/lib/__tests__/stats-view-contract.test.ts`; `pnpm --dir
+    frontend check`; `cargo check -p capsem-logger -p capsem-proto -p
+    capsem-process -p capsem-service -p capsem-core -p capsem-mcp`;
+    `cargo build -p capsem-service -p capsem-process -p capsem-gateway -p
+    capsem-tray -p capsem-mcp-builtin`; `uv run python -m pytest
+    tests/capsem-session-lifecycle/test_db_schema.py
+    tests/capsem-session-lifecycle/test_db_exists.py
+    tests/capsem-session-lifecycle/test_multiple_events.py
+    tests/capsem-session/test_cross_table.py -q`.
 - [ ] Implement bug 8 after user resumes coding: non-destructively trace file
   provenance from paths, mtimes, process/security logs, and session DB evidence;
   prove whether snapshot is read-only or mutating the workspace; then add a
@@ -177,6 +201,11 @@
     workspace, including symlinked `auto_snapshots` paths. Capture and compact
     tests prove live workspace entries/hash do not change.
     Proof: `cargo test -p capsem-core auto_snapshot:: -- --nocapture`.
+  - [x] Host-only snapshot state slice: automatic snapshots now emit structured
+    process logs only and keep scheduler state in memory for live VMs; they no
+    longer write `SnapshotEvent` rows to the session ledger. This keeps
+    capsem-doctor/agent snapshot activity from bleeding into generic user-facing
+    activity unless an MCP/tool caller explicitly invokes a snapshot tool.
   - [x] Restore symlink escape rail slice: `snapshots_revert` now rejects
     snapshot parent symlinks that would make restore read outside checkpoint
     storage, skips no-op comparisons for live symlinks, and reads regular
