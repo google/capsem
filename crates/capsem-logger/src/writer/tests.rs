@@ -1177,6 +1177,66 @@ fn audit_event_insert_populates_row() {
 }
 
 #[test]
+fn audit_event_insert_preserves_microsecond_precision() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("audit-precision.db");
+    let base = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_713_100_000);
+
+    {
+        let writer = DbWriter::open(&db_path, 64).unwrap();
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            for micros in [123_456_u64, 123_789_u64] {
+                writer
+                    .write(WriteOp::AuditEvent(crate::events::AuditEvent {
+                        event_id: None,
+                        timestamp: base + std::time::Duration::from_micros(micros),
+                        pid: 100 + micros as u32,
+                        ppid: 1,
+                        uid: 501,
+                        exe: "/usr/bin/ls".into(),
+                        comm: Some("ls".into()),
+                        argv: "ls -la".into(),
+                        cwd: Some("/tmp".into()),
+                        tty: None,
+                        session_id: Some(42),
+                        audit_id: Some(format!("1713100000.{micros}:1")),
+                        exec_event_id: None,
+                        parent_exe: Some("/bin/bash".into()),
+                        trace_id: None,
+                        credential_ref: None,
+                    }))
+                    .await;
+            }
+        });
+    }
+
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    let timestamps = {
+        let mut stmt = conn
+            .prepare("SELECT timestamp FROM audit_events ORDER BY timestamp ASC")
+            .unwrap();
+        stmt.query_map([], |r| r.get::<_, String>(0))
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap()
+    };
+    assert_eq!(
+        timestamps,
+        vec!["2024-04-14T13:06:40.123456Z", "2024-04-14T13:06:40.123789Z"]
+    );
+
+    let events = crate::DbReader::open(&db_path)
+        .unwrap()
+        .recent_audit_events(2)
+        .unwrap();
+    assert_eq!(events.len(), 2);
+    assert!(events[0].timestamp > events[1].timestamp);
+}
+
+#[test]
 fn dns_event_insert_populates_row() {
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("dns.db");

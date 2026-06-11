@@ -1,5 +1,5 @@
 use std::path::{Path, PathBuf};
-use std::time::Instant;
+use std::time::{Instant, SystemTime};
 
 use rusqlite::{params, Connection};
 use tracing::{warn, Instrument};
@@ -30,6 +30,10 @@ pub const DB_SHUTDOWN_FLUSH_MS: &str = "db.shutdown_flush_ms";
 fn new_event_id() -> String {
     let value = Uuid::new_v4().simple().to_string();
     value[..12].to_string()
+}
+
+fn format_timestamp(timestamp: SystemTime) -> String {
+    humantime::format_rfc3339_micros(timestamp).to_string()
 }
 
 /// Truncate an optional string field to MAX_FIELD_BYTES.
@@ -426,7 +430,7 @@ fn execute_batch(conn: &Connection, batch: &[WriteOp]) -> rusqlite::Result<()> {
 }
 
 fn insert_net_event(conn: &Connection, event: &NetEvent) -> rusqlite::Result<()> {
-    let timestamp = humantime::format_rfc3339(event.timestamp).to_string();
+    let timestamp = format_timestamp(event.timestamp);
     let req_body = cap_field(&event.request_body_preview);
     let resp_body = cap_field(&event.response_body_preview);
     let req_headers = cap_field(&event.request_headers);
@@ -475,7 +479,7 @@ fn insert_net_event(conn: &Connection, event: &NetEvent) -> rusqlite::Result<()>
 }
 
 fn insert_model_call(conn: &Connection, call: &ModelCall) -> rusqlite::Result<()> {
-    let timestamp = humantime::format_rfc3339(call.timestamp).to_string();
+    let timestamp = format_timestamp(call.timestamp);
     let req_body = cap_field(&call.request_body_preview);
     let text_content = cap_field(&call.text_content);
     let thinking_content = cap_field(&call.thinking_content);
@@ -562,7 +566,7 @@ fn insert_model_call(conn: &Connection, call: &ModelCall) -> rusqlite::Result<()
 }
 
 fn insert_file_event(conn: &Connection, event: &FileEvent) -> rusqlite::Result<()> {
-    let timestamp = humantime::format_rfc3339(event.timestamp).to_string();
+    let timestamp = format_timestamp(event.timestamp);
     conn.execute(
         "INSERT INTO fs_events (event_id, timestamp, action, path, size, trace_id, credential_ref)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
@@ -580,7 +584,7 @@ fn insert_file_event(conn: &Connection, event: &FileEvent) -> rusqlite::Result<(
 }
 
 fn insert_mcp_call(conn: &Connection, call: &McpCall) -> rusqlite::Result<()> {
-    let timestamp = humantime::format_rfc3339(call.timestamp).to_string();
+    let timestamp = format_timestamp(call.timestamp);
     let req_preview = cap_field(&call.request_preview);
     let resp_preview = cap_field(&call.response_preview);
     conn.execute(
@@ -620,7 +624,7 @@ fn insert_mcp_call(conn: &Connection, call: &McpCall) -> rusqlite::Result<()> {
 }
 
 fn insert_exec_event(conn: &Connection, event: &ExecEvent) -> rusqlite::Result<()> {
-    let timestamp = humantime::format_rfc3339(event.timestamp).to_string();
+    let timestamp = format_timestamp(event.timestamp);
     conn.execute(
         "INSERT INTO exec_events (
             event_id, timestamp, exec_id, command, source, mcp_call_id, trace_id, process_name, credential_ref
@@ -669,7 +673,7 @@ fn update_exec_event(conn: &Connection, complete: &ExecEventComplete) -> rusqlit
 }
 
 fn insert_dns_event(conn: &Connection, event: &DnsEvent) -> rusqlite::Result<()> {
-    let timestamp = humantime::format_rfc3339(event.timestamp).to_string();
+    let timestamp = format_timestamp(event.timestamp);
     conn.execute(
         "INSERT INTO dns_events (
             event_id, timestamp, qname, qtype, qclass, rcode, decision, matched_rule,
@@ -701,7 +705,7 @@ fn insert_dns_event(conn: &Connection, event: &DnsEvent) -> rusqlite::Result<()>
 }
 
 fn insert_audit_event(conn: &Connection, event: &AuditEvent) -> rusqlite::Result<()> {
-    let timestamp = humantime::format_rfc3339(event.timestamp).to_string();
+    let timestamp = format_timestamp(event.timestamp);
     conn.execute(
         "INSERT INTO audit_events (
             event_id, timestamp, pid, ppid, uid, exe, comm, argv, cwd,
@@ -731,7 +735,7 @@ fn insert_audit_event(conn: &Connection, event: &AuditEvent) -> rusqlite::Result
 }
 
 fn insert_substitution_event(conn: &Connection, event: &SubstitutionEvent) -> rusqlite::Result<()> {
-    let timestamp = humantime::format_rfc3339(event.timestamp).to_string();
+    let timestamp = format_timestamp(event.timestamp);
     conn.execute(
         "INSERT INTO substitution_events (
             event_id, timestamp, material_class, source, event_type, algorithm,

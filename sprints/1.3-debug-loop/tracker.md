@@ -148,7 +148,7 @@
     current evidence VM, expose richer credential-broker capability/status in
     the TUI/status surfaces, and add a hermetic OAuth/broker flow once the local
     HTTP test server is in the next-gen testing harness.
-- [ ] Implement bug 5 after user resumes coding: define what process audit is
+- [x] Implement bug 5 after user resumes coding: define what process audit is
   supposed to represent, fix timestamp semantics if it is a snapshot, and rename
   or reshape the UI so it reflects the actual data contract rather than a vague
   audit label.
@@ -159,8 +159,14 @@
     Proof: `pnpm --dir frontend test -- --run
     frontend/src/lib/__tests__/stats-view-contract.test.ts`; `pnpm --dir
     frontend check`.
-  - [ ] Remaining: inspect live timestamps/provenance for repeated same-time
-    rows and decide whether producer semantics need changes beyond UI wording.
+  - [x] Timestamp precision slice: process observations were semantically
+    correct audit-port records, but the session DB writer formatted timestamps
+    at second precision even when the guest audit record carried microseconds.
+    The writer now stores RFC3339 microsecond timestamps for every primary
+    event insert so bursty process/HTTP/DNS/model/MCP rows remain ordered in
+    the ledger. Proof: `cargo test -p capsem-logger
+    audit_event_insert_preserves_microsecond_precision -- --nocapture`;
+    `cargo test -p capsem-logger --lib -- --nocapture`.
 - [x] Implement bug 6 slice: classify headline MCP stats so user-facing totals
   count only user tool calls (`tools/call`) and exclude protocol handshakes,
   `tools/list`, and builtin snapshot maintenance while raw rows remain in
