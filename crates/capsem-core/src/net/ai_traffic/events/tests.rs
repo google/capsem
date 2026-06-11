@@ -375,6 +375,32 @@ fn non_streaming_google_usage() {
 }
 
 #[test]
+fn non_streaming_google_tool_calls() {
+    let body = br#"{
+        "candidates": [{
+            "content": {
+                "parts": [
+                    {"functionCall": {"name": "search_web", "args": {"query": "capsem"}}},
+                    {"functionCall": {"name": "read_file", "args": {"path": "/workspace/README.md"}}}
+                ]
+            }
+        }]
+    }"#;
+
+    let calls = parse_non_streaming_tool_calls(ProviderKind::Google, body);
+
+    assert_eq!(calls.len(), 2);
+    assert_eq!(calls[0].index, 0);
+    assert_eq!(calls[0].call_id, "gemini_search_web_0");
+    assert_eq!(calls[0].name, "search_web");
+    assert_eq!(calls[0].arguments, r#"{"query":"capsem"}"#);
+    assert_eq!(calls[1].index, 1);
+    assert_eq!(calls[1].call_id, "gemini_read_file_1");
+    assert_eq!(calls[1].name, "read_file");
+    assert_eq!(calls[1].arguments, r#"{"path":"/workspace/README.md"}"#);
+}
+
+#[test]
 fn non_streaming_anthropic_usage() {
     let body = br#"{
         "model": "claude-sonnet-4-20250514",

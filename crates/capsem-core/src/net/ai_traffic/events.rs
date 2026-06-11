@@ -226,23 +226,7 @@ pub fn parse_non_streaming_usage(
     Option<u64>,
     BTreeMap<String, u64>,
 ) {
-    // Try plain JSON first, then gzip-decompress if it fails.
-    let json: serde_json::Value = if let Ok(v) = serde_json::from_slice(body) {
-        v
-    } else if body.len() >= 2 && body[0] == 0x1f && body[1] == 0x8b {
-        // Gzip magic bytes -- decompress and retry.
-        use flate2::read::GzDecoder;
-        use std::io::Read;
-        let mut decoder = GzDecoder::new(body);
-        let mut decompressed = Vec::new();
-        if decoder.read_to_end(&mut decompressed).is_err() {
-            return (None, None, None, BTreeMap::new());
-        }
-        match serde_json::from_slice(&decompressed) {
-            Ok(v) => v,
-            Err(_) => return (None, None, None, BTreeMap::new()),
-        }
-    } else {
+    let Some(json) = parse_response_json(body) else {
         return (None, None, None, BTreeMap::new());
     };
 
@@ -334,6 +318,75 @@ pub fn parse_non_streaming_usage(
             (model, input, output, BTreeMap::new())
         }
     }
+}
+
+/// Parse model-native tool calls from a non-streaming JSON response body.
+pub fn parse_non_streaming_tool_calls(
+    kind: super::provider::ProviderKind,
+    body: &[u8],
+) -> Vec<ToolCall> {
+    let Some(json) = parse_response_json(body) else {
+        return Vec::new();
+    };
+    match kind {
+        super::provider::ProviderKind::Google => google_non_streaming_tool_calls(&json),
+        _ => Vec::new(),
+    }
+}
+
+fn parse_response_json(body: &[u8]) -> Option<serde_json::Value> {
+    if let Ok(v) = serde_json::from_slice(body) {
+        return Some(v);
+    }
+    if body.len() >= 2 && body[0] == 0x1f && body[1] == 0x8b {
+        use flate2::read::GzDecoder;
+        use std::io::Read;
+        let mut decoder = GzDecoder::new(body);
+        let mut decompressed = Vec::new();
+        if decoder.read_to_end(&mut decompressed).is_err() {
+            return None;
+        }
+        return serde_json::from_slice(&decompressed).ok();
+    }
+    None
+}
+
+fn google_non_streaming_tool_calls(json: &serde_json::Value) -> Vec<ToolCall> {
+    let mut calls = Vec::new();
+    let Some(candidates) = json.get("candidates").and_then(|value| value.as_array()) else {
+        return calls;
+    };
+    for candidate in candidates {
+        let Some(parts) = candidate
+            .get("content")
+            .and_then(|content| content.get("parts"))
+            .and_then(|parts| parts.as_array())
+        else {
+            continue;
+        };
+        for part in parts {
+            let Some(function_call) = part.get("functionCall") else {
+                continue;
+            };
+            let name = function_call
+                .get("name")
+                .and_then(|name| name.as_str())
+                .unwrap_or_default()
+                .to_string();
+            let args = function_call
+                .get("args")
+                .map(|args| serde_json::to_string(args).unwrap_or_else(|_| "{}".to_string()))
+                .unwrap_or_else(|| "{}".to_string());
+            let index = calls.len() as u32;
+            calls.push(ToolCall {
+                index,
+                call_id: format!("gemini_{}_{}", name, index),
+                name,
+                arguments: args,
+            });
+        }
+    }
+    calls
 }
 
 #[cfg(test)]

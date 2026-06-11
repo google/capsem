@@ -34,7 +34,9 @@ use crate::credential_broker::{
     broker_and_log_observations, detect_http_body_credentials,
     redact_observed_credentials_in_bytes, CredentialObservation,
 };
-use crate::net::ai_traffic::events::{collect_summary, parse_non_streaming_usage, StopReason};
+use crate::net::ai_traffic::events::{
+    collect_summary, parse_non_streaming_tool_calls, parse_non_streaming_usage, StopReason,
+};
 use crate::net::ai_traffic::pricing::PricingTable;
 use crate::net::ai_traffic::provider::{extract_model_from_path, tool_origin, ProviderKind};
 use crate::net::ai_traffic::{request_parser, TraceState};
@@ -419,7 +421,7 @@ pub fn maybe_build_model_call(
                 StopReason::Other(s) => s.clone(),
             });
 
-    let tool_calls: Vec<ToolCallEntry> = summary
+    let mut tool_calls: Vec<ToolCallEntry> = summary
         .as_ref()
         .map(|s| {
             s.tool_calls
@@ -439,6 +441,19 @@ pub fn maybe_build_model_call(
                 .collect()
         })
         .unwrap_or_default();
+    if tool_calls.is_empty() {
+        tool_calls = parse_non_streaming_tool_calls(provider, &resp_stats.preview)
+            .into_iter()
+            .map(|tc| ToolCallEntry {
+                call_index: tc.index,
+                call_id: tc.call_id,
+                tool_name: tc.name.clone(),
+                arguments: Some(tc.arguments),
+                origin: tool_origin(&tc.name).to_string(),
+                trace_id: crate::telemetry::ambient_capsem_trace_id(),
+            })
+            .collect();
+    }
 
     let tool_responses: Vec<ToolResponseEntry> = req_meta
         .tool_results

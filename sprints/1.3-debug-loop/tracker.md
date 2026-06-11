@@ -96,6 +96,10 @@
     and `/v1internal:generateContent`. Added that host as a Google protocol
     alias and covered the telemetry path so AGY generation emits `ModelCall`
     rows once the new service build runs.
+  - [x] AGY Google tool-call telemetry slice: non-streaming Google
+    `functionCall` response parts now produce first-party `tool_calls` with
+    deterministic synthetic `gemini_<name>_<index>` IDs matching the Google
+    `functionResponse` request-parser shape.
   - [ ] Remaining: prove AGY tool-call/activity semantics beyond model HTTP
     rows, and verify against a rebuilt service/VM without destroying the current
     evidence VM until approved.
@@ -311,6 +315,21 @@
   - `cargo test -p capsem-core agy_cloudcode_stream_generate_content_is_a_model_call -- --nocapture`
     passed; proves AGY Cloud Code generation paths emit model telemetry when
     provider metadata is present.
+  - `cargo test -p capsem-core --lib non_streaming_google_tool_calls -- --nocapture`
+    passed; proves non-streaming Google response `functionCall` parts parse
+    into deterministic first-party model tool calls.
+  - `cargo test -p capsem-core --lib net::ai_traffic::events::tests:: -- --nocapture`
+    passed; proves the event parser suite including non-streaming usage,
+    gzip, and Google tool-call parsing.
+  - `cargo test -p capsem-core --lib google_non_streaming_function_call_is_logged_as_model_tool_call -- --nocapture`
+    passed; proves the MITM telemetry hook logs AGY/Google non-streaming
+    function calls as model tool-call rows.
+  - `cargo test -p capsem-core --lib net::ai_traffic::request_parser::tests::google -- --nocapture`
+    passed; proves Google function responses still parse under the same
+    synthetic ID family.
+  - `cargo test -p capsem-core --lib net::interpreters::google_interpreter::tests:: -- --nocapture`
+    passed after one transient local code-sign wrapper retry; proves streaming
+    Google tool calls use the same deterministic synthetic ID shape.
   - `cargo test -p capsem-core --lib http_body_detector_finds_google_oauth -- --nocapture`
     passed; proves Google OAuth JSON and form token exchanges are recognized
     and redacted by the credential broker.

@@ -206,6 +206,48 @@ fn agy_cloudcode_stream_generate_content_is_a_model_call() {
     assert!(mc.stream);
 }
 
+#[test]
+fn google_non_streaming_function_call_is_logged_as_model_tool_call() {
+    let mut req_ctx = anthropic_req_ctx();
+    req_ctx.domain = "daily-cloudcode-pa.googleapis.com".into();
+    req_ctx.process_name = Some("agy".into());
+    req_ctx.ai_provider = Some(ProviderKind::Google);
+    req_ctx.path = "/v1internal:generateContent".into();
+    req_ctx.request_body_stats =
+        req_stats(br#"{"contents":[{"role":"user","parts":[{"text":"search"}]}]}"#);
+    let response = br#"{
+        "candidates": [{
+            "content": {"parts": [{"functionCall": {"name": "search_web", "args": {"query": "capsem"}}}]},
+            "finishReason": "STOP"
+        }],
+        "modelVersion": "gemini-3.1-pro-preview-customtools",
+        "usageMetadata": {"promptTokenCount": 7, "candidatesTokenCount": 3}
+    }"#;
+    let resp_stats = TelemetryResponseStats {
+        bytes: response.len() as u64,
+        preview: response.to_vec(),
+        max_preview: response.len(),
+    };
+    let pricing = Arc::new(PricingTable::load());
+    let trace = Arc::new(Mutex::new(TraceState::new()));
+
+    let mc = maybe_build_model_call(&req_ctx, &resp_stats, &[], &pricing, &trace)
+        .expect("Google generateContent should produce model telemetry");
+
+    assert_eq!(mc.provider, "google");
+    assert_eq!(
+        mc.model.as_deref(),
+        Some("gemini-3.1-pro-preview-customtools")
+    );
+    assert_eq!(mc.tool_calls.len(), 1);
+    assert_eq!(mc.tool_calls[0].call_id, "gemini_search_web_0");
+    assert_eq!(mc.tool_calls[0].tool_name, "search_web");
+    assert_eq!(
+        mc.tool_calls[0].arguments.as_deref(),
+        Some(r#"{"query":"capsem"}"#)
+    );
+}
+
 /// Non-AI provider returns no model call.
 #[test]
 fn non_ai_provider_is_not_a_model_call() {
