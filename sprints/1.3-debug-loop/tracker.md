@@ -138,10 +138,16 @@
     broker-owned credential-candidate preview caps for MITM request/response
     bodies, and profile plugin runtime status derived from session DB
     `substitution_events` via `capsem-logger::DbReader`.
+  - [x] VM Stats broker visibility slice: credential-broker evidence now has a
+    first-class `Credentials` tab backed by `substitution_events`; the Process
+    tab only shows command executions and audit-port process observations.
+    Proof: `pnpm --dir frontend test -- --run
+    frontend/src/lib/__tests__/stats-view-contract.test.ts`; `pnpm --dir
+    frontend check`.
   - [ ] Remaining: verify against a rebuilt service/VM without destroying the
     current evidence VM, expose richer credential-broker capability/status in
-    the UI/VM stats, and add a hermetic OAuth/broker flow once the local HTTP
-    test server is in the next-gen testing harness.
+    the TUI/status surfaces, and add a hermetic OAuth/broker flow once the local
+    HTTP test server is in the next-gen testing harness.
 - [ ] Implement bug 5 after user resumes coding: define what process audit is
   supposed to represent, fix timestamp semantics if it is a snapshot, and rename
   or reshape the UI so it reflects the actual data contract rather than a vague

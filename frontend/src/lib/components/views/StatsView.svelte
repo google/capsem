@@ -19,10 +19,11 @@
   import Database from 'phosphor-svelte/lib/Database';
   import Terminal from 'phosphor-svelte/lib/Terminal';
   import DotsThreeCircle from 'phosphor-svelte/lib/DotsThreeCircle';
+  import Fingerprint from 'phosphor-svelte/lib/Fingerprint';
 
   let { vmId }: { vmId: string } = $props();
 
-  type StatsTab = 'model' | 'mcp' | 'http' | 'dns' | 'files' | 'process' | 'security';
+  type StatsTab = 'model' | 'mcp' | 'http' | 'dns' | 'files' | 'process' | 'credentials' | 'security';
   type DetailSelection = { type: string; data: Record<string, unknown> };
   type Row = Record<string, any>;
 
@@ -233,6 +234,9 @@
   const fileImports = $derived(fileRows.filter(row => text(row.action) === 'import').length);
   const fileExports = $derived(fileRows.filter(row => text(row.action) === 'export').length);
   const processFailures = $derived(processRows.filter(row => row.exit_code != null && number(row.exit_code) !== 0).length);
+  const brokerSubstitutedCount = $derived(substitutionRows.filter(row => text(row.outcome) === 'substituted').length);
+  const brokerProviders = $derived(new Set(substitutionRows.map(row => text(row.provider)).filter(Boolean)).size);
+  const brokerRefs = $derived(new Set(substitutionRows.map(row => text(row.substitution_ref)).filter(Boolean)).size);
   const detections = $derived(securityLatest.filter(row => row.detection_level !== 'none').length);
   const blocks = $derived(securityLatest.filter(row => row.rule_action === 'block').length);
 
@@ -243,6 +247,7 @@
     { id: 'dns', label: 'DNS', icon: DotsThreeCircle },
     { id: 'files', label: 'Files', icon: FileText },
     { id: 'process', label: 'Process', icon: Terminal },
+    { id: 'credentials', label: 'Credentials', icon: Fingerprint },
     { id: 'security', label: 'Security', icon: ShieldCheck },
   ];
 </script>
@@ -399,7 +404,7 @@
           <MetricCard label="Exec Events" value={processRows.length.toLocaleString()} />
           <MetricCard label="Failures" value={processFailures.toLocaleString()} tone="danger" />
           <MetricCard label="Process Observations" value={auditRows.length.toLocaleString()} />
-          <MetricCard label="Substitutions" value={substitutionRows.length.toLocaleString()} />
+          <MetricCard label="Credential Refs" value={processRows.filter(row => row.credential_ref).length.toLocaleString()} />
         </div>
         <StatsEventList title="Process Exec Events" rows={processRows} columns={['Time', 'Source', 'Command', 'Exit', 'Duration']} onrow={(row) => detail = { type: 'process', data: row }}>
           {#snippet children(row: any)}
@@ -422,7 +427,14 @@
             <td class="px-4 py-2 text-center text-foreground">{row.exit_code ?? '--'}</td>
           {/snippet}
         </StatsEventList>
-        <StatsEventList title="Credential Substitutions" rows={substitutionRows} columns={['Time', 'Class', 'Source', 'Outcome', 'Reference']} onrow={(row) => detail = { type: 'substitution', data: row }}>
+      {:else if activeTab === 'credentials'}
+        <div class="grid grid-cols-4 gap-3 mb-6">
+          <MetricCard label="Broker Events" value={substitutionRows.length.toLocaleString()} />
+          <MetricCard label="Substituted" value={brokerSubstitutedCount.toLocaleString()} />
+          <MetricCard label="Providers" value={brokerProviders.toLocaleString()} />
+          <MetricCard label="References" value={brokerRefs.toLocaleString()} />
+        </div>
+        <StatsEventList title="Credential Broker Events" rows={substitutionRows} columns={['Time', 'Class', 'Source', 'Outcome', 'Reference']} onrow={(row) => detail = { type: 'credential broker event', data: row }}>
           {#snippet children(row: any)}
             <td class="px-4 py-2 text-muted-foreground">{formatTime(row.timestamp)}</td>
             <td class="px-4 py-2 text-foreground">{row.material_class}</td>

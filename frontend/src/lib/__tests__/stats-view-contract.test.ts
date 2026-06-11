@@ -25,3 +25,26 @@ describe('StatsView snapshot boundary', () => {
     expect(source).toContain("id: 'mcp'");
   });
 });
+
+describe('StatsView credential broker contract', () => {
+  it('surfaces broker evidence as a first-class tab instead of process activity', () => {
+    expect(source).toContain("'credentials'");
+    expect(source).toContain("label: 'Credentials'");
+    expect(source).toContain('Credential Broker Events');
+    expect(source).toContain("type: 'credential broker event'");
+    expect(source).toContain('substitution_events');
+    expect(source).toContain('Substituted');
+    expect(source).not.toContain('Credential Substitutions');
+
+    const processStart = source.indexOf("{:else if activeTab === 'process'}");
+    const credentialsStart = source.indexOf("{:else if activeTab === 'credentials'}");
+    const securityStart = source.indexOf("{:else if activeTab === 'security'}");
+    expect(processStart).toBeGreaterThan(-1);
+    expect(credentialsStart).toBeGreaterThan(processStart);
+    expect(securityStart).toBeGreaterThan(credentialsStart);
+
+    const processBlock = source.slice(processStart, credentialsStart);
+    expect(processBlock).not.toContain('substitutionRows');
+    expect(processBlock).not.toContain('Credential Broker Events');
+  });
+});
