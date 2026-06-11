@@ -866,6 +866,20 @@ describe('api', () => {
       expect(result).toEqual([]);
     });
 
+    it('getMcpDefaultPermission sends GET /profiles/{profile_id}/mcp/default/info', async () => {
+      mockFetch
+        .mockReturnValueOnce(jsonResponse({ ok: true, version: '1.0.0', service_socket: '/tmp/s' }))
+        .mockReturnValueOnce(jsonResponse({ token: 'tok' }));
+      await api.init();
+
+      const permission = { action: 'allow', source: 'default', rule_id: 'default.mcp' };
+      mockFetch.mockReturnValueOnce(jsonResponse(permission));
+      const result = await api.getMcpDefaultPermission('code');
+      expect(result).toEqual(permission);
+      const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
+      expect(call[0]).toContain('/profiles/code/mcp/default/info');
+    });
+
     it('getMcpTools sends GET /profiles/{profile_id}/mcp/servers/{server_id}/tools/list', async () => {
       // Re-connect after the disconnected test above.
       mockFetch
@@ -905,6 +919,20 @@ describe('api', () => {
       expect(call[0]).toContain('/profiles/code/mcp/servers/local/tools/bash/edit');
       expect(call[1].method).toBe('PATCH');
       expect(JSON.parse(call[1].body)).toEqual({ action: 'ask' });
+    });
+
+    it('updateMcpDefaultPermission sends PATCH /profiles/{profile_id}/mcp/default/edit', async () => {
+      mockFetch
+        .mockReturnValueOnce(jsonResponse({ ok: true, version: '1.0.0', service_socket: '/tmp/s' }))
+        .mockReturnValueOnce(jsonResponse({ token: 'tok' }));
+      await api.init();
+
+      mockFetch.mockReturnValueOnce(jsonResponse(null));
+      await api.updateMcpDefaultPermission('code', 'block');
+      const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
+      expect(call[0]).toContain('/profiles/code/mcp/default/edit');
+      expect(call[1].method).toBe('PATCH');
+      expect(JSON.parse(call[1].body)).toEqual({ action: 'block' });
     });
 
     it('callMcpTool sends POST /profiles/{profile_id}/mcp/servers/{server_id}/tools/{tool_id}/call', async () => {

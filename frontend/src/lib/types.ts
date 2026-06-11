@@ -223,6 +223,13 @@ export interface McpServerInfo {
   is_stdio: boolean;
 }
 
+/** Default MCP permission rule exposed from the profile enforcement contract. */
+export interface McpDefaultPermission {
+  action: ToolPermission;
+  source: string;
+  rule_id: string | null;
+}
+
 /** Info about a discovered MCP tool. */
 export interface McpToolInfo {
   namespaced_name: string;

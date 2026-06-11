@@ -498,6 +498,14 @@ pub struct McpServerInfoResponse {
     pub is_stdio: bool,
 }
 
+/// Response for GET /profiles/{profile_id}/mcp/default/info.
+#[derive(Serialize, Deserialize, Debug)]
+pub struct McpDefaultPermissionResponse {
+    pub action: capsem_core::net::policy_config::SecurityRuleAction,
+    pub source: String,
+    pub rule_id: Option<String>,
+}
+
 /// Response for GET /profiles/{profile_id}/mcp/servers/{server_id}/tools/list.
 #[derive(Serialize, Deserialize, Debug)]
 pub struct McpToolInfoResponse {

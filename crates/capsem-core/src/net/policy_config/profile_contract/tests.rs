@@ -469,6 +469,86 @@ fn profile_mcp_tool_permission_mutation_updates_rule_and_pin() {
 }
 
 #[test]
+fn profile_mcp_default_permission_mutation_updates_rule_pin_and_fallback() {
+    let fixture = ProfileFixture::new();
+    let mut profile = Profile::load_from_dir(fixture.profile_dir()).expect("profile loads");
+    let initial_default = profile
+        .mcp_default_permission()
+        .expect("default MCP permission resolves");
+    assert_eq!(initial_default.action, SecurityRuleAction::Allow);
+    assert_eq!(initial_default.source, "default");
+    assert_eq!(initial_default.rule_id.as_deref(), Some("default.mcp"));
+
+    let old_pin = profile
+        .config()
+        .files
+        .enforcement
+        .as_ref()
+        .unwrap()
+        .hash
+        .clone();
+
+    let summary = profile
+        .set_mcp_default_permission(SecurityRuleAction::Ask, "ui")
+        .expect("default MCP permission mutation succeeds");
+    assert_eq!(summary.profile_id, "code");
+    assert_eq!(summary.category, "mcp");
+    assert_eq!(summary.target_kind, "mcp_default");
+    assert_eq!(summary.target_key, "default.mcp");
+    assert_eq!(summary.rule_id.as_deref(), Some("default.mcp"));
+    assert_ne!(summary.new_hash, old_pin);
+
+    let reloaded = Profile::load_from_dir(fixture.profile_dir()).expect("profile reloads");
+    let default = reloaded
+        .mcp_default_permission()
+        .expect("default MCP permission resolves after mutation");
+    assert_eq!(default.action, SecurityRuleAction::Ask);
+    assert_eq!(default.source, "default");
+
+    let fallback = reloaded
+        .mcp_tool_permission("capsem", "fetch_http")
+        .expect("tool falls back to default permission");
+    assert_eq!(fallback.action, SecurityRuleAction::Ask);
+    assert_eq!(fallback.source, "default");
+
+    let new_pin = reloaded
+        .config()
+        .files
+        .enforcement
+        .as_ref()
+        .unwrap()
+        .hash
+        .clone();
+    assert_eq!(new_pin, summary.new_hash);
+    reloaded
+        .check(&fixture.assets_dir(), "arm64")
+        .expect("default mutation keeps profile ledger valid");
+}
+
+#[test]
+fn profile_mcp_tool_permission_override_wins_after_default_mutation() {
+    let fixture = ProfileFixture::new();
+    let mut profile = Profile::load_from_dir(fixture.profile_dir()).expect("profile loads");
+    profile
+        .set_mcp_default_permission(SecurityRuleAction::Block, "ui")
+        .expect("default MCP mutation succeeds");
+    profile
+        .set_mcp_tool_permission("capsem", "fetch_http", SecurityRuleAction::Allow, "ui")
+        .expect("managed MCP tool override succeeds");
+
+    let reloaded = Profile::load_from_dir(fixture.profile_dir()).expect("profile reloads");
+    let permission = reloaded
+        .mcp_tool_permission("capsem", "fetch_http")
+        .expect("managed MCP permission resolves");
+    assert_eq!(permission.action, SecurityRuleAction::Allow);
+    assert_eq!(permission.source, "profile_managed");
+    assert_eq!(
+        permission.rule_id.as_deref(),
+        Some("profiles.rules.mcp_capsem_fetch_http_permission")
+    );
+}
+
+#[test]
 fn profile_mcp_tool_permission_mutation_updates_existing_managed_rule() {
     let fixture = ProfileFixture::new();
     let mut profile = Profile::load_from_dir(fixture.profile_dir()).expect("profile loads");

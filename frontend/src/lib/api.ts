@@ -19,6 +19,7 @@ import type {
 } from './types/settings';
 import type {
   DownloadProgress,
+  McpDefaultPermission,
   McpServerInfo,
   McpToolInfo,
   ToolPermission,
@@ -1083,6 +1084,12 @@ export async function getMcpServers(profileId: string): Promise<McpServerInfo[]>
   }
 }
 
+/** Read the profile default MCP permission rule. */
+export async function getMcpDefaultPermission(profileId: string): Promise<McpDefaultPermission> {
+  const resp = await _get(`/profiles/${encodeURIComponent(profileId)}/mcp/default/info`);
+  return await resp.json();
+}
+
 /** List discovered MCP tools with cache/approval status (runtime). */
 export async function getMcpTools(profileId: string, serverId: string): Promise<McpToolInfo[]> {
   if (!_connected) return [];
@@ -1101,6 +1108,17 @@ export async function getMcpTools(profileId: string, serverId: string): Promise<
 export async function refreshMcpTools(profileId: string, serverId: string): Promise<void> {
   await _post(
     `/profiles/${encodeURIComponent(profileId)}/mcp/servers/${encodeURIComponent(serverId)}/refresh`,
+  );
+}
+
+/** Edit the profile default MCP permission through the enforcement rule ledger. */
+export async function updateMcpDefaultPermission(
+  profileId: string,
+  action: ToolPermission,
+): Promise<void> {
+  await _patch(
+    `/profiles/${encodeURIComponent(profileId)}/mcp/default/edit`,
+    { action },
   );
 }
 

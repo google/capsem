@@ -12,6 +12,7 @@
 
   let { profileId } = $props<{ profileId: string }>();
   let servers = $derived(mcpStore.servers);
+  let defaultPermission = $derived(mcpStore.defaultPermission);
   let userServers = $derived(servers.filter(s => s.source !== 'builtin'));
   let builtinServers = $derived(servers.filter(s => s.source === 'builtin'));
   let actionError = $state<string | null>(null);
@@ -77,6 +78,18 @@
     actionError = null;
     try {
       await mcpStore.setToolPermission(tool, action);
+    } catch (err) {
+      actionError = String(err instanceof Error ? err.message : err);
+    } finally {
+      saving = false;
+    }
+  }
+
+  async function setDefaultPermission(action: ToolPermission) {
+    saving = true;
+    actionError = null;
+    try {
+      await mcpStore.setDefaultPermission(action);
     } catch (err) {
       actionError = String(err instanceof Error ? err.message : err);
     } finally {
@@ -157,6 +170,38 @@
   {#if actionError || mcpStore.error}
     <div class="border border-destructive/40 rounded-lg p-3 text-sm text-destructive-foreground">
       {actionError ?? mcpStore.error}
+    </div>
+  {/if}
+
+  {#if defaultPermission}
+    {@const defaultMeta = permissionMeta(defaultPermission.action)}
+    <div class="bg-card border border-card-line rounded-xl p-4 flex items-start justify-between gap-x-4">
+      <div class="min-w-0">
+        <div class="flex items-center gap-x-2 flex-wrap">
+          <span class="text-sm font-semibold text-foreground">Default MCP permission</span>
+          <span class={`inline-flex items-center gap-x-1 rounded-full border px-2 py-0.5 text-xs font-medium ${defaultMeta.tone}`}>
+            <defaultMeta.icon size={12} weight="fill" />
+            {defaultMeta.label}
+          </span>
+        </div>
+        <p class="text-xs text-muted-foreground-1 mt-1">
+          Rule: {defaultPermission.rule_id ?? 'default.mcp'} · Source: {defaultPermission.source}
+        </p>
+      </div>
+      <div class="shrink-0">
+        <label class="sr-only" for="mcp-default-permission">Default MCP permission</label>
+        <select
+          id="mcp-default-permission"
+          class="rounded-lg border border-line-2 bg-layer px-2 py-1 text-xs text-foreground disabled:opacity-50"
+          value={defaultPermission.action}
+          disabled={saving}
+          onchange={(event) => setDefaultPermission(event.currentTarget.value as ToolPermission)}
+        >
+          <option value="allow">Allow</option>
+          <option value="ask">Ask</option>
+          <option value="block">Block</option>
+        </select>
+      </div>
     </div>
   {/if}
 

@@ -262,10 +262,20 @@
     slices.
   - [x] Enforcement/detection disabled-rule rendering is backed by the
     first-party `enabled` rule DTO field.
-- [ ] Implement bug 19 after user resumes coding: expose the default MCP rule
+- [x] Implement bug 19 slice: expose the default MCP rule
   as a visible, editable rule/policy selector where allowed by profile/corp
   constraints; test that changing the selector mutates the same rule contract
   used by enforcement, not a separate MCP policy field.
+  Proof: `cargo test -p capsem-core profile_mcp_default_permission --
+  --nocapture`; `cargo test -p capsem-core
+  profile_mcp_tool_permission_override_wins_after_default_mutation --
+  --nocapture`; `cargo test -p capsem-service
+  profile_mcp_default_edit_writes_default_rule_and_mutation_ledger --
+  --nocapture`; `pnpm --dir frontend test -- --run
+  frontend/src/lib/__tests__/api.test.ts
+  frontend/src/lib/__tests__/mcp-store.test.ts
+  frontend/src/lib/__tests__/mcp-section-contract.test.ts`; `pnpm --dir
+  frontend check`.
 - [x] Implement bug 20 slice: per-tool MCP overrides are now backed by
   profile-managed enforcement rules. `Profile::mcp_tool_permission` reads the
   default MCP rule or the managed override from pinned enforcement TOML,
@@ -550,12 +560,31 @@
   - `cargo test -p capsem-service profile_mcp_tool_edit_writes_profile_rule_and_mutation_ledger -- --nocapture`
     passed; proves the route mutation writes the profile mutation ledger and
     `tools/list` returns the effective `permission_action`/`permission_source`.
+  - `cargo test -p capsem-core profile_mcp_default_permission -- --nocapture`
+    passed; proves `default.mcp` readback/mutation updates the pinned
+    enforcement rule file and changes fallback behavior for non-overridden MCP
+    tools.
+  - `cargo test -p capsem-core
+    profile_mcp_tool_permission_override_wins_after_default_mutation --
+    --nocapture` passed; proves profile-managed per-tool MCP overrides still
+    win after the default MCP rule changes.
+  - `cargo test -p capsem-service
+    profile_mcp_default_edit_writes_default_rule_and_mutation_ledger --
+    --nocapture` passed; proves `/profiles/{profile_id}/mcp/default/edit`
+    mutates `[default.mcp]`, updates the profile file pin, writes the DB
+    mutation ledger, and makes tool list readback inherit the new default.
   - `cargo test -p capsem-service mounted_mcp_routes_are_profile_scoped_mechanics_only -- --nocapture`
     passed; proves profile MCP routes expose the Capsem-owned local MCP entry
     as `source = builtin`, not as a settings-owned or live external runtime.
   - `pnpm --dir frontend test -- --run frontend/src/lib/__tests__/api.test.ts frontend/src/lib/__tests__/mcp-store.test.ts`
     passed; proves frontend MCP clients send `{ action }`, require explicit
     profile ids, and no longer expose unsupported server edit/delete helpers.
+  - `pnpm --dir frontend test -- --run
+    frontend/src/lib/__tests__/api.test.ts
+    frontend/src/lib/__tests__/mcp-store.test.ts
+    frontend/src/lib/__tests__/mcp-section-contract.test.ts` passed; proves the
+    default MCP selector is route-backed and tied to `default.mcp` instead of
+    local UI policy state.
   - `pnpm --dir frontend test -- --run frontend/src/lib/__tests__/profile-page-contract.test.ts`
     passed; proves the Profile UI exposes enforcement and detection as
     first-class tabs instead of a generic policy tab, and renders typed asset

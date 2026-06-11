@@ -5258,6 +5258,24 @@ async fn handle_profile_mcp_servers(
     Ok(Json(serde_json::to_value(resp).unwrap_or_default()))
 }
 
+/// GET /profiles/:profile_id/mcp/default/info -- read the profile MCP default permission.
+async fn handle_profile_mcp_default_info(
+    Path(profile_id): Path<String>,
+) -> Result<Json<api::McpDefaultPermissionResponse>, AppError> {
+    let profile = profile_for_route(profile_id)?;
+    let permission = profile.mcp_default_permission().map_err(|error| {
+        AppError(
+            StatusCode::BAD_REQUEST,
+            format!("resolve MCP default permission: {error}"),
+        )
+    })?;
+    Ok(Json(api::McpDefaultPermissionResponse {
+        action: permission.action,
+        source: permission.source,
+        rule_id: permission.rule_id,
+    }))
+}
+
 /// GET /profiles/:profile_id/mcp/servers/:server_id/tools/list -- list one server's tools.
 async fn handle_profile_mcp_server_tools(
     Path((profile_id, server_id)): Path<(String, String)>,
@@ -5333,6 +5351,51 @@ async fn handle_profile_mcp_server_refresh(
     Ok(Json(
         serde_json::json!({"success": true, "server_id": server_id, "instances": uds_paths.len()}),
     ))
+}
+
+/// PATCH /profiles/:profile_id/mcp/default/edit -- edit the default MCP permission rule.
+async fn handle_profile_mcp_default_edit(
+    State(state): State<Arc<ServiceState>>,
+    Path(profile_id): Path<String>,
+    Json(update): Json<McpToolEditRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    log_profile_mutation_route_request(
+        "profile_mcp_default_edit",
+        &profile_id,
+        "mcp_default",
+        "default.mcp",
+        "permission",
+    );
+    let mut profile = profile_for_route(profile_id.clone()).inspect_err(|error| {
+        log_profile_mutation_route_rejected(
+            "profile_mcp_default_edit",
+            &profile_id,
+            "mcp_default",
+            "default.mcp",
+            "permission",
+            &error.1,
+        );
+    })?;
+    let summary = profile
+        .set_mcp_default_permission(update.action, "service-api")
+        .map_err(|error| {
+            log_profile_mutation_route_rejected(
+                "profile_mcp_default_edit",
+                &profile_id,
+                "mcp_default",
+                "default.mcp",
+                "permission",
+                &error,
+            );
+            AppError(StatusCode::BAD_REQUEST, error)
+        })?;
+    let event = write_profile_mutation_event(&state, summary).await?;
+    log_profile_mutation_applied("profile_mcp_default_edit", &event);
+    Ok(Json(json!({
+        "profile_id": event.profile_id,
+        "action": update.action,
+        "mutation": event,
+    })))
 }
 
 /// PATCH /profiles/:profile_id/mcp/servers/:server_id/tools/:tool_id/edit -- edit tool mechanics.
@@ -7987,6 +8050,14 @@ fn build_service_router(state: Arc<ServiceState>) -> Router {
         .route(
             "/profiles/{profile_id}/mcp/info",
             get(handle_profile_mcp_info),
+        )
+        .route(
+            "/profiles/{profile_id}/mcp/default/info",
+            get(handle_profile_mcp_default_info),
+        )
+        .route(
+            "/profiles/{profile_id}/mcp/default/edit",
+            patch(handle_profile_mcp_default_edit),
         )
         .route(
             "/profiles/{profile_id}/mcp/servers/{server_id}/edit",

@@ -601,6 +601,65 @@ impl Profile {
         })
     }
 
+    pub fn mcp_default_permission(&self) -> Result<McpToolPermissionStatus, String> {
+        let (_, _, _, _, rules) = self.load_verified_enforcement_rules()?;
+        let default = rules.default.get("mcp").ok_or_else(|| {
+            "default.mcp rule is required for MCP permission readback".to_string()
+        })?;
+        mcp_permission_action(default.action).map(|action| McpToolPermissionStatus {
+            action,
+            source: "default".to_string(),
+            rule_id: Some("default.mcp".to_string()),
+        })
+    }
+
+    pub fn set_mcp_default_permission(
+        &mut self,
+        action: SecurityRuleAction,
+        actor: &str,
+    ) -> Result<ProfileMutationSummary, String> {
+        let action = mcp_permission_action(action)?;
+        let (enforcement_descriptor, enforcement_path, old_hash, old_size, mut rules) =
+            self.load_verified_enforcement_rules()?;
+        let default = rules.default.get_mut("mcp").ok_or_else(|| {
+            "default.mcp rule is required before mutating MCP default permission".to_string()
+        })?;
+        default.action = action;
+        rules.validate()?;
+
+        let serialized = toml::to_string_pretty(&rules)
+            .map_err(|error| format!("serialize enforcement file: {error}"))?;
+        fs::write(&enforcement_path, serialized).map_err(|error| {
+            format!(
+                "write enforcement file {}: {error}",
+                enforcement_path.display()
+            )
+        })?;
+        let (new_hash, new_size) =
+            self.update_enforcement_pin(&enforcement_descriptor.path, &enforcement_path)?;
+        self.save()?;
+
+        Ok(ProfileMutationSummary {
+            profile_id: self.config.id.clone(),
+            actor: actor.to_string(),
+            category: "mcp".to_string(),
+            filename: Path::new(&enforcement_descriptor.path)
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("enforcement.toml")
+                .to_string(),
+            affected_path: enforcement_descriptor.path,
+            target_kind: "mcp_default".to_string(),
+            target_key: "default.mcp".to_string(),
+            operation: "permission".to_string(),
+            rule_id: Some("default.mcp".to_string()),
+            old_hash: format!("blake3:{old_hash}"),
+            old_size,
+            new_hash: format!("blake3:{new_hash}"),
+            new_size,
+        })
+    }
+
     pub fn upsert_profile_rule(
         &mut self,
         rule_id: &str,

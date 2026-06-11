@@ -16,6 +16,14 @@ describe('McpSection route contract', () => {
     expect(source).toContain('setToolPermission(tool, event.currentTarget.value as ToolPermission)');
   });
 
+  it('renders the default MCP permission as the same route-backed rule selector', () => {
+    expect(source).toContain('let defaultPermission = $derived(mcpStore.defaultPermission)');
+    expect(source).toContain('Default MCP permission');
+    expect(source).toContain("defaultPermission.rule_id ?? 'default.mcp'");
+    expect(source).toContain('mcpStore.setDefaultPermission(action)');
+    expect(source).toContain('setDefaultPermission(event.currentTarget.value as ToolPermission)');
+  });
+
   it('greys disabled servers from server.enabled without inventing another policy path', () => {
     expect(source).toContain("server.enabled ? '' : 'opacity-70 bg-muted/20'");
     expect(source).not.toContain('approved');

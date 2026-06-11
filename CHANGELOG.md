@@ -116,6 +116,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Grouped Profile enforcement and detection rule lists into `default_rule`
   and profile/corp sections so built-in catchalls are visible without creating
   a second rule engine.
+- Added a visible MCP default permission selector backed by `default.mcp`.
+  The UI reads and edits `/profiles/{profile_id}/mcp/default/*`, while the
+  service mutates the pinned enforcement file and writes the same profile
+  mutation ledger used by per-tool MCP overrides.
 - Cleaned the admin/doctor/status/debug rails so diagnostics follow the profile
   contract: builder doctor delegates profile validation to `capsem-admin
   profile check`, Justfile asset builds no longer pass legacy guest-config

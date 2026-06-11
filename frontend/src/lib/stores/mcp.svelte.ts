@@ -1,15 +1,18 @@
 // MCP store -- loads profile-owned MCP servers and tools.
 import {
+  getMcpDefaultPermission,
   getMcpServers,
   getMcpTools,
+  updateMcpDefaultPermission,
   updateMcpToolPermission,
   refreshMcpTools,
 } from '../api';
-import type { McpServerInfo, McpToolInfo, ToolPermission } from '../types';
+import type { McpDefaultPermission, McpServerInfo, McpToolInfo, ToolPermission } from '../types';
 
 class McpStore {
   servers = $state<McpServerInfo[]>([]);
   tools = $state<McpToolInfo[]>([]);
+  defaultPermission = $state<McpDefaultPermission | null>(null);
   loading = $state(false);
   error = $state<string | null>(null);
   profileId = $state<string | null>(null);
@@ -43,11 +46,15 @@ class McpStore {
     this.loading = true;
     this.error = null;
     try {
-      const servers = await getMcpServers(profileId);
+      const [servers, defaultPermission] = await Promise.all([
+        getMcpServers(profileId),
+        getMcpDefaultPermission(profileId),
+      ]);
       const toolLists = await Promise.all(
         servers.map((server) => getMcpTools(profileId, server.name)),
       );
       this.servers = servers;
+      this.defaultPermission = defaultPermission;
       this.tools = toolLists.flat();
     } catch (e) {
       console.error('Failed to load MCP data:', e);
@@ -64,6 +71,12 @@ class McpStore {
     if (!target) throw new Error(`MCP tool not loaded: ${tool}`);
     const profileId = this.activeProfileId();
     await updateMcpToolPermission(profileId, target.server_name, target.original_name, action);
+    await this.load(profileId);
+  }
+
+  async setDefaultPermission(action: ToolPermission) {
+    const profileId = this.activeProfileId();
+    await updateMcpDefaultPermission(profileId, action);
     await this.load(profileId);
   }
 

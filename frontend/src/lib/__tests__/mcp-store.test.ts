@@ -32,10 +32,12 @@ const mockTools: McpToolInfo[] = [
 ];
 
 vi.mock('../api', () => ({
+  getMcpDefaultPermission: vi.fn(async () => ({ action: 'allow', source: 'default', rule_id: 'default.mcp' })),
   getMcpServers: vi.fn(async () => mockServers),
   getMcpTools: vi.fn(async (_profileId: string, serverId: string) =>
     mockTools.filter((tool) => tool.server_name === serverId)
   ),
+  updateMcpDefaultPermission: vi.fn(async () => {}),
   updateMcpToolPermission: vi.fn(async () => {}),
   refreshMcpTools: vi.fn(async () => {}),
 }));
@@ -58,6 +60,8 @@ describe('mcpStore', () => {
     expect(mcpStore.profileId).toBe('co-work');
 
     expect(mcpStore.tools).toHaveLength(2);
+    expect(mcpStore.defaultPermission.action).toBe('allow');
+    expect(mcpStore.defaultPermission.rule_id).toBe('default.mcp');
 
     expect('policy' in mcpStore).toBe(false);
 
@@ -81,10 +85,16 @@ describe('mcpStore', () => {
 
   it('does not expose retired policy or unsupported server mutation methods', () => {
     expect('setGlobalPolicy' in mcpStore).toBe(false);
-    expect('setDefaultPermission' in mcpStore).toBe(false);
     expect('toggleServer' in mcpStore).toBe(false);
     expect('addServer' in mcpStore).toBe(false);
     expect('removeServer' in mcpStore).toBe(false);
+  });
+
+  it('setDefaultPermission calls the profile-backed default rule API and reloads', async () => {
+    await mcpStore.load('co-work');
+    await mcpStore.setDefaultPermission('ask');
+    const { updateMcpDefaultPermission } = await import('../api');
+    expect(updateMcpDefaultPermission).toHaveBeenCalledWith('co-work', 'ask');
   });
 
   it('setToolPermission calls the profile-backed rule API and reloads', async () => {
@@ -118,5 +128,6 @@ describe('mcpStore', () => {
 
   it('requires an explicit profile before mutating MCP config', async () => {
     await expect(mcpStore.setToolPermission(mockTools[0], 'block')).rejects.toThrow('profile id');
+    await expect(mcpStore.setDefaultPermission('block')).rejects.toThrow('profile id');
   });
 });

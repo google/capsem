@@ -567,6 +567,126 @@ async fn profile_mcp_tool_edit_writes_profile_rule_and_mutation_ledger() {
     assert_eq!(tools[0]["permission_source"], "profile_managed");
 }
 
+#[tokio::test]
+async fn profile_mcp_default_edit_writes_default_rule_and_mutation_ledger() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+
+    let dir = tempfile::tempdir().unwrap();
+    let (config_root, _) = install_file_asset_profile_fixture(&dir);
+    let _profiles_guard = EnvVarGuard::set("CAPSEM_PROFILES_DIR", config_root.join("profiles"));
+    let _home_guard = EnvVarGuard::set("CAPSEM_HOME", dir.path());
+    capsem_core::mcp::save_tool_cache(&[capsem_core::mcp::ToolCacheEntry {
+        namespaced_name: "local__fetch_http".to_string(),
+        original_name: "fetch_http".to_string(),
+        description: Some("Fetch HTTP".to_string()),
+        server_name: "local".to_string(),
+        annotations: None,
+        pin_hash: "tool-pin".to_string(),
+        first_seen: "2026-06-10T00:00:00Z".to_string(),
+        last_seen: "2026-06-10T00:00:00Z".to_string(),
+        approved: true,
+    }])
+    .expect("write test MCP tool cache");
+    let state = make_asset_state(dir.path().join("assets"));
+    let app = build_service_router(Arc::clone(&state));
+
+    let (status, initial) = route_request(
+        app.clone(),
+        axum::http::Method::GET,
+        "/profiles/code/mcp/default/info",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{initial}");
+    assert_eq!(initial["action"], "allow");
+    assert_eq!(initial["source"], "default");
+    assert_eq!(initial["rule_id"], "default.mcp");
+
+    let (status, edited) = route_request(
+        app.clone(),
+        axum::http::Method::PATCH,
+        "/profiles/code/mcp/default/edit",
+        Some(json!({ "action": "ask" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{edited}");
+    assert_eq!(edited["profile_id"], "code");
+    assert_eq!(edited["action"], "ask");
+    assert_eq!(edited["mutation"]["category"], "mcp");
+    assert_eq!(edited["mutation"]["target_kind"], "mcp_default");
+    assert_eq!(edited["mutation"]["target_key"], "default.mcp");
+    assert_eq!(edited["mutation"]["rule_id"], "default.mcp");
+    assert_eq!(edited["mutation"]["status"], "applied");
+
+    let enforcement = std::fs::read_to_string(config_root.join("profiles/code/enforcement.toml"))
+        .expect("mutated enforcement file");
+    let rule_profile = SecurityRuleProfile::parse_toml(&enforcement).unwrap();
+    let default = rule_profile.default.get("mcp").expect("default mcp rule");
+    assert_eq!(
+        default.action,
+        capsem_core::net::policy_config::SecurityRuleAction::Ask
+    );
+
+    let profile: ProfileConfigFile = toml::from_str(
+        &std::fs::read_to_string(config_root.join("profiles/code/profile.toml")).unwrap(),
+    )
+    .unwrap();
+    let descriptor = profile.files.enforcement.expect("updated enforcement pin");
+    assert_eq!(descriptor.path, "profiles/code/enforcement.toml");
+    assert_eq!(
+        descriptor.hash,
+        format!(
+            "blake3:{}",
+            capsem_core::asset_manager::hash_file(
+                &config_root.join("profiles/code/enforcement.toml")
+            )
+            .unwrap()
+        )
+    );
+
+    let main_db = state.main_db_path();
+    let reader = capsem_logger::DbReader::open(&main_db).expect("main.db mutation ledger");
+    let rows = reader
+        .query_raw(
+            "SELECT profile_id, category, target_kind, target_key, operation, status \
+             FROM profile_mutation_events",
+        )
+        .expect("query profile mutation events");
+    let rows: serde_json::Value = serde_json::from_str(&rows).unwrap();
+    assert_eq!(
+        rows["rows"][0],
+        json!([
+            "code",
+            "mcp",
+            "mcp_default",
+            "default.mcp",
+            "permission",
+            "applied"
+        ])
+    );
+
+    let (status, tools) = route_request(
+        app.clone(),
+        axum::http::Method::GET,
+        "/profiles/code/mcp/servers/local/tools/list",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{tools}");
+    assert_eq!(tools[0]["permission_action"], "ask");
+    assert_eq!(tools[0]["permission_source"], "default");
+
+    let (status, default_info) = route_request(
+        app,
+        axum::http::Method::GET,
+        "/profiles/code/mcp/default/info",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{default_info}");
+    assert_eq!(default_info["action"], "ask");
+}
+
 #[test]
 fn profile_mutation_log_fields_match_ledger_contract() {
     let event = capsem_logger::ProfileMutationEvent {
