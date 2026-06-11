@@ -244,8 +244,12 @@
     for snapshot state. Proof: read-only `sqlite3` inspection of
     `/Users/elie/.capsem/run/persistent/code-mq8jcb45/session.db`.
 - [ ] Implement bug 9 after user resumes coding: design and test DNS policy as
-  first-class enforcement, including deny/ask/default DNS rules, DNS query
-  length/entropy/rate guards, and ledger evidence for suspicious query payloads.
+  first-class enforcement, including deny/ask/default DNS rules and ledger
+  evidence for suspicious query payloads.
+  - [ ] Do not add DNS-local rate limiting. Rate limiting is a general
+    security-rail feature for DNS tunneling, HTTP/MCP abuse, plugin activity,
+    and model/token/cost budgets. Track and implement it through
+    https://github.com/google/capsem/issues/69.
 - [ ] Implement bug 10 after user resumes coding: inventory host VSOCK listener
   exposure, define the allowed guest/host VSOCK contract, and test that raw
   guest access cannot bypass audited service entry points.
