@@ -231,6 +231,14 @@
   same security event as `http.host`, preserve declared custom endpoint support,
   and add adversarial tests proving unknown-domain OpenAI/Gemini/Claude shapes
   are detected without allowing unbounded body capture or host-only bypasses.
+  - [x] Canonical path promotion slice: unknown hosts using first-party model
+    paths such as `/v1/chat/completions`, `/v1/messages`, or Google
+    `generateContent` paths now promote to the matching model protocol so the
+    same event carries `model.provider` and `http.host`.
+  - [ ] Remaining: bounded request/response body-shape sniffing for
+    non-canonical/private gateway paths, plus default detection rules that flag
+    undeclared model endpoints without treating declared custom endpoints as
+    rogue.
 - [ ] Implement bug 25 after user resumes coding: complete broker reuse across
   VM lifecycles. Add broker inventory and grant semantics so accumulated
   credential refs can be exposed per profile and inherited/limited by forked
@@ -437,6 +445,13 @@
     passed; proves frontend API helpers understand plugin detail routes and
     the credential broker detail endpoint.
   - `pnpm --dir frontend check` passed with zero Svelte/TypeScript warnings.
+  - `cargo test -p capsem-core provider_detection_promotes_unknown_host_by_canonical_model_path -- --nocapture`
+    passed; proves canonical OpenAI/Anthropic/Google model paths promote
+    unknown hosts into typed model protocol detection.
+  - `cargo test -p capsem-core --lib net::mitm_proxy::tests:: -- --nocapture`
+    passed; proves the MITM helper suite still keeps unrelated non-AI bodies
+    uncaptured while AI and OAuth paths receive bounded previews.
+  - `cargo check -p capsem-core` passed.
   - `cargo check -p capsem-core -p capsem-logger -p capsem-service` passed.
 - Functional: focused source tests passed; live install not restarted or killed
   per evidence-preservation rule.

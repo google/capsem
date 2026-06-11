@@ -51,7 +51,7 @@ impl<T> TokioReadWrite for T where T: AsyncRead + AsyncWrite {}
 
 use super::cert_authority::{CertAuthority, MitmCertResolver};
 use super::policy::NetworkPolicy;
-use crate::net::ai_traffic::provider::ProviderKind;
+use crate::net::ai_traffic::provider::{route_provider, ProviderKind};
 use crate::security_engine::{HttpSecurityEvent, ModelSecurityEvent, SecurityEvent};
 use body::{BodyStats, ProxyBoxBody, TrackedBody};
 use fd_stream::{set_nonblocking, AsyncFdStream, ReplayReader};
@@ -179,12 +179,21 @@ fn ai_provider_for_target(
     config: &MitmProxyConfig,
     domain: &str,
     upstream_port: u16,
+    path: &str,
 ) -> Option<ProviderKind> {
-    config
-        .model_endpoints
-        .read()
-        .unwrap()
+    let registry = config.model_endpoints.read().unwrap();
+    ai_provider_for_target_or_path(&registry, domain, upstream_port, path)
+}
+
+fn ai_provider_for_target_or_path(
+    registry: &crate::net::policy_config::ModelEndpointRegistry,
+    domain: &str,
+    upstream_port: u16,
+    path: &str,
+) -> Option<ProviderKind> {
+    registry
         .protocol_for_target(domain, upstream_port)
+        .or_else(|| route_provider(path).map(|(provider, _)| provider))
 }
 
 fn provider_label(provider: Option<ProviderKind>) -> &'static str {
@@ -662,7 +671,12 @@ async fn serve_pipeline<IO>(
                 Protocol::McpFrame => unreachable!("framed MCP bypasses HTTP pipeline"),
                 Protocol::Unknown => (String::new(), 0),
             };
-            let ai_provider = ai_provider_for_target(&config_arc, &request_domain, upstream_port);
+            let ai_provider = ai_provider_for_target(
+                &config_arc,
+                &request_domain,
+                upstream_port,
+                req.uri().path(),
+            );
             handle_request(
                 req,
                 &request_domain,
@@ -1961,6 +1975,34 @@ async fn handle_request(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn provider_detection_promotes_unknown_host_by_canonical_model_path() {
+        let registry = crate::net::policy_config::ModelEndpointRegistry::default();
+
+        assert_eq!(
+            ai_provider_for_target_or_path(
+                &registry,
+                "rogue-openai-compatible.example",
+                443,
+                "/v1/chat/completions"
+            ),
+            Some(ProviderKind::OpenAi)
+        );
+        assert_eq!(
+            ai_provider_for_target_or_path(&registry, "unknown.example", 443, "/v1/messages"),
+            Some(ProviderKind::Anthropic)
+        );
+        assert_eq!(
+            ai_provider_for_target_or_path(
+                &registry,
+                "unknown.example",
+                443,
+                "/v1beta/models/gemini-2.5-pro:generateContent"
+            ),
+            Some(ProviderKind::Google)
+        );
+    }
 
     #[test]
     fn body_preview_cap_captures_oauth_broker_candidates_without_body_logging() {
