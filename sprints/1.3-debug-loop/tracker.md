@@ -90,10 +90,10 @@
   should flag `model.provider == "<provider>"` when the host is not a known or
   profile/corp-declared endpoint.
 - [x] Capture bug 25: brokered credentials are not yet a complete next-VM reuse
-  loop. Capture can store opaque credential refs and upstream substitution can
-  rehydrate refs, but AGY/Gemini/Claude/Codex config is not automatically seeded
-  with those refs for the next VM, so OAuth/login dances may repeat even after
-  the broker captured a usable credential.
+  loop. Capture can store opaque credential refs, but AGY/Gemini/Claude/Codex
+  auth flows are not yet satisfied by a broker-owned host-side replay/refresh
+  path, so OAuth/login dances may repeat even after the broker captured the
+  exchange needed to refresh or complete them.
 - [x] Implement bug 1 slice: TDD over CLI purge messaging, service purge of
   defunct persistent VMs, and TUI resume gating from `can_resume`.
 - [x] Implement bug 2 slice: TDD over the checked-in code profile installer so
@@ -216,10 +216,12 @@
   and add adversarial tests proving unknown-domain OpenAI/Gemini/Claude shapes
   are detected without allowing unbounded body capture or host-only bypasses.
 - [ ] Implement bug 25 after user resumes coding: complete broker reuse across
-  VM lifecycles. Add provider/tool adapters that write only opaque broker refs
-  into profile-owned guest config, prove HTTP and MCP reinjection use those refs
-  without exposing raw secrets, and add an AGY/Google OAuth e2e showing a second
-  VM does not redo the OAuth dance when a valid brokered ref exists.
+  VM lifecycles. Add broker/provider adapters that recognize a repeated
+  auth/token-refresh dance from the observed request shape, satisfy or replay
+  the exchange host-side using broker-held secrets, return only the expected
+  provider response to the guest, and add an AGY/Google OAuth e2e showing a
+  second VM does not redo the user-facing OAuth dance when a valid brokered
+  exchange exists.
 
 ## Notes
 
@@ -256,11 +258,16 @@
     never saw the `oauth2.googleapis.com/token` body. Runtime plugin status was
     also a placeholder that always returned zero counters even if broker rows
     existed in session DB.
-  - Broker capture and broker substitution are currently separate primitives:
-    Keychain/test storage plus `credential:blake3:<hash>` refs exist, and HTTP
-    upstream/MCP auth can rehydrate refs when config already carries them. What
-    is missing is the profile-owned adapter that seeds future VM/tool config
-    from captured refs, especially for AGY/Google OAuth.
+  - Broker capture and replay are currently separate primitives: Keychain/test
+    storage plus `credential:blake3:<hash>` refs exist, and some HTTP/MCP
+    paths can rehydrate refs when explicitly configured. What is missing for
+    AGY/Google OAuth is not a guest config file; it is a broker-owned
+    request-shape adapter that recognizes the captured dance and satisfies the
+    token/refresh exchange at the host boundary with structured logging.
+  - Spike shape for bug 25: launch AGY, capture the exact OAuth/token requests
+    and responses, add the minimal host-side replay/refresh adapter, then retry
+    AGY in a fresh VM and prove the guest no longer requires a user-facing auth
+    dance while raw secrets never enter guest config.
   - Process audit may be rendering snapshot collection time for every row
     rather than per-process start time or per-event emission time.
   - Process audit may be mixing inventory/snapshot data with security-event
