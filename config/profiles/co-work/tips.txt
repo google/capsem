@@ -1,0 +1,5 @@
+# Tips shown randomly at login. One tip per line. Lines starting with # are ignored.
+Run capsem-doctor when something feels off.
+Your /root directory is the VM workspace for this profile.
+MCP tools are brokered through Capsem; inspect profile MCP settings on the host.
+Credentials are brokered by Capsem; do not bake secrets into the image.

@@ -53,10 +53,11 @@ describe('mcpStore', () => {
   });
 
   it('loads servers and tools only', async () => {
-    await mcpStore.load();
+    await mcpStore.load('co-work');
 
     expect(mcpStore.servers).toHaveLength(2);
     expect(mcpStore.servers[0].name).toBe('builtin');
+    expect(mcpStore.profileId).toBe('co-work');
 
     expect(mcpStore.tools).toHaveLength(2);
 
@@ -68,7 +69,7 @@ describe('mcpStore', () => {
   });
 
   it('computes derived state', async () => {
-    await mcpStore.load();
+    await mcpStore.load('co-work');
 
     const grouped = mcpStore.toolsByServer;
     expect(grouped['builtin']).toHaveLength(1);
@@ -81,24 +82,24 @@ describe('mcpStore', () => {
   });
 
   it('toggleServer calls API and reloads', async () => {
-    await mcpStore.load();
+    await mcpStore.load('co-work');
     await mcpStore.toggleServer('builtin', false);
     const { updateMcpServer } = await import('../api');
-    expect(updateMcpServer).toHaveBeenCalledWith('code', 'builtin', { enabled: false });
+    expect(updateMcpServer).toHaveBeenCalledWith('co-work', 'builtin', { enabled: false });
   });
 
   it('addServer calls API and reloads', async () => {
-    await mcpStore.load();
+    await mcpStore.load('co-work');
     await mcpStore.addServer('new-srv', 'http://new', { 'X-H': 'v' });
     const { upsertMcpServer } = await import('../api');
-    expect(upsertMcpServer).toHaveBeenCalledWith('code', 'new-srv', 'http://new', { 'X-H': 'v' });
+    expect(upsertMcpServer).toHaveBeenCalledWith('co-work', 'new-srv', 'http://new', { 'X-H': 'v' });
   });
 
   it('removeServer calls API and reloads', async () => {
-    await mcpStore.load();
+    await mcpStore.load('co-work');
     await mcpStore.removeServer('external');
     const { deleteMcpServer } = await import('../api');
-    expect(deleteMcpServer).toHaveBeenCalledWith('code', 'external');
+    expect(deleteMcpServer).toHaveBeenCalledWith('co-work', 'external');
   });
 
   it('does not expose retired policy mutation methods', () => {
@@ -108,31 +109,35 @@ describe('mcpStore', () => {
   });
 
   it('approveTool calls API and reloads', async () => {
-    await mcpStore.load();
+    await mcpStore.load('co-work');
     await mcpStore.approveTool('builtin__http_get');
     const { approveMcpTool } = await import('../api');
-    expect(approveMcpTool).toHaveBeenCalledWith('code', 'builtin', 'http_get');
+    expect(approveMcpTool).toHaveBeenCalledWith('co-work', 'builtin', 'http_get');
   });
 
   it('refresh with server calls API', async () => {
-    await mcpStore.load();
+    await mcpStore.load('co-work');
     await mcpStore.refresh('builtin');
     const { refreshMcpTools } = await import('../api');
-    expect(refreshMcpTools).toHaveBeenCalledWith('code', 'builtin');
+    expect(refreshMcpTools).toHaveBeenCalledWith('co-work', 'builtin');
   });
 
   it('refresh without server refreshes each loaded server', async () => {
-    await mcpStore.load();
+    await mcpStore.load('co-work');
     await mcpStore.refresh();
     const { refreshMcpTools } = await import('../api');
-    expect(refreshMcpTools).toHaveBeenCalledWith('code', 'builtin');
-    expect(refreshMcpTools).toHaveBeenCalledWith('code', 'external');
+    expect(refreshMcpTools).toHaveBeenCalledWith('co-work', 'builtin');
+    expect(refreshMcpTools).toHaveBeenCalledWith('co-work', 'external');
   });
 
   it('handles load error', async () => {
     const { getMcpServers } = await import('../api');
     (getMcpServers as any).mockRejectedValueOnce(new Error('boom'));
-    await mcpStore.load();
+    await mcpStore.load('co-work');
     expect(mcpStore.error).toContain('boom');
+  });
+
+  it('requires an explicit profile before mutating MCP config', async () => {
+    await expect(mcpStore.toggleServer('builtin', false)).rejects.toThrow('profile id');
   });
 });

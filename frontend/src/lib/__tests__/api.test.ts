@@ -1098,16 +1098,16 @@ describe('api', () => {
   });
 
   describe('reloadProfile', () => {
-    it('sends POST /profiles/code/reload by default', async () => {
+    it('sends POST /profiles/{profile_id}/reload', async () => {
       mockFetch
         .mockReturnValueOnce(jsonResponse({ ok: true, version: '1.0.0', service_socket: '/tmp/s' }))
         .mockReturnValueOnce(jsonResponse({ token: 'tok' }));
       await api.init();
 
       mockFetch.mockReturnValueOnce(jsonResponse(null));
-      await api.reloadProfile();
+      await api.reloadProfile('co-work');
       const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
-      expect(call[0]).toContain('/profiles/code/reload');
+      expect(call[0]).toContain('/profiles/co-work/reload');
       expect(call[1].method).toBe('POST');
     });
   });

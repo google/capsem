@@ -44,7 +44,7 @@ struct ProfileCommand {
 
 #[derive(Debug, Subcommand)]
 enum ProfileSubcommand {
-    Init(InitArgs),
+    Init(ProfileInitArgs),
     Validate(ProfileValidateArgs),
     Check(ProfileCheckArgs),
     Materialize(ProfileMaterializeArgs),
@@ -154,6 +154,31 @@ struct ProfileMaterializeArgs {
     /// Emit a machine-readable materialization report.
     #[arg(long)]
     json: bool,
+}
+
+#[derive(Debug, Parser)]
+struct ProfileInitArgs {
+    /// Destination profile TOML to create.
+    #[arg(long)]
+    output: PathBuf,
+    /// Replace an existing destination profile and copied payloads.
+    #[arg(long)]
+    force: bool,
+    /// Profile id to write. Defaults to the source profile id.
+    #[arg(long)]
+    id: Option<String>,
+    /// Profile display name to write. Defaults to the source profile name.
+    #[arg(long)]
+    name: Option<String>,
+    /// Profile description to write. Defaults to the source profile description.
+    #[arg(long)]
+    description: Option<String>,
+    /// Optional SVG icon override.
+    #[arg(long)]
+    icon_svg: Option<String>,
+    /// Source profile TOML to clone payloads from.
+    #[arg(long = "from")]
+    from_profile: Option<PathBuf>,
 }
 
 #[derive(Debug, Parser)]
@@ -564,7 +589,7 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Commands::Profile(command) => match command.command {
-            ProfileSubcommand::Init(args) => init_file_command(args, CODE_PROFILE_TEMPLATE),
+            ProfileSubcommand::Init(args) => init_profile_command(args),
             ProfileSubcommand::Validate(args) => validate_profile_command(args),
             ProfileSubcommand::Check(args) => profile_check_command(args),
             ProfileSubcommand::Materialize(args) => profile_materialize_command(args),
@@ -609,6 +634,195 @@ fn init_file_command(args: InitArgs, template: &str) -> Result<()> {
     fs::write(&args.output, template)
         .with_context(|| format!("write {}", args.output.display()))?;
     println!("wrote {}", args.output.display());
+    Ok(())
+}
+
+fn init_profile_command(args: ProfileInitArgs) -> Result<()> {
+    if args.output.exists() && !args.force {
+        return Err(anyhow!(
+            "refusing to overwrite existing file {}; pass --force to replace it",
+            args.output.display()
+        ));
+    }
+
+    let source_profile_path = args
+        .from_profile
+        .clone()
+        .unwrap_or_else(|| PathBuf::from("config/profiles/code/profile.toml"));
+    let source_profile_dir = source_profile_path.parent().ok_or_else(|| {
+        anyhow!(
+            "source profile path {} has no parent directory",
+            source_profile_path.display()
+        )
+    })?;
+    let source_config_root = infer_config_root(&source_profile_path)?;
+    let mut profile = if args.from_profile.is_some() {
+        load_profile(&source_profile_path)?
+    } else {
+        toml::from_str::<ProfileConfigFile>(CODE_PROFILE_TEMPLATE)
+            .context("parse built-in code profile template")?
+    };
+
+    let target_profile_dir = args.output.parent().ok_or_else(|| {
+        anyhow!(
+            "output profile path {} has no parent directory",
+            args.output.display()
+        )
+    })?;
+    let target_config_root = infer_config_root(&args.output)?;
+    let target_id = args.id.unwrap_or_else(|| profile.id.clone());
+    profile.id = target_id.clone();
+    if let Some(name) = args.name {
+        profile.name = name;
+    }
+    if let Some(description) = args.description {
+        profile.description = description;
+    }
+    if let Some(icon_svg) = args.icon_svg {
+        profile.icon_svg = Some(icon_svg);
+    }
+    rewrite_profile_owned_paths(&mut profile, &target_id);
+    profile
+        .validate()
+        .map_err(|error| anyhow!("validate initialized profile: {error}"))?;
+
+    if let Some(from_profile) = args.from_profile.as_ref() {
+        copy_profile_payloads(
+            from_profile,
+            source_profile_dir,
+            &source_config_root,
+            target_profile_dir,
+            &target_config_root,
+            &profile,
+            args.force,
+        )?;
+    } else if let Some(parent) = args.output.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("create parent directory {}", parent.display()))?;
+    }
+
+    fs::write(
+        &args.output,
+        toml::to_string_pretty(&profile).context("serialize initialized profile")?,
+    )
+    .with_context(|| format!("write {}", args.output.display()))?;
+    println!("wrote {}", args.output.display());
+    Ok(())
+}
+
+fn rewrite_profile_owned_paths(profile: &mut ProfileConfigFile, profile_id: &str) {
+    if profile.rule_files.enforcement.is_some() {
+        profile.rule_files.enforcement = Some(format!("profiles/{profile_id}/enforcement.toml"));
+    }
+    if profile.rule_files.sigma.is_some() {
+        profile.rule_files.sigma = Some(format!("profiles/{profile_id}/detection.yaml"));
+    }
+    rewrite_descriptor_path(
+        &mut profile.files.enforcement,
+        profile_id,
+        "enforcement.toml",
+    );
+    rewrite_descriptor_path(&mut profile.files.detection, profile_id, "detection.yaml");
+    rewrite_descriptor_path(&mut profile.files.mcp, profile_id, "mcp.json");
+    rewrite_descriptor_path(
+        &mut profile.files.apt_packages,
+        profile_id,
+        "apt-packages.txt",
+    );
+    rewrite_descriptor_path(
+        &mut profile.files.python_requirements,
+        profile_id,
+        "python-requirements.txt",
+    );
+    rewrite_descriptor_path(
+        &mut profile.files.npm_packages,
+        profile_id,
+        "npm-packages.txt",
+    );
+    rewrite_descriptor_path(&mut profile.files.install, profile_id, "install.sh");
+    rewrite_descriptor_path(&mut profile.files.tips, profile_id, "tips.txt");
+    rewrite_descriptor_path(
+        &mut profile.files.root_manifest,
+        profile_id,
+        "root.manifest.json",
+    );
+}
+
+fn rewrite_descriptor_path(
+    descriptor: &mut Option<capsem_core::net::policy_config::ProfileFileDescriptor>,
+    profile_id: &str,
+    filename: &str,
+) {
+    if let Some(descriptor) = descriptor {
+        descriptor.path = format!("profiles/{profile_id}/{filename}");
+    }
+}
+
+fn copy_profile_payloads(
+    source_profile_path: &Path,
+    source_profile_dir: &Path,
+    source_config_root: &Path,
+    target_profile_dir: &Path,
+    target_config_root: &Path,
+    target_profile: &ProfileConfigFile,
+    force: bool,
+) -> Result<()> {
+    if target_profile_dir.exists() && !force {
+        return Err(anyhow!(
+            "refusing to overwrite existing profile directory {}; pass --force to replace it",
+            target_profile_dir.display()
+        ));
+    }
+    fs::create_dir_all(target_profile_dir)
+        .with_context(|| format!("create {}", target_profile_dir.display()))?;
+
+    let source_profile = load_profile(source_profile_path)?;
+    let mut copied = std::collections::BTreeSet::new();
+    for (kind, source_descriptor) in source_profile.files.iter() {
+        let Some((_, target_descriptor)) = target_profile
+            .files
+            .iter()
+            .find(|(target_kind, _)| *target_kind == kind)
+        else {
+            continue;
+        };
+        let source = source_config_root.join(&source_descriptor.path);
+        let target = target_config_root.join(&target_descriptor.path);
+        if source.is_dir() {
+            copy_dir_recursive(&source, &target)?;
+        } else {
+            if target.exists() && !force {
+                return Err(anyhow!(
+                    "refusing to overwrite existing profile payload {}; pass --force to replace it",
+                    target.display()
+                ));
+            }
+            if let Some(parent) = target.parent() {
+                fs::create_dir_all(parent)
+                    .with_context(|| format!("create {}", parent.display()))?;
+            }
+            fs::copy(&source, &target)
+                .with_context(|| format!("copy {} to {}", source.display(), target.display()))?;
+        }
+        copied.insert(kind.to_string());
+    }
+
+    let source_root = source_profile_dir.join("root");
+    if source_root.is_dir() {
+        let target_root = target_profile_dir.join("root");
+        if target_root.exists() && force {
+            fs::remove_dir_all(&target_root)
+                .with_context(|| format!("remove {}", target_root.display()))?;
+        }
+        copy_dir_recursive(&source_root, &target_root)?;
+        copied.insert("root".to_string());
+    }
+    if copied.is_empty() {
+        return Err(anyhow!(
+            "source profile {} did not expose payload files to copy",
+            source_profile_path.display()
+        ));
+    }
     Ok(())
 }
 
@@ -2366,13 +2580,15 @@ code = true
             .expect("repo root");
         let temp = tempfile::tempdir().expect("tempdir");
         let profile_path = temp.path().join("profile.toml");
-        init_file_command(
-            InitArgs {
-                output: profile_path.clone(),
-                force: false,
-            },
-            CODE_PROFILE_TEMPLATE,
-        )
+        init_profile_command(ProfileInitArgs {
+            output: profile_path.clone(),
+            force: false,
+            id: None,
+            name: None,
+            description: None,
+            icon_svg: None,
+            from_profile: None,
+        })
         .expect("profile init");
 
         let profile: ProfileConfigFile =
@@ -2415,6 +2631,71 @@ code = true
                     && rule.action.as_str() == "allow"),
             "profile default HTTP allow rule must compile"
         );
+    }
+
+    #[test]
+    fn profile_init_clones_payloads_with_new_identity_through_admin_rail() {
+        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let repo_root = manifest_dir
+            .parent()
+            .and_then(Path::parent)
+            .expect("repo root");
+        let source_profile = repo_root.join("config/profiles/code/profile.toml");
+        let temp = tempfile::tempdir().expect("tempdir");
+        let config_root = temp.path().join("config");
+        let profile_path = config_root.join("profiles/co-work/profile.toml");
+
+        init_profile_command(ProfileInitArgs {
+            output: profile_path.clone(),
+            force: false,
+            id: Some("co-work".to_string()),
+            name: Some("Co-work".to_string()),
+            description: Some("Shared profile for collaborative agent sessions.".to_string()),
+            icon_svg: None,
+            from_profile: Some(source_profile),
+        })
+        .expect("profile init");
+
+        let profile: ProfileConfigFile =
+            toml::from_str(&fs::read_to_string(&profile_path).expect("read profile"))
+                .expect("profile parses");
+        assert_eq!(profile.id, "co-work");
+        assert_eq!(profile.name, "Co-work");
+        assert_eq!(
+            profile.rule_files.enforcement.as_deref(),
+            Some("profiles/co-work/enforcement.toml")
+        );
+        assert_eq!(
+            profile
+                .files
+                .mcp
+                .as_ref()
+                .map(|descriptor| descriptor.path.as_str()),
+            Some("profiles/co-work/mcp.json")
+        );
+        assert!(config_root
+            .join("profiles/co-work/enforcement.toml")
+            .is_file());
+        assert!(config_root
+            .join("profiles/co-work/detection.yaml")
+            .is_file());
+        assert!(config_root.join("profiles/co-work/mcp.json").is_file());
+        assert!(config_root
+            .join("profiles/co-work/root/root/.mcp.json")
+            .is_file());
+
+        let validation =
+            validate_profile(&profile_path, Some(&config_root)).expect("profile validates");
+        assert_eq!(validation.profile_id, "co-work");
+        let check = check_profile(&ProfileCheckArgs {
+            path: profile_path,
+            config_root: Some(config_root),
+            arch: None,
+            json: true,
+        })
+        .expect("profile payloads check");
+        assert!(check.ok);
+        assert!(check.profile_files.iter().all(|file| file.present));
     }
 
     #[test]

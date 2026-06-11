@@ -1,0 +1,15 @@
+pytest
+numpy
+requests
+httpx
+pandas
+scipy
+scikit-learn
+matplotlib
+pillow
+pyyaml
+beautifulsoup4
+lxml
+tqdm
+rich
+fastmcp

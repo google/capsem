@@ -1006,7 +1006,8 @@ async fn gateway_provider_reuses_token_across_status_refreshes() {
     provider.load_async().await.expect("initial load");
     let refreshed = provider.load_async().await.expect("refresh load");
     assert_eq!(refreshed.profiles.len(), 2);
-    assert_eq!(refreshed.profiles[0].id, "corp-default");
+    assert_eq!(refreshed.profiles[0].id, "code");
+    assert_eq!(refreshed.profiles[1].id, "co-work");
     assert!(
         !refreshed.profiles.iter().any(|profile| profile.is_default),
         "current /profiles/list does not expose a default; TUI must not invent one"
@@ -1046,7 +1047,7 @@ async fn gateway_provider_only_offers_tui_launchable_profiles() {
         .expect("load state over gateway");
 
     assert_eq!(state.profiles.len(), 1);
-    assert_eq!(state.profiles[0].id, "corp-default");
+    assert_eq!(state.profiles[0].id, "code");
 
     server.await.expect("server task");
 }
@@ -1108,7 +1109,7 @@ async fn gateway_provider_invokes_named_profile_create_over_authenticated_gatewa
                 );
                 assert!(request.contains(r#""name":"tmp-1-proof""#));
                 assert!(request.contains(r#""persistent":true"#));
-                assert!(request.contains(r#""profile_id":"linux-builder""#));
+                assert!(request.contains(r#""profile_id":"co-work""#));
                 write_json_response(&mut stream, r#"{"id":"tmp-1-proof"}"#).await;
             }
         }
@@ -1117,7 +1118,7 @@ async fn gateway_provider_invokes_named_profile_create_over_authenticated_gatewa
     let outcome = GatewayProvider::new(format!("http://{addr}"))
         .invoke_async(&ControlAction::CreateSession {
             name: "tmp-1-proof".to_string(),
-            profile_id: "linux-builder".to_string(),
+            profile_id: "co-work".to_string(),
         })
         .await
         .expect("invoke create");
@@ -1482,20 +1483,20 @@ fn gateway_profiles_body() -> &'static str {
     r#"{
         "profiles": [
             {
-                "id": "corp-default",
-                "name": "Corp Default",
-                "description": "default profile",
+                "id": "code",
+                "name": "Code",
+                "description": "Optimized for coding and long-running agents.",
                 "availability": { "web": true, "shell": true, "mobile": false },
-                "source": "corp",
+                "source": "profile",
                 "rule_count": 3,
                 "default_rule_count": 2,
                 "plugin_count": 1,
                 "mcp_server_count": 1
             },
             {
-                "id": "linux-builder",
-                "name": "Linux Builder",
-                "description": "kernel and distro work",
+                "id": "co-work",
+                "name": "Co-work",
+                "description": "Shared profile for collaborative agent sessions.",
                 "availability": { "web": true, "shell": true, "mobile": false },
                 "source": "profile",
                 "rule_count": 4,
@@ -1511,11 +1512,11 @@ fn gateway_profiles_with_unlaunchable_body() -> &'static str {
     r#"{
         "profiles": [
             {
-                "id": "corp-default",
-                "name": "Corp Default",
-                "description": "default profile",
+                "id": "code",
+                "name": "Code",
+                "description": "Optimized for coding and long-running agents.",
                 "availability": { "web": true, "shell": true, "mobile": false },
-                "source": "corp",
+                "source": "profile",
                 "rule_count": 3,
                 "default_rule_count": 2,
                 "plugin_count": 1,

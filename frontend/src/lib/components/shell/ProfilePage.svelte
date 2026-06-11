@@ -1,12 +1,14 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import {
+    listProfiles,
     getProfileInfo,
     getProfileAssetsInfo,
     listEnforcementRules,
     listDetectionRules,
     type EnforcementRuleInfo,
     type ProfileInfoResponse,
+    type ProfileSummary,
   } from '../../api';
   import McpSection from '../settings/McpSection.svelte';
   import PluginSection from '../settings/PluginSection.svelte';
@@ -15,10 +17,10 @@
   import HardDrives from 'phosphor-svelte/lib/HardDrives';
   import IdentificationCard from 'phosphor-svelte/lib/IdentificationCard';
 
-  const PROFILE_ID = 'code';
-
   type Section = 'overview' | 'policy' | 'plugins' | 'mcp' | 'assets';
   let activeSection = $state<Section>('overview');
+  let profiles = $state<ProfileSummary[]>([]);
+  let profileId = $state('');
   let loading = $state(true);
   let error = $state<string | null>(null);
   let profile = $state<ProfileInfoResponse | null>(null);
@@ -42,11 +44,27 @@
     loading = true;
     error = null;
     try {
+      const profileList = await listProfiles();
+      profiles = profileList.profiles;
+      const activeProfileId = profileId || profiles[0]?.id;
+      if (!activeProfileId) throw new Error('No profiles available');
+      profileId = activeProfileId;
+      await loadProfile(activeProfileId);
+    } catch (err) {
+      error = String(err instanceof Error ? err.message : err);
+    } finally {
+      loading = false;
+    }
+  }
+
+  async function loadProfile(activeProfileId: string) {
+    error = null;
+    try {
       const [profileResult, assetsResult, enforcementResult, detectionResult] = await Promise.all([
-        getProfileInfo(PROFILE_ID),
-        getProfileAssetsInfo(PROFILE_ID),
-        listEnforcementRules(PROFILE_ID),
-        listDetectionRules(PROFILE_ID),
+        getProfileInfo(activeProfileId),
+        getProfileAssetsInfo(activeProfileId),
+        listEnforcementRules(activeProfileId),
+        listDetectionRules(activeProfileId),
       ]);
       profile = profileResult;
       assetsInfo = assetsResult;
@@ -54,6 +72,17 @@
       detectionRules = detectionResult.rules;
     } catch (err) {
       error = String(err instanceof Error ? err.message : err);
+    } finally {
+      loading = false;
+    }
+  }
+
+  async function selectProfile(nextProfileId: string) {
+    if (!nextProfileId || nextProfileId === profileId) return;
+    profileId = nextProfileId;
+    loading = true;
+    try {
+      await loadProfile(nextProfileId);
     } finally {
       loading = false;
     }
@@ -67,6 +96,21 @@
 <div class="flex h-full">
   <aside class="w-56 shrink-0 border-e border-line-2 bg-background overflow-y-auto py-4">
     <h1 class="text-xl font-bold text-foreground px-5 mb-4">Profile</h1>
+    {#if profiles.length > 0}
+      <div class="px-3 mb-4">
+        <label for="profile-select" class="text-xs font-semibold text-muted-foreground-1 uppercase tracking-wider block mb-1">Profile</label>
+        <select
+          id="profile-select"
+          class="w-full py-2 px-3 text-sm rounded-lg border border-line-2 bg-layer text-foreground focus:outline-hidden focus:border-primary"
+          value={profileId}
+          onchange={(event) => selectProfile((event.target as HTMLSelectElement).value)}
+        >
+          {#each profiles as option (option.id)}
+            <option value={option.id}>{option.name}</option>
+          {/each}
+        </select>
+      </div>
+    {/if}
     <nav class="space-y-0.5 px-3">
       {#each navItems as item (item.key)}
         <button
@@ -181,9 +225,9 @@
             </section>
           </div>
         {:else if activeSection === 'plugins'}
-          <PluginSection />
+          <PluginSection {profileId} />
         {:else if activeSection === 'mcp'}
-          <McpSection />
+          <McpSection {profileId} />
         {:else if activeSection === 'assets'}
           <h2 class="text-xl font-medium text-foreground mb-6">Assets</h2>
           <pre class="bg-card border border-card-line rounded-xl p-4 text-xs text-foreground overflow-auto">{JSON.stringify(assetsInfo, null, 2)}</pre>

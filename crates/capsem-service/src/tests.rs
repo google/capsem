@@ -831,6 +831,41 @@ fn profile_catalog_status_reports_directory_catalog_readiness() {
     );
 }
 
+#[test]
+fn checked_in_profile_catalog_status_reports_code_and_co_work() {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let repo_root = manifest_dir
+        .parent()
+        .and_then(std::path::Path::parent)
+        .expect("repo root");
+    let profiles_dir = repo_root.join("config/profiles");
+    let catalog = ProfileCatalog::load_from_dir(&profiles_dir).expect("checked-in catalog loads");
+    let state = make_asset_state(repo_root.join("target/test-empty-assets"));
+
+    let status = profile_catalog_status_value(&state, &catalog);
+    let profile_ids = status["profiles"]
+        .as_array()
+        .expect("profiles array")
+        .iter()
+        .map(|profile| profile["id"].as_str().expect("profile id").to_string())
+        .collect::<Vec<_>>();
+
+    assert_eq!(status["profile_count"], 2);
+    assert!(profile_ids.contains(&"code".to_string()), "{profile_ids:?}");
+    assert!(
+        profile_ids.contains(&"co-work".to_string()),
+        "{profile_ids:?}"
+    );
+    for profile in status["profiles"].as_array().expect("profiles array") {
+        assert!(
+            profile["profile_payload_hash"]
+                .as_str()
+                .is_some_and(|hash| hash.starts_with("blake3:")),
+            "profile status must expose payload hash: {profile}"
+        );
+    }
+}
+
 #[tokio::test]
 async fn handle_profiles_reload_reports_active_catalog_status() {
     let (state, _dir) = make_test_state_with_tempdir();

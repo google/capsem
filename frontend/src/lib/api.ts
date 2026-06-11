@@ -615,7 +615,7 @@ export async function getImages(): Promise<{ images: { name: string }[] }> {
 
 // -- Config --
 
-export async function reloadProfile(profileId = 'code'): Promise<void> {
+export async function reloadProfile(profileId: string): Promise<void> {
   await _post(`/profiles/${encodeURIComponent(profileId)}/reload`);
 }
 
@@ -1177,13 +1177,13 @@ export async function callMcpTool(
 import type { AssetStatusResponse } from './types/assets';
 
 /** Get first-class VM asset status. */
-export async function getAssetsStatus(profileId = 'code'): Promise<AssetStatusResponse> {
+export async function getAssetsStatus(profileId: string): Promise<AssetStatusResponse> {
   const resp = await _get(`/profiles/${encodeURIComponent(profileId)}/assets/status`);
   return await resp.json();
 }
 
 /** Ensure missing/corrupt VM assets, then return refreshed status. */
-export async function ensureAssets(profileId = 'code'): Promise<AssetStatusResponse> {
+export async function ensureAssets(profileId: string): Promise<AssetStatusResponse> {
   const resp = await _post(`/profiles/${encodeURIComponent(profileId)}/assets/ensure`, {});
   return await resp.json();
 }

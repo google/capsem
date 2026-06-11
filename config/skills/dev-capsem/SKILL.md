@@ -59,6 +59,7 @@ When working on a specific area, consult the relevant skill:
 | `/dev-debugging` | Bug investigation workflow |
 | `/dev-rust-patterns` | Async, cross-compile, error handling |
 | `/dev-capsem-doctor` | In-VM diagnostic suite |
+| `/dev-capsem-admin` | Profile/admin rail, generated config, profile payload pins |
 | `/dev-installation` | Service registration, self-update, package install tests |
 | `/dev-setup` | New developer onboarding |
 | `/dev-skills` | Skills system internals |

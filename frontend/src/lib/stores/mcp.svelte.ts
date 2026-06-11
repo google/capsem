@@ -10,13 +10,12 @@ import {
 } from '../api';
 import type { McpServerInfo, McpToolInfo } from '../types';
 
-const PROFILE_ID = 'code';
-
 class McpStore {
   servers = $state<McpServerInfo[]>([]);
   tools = $state<McpToolInfo[]>([]);
   loading = $state(false);
   error = $state<string | null>(null);
+  profileId = $state<string | null>(null);
 
   /** Tools grouped by server_name. */
   toolsByServer = $derived.by(() => {
@@ -37,13 +36,19 @@ class McpStore {
   /** Number of running servers. */
   runningCount = $derived(this.servers.filter((s) => s.running).length);
 
-  async load() {
+  private activeProfileId(): string {
+    if (!this.profileId) throw new Error('MCP profile id is not loaded');
+    return this.profileId;
+  }
+
+  async load(profileId: string) {
+    this.profileId = profileId;
     this.loading = true;
     this.error = null;
     try {
-      const servers = await getMcpServers(PROFILE_ID);
+      const servers = await getMcpServers(profileId);
       const toolLists = await Promise.all(
-        servers.map((server) => getMcpTools(PROFILE_ID, server.name)),
+        servers.map((server) => getMcpTools(profileId, server.name)),
       );
       this.servers = servers;
       this.tools = toolLists.flat();
@@ -56,18 +61,21 @@ class McpStore {
   }
 
   async toggleServer(name: string, enabled: boolean) {
-    await updateMcpServer(PROFILE_ID, name, { enabled });
-    await this.load();
+    const profileId = this.activeProfileId();
+    await updateMcpServer(profileId, name, { enabled });
+    await this.load(profileId);
   }
 
   async addServer(name: string, url: string, headers: Record<string, string>) {
-    await upsertMcpServer(PROFILE_ID, name, url, headers);
-    await this.load();
+    const profileId = this.activeProfileId();
+    await upsertMcpServer(profileId, name, url, headers);
+    await this.load(profileId);
   }
 
   async removeServer(name: string) {
-    await deleteMcpServer(PROFILE_ID, name);
-    await this.load();
+    const profileId = this.activeProfileId();
+    await deleteMcpServer(profileId, name);
+    await this.load(profileId);
   }
 
   async approveTool(tool: McpToolInfo | string) {
@@ -75,14 +83,16 @@ class McpStore {
       ? this.tools.find((candidate) => candidate.namespaced_name === tool || candidate.original_name === tool)
       : tool;
     if (!target) throw new Error(`MCP tool not loaded: ${tool}`);
-    await approveMcpTool(PROFILE_ID, target.server_name, target.original_name);
-    await this.load();
+    const profileId = this.activeProfileId();
+    await approveMcpTool(profileId, target.server_name, target.original_name);
+    await this.load(profileId);
   }
 
   async refresh(server?: string) {
+    const profileId = this.activeProfileId();
     const serverIds = server ? [server] : this.servers.map((entry) => entry.name);
-    await Promise.all(serverIds.map((serverId) => refreshMcpTools(PROFILE_ID, serverId)));
-    await this.load();
+    await Promise.all(serverIds.map((serverId) => refreshMcpTools(profileId, serverId)));
+    await this.load(profileId);
   }
 }
 

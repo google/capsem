@@ -10,10 +10,12 @@
   import WarningCircle from 'phosphor-svelte/lib/WarningCircle';
   import X from 'phosphor-svelte/lib/X';
 
+  let { profileId } = $props<{ profileId: string }>();
   let servers = $derived(mcpStore.servers);
   let userServers = $derived(servers.filter(s => s.source !== 'builtin'));
   let builtinServers = $derived(servers.filter(s => s.source === 'builtin'));
   let actionError = $state<string | null>(null);
+  let loadedProfileId = $state<string | null>(null);
 
   // Runtime status lookup by server name
   let runtimeByName = $derived.by(() => {
@@ -42,7 +44,17 @@
   let canAdd = $derived(newName.trim().length > 0 && newUrl.trim().length > 0);
 
   onMount(() => {
-    mcpStore.load();
+    if (profileId) {
+      loadedProfileId = profileId;
+      void mcpStore.load(profileId);
+    }
+  });
+
+  $effect(() => {
+    if (profileId && profileId !== loadedProfileId) {
+      loadedProfileId = profileId;
+      void mcpStore.load(profileId);
+    }
   });
 
   function resetForm() {

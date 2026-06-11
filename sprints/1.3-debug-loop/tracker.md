@@ -169,6 +169,30 @@
   route-backed and multi-profile aware in the UI, using select controls for the
   profile enum/list; add a real `co-work` profile fixture if needed to prevent
   single-profile assumptions from creeping back in.
+  - [x] Admin rail guard: add/use `/dev-capsem-admin`, and create the second
+    profile only through `capsem-admin`; no hand-copied profile directory as
+    proof.
+    Proof: `cargo test -p capsem-admin profile_init -- --nocapture`; actual
+    profile created with `cargo run -p capsem-admin -- profile init --output
+    config/profiles/co-work/profile.toml --id co-work --name 'Co-work'
+    --description 'Shared profile for collaborative agent sessions.' --from
+    config/profiles/code/profile.toml`.
+  - [x] Service/status proof: checked-in config catalog exposes both `code` and
+    `co-work`, with validated payload pins and status/readiness data.
+    Proof: `cargo run -p capsem-admin -- profile validate
+    config/profiles/code/profile.toml --config-root config --json`; same for
+    `co-work`; `cargo test -p capsem-service profile -- --nocapture`.
+  - [x] UI proof: profile/settings surfaces pass selected profile ids into
+    plugins, MCP, enforcement, detection, assets, and credential broker detail
+    routes; no `code` fallback in those surfaces.
+    Proof: `pnpm --dir frontend test -- --run
+    frontend/src/lib/__tests__/mcp-store.test.ts
+    frontend/src/lib/__tests__/api.test.ts
+    frontend/src/lib/__tests__/settings-store.test.ts`; `pnpm --dir frontend
+    check`; hardcode scan for profile-less calls returned empty.
+  - [x] TUI/CLI proof: status and shell/profile selection paths list both
+    profile-backed options and do not synthesize defaults.
+    Proof: `cargo test -p capsem-tui gateway_provider_ -- --nocapture`.
 - [ ] Implement bug 13 after user resumes coding: burn/rename the generic
   `Policy` UI surface and replace it with route-backed enforcement, detection,
   and plugin views that list rules/plugins from the contract, show source files

@@ -35,16 +35,6 @@ class VmStore {
       this.vms = status.vms;
       this.resourceSummary = status.resource_summary;
       this.serviceStatus = status.service;
-      try {
-        this.assetHealth = await api.getAssetsStatus();
-      } catch (e) {
-        this.assetHealth = {
-          ready: false,
-          downloading: false,
-          assets: [],
-          error: assetStatusError(e),
-        };
-      }
       this.polled = true;
       this.error = null;
       // Only log state transitions, not every 2s poll.
@@ -160,10 +150,10 @@ class VmStore {
     }
   }
 
-  async ensureAssets(): Promise<void> {
+  async ensureAssets(profileId: string): Promise<void> {
     this.acting = true;
     try {
-      this.assetHealth = await api.ensureAssets();
+      this.assetHealth = await api.ensureAssets(profileId);
       await this.refresh();
     } finally {
       this.acting = false;
