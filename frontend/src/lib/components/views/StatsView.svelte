@@ -408,7 +408,7 @@
         <div class="grid grid-cols-4 gap-3 mb-6">
           <MetricCard label="Exec Events" value={processRows.length.toLocaleString()} />
           <MetricCard label="Failures" value={processFailures.toLocaleString()} tone="danger" />
-          <MetricCard label="Audit Events" value={auditRows.length.toLocaleString()} />
+          <MetricCard label="Process Observations" value={auditRows.length.toLocaleString()} />
           <MetricCard label="Substitutions" value={substitutionRows.length.toLocaleString()} />
         </div>
         <StatsEventList title="Process Exec Events" rows={processRows} columns={['Time', 'Source', 'Command', 'Exit', 'Duration']} onrow={(row) => detail = { type: 'process', data: row }}>
@@ -420,7 +420,10 @@
             <td class="px-4 py-2 text-right text-muted-foreground">{row.duration_ms != null ? formatDuration(number(row.duration_ms)) : '--'}</td>
           {/snippet}
         </StatsEventList>
-        <StatsEventList title="Process Audit Events" rows={auditRows} columns={['Time', 'Exe', 'PID', 'Parent', 'Exit']} onrow={(row) => detail = { type: 'process audit', data: row }}>
+        <div class="mb-2 text-xs text-muted-foreground-1">
+          Process observations are audit-port process records; command executions are listed separately above.
+        </div>
+        <StatsEventList title="Process Observations" rows={auditRows} columns={['Observed', 'Exe', 'PID', 'Parent', 'Exit']} onrow={(row) => detail = { type: 'process observation', data: row }}>
           {#snippet children(row: any)}
             <td class="px-4 py-2 text-muted-foreground">{formatTime(row.timestamp)}</td>
             <td class="px-4 py-2 font-mono text-xs text-foreground max-w-xl truncate">{row.exe}</td>

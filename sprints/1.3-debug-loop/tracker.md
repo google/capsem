@@ -141,6 +141,15 @@
   supposed to represent, fix timestamp semantics if it is a snapshot, and rename
   or reshape the UI so it reflects the actual data contract rather than a vague
   audit label.
+  - [x] Process Stats wording slice: the Stats process tab now labels
+    `audit_events` as audit-port `Process Observations`, keeps command
+    executions separate as `Process Exec Events`, and uses `process
+    observation` as the detail type.
+    Proof: `pnpm --dir frontend test -- --run
+    frontend/src/lib/__tests__/stats-view-contract.test.ts`; `pnpm --dir
+    frontend check`.
+  - [ ] Remaining: inspect live timestamps/provenance for repeated same-time
+    rows and decide whether producer semantics need changes beyond UI wording.
 - [x] Implement bug 6 slice: classify headline MCP stats so user-facing totals
   count only user tool calls (`tools/call`) and exclude protocol handshakes,
   `tools/list`, and builtin snapshot maintenance while raw rows remain in
@@ -618,6 +627,11 @@
     Profile overview update; proves overview reads route-backed surface
     availability and broker-visible credential inventory instead of inventing
     profile status text.
+  - `pnpm --dir frontend test -- --run
+    frontend/src/lib/__tests__/stats-view-contract.test.ts` passed; proves VM
+    Stats distinguishes `exec_events` command executions from audit-port
+    process observations and no longer renders the vague `Process Audit Events`
+    label.
   - `pnpm --dir frontend test -- --run frontend/src/lib/__tests__/profile-page-contract.test.ts`
     passed; proves the Profile UI exposes enforcement and detection as
     first-class tabs instead of a generic policy tab, and renders typed asset
