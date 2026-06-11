@@ -136,6 +136,16 @@ fn make_proxy_config_full(
     default_allow: bool,
     http_ports: &[u16],
 ) -> (Arc<MitmProxyConfig>, Arc<DbWriter>) {
+    make_proxy_config_with_security_rules(
+        security_rules_for_proxy(allowed, blocked, default_allow),
+        http_ports,
+    )
+}
+
+fn make_proxy_config_with_security_rules(
+    security_rules: capsem_core::net::policy_config::SecurityRuleSet,
+    http_ports: &[u16],
+) -> (Arc<MitmProxyConfig>, Arc<DbWriter>) {
     let ca = Arc::new(CertAuthority::load(CA_KEY, CA_CERT).unwrap());
     let mut policy_inner = NetworkPolicy::new();
     policy_inner.http_upstream_ports = http_ports.to_vec();
@@ -144,7 +154,6 @@ fn make_proxy_config_full(
     let db = Arc::new(DbWriter::open(&dir.path().join("test.db"), 256).unwrap());
     // Leak the tempdir so it lives for the test
     std::mem::forget(dir);
-    let security_rules = security_rules_for_proxy(allowed, blocked, default_allow);
     let telemetry = Arc::new(mitm_proxy::telemetry_hook::TelemetryDeps {
         db: db.clone(),
         pricing: Arc::new(capsem_core::net::ai_traffic::pricing::PricingTable::load()),
@@ -171,6 +180,16 @@ fn make_proxy_config_full(
         mcp_endpoint: None,
     });
     (config, db)
+}
+
+fn security_rules_from_toml(toml: &str) -> capsem_core::net::policy_config::SecurityRuleSet {
+    let profile = capsem_core::net::policy_config::SecurityRuleProfile::parse_toml(toml)
+        .expect("test security rule profile");
+    capsem_core::net::policy_config::SecurityRuleSet::compile_profile(
+        &profile,
+        capsem_core::net::policy_config::SecurityRuleSource::User,
+    )
+    .expect("test security rules")
 }
 
 /// Build a rustls ClientConfig that trusts the Capsem MITM CA.
@@ -858,6 +877,145 @@ async fn mitm_proxy_plain_http_unknown_openai_shape_emits_model_call() {
     assert_eq!(call.request_bytes, req_body_len as u64);
     assert_eq!(call.input_tokens, Some(5));
     assert_eq!(call.output_tokens, Some(2));
+}
+
+#[tokio::test]
+async fn mitm_proxy_plain_http_unknown_mcp_shape_emits_mcp_call() {
+    let req_body = br#"{"jsonrpc":"2.0","id":"call-1","method":"tools/call","params":{"name":"search_web","arguments":{"q":"capsem"}}}"#;
+    let req_body_len = req_body.len();
+
+    let received: Arc<std::sync::Mutex<Vec<u8>>> = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let received_for_serve = Arc::clone(&received);
+
+    let (upstream_port, upstream_task) = spawn_fake_upstream(move |mut sock| {
+        Box::pin(async move {
+            let bytes = read_http11_request(&mut sock).await;
+            *received_for_serve.lock().unwrap() = bytes.clone();
+            let body = br#"{"jsonrpc":"2.0","id":"call-1","result":{"content":[{"type":"text","text":"ok"}]}}"#;
+            let resp = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            sock.write_all(resp.as_bytes()).await.unwrap();
+            sock.write_all(body).await.unwrap();
+            sock.flush().await.unwrap();
+            let _ = sock.shutdown().await;
+            bytes
+        })
+    })
+    .await;
+
+    let (config, db) = make_proxy_config_full(&["127.0.0.1"], &[], false, &[80, upstream_port]);
+    let (proxy_task, proxy_addr) = spawn_proxy(config).await;
+
+    let req_head = format!(
+        "POST /remote-mcp HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        upstream_port, req_body_len,
+    );
+    let mut tcp = tokio::net::TcpStream::connect(proxy_addr).await.unwrap();
+    tcp.write_all(req_head.as_bytes()).await.unwrap();
+    tcp.write_all(req_body).await.unwrap();
+    tcp.flush().await.unwrap();
+    let mut resp_buf = Vec::new();
+    let _ = tcp.read_to_end(&mut resp_buf).await;
+    drop(tcp);
+
+    upstream_task.await.unwrap();
+    proxy_task.await.unwrap();
+    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+    let recv = received.lock().unwrap().clone();
+    let recv_str = std::str::from_utf8(&recv).unwrap_or("");
+    assert!(
+        recv_str.contains(r#""method":"tools/call""#),
+        "upstream did not receive the original MCP request body: {recv_str:?}"
+    );
+
+    let reader = db.reader().unwrap();
+    let net_events = reader.recent_net_events(10).unwrap();
+    assert_eq!(
+        net_events.len(),
+        1,
+        "MCP-over-HTTP still emits HTTP telemetry"
+    );
+    assert_eq!(net_events[0].path.as_deref(), Some("/remote-mcp"));
+
+    let mcp_calls = reader.recent_mcp_calls(10).unwrap();
+    assert_eq!(
+        mcp_calls.len(),
+        1,
+        "unknown remote MCP-over-HTTP must emit one McpCall"
+    );
+    let call = &mcp_calls[0];
+    assert_eq!(call.method, "tools/call");
+    assert_eq!(call.tool_name.as_deref(), Some("search_web"));
+    assert_eq!(call.request_id.as_deref(), Some("call-1"));
+    assert_eq!(call.decision, "allowed");
+    assert_eq!(call.bytes_sent, req_body_len as u64);
+    assert!(
+        call.server_name.contains("127.0.0.1"),
+        "observed MCP server identity should include host/path: {:?}",
+        call.server_name
+    );
+}
+
+#[tokio::test]
+async fn mitm_proxy_plain_http_unknown_mcp_shape_can_be_blocked_by_mcp_rule() {
+    let req_body = br#"{"jsonrpc":"2.0","id":"call-2","method":"tools/call","params":{"name":"search_web","arguments":{"q":"capsem"}}}"#;
+    let req_body_len = req_body.len();
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let upstream_port = listener.local_addr().unwrap().port();
+    drop(listener);
+
+    let rules = security_rules_from_toml(
+        r#"
+[profiles.rules.block_search_web_mcp]
+name = "block_search_web_mcp"
+action = "block"
+reason = "test MCP block"
+match = 'mcp.tool_call.name == "search_web"'
+"#,
+    );
+    let (config, db) = make_proxy_config_with_security_rules(rules, &[80, upstream_port]);
+    let (proxy_task, proxy_addr) = spawn_proxy(config).await;
+
+    let req_head = format!(
+        "POST /remote-mcp HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        upstream_port, req_body_len,
+    );
+    let mut tcp = tokio::net::TcpStream::connect(proxy_addr).await.unwrap();
+    tcp.write_all(req_head.as_bytes()).await.unwrap();
+    tcp.write_all(req_body).await.unwrap();
+    tcp.flush().await.unwrap();
+    let mut resp_buf = Vec::new();
+    let _ = tcp.read_to_end(&mut resp_buf).await;
+    drop(tcp);
+
+    proxy_task.await.unwrap();
+    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+    let resp_text = String::from_utf8_lossy(&resp_buf);
+    assert!(
+        resp_text.contains("HTTP/1.1 403"),
+        "MCP rule did not block request:\n{resp_text}"
+    );
+
+    let reader = db.reader().unwrap();
+    let mcp_calls = reader.recent_mcp_calls(10).unwrap();
+    assert_eq!(
+        mcp_calls.len(),
+        1,
+        "denied unknown MCP-over-HTTP must still emit one McpCall"
+    );
+    let call = &mcp_calls[0];
+    assert_eq!(call.method, "tools/call");
+    assert_eq!(call.tool_name.as_deref(), Some("search_web"));
+    assert_eq!(call.decision, "denied");
+    assert_eq!(
+        call.policy_rule.as_deref(),
+        Some("profiles.rules.block_search_web_mcp")
+    );
 }
 
 /// T2.2: a chunked-transfer-encoding response from upstream is

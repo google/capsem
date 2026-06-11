@@ -176,8 +176,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fails loud instead of returning an empty MCP tool stub, unknown private
   model gateways are promoted from bounded JSON protocol shape while preserving
   the original HTTP body, broker credential inventory reports whether a stored
-  reference is actually replayable, and boot/dispatch consume one typed host
-  VSOCK service registry.
+  reference is actually replayable, unknown remote MCP-over-HTTP JSON-RPC is
+  promoted into first-party MCP ledger/security events, and boot/dispatch
+  consume one typed host VSOCK service registry.
 
 ### Added (kernel 7.0 + EROFS)
 - Added a stable-kernel upgrade path for guest builds: `kernel_branch = "7.0"`

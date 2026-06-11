@@ -34,7 +34,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Instant, SystemTime};
 
-use capsem_logger::{DbWriter, Decision, NetEvent, WriteOp};
+use capsem_logger::{DbWriter, Decision, McpCall, NetEvent, WriteOp};
 use http_body_util::Full;
 use hyper::body::Bytes;
 use hyper_util::rt::TokioIo;
@@ -43,7 +43,9 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_rustls::TlsAcceptor;
 use tracing::{debug, warn, Instrument};
 
-use crate::security_engine::RuntimeSecurityEventType;
+use crate::security_engine::{
+    emit_matching_security_rules, emit_security_write, McpSecurityEvent, RuntimeSecurityEventType,
+};
 
 trait TokioReadWrite: AsyncRead + AsyncWrite {}
 
@@ -70,6 +72,7 @@ pub type UpstreamTlsConfig = rustls::ClientConfig;
 /// Maximum bytes to buffer when peeking at the TLS ClientHello.
 const MAX_HELLO_SIZE: usize = 16384;
 const AI_BODY_PREVIEW: usize = 64 * 1024;
+const MCP_BODY_PREVIEW: usize = 64 * 1024;
 const CREDENTIAL_BODY_PREVIEW: usize = 16 * 1024;
 
 static FIRST_NETWORK_READY_EMITTED: AtomicBool = AtomicBool::new(false);
@@ -265,6 +268,129 @@ fn should_sniff_unknown_model_body(
     len <= AI_BODY_PREVIEW
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ObservedMcpHttpRequest {
+    method: String,
+    server_name: String,
+    tool_name: Option<String>,
+    request_id: Option<String>,
+    request_preview: Option<String>,
+    bytes_sent: u64,
+}
+
+impl ObservedMcpHttpRequest {
+    fn event_type(&self) -> RuntimeSecurityEventType {
+        runtime_mcp_event_type(&self.method)
+    }
+
+    fn security_event(&self, tool_list: Option<String>) -> SecurityEvent {
+        SecurityEvent::new(self.event_type()).with_mcp(McpSecurityEvent {
+            method: Some(self.method.clone()),
+            server_name: Some(self.server_name.clone()),
+            tool_call_name: self.tool_name.clone(),
+            tool_list,
+        })
+    }
+}
+
+fn should_sniff_mcp_http_body(method: &http::Method, headers: &http::HeaderMap) -> bool {
+    if !matches!(
+        *method,
+        http::Method::POST | http::Method::PUT | http::Method::PATCH
+    ) {
+        return false;
+    }
+    let is_json = headers
+        .get(http::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .map(|value| value.to_ascii_lowercase().contains("json"))
+        .unwrap_or(false);
+    if !is_json {
+        return false;
+    }
+    let Some(len) = headers
+        .get(http::header::CONTENT_LENGTH)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<usize>().ok())
+    else {
+        return false;
+    };
+    len <= MCP_BODY_PREVIEW
+}
+
+fn observed_mcp_http_request_for_body(
+    body: &[u8],
+    domain: &str,
+    upstream_port: u16,
+    path: &str,
+) -> Option<ObservedMcpHttpRequest> {
+    if body.len() > MCP_BODY_PREVIEW {
+        return None;
+    }
+    let json: serde_json::Value = serde_json::from_slice(body).ok()?;
+    let obj = json.as_object()?;
+    if obj.get("jsonrpc").and_then(|value| value.as_str()) != Some("2.0") {
+        return None;
+    }
+    let method = obj.get("method").and_then(|value| value.as_str())?;
+    if !is_mcp_json_rpc_method(method) {
+        return None;
+    }
+    let request_id = obj.get("id").and_then(json_rpc_id_to_log_string);
+    let params = obj.get("params").and_then(|value| value.as_object());
+    let tool_name = if method == "tools/call" {
+        params
+            .and_then(|params| params.get("name"))
+            .and_then(|value| value.as_str())
+            .map(str::to_string)
+    } else {
+        None
+    };
+    Some(ObservedMcpHttpRequest {
+        method: method.to_string(),
+        server_name: observed_mcp_server_name(domain, upstream_port, path),
+        tool_name,
+        request_id,
+        request_preview: Some(String::from_utf8_lossy(body).to_string()),
+        bytes_sent: body.len() as u64,
+    })
+}
+
+fn is_mcp_json_rpc_method(method: &str) -> bool {
+    matches!(
+        method,
+        "initialize"
+            | "notifications/initialized"
+            | "tools/list"
+            | "tools/call"
+            | "resources/list"
+            | "resources/read"
+            | "prompts/list"
+            | "prompts/get"
+    )
+}
+
+fn runtime_mcp_event_type(method: &str) -> RuntimeSecurityEventType {
+    match method {
+        "tools/call" => RuntimeSecurityEventType::McpToolCall,
+        "tools/list" => RuntimeSecurityEventType::McpToolList,
+        _ => RuntimeSecurityEventType::McpEvent,
+    }
+}
+
+fn observed_mcp_server_name(domain: &str, upstream_port: u16, path: &str) -> String {
+    format!("observed:{domain}:{upstream_port}{path}")
+}
+
+fn json_rpc_id_to_log_string(value: &serde_json::Value) -> Option<String> {
+    match value {
+        serde_json::Value::String(id) => Some(id.clone()),
+        serde_json::Value::Number(id) => Some(id.to_string()),
+        serde_json::Value::Null => Some("null".to_string()),
+        _ => serde_json::to_string(value).ok(),
+    }
+}
+
 fn is_openai_model_name(model: &str) -> bool {
     let model = model.to_ascii_lowercase();
     model.starts_with("gpt-")
@@ -353,6 +479,13 @@ fn maybe_decompress_gzip_body(body: Bytes, is_gzip: bool) -> anyhow::Result<Byte
     let mut decompressed = Vec::new();
     decoder.read_to_end(&mut decompressed)?;
     Ok(Bytes::from(decompressed))
+}
+
+fn current_unix_ms() -> i64 {
+    SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as i64
 }
 
 /// Build the upstream TLS client config (trusts standard webpki roots).
@@ -1366,19 +1499,30 @@ async fn handle_request(
 
     let mut effective_ai_provider = ai_provider;
     let mut sniffed_model_request = false;
+    let mut observed_mcp_request: Option<ObservedMcpHttpRequest> = None;
+    let mut mcp_request_security_decision = SecurityBoundaryDecisionFields::default();
     let mut request_body_source = RequestBodySource::Incoming(req_body);
-    if should_sniff_unknown_model_body(effective_ai_provider, &original_method, &original_headers) {
+    let should_sniff_model =
+        should_sniff_unknown_model_body(effective_ai_provider, &original_method, &original_headers);
+    let should_sniff_mcp = should_sniff_mcp_http_body(&original_method, &original_headers);
+    if should_sniff_model || should_sniff_mcp {
         let sniff_span = tracing::debug_span!(
             target: "capsem.mitm",
-            "mitm_unknown_model_body_sniff",
+            "mitm_unknown_semantic_body_sniff",
             protocol = protocol.label(),
             host = domain,
             path = path.as_str(),
             provider = tracing::field::Empty,
+            mcp_method = tracing::field::Empty,
             status = tracing::field::Empty,
         );
         if let RequestBodySource::Incoming(body) = request_body_source {
-            let collected = match http_body_util::Limited::new(body, AI_BODY_PREVIEW)
+            let preview_limit = if should_sniff_model {
+                AI_BODY_PREVIEW.max(MCP_BODY_PREVIEW)
+            } else {
+                MCP_BODY_PREVIEW
+            };
+            let collected = match http_body_util::Limited::new(body, preview_limit)
                 .collect()
                 .instrument(sniff_span.clone())
                 .await
@@ -1398,24 +1542,186 @@ async fn handle_request(
                 }
             };
             let body_bytes = collected.to_bytes();
-            if let Some(provider) = ai_provider_for_body_preview(&body_bytes) {
-                effective_ai_provider = Some(provider);
-                sniffed_model_request = true;
-                sniff_span.record("provider", provider.as_str());
+            let mut sniff_matched = false;
+            if should_sniff_model {
+                if let Some(provider) = ai_provider_for_body_preview(&body_bytes) {
+                    effective_ai_provider = Some(provider);
+                    sniffed_model_request = true;
+                    sniff_matched = true;
+                    sniff_span.record("provider", provider.as_str());
+                    tracing::info!(
+                        target: "capsem.mitm",
+                        host = domain,
+                        path,
+                        provider = provider.as_str(),
+                        body_bytes = body_bytes.len(),
+                        "unknown model endpoint promoted from bounded body shape"
+                    );
+                }
+            }
+            if should_sniff_mcp {
+                if let Some(observed) =
+                    observed_mcp_http_request_for_body(&body_bytes, domain, upstream_port, &path)
+                {
+                    sniff_matched = true;
+                    sniff_span.record("mcp_method", observed.method.as_str());
+                    tracing::info!(
+                        target: "capsem.mitm",
+                        host = domain,
+                        path,
+                        mcp_method = observed.method.as_str(),
+                        mcp_server = observed.server_name.as_str(),
+                        mcp_tool = observed.tool_name.as_deref(),
+                        body_bytes = body_bytes.len(),
+                        "unknown MCP-over-HTTP endpoint promoted from bounded JSON-RPC shape"
+                    );
+                    observed_mcp_request = Some(observed);
+                }
+            }
+            if sniff_matched {
                 sniff_span.record("status", "ok");
-                tracing::info!(
-                    target: "capsem.mitm",
-                    host = domain,
-                    path,
-                    provider = provider.as_str(),
-                    body_bytes = body_bytes.len(),
-                    "unknown model endpoint promoted from bounded body shape"
-                );
             } else {
                 sniff_span.record("status", "no_match");
             }
             request_body_source = RequestBodySource::Collected(body_bytes);
         }
+    }
+
+    if let Some(observed) = observed_mcp_request.as_ref() {
+        let mcp_span = tracing::debug_span!(
+            target: "capsem.mitm",
+            spans::MITM_SECURITY_ACTIONS,
+            protocol = protocol.label(),
+            mcp_method = observed.method.as_str(),
+            mcp_server = observed.server_name.as_str(),
+            decision = tracing::field::Empty,
+            status = tracing::field::Empty,
+            error_kind = tracing::field::Empty,
+        );
+        let mcp_event = observed.security_event(None).with_http(HttpSecurityEvent {
+            host: Some(domain.to_string()),
+            method: Some(method.clone()),
+            path: Some(path.clone()),
+            status: None,
+            body: observed.request_preview.clone(),
+        });
+        let mcp_evaluation = match mcp_span.in_scope(|| {
+            crate::security_engine::evaluate_security_boundary(
+                &rules,
+                config.telemetry.plugin_policy.read().unwrap().clone(),
+                mcp_event,
+            )
+        }) {
+            Ok(evaluation) => evaluation,
+            Err(error) => {
+                mcp_span.record("decision", "error");
+                mcp_span.record("status", "error");
+                mcp_span.record("error_kind", "security_actions");
+                return Ok(make_502(
+                    &error,
+                    &method,
+                    &path,
+                    &query,
+                    &req_hdrs,
+                    start_time,
+                    &request_security_decision,
+                ));
+            }
+        };
+        mcp_request_security_decision =
+            SecurityBoundaryDecisionFields::from_enforcement(&mcp_evaluation.enforcement);
+        if !mcp_evaluation.enforcement.is_allowed() {
+            mcp_span.record("decision", mcp_evaluation.enforcement.action.as_str());
+            mcp_span.record("status", "ok");
+            request_security_decision = mcp_request_security_decision.clone();
+            let body_text = format!(
+                "capsem: MCP request blocked by security rule: {}\n",
+                mcp_evaluation
+                    .enforcement
+                    .rule_id
+                    .as_deref()
+                    .unwrap_or("unknown")
+            );
+            let security_event = observed.security_event(None);
+            let denied_call = McpCall {
+                event_id: None,
+                timestamp: SystemTime::now(),
+                server_name: observed.server_name.clone(),
+                method: observed.method.clone(),
+                tool_name: observed.tool_name.clone(),
+                request_id: observed.request_id.clone(),
+                request_preview: observed.request_preview.clone(),
+                response_preview: Some(body_text.clone()),
+                decision: "denied".to_string(),
+                duration_ms: start_time.elapsed().as_millis() as u64,
+                error_message: Some(body_text.trim().to_string()),
+                process_name: process_name.clone(),
+                bytes_sent: observed.bytes_sent,
+                bytes_received: body_text.len() as u64,
+                policy_mode: request_security_decision.policy_mode.clone(),
+                policy_action: request_security_decision.policy_action.clone(),
+                policy_rule: request_security_decision.policy_rule.clone(),
+                policy_reason: request_security_decision.policy_reason.clone(),
+                trace_id: crate::telemetry::ambient_capsem_trace_id(),
+                credential_ref: credential_ref.clone(),
+            };
+            if let Some(event_id) =
+                emit_security_write(&config.db, WriteOp::McpCall(denied_call)).await
+            {
+                if let Err(error) = emit_matching_security_rules(
+                    &config.db,
+                    event_id,
+                    observed.event_type(),
+                    &rules,
+                    &security_event,
+                    current_unix_ms(),
+                )
+                .await
+                {
+                    warn!(error = %error, "failed to emit denied observed MCP-over-HTTP security rule ledger rows");
+                }
+            }
+            let mut scrubbed_stats = BodyStats::new(0);
+            scrubbed_stats.bytes = observed.bytes_sent;
+            let req_ctx = TelemetryRequestContext {
+                domain: domain.to_string(),
+                process_name: process_name.clone(),
+                ai_provider: effective_ai_provider,
+                model_traffic: sniffed_model_request,
+                method: method.clone(),
+                path: path.clone(),
+                query: query.clone(),
+                status_code: Some(403),
+                decision: Decision::Denied,
+                matched_rule: mcp_evaluation.enforcement.rule_id.clone(),
+                request_headers: Some(req_hdrs.clone()),
+                response_headers: None,
+                start_time,
+                request_body_stats: Arc::new(Mutex::new(scrubbed_stats)),
+                max_response_preview: 0,
+                port: upstream_port,
+                conn_type,
+                policy_mode: request_security_decision.policy_mode.clone(),
+                policy_action: request_security_decision.policy_action.clone(),
+                policy_rule: request_security_decision.policy_rule.clone(),
+                policy_reason: request_security_decision.policy_reason.clone(),
+                credential_ref: credential_ref.clone(),
+                credential_observations: credential_observations.clone(),
+            };
+            let deny_body = Full::new(Bytes::from(body_text))
+                .map_err(|never| match never {})
+                .boxed();
+            return Ok(hyper::Response::builder()
+                .status(403)
+                .body(seal_with_telemetry(
+                    deny_body,
+                    req_ctx,
+                    effective_ai_provider,
+                ))
+                .unwrap());
+        }
+        mcp_span.record("decision", "allow");
+        mcp_span.record("status", "ok");
     }
 
     // Track request body (boxed for consistent sender type across requests).
@@ -1928,13 +2234,18 @@ async fn handle_request(
     // works even when log_bodies is off. Credential broker exchange
     // candidates get a smaller bounded preview for capture/redaction.
     // Other non-AI bodies follow the log_bodies / max_body_capture policy.
-    let resp_max_preview =
+    let mut resp_max_preview =
         body_preview_cap(effective_ai_provider, domain, &path, log_bodies, max_body);
+    if observed_mcp_request.is_some() {
+        resp_max_preview = resp_max_preview.max(MCP_BODY_PREVIEW);
+    }
 
     let should_evaluate_model_response = sniffed_model_request
         || effective_ai_provider.is_some_and(|provider| is_llm_api_path(provider, &path));
+    let should_collect_semantic_response =
+        should_evaluate_model_response || observed_mcp_request.is_some();
 
-    let resp_body: ProxyBoxBody = if should_evaluate_model_response {
+    let resp_body: ProxyBoxBody = if should_collect_semantic_response {
         let model_response_span = tracing::debug_span!(
             target: "capsem.mitm",
             spans::MITM_SECURITY_ACTIONS,
@@ -2084,6 +2395,51 @@ async fn handle_request(
                     if updated_body.as_bytes() != response_body.as_ref() {
                         response_body = Bytes::from(updated_body.clone());
                     }
+                }
+            }
+        }
+        if let Some(observed) = observed_mcp_request.as_ref() {
+            let response_preview = Some(String::from_utf8_lossy(&response_body).to_string());
+            let tool_list = if observed.method == "tools/list" {
+                response_preview.clone()
+            } else {
+                None
+            };
+            let security_event = observed.security_event(tool_list);
+            let call = McpCall {
+                event_id: None,
+                timestamp: SystemTime::now(),
+                server_name: observed.server_name.clone(),
+                method: observed.method.clone(),
+                tool_name: observed.tool_name.clone(),
+                request_id: observed.request_id.clone(),
+                request_preview: observed.request_preview.clone(),
+                response_preview,
+                decision: "allowed".to_string(),
+                duration_ms: start_time.elapsed().as_millis() as u64,
+                error_message: None,
+                process_name: process_name.clone(),
+                bytes_sent: observed.bytes_sent,
+                bytes_received: response_body.len() as u64,
+                policy_mode: mcp_request_security_decision.policy_mode.clone(),
+                policy_action: mcp_request_security_decision.policy_action.clone(),
+                policy_rule: mcp_request_security_decision.policy_rule.clone(),
+                policy_reason: mcp_request_security_decision.policy_reason.clone(),
+                trace_id: crate::telemetry::ambient_capsem_trace_id(),
+                credential_ref: credential_ref.clone(),
+            };
+            if let Some(event_id) = emit_security_write(&config.db, WriteOp::McpCall(call)).await {
+                if let Err(error) = emit_matching_security_rules(
+                    &config.db,
+                    event_id,
+                    observed.event_type(),
+                    &rules,
+                    &security_event,
+                    current_unix_ms(),
+                )
+                .await
+                {
+                    warn!(error = %error, "failed to emit observed MCP-over-HTTP security rule ledger rows");
                 }
             }
         }
@@ -2258,6 +2614,64 @@ mod tests {
             &http::Method::POST,
             &headers
         ));
+    }
+
+    #[test]
+    fn unknown_mcp_http_body_sniffing_is_json_and_length_bounded() {
+        let mut headers = http::HeaderMap::new();
+        headers.insert(
+            http::header::CONTENT_TYPE,
+            http::HeaderValue::from_static("application/json"),
+        );
+        headers.insert(
+            http::header::CONTENT_LENGTH,
+            http::HeaderValue::from_static("128"),
+        );
+        assert!(should_sniff_mcp_http_body(&http::Method::POST, &headers));
+
+        headers.insert(
+            http::header::CONTENT_LENGTH,
+            http::HeaderValue::from_str(&(MCP_BODY_PREVIEW + 1).to_string()).unwrap(),
+        );
+        assert!(!should_sniff_mcp_http_body(&http::Method::POST, &headers));
+
+        headers.insert(
+            http::header::CONTENT_LENGTH,
+            http::HeaderValue::from_static("128"),
+        );
+        assert!(!should_sniff_mcp_http_body(&http::Method::GET, &headers));
+
+        headers.insert(
+            http::header::CONTENT_TYPE,
+            http::HeaderValue::from_static("text/plain"),
+        );
+        assert!(!should_sniff_mcp_http_body(&http::Method::POST, &headers));
+    }
+
+    #[test]
+    fn observed_mcp_http_request_requires_mcp_json_rpc_shape() {
+        let body = br#"{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"fetch_http","arguments":{"url":"https://example.com"}}}"#;
+        let observed =
+            observed_mcp_http_request_for_body(body, "mcp.example.test", 443, "/mcp").unwrap();
+        assert_eq!(observed.method, "tools/call");
+        assert_eq!(observed.tool_name.as_deref(), Some("fetch_http"));
+        assert_eq!(observed.request_id.as_deref(), Some("7"));
+        assert_eq!(observed.server_name, "observed:mcp.example.test:443/mcp");
+
+        assert!(observed_mcp_http_request_for_body(
+            br#"{"jsonrpc":"2.0","method":"eth_call"}"#,
+            "rpc.example.test",
+            443,
+            "/"
+        )
+        .is_none());
+        assert!(observed_mcp_http_request_for_body(
+            br#"{"method":"tools/call","params":{"name":"fetch_http"}}"#,
+            "mcp.example.test",
+            443,
+            "/mcp"
+        )
+        .is_none());
     }
 
     #[test]
