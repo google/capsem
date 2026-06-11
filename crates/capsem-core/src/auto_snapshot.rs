@@ -102,6 +102,50 @@ impl AutoSnapshotScheduler {
         self.session_dir.join("system")
     }
 
+    fn ensure_snapshot_storage_outside_workspace(&self) -> anyhow::Result<()> {
+        let workspace = self
+            .workspace_dir()
+            .canonicalize()
+            .context("failed to resolve workspace directory for snapshot safety check")?;
+        self.ensure_existing_path_outside_workspace(
+            &self.snapshots_dir(),
+            &workspace,
+            "snapshot storage",
+        )
+    }
+
+    fn ensure_snapshot_path_outside_workspace(
+        &self,
+        path: &Path,
+        label: &str,
+    ) -> anyhow::Result<()> {
+        let workspace = self
+            .workspace_dir()
+            .canonicalize()
+            .context("failed to resolve workspace directory for snapshot safety check")?;
+        self.ensure_existing_path_outside_workspace(path, &workspace, label)
+    }
+
+    fn ensure_existing_path_outside_workspace(
+        &self,
+        path: &Path,
+        workspace: &Path,
+        label: &str,
+    ) -> anyhow::Result<()> {
+        if path.exists() {
+            let resolved = path
+                .canonicalize()
+                .with_context(|| format!("failed to resolve {label} path {}", path.display()))?;
+            anyhow::ensure!(
+                !resolved.starts_with(workspace),
+                "{label} resolves inside live workspace: {} -> {}",
+                path.display(),
+                resolved.display()
+            );
+        }
+        Ok(())
+    }
+
     /// Absolute slot index for auto pool.
     fn auto_slot(&self, idx: usize) -> usize {
         idx
@@ -158,6 +202,8 @@ impl AutoSnapshotScheduler {
     ) -> anyhow::Result<SnapshotSlot> {
         let t0 = std::time::Instant::now();
         let slot_dir = self.slot_dir(slot);
+        self.ensure_snapshot_storage_outside_workspace()?;
+        self.ensure_snapshot_path_outside_workspace(&slot_dir, "snapshot slot")?;
 
         if slot_dir.exists() {
             std::fs::remove_dir_all(&slot_dir)?;
@@ -295,6 +341,7 @@ impl AutoSnapshotScheduler {
         anyhow::ensure!(slot < self.total_slots(), "slot {slot} out of range");
         let dir = self.slot_dir(slot);
         anyhow::ensure!(dir.exists(), "slot {slot} is empty");
+        self.ensure_snapshot_path_outside_workspace(&dir, "snapshot slot")?;
         std::fs::remove_dir_all(&dir)?;
         debug!(slot, "snapshot deleted");
         Ok(())
@@ -322,6 +369,12 @@ impl AutoSnapshotScheduler {
             .collect();
         if let Some(oldest) = auto_slots.last() {
             let dir = self.slot_dir(oldest.slot);
+            if self
+                .ensure_snapshot_path_outside_workspace(&dir, "snapshot slot")
+                .is_err()
+            {
+                return false;
+            }
             if std::fs::remove_dir_all(&dir).is_ok() {
                 debug!(slot = oldest.slot, "evicted oldest auto-snapshot");
                 return true;
@@ -340,6 +393,7 @@ impl AutoSnapshotScheduler {
         name: &str,
     ) -> anyhow::Result<SnapshotSlot> {
         let t0 = std::time::Instant::now();
+        self.ensure_snapshot_storage_outside_workspace()?;
         anyhow::ensure!(!slots.is_empty(), "no snapshots to compact");
         anyhow::ensure!(
             self.available_manual_slots() > 0,
@@ -367,6 +421,7 @@ impl AutoSnapshotScheduler {
 
         // Build merged workspace in a temp dir within snapshots dir.
         let tmp_dir = self.snapshots_dir().join("_compact_tmp");
+        self.ensure_snapshot_path_outside_workspace(&tmp_dir, "snapshot compact temp")?;
         if tmp_dir.exists() {
             std::fs::remove_dir_all(&tmp_dir)?;
         }
@@ -419,6 +474,7 @@ impl AutoSnapshotScheduler {
 
         // Create the new snapshot slot.
         let slot_dir = self.slot_dir(target_slot);
+        self.ensure_snapshot_path_outside_workspace(&slot_dir, "snapshot slot")?;
         if slot_dir.exists() {
             std::fs::remove_dir_all(&slot_dir)?;
         }
@@ -455,6 +511,7 @@ impl AutoSnapshotScheduler {
         for &(slot, _) in &metas {
             let dir = self.slot_dir(slot);
             if dir.exists() {
+                self.ensure_snapshot_path_outside_workspace(&dir, "snapshot slot")?;
                 let _ = std::fs::remove_dir_all(&dir);
             }
         }

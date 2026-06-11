@@ -33,6 +33,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Compact `snapshots_list` output now defaults to created/edited/deleted counts
   so AI-facing MCP responses stay small; callers must pass
   `include_changes=true` to request full per-file snapshot diffs.
+- Hardened workspace snapshot storage so capture, compaction, deletion, and
+  eviction refuse to operate when snapshot storage or a slot resolves inside
+  the live workspace. Regression tests prove snapshot capture/compaction leave
+  live workspace entries unchanged and reject symlinked storage back into the
+  workspace.
 - Clarified the VM Stats process tab by separating command execution rows from
   audit-port process observations, removing the vague “Process Audit Events”
   label from the user-facing table.

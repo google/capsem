@@ -172,6 +172,14 @@
   prove whether snapshot is read-only or mutating the workspace; then add a
   regression test that snapshot cannot create workspace files unless explicitly
   requested.
+  - [x] Snapshot read-only rail slice: `AutoSnapshotScheduler` now refuses to
+    run if snapshot storage or a snapshot slot resolves inside the live
+    workspace, including symlinked `auto_snapshots` paths. Capture and compact
+    tests prove live workspace entries/hash do not change.
+    Proof: `cargo test -p capsem-core auto_snapshot:: -- --nocapture`.
+  - [ ] Remaining: inspect live VM/session DB evidence for the files the user
+    observed and attribute them to AGY/process/file events without deleting the
+    current VM evidence.
 - [ ] Implement bug 9 after user resumes coding: design and test DNS policy as
   first-class enforcement, including deny/ask/default DNS rules, DNS query
   length/entropy/rate guards, and ledger evidence for suspicious query payloads.
@@ -513,6 +521,9 @@
     expose a generic Snapshot tab/query.
   - `pnpm --dir frontend check` passed; Astro and Svelte checks have 0 errors
     and 0 warnings after removing the Snapshot tab.
+  - `cargo test -p capsem-core auto_snapshot:: -- --nocapture` passed; proves
+    snapshot capture/compaction do not mutate live workspace entries and
+    rejects snapshot storage symlinked into the workspace.
   - `cargo test -p capsem-logger mcp_call_stats_counts_user_tool_calls_not_protocol_or_snapshot_noise -- --nocapture`
     passed; proves backend MCP headline stats filter protocol/snapshot noise.
   - `pnpm --dir frontend test -- --run frontend/src/lib/__tests__/mcp-sql.test.ts`
