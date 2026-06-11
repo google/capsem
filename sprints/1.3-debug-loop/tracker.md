@@ -218,6 +218,13 @@
   UI/VM stats, and add a credential-broker-specific route/panel for inventory,
   grant editing/visibility per profile and VM, corp-denied provider/flow
   constraints, capture/replay evidence, and profile/fork exposure.
+  - [x] Plugin detail-route contract slice: `PluginInfo` now advertises typed
+    custom detail routes, and credential broker exposes
+    `/profiles/{profile_id}/plugins/credential_broker/credentials/info` for
+    broker inventory plus the initial grant/corp-constraint surface.
+  - [ ] Remaining: render the credential-broker-specific panel in the UI,
+    implement grant mutation/constraints, and connect those grants to broker
+    replay/substitution decisions.
 - [ ] Implement bug 24 after user resumes coding: add TDD for unknown-domain AI
   protocol sniffing and rogue/custom endpoint detection. The fix must use
   bounded request/response previews, set first-party `model.provider` on the
@@ -422,6 +429,14 @@
   - `cargo test -p capsem-service profile_plugin_endpoint_matrix_dynamically_controls_enforcement_evaluation -- --nocapture`
     passed after one transient local code-sign wrapper retry; proves the plugin
     endpoint matrix still controls enforcement evaluation.
+  - `cargo test -p capsem-service credential_broker_detail_route_exposes_inventory_and_grant_surface -- --nocapture`
+    passed after a transient local code-sign wrapper retry; proves the
+    credential broker exposes a plugin-owned detail route for inventory and the
+    initial grant surface.
+  - `pnpm --dir frontend test -- --run frontend/src/lib/__tests__/api.test.ts`
+    passed; proves frontend API helpers understand plugin detail routes and
+    the credential broker detail endpoint.
+  - `pnpm --dir frontend check` passed with zero Svelte/TypeScript warnings.
   - `cargo check -p capsem-core -p capsem-logger -p capsem-service` passed.
 - Functional: focused source tests passed; live install not restarted or killed
   per evidence-preservation rule.

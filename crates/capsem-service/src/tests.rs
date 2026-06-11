@@ -1917,6 +1917,16 @@ async fn profile_plugin_endpoint_matrix_dynamically_controls_enforcement_evaluat
         .expect("built-in plugin list must include credential_broker");
     assert_eq!(broker.stage, PluginStage::PreAndPost);
     assert_eq!(broker.version, "1");
+    assert_eq!(broker.detail_routes.len(), 1);
+    assert_eq!(broker.detail_routes[0].id, "credential_broker_credentials");
+    assert_eq!(
+        broker.detail_routes[0].kind,
+        PluginDetailRouteKind::CredentialBroker
+    );
+    assert_eq!(
+        broker.detail_routes[0].path,
+        "/profiles/code/plugins/credential_broker/credentials/info"
+    );
     assert!(broker.runtime.enabled);
     assert_eq!(broker.runtime.event_count, 0);
     assert!(
@@ -1934,6 +1944,10 @@ async fn profile_plugin_endpoint_matrix_dynamically_controls_enforcement_evaluat
     assert_eq!(info.scope.profile_id, "code");
     assert_eq!(info.stage, PluginStage::Preprocess);
     assert_eq!(info.version, "1");
+    assert!(
+        info.detail_routes.is_empty(),
+        "debug plugins do not get custom UI routes"
+    );
     assert!(info.runtime.enabled);
     assert!(info.runtime.brokered_credentials.is_empty());
     assert_eq!(
@@ -2069,6 +2083,35 @@ async fn profile_plugin_endpoint_matrix_dynamically_controls_enforcement_evaluat
             && detection["detection_level"] == "critical"
             && detection["plugin_mode"] == "block"
     }));
+}
+
+#[tokio::test]
+async fn credential_broker_detail_route_exposes_inventory_and_grant_surface() {
+    let state = make_test_state();
+
+    let Json(detail) = handle_profile_credential_broker_credentials_info(
+        State(Arc::clone(&state)),
+        Path("code".to_string()),
+    )
+    .await
+    .expect("credential broker detail");
+
+    assert_eq!(detail.scope.profile_id, "code");
+    assert_eq!(detail.plugin_id, "credential_broker");
+    assert!(detail.inventory.is_empty());
+    assert!(detail.grants.profile_enabled);
+    assert_eq!(
+        detail.grants.fork_default,
+        CredentialBrokerForkGrantDefault::InheritProfile
+    );
+    assert!(
+        detail.grants.vm_grants.is_empty(),
+        "VM-specific credential grants are explicit overrides, not hidden defaults"
+    );
+    assert!(
+        detail.corp_constraints.is_empty(),
+        "test profile has no corp broker OAuth/provider constraints"
+    );
 }
 
 #[tokio::test]

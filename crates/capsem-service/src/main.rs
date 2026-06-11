@@ -240,6 +240,20 @@ struct BrokeredCredentialStatus {
     last_seen: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum PluginDetailRouteKind {
+    CredentialBroker,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+struct PluginDetailRoute {
+    id: &'static str,
+    label: &'static str,
+    kind: PluginDetailRouteKind,
+    path: String,
+}
+
 #[derive(Debug, Serialize)]
 struct PluginInfo {
     id: String,
@@ -251,6 +265,41 @@ struct PluginInfo {
     stage: PluginStage,
     version: &'static str,
     runtime: PluginRuntimeStatus,
+    detail_routes: Vec<PluginDetailRoute>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum CredentialBrokerForkGrantDefault {
+    InheritProfile,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+struct CredentialBrokerVmGrant {
+    vm_id: String,
+    enabled: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+struct CredentialBrokerGrantStatus {
+    profile_enabled: bool,
+    vm_grants: Vec<CredentialBrokerVmGrant>,
+    fork_default: CredentialBrokerForkGrantDefault,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+struct CredentialBrokerCorpConstraint {
+    id: String,
+    description: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct CredentialBrokerDetailResponse {
+    scope: PluginScope,
+    plugin_id: &'static str,
+    inventory: Vec<BrokeredCredentialStatus>,
+    grants: CredentialBrokerGrantStatus,
+    corp_constraints: Vec<CredentialBrokerCorpConstraint>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -5913,6 +5962,7 @@ fn plugin_info_for(
         .get(&scope.profile_id)
         .is_some_and(|policy| policy.contains_key(plugin_id));
     let runtime = plugin_runtime_status(state, &scope.profile_id, plugin_id, config);
+    let detail_routes = plugin_detail_routes(plugin_id, &scope);
     Ok(PluginInfo {
         id: plugin_id.to_string(),
         config,
@@ -5923,7 +5973,23 @@ fn plugin_info_for(
         stage: catalog_entry.stage,
         version: catalog_entry.version,
         runtime,
+        detail_routes,
     })
+}
+
+fn plugin_detail_routes(plugin_id: &str, scope: &PluginScope) -> Vec<PluginDetailRoute> {
+    match plugin_id {
+        "credential_broker" => vec![PluginDetailRoute {
+            id: "credential_broker_credentials",
+            label: "Credential Broker",
+            kind: PluginDetailRouteKind::CredentialBroker,
+            path: format!(
+                "/profiles/{}/plugins/credential_broker/credentials/info",
+                scope.profile_id
+            ),
+        }],
+        _ => Vec::new(),
+    }
 }
 
 fn plugin_runtime_status(
@@ -6023,6 +6089,29 @@ async fn handle_profile_plugins_info(
             .filter(|config| config.mode != SecurityPluginMode::Disable)
             .count(),
     })))
+}
+
+async fn handle_profile_credential_broker_credentials_info(
+    State(state): State<Arc<ServiceState>>,
+    Path(profile_id): Path<String>,
+) -> Result<Json<CredentialBrokerDetailResponse>, AppError> {
+    let scope = profile_plugin_scope(profile_id)?;
+    let config = effective_plugin_policy(&state, &scope.profile_id)
+        .get("credential_broker")
+        .copied()
+        .unwrap_or_else(|| default_plugin_config(SecurityPluginMode::Rewrite));
+    let runtime = plugin_runtime_status(&state, &scope.profile_id, "credential_broker", config);
+    Ok(Json(CredentialBrokerDetailResponse {
+        scope,
+        plugin_id: "credential_broker",
+        inventory: runtime.brokered_credentials,
+        grants: CredentialBrokerGrantStatus {
+            profile_enabled: config.mode != SecurityPluginMode::Disable,
+            vm_grants: Vec::new(),
+            fork_default: CredentialBrokerForkGrantDefault::InheritProfile,
+        },
+        corp_constraints: Vec::new(),
+    }))
 }
 
 fn list_plugins_for_scope(
@@ -7818,6 +7907,10 @@ fn build_service_router(state: Arc<ServiceState>) -> Router {
         .route(
             "/profiles/{profile_id}/plugins/info",
             get(handle_profile_plugins_info),
+        )
+        .route(
+            "/profiles/{profile_id}/plugins/credential_broker/credentials/info",
+            get(handle_profile_credential_broker_credentials_info),
         )
         .route(
             "/profiles/{profile_id}/plugins/{plugin_id}/info",

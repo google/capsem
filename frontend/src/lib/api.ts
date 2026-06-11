@@ -71,6 +71,7 @@ export type InitResult = {
 export type PluginMode = 'allow' | 'ask' | 'block' | 'disable' | 'rewrite';
 export type PluginDetectionLevel = 'informational' | 'low' | 'medium' | 'high' | 'critical';
 export type PluginStage = 'preprocess' | 'postprocess' | 'pre_and_post';
+export type PluginDetailRouteKind = 'credential_broker';
 
 export interface PluginConfig {
   mode: PluginMode;
@@ -100,6 +101,13 @@ export interface PluginRuntimeStatus {
   brokered_credentials: BrokeredCredentialStatus[];
 }
 
+export interface PluginDetailRoute {
+  id: string;
+  label: string;
+  kind: PluginDetailRouteKind;
+  path: string;
+}
+
 export interface PluginInfo {
   id: string;
   config: PluginConfig;
@@ -110,11 +118,38 @@ export interface PluginInfo {
   stage: PluginStage;
   version: string;
   runtime: PluginRuntimeStatus;
+  detail_routes: PluginDetailRoute[];
 }
 
 export interface PluginListResponse {
   scope: PluginScope;
   plugins: PluginInfo[];
+}
+
+export type CredentialBrokerForkGrantDefault = 'inherit_profile';
+
+export interface CredentialBrokerVmGrant {
+  vm_id: string;
+  enabled: boolean;
+}
+
+export interface CredentialBrokerGrantStatus {
+  profile_enabled: boolean;
+  vm_grants: CredentialBrokerVmGrant[];
+  fork_default: CredentialBrokerForkGrantDefault;
+}
+
+export interface CredentialBrokerCorpConstraint {
+  id: string;
+  description: string;
+}
+
+export interface CredentialBrokerInfo {
+  scope: PluginScope;
+  plugin_id: 'credential_broker';
+  inventory: BrokeredCredentialStatus[];
+  grants: CredentialBrokerGrantStatus;
+  corp_constraints: CredentialBrokerCorpConstraint[];
 }
 
 export interface McpServerEditRequest {
@@ -1029,6 +1064,13 @@ export async function updatePlugin(
   const resp = await _patch(
     `/profiles/${encodeURIComponent(profileId)}/plugins/${encodeURIComponent(pluginId)}/edit`,
     update,
+  );
+  return await resp.json();
+}
+
+export async function getCredentialBrokerInfo(profileId: string): Promise<CredentialBrokerInfo> {
+  const resp = await _get(
+    `/profiles/${encodeURIComponent(profileId)}/plugins/credential_broker/credentials/info`,
   );
   return await resp.json();
 }

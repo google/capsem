@@ -769,7 +769,35 @@ describe('api', () => {
     it('listPlugins sends GET /profiles/{profile_id}/plugins/list', async () => {
       const plugins = {
         scope: { kind: 'profile', profile_id: 'code' },
-        plugins: [],
+        plugins: [
+          {
+            id: 'credential_broker',
+            config: { mode: 'rewrite', detection_level: 'informational' },
+            default_config: { mode: 'rewrite', detection_level: 'informational' },
+            overridden: false,
+            scope: { kind: 'profile', profile_id: 'code' },
+            description: 'captures observed credentials',
+            stage: 'pre_and_post',
+            version: '1',
+            runtime: {
+              enabled: true,
+              event_count: 0,
+              detection_count: 0,
+              block_count: 0,
+              rewrite_count: 0,
+              last_error: null,
+              brokered_credentials: [],
+            },
+            detail_routes: [
+              {
+                id: 'credential_broker_credentials',
+                label: 'Credential Broker',
+                kind: 'credential_broker',
+                path: '/profiles/code/plugins/credential_broker/credentials/info',
+              },
+            ],
+          },
+        ],
       };
       mockFetch.mockReturnValueOnce(jsonResponse(plugins));
       const result = await api.listPlugins('code');
@@ -797,6 +825,7 @@ describe('api', () => {
           last_error: null,
           brokered_credentials: [],
         },
+        detail_routes: [],
       };
       mockFetch.mockReturnValueOnce(jsonResponse(plugin));
       const result = await api.updatePlugin('strict', 'dummy_pre_eicar', {
@@ -816,6 +845,25 @@ describe('api', () => {
     it('does not expose retired global plugin authoring helpers', () => {
       expect(api.listPlugins.length).toBe(1);
       expect(api.updatePlugin.length).toBe(3);
+    });
+
+    it('getCredentialBrokerInfo sends GET /profiles/{profile_id}/plugins/credential_broker/credentials/info', async () => {
+      const detail = {
+        scope: { kind: 'profile', profile_id: 'code' },
+        plugin_id: 'credential_broker',
+        inventory: [],
+        grants: {
+          profile_enabled: true,
+          vm_grants: [],
+          fork_default: 'inherit_profile',
+        },
+        corp_constraints: [],
+      };
+      mockFetch.mockReturnValueOnce(jsonResponse(detail));
+      const result = await api.getCredentialBrokerInfo('code');
+      expect(result).toEqual(detail);
+      const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
+      expect(call[0]).toContain('/profiles/code/plugins/credential_broker/credentials/info');
     });
   });
 
