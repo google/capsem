@@ -110,6 +110,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Updated the Profile rule lists and MCP tool list to use the same
   enum-backed visual language for allow/ask/block/rewrite/detection levels,
   while keeping MCP tool permission changes on the route-backed selector.
+- Added an explicit `enabled` field to the security rule contract. Disabled
+  rules remain visible in profile enforcement/detection inventories but are
+  skipped by `SecurityRuleSet` evaluation and rendered inactive in the UI.
 - Cleaned the admin/doctor/status/debug rails so diagnostics follow the profile
   contract: builder doctor delegates profile validation to `capsem-admin
   profile check`, Justfile asset builds no longer pass legacy guest-config

@@ -32,4 +32,11 @@ describe('ProfilePage route contract', () => {
     expect(source).not.toContain('{rule.action}</span>');
     expect(source).not.toContain("{rule.detection_level ?? 'none'}</span>");
   });
+
+  it('renders disabled rule rows from the backend enabled field', () => {
+    expect(source).toContain('rule.enabled');
+    expect(source).toContain("rule.enabled ? '' : 'bg-muted/20 opacity-70'");
+    expect(source).toContain('{#if !rule.enabled}');
+    expect(source).toContain('Disabled</span>');
+  });
 });

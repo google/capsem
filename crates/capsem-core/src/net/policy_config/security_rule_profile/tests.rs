@@ -426,6 +426,52 @@ fn compiled_rule_set_evaluates_once_over_security_event() {
 }
 
 #[test]
+fn disabled_rules_remain_inventory_but_do_not_match() {
+    let profile = SecurityRuleProfile::parse_toml(
+        r#"
+[profiles.rules.disabled_openai_block]
+name = "disabled_openai_block"
+action = "block"
+enabled = false
+detection_level = "high"
+match = 'http.host.contains("openai.com")'
+
+[profiles.rules.openai_observed]
+name = "openai_observed"
+action = "allow"
+detection_level = "informational"
+match = 'http.host.contains("openai.com")'
+"#,
+    )
+    .expect("disabled rule fixture parses");
+    let rules = SecurityRuleSet::compile_profile(&profile, SecurityRuleSource::User)
+        .expect("rule set compiles");
+    let disabled = rules
+        .rules()
+        .iter()
+        .find(|rule| rule.rule_id == "profiles.rules.disabled_openai_block")
+        .expect("disabled rule remains visible in compiled inventory");
+    assert!(!disabled.enabled);
+
+    let event = SecurityEvent::new(RuntimeSecurityEventType::HttpRequest).with_http(
+        crate::security_engine::HttpSecurityEvent {
+            host: Some("api.openai.com".to_string()),
+            ..Default::default()
+        },
+    );
+    let evaluation = rules.evaluate(&event).expect("rule set evaluates");
+
+    assert_eq!(
+        evaluation
+            .matched_rules()
+            .iter()
+            .map(|rule| rule.rule_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["profiles.rules.openai_observed"]
+    );
+}
+
+#[test]
 fn compiled_rule_set_does_not_fan_out_cross_root_rules() {
     let profile = SecurityRuleProfile::parse_toml(
         r#"

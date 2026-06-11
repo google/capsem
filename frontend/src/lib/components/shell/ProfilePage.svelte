@@ -292,10 +292,15 @@
           <div class="bg-card border border-card-line rounded-xl divide-y divide-card-divider">
             {#each enforcementRules as rule (rule.rule_id)}
               {@const meta = actionMeta(rule.action)}
-              <div class="p-4">
+              <div class="p-4 {rule.enabled ? '' : 'bg-muted/20 opacity-70'}">
                 <div class="flex items-start justify-between gap-x-3">
                   <div class="min-w-0">
-                    <p class="text-sm font-medium text-foreground truncate">{rule.name}</p>
+                    <div class="flex items-center gap-x-2">
+                      <p class="text-sm font-medium text-foreground truncate">{rule.name}</p>
+                      {#if !rule.enabled}
+                        <span class="text-[11px] uppercase tracking-wide text-muted-foreground-2">Disabled</span>
+                      {/if}
+                    </div>
                     {#if rule.reason}
                       <p class="text-xs text-muted-foreground-1 mt-0.5 line-clamp-2">{rule.reason}</p>
                     {/if}
@@ -315,10 +320,15 @@
           <div class="bg-card border border-card-line rounded-xl divide-y divide-card-divider">
             {#each detectionRules as rule (rule.rule_id)}
               {@const meta = detectionMeta(rule.detection_level)}
-              <div class="p-4">
+              <div class="p-4 {rule.enabled ? '' : 'bg-muted/20 opacity-70'}">
                 <div class="flex items-start justify-between gap-x-3">
                   <div class="min-w-0">
-                    <p class="text-sm font-medium text-foreground truncate">{rule.name}</p>
+                    <div class="flex items-center gap-x-2">
+                      <p class="text-sm font-medium text-foreground truncate">{rule.name}</p>
+                      {#if !rule.enabled}
+                        <span class="text-[11px] uppercase tracking-wide text-muted-foreground-2">Disabled</span>
+                      {/if}
+                    </div>
                     {#if rule.reason}
                       <p class="text-xs text-muted-foreground-1 mt-0.5 line-clamp-2">{rule.reason}</p>
                     {/if}

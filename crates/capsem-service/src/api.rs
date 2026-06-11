@@ -315,6 +315,7 @@ pub struct EnforcementRuleInfo {
     pub namespace: String,
     pub rule_key: String,
     pub default_rule: bool,
+    pub enabled: bool,
     pub name: String,
     pub action: SecurityRuleAction,
     #[serde(rename = "match")]

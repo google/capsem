@@ -222,6 +222,7 @@ export interface EnforcementRuleInfo {
   namespace: string;
   rule_key: string;
   default_rule: boolean;
+  enabled: boolean;
   name: string;
   action: SecurityRuleAction;
   match: string;

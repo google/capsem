@@ -6274,6 +6274,7 @@ fn enforcement_rule_info(
         namespace: rule.namespace,
         rule_key: rule.rule_key,
         default_rule: rule.default_rule,
+        enabled: rule.enabled,
         name: rule.name,
         action: rule.action,
         condition: rule.condition,

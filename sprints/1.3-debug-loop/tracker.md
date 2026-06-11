@@ -222,8 +222,13 @@
     frontend/src/lib/__tests__/mcp-section-contract.test.ts
     frontend/src/lib/__tests__/plugin-section-contract.test.ts
     frontend/src/lib/__tests__/mcp-store.test.ts`; `pnpm --dir frontend check`.
-  - [ ] Remaining: disabled rule rows need a backend rule enabled/disabled
-    contract field before the UI can render disabled rules without guessing.
+  - [x] Disabled-rule contract slice: `SecurityRule.enabled` defaults to true,
+    compiled rule inventory preserves disabled rules, `SecurityRuleSet`
+    evaluation skips them, profile enforcement/detection list DTOs expose
+    `enabled`, and the Profile UI greys disabled rule rows from that field.
+    Proof: `cargo test -p capsem-core
+    disabled_rules_remain_inventory_but_do_not_match -- --nocapture`;
+    `cargo test -p capsem-service rules -- --nocapture`; frontend proof below.
 - [x] Implement bug 16 slice: make MCP source/lifecycle display respect the
   existing route contract. The profile route exposes `local` as
   `source = builtin` with `running = false` because it is static Capsem-owned
@@ -243,14 +248,14 @@
   frontend/src/lib/__tests__/mcp-store.test.ts`; `pnpm --dir frontend check`;
   frontend hardcode scan only finds the burned server helpers in negative
   tests.
-- [ ] Implement bug 18 after user resumes coding: create shared row/icon
+- [x] Implement bug 18 slice: create shared row/icon
   semantics for disabled entries across plugins, MCP, enforcement rules, and
   detection rules: grey/inactive styling for disabled state, plus policy/mode
   icon from the underlying enum.
   - [x] Plugin and MCP parts covered by bug 14 and bug 15 UI iconography
     slices.
-  - [ ] Remaining: enforcement/detection disabled-rule rendering needs a
-    first-party disabled state in the rule DTO.
+  - [x] Enforcement/detection disabled-rule rendering is backed by the
+    first-party `enabled` rule DTO field.
 - [ ] Implement bug 19 after user resumes coding: expose the default MCP rule
   as a visible, editable rule/policy selector where allowed by profile/corp
   constraints; test that changing the selector mutates the same rule contract
@@ -516,6 +521,15 @@
   - `pnpm --dir frontend test -- --run frontend/src/lib/__tests__/plugin-section-contract.test.ts frontend/src/lib/__tests__/api.test.ts`
     passed; proves plugin UI mode labels/icons are derived from the typed enum
     and disabled plugins stay visible but inactive.
+  - `cargo test -p capsem-core disabled_rules_remain_inventory_but_do_not_match -- --nocapture`
+    passed; proves disabled rules remain in compiled inventory but cannot
+    match/evaluate.
+  - `cargo test -p capsem-service rules -- --nocapture` passed; proves profile
+    enforcement/detection rule routes expose `enabled` and list disabled rules
+    without letting them affect evaluation.
+  - `pnpm --dir frontend test -- --run frontend/src/lib/__tests__/profile-page-contract.test.ts frontend/src/lib/__tests__/mcp-section-contract.test.ts`
+    passed; proves Profile/MCP UI rows render typed policy metadata and disabled
+    state from backend fields.
   - `pnpm --dir frontend test -- --run frontend/src/lib/__tests__/api.test.ts`
     passed; proves frontend API helpers understand plugin detail routes and
     the credential broker detail endpoint.

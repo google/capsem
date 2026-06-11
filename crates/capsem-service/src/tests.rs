@@ -622,6 +622,7 @@ async fn profile_enforcement_list_uses_profile_files_and_corp_not_user_settings(
             name: "route_file_probe".to_string(),
             action: capsem_core::net::policy_config::SecurityRuleAction::Allow,
             condition: r#"file.read.path.contains("skills/")"#.to_string(),
+            enabled: true,
             detection_level: Some(capsem_core::net::policy_config::DetectionLevel::Informational),
             priority: None,
             corp_locked: false,
@@ -640,6 +641,7 @@ async fn profile_enforcement_list_uses_profile_files_and_corp_not_user_settings(
             name: "settings_only_should_not_load".to_string(),
             action: capsem_core::net::policy_config::SecurityRuleAction::Block,
             condition: r#"http.host.contains("settings-only.invalid")"#.to_string(),
+            enabled: true,
             detection_level: None,
             priority: None,
             corp_locked: false,
@@ -657,6 +659,7 @@ async fn profile_enforcement_list_uses_profile_files_and_corp_not_user_settings(
             name: "block_evil_example".to_string(),
             action: capsem_core::net::policy_config::SecurityRuleAction::Block,
             condition: r#"http.host.contains("evil.example")"#.to_string(),
+            enabled: true,
             detection_level: Some(capsem_core::net::policy_config::DetectionLevel::High),
             priority: Some(capsem_core::net::policy_config::SecurityRulePriority::Explicit(-100)),
             corp_locked: false,
@@ -1193,6 +1196,7 @@ async fn t1_adversarial_route_inputs_fail_closed() {
         name: "bad_rule".to_string(),
         action: capsem_core::net::policy_config::SecurityRuleAction::Allow,
         condition: "file.read.path.contains(\"tmp\")".to_string(),
+        enabled: true,
         detection_level: None,
         priority: None,
         corp_locked: false,
@@ -1821,11 +1825,82 @@ async fn handle_enforcement_rules_list_returns_compiled_profile_rules() {
         .expect("custom profile rule should be listed");
     assert_eq!(custom.source, api::EnforcementRuleSource::Profile);
     assert!(!custom.default_rule);
+    assert!(custom.enabled);
     assert_eq!(custom.priority, 10);
     assert_eq!(
         custom.detection_level,
         Some(capsem_core::net::policy_config::DetectionLevel::Informational)
     );
+}
+
+#[tokio::test]
+async fn disabled_rules_are_listed_but_do_not_evaluate() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+
+    let dir = tempfile::tempdir().unwrap();
+    let (config_root, _) = install_file_asset_profile_fixture(&dir);
+    add_profile_enforcement_rule(
+        &config_root,
+        "disabled_tmp_block",
+        capsem_core::net::policy_config::SecurityRule {
+            name: "disabled_tmp_block".to_string(),
+            action: capsem_core::net::policy_config::SecurityRuleAction::Block,
+            condition: r#"file.read.path.contains("tmp")"#.to_string(),
+            enabled: false,
+            detection_level: Some(capsem_core::net::policy_config::DetectionLevel::High),
+            priority: None,
+            corp_locked: false,
+            reason: Some("disabled rule inventory proof".to_string()),
+            managed: None,
+            plugin_config: BTreeMap::new(),
+        },
+    );
+    let _profiles_guard = EnvVarGuard::set("CAPSEM_PROFILES_DIR", config_root.join("profiles"));
+    let (_settings_guard, _, _) = install_empty_settings_env(&dir);
+
+    let Json(response) = handle_enforcement_rules_list(Path("code".to_string()))
+        .await
+        .expect("rules list should include disabled rules");
+    let disabled = response
+        .rules
+        .iter()
+        .find(|rule| rule.rule_id == "profiles.rules.disabled_tmp_block")
+        .expect("disabled rule should stay visible in inventory");
+    assert!(!disabled.enabled);
+    assert_eq!(
+        disabled.detection_level,
+        Some(capsem_core::net::policy_config::DetectionLevel::High)
+    );
+
+    let profile_rules = profile_security_rule_profile_for_route("code").unwrap();
+    let rule_set = capsem_core::net::policy_config::SecurityRuleSet::compile_profile(
+        &profile_rules,
+        capsem_core::net::policy_config::SecurityRuleSource::User,
+    )
+    .expect("compile profile rules");
+    let event = capsem_core::security_engine::SecurityEvent::new(
+        capsem_core::security_engine::RuntimeSecurityEventType::FileEvent,
+    )
+    .with_file(capsem_core::security_engine::FileSecurityEvent {
+        read_path: Some("/tmp/secret.txt".to_string()),
+        ..Default::default()
+    });
+    let evaluation = rule_set.evaluate(&event).expect("evaluate rules");
+    assert!(
+        evaluation
+            .matched_rules()
+            .iter()
+            .all(|rule| rule.rule_id != "profiles.rules.disabled_tmp_block"),
+        "disabled rule must not participate in enforcement or detection"
+    );
+
+    let Json(detection_response) = handle_detection_rules_list(Path("code".to_string()))
+        .await
+        .expect("detection rules list should include disabled detection rules");
+    assert!(detection_response
+        .rules
+        .iter()
+        .any(|rule| rule.rule_id == "profiles.rules.disabled_tmp_block" && !rule.enabled));
 }
 
 #[tokio::test]
@@ -1894,6 +1969,7 @@ async fn handle_detection_rules_list_returns_detection_rules_only() {
             name: "pure_block".to_string(),
             action: capsem_core::net::policy_config::SecurityRuleAction::Block,
             condition: r#"file.read.path.contains("tmp")"#.to_string(),
+            enabled: true,
             detection_level: None,
             priority: None,
             corp_locked: false,
@@ -1952,6 +2028,7 @@ async fn handle_detection_rule_upsert_requires_detection_level() {
         name: "pure_block".to_string(),
         action: capsem_core::net::policy_config::SecurityRuleAction::Block,
         condition: r#"file.read.path.contains("tmp")"#.to_string(),
+        enabled: true,
         detection_level: None,
         priority: None,
         corp_locked: false,
@@ -2351,6 +2428,7 @@ async fn enforcement_rule_endpoints_add_delete_reload_and_reject_invalid_rules_a
         name: "file_import_eicar_block".to_string(),
         action: capsem_core::net::policy_config::SecurityRuleAction::Block,
         condition: r#"file.import.content.contains("EICAR")"#.to_string(),
+        enabled: true,
         detection_level: Some(capsem_core::net::policy_config::DetectionLevel::High),
         priority: Some(capsem_core::net::policy_config::SecurityRulePriority::Explicit(10)),
         corp_locked: false,
@@ -2484,6 +2562,7 @@ async fn route_authored_detection_rule_triggers_runtime_ledger_and_latest_routes
         name: "openai_http_observed".to_string(),
         action: capsem_core::net::policy_config::SecurityRuleAction::Allow,
         condition: r#"http.host.contains("openai.com")"#.to_string(),
+        enabled: true,
         detection_level: Some(capsem_core::net::policy_config::DetectionLevel::Informational),
         priority: Some(capsem_core::net::policy_config::SecurityRulePriority::Explicit(10)),
         corp_locked: false,
@@ -2708,6 +2787,7 @@ async fn mounted_service_ledger_routes_read_real_session_db_rows() {
                         name: "service_http_detect".to_string(),
                         action: capsem_core::net::policy_config::SecurityRuleAction::Allow,
                         condition: r#"http.host.contains("example.com")"#.to_string(),
+                        enabled: true,
                         detection_level: Some(
                             capsem_core::net::policy_config::DetectionLevel::Informational,
                         ),

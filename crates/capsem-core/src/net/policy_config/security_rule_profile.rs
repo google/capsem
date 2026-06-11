@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use super::condition::{evaluate_condition_with, validate_condition_with, CompiledCondition};
-use super::types::PolicySubject;
+use super::types::{default_true, PolicySubject};
 
 pub const CORP_PRIORITY_MIN: i32 = -1000;
 pub const CORP_PRIORITY_MAX: i32 = -10;
@@ -83,6 +83,8 @@ pub struct SecurityRule {
     pub action: SecurityRuleAction,
     #[serde(rename = "match")]
     pub condition: String,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub detection_level: Option<DetectionLevel>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -338,6 +340,7 @@ pub struct CompiledSecurityRule {
     pub namespace: String,
     pub rule_key: String,
     pub default_rule: bool,
+    pub enabled: bool,
     pub name: String,
     pub action: SecurityRuleAction,
     pub condition: String,
@@ -465,6 +468,7 @@ impl SecurityRuleProfile {
                     namespace: "profiles".to_string(),
                     rule_key: rule_key.clone(),
                     default_rule: false,
+                    enabled: rule.enabled,
                     name: rule.name.clone(),
                     action: rule.action,
                     condition: rule.condition.clone(),
@@ -500,6 +504,7 @@ impl SecurityRuleProfile {
                 namespace: "profiles".to_string(),
                 rule_key: compiled_rule_key,
                 default_rule: true,
+                enabled: rule.enabled,
                 name: rule.name.clone(),
                 action: rule.action,
                 condition: rule.condition.clone(),
@@ -531,6 +536,7 @@ impl SecurityRuleProfile {
                 namespace: namespace.to_string(),
                 rule_key: rule_key.clone(),
                 default_rule: false,
+                enabled: rule.enabled,
                 name: rule.name.clone(),
                 action: rule.action,
                 condition: rule.condition.clone(),
@@ -609,6 +615,7 @@ impl SigmaRule {
             name: rule_key.clone(),
             action: self.capsem.action.unwrap_or(SecurityRuleAction::Allow),
             condition,
+            enabled: true,
             detection_level: Some(self.level),
             priority: self.capsem.priority,
             corp_locked: self.capsem.corp_locked,
@@ -842,6 +849,9 @@ impl SecurityRuleSet {
     {
         let mut matched_rules = Vec::new();
         for rule in &self.rules {
+            if !rule.enabled {
+                continue;
+            }
             if rule.matches_security_event(subject)? {
                 matched_rules.push(rule);
             }

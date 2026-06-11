@@ -502,6 +502,7 @@ impl Profile {
                     cel_string(server),
                     cel_string(tool)
                 ),
+                enabled: true,
                 detection_level: None,
                 priority: Some(SecurityRulePriority::Named(
                     SecurityRulePriorityName::Default,
