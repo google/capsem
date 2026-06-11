@@ -83,6 +83,10 @@
   tell whether AGY OAuth was intercepted, plugin activity is absent from VM
   stats, and supported credential types are not listed. Each plugin should
   expose structured info/status/capabilities/counters that the UI can render.
+  Plugins may also expose typed route-backed detail surfaces for custom UI
+  panels when generic counters are not enough; credential broker needs such a
+  panel for inventory, grants, capture/replay evidence, and profile/fork
+  exposure.
 - [x] Capture bug 24: AI provider detection is host/registry-biased and misses
   unknown-domain OpenAI/Gemini/Claude-compatible traffic. Bounded
   request/response sniffing should detect protocol shape, emit
@@ -207,8 +211,10 @@
 - [ ] Implement bug 23 after user resumes coding: define and wire a plugin info
   contract for each plugin: name, description, version, mode, pre/post phase,
   supported event families, supported credential kinds/providers where relevant,
-  status, counters, last activity, and recent evidence links; render this in the
-  plugin UI and VM stats.
+  status, counters, last activity, recent evidence links, and optional typed
+  detail routes for plugin-specific UI. Render the generic contract in plugin
+  UI/VM stats, and add a credential-broker-specific route/panel for inventory,
+  grants, capture/replay evidence, and profile/fork exposure.
 - [ ] Implement bug 24 after user resumes coding: add TDD for unknown-domain AI
   protocol sniffing and rogue/custom endpoint detection. The fix must use
   bounded request/response previews, set first-party `model.provider` on the
