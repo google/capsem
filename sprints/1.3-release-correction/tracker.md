@@ -259,6 +259,17 @@ next one, and stage only the files for that slice.
 - [ ] RED/GREEN: doctor/toolchain probes cover apt/dpkg triggers, Python, pip,
   uv, Node, npm, npx, packaged CLIs, aliases, MCP bootstrap, DNS, TLS, FS
   writes.
+- [x] RED/GREEN: cargo test runner codesigning is serialized so parallel test
+  shards do not race while replacing ad-hoc signatures.
+  - 2026-06-11 progress: `scripts/run_signed.sh` now uses a portable
+    `mkdir` lock around `codesign` and signature revalidation; no `flock`
+    dependency on macOS.
+  - Proof: `uv run python -m pytest
+    tests/capsem-build-chain/test_run_signed.py -q`; `bash -n
+    scripts/run_signed.sh`; parallel retry of `cargo test -p capsem-logger
+    substitution_events_require_brokered_reference -- --nocapture` and `cargo
+    test -p capsem-logger
+    brokered_substitution_persists_reference_and_not_secret -- --nocapture`.
 - [ ] RED/GREEN: benchmarks use concurrency and request counts large enough to
   produce meaningful p50/p95/p99/rps for HTTP/SSE/WS/DNS/MCP/broker/model
   replay/storage/startup/lifecycle/fork.
