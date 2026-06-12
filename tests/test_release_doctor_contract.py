@@ -44,9 +44,20 @@ def test_guest_network_doctor_is_hermetic_by_default() -> None:
 def test_doctor_session_validation_starts_hermetic_upstream() -> None:
     source = (PROJECT_ROOT / "scripts" / "doctor_session_test.py").read_text()
 
-    assert "capsem-debug-upstream" in source
+    assert "from debug_upstream import start_debug_upstream, stop_process" in source
     assert "CAPSEM_BENCH_MITM_LOCAL_BASE_URL" in source
     assert "[binary, \"run\", \"capsem-doctor\"]" in source
+
+
+def test_release_scripts_use_shared_debug_upstream_helper() -> None:
+    helper = PROJECT_ROOT / "scripts" / "debug_upstream.py"
+    assert helper.exists(), "release scripts need one shared debug-upstream helper"
+
+    for rel in ["scripts/doctor_session_test.py", "scripts/integration_test.py"]:
+        source = (PROJECT_ROOT / rel).read_text()
+        assert "from debug_upstream import" in source
+        assert "def _read_debug_upstream_ready" not in source
+        assert "def _start_debug_upstream" not in source
 
 
 def test_guest_init_exports_ca_bundle_for_runtime_and_login_shells() -> None:

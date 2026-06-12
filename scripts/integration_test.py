@@ -19,7 +19,6 @@ import argparse
 import json
 import os
 import re
-import selectors
 import signal
 import shutil
 import shlex
@@ -29,6 +28,12 @@ import sys
 import time
 from pathlib import Path
 from typing import Optional
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
+from debug_upstream import local_fixture_env, start_debug_upstream, stop_process  # noqa: E402
 
 BOLD = "\033[1m"
 DIM = "\033[2m"
@@ -62,8 +67,6 @@ SESSIONS_DIR = _run_dir() / "sessions"
 MAIN_DB = CAPSEM_HOME / "sessions" / "main.db"
 SERVICE_SOCKET = _run_dir() / "service.sock"
 SERVICE_PIDFILE = _run_dir() / "service.pid"
-DEBUG_UPSTREAM_BINARY = Path("target/debug/capsem-debug-upstream")
-DEBUG_UPSTREAM_ADDR = "127.0.0.1:3713"
 
 def _gemini_api_key() -> Optional[str]:
     """Find a Gemini API key for the optional live model telemetry probe."""
@@ -80,72 +83,6 @@ def _gemini_api_key() -> Optional[str]:
                     if m:
                         return m.group(1)
     return None
-
-
-def _read_debug_upstream_ready(proc: subprocess.Popen, timeout_s: float = 10.0) -> dict:
-    selector = selectors.DefaultSelector()
-    selector.register(proc.stdout, selectors.EVENT_READ)
-    deadline = time.monotonic() + timeout_s
-    lines: list[str] = []
-    while time.monotonic() < deadline:
-        if proc.poll() is not None:
-            raise RuntimeError(
-                f"capsem-debug-upstream exited early with code {proc.returncode}: "
-                f"{''.join(lines)}"
-            )
-        for key, _ in selector.select(timeout=0.2):
-            line = key.fileobj.readline()
-            if not line:
-                continue
-            lines.append(line)
-            try:
-                payload = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if payload.get("service") == "capsem-debug-upstream":
-                return payload
-    raise TimeoutError(
-        "capsem-debug-upstream did not become ready; "
-        f"stdout={''.join(lines)!r}"
-    )
-
-
-def _start_debug_upstream() -> tuple[subprocess.Popen, str]:
-    if not DEBUG_UPSTREAM_BINARY.exists():
-        raise RuntimeError(
-            f"{DEBUG_UPSTREAM_BINARY} not found; run `cargo build -p capsem-debug-upstream`"
-        )
-    proc = subprocess.Popen(
-        [str(DEBUG_UPSTREAM_BINARY), "--addr", DEBUG_UPSTREAM_ADDR],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        bufsize=1,
-    )
-    try:
-        ready = _read_debug_upstream_ready(proc)
-        return proc, ready["base_url"]
-    except Exception:
-        proc.terminate()
-        try:
-            proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-        raise
-
-
-def _stop_process(proc: Optional[subprocess.Popen]) -> None:
-    if proc is None:
-        return
-    proc.terminate()
-    try:
-        proc.wait(timeout=5)
-    except subprocess.TimeoutExpired:
-        proc.kill()
-
-
-def _local_fixture_env(base_url: str) -> dict[str, str]:
-    return {"CAPSEM_BENCH_MITM_LOCAL_BASE_URL": base_url}
 
 
 def _vm_command(include_gemini_probe: bool, local_base_url: str) -> str:
@@ -341,14 +278,15 @@ def run_vm(binary: str, assets_dir: str) -> tuple[str, int, bool]:
     existing = set(p.name for p in SESSIONS_DIR.iterdir()) if SESSIONS_DIR.exists() else set()
 
     try:
-        debug_proc, debug_base_url = _start_debug_upstream()
+        debug_proc, ready = start_debug_upstream()
+        debug_base_url = ready["base_url"]
         print(f"{BOLD}Local debug upstream:{RESET} {debug_base_url}")
 
         # Pass API key and deterministic local fixture settings via --env so
         # they reach the VM through the service. Do not inject proxy variables:
         # guest traffic must prove the iptables-nft redirect rail.
         cmd = [binary, "run", "--timeout", "300"]
-        for key, value in _local_fixture_env(debug_base_url).items():
+        for key, value in local_fixture_env(debug_base_url).items():
             cmd.extend(["--env", f"{key}={value}"])
         if google_key:
             cmd.extend(["--env", f"GEMINI_API_KEY={google_key}"])
@@ -363,7 +301,7 @@ def run_vm(binary: str, assets_dir: str) -> tuple[str, int, bool]:
             env=env, capture_output=True, text=True, timeout=300,
         )
     finally:
-        _stop_process(debug_proc)
+        stop_process(debug_proc)
         # Always tear down the test service. Subsequent smoke steps spawn
         # their own fixtures, and leaving this one around would shadow any
         # default-config service the pipeline expects next.

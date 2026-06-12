@@ -268,7 +268,7 @@ next one, and stage only the files for that slice.
     `/v1/chat/completions`, status `200`, and one parsed message. This proves
     the local backend path is routed and parsed through Capsem, not a guest
     install shortcut.
-- [ ] Proof: lab is shared by doctor, integration tests, recorder, and
+- [x] Proof: lab is shared by doctor, integration tests, recorder, and
   benchmark.
   - 2026-06-12 progress: benchmark tests no longer carry a private fake HTTP
     fixture. `tests/test_capsem_bench_mitm_local.py` now starts the real
@@ -278,6 +278,19 @@ next one, and stage only the files for that slice.
   - Proof: `cargo build -p capsem-debug-upstream`; `cargo test -p
     capsem-debug-upstream -- --nocapture`; `uv run python -m pytest
     tests/test_capsem_bench_mitm_local.py -q` (`23 passed in 1.06s`).
+  - 2026-06-12 progress: release scripts no longer carry private
+    `capsem-debug-upstream` process bootstrap code. `scripts/debug_upstream.py`
+    is the single launcher/ready/lock/teardown helper, used by
+    `scripts/doctor_session_test.py`, `scripts/integration_test.py`, the
+    recorder tests, and benchmark tests.
+  - Proof: `uv run python -m pytest tests/test_release_doctor_contract.py -q`
+    (`8 passed`); `uv run ruff check scripts/debug_upstream.py
+    scripts/doctor_session_test.py scripts/integration_test.py
+    tests/helpers/debug_upstream.py tests/test_release_doctor_contract.py`;
+    `uv run python -m pytest tests/test_protocol_fixture_recorder.py
+    tests/test_capsem_bench_mitm_local.py -q` (`25 passed`); `python3 -m
+    py_compile scripts/debug_upstream.py scripts/doctor_session_test.py
+    scripts/integration_test.py tests/helpers/debug_upstream.py`.
 
 ## S5. Doctor, Just, E2E, Benchmark
 

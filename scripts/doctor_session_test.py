@@ -19,12 +19,16 @@ import argparse
 import gzip
 import json
 import os
-import selectors
 import sqlite3
 import subprocess
 import sys
-import time
 from pathlib import Path
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
+from debug_upstream import start_debug_upstream, stop_process  # noqa: E402
 
 BOLD = "\033[1m"
 DIM = "\033[2m"
@@ -37,8 +41,6 @@ RESET = "\033[0m"
 SESSIONS_DIR = Path.home() / ".capsem" / "run" / "sessions"
 MAIN_DB = Path.home() / ".capsem" / "sessions" / "main.db"
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-DEBUG_UPSTREAM_BINARY = PROJECT_ROOT / "target" / "debug" / "capsem-debug-upstream"
-DEBUG_UPSTREAM_ADDR = "127.0.0.1:3713"
 DEBUG_UPSTREAM_ENV = "CAPSEM_BENCH_MITM_LOCAL_BASE_URL"
 
 
@@ -71,70 +73,6 @@ class Results:
     @property
     def success(self) -> bool:
         return len(self.failed) == 0
-
-
-def _read_debug_upstream_ready(proc: subprocess.Popen, timeout_s: float = 10.0) -> dict:
-    selector = selectors.DefaultSelector()
-    selector.register(proc.stdout, selectors.EVENT_READ)
-    deadline = time.monotonic() + timeout_s
-    lines: list[str] = []
-    while time.monotonic() < deadline:
-        if proc.poll() is not None:
-            raise RuntimeError(
-                f"capsem-debug-upstream exited early with code {proc.returncode}: "
-                f"{''.join(lines)}"
-            )
-        for key, _ in selector.select(timeout=0.2):
-            line = key.fileobj.readline()
-            if not line:
-                continue
-            lines.append(line)
-            try:
-                payload = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if payload.get("service") == "capsem-debug-upstream":
-                return payload
-    raise TimeoutError(
-        "capsem-debug-upstream did not become ready; "
-        f"stdout={''.join(lines)!r}"
-    )
-
-
-def _start_debug_upstream() -> tuple[subprocess.Popen, str]:
-    if not DEBUG_UPSTREAM_BINARY.exists():
-        raise FileNotFoundError(
-            f"{DEBUG_UPSTREAM_BINARY} not found; run `cargo build -p capsem-debug-upstream`"
-        )
-    proc = subprocess.Popen(
-        [str(DEBUG_UPSTREAM_BINARY), "--addr", DEBUG_UPSTREAM_ADDR],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        bufsize=1,
-    )
-    try:
-        ready = _read_debug_upstream_ready(proc)
-    except Exception:
-        proc.terminate()
-        try:
-            proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.wait(timeout=5)
-        raise
-    return proc, ready["base_url"]
-
-
-def _stop_debug_upstream(proc: subprocess.Popen | None) -> None:
-    if proc is None:
-        return
-    proc.terminate()
-    try:
-        proc.wait(timeout=5)
-    except subprocess.TimeoutExpired:
-        proc.kill()
-        proc.wait(timeout=5)
 
 
 def run_doctor(binary: str, assets_dir: str, debug_base_url: str) -> tuple[str, int]:
@@ -511,11 +449,12 @@ def main():
 
     debug_proc = None
     try:
-        debug_proc, debug_base_url = _start_debug_upstream()
+        debug_proc, ready = start_debug_upstream()
+        debug_base_url = ready["base_url"]
         print(f"{BOLD}Local debug upstream:{RESET} {debug_base_url}")
         session_id, exit_code = run_doctor(args.binary, args.assets, debug_base_url)
     finally:
-        _stop_debug_upstream(debug_proc)
+        stop_process(debug_proc)
 
     # capsem-doctor must pass -- a failure is itself a test failure.
     if exit_code != 0:
