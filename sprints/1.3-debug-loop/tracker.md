@@ -1,5 +1,17 @@
 # Sprint: 1.3 Debug Loop
 
+> Superseded for execution by `sprints/1.3-release-correction/`.
+> This tracker is historical evidence. New fixes must land through the
+> release-correction sprint and gates.
+
+## Active Hotlist
+
+- Current actionable release bugs live in
+  [`current-hotlist.md`](current-hotlist.md).
+- The captured bug list below is retained as historical/manual-loop evidence.
+  Do not use it as the current execution queue without reconciling it back into
+  the hotlist.
+
 ## Tasks
 
 - [x] Capture live-debug ground rule: do not kill, purge, reinstall, or restart
