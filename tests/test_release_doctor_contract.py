@@ -170,3 +170,14 @@ def test_guest_runtime_doctor_package_probes_are_hermetic() -> None:
     assert "file:" in source
     assert "dpkg-deb --build" in source
     assert "--python /root/.venv/bin/python" in source
+
+
+def test_guest_virtiofs_pip_probe_is_hermetic() -> None:
+    source = (
+        PROJECT_ROOT / "guest" / "artifacts" / "diagnostics" / "test_virtiofs.py"
+    ).read_text()
+
+    assert "pip install --quiet cowsay" not in source
+    assert "import cowsay" not in source
+    assert "pip install --no-index" in source
+    assert "ZipFile" in source

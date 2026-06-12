@@ -132,6 +132,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   service routes, runs the hermetic mock protocol lab, and verifies HTTP, DNS,
   MCP, model, tool-call, file, exec, security-rule, and credential broker rows
   agree in `session.db`.
+- Made the VirtioFS doctor pip probe hermetic by installing a generated local
+  wheel with `--no-index` instead of reaching out to PyPI for `cowsay`.
 - Expanded per-architecture VM build ledgers with a `rootfs.config_inputs`
   stage that records declared package config, rendered rootfs install inputs,
   profile root/build-script inputs, and EROFS settings. Installed package

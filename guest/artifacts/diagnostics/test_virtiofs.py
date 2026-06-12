@@ -8,6 +8,8 @@ These tests verify the VirtioFS single-share hybrid architecture:
 
 import os
 import pathlib
+import textwrap
+import zipfile
 
 import pytest
 
@@ -112,13 +114,51 @@ def test_system_overlay_writable():
     test_file.unlink()
 
 
-def test_pip_install_works():
+def _write_python_wheel(output_dir, distribution, module, module_source):
+    """Create a tiny pure-Python wheel without touching a package index."""
+    version = "0.1.0"
+    normalized = distribution.replace("-", "_")
+    wheel_path = output_dir / f"{normalized}-{version}-py3-none-any.whl"
+    dist_info = f"{normalized}-{version}.dist-info"
+    files = {
+        f"{module}/__init__.py": textwrap.dedent(module_source).lstrip(),
+        f"{dist_info}/METADATA": (
+            "Metadata-Version: 2.1\n"
+            f"Name: {distribution}\n"
+            f"Version: {version}\n"
+        ),
+        f"{dist_info}/WHEEL": (
+            "Wheel-Version: 1.0\n"
+            "Generator: capsem-doctor\n"
+            "Root-Is-Purelib: true\n"
+            "Tag: py3-none-any\n"
+        ),
+    }
+    record_rows = [f"{path},," for path in files]
+    record_rows.append(f"{dist_info}/RECORD,,")
+    files[f"{dist_info}/RECORD"] = "\n".join(record_rows) + "\n"
+    with zipfile.ZipFile(wheel_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for path, data in files.items():
+            zf.writestr(path, data)
+    return wheel_path
+
+
+def test_pip_install_works(output_dir):
     """pip install must work (writes to ext4 virtio-blk overlay, not VirtioFS)."""
-    # Install a tiny package to verify the overlay is writable for package managers.
-    result = run("pip install --quiet cowsay 2>&1", timeout=30)
+    wheel = _write_python_wheel(
+        output_dir,
+        "capsem-virtiofs-pip",
+        "capsem_virtiofs_pip",
+        """
+        def moo():
+            return "moo"
+        """,
+    )
+    result = run(f"pip install --no-index {wheel} 2>&1", timeout=30)
     assert result.returncode == 0, f"pip install failed: {result.stdout}\n{result.stderr}"
-    result = run("python3 -c 'import cowsay; print(cowsay.cow(\"moo\"))'")
-    assert "moo" in result.stdout, f"cowsay not working: {result.stdout}"
+    result = run("python3 -c 'import capsem_virtiofs_pip; print(capsem_virtiofs_pip.moo())'")
+    assert result.returncode == 0, f"local wheel not importable: {result.stderr}"
+    assert "moo" in result.stdout, f"local wheel not working: {result.stdout}"
 
 
 def test_file_delete_and_recreate():
