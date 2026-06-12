@@ -151,7 +151,7 @@
       .trim()
       .toLowerCase()
       .replace(/[^a-z0-9-]+/g, '-')
-      .replace(/^-+|-+$/g, '') || 'vm';
+      .replace(/^-+|-+$/g, '') || 'session';
     const stamp = Date.now().toString(36);
     return `${safeProfile}-${stamp}`;
   }
@@ -160,7 +160,7 @@
   let actionError = $state<string | null>(null);
 
   function profileAssetText(assetHealth: AssetStatusResponse | null): string {
-    if (!assetHealth) return 'Checking VM assets.';
+    if (!assetHealth) return 'Checking profile assets.';
     if (assetHealth.downloading) {
       const name = assetHealth.current_asset ? ` ${assetHealth.current_asset}` : '';
       if (assetHealth.bytes_total && assetHealth.bytes_total > 0) {
@@ -254,7 +254,7 @@
     actionError = null;
     const launcher = profileLaunchers.find(item => item.profile.id === profileId);
     if (!launcher || launcher.assets?.ready !== true) {
-      actionError = `VM assets are not ready for profile ${profileId}`;
+      actionError = `Assets are not ready for profile ${profileId}`;
       return;
     }
     creatingVm = true;
@@ -382,19 +382,19 @@
 {/snippet}
 
 <div class="p-6 max-w-5xl mx-auto">
-  <!-- VMs header -->
+  <!-- Sessions header -->
   <div class="flex items-center justify-between mb-6">
-    <h2 class="text-2xl font-bold text-foreground">VMs</h2>
+    <h2 class="text-2xl font-bold text-foreground">Sessions</h2>
     <div class="flex items-center gap-x-2">
       <button
         type="button"
         class="inline-flex items-center gap-x-2 bg-surface border border-line-2 text-foreground hover:bg-muted-hover rounded-lg px-4 py-2 text-sm font-medium transition-colors disabled:opacity-50 disabled:pointer-events-none"
         onclick={() => vmStore.showCreateModal = true}
         disabled={creatingVm}
-        title="Customize VM"
+        title="Customize session"
       >
         <Plus size={16} weight="bold" />
-        Customize VM...
+        Customize Session...
       </button>
     </div>
   </div>
@@ -475,7 +475,7 @@
     <div class="flex items-start gap-x-3 p-4 mb-4 rounded-lg border border-destructive/30 bg-destructive/10 text-sm">
       <Warning size={18} class="text-destructive mt-0.5 shrink-0" />
       <div class="flex-1 min-w-0">
-        <p class="font-medium text-foreground">Failed to create VM</p>
+        <p class="font-medium text-foreground">Failed to create session</p>
         <p class="text-muted-foreground-1 mt-0.5 break-words">{actionError}</p>
       </div>
       <button
@@ -489,16 +489,16 @@
     </div>
   {/if}
 
-  <!-- VM list -->
-  <h3 class="text-xs font-semibold text-foreground uppercase tracking-wider mb-3">VMs</h3>
+  <!-- Session list -->
+  <h3 class="text-xs font-semibold text-foreground uppercase tracking-wider mb-3">Sessions</h3>
   {#if initialLoading}
     <div class="bg-card border border-card-line rounded-xl p-12 flex items-center justify-center gap-x-3">
       <CircleNotch size={18} class="text-muted-foreground-1 animate-spin" />
-      <p class="text-muted-foreground-1 text-sm">Loading VMs...</p>
+      <p class="text-muted-foreground-1 text-sm">Loading sessions...</p>
     </div>
   {:else if allVms.length === 0}
     <div class="bg-card border border-card-line rounded-xl p-8 flex items-center justify-center">
-      <p class="text-muted-foreground-1 text-sm">No VMs</p>
+      <p class="text-muted-foreground-1 text-sm">No sessions</p>
     </div>
   {:else}
     {@render sessionTable(allVms)}
@@ -514,7 +514,7 @@
   {:else}
     <div class="grid grid-cols-4 gap-3">
       <div class="bg-card border border-card-line rounded-lg p-3">
-        <div class="text-[11px] text-muted-foreground mb-0.5 uppercase tracking-wider">VMs</div>
+        <div class="text-[11px] text-muted-foreground mb-0.5 uppercase tracking-wider">Sessions</div>
         <div class="text-lg font-semibold text-foreground">{globalStats?.total_sessions ?? 0}</div>
       </div>
       <div class="bg-card border border-card-line rounded-lg p-3">
@@ -535,22 +535,22 @@
 
 <Modal
   open={dashModalKind === 'stop'}
-  title="Stop VM"
+  title="Stop session"
   confirmLabel="Stop"
   destructive
   onconfirm={handleDashModalConfirm}
   oncancel={closeDashModal}
 >
-  <p class="text-sm text-foreground">Stop <strong>{dashModalVm?.name ?? dashModalVm?.id}</strong>?</p>
+  <p class="text-sm text-foreground">Stop session <strong>{dashModalVm?.name ?? dashModalVm?.id}</strong>?</p>
 </Modal>
 
 <Modal
   open={dashModalKind === 'delete'}
-  title="Delete VM"
+  title="Delete session"
   confirmLabel="Delete"
   destructive
   onconfirm={handleDashModalConfirm}
   oncancel={closeDashModal}
 >
-  <p class="text-sm text-foreground">Delete <strong>{dashModalVm?.name ?? dashModalVm?.id}</strong>? This cannot be undone.</p>
+  <p class="text-sm text-foreground">Delete session <strong>{dashModalVm?.name ?? dashModalVm?.id}</strong>? This cannot be undone.</p>
 </Modal>

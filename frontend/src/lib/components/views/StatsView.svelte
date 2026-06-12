@@ -287,7 +287,7 @@
       detectionLatest = detLatest;
       enforcementLatest = enfLatest;
     } catch (e) {
-      error = e instanceof Error ? e.message : 'Failed to load VM stats';
+      error = e instanceof Error ? e.message : 'Failed to load session stats';
     } finally {
       loading = false;
     }
@@ -366,7 +366,7 @@
       <div class="flex items-center justify-between gap-x-3 mb-6">
         <div>
           <h2 class="text-xl font-medium text-foreground capitalize">{activeTab}</h2>
-          <p class="text-xs text-muted-foreground-1 mt-1">VM {vmId} session database</p>
+          <p class="text-xs text-muted-foreground-1 mt-1">Session {vmId} database</p>
         </div>
         <button
           type="button"

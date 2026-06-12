@@ -121,7 +121,7 @@
               onclick={() => { if (active) tabStore.updateView(active.id, 'logs'); menuOpen = false; }}
             >
               <Scroll size={16} />
-              <span>VM Logs</span>
+              <span>Session Logs</span>
             </button>
             {#if activeVm && hasVmAction(activeVm, 'pause')}
               <button
@@ -222,7 +222,7 @@
             <span class="size-1.5 rounded-full {gatewayStore.connected ? 'bg-green-500' : gatewayStore.reachable ? 'bg-amber-500' : 'bg-red-500'}"></span>
             <span class="text-xs text-muted-foreground">
               {#if gatewayStore.connected}
-                Gateway {gatewayStore.version ?? ''} -- {vmStore.serviceStatus === 'running' ? `${vmStore.vms.length} VM${vmStore.vms.length !== 1 ? 's' : ''}` : vmStore.serviceStatus === 'unavailable' ? 'service down' : 'service unknown'}
+                Gateway {gatewayStore.version ?? ''} -- {vmStore.serviceStatus === 'running' ? `${vmStore.vms.length} session${vmStore.vms.length !== 1 ? 's' : ''}` : vmStore.serviceStatus === 'unavailable' ? 'service down' : 'service unknown'}
               {:else if gatewayStore.reachable}
                 Gateway {gatewayStore.version ?? ''} -- needs rebuild
               {:else}
@@ -269,36 +269,38 @@
       <span title="Tool calls">{activeVm.total_tool_calls ?? 0} calls</span>
       <span title="Cost">{formatCost(activeVm.total_estimated_cost ?? 0)}</span>
     {/if}
-    <span title="Frontend build" class="opacity-60 font-mono">build {__BUILD_TS__}</span>
+    {#if !isVM}
+      <span title="Frontend build" class="opacity-60 font-mono">build {__BUILD_TS__}</span>
+    {/if}
   </div>
 </div>
 
 <!-- Modals -->
 <Modal
   open={modalKind === 'stop'}
-  title="Stop VM"
+  title="Stop session"
   confirmLabel="Stop"
   destructive
   onconfirm={handleModalConfirm}
   oncancel={closeModal}
 >
-  <p class="text-sm text-foreground">Stop <strong>{active?.title}</strong>?</p>
+  <p class="text-sm text-foreground">Stop session <strong>{active?.title}</strong>?</p>
 </Modal>
 
 <Modal
   open={modalKind === 'delete'}
-  title="Delete VM"
+  title="Delete session"
   confirmLabel="Delete"
   destructive
   onconfirm={handleModalConfirm}
   oncancel={closeModal}
 >
-  <p class="text-sm text-foreground">Delete <strong>{active?.title}</strong>? This cannot be undone.</p>
+  <p class="text-sm text-foreground">Delete session <strong>{active?.title}</strong>? This cannot be undone.</p>
 </Modal>
 
 <Modal
   open={modalKind === 'fork'}
-  title="Fork VM"
+  title="Fork session"
   confirmLabel="Fork"
   onconfirm={handleModalConfirm}
   oncancel={closeModal}

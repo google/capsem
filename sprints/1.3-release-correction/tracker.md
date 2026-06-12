@@ -291,8 +291,14 @@ next one, and stage only the files for that slice.
 
 ## S8. UI/TUI Contract Repair
 
-- [ ] RED/GREEN: user-facing dashboard says sessions/profiles, not VMs, except
+- [x] RED/GREEN: user-facing dashboard says sessions/profiles, not VMs, except
   internal/debug contexts.
+  - 2026-06-11 progress: dashboard headings, empty/loading states, create
+    errors, lifecycle modals, toolbar menu/status, and stats subtitles now use
+    session wording. The frontend build stamp is hidden on session tabs.
+  - Proof: `pnpm --dir frontend test
+    src/lib/__tests__/session-language-contract.test.ts`; `pnpm --dir
+    frontend check`; targeted grep for retired visible VM labels is quiet.
 - [ ] RED/GREEN: profile cards render name, description, icon, readiness, asset
   checklist, `New`, and `Customize` from route data.
 - [ ] RED/GREEN: incompatible/defunct sessions are greyed and expose only valid
