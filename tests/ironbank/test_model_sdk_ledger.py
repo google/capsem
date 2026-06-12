@@ -603,6 +603,55 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
             assert all(row["rule_action"] == "allow" for row in security_rows)
             assert all(json.loads(row["rule_json"]) for row in security_rows)
             assert all(json.loads(row["event_json"]) for row in security_rows)
+            security_payloads = [json.loads(row["event_json"]) for row in security_rows]
+            plugin_executions = [
+                execution
+                for payload in security_payloads
+                for execution in payload.get("plugin_executions", [])
+            ]
+            assert plugin_executions, "security ledger must carry plugin execution counters"
+            assert {
+                "plugin_id",
+                "stage",
+                "applied",
+                "duration_us",
+            } <= plugin_executions[0].keys()
+            assert all(
+                execution["stage"] in {"preprocess", "postprocess", "logging"}
+                for execution in plugin_executions
+            )
+            assert all(isinstance(execution["applied"], bool) for execution in plugin_executions)
+            assert all(isinstance(execution["duration_us"], int) for execution in plugin_executions)
+            assert any(
+                execution["plugin_id"] == "credential_broker"
+                for execution in plugin_executions
+            )
+            assert any(
+                execution["plugin_id"] == "log_sanitizer" and execution["applied"] is True
+                for execution in plugin_executions
+            )
+            assert any(
+                detection.get("source") == "plugin"
+                and detection.get("plugin_id") == "log_sanitizer"
+                for payload in security_payloads
+                for detection in payload.get("detections", [])
+            )
+
+            plugins = client.get(f"/profiles/{CODE_PROFILE_ID}/plugins/list", timeout=30)
+            assert plugins is not None
+            by_plugin = {plugin["id"]: plugin for plugin in plugins["plugins"]}
+            broker_runtime = by_plugin["credential_broker"]["runtime"]
+            sanitizer_runtime = by_plugin["log_sanitizer"]["runtime"]
+            for runtime in (broker_runtime, sanitizer_runtime):
+                assert runtime["enabled"] is True
+                assert runtime["execution_count"] > 0
+                assert runtime["applied_count"] + runtime["skipped_count"] == runtime["execution_count"]
+                assert runtime["total_duration_us"] >= runtime["max_duration_us"]
+                assert runtime["max_duration_us"] >= 0
+            assert broker_runtime["applied_count"] > 0
+            assert broker_runtime["detection_count"] > 0
+            assert sanitizer_runtime["applied_count"] > 0
+            assert sanitizer_runtime["detection_count"] > 0
 
             substitutions = conn.execute(
                 """

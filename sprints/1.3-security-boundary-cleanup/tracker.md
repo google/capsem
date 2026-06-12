@@ -60,7 +60,12 @@ failure first.
     previews contain broker refs instead of raw credential material and
     substitution ledger rows include `captured`/`injected` sources for all
     exercised material classes.
-- [ ] Add plugin latency/counter evidence for broker and sanitizer.
+- [x] Add plugin latency/counter evidence for broker and sanitizer.
+  - Proof: `uv run python -m pytest tests/ironbank/test_model_sdk_ledger.py -q`
+    now asserts `plugin_executions` in `security_rule_events.event_json` for
+    live MITM traffic and verifies `/profiles/code/plugins/list` reports
+    execution, applied/skipped, detection, total-duration, and max-duration
+    counters for `credential_broker` and `log_sanitizer`.
 - [x] Update CHANGELOG.md.
 - [x] Focused test gate.
 - [x] Commit and push this slice before returning to broader bug hotlist.
@@ -128,7 +133,11 @@ failure first.
   - The body/query extension asserts query injection rows and captured
     substitution rows for JSON request bodies, form request bodies, OAuth token
     response bodies, and nested credential response bodies.
-- Performance: pending plugin counters/latency evidence.
+- Performance:
+  - Plugin execution payloads now carry per-plugin `duration_us`, and the
+    profile plugin route aggregates `execution_count`, `applied_count`,
+    `skipped_count`, `total_duration_us`, and `max_duration_us` from
+    `security_rule_events` without double-counting multi-rule matches.
   - `cargo bench -p capsem-core --bench security_actions --no-run` now
     compiles the preprocess, postprocess, and logging plugin benchmark matrix.
 - Docs/skills: boundary note added to `/dev-mitm-proxy`; architecture docs still pending.

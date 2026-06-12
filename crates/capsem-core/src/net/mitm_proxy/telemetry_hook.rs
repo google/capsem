@@ -43,8 +43,8 @@ use crate::net::ai_traffic::provider::{extract_model_from_path, tool_origin, Pro
 use crate::net::ai_traffic::{request_parser, TraceState};
 use crate::net::policy_config::SecurityRuleSet;
 use crate::security_engine::{
-    emit_matching_security_rules, emit_security_write, HttpSecurityEvent, ModelSecurityEvent,
-    RuntimeSecurityEventType, SecurityEvent,
+    emit_matching_security_rules_with_plugins, emit_security_write, HttpSecurityEvent,
+    ModelSecurityEvent, RuntimeSecurityEventType, SecurityEvent,
 };
 
 /// Per-request snapshot of the request-side fields that the response
@@ -239,18 +239,27 @@ impl ChunkHook for TelemetryHook {
         // on backpressure.
         let db = Arc::clone(&self.deps.db);
         let security_rules = Arc::clone(&self.deps.security_rules);
+        let plugin_policy = Arc::clone(&self.deps.plugin_policy);
         tokio::spawn(async move {
             let rules = security_rules.read().unwrap().clone();
-            log_brokered_injections(&db, &rules, req_ctx.credential_injections).await;
-            broker_and_log_observations(&db, &rules, credential_observations).await;
-            let net_security_event = security_event_from_net_event(&net_event);
+            let credential_injections = req_ctx.credential_injections.clone();
+            log_brokered_injections(&db, &rules, credential_injections.clone()).await;
+            broker_and_log_observations(&db, &rules, credential_observations.clone()).await;
+            let net_security_event = security_event_from_net_event(&net_event)
+                .with_credential_observations(credential_observations)
+                .with_credential_injections(credential_injections);
             if let Some(event_id) = emit_security_write(&db, WriteOp::NetEvent(net_event)).await {
-                if let Err(error) = emit_matching_security_rules(
+                let plugin_policy = {
+                    let guard = plugin_policy.read().unwrap();
+                    guard.clone()
+                };
+                if let Err(error) = emit_matching_security_rules_with_plugins(
                     &db,
                     event_id,
                     RuntimeSecurityEventType::HttpRequest,
                     &rules,
-                    &net_security_event,
+                    plugin_policy,
+                    net_security_event,
                     current_unix_ms(),
                 )
                 .await
@@ -262,12 +271,17 @@ impl ChunkHook for TelemetryHook {
                 let model_security_event = security_event_from_model_call(&mc);
                 if let Some(event_id) = emit_security_write(&db, WriteOp::ModelCall(mc)).await {
                     let rules = security_rules.read().unwrap().clone();
-                    if let Err(error) = emit_matching_security_rules(
+                    let plugin_policy = {
+                        let guard = plugin_policy.read().unwrap();
+                        guard.clone()
+                    };
+                    if let Err(error) = emit_matching_security_rules_with_plugins(
                         &db,
                         event_id,
                         RuntimeSecurityEventType::ModelCall,
                         &rules,
-                        &model_security_event,
+                        plugin_policy,
+                        model_security_event,
                         current_unix_ms(),
                     )
                     .await

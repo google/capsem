@@ -218,14 +218,34 @@ fn insert_fake_instance_with_session_dir(
     pid: u32,
     session_dir: PathBuf,
 ) {
+    insert_fake_instance_with_session_dir_and_pins(
+        state,
+        id,
+        pid,
+        session_dir,
+        test_profile_revision(),
+        test_profile_payload_hash(),
+        test_asset_pins(),
+    );
+}
+
+fn insert_fake_instance_with_session_dir_and_pins(
+    state: &ServiceState,
+    id: &str,
+    pid: u32,
+    session_dir: PathBuf,
+    profile_revision: String,
+    profile_payload_hash: String,
+    asset_pins: BootAssetPins,
+) {
     state.instances.lock().unwrap().insert(
         id.to_string(),
         InstanceInfo {
             id: id.to_string(),
             profile_id: "code".into(),
-            profile_revision: test_profile_revision(),
-            profile_payload_hash: test_profile_payload_hash(),
-            asset_pins: test_asset_pins(),
+            profile_revision,
+            profile_payload_hash,
+            asset_pins,
             pid,
             uds_path: PathBuf::from(format!("/tmp/{}.sock", id)),
             session_dir,
@@ -2840,6 +2860,109 @@ async fn credential_broker_plugin_runtime_reports_session_db_captures() {
         broker["runtime"]["brokered_credentials"][0]["replay_available"], false,
         "DB evidence alone must not imply the broker can replay the credential"
     );
+}
+
+#[tokio::test]
+async fn plugin_runtime_reports_execution_latency_from_security_ledger_payloads() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+    let profile_dir = tempfile::tempdir().unwrap();
+    let (config_root, profile) = install_file_asset_profile_fixture(&profile_dir);
+    let _profiles_guard = EnvVarGuard::set("CAPSEM_PROFILES_DIR", config_root.join("profiles"));
+    let state = make_asset_state(profile_dir.path().join("assets"));
+    let app = build_service_router(Arc::clone(&state));
+    let dir = tempfile::tempdir().unwrap();
+    let session_dir = dir.path().join("sessions").join("plugin-vm");
+    std::fs::create_dir_all(&session_dir).unwrap();
+    insert_fake_instance_with_session_dir_and_pins(
+        &state,
+        "plugin-vm",
+        std::process::id(),
+        session_dir.clone(),
+        profile.revision.clone(),
+        profile_payload_hash(&profile).unwrap(),
+        profile_asset_pins(&profile).unwrap(),
+    );
+
+    let event_json = r#"{
+        "event_type": "http.request",
+        "plugin_executions": [
+            {
+                "plugin_id": "credential_broker",
+                "stage": "preprocess",
+                "applied": false,
+                "duration_us": 13
+            },
+            {
+                "plugin_id": "log_sanitizer",
+                "stage": "logging",
+                "applied": true,
+                "duration_us": 77
+            }
+        ],
+        "detections": [
+            {
+                "source": "plugin",
+                "detection_level": "informational",
+                "rule_id": null,
+                "plugin_id": "log_sanitizer",
+                "action": null,
+                "plugin_mode": "rewrite",
+                "reason": null
+            }
+        ]
+    }"#;
+    let writer = capsem_logger::DbWriter::open(&session_dir.join("session.db"), 16).unwrap();
+    for rule_id in ["profiles.rules.default_http", "profiles.rules.ai_google"] {
+        writer
+            .write(capsem_logger::WriteOp::SecurityRuleEvent(
+                capsem_logger::SecurityRuleEvent::new(
+                    1_789_000_123_456,
+                    "abc123def456",
+                    "http.request",
+                    rule_id,
+                    r#"{"name":"default_http"}"#,
+                    event_json,
+                ),
+            ))
+            .await;
+    }
+    writer.shutdown_blocking();
+
+    let (status, list) = route_request(
+        app,
+        axum::http::Method::GET,
+        "/profiles/code/plugins/list",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{list}");
+
+    let sanitizer = list["plugins"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|plugin| plugin["id"] == "log_sanitizer")
+        .expect("log sanitizer plugin is listed");
+    assert_eq!(
+        sanitizer["runtime"]["execution_count"], 1,
+        "multiple rule rows for one security event must not double-count one plugin execution"
+    );
+    assert_eq!(sanitizer["runtime"]["applied_count"], 1);
+    assert_eq!(sanitizer["runtime"]["skipped_count"], 0);
+    assert_eq!(sanitizer["runtime"]["detection_count"], 1);
+    assert_eq!(sanitizer["runtime"]["total_duration_us"], 77);
+    assert_eq!(sanitizer["runtime"]["max_duration_us"], 77);
+
+    let broker = list["plugins"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|plugin| plugin["id"] == "credential_broker")
+        .expect("credential broker plugin is listed");
+    assert_eq!(broker["runtime"]["execution_count"], 1);
+    assert_eq!(broker["runtime"]["applied_count"], 0);
+    assert_eq!(broker["runtime"]["skipped_count"], 1);
+    assert_eq!(broker["runtime"]["total_duration_us"], 13);
 }
 
 #[tokio::test]

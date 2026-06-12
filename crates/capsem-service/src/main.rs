@@ -226,6 +226,11 @@ enum PluginStage {
 struct PluginRuntimeStatus {
     enabled: bool,
     event_count: u64,
+    execution_count: u64,
+    applied_count: u64,
+    skipped_count: u64,
+    total_duration_us: u64,
+    max_duration_us: u64,
     detection_count: u64,
     block_count: u64,
     rewrite_count: u64,
@@ -6459,16 +6464,120 @@ fn plugin_runtime_status(
     let mut status = PluginRuntimeStatus {
         enabled: config.mode != SecurityPluginMode::Disable,
         event_count: 0,
+        execution_count: 0,
+        applied_count: 0,
+        skipped_count: 0,
+        total_duration_us: 0,
+        max_duration_us: 0,
         detection_count: 0,
         block_count: 0,
         rewrite_count: 0,
         last_error: None,
         brokered_credentials: Vec::new(),
     };
+    hydrate_plugin_execution_runtime(state, profile_id, plugin_id, &mut status);
     if plugin_id == "credential_broker" {
         hydrate_credential_broker_runtime(state, profile_id, &mut status);
     }
     status
+}
+
+fn hydrate_plugin_execution_runtime(
+    state: &ServiceState,
+    profile_id: &str,
+    plugin_id: &str,
+    status: &mut PluginRuntimeStatus,
+) {
+    let mut seen_executions = HashSet::<(String, String)>::new();
+    let mut seen_detections = HashSet::<(String, String)>::new();
+    for (vm_id, session_dir) in profile_session_dirs(state, profile_id) {
+        let db_path = session_dir.join("session.db");
+        if !db_path.exists() {
+            continue;
+        }
+        let reader = match capsem_logger::DbReader::open(&db_path) {
+            Ok(reader) => reader,
+            Err(error) => {
+                status.last_error = Some(format!("failed to open session DB for {vm_id}: {error}"));
+                continue;
+            }
+        };
+        let events = match reader.recent_security_rule_events(5000) {
+            Ok(events) => events,
+            Err(error) => {
+                status.last_error = Some(format!(
+                    "failed to read plugin execution rows for {vm_id}: {error}"
+                ));
+                continue;
+            }
+        };
+        for event in events {
+            let Ok(payload) = serde_json::from_str::<serde_json::Value>(&event.event_json) else {
+                status.last_error = Some(format!(
+                    "failed to parse plugin execution payload for {}",
+                    event.event_id
+                ));
+                continue;
+            };
+            if let Some(executions) = payload
+                .get("plugin_executions")
+                .and_then(serde_json::Value::as_array)
+            {
+                for execution in executions {
+                    if execution
+                        .get("plugin_id")
+                        .and_then(serde_json::Value::as_str)
+                        != Some(plugin_id)
+                    {
+                        continue;
+                    }
+                    let stage = execution
+                        .get("stage")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("unknown");
+                    if !seen_executions
+                        .insert((event.event_id.clone(), format!("{plugin_id}:{stage}")))
+                    {
+                        continue;
+                    }
+                    status.execution_count += 1;
+                    if execution
+                        .get("applied")
+                        .and_then(serde_json::Value::as_bool)
+                        .unwrap_or(false)
+                    {
+                        status.applied_count += 1;
+                    } else {
+                        status.skipped_count += 1;
+                    }
+                    let duration_us = execution
+                        .get("duration_us")
+                        .and_then(serde_json::Value::as_u64)
+                        .unwrap_or(0);
+                    status.total_duration_us = status.total_duration_us.saturating_add(duration_us);
+                    status.max_duration_us = status.max_duration_us.max(duration_us);
+                }
+            }
+            if let Some(detections) = payload
+                .get("detections")
+                .and_then(serde_json::Value::as_array)
+            {
+                for detection in detections {
+                    if detection.get("source").and_then(serde_json::Value::as_str) != Some("plugin")
+                        || detection
+                            .get("plugin_id")
+                            .and_then(serde_json::Value::as_str)
+                            != Some(plugin_id)
+                    {
+                        continue;
+                    }
+                    if seen_detections.insert((event.event_id.clone(), plugin_id.to_string())) {
+                        status.detection_count += 1;
+                    }
+                }
+            }
+        }
+    }
 }
 
 fn hydrate_credential_broker_runtime(

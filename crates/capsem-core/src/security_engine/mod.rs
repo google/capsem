@@ -757,6 +757,37 @@ pub async fn emit_matching_security_rules(
     .map(|emission| emission.emitted)
 }
 
+pub async fn emit_matching_security_rules_with_plugins(
+    db: &DbWriter,
+    event_id: SecurityEventId,
+    event_type: RuntimeSecurityEventType,
+    rules: &SecurityRuleSet,
+    plugin_policy: BTreeMap<String, SecurityPluginConfig>,
+    event: SecurityEvent,
+    timestamp_unix_ms: i64,
+) -> Result<usize, String> {
+    let event = prepare_event_for_security_rule_ledger(plugin_policy, event)?;
+    emit_matching_security_rules(db, event_id, event_type, rules, &event, timestamp_unix_ms).await
+}
+
+fn prepare_event_for_security_rule_ledger(
+    plugin_policy: BTreeMap<String, SecurityPluginConfig>,
+    mut event: SecurityEvent,
+) -> Result<SecurityEvent, String> {
+    let action_registry =
+        SecurityActionRegistry::with_builtin_actions().with_plugin_policy(plugin_policy);
+    event = action_registry
+        .apply_security_plugins(SecurityPluginStage::Preprocess, event)
+        .map_err(|error| error.to_string())?;
+    event = action_registry
+        .apply_security_plugins(SecurityPluginStage::Postprocess, event)
+        .map_err(|error| error.to_string())?;
+    event = action_registry
+        .apply_security_plugins(SecurityPluginStage::Logging, event)
+        .map_err(|error| error.to_string())?;
+    Ok(event)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SecurityRuleEmission {
     pub emitted: usize,
@@ -1402,6 +1433,7 @@ fn security_event_forensic_json(event: &SecurityEvent) -> serde_json::Value {
         "action_trace": event.action_trace.iter().map(|action| action.as_str()).collect::<Vec<_>>(),
         "decision": event.decision,
         "detections": event.detections,
+        "plugin_executions": event.plugin_executions,
         "http_request": event.http_request.as_ref().map(http_request_forensic_json),
         "http": event.http,
         "dns": event.dns,
@@ -1604,6 +1636,14 @@ pub enum SecurityDetectionSource {
     Plugin,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SecurityPluginExecution {
+    pub plugin_id: String,
+    pub stage: SecurityPluginStage,
+    pub applied: bool,
+    pub duration_us: u64,
+}
+
 /// Canonical security-event envelope used by rule actions and emitters.
 ///
 /// Protocol parsers attach typed context to this object; action plugins return
@@ -1619,6 +1659,7 @@ pub struct SecurityEvent {
     pub action_trace: Vec<PolicyActionId>,
     pub decision: SecurityDecisionState,
     pub detections: Vec<SecurityDetectionEvent>,
+    pub plugin_executions: Vec<SecurityPluginExecution>,
     pub http_request: Option<HttpRequestSecurityEvent>,
     pub http: Option<HttpSecurityEvent>,
     pub dns: Option<DnsSecurityEvent>,
@@ -1639,6 +1680,7 @@ pub struct SerializableSecurityEvent {
     pub action_trace: Vec<String>,
     pub decision: SecurityDecisionState,
     pub detections: Vec<SecurityDetectionEvent>,
+    pub plugin_executions: Vec<SecurityPluginExecution>,
     pub http: Option<HttpSecurityEvent>,
     pub dns: Option<DnsSecurityEvent>,
     pub mcp: Option<McpSecurityEvent>,
@@ -1663,6 +1705,7 @@ impl From<&SecurityEvent> for SerializableSecurityEvent {
                 .collect(),
             decision: event.decision.clone(),
             detections: event.detections.clone(),
+            plugin_executions: event.plugin_executions.clone(),
             http: event.http.clone(),
             dns: event.dns.clone(),
             mcp: event.mcp.clone(),
@@ -1687,6 +1730,7 @@ impl SecurityEvent {
             action_trace: Vec::new(),
             decision: SecurityDecisionState::default(),
             detections: Vec::new(),
+            plugin_executions: Vec::new(),
             http_request: None,
             http: None,
             dns: None,
@@ -1790,6 +1834,10 @@ impl SecurityEvent {
 
     pub fn record_detection(&mut self, detection: SecurityDetectionEvent) {
         self.detections.push(detection);
+    }
+
+    pub fn record_plugin_execution(&mut self, execution: SecurityPluginExecution) {
+        self.plugin_executions.push(execution);
     }
 
     pub fn serializable(&self) -> SerializableSecurityEvent {
@@ -2202,7 +2250,8 @@ impl fmt::Display for SecurityActionError {
 
 impl std::error::Error for SecurityActionError {}
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum SecurityPluginStage {
     Preprocess,
     Postprocess,
@@ -2307,8 +2356,16 @@ impl SecurityActionRegistry {
             if plugin_config.mode == SecurityPluginMode::Disable {
                 continue;
             }
+            let started = std::time::Instant::now();
             let result = plugin.apply(event)?;
+            let duration_us = started.elapsed().as_micros().min(u128::from(u64::MAX)) as u64;
             event = result.event;
+            event.record_plugin_execution(SecurityPluginExecution {
+                plugin_id: plugin_id.clone(),
+                stage,
+                applied: result.applied,
+                duration_us,
+            });
             if !result.applied {
                 continue;
             }

@@ -234,6 +234,24 @@ fn security_event_engine_runs_enabled_plugins_by_stage() {
             ),
         ]
     );
+    assert_eq!(
+        returned
+            .plugin_executions
+            .iter()
+            .map(|execution| (
+                execution.plugin_id.as_str(),
+                execution.stage,
+                execution.applied,
+                execution.duration_us <= 1_000_000,
+            ))
+            .collect::<Vec<_>>(),
+        vec![
+            ("trace_pre", SecurityPluginStage::Preprocess, true, true),
+            ("trace_post", SecurityPluginStage::Postprocess, true, true),
+            ("trace_logging", SecurityPluginStage::Logging, true, true),
+        ],
+        "plugin execution counters must ride on the same security event as detections"
+    );
     assert_eq!(emitter.events.lock().unwrap().as_slice(), [returned]);
 }
 

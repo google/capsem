@@ -27,6 +27,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   JSON request bodies, form request bodies, OAuth response token bodies, and
   generic credential response bodies through the real VM path and hermetic
   mock server.
+- Added route-visible plugin execution counters and latency totals for
+  security plugins, and moved MITM rule-ledger emission onto the plugin-aware
+  security event path so broker and log-sanitizer executions are preserved in
+  session DB forensic payloads and `/profiles/{id}/plugins/list`.
 - Hardened the local OpenAI-compatible model path: bounded request sniffing now
   promotes unknown localhost model traffic before CEL/plugin evaluation, the
   credential broker uses the parsed provider hint for SDK bearer headers, and

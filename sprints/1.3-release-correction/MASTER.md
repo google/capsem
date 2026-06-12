@@ -96,6 +96,7 @@ prove the same rails without user credentials.
   mock server, credential broker capture and replay/injection, query
   injection, JSON/form request credential capture, OAuth/generic credential
   response capture, model response parsing, native tool call ledger rows, file
-  write, security latest route, session DB rows, and raw-secret absence.
+  write, security latest route, session DB rows, plugin execution counters,
+  profile plugin route telemetry, and raw-secret absence.
 
 Those files remain evidence. This sprint is the execution authority.
