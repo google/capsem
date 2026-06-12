@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import * as api from '../../api';
   import type { InspectResponse } from '../../types/gateway';
-  import { formatBytes, formatDuration, formatTime, truncate } from '../../format';
+  import { formatBytes, formatDuration, formatTime } from '../../format';
   import { getShikiHighlighter, resolveShikiTheme, ensureShikiLang, ensureShikiTheme, type ShikiHighlighter } from '../../shiki.ts';
   import { themeStore } from '../../stores/theme.svelte.ts';
   import { tabStore } from '../../stores/tabs.svelte.ts';
@@ -103,6 +103,11 @@
     'event_json',
   ]);
 
+  const DETAIL_HIDDEN_KEYS = new Set([
+    'substitution_ref',
+    'credential_ref',
+  ]);
+
   function isPresent(value: unknown): boolean {
     if (value == null) return false;
     if (typeof value === 'string') return value.trim().length > 0;
@@ -121,6 +126,7 @@
       isPresent(value)
       && !DETAIL_PAYLOAD_KEYS.has(key)
       && !DETAIL_STRUCTURED_KEYS.has(key)
+      && !DETAIL_HIDDEN_KEYS.has(key)
     ));
   }
 
@@ -312,9 +318,16 @@
   const fileModified = $derived(fileRows.filter(row => ['modify', 'modified', 'write', 'written'].includes(text(row.action))).length);
   const fileDeleted = $derived(fileRows.filter(row => ['delete', 'deleted'].includes(text(row.action))).length);
   const processFailures = $derived(processRows.filter(row => row.exit_code != null && number(row.exit_code) !== 0).length);
-  const brokerSubstitutedCount = $derived(substitutionRows.filter(row => text(row.outcome) === 'substituted').length);
-  const brokerProviders = $derived(new Set(substitutionRows.map(row => text(row.provider)).filter(Boolean)).size);
-  const brokerRefs = $derived(new Set(substitutionRows.map(row => text(row.substitution_ref)).filter(Boolean)).size);
+  function brokerVerb(row: Row): string {
+    const outcome = text(row.outcome).toLowerCase();
+    if (outcome === 'brokered' || outcome === 'captured' || outcome === 'injected') return outcome;
+    if (outcome === 'substituted') return 'brokered';
+    return 'captured';
+  }
+
+  const brokerCapturedCount = $derived(substitutionRows.length);
+  const brokerBrokeredCount = $derived(substitutionRows.filter(row => brokerVerb(row) === 'brokered').length);
+  const brokerInjectedCount = $derived(substitutionRows.filter(row => brokerVerb(row) === 'injected').length);
   const detections = $derived(securityLatest.filter(row => row.detection_level !== 'none').length);
   const blocks = $derived(securityLatest.filter(row => row.rule_action === 'block').length);
 
@@ -508,17 +521,17 @@
       {:else if activeTab === 'credentials'}
         <div class="grid grid-cols-4 gap-3 mb-6">
           <MetricCard label="Broker Events" value={substitutionRows.length.toLocaleString()} />
-          <MetricCard label="Substituted" value={brokerSubstitutedCount.toLocaleString()} />
-          <MetricCard label="Providers" value={brokerProviders.toLocaleString()} />
-          <MetricCard label="References" value={brokerRefs.toLocaleString()} />
+          <MetricCard label="Captured" value={brokerCapturedCount.toLocaleString()} />
+          <MetricCard label="Brokered" value={brokerBrokeredCount.toLocaleString()} />
+          <MetricCard label="Injected" value={brokerInjectedCount.toLocaleString()} />
         </div>
-        <StatsEventList title="Credential Broker Events" rows={substitutionRows} columns={['Time', 'Class', 'Source', 'Outcome', 'Reference']} onrow={(row) => detail = { type: 'credential broker event', data: row }}>
+        <StatsEventList title="Credential Broker Events" rows={substitutionRows} columns={['Time', 'Verb', 'Source', 'Provider', 'Origin']} onrow={(row) => detail = { type: 'credential broker event', data: row }}>
           {#snippet children(row: any)}
             <td class="px-4 py-2 text-muted-foreground">{formatTime(row.timestamp)}</td>
-            <td class="px-4 py-2 text-foreground">{row.material_class}</td>
+            <td class="px-4 py-2"><StatsBadge value={brokerVerb(row)} /></td>
             <td class="px-4 py-2 text-muted-foreground-1">{row.source}</td>
-            <td class="px-4 py-2"><StatsBadge value={text(row.outcome)} /></td>
-            <td class="px-4 py-2 font-mono text-xs text-muted-foreground-1">{truncate(text(row.substitution_ref), 40)}</td>
+            <td class="px-4 py-2 text-foreground">{row.provider ?? '--'}</td>
+            <td class="px-4 py-2 font-mono text-xs text-muted-foreground-1">{row.event_type ?? '--'}</td>
           {/snippet}
         </StatsEventList>
 

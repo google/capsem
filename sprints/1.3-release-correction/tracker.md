@@ -323,6 +323,11 @@ next one, and stage only the files for that slice.
   - 2026-06-11 progress: file stats cards now summarize the visible
     created/modified/deleted ledger actions instead of unrelated
     import/export/brokered-ref counters.
+  - 2026-06-11 progress: credential broker stats now render broker evidence
+    as captured/brokered/injected event verbs, hide BLAKE3 credential
+    references from the primary table/detail presentation, and remove the old
+    status/reference table columns. Backend verb/schema normalization remains
+    tracked in S7.
   - Proof: `pnpm --dir frontend test
     src/lib/__tests__/stats-view-contract.test.ts`; `pnpm --dir frontend
     check`.

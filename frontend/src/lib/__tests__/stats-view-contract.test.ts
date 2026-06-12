@@ -33,7 +33,9 @@ describe('StatsView credential broker contract', () => {
     expect(source).toContain('Credential Broker Events');
     expect(source).toContain("type: 'credential broker event'");
     expect(source).toContain('substitution_events');
-    expect(source).toContain('Substituted');
+    expect(source).toContain('Captured');
+    expect(source).toContain('Brokered');
+    expect(source).toContain('Injected');
     expect(source).not.toContain('Credential Substitutions');
 
     const processStart = source.indexOf("{:else if activeTab === 'process'}");
@@ -46,6 +48,27 @@ describe('StatsView credential broker contract', () => {
     const processBlock = source.slice(processStart, credentialsStart);
     expect(processBlock).not.toContain('substitutionRows');
     expect(processBlock).not.toContain('Credential Broker Events');
+  });
+
+  it('shows credential broker verbs instead of reference hashes or status columns', () => {
+    const credentialsStart = source.indexOf("{:else if activeTab === 'credentials'}");
+    const securityStart = source.indexOf("{:else if activeTab === 'security'}");
+    expect(credentialsStart).toBeGreaterThan(-1);
+    expect(securityStart).toBeGreaterThan(credentialsStart);
+
+    const credentialsBlock = source.slice(credentialsStart, securityStart);
+    expect(credentialsBlock).toContain('brokerVerb(row)');
+    expect(credentialsBlock).toContain("columns={['Time', 'Verb', 'Source', 'Provider', 'Origin']}");
+    expect(credentialsBlock).toContain('Captured');
+    expect(credentialsBlock).toContain('Brokered');
+    expect(credentialsBlock).toContain('Injected');
+    expect(credentialsBlock).not.toContain('Substituted');
+    expect(credentialsBlock).not.toContain('References');
+    expect(credentialsBlock).not.toContain('Outcome');
+    expect(credentialsBlock).not.toContain('substitution_ref');
+
+    expect(source).toContain("'substitution_ref'");
+    expect(source).toContain("'credential_ref'");
   });
 });
 
