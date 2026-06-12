@@ -26,6 +26,8 @@
   type StatsTab = 'model' | 'mcp' | 'http' | 'dns' | 'files' | 'process' | 'credentials' | 'security';
   type DetailSelection = { type: string; data: Record<string, unknown> };
   type Row = Record<string, any>;
+  const SECURITY_ACTIONS: api.SecurityRuleAction[] = ['allow', 'ask', 'block', 'preprocess', 'rewrite', 'postprocess'];
+  const SECURITY_DETECTION_LEVELS: api.RuntimeSecurityRuleDetectionLevel[] = ['none', 'informational', 'low', 'medium', 'high', 'critical'];
 
   let activeTab = $state<StatsTab>('model');
   let loading = $state(false);
@@ -325,11 +327,28 @@
     return 'captured';
   }
 
+  function securityActionSummary(rows: api.SecurityRuleActionCount[] | undefined): Row[] {
+    const counts = new Map<api.SecurityRuleAction, number>(SECURITY_ACTIONS.map(action => [action, 0]));
+    for (const row of rows ?? []) {
+      if (counts.has(row.rule_action)) counts.set(row.rule_action, number(row.count));
+    }
+    return SECURITY_ACTIONS.map(action => ({ rule_action: action, count: counts.get(action) ?? 0 }));
+  }
+
+  function securityDetectionSummary(rows: api.SecurityRuleStatsByRule[] | undefined): Row[] {
+    const counts = new Map<api.RuntimeSecurityRuleDetectionLevel, number>(SECURITY_DETECTION_LEVELS.map(level => [level, 0]));
+    for (const row of rows ?? []) {
+      counts.set(row.detection_level, (counts.get(row.detection_level) ?? 0) + number(row.count));
+    }
+    return SECURITY_DETECTION_LEVELS.map(level => ({ detection_level: level, count: counts.get(level) ?? 0 }));
+  }
+
   const brokerCapturedCount = $derived(substitutionRows.length);
   const brokerBrokeredCount = $derived(substitutionRows.filter(row => brokerVerb(row) === 'brokered').length);
   const brokerInjectedCount = $derived(substitutionRows.filter(row => brokerVerb(row) === 'injected').length);
   const detections = $derived(securityLatest.filter(row => row.detection_level !== 'none').length);
-  const blocks = $derived(securityLatest.filter(row => row.rule_action === 'block').length);
+  const securityActionRows = $derived(securityActionSummary(securityStatus?.by_action));
+  const securityDetectionRows = $derived(securityDetectionSummary(securityStatus?.by_rule));
 
   const navItems: { id: StatsTab; label: string; icon: any }[] = [
     { id: 'model', label: 'Model', icon: Brain },
@@ -538,13 +557,14 @@
       {:else if activeTab === 'security'}
         <div class="grid grid-cols-4 gap-3 mb-6">
           <MetricCard label="Rule Matches" value={(securityStatus?.total ?? securityLatest.length).toLocaleString()} />
-          <MetricCard label="Detections" value={detections.toLocaleString()} />
-          <MetricCard label="Blocks" value={blocks.toLocaleString()} tone="danger" />
-          <MetricCard label="Rules Hit" value={(securityStatus?.by_rule.length ?? 0).toLocaleString()} />
+          <MetricCard label="Detection Matches" value={detections.toLocaleString()} />
+          <MetricCard label="Latest Detections" value={detectionLatest.length.toLocaleString()} />
+          <MetricCard label="Latest Enforcement" value={enforcementLatest.length.toLocaleString()} />
         </div>
         {#if securityStatus}
-          <div class="grid grid-cols-2 gap-4 mb-6">
-            <StatsMiniGroup title="By Action" rows={securityStatus.by_action} nameKey="rule_action" />
+          <div class="grid grid-cols-3 gap-4 mb-6">
+            <StatsMiniGroup title="By Action" rows={securityActionRows} nameKey="rule_action" />
+            <StatsMiniGroup title="By Detection Level" rows={securityDetectionRows} nameKey="detection_level" />
             <StatsMiniGroup title="By Event Type" rows={securityStatus.by_event_type} nameKey="event_type" />
           </div>
         {/if}

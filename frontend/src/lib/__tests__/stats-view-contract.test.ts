@@ -96,3 +96,21 @@ describe('StatsView file summary contract', () => {
     expect(filesBlock).not.toContain('Brokered Refs');
   });
 });
+
+describe('StatsView security summary contract', () => {
+  it('shows complete action and detection summaries instead of a partial block/rules-hit headline', () => {
+    const securityStart = source.indexOf("{:else if activeTab === 'security'}");
+    expect(securityStart).toBeGreaterThan(-1);
+
+    const securityBlock = source.slice(securityStart);
+    expect(source).toContain('securityActionRows');
+    expect(source).toContain('securityDetectionRows');
+    expect(source).toContain("['allow', 'ask', 'block', 'preprocess', 'rewrite', 'postprocess']");
+    expect(source).toContain("['none', 'informational', 'low', 'medium', 'high', 'critical']");
+    expect(securityBlock).toContain('By Detection Level');
+    expect(securityBlock).toContain('securityActionRows');
+    expect(securityBlock).toContain('securityDetectionRows');
+    expect(securityBlock).not.toContain('Rules Hit');
+    expect(securityBlock).not.toContain('Blocks');
+  });
+});

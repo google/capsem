@@ -328,6 +328,9 @@ next one, and stage only the files for that slice.
     references from the primary table/detail presentation, and remove the old
     status/reference table columns. Backend verb/schema normalization remains
     tracked in S7.
+  - 2026-06-11 progress: security stats now show complete action and detection
+    summaries, including zero-count enum values, instead of elevating a partial
+    blocks/rules-hit headline.
   - Proof: `pnpm --dir frontend test
     src/lib/__tests__/stats-view-contract.test.ts`; `pnpm --dir frontend
     check`.
