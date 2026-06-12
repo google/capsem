@@ -409,11 +409,31 @@ pub struct ProvisionOptions<'a> {
     pub profile_id: String,
     pub ram_mb: u64,
     pub cpus: u32,
+    pub scratch_disk_size_gb: u32,
     pub version_override: Option<String>,
     pub persistent: bool,
     pub env: Option<std::collections::HashMap<String, String>>,
     pub from: Option<String>,
     pub description: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ResolvedVmResources {
+    ram_mb: u64,
+    cpus: u32,
+    scratch_disk_size_gb: u32,
+}
+
+fn resolve_profile_vm_resources(
+    profile: &ProfileConfigFile,
+    requested_ram_mb: Option<u64>,
+    requested_cpus: Option<u32>,
+) -> ResolvedVmResources {
+    ResolvedVmResources {
+        ram_mb: requested_ram_mb.unwrap_or(profile.vm.ram_gb as u64 * 1024),
+        cpus: requested_cpus.unwrap_or(profile.vm.cpu_count),
+        scratch_disk_size_gb: profile.vm.scratch_disk_size_gb,
+    }
 }
 
 /// Maximum number of `-failed-*` session dirs preserved across crashes /
@@ -615,6 +635,7 @@ impl ServiceState {
             profile_id,
             ram_mb,
             cpus,
+            scratch_disk_size_gb,
             version_override,
             persistent,
             env,
@@ -810,6 +831,8 @@ impl ServiceState {
                 .arg(cpus.to_string())
                 .arg("--ram-mb")
                 .arg(ram_mb.to_string())
+                .arg("--scratch-disk-size-gb")
+                .arg(scratch_disk_size_gb.to_string())
                 .arg("--uds-path")
                 .arg(&uds_path)
                 .stdout(std::process::Stdio::from(process_log_file.try_clone()?))
@@ -2282,16 +2305,13 @@ async fn handle_provision(
         generate_tmp_name(existing.iter().map(|s| s.as_str()))
     });
 
-    // Missing ram_mb/cpus fall back to merged VM settings. This keeps
-    // "new ephemeral VM" callers (tray, MCP one-shots) honoring the user's
-    // configured defaults without having to fetch settings first.
-    let vm_settings = capsem_core::net::policy_config::load_merged_vm_settings();
-    let ram_mb = payload
-        .ram_mb
-        .unwrap_or_else(|| vm_settings.ram_gb.unwrap_or(4) as u64 * 1024);
-    let cpus = payload
-        .cpus
-        .unwrap_or_else(|| vm_settings.cpu_count.unwrap_or(4));
+    let profile = state
+        .profile_config(&profile_id)
+        .map_err(|e| AppError(StatusCode::PRECONDITION_FAILED, e.to_string()))?;
+    let resources = resolve_profile_vm_resources(&profile, payload.ram_mb, payload.cpus);
+    let ram_mb = resources.ram_mb;
+    let cpus = resources.cpus;
+    let scratch_disk_size_gb = resources.scratch_disk_size_gb;
 
     // Retry budget for the launchd-cleanup transient. Failed attempts
     // fast-fail in ~500ms (capsem-process spawn -> validateWithError
@@ -2342,6 +2362,7 @@ async fn handle_provision(
                 &id,
                 ram_mb,
                 cpus,
+                scratch_disk_size_gb,
                 payload_profile_id,
                 payload_persistent,
                 payload_env,
@@ -2408,6 +2429,7 @@ async fn provision_attempt(
     id: &str,
     ram_mb: u64,
     cpus: u32,
+    scratch_disk_size_gb: u32,
     profile_id: String,
     persistent: bool,
     env: Option<std::collections::HashMap<String, String>>,
@@ -2422,6 +2444,7 @@ async fn provision_attempt(
             profile_id,
             ram_mb,
             cpus,
+            scratch_disk_size_gb,
             version_override: Some(version),
             persistent,
             env,
@@ -7845,15 +7868,13 @@ async fn handle_run(
         generate_tmp_name(existing.iter().map(|s| s.as_str()))
     };
 
-    // Resolve ram/cpu from merged VM settings if the caller didn't specify,
-    // matching handle_provision. Keeps `capsem run` settings-driven.
-    let vm_settings = capsem_core::net::policy_config::load_merged_vm_settings();
-    let ram_mb = payload
-        .ram_mb
-        .unwrap_or_else(|| vm_settings.ram_gb.unwrap_or(4) as u64 * 1024);
-    let cpus = payload
-        .cpus
-        .unwrap_or_else(|| vm_settings.cpu_count.unwrap_or(4));
+    let profile = state
+        .profile_config(&profile_id)
+        .map_err(|e| AppError(StatusCode::PRECONDITION_FAILED, e.to_string()))?;
+    let resources = resolve_profile_vm_resources(&profile, payload.ram_mb, payload.cpus);
+    let ram_mb = resources.ram_mb;
+    let cpus = resources.cpus;
+    let scratch_disk_size_gb = resources.scratch_disk_size_gb;
 
     let ram_bytes = ram_mb * 1024 * 1024;
     let session_dir = state.run_dir.join("sessions").join(&id);
@@ -7873,6 +7894,7 @@ async fn handle_run(
             profile_id,
             ram_mb,
             cpus,
+            scratch_disk_size_gb,
             version_override: Some(version),
             persistent: false,
             env,
@@ -7910,7 +7932,7 @@ async fn handle_run(
             status: "running".to_string(),
             created_at: capsem_core::session::now_iso(),
             stopped_at: None,
-            scratch_disk_size_gb: 0,
+            scratch_disk_size_gb,
             ram_bytes,
             total_requests: 0,
             allowed_requests: 0,

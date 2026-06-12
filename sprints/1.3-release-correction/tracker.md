@@ -49,14 +49,23 @@ below pass. Manual credentials are not the debugger.
 
 ## S2. Materialization, Assets, VM Resources
 
-- [ ] RED: `just _materialize-config` must materialize every checked-in profile
+- [x] RED: `just _materialize-config` must materialize every checked-in profile
   and fail if `code` clobbers `co-work`.
-- [ ] GREEN: `capsem-admin` materializes `code` and `co-work` with current
+- [x] GREEN: `capsem-admin` materializes `code` and `co-work` with current
   `file://` EROFS/LZ4HC assets and matching BLAKE3 hashes.
-- [ ] RED: package/profile tests fail if profile VM resource fields do not
+- [x] RED: package/profile tests fail if profile VM resource fields do not
   propagate to session creation.
-- [ ] GREEN: new session rootfs image logical size matches
+- [x] GREEN: new session rootfs image logical size matches
   `profile.vm.scratch_disk_size_gb`.
+  - Proof: `uv run python -m pytest tests/test_build_assets_profile.py -q`;
+    `just _materialize-config`; generated `target/config/profiles/{code,co-work}/profile.toml`
+    points at current `file://` arm64 EROFS assets with manifest BLAKE3 hashes.
+  - Proof: `cargo test -p capsem-process -- --nocapture`; includes
+    `prepare_session_layout_uses_requested_scratch_disk_size` proving a 64 GiB
+    sparse `rootfs.img` logical size from the process layout rail.
+  - Proof: `cargo test -p capsem-service provision_ -- --nocapture`; `cargo
+    test -p capsem-service profile_vm_resources_drive_new_session_defaults --
+    --nocapture`; `cargo check -p capsem-service -p capsem-process`.
 - [ ] RED/GREEN: doctor/status/debug report guest `df -h`, `df -i`, `/dev/vdb`,
   overlay mount options, host sparse-image logical/physical size, and host free
   space.

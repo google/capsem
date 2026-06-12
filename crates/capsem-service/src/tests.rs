@@ -4055,6 +4055,7 @@ fn provision_accepts_name_just_under_uds_limit() {
         profile_id: "code".into(),
         ram_mb: 2048,
         cpus: 2,
+        scratch_disk_size_gb: 16,
         version_override: None,
         persistent: false,
         env: None,
@@ -4079,6 +4080,7 @@ fn provision_short_name_passes_path_check() {
         profile_id: "code".into(),
         ram_mb: 2048,
         cpus: 2,
+        scratch_disk_size_gb: 16,
         version_override: None,
         persistent: false,
         env: None,
@@ -4103,6 +4105,7 @@ fn provision_rejects_unknown_profile_before_boot() {
         profile_id: "missing-profile".into(),
         ram_mb: 2048,
         cpus: 2,
+        scratch_disk_size_gb: 16,
         version_override: None,
         persistent: false,
         env: None,
@@ -4158,6 +4161,7 @@ fn provision_persistent_rejects_duplicate_name() {
         profile_id: "code".into(),
         ram_mb: 2048,
         cpus: 2,
+        scratch_disk_size_gb: 16,
         version_override: None,
         persistent: true,
         env: None,
@@ -4261,6 +4265,7 @@ fn provision_persistent_validates_name() {
         profile_id: "code".into(),
         ram_mb: 2048,
         cpus: 2,
+        scratch_disk_size_gb: 16,
         version_override: None,
         persistent: true,
         env: None,
@@ -4682,6 +4687,7 @@ fn provision_rejects_nonexistent_source_sandbox() {
         profile_id: "code".into(),
         ram_mb: 2048,
         cpus: 2,
+        scratch_disk_size_gb: 16,
         version_override: None,
         persistent: false,
         env: None,
@@ -4729,6 +4735,7 @@ fn provision_rejects_source_with_different_profile() {
         profile_id: "code".into(),
         ram_mb: 2048,
         cpus: 2,
+        scratch_disk_size_gb: 16,
         version_override: None,
         persistent: false,
         env: None,
@@ -5216,6 +5223,28 @@ fn sandbox_info_rejects_missing_profile_id() {
     let json = r#"{"id":"x","pid":1,"status":"Running","persistent":false}"#;
     let err = serde_json::from_str::<SandboxInfo>(json).unwrap_err();
     assert!(err.to_string().contains("profile_id"));
+}
+
+#[test]
+fn profile_vm_resources_drive_new_session_defaults() {
+    let profile = ProfileConfigFile::builtin_code();
+
+    let default_resources = resolve_profile_vm_resources(&profile, None, None);
+    assert_eq!(default_resources.cpus, profile.vm.cpu_count);
+    assert_eq!(default_resources.ram_mb, profile.vm.ram_gb as u64 * 1024);
+    assert_eq!(
+        default_resources.scratch_disk_size_gb,
+        profile.vm.scratch_disk_size_gb
+    );
+
+    let customized_resources = resolve_profile_vm_resources(&profile, Some(3072), Some(2));
+    assert_eq!(customized_resources.cpus, 2);
+    assert_eq!(customized_resources.ram_mb, 3072);
+    assert_eq!(
+        customized_resources.scratch_disk_size_gb,
+        profile.vm.scratch_disk_size_gb,
+        "scratch image size is profile-owned and must not fall back to hidden service defaults"
+    );
 }
 
 // -----------------------------------------------------------------------

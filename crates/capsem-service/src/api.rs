@@ -20,12 +20,12 @@ pub struct StatsResponse {
 pub struct ProvisionRequest {
     pub name: Option<String>,
     pub profile_id: String,
-    /// RAM in megabytes. If absent, service resolves from merged VM settings
-    /// (vm.resources.ram_gb, default 4 GiB).
+    /// RAM in megabytes. If absent, service resolves from the selected
+    /// profile's VM resources.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ram_mb: Option<u64>,
-    /// CPU count. If absent, service resolves from merged VM settings
-    /// (vm.resources.cpu_count, default 4).
+    /// CPU count. If absent, service resolves from the selected profile's VM
+    /// resources.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cpus: Option<u32>,
     /// When true, the VM is persistent (named VMs). Ephemeral VMs are destroyed on stop.
@@ -374,12 +374,10 @@ pub struct RunRequest {
     pub profile_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeout_secs: Option<u64>,
-    /// Guest RAM in MiB. Falls back to merged VM settings
-    /// (vm.resources.ram_gb, default 4 GiB).
+    /// Guest RAM in MiB. Falls back to the selected profile's VM resources.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ram_mb: Option<u64>,
-    /// Guest CPU count. Falls back to merged VM settings
-    /// (vm.resources.cpu_count, default 4).
+    /// Guest CPU count. Falls back to the selected profile's VM resources.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cpus: Option<u32>,
     /// Environment variables to inject into the guest at boot.
@@ -642,8 +640,8 @@ mod tests {
 
     #[test]
     fn provision_request_ram_cpus_omitted_deserializes_as_none() {
-        // Service handler fills these from merged VM settings. Callers like
-        // the tray's "New Session" rely on this to honor user defaults.
+        // Service handler fills these from the selected profile. Callers like
+        // the tray's "New Session" do not have to duplicate profile resources.
         let json = json!({"name": "my-vm", "profile_id": "code"});
         let r: ProvisionRequest = serde_json::from_value(json).unwrap();
         assert_eq!(r.ram_mb, None);
@@ -830,7 +828,7 @@ mod tests {
 
     #[test]
     fn run_request_defaults() {
-        // ram_mb/cpus omitted -> None; handler resolves from VM settings.
+        // ram_mb/cpus omitted -> None; handler resolves from the profile.
         let json = json!({"command": "echo hello", "profile_id": "code"});
         let r: RunRequest = serde_json::from_value(json).unwrap();
         assert_eq!(r.command, "echo hello");

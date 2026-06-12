@@ -69,6 +69,8 @@ struct Args {
     cpus: u32,
     #[arg(long, default_value_t = 2048)]
     ram_mb: u64,
+    #[arg(long, default_value_t = 16)]
+    scratch_disk_size_gb: u32,
     #[arg(long)]
     uds_path: PathBuf,
     #[arg(long)]
@@ -112,6 +114,11 @@ fn aggregator_log_path(session_dir: &Path) -> PathBuf {
     session_dir.join("mcp-aggregator.stderr.log")
 }
 
+fn prepare_session_layout(session_dir: &Path, scratch_disk_size_gb: u32) -> Result<PathBuf> {
+    capsem_core::create_virtiofs_session(session_dir, scratch_disk_size_gb)?;
+    Ok(capsem_core::guest_share_dir(session_dir))
+}
+
 fn main() -> Result<()> {
     let _telemetry_guard = capsem_core::telemetry::init(capsem_core::telemetry::TelemetryConfig {
         service: "capsem-process",
@@ -139,8 +146,7 @@ fn main() -> Result<()> {
         session_dir = resolved;
     }
 
-    capsem_core::create_virtiofs_session(&session_dir, 2)?;
-    let guest_dir = capsem_core::guest_share_dir(&session_dir);
+    let guest_dir = prepare_session_layout(&session_dir, args.scratch_disk_size_gb)?;
     let virtiofs_shares = vec![VirtioFsShare {
         tag: "capsem".into(),
         host_path: guest_dir.clone(),
@@ -943,7 +949,26 @@ mod tests {
     }
 
     #[test]
-    fn args_custom_cpus_and_ram() {
+    fn args_default_scratch_disk_size_gb() {
+        let args = Args::try_parse_from([
+            "capsem-process",
+            "--id",
+            "vm",
+            "--assets-dir",
+            "/a",
+            "--rootfs",
+            "/r",
+            "--session-dir",
+            "/s",
+            "--uds-path",
+            "/u",
+        ])
+        .unwrap();
+        assert_eq!(args.scratch_disk_size_gb, 16);
+    }
+
+    #[test]
+    fn args_custom_cpus_ram_and_scratch_disk_size() {
         let args = Args::try_parse_from([
             "capsem-process",
             "--id",
@@ -960,10 +985,26 @@ mod tests {
             "8",
             "--ram-mb",
             "16384",
+            "--scratch-disk-size-gb",
+            "64",
         ])
         .unwrap();
         assert_eq!(args.cpus, 8);
         assert_eq!(args.ram_mb, 16384);
+        assert_eq!(args.scratch_disk_size_gb, 64);
+    }
+
+    #[test]
+    fn prepare_session_layout_uses_requested_scratch_disk_size() {
+        let dir = tempfile::tempdir().unwrap();
+        let session_dir = dir.path().join("session");
+
+        let guest_dir = prepare_session_layout(&session_dir, 64).unwrap();
+
+        assert_eq!(guest_dir, session_dir.join("guest"));
+        let rootfs_img = guest_dir.join("system/rootfs.img");
+        let metadata = std::fs::metadata(&rootfs_img).unwrap();
+        assert_eq!(metadata.len(), 64 * 1024 * 1024 * 1024);
     }
 
     #[test]
