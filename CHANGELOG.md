@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed (route surfaces and diagnostics)
+- Clarified the shared skills contract for profile `build.sh`: it is a
+  rootfs-only build hook, not an installer/runtime/config path, and changes
+  require profile descriptor updates, asset rebuilds, and black-box VM proof.
 - Renamed the deterministic local fixture upstream to `capsem-mock-server` and
   made `CAPSEM_MOCK_SERVER_BASE_URL` the shared contract for doctor,
   integration, recorder, benchmark, and Ironbank-style black-box tests.

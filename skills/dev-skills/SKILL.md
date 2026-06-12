@@ -61,6 +61,13 @@ by the admin/just image pipeline before EROFS assets are produced. The profile
 ledger owns the file descriptor, and the change is only real in a VM after the
 profile assets are rebuilt through that same pipeline.
 
+Use `build.sh` only for rootfs construction work that cannot live in the boring
+profile package files: vendor shell installers, binary tarball installs,
+system-path wrappers, and build-time cleanup. Do not put credentials, corp
+policy, provider state, MCP decisions, runtime settings, or user repair logic
+there. After changing it, update the profile descriptor, rebuild assets, boot a
+fresh VM, and pay the Ironbank proof for the user-visible behavior.
+
 ## SKILL.md format
 
 ```yaml

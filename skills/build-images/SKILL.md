@@ -139,6 +139,8 @@ Remember this rail when touching profile image contents:
   `apt-packages.txt`, `python-requirements.txt`, or `npm-packages.txt`.
 - It may install public runtime tools such as Claude, AGY, and Ollama into
   stable system paths.
+- It is not a second profile format, provider registry, runtime settings file,
+  credential injection path, or local developer repair script.
 - It must not bake credentials, per-user state, corp policy, rules, MCP
   decisions, or runtime settings.
 - The owning `profile.toml` must reference it through `[files.build]` and keep
@@ -147,6 +149,18 @@ Remember this rail when touching profile image contents:
   the admin/just rail before claiming a VM contains the change.
 - The same admin materialization path must be used locally and in CI; no
   one-off Docker or installer path is release proof.
+- Verification must be black-box: boot the rebuilt profile image, run the tool
+  from the VM, and inspect the generated session evidence when the tool should
+  produce network, model, MCP, file, process, or credential events.
+
+Decision rule:
+
+- Normal Debian package: use `apt-packages.txt`.
+- Normal Python package: use `python-requirements.txt`.
+- Normal npm package: use `npm-packages.txt`.
+- Vendor shell installer, binary tarball, wrapper creation, or cleanup that must
+  happen while baking the immutable rootfs: use `build.sh`.
+- Anything that depends on user/corp/runtime state: do not use `build.sh`.
 
 ## Dockerfile templates
 
