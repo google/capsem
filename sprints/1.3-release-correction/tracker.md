@@ -266,6 +266,15 @@ next one, and stage only the files for that slice.
     depending on per-tool defaults.
   - Proof: `uv run python -m pytest tests/test_release_doctor_contract.py -q`;
     `sh -n guest/artifacts/capsem-init`.
+  - 2026-06-12 progress: `_apt` sandbox failures were traced to guest `/`
+    being `0700`, so non-root users could not traverse to `/bin/sh` despite
+    the shell itself being executable. Guest init now normalizes the overlay
+    root mode both before and inside the chroot after profile-root projection.
+  - Runtime proof after `just run-service`: `target/debug/capsem run "stat -c
+    '%a %U %G %n' /; su -s /bin/sh _apt -c 'id && touch
+    /var/cache/apt/archives/partial/.capsem_apt_probe && rm -f
+    /var/cache/apt/archives/partial/.capsem_apt_probe'"` returned `/` as
+    `755 root root /` and `_apt` probe `OK`.
 - [x] RED/GREEN: cargo test runner codesigning is serialized so parallel test
   shards do not race while replacing ad-hoc signatures.
   - 2026-06-11 progress: `scripts/run_signed.sh` now uses a portable

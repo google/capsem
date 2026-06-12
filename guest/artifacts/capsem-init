@@ -177,6 +177,11 @@ else
     boot_mark "overlayfs"
 fi
 
+# The overlay root can inherit a restrictive mount-point mode from the initrd
+# staging directory. Unprivileged tools such as apt's `_apt` sandbox must be
+# able to traverse `/` even though most writes remain constrained elsewhere.
+chmod 755 /newroot
+
 # Mount virtual filesystems fresh in the new root.
 # /proc, /sys, /dev exist as empty dirs from docker export.
 # /dev/pts is created after devtmpfs is mounted (devtmpfs is writable).
@@ -249,6 +254,8 @@ if [ -d /newroot/usr/local/share/capsem/profile-root ]; then
     }
     boot_mark "profile_root_seed"
 fi
+
+chroot /newroot /bin/chmod 755 /
 
 # Remove legacy HTTP sources.list if present (belt-and-suspenders).
 # The rootfs already has HTTPS-only debian.sources from the Docker build.

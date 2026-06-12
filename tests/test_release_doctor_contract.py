@@ -64,3 +64,17 @@ def test_guest_init_exports_ca_bundle_for_runtime_and_login_shells() -> None:
         export = f"export {key}={value}"
         assert export in runtime_block
         assert export in profile_block
+
+
+def test_guest_init_repairs_overlay_root_traversal_for_unprivileged_tools() -> None:
+    init = (PROJECT_ROOT / "guest" / "artifacts" / "capsem-init").read_text()
+
+    chmod_pos = init.find("chmod 755 /newroot")
+    chroot_chmod_pos = init.find("chroot /newroot /bin/chmod 755 /")
+    launch_pos = init.find("chroot /newroot \"$AGENT_PATH\"")
+
+    assert chmod_pos != -1, "init must make / traversable for _apt and tool users"
+    assert chroot_chmod_pos != -1, "init must repair root mode as seen inside chroot"
+    assert launch_pos != -1
+    assert chmod_pos < launch_pos
+    assert chroot_chmod_pos < launch_pos
