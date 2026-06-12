@@ -287,6 +287,11 @@ next one, and stage only the files for that slice.
   - Proof: `uv run python -m pytest tests/test_release_doctor_contract.py -q`;
     `python3 -m py_compile guest/artifacts/diagnostics/test_runtimes.py`;
     selected in-VM doctor command above.
+  - Full doctor proof after the hermetic fixes:
+    `/usr/bin/time -p target/debug/capsem doctor` passed with `309 passed`,
+    `13 skipped`, pytest time `23.72s`, wall time `26.20s`. The slowest tests
+    are now snapshot/MCP filesystem checks (`2.28s` max), not network/package
+    retries.
 - [x] RED/GREEN: cargo test runner codesigning is serialized so parallel test
   shards do not race while replacing ad-hoc signatures.
   - 2026-06-11 progress: `scripts/run_signed.sh` now uses a portable
