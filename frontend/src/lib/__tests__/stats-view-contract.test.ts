@@ -56,3 +56,20 @@ describe('StatsView detail drawer contract', () => {
     expect(source).toContain('detailPayloadSections(detail.data)');
   });
 });
+
+describe('StatsView file summary contract', () => {
+  it('summarizes file actions visible in the event table', () => {
+    const filesStart = source.indexOf("{:else if activeTab === 'files'}");
+    const processStart = source.indexOf("{:else if activeTab === 'process'}");
+    expect(filesStart).toBeGreaterThan(-1);
+    expect(processStart).toBeGreaterThan(filesStart);
+
+    const filesBlock = source.slice(filesStart, processStart);
+    expect(filesBlock).toContain('Created');
+    expect(filesBlock).toContain('Modified');
+    expect(filesBlock).toContain('Deleted');
+    expect(filesBlock).not.toContain('Imports');
+    expect(filesBlock).not.toContain('Exports');
+    expect(filesBlock).not.toContain('Brokered Refs');
+  });
+});

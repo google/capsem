@@ -314,6 +314,12 @@ next one, and stage only the files for that slice.
     check`.
 - [ ] RED/GREEN: HTTP/DNS/file/process/security/credentials panels use correct
   labels, counts, syntax highlighting, and no duplicate payload fields.
+  - 2026-06-11 progress: file stats cards now summarize the visible
+    created/modified/deleted ledger actions instead of unrelated
+    import/export/brokered-ref counters.
+  - Proof: `pnpm --dir frontend test
+    src/lib/__tests__/stats-view-contract.test.ts`; `pnpm --dir frontend
+    check`.
 
 ## S9. Agent Bootstrap Repair
 

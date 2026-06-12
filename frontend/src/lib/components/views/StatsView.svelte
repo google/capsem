@@ -308,8 +308,9 @@
   const httpAllowed = $derived(httpRows.filter(row => text(row.decision) === 'allowed').length);
   const httpDenied = $derived(httpRows.filter(row => text(row.decision) !== 'allowed').length);
   const dnsDenied = $derived(dnsRows.filter(row => text(row.decision) !== 'allowed').length);
-  const fileImports = $derived(fileRows.filter(row => text(row.action) === 'import').length);
-  const fileExports = $derived(fileRows.filter(row => text(row.action) === 'export').length);
+  const fileCreated = $derived(fileRows.filter(row => ['create', 'created'].includes(text(row.action))).length);
+  const fileModified = $derived(fileRows.filter(row => ['modify', 'modified', 'write', 'written'].includes(text(row.action))).length);
+  const fileDeleted = $derived(fileRows.filter(row => ['delete', 'deleted'].includes(text(row.action))).length);
   const processFailures = $derived(processRows.filter(row => row.exit_code != null && number(row.exit_code) !== 0).length);
   const brokerSubstitutedCount = $derived(substitutionRows.filter(row => text(row.outcome) === 'substituted').length);
   const brokerProviders = $derived(new Set(substitutionRows.map(row => text(row.provider)).filter(Boolean)).size);
@@ -462,9 +463,9 @@
       {:else if activeTab === 'files'}
         <div class="grid grid-cols-4 gap-3 mb-6">
           <MetricCard label="File Events" value={fileRows.length.toLocaleString()} />
-          <MetricCard label="Imports" value={fileImports.toLocaleString()} />
-          <MetricCard label="Exports" value={fileExports.toLocaleString()} />
-          <MetricCard label="Brokered Refs" value={fileRows.filter(row => row.credential_ref).length.toLocaleString()} />
+          <MetricCard label="Created" value={fileCreated.toLocaleString()} />
+          <MetricCard label="Modified" value={fileModified.toLocaleString()} />
+          <MetricCard label="Deleted" value={fileDeleted.toLocaleString()} tone="danger" />
         </div>
         <StatsEventList title="File Events" rows={fileRows} columns={['Time', 'Action', 'Path', 'Size', 'Trace']} onrow={(row) => detail = { type: 'file', data: row }}>
           {#snippet children(row: any)}
