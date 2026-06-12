@@ -321,6 +321,10 @@ fn service_proxy_routes() -> Router<Arc<AppState>> {
             get(proxy::handle_proxy),
         )
         .route(
+            "/profiles/{profile_id}/plugins/credential_broker/credentials/info",
+            get(proxy::handle_proxy),
+        )
+        .route(
             "/profiles/{profile_id}/plugins/{plugin_id}/edit",
             patch(proxy::handle_proxy),
         )
@@ -674,6 +678,10 @@ mod tests {
             ("GET", "/profiles/code/plugins/info"),
             ("GET", "/profiles/code/plugins/dummy_pre_eicar/info"),
             ("PATCH", "/profiles/code/plugins/dummy_pre_eicar/edit"),
+            (
+                "GET",
+                "/profiles/code/plugins/credential_broker/credentials/info",
+            ),
             ("GET", "/profiles/code/mcp/info"),
             ("GET", "/profiles/code/mcp/servers/list"),
             ("PUT", "/profiles/code/mcp/servers/local/edit"),

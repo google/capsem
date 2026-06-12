@@ -112,6 +112,16 @@ next one, and stage only the files for that slice.
   - The router-level test exercises checked-in profile ids `code` and
     `co-work` across profile overview, assets, enforcement, detection,
     plugins, credential broker detail, MCP, and skills info/list routes.
+  - 2026-06-11 progress: gateway route matrix now explicitly forwards
+    `/profiles/{profile_id}/plugins/credential_broker/credentials/info`;
+    this caught the UI-visible profile 404 path as a gateway route-table gap,
+    not a frontend fallback.
+  - Proof: `cargo test -p capsem-gateway
+    gateway_security_routes_are_explicitly_forwarded -- --nocapture`; `cargo
+    test -p capsem-service
+    profile_ui_route_matrix_is_registered_for_all_profiles -- --nocapture`;
+    `pnpm --dir frontend test src/lib/__tests__/api.test.ts`; `cargo check -p
+    capsem-gateway`.
 - [x] RED/GREEN: mutation routes either persist via profile object or do not
   exist; no fake success.
   - 2026-06-11 progress: MCP server edit/delete are no longer mounted 501
