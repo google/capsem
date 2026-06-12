@@ -170,8 +170,24 @@ next one, and stage only the files for that slice.
     gateway_security_routes_are_explicitly_forwarded -- --nocapture`; `cargo
     check -p capsem-service -p capsem-gateway`; `pnpm --dir docs build`.
   - Remaining mounted mutation stubs after VM route burn: none known in S3.
-- [ ] RED/GREEN: session state enum controls available actions for running,
+- [x] RED/GREEN: session state enum controls available actions for running,
   stopped, incompatible, defunct, paused, and deleted sessions.
+  - 2026-06-11 progress: service `/vms/list` and `/vms/{id}/status` now emit
+    `available_actions` from the typed VM lifecycle state, gateway preserves
+    that contract, and the UI gates row opening/menu actions from the backend
+    action list instead of guessing from status text. Incompatible and defunct
+    sessions expose only `delete`.
+  - Proof: `cargo test -p capsem-service
+    vm_lifecycle_available_actions_are_contractual -- --nocapture`; `cargo
+    test -p capsem-gateway fetch_status_preserves_session_available_actions --
+    --nocapture`; `pnpm --dir frontend test
+    src/lib/__tests__/vm-actions.test.ts`; `cargo test -p capsem-service
+    handle_list_marks_profile_payload_drift_incompatible -- --nocapture`;
+    `cargo test -p capsem-service
+    handle_info_marks_profile_payload_drift_incompatible -- --nocapture`;
+    `cargo test -p capsem-gateway status_response_serializes -- --nocapture`;
+    `pnpm --dir frontend test src/lib/__tests__/api.test.ts`; `cargo check -p
+    capsem-service -p capsem-gateway`; `pnpm --dir frontend check`.
 - [ ] Proof: profile routes are scoped by profile id; service-global routes are
   only service/runtime summaries.
 

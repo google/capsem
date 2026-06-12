@@ -2592,6 +2592,7 @@ async fn handle_list(State(state): State<Arc<ServiceState>>) -> Json<ListRespons
             info.forked_from = i.forked_from.clone();
             info.uptime_secs = Some(i.start_time.elapsed().as_secs());
             info.can_resume = false;
+            info.refresh_available_actions();
             enrich_telemetry(&mut info, &i.session_dir);
             sandboxes.push(info);
         }
@@ -2633,6 +2634,7 @@ async fn handle_list(State(state): State<Arc<ServiceState>>) -> Json<ListRespons
         } else {
             info.resume_blocked_reason = blocked_reason;
         }
+        info.refresh_available_actions();
         sandboxes.push(info);
     }
 
@@ -2699,6 +2701,7 @@ async fn handle_info(
                     info.forked_from = i.forked_from.clone();
                     info.uptime_secs = Some(i.start_time.elapsed().as_secs());
                     info.can_resume = false;
+                    info.refresh_available_actions();
                     (Some(info), Some(i.session_dir.clone()))
                 }
                 None => (None, None),
@@ -2738,6 +2741,7 @@ async fn handle_info(
             } else {
                 info.resume_blocked_reason = blocked_reason;
             }
+            info.refresh_available_actions();
             info.size_bytes =
                 capsem_core::auto_snapshot::sandbox_disk_usage(&entry.session_dir).ok();
             info.storage = storage_diagnostics(&entry.session_dir);
@@ -2769,6 +2773,7 @@ async fn handle_vm_status(
                 can_resume: false,
                 resume_blocked_reason: None,
                 storage: storage_diagnostics(&i.session_dir),
+                available_actions: VmLifecycleState::Running.available_actions(false),
             }));
         }
     }
@@ -2797,6 +2802,7 @@ async fn handle_vm_status(
                     blocked_reason
                 },
                 storage: storage_diagnostics(&entry.session_dir),
+                available_actions: status.available_actions(can_resume),
             }));
         }
     }

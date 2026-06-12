@@ -8,6 +8,7 @@
   import type { VmSummary } from '../../types/gateway';
   import type { GlobalStats } from '../../types/gateway';
   import { formatUptime, formatTokens, formatCost } from '../../format';
+  import { canOpenSession, hasVmAction, startAction, startLabel } from '../../vm-actions';
   import Modal from './Modal.svelte';
   import Pause from 'phosphor-svelte/lib/Pause';
   import Trash from 'phosphor-svelte/lib/Trash';
@@ -126,7 +127,7 @@
 
   async function handleStart(e: MouseEvent, vm: VmSummary) {
     e.stopPropagation();
-    if (!vm.can_resume) {
+    if (!hasVmAction(vm, startAction(vm))) {
       actionError = vm.resume_blocked_reason ?? `${vm.name ?? vm.id} cannot be resumed.`;
       return;
     }
@@ -331,7 +332,10 @@
 
         <tbody class="divide-y divide-table-line">
           {#each vms as vm (vm.id)}
-            <tr class="hover:bg-muted-hover cursor-pointer" onclick={() => tabStore.openVM(vm.id, vm.name ?? vm.id)}>
+            <tr
+              class="{canOpenSession(vm) ? 'hover:bg-muted-hover cursor-pointer' : 'opacity-60 cursor-default'}"
+              onclick={() => { if (canOpenSession(vm)) tabStore.openVM(vm.id, vm.name ?? vm.id); }}
+            >
               <td class="p-3 whitespace-nowrap text-sm font-medium text-foreground">{vm.name ?? vm.id}</td>
               <td class="p-3 whitespace-nowrap text-sm">
                 <span class="text-xs px-2 py-0.5 rounded-full {statusBadge(vm.status)}">{vm.status}</span>
@@ -342,24 +346,31 @@
               <td class="p-3 whitespace-nowrap text-sm text-muted-foreground-1 tabular-nums">{vm.total_estimated_cost != null ? formatCost(vm.total_estimated_cost) : '--'}</td>
               <td class="p-3 whitespace-nowrap text-end">
                 <div class="inline-flex items-center gap-x-1">
-                  {#if vm.status === 'Running'}
+                  {#if hasVmAction(vm, 'pause')}
                     <button type="button" class="size-7 inline-flex items-center justify-center rounded-lg text-muted-foreground-1 hover:text-foreground hover:bg-surface" onclick={(e: MouseEvent) => handlePause(e, vm)} aria-label="Pause" title="Pause">
                       <Pause size={16} />
                     </button>
+                  {/if}
+                  {#if hasVmAction(vm, 'stop')}
                     <button type="button" class="size-7 inline-flex items-center justify-center rounded-lg text-muted-foreground-1 hover:text-foreground hover:bg-surface" onclick={(e: MouseEvent) => openDashModal(e, 'stop', vm)} aria-label="Stop" title="Stop">
                       <Stop size={16} />
                     </button>
-                  {:else if vm.status === 'Stopped' || vm.status === 'Suspended' || vm.status === 'Incompatible'}
-                    <button type="button" class="size-7 inline-flex items-center justify-center rounded-lg text-muted-foreground-1 hover:text-primary hover:bg-surface disabled:opacity-40 disabled:pointer-events-none" disabled={!vm.can_resume} onclick={(e: MouseEvent) => handleStart(e, vm)} aria-label={vm.status === 'Suspended' ? 'Resume' : 'Start'} title={vm.can_resume ? (vm.status === 'Suspended' ? 'Resume' : 'Start') : (vm.resume_blocked_reason ?? 'Cannot resume')}>
+                  {/if}
+                  {#if hasVmAction(vm, startAction(vm))}
+                    <button type="button" class="size-7 inline-flex items-center justify-center rounded-lg text-muted-foreground-1 hover:text-primary hover:bg-surface" onclick={(e: MouseEvent) => handleStart(e, vm)} aria-label={startLabel(vm)} title={startLabel(vm)}>
                       <Play size={16} />
                     </button>
                   {/if}
-                  <button type="button" class="size-7 inline-flex items-center justify-center rounded-lg text-muted-foreground-1 hover:text-foreground hover:bg-surface" onclick={(e: MouseEvent) => handleFork(e, vm)} aria-label="Fork" title="Fork">
-                    <GitFork size={16} />
-                  </button>
-                  <button type="button" class="size-7 inline-flex items-center justify-center rounded-lg text-muted-foreground-1 hover:text-destructive hover:bg-surface" onclick={(e: MouseEvent) => openDashModal(e, 'delete', vm)} aria-label="Delete" title="Delete">
-                    <Trash size={16} />
-                  </button>
+                  {#if hasVmAction(vm, 'fork')}
+                    <button type="button" class="size-7 inline-flex items-center justify-center rounded-lg text-muted-foreground-1 hover:text-foreground hover:bg-surface" onclick={(e: MouseEvent) => handleFork(e, vm)} aria-label="Fork" title="Fork">
+                      <GitFork size={16} />
+                    </button>
+                  {/if}
+                  {#if hasVmAction(vm, 'delete')}
+                    <button type="button" class="size-7 inline-flex items-center justify-center rounded-lg text-muted-foreground-1 hover:text-destructive hover:bg-surface" onclick={(e: MouseEvent) => openDashModal(e, 'delete', vm)} aria-label="Delete" title="Delete">
+                      <Trash size={16} />
+                    </button>
+                  {/if}
                 </div>
               </td>
             </tr>

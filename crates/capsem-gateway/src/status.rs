@@ -58,6 +58,17 @@ pub enum VmLifecycleState {
     Incompatible,
 }
 
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
+#[serde(rename_all = "snake_case")]
+pub enum VmAction {
+    Pause,
+    Stop,
+    Start,
+    Resume,
+    Fork,
+    Delete,
+}
+
 #[derive(Serialize, Clone)]
 pub struct VmSummary {
     pub id: String,
@@ -92,6 +103,7 @@ pub struct VmSummary {
     pub can_resume: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub resume_blocked_reason: Option<String>,
+    pub available_actions: Vec<VmAction>,
 }
 
 #[derive(Serialize, Clone)]
@@ -139,7 +151,7 @@ pub async fn handle_status(State(state): State<Arc<AppState>>) -> Response {
             .map(|(_, r)| {
                 r.vms
                     .iter()
-                    .map(|v| (v.id.clone(), v.status.clone()))
+                    .map(|v| (v.id.clone(), v.status))
                     .collect()
             })
             .unwrap_or_default()
@@ -232,6 +244,7 @@ struct SessionInfo {
     can_resume: bool,
     #[serde(default)]
     resume_blocked_reason: Option<String>,
+    available_actions: Vec<VmAction>,
 }
 
 async fn fetch_status(state: &AppState) -> StatusResponse {
@@ -278,7 +291,7 @@ async fn fetch_status(state: &AppState) -> StatusResponse {
         vms.push(VmSummary {
             id: sess.id.clone(),
             name: sess.name.clone(),
-            status: sess.status.clone(),
+            status: sess.status,
             persistent: sess.persistent,
             profile_id: sess.profile_id.clone(),
             uptime_secs: sess.uptime_secs,
@@ -294,6 +307,7 @@ async fn fetch_status(state: &AppState) -> StatusResponse {
             model_call_count: sess.model_call_count,
             can_resume: sess.can_resume,
             resume_blocked_reason: sess.resume_blocked_reason.clone(),
+            available_actions: sess.available_actions.clone(),
         });
     }
 

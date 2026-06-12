@@ -37,6 +37,7 @@ export interface VmSummary {
   profile_id: string;
   can_resume: boolean;
   resume_blocked_reason?: string;
+  available_actions: VmAction[];
   // Telemetry (present for running VMs, absent for stopped)
   uptime_secs?: number;
   total_input_tokens?: number;
@@ -72,6 +73,7 @@ export interface SandboxInfo {
   persistent: boolean;
   can_resume: boolean;
   resume_blocked_reason?: string;
+  available_actions: VmAction[];
   ram_mb?: number;
   cpus?: number;
   version?: string;
@@ -100,6 +102,7 @@ export interface VmStatusResponse {
   persistent: boolean;
   can_resume: boolean;
   resume_blocked_reason?: string;
+  available_actions: VmAction[];
   uptime_secs?: number;
   created_at?: string;
   last_error?: string;
@@ -111,6 +114,18 @@ export type VmLifecycleState =
   | 'Suspended'
   | 'Defunct'
   | 'Incompatible';
+
+export type VmAction =
+  | 'pause'
+  | 'stop'
+  | 'start'
+  | 'resume'
+  | 'fork'
+  | 'delete';
+
+export interface VmActionContract {
+  available_actions: VmAction[];
+}
 
 // GET /vms/{id}/save/status, GET /vms/{id}/fork/status
 export interface VmOperationStatusResponse {

@@ -88,7 +88,7 @@ fn vm_summary_name_null_when_absent() {
 
 #[test]
 fn list_response_deserializes() {
-    let json = r#"{"sandboxes":[{"id":"abc","profile_id":"code","pid":123,"status":"Running","persistent":true,"ram_mb":2048,"cpus":2}]}"#;
+    let json = r#"{"sandboxes":[{"id":"abc","profile_id":"code","pid":123,"status":"Running","persistent":true,"ram_mb":2048,"cpus":2,"available_actions":["pause","stop","fork","delete"]}]}"#;
     let list: ListResponse = serde_json::from_str(json).unwrap();
     assert_eq!(list.sessions.len(), 1);
     assert_eq!(list.sessions[0].id, "abc");
@@ -99,12 +99,40 @@ fn list_response_deserializes() {
 
 #[test]
 fn list_response_handles_missing_optional_fields() {
-    let json = r#"{"sandboxes":[{"id":"abc","profile_id":"code","pid":123,"status":"Stopped"}]}"#;
+    let json = r#"{"sandboxes":[{"id":"abc","profile_id":"code","pid":123,"status":"Stopped","available_actions":["fork","delete"]}]}"#;
     let list: ListResponse = serde_json::from_str(json).unwrap();
     assert_eq!(list.sessions[0].profile_id, "code");
     assert_eq!(list.sessions[0].ram_mb, None);
     assert_eq!(list.sessions[0].cpus, None);
     assert!(!list.sessions[0].persistent);
+}
+
+#[tokio::test]
+async fn fetch_status_preserves_session_available_actions() {
+    let mock = axum::Router::new().route(
+        "/vms/list",
+        axum::routing::get(|| async {
+            axum::Json(serde_json::json!({
+                "sandboxes": [
+                    {
+                        "id": "bad-vm",
+                        "profile_id": "code",
+                        "pid": 0,
+                        "status": "Incompatible",
+                        "persistent": true,
+                        "available_actions": ["delete"]
+                    }
+                ]
+            }))
+        }),
+    );
+    let (path, handle, _dir) = mock_uds(mock).await;
+    let state = test_app_state(&path);
+
+    let status = fetch_status(&state).await;
+    assert_eq!(status.vms[0].available_actions, vec![VmAction::Delete]);
+
+    handle.abort();
 }
 
 #[test]
@@ -199,6 +227,18 @@ fn test_vm(id: &str, name: Option<&str>, status: VmLifecycleState, persistent: b
         model_call_count: None,
         can_resume: false,
         resume_blocked_reason: None,
+        available_actions: match status {
+            VmLifecycleState::Running => vec![
+                VmAction::Pause,
+                VmAction::Stop,
+                VmAction::Fork,
+                VmAction::Delete,
+            ],
+            VmLifecycleState::Stopped | VmLifecycleState::Suspended => {
+                vec![VmAction::Fork, VmAction::Delete]
+            }
+            VmLifecycleState::Defunct | VmLifecycleState::Incompatible => vec![VmAction::Delete],
+        },
     }
 }
 
@@ -251,9 +291,9 @@ async fn fetch_status_multiple_vms() {
         .route("/vms/list", axum::routing::get(|| async {
             axum::Json(serde_json::json!({
                 "sandboxes": [
-                    {"id": "vm1", "profile_id": "code", "name": "dev", "pid": 100, "status": "Running", "persistent": true, "ram_mb": 2048, "cpus": 2},
-                    {"id": "vm2", "profile_id": "code", "pid": 200, "status": "Running", "persistent": false, "ram_mb": 4096, "cpus": 4},
-                    {"id": "vm3", "profile_id": "code", "name": "ci", "pid": 300, "status": "Stopped", "persistent": true, "ram_mb": 1024, "cpus": 1},
+                    {"id": "vm1", "profile_id": "code", "name": "dev", "pid": 100, "status": "Running", "persistent": true, "ram_mb": 2048, "cpus": 2, "available_actions": ["pause", "stop", "fork", "delete"]},
+                    {"id": "vm2", "profile_id": "code", "pid": 200, "status": "Running", "persistent": false, "ram_mb": 4096, "cpus": 4, "available_actions": ["pause", "stop", "fork", "delete"]},
+                    {"id": "vm3", "profile_id": "code", "name": "ci", "pid": 300, "status": "Stopped", "persistent": true, "ram_mb": 1024, "cpus": 1, "available_actions": ["fork", "delete"]},
                 ]
             }))
         }));
@@ -345,9 +385,9 @@ async fn fetch_status_counts_suspended_vms() {
         .route("/vms/list", axum::routing::get(|| async {
             axum::Json(serde_json::json!({
                 "sandboxes": [
-                    {"id": "vm1", "profile_id": "code", "pid": 100, "status": "Running", "persistent": true, "ram_mb": 2048, "cpus": 2},
-                    {"id": "vm2", "profile_id": "code", "pid": 0, "status": "Suspended", "persistent": true, "ram_mb": 2048, "cpus": 2},
-                    {"id": "vm3", "profile_id": "code", "pid": 0, "status": "Stopped", "persistent": true, "ram_mb": 1024, "cpus": 1},
+                    {"id": "vm1", "profile_id": "code", "pid": 100, "status": "Running", "persistent": true, "ram_mb": 2048, "cpus": 2, "available_actions": ["pause", "stop", "fork", "delete"]},
+                    {"id": "vm2", "profile_id": "code", "pid": 0, "status": "Suspended", "persistent": true, "ram_mb": 2048, "cpus": 2, "available_actions": ["resume", "fork", "delete"]},
+                    {"id": "vm3", "profile_id": "code", "pid": 0, "status": "Stopped", "persistent": true, "ram_mb": 1024, "cpus": 1, "available_actions": ["fork", "delete"]},
                 ]
             }))
         }));
@@ -401,7 +441,7 @@ fn vm_summary_omits_absent_telemetry() {
 
 #[test]
 fn list_response_deserializes_telemetry() {
-    let json = r#"{"sandboxes":[{"id":"vm1","profile_id":"code","pid":100,"status":"Running","persistent":false,"ram_mb":2048,"cpus":2,"uptime_secs":60,"total_input_tokens":1000,"total_output_tokens":500,"total_estimated_cost":0.42}]}"#;
+    let json = r#"{"sandboxes":[{"id":"vm1","profile_id":"code","pid":100,"status":"Running","persistent":false,"ram_mb":2048,"cpus":2,"uptime_secs":60,"total_input_tokens":1000,"total_output_tokens":500,"total_estimated_cost":0.42,"available_actions":["pause","stop","fork","delete"]}]}"#;
     let list: ListResponse = serde_json::from_str(json).unwrap();
     assert_eq!(list.sessions[0].profile_id, "code");
     assert_eq!(list.sessions[0].uptime_secs, Some(60));
@@ -421,7 +461,8 @@ async fn fetch_status_passes_through_telemetry() {
                     "ram_mb": 2048, "cpus": 2,
                     "uptime_secs": 120, "total_input_tokens": 3000,
                     "total_output_tokens": 1000, "total_estimated_cost": 0.99,
-                    "total_tool_calls": 10, "model_call_count": 5
+                    "total_tool_calls": 10, "model_call_count": 5,
+                    "available_actions": ["pause", "stop", "fork", "delete"]
                 }]
             }))
         }),

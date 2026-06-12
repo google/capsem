@@ -5365,6 +5365,40 @@ fn sandbox_info_new_defaults_telemetry_to_none() {
 }
 
 #[test]
+fn vm_lifecycle_available_actions_are_contractual() {
+    use api::VmAction;
+
+    assert_eq!(
+        VmLifecycleState::Running.available_actions(false),
+        vec![VmAction::Pause, VmAction::Stop, VmAction::Fork, VmAction::Delete]
+    );
+    assert_eq!(
+        VmLifecycleState::Stopped.available_actions(true),
+        vec![VmAction::Start, VmAction::Fork, VmAction::Delete]
+    );
+    assert_eq!(
+        VmLifecycleState::Stopped.available_actions(false),
+        vec![VmAction::Fork, VmAction::Delete]
+    );
+    assert_eq!(
+        VmLifecycleState::Suspended.available_actions(true),
+        vec![VmAction::Resume, VmAction::Fork, VmAction::Delete]
+    );
+    assert_eq!(
+        VmLifecycleState::Suspended.available_actions(false),
+        vec![VmAction::Fork, VmAction::Delete]
+    );
+    assert_eq!(
+        VmLifecycleState::Defunct.available_actions(false),
+        vec![VmAction::Delete]
+    );
+    assert_eq!(
+        VmLifecycleState::Incompatible.available_actions(false),
+        vec![VmAction::Delete]
+    );
+}
+
+#[test]
 fn sandbox_info_telemetry_fields_serialize_when_present() {
     let mut info = SandboxInfo::new(
         "test".into(),

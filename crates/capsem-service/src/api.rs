@@ -73,6 +73,45 @@ pub enum VmLifecycleState {
     Incompatible,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum VmAction {
+    Pause,
+    Stop,
+    Start,
+    Resume,
+    Fork,
+    Delete,
+}
+
+impl VmLifecycleState {
+    pub fn available_actions(self, can_resume: bool) -> Vec<VmAction> {
+        match self {
+            Self::Running => vec![
+                VmAction::Pause,
+                VmAction::Stop,
+                VmAction::Fork,
+                VmAction::Delete,
+            ],
+            Self::Stopped => {
+                if can_resume {
+                    vec![VmAction::Start, VmAction::Fork, VmAction::Delete]
+                } else {
+                    vec![VmAction::Fork, VmAction::Delete]
+                }
+            }
+            Self::Suspended => {
+                if can_resume {
+                    vec![VmAction::Resume, VmAction::Fork, VmAction::Delete]
+                } else {
+                    vec![VmAction::Fork, VmAction::Delete]
+                }
+            }
+            Self::Defunct | Self::Incompatible => vec![VmAction::Delete],
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct StorageDiagnostics {
     pub rootfs_image_path: String,
@@ -151,6 +190,7 @@ pub struct SandboxInfo {
     /// VM, e.g. profile payload hash drift after an upgrade.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub resume_blocked_reason: Option<String>,
+    pub available_actions: Vec<VmAction>,
 }
 
 impl SandboxInfo {
@@ -162,6 +202,7 @@ impl SandboxInfo {
         status: VmLifecycleState,
         persistent: bool,
     ) -> Self {
+        let available_actions = status.available_actions(false);
         Self {
             id,
             profile_id,
@@ -191,7 +232,12 @@ impl SandboxInfo {
             last_error: None,
             can_resume: false,
             resume_blocked_reason: None,
+            available_actions,
         }
+    }
+
+    pub fn refresh_available_actions(&mut self) {
+        self.available_actions = self.status.available_actions(self.can_resume);
     }
 }
 
@@ -215,6 +261,7 @@ pub struct VmStatusResponse {
     pub resume_blocked_reason: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub storage: Option<StorageDiagnostics>,
+    pub available_actions: Vec<VmAction>,
 }
 
 #[derive(Deserialize, Debug, Default)]

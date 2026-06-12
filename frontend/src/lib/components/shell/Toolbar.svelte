@@ -19,6 +19,7 @@
   import Scroll from 'phosphor-svelte/lib/Scroll';
   import HardDrives from 'phosphor-svelte/lib/HardDrives';
   import { formatTokens, formatCost } from '../../format';
+  import { hasVmAction, startAction, startLabel } from '../../vm-actions';
 
   let active = $derived(tabStore.active);
   let isVM = $derived(active?.vmId != null);
@@ -122,7 +123,7 @@
               <Scroll size={16} />
               <span>VM Logs</span>
             </button>
-            {#if activeVm?.status === 'Running'}
+            {#if activeVm && hasVmAction(activeVm, 'pause')}
               <button
                 type="button"
                 class="w-full flex items-center gap-x-3 py-2 px-3 text-sm text-dropdown-item-foreground rounded-lg hover:bg-dropdown-item-hover disabled:opacity-40 disabled:pointer-events-none"
@@ -132,6 +133,8 @@
                 <Pause size={16} />
                 <span>Pause</span>
               </button>
+            {/if}
+            {#if activeVm && hasVmAction(activeVm, 'stop')}
               <button
                 type="button"
                 class="w-full flex items-center gap-x-3 py-2 px-3 text-sm text-dropdown-item-foreground rounded-lg hover:bg-dropdown-item-hover disabled:opacity-40 disabled:pointer-events-none"
@@ -141,36 +144,41 @@
                 <Stop size={16} />
                 <span>Stop</span>
               </button>
-            {:else if activeVm?.status === 'Stopped' || activeVm?.status === 'Suspended' || activeVm?.status === 'Incompatible'}
+            {/if}
+            {#if activeVm && hasVmAction(activeVm, startAction(activeVm))}
               <button
                 type="button"
                 class="w-full flex items-center gap-x-3 py-2 px-3 text-sm text-dropdown-item-foreground rounded-lg hover:bg-dropdown-item-hover disabled:opacity-40 disabled:pointer-events-none"
-                disabled={busy || !activeVm.can_resume}
-                title={activeVm.can_resume ? undefined : (activeVm.resume_blocked_reason ?? 'Cannot resume')}
+                disabled={busy}
+                title={startLabel(activeVm)}
                 onclick={async () => { if (activeVm) { await vmStore.resume(activeVm.name ?? activeVm.id); } menuOpen = false; }}
               >
                 <Play size={16} />
-                <span>{activeVm.status === 'Suspended' ? 'Resume' : 'Start'}</span>
+                <span>{startLabel(activeVm)}</span>
               </button>
             {/if}
-            <button
-              type="button"
-              class="w-full flex items-center gap-x-3 py-2 px-3 text-sm text-dropdown-item-foreground rounded-lg hover:bg-dropdown-item-hover disabled:opacity-40 disabled:pointer-events-none"
-              disabled={busy}
-              onclick={() => openModal('fork')}
-            >
-              <GitFork size={16} />
-              <span>Fork</span>
-            </button>
-            <button
-              type="button"
-              class="w-full flex items-center gap-x-3 py-2 px-3 text-sm text-dropdown-item-foreground rounded-lg hover:bg-dropdown-item-hover disabled:opacity-40 disabled:pointer-events-none"
-              disabled={busy}
-              onclick={() => openModal('delete')}
-            >
-              <Trash size={16} />
-              <span>Delete</span>
-            </button>
+            {#if activeVm && hasVmAction(activeVm, 'fork')}
+              <button
+                type="button"
+                class="w-full flex items-center gap-x-3 py-2 px-3 text-sm text-dropdown-item-foreground rounded-lg hover:bg-dropdown-item-hover disabled:opacity-40 disabled:pointer-events-none"
+                disabled={busy}
+                onclick={() => openModal('fork')}
+              >
+                <GitFork size={16} />
+                <span>Fork</span>
+              </button>
+            {/if}
+            {#if activeVm && hasVmAction(activeVm, 'delete')}
+              <button
+                type="button"
+                class="w-full flex items-center gap-x-3 py-2 px-3 text-sm text-dropdown-item-foreground rounded-lg hover:bg-dropdown-item-hover disabled:opacity-40 disabled:pointer-events-none"
+                disabled={busy}
+                onclick={() => openModal('delete')}
+              >
+                <Trash size={16} />
+                <span>Delete</span>
+              </button>
+            {/if}
             <div class="border-t border-dropdown-border my-1"></div>
           {/if}
 
