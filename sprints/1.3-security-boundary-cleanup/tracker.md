@@ -19,6 +19,10 @@ failure first.
 - [ ] Burn credential-sensitive logic from network formatter/intercept helpers.
 - [ ] Rename/docs cleanup for touched boundaries: network engine, security
   engine, credential broker, log sanitizer.
+- [ ] Update architecture docs with the explicit runtime-vs-ledger
+  materialization contract.
+- [ ] Update developer skills with the no-drift rule: no credential handling in
+  network formatters, DB readers, frontend transforms, or one-off harnesses.
 - [ ] Ironbank: HTTP credential header request reaches upstream while DB/log/UI
   route payloads contain no raw secret.
 - [ ] Ironbank: query, JSON body, form body, response token body, and model SDK
@@ -49,4 +53,5 @@ failure first.
 - E2E/VM: pending in `tests/ironbank/`.
 - Telemetry: pending.
 - Performance: pending plugin counters/latency evidence.
+- Docs/skills: pending architecture docs and developer skill updates.
 - Missing/deferred: none accepted for release blocker scope.

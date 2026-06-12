@@ -9,6 +9,22 @@ This is the active debug list for the 1.3 release loop. Older captured bugs in
 
 ## P0 Release Blockers
 
+- [ ] Security boundary cleanup blocks credential/model release readiness
+  - Execution tracker:
+    `sprints/1.3-security-boundary-cleanup/tracker.md`.
+  - Network engine parses/routes only; it must not decide, broker, redact, or
+    credential-classify.
+  - Security engine owns rules/plugins/decisions.
+  - Credential broker is the pre-plugin for runtime capture/store/injection.
+  - Log sanitizer is the final plugin before DB/log/route/UI materialization.
+  - Runtime bytes and ledger bytes are separate materializations: upstream may
+    need the real header/token, but session DB, structured logs, route JSON, and
+    frontend stats must only see sanitized broker refs/hashes/bounded previews.
+  - Missing sanitizer fails closed. No fallback logger and no network formatter
+    side-channel.
+  - Architecture docs and developer skills must be updated as part of the same
+    fix so future agents keep credential handling in the broker/sanitizer rail.
+
 - [ ] No more manual credential/client runs until due-diligence gate passes
   - Do not ask for another Claude/Codex/AGY/OAuth manual run until the local
     hermetic/Ollama/protocol lab proves the core rails without user

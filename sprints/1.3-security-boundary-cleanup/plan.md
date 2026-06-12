@@ -79,6 +79,13 @@ Names must describe the boundary:
    - Rename newly touched user-facing logs/docs from MITM-centric wording to
      network-engine/security-engine wording.
    - Add code comments only at the boundary where they prevent future drift.
+   - Update architecture docs so admins/developers see the same rail:
+     network engine parses/routes, security engine decides/mutates, credential
+     broker handles runtime capture/injection, log sanitizer owns durable
+     projection.
+   - Update developer skills so future agents do not put credential logic back
+     into network formatters, DB readers, frontend transforms, or ad hoc test
+     harnesses.
 
 5. Ironbank proof.
    - Add/extend `tests/ironbank/` coverage for HTTP credential header capture,
@@ -137,3 +144,5 @@ Names must describe the boundary:
 - Network engine code has no credential-sensitive formatter heuristics.
 - Docs and skills state the boundary in plain language.
 - Focused tests pass, Ironbank test is green, changelog updated, commit pushed.
+- Architecture docs and relevant skills describe the boundary and forbid the
+  old drift.

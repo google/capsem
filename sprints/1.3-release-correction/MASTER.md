@@ -51,6 +51,7 @@ prove the same rails without user credentials.
 | S8 | UI/TUI contract repair | In progress | Sessions/profiles/settings/stats/plugin/MCP/security/file/process views reflect routes and enums only. |
 | S9 | Agent bootstrap repair | Planned | AGY, Claude, Codex, MCP, aliases, and profile root files are packaged from profile-owned bootstrap. |
 | S10 | Packaging/install/release gate | In progress | Package payload closed contract, `just install`, status/debug, changelog/docs, and benchmark report pass. |
+| S11 | Security boundary cleanup | In progress | `sprints/1.3-security-boundary-cleanup/` proves network engine parses/routes only, credential broker handles runtime capture/injection, log sanitizer is the final ledger projection, raw credentials cannot reach DB/log/route/UI output, and docs/skills teach the boundary. |
 
 ## Release Holds
 
@@ -68,10 +69,17 @@ prove the same rails without user credentials.
   proof. Ironbank lives in `tests/ironbank/`, is authored from public
   contracts only, and cannot use Rust internals, `skip`, `slow`, public
   services, status-only replay, or row-exists checks as proof.
+- Hold: `sprints/1.3-security-boundary-cleanup/` must close before credential
+  broker, model/client traffic, or UI stats are called release-ready. Runtime
+  bytes and ledger bytes must be separate materializations; the credential
+  broker owns capture/injection and the log sanitizer owns final redaction.
+  Architecture docs and developer skills must be updated in the same slice so
+  the old drift does not return.
 
 ## Source Evidence
 
 - Active hotlist: `sprints/1.3-debug-loop/current-hotlist.md`
+- Security boundary cleanup: `sprints/1.3-security-boundary-cleanup/`
 - Lost surface audit: `sprints/1.3-release-correction/lost-surface-audit.md`
 - Ironbank contract: `sprints/1.3-release-correction/IRONBANK.md`
 - Historical debug tracker: `sprints/1.3-debug-loop/tracker.md`
