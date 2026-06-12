@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Renamed the deterministic local fixture upstream to `capsem-mock-server` and
   made `CAPSEM_MOCK_SERVER_BASE_URL` the shared contract for doctor,
   integration, recorder, benchmark, and Ironbank-style black-box tests.
+- Added an Ironbank package-manager ledger proof that boots a VM through public
+  service routes, verifies apt, npm, uv, pip, and node packages perform real
+  work, and audits session history plus `exec_events`/`fs_events` fields.
 - Added a real checked-in `co-work` profile created through
   `capsem-admin profile init --from`, and tightened Profile UI/TUI/service
   tests so profile-aware surfaces consume route-provided profile ids instead of

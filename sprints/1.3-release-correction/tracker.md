@@ -121,7 +121,7 @@ next one, and stage only the files for that slice.
     `/var/cache/apt`, `/tmp`, `/var/tmp`, and `/root`; `_apt` must be able to
     write `/var/cache/apt/archives/partial` so apt does not fall back to
     unsandboxed root downloads.
-- [ ] RED/GREEN: Ironbank package-manager probes prove installed packages
+- [x] RED/GREEN: Ironbank package-manager probes prove installed packages
   function through apt, npm, uv, pip, and node rails.
   - Required proof: binary presence, version/hash where relevant, and an
     execution that demonstrates the installed package does its intended work.
@@ -131,6 +131,11 @@ next one, and stage only the files for that slice.
     deterministic behavior, and prove no package path needed public fallback.
   - Node/npm example: install/run a tiny CLI/module and prove stdout/exit code
     plus ledger evidence, not just `npm list`.
+  - Proof: `uv run python -m pytest tests/ironbank/test_package_managers.py -q
+    -s` boots a VM through `/vms/create`, uploads a probe through
+    `/vms/{id}/files/content`, runs it through `/vms/{id}/exec`, proves local
+    apt/npm/uv/pip/node packages function, and verifies `/status`, `/history`,
+    `/history/counts`, plus `exec_events` and `fs_events` ledger fields.
 
 ## S3. Route Contract and API Coverage
 

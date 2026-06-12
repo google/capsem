@@ -307,6 +307,7 @@ Commands executed through Capsem service APIs and MCP tools.
 | Column | Type | Description |
 |--------|------|-------------|
 | `id` | INTEGER PK | Auto-increment |
+| `event_id` | TEXT | 12-hex primary event id for ledger joins |
 | `timestamp` | TEXT | ISO 8601 |
 | `exec_id` | INTEGER | Per-session exec identifier |
 | `command` | TEXT | Command string |
@@ -321,6 +322,7 @@ Commands executed through Capsem service APIs and MCP tools.
 | `trace_id` | TEXT | Cross-table correlation ID |
 | `process_name` | TEXT | Guest process name, when known |
 | `pid` | INTEGER | Guest process ID, when known |
+| `credential_ref` | TEXT | Brokered credential reference, when present |
 
 ### audit_events
 
@@ -352,11 +354,13 @@ File system changes in the workspace (tracked by VirtioFS).
 | Column | Type | Description |
 |--------|------|-------------|
 | `id` | INTEGER PK | Auto-increment |
+| `event_id` | TEXT | 12-hex primary event id for ledger joins |
 | `timestamp` | TEXT | ISO 8601 |
 | `action` | TEXT | `created`, `modified`, `deleted`, `restored` |
 | `path` | TEXT | File path relative to workspace |
 | `size` | INTEGER | File size in bytes |
 | `trace_id` | TEXT | Cross-table correlation ID |
+| `credential_ref` | TEXT | Brokered credential reference, when present |
 
 ### Snapshot State
 
