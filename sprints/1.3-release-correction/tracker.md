@@ -112,7 +112,7 @@ next one, and stage only the files for that slice.
   - The router-level test exercises checked-in profile ids `code` and
     `co-work` across profile overview, assets, enforcement, detection,
     plugins, credential broker detail, MCP, and skills info/list routes.
-- [ ] RED/GREEN: mutation routes either persist via profile object or do not
+- [x] RED/GREEN: mutation routes either persist via profile object or do not
   exist; no fake success.
   - 2026-06-11 progress: MCP server edit/delete are no longer mounted 501
     stubs. They now mutate through `Profile::upsert_mcp_server` /
