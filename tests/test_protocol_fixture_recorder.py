@@ -65,3 +65,26 @@ def test_protocol_fixture_recorder_uses_debug_upstream_and_sanitizes(tmp_path):
         assert fixture.auth_mode in {"none", "bearer", "api_key", "oauth_code"}
         assert fixture.expected_ledger_rows
         assert fixture.expected_visible_bytes >= 0
+
+
+def test_protocol_fixture_replay_covers_recorded_flows(tmp_path):
+    recorder = _load_recorder()
+    subprocess.run(
+        ["cargo", "build", "-p", "capsem-debug-upstream"],
+        cwd=PROJECT_ROOT,
+        check=True,
+    )
+    proc = None
+    try:
+        proc, ready = start_debug_upstream()
+        written = recorder.record_debug_upstream(ready["base_url"], tmp_path)
+        results = recorder.replay_fixtures(ready["base_url"], written)
+    finally:
+        stop_process(proc)
+
+    assert {result.name for result in results} == {path.stem for path in written}
+    assert all(result.status_matches for result in results)
+    assert all(result.visible_bytes_match for result in results)
+    assert {
+        result.protocol_family for result in results
+    } == {"model", "oauth", "mcp", "credential"}

@@ -240,8 +240,17 @@ next one, and stage only the files for that slice.
   - Proof: `uv run python -m pytest tests/test_protocol_fixture_recorder.py
     -q` (`1 passed in 1.81s`); `uv run ruff check
     scripts/protocol_fixture_recorder.py tests/test_protocol_fixture_recorder.py`.
-- [ ] RED/GREEN: replay covers Claude/Anthropic, OpenAI/Codex-compatible,
+- [x] RED/GREEN: replay covers Claude/Anthropic, OpenAI/Codex-compatible,
   Gemini/AGY-compatible, Ollama/OpenAI-compatible, MCP, and credential flows.
+  - 2026-06-12 progress: the recorder now exposes `replay_fixtures()`, which
+    reissues recorded fixtures against the local lab and validates response
+    status plus stable visible-byte counts. The test records and replays
+    Claude/Anthropic-shaped, Codex/OpenAI-compatible, AGY/Gemini-shaped,
+    Ollama/OpenAI-compatible, OAuth, MCP tools/list, MCP tools/call, and
+    credential-capture fixtures without public network.
+  - Proof: `uv run python -m pytest tests/test_protocol_fixture_recorder.py
+    -q` (`2 passed in 0.92s`); `uv run ruff check
+    scripts/protocol_fixture_recorder.py tests/test_protocol_fixture_recorder.py`.
 - [ ] RED/GREEN: live-local Ollama probe uses host `gemma4:latest` through the
   Capsem-routed path and records/replays the resulting native Ollama and
   OpenAI-compatible traffic without installing Ollama in the guest.

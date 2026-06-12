@@ -51,6 +51,17 @@ class ProtocolFixture(BaseModel):
     substitutions: dict[str, str] = Field(default_factory=dict)
 
 
+class ReplayResult(BaseModel):
+    name: str
+    protocol_family: ProtocolFamily
+    status_matches: bool
+    visible_bytes_match: bool
+    expected_status_code: int
+    actual_status_code: int
+    expected_visible_bytes: int
+    actual_visible_bytes: int
+
+
 def _substitution_for(secret: str) -> str:
     digest = blake3.blake3(secret.encode("utf-8")).hexdigest()
     return f"credential:blake3:{digest}"
@@ -312,10 +323,41 @@ def record_debug_upstream(
     return written
 
 
+def replay_fixtures(base_url: str, fixture_paths: list[str | Path]) -> list[ReplayResult]:
+    results: list[ReplayResult] = []
+    for path in fixture_paths:
+        fixture = ProtocolFixture.model_validate_json(Path(path).read_text())
+        exchange, visible_bytes, _substitutions = _http_exchange(
+            base_url,
+            fixture.exchange.method,
+            fixture.exchange.path,
+            headers=dict(fixture.exchange.request_headers),
+            body=fixture.exchange.request_body,
+        )
+        results.append(
+            ReplayResult(
+                name=fixture.name,
+                protocol_family=fixture.protocol_family,
+                status_matches=exchange.status_code == fixture.exchange.status_code,
+                visible_bytes_match=visible_bytes == fixture.expected_visible_bytes,
+                expected_status_code=fixture.exchange.status_code,
+                actual_status_code=exchange.status_code,
+                expected_visible_bytes=fixture.expected_visible_bytes,
+                actual_visible_bytes=visible_bytes,
+            )
+        )
+    return results
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base-url", required=True, help="capsem-debug-upstream base URL")
     parser.add_argument("--out-dir", required=True, type=Path, help="fixture output directory")
+    parser.add_argument(
+        "--replay",
+        action="store_true",
+        help="replay written fixtures after recording and include replay results",
+    )
     parser.add_argument(
         "--scenario",
         action="append",
@@ -328,7 +370,12 @@ def main() -> int:
         args.out_dir,
         scenarios=set(args.scenarios) if args.scenarios else None,
     )
-    print(json.dumps({"written": [str(path) for path in written]}, indent=2))
+    output: dict[str, Any] = {"written": [str(path) for path in written]}
+    if args.replay:
+        output["replay"] = [
+            result.model_dump() for result in replay_fixtures(args.base_url, written)
+        ]
+    print(json.dumps(output, indent=2))
     return 0
 
 
