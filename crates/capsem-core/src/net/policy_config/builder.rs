@@ -1,4 +1,4 @@
-use super::loader::load_settings_files;
+use super::loader::load_settings_and_corp_files;
 use super::provider_profile::{
     compile_provider_rules_to_security_rule_set, ModelEndpointRegistry, ProviderRuleProfile,
 };
@@ -212,7 +212,7 @@ impl MergedPolicies {
 
     /// Load from disk then merge. Falls back to defaults on any I/O error.
     pub fn from_disk() -> Self {
-        let (user, corp) = load_settings_files();
+        let (user, corp) = load_settings_and_corp_files();
         Self::from_files(&user, &corp)
     }
 }
@@ -335,6 +335,6 @@ pub fn load_merged_vm_settings() -> VmSettings {
 
 /// Load all resolved settings (for UI).
 pub fn load_merged_settings() -> Vec<ResolvedSetting> {
-    let (user, corp) = load_settings_files();
+    let (user, corp) = load_settings_and_corp_files();
     resolve_settings(&user, &corp)
 }

@@ -5,7 +5,7 @@ from __future__ import annotations
 from .conftest import CAPSEM_DIR, run_capsem
 
 SETUP_STATE = CAPSEM_DIR / "setup-state.json"
-USER_TOML = CAPSEM_DIR / "user.toml"
+USER_TOML = CAPSEM_DIR / "settings.toml"
 
 
 def test_setup_command_is_removed(installed_layout, clean_state):
@@ -19,4 +19,4 @@ def test_setup_command_is_removed(installed_layout, clean_state):
     combined = f"{result.stdout}\n{result.stderr}".lower()
     assert "unrecognized" in combined or "invalid" in combined
     assert not SETUP_STATE.exists(), "removed setup command must not write setup-state.json"
-    assert not USER_TOML.exists(), "removed setup command must not write user.toml"
+    assert not USER_TOML.exists(), "removed setup command must not write settings.toml"

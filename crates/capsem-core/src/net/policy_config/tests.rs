@@ -749,7 +749,8 @@ fn parse_real_user_toml_format() {
 "ai.anthropic.allow" = { value = true, modified = "2026-02-25T00:00:00Z" }
 "ai.anthropic.api_key" = { value = "sk-ant-test-key", modified = "2026-02-25T00:00:00Z" }
 "#;
-    let file: SettingsFile = toml::from_str(toml_str).expect("should parse real settings.toml format");
+    let file: SettingsFile =
+        toml::from_str(toml_str).expect("should parse real settings.toml format");
     assert_eq!(file.settings.len(), 3);
     assert_eq!(
         file.settings["ai.google.api_key"].value,

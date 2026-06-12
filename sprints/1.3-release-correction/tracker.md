@@ -385,6 +385,11 @@ next one, and stage only the files for that slice.
   capsem-core --lib policy_config -- --nocapture`; `cargo test -p
   capsem-core credential_broker -- --nocapture`; `cargo check -p capsem-core
   -p capsem-service -p capsem-process -p capsem-mcp-builtin`.
+- S1 2026-06-11 focused burn proof: `uv run python -m pytest
+  tests/capsem-install/test_setup_removed.py
+  tests/capsem-service/test_svc_settings.py
+  tests/capsem-build-chain/test_no_legacy_user_config.py -q`; `cargo check
+  -p capsem-core -p capsem-service`.
 - S1 correction from review: any VM/profile behavior that survived as local
   settings is still debt. `settings.toml` is not a new name for `user.toml`;
   behavior must move to profile-owned artifacts or be rejected.

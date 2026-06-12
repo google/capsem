@@ -1,4 +1,4 @@
-use super::loader::load_settings_files;
+use super::loader::load_settings_and_corp_files;
 use super::registry::{setting_definitions, DEFAULTS_JSON};
 use super::resolver::resolve_settings;
 use super::types::*;
@@ -265,7 +265,7 @@ pub fn build_settings_tree_with_mcp(
 
 /// Load settings tree from standard locations.
 pub fn load_settings_tree() -> Vec<SettingsNode> {
-    let (user, corp) = load_settings_files();
+    let (user, corp) = load_settings_and_corp_files();
     let resolved = resolve_settings(&user, &corp);
     let mcp_servers = super::loader::load_mcp_servers();
     build_settings_tree_with_mcp(&resolved, &mcp_servers)

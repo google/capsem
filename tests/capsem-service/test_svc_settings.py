@@ -1,6 +1,6 @@
 """Settings endpoints: /settings/info and /settings/edit.
 
-These endpoints read and write under CAPSEM_HOME (user.toml, corp.toml).
+These endpoints read and write under CAPSEM_HOME (settings.toml, corp.toml).
 The conftest's `service_env` fixture isolates CAPSEM_HOME to a tmpdir,
 so mutations here never touch the developer's real ~/.capsem/.
 """
@@ -21,7 +21,7 @@ def isolated_client():
     user settings into that shared CAPSEM_HOME,
     which then leaks into `test_svc_mcp_api.py::test_policy_returns_merged_shape`
     (which expects the unset-default `"allow"`). Any test that mutates
-    user.toml state other tests depend on should use this fixture instead.
+    settings.toml state other tests depend on should use this fixture instead.
     """
     svc = ServiceInstance()
     svc.start()
@@ -48,7 +48,7 @@ class TestSettingsTree:
 
         `app.auto_update` is a baseline bool (default: true). Flipping it
         to false and re-reading proves write-through works against the
-        isolated CAPSEM_HOME user.toml. Leaves it flipped -- teardown drops
+        isolated CAPSEM_HOME settings.toml. Leaves it flipped -- teardown drops
         the tmpdir with the rest of the isolated home.
         """
         before = _find_setting_value(client.get("/settings/info")["tree"], "app.auto_update")
