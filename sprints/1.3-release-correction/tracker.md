@@ -294,6 +294,14 @@ next one, and stage only the files for that slice.
 - [ ] RED/GREEN: tool declarations are not counted as executed tool calls.
 - [ ] RED/GREEN: executed model tool calls and MCP tools/call rows are linked
   without phantom calls.
+- [x] RED/GREEN: MCP user-facing stats distinguish executed tool calls from
+  protocol chatter and host-only snapshot tooling.
+  - 2026-06-11 progress: `DbReader::mcp_call_stats()` keeps filtering
+    initialize/list/snapshot noise for UI/user status, while
+    `raw_mcp_call_count()` exists for forensic session-index rollups that must
+    equal raw `mcp_calls` ledger rows.
+  - Proof: `cargo test -p capsem-logger mcp_call -- --nocapture`; `cargo
+    check -p capsem-logger -p capsem-service`.
 - [ ] RED/GREEN: unknown AI-compatible protocol shape on unknown host emits
   model provider plus host and triggers detection.
 - [ ] RED/GREEN: unknown remote MCP activity becomes route-visible profile

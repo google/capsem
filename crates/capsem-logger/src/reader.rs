@@ -1525,6 +1525,18 @@ impl DbReader {
         })
     }
 
+    /// Raw MCP row count for session-index rollups.
+    ///
+    /// `mcp_call_stats` intentionally filters protocol chatter and host-only
+    /// snapshot tooling for user-facing status. The session index is the
+    /// forensic ledger summary, so it must match `COUNT(*) FROM mcp_calls`.
+    pub fn raw_mcp_call_count(&self) -> rusqlite::Result<u64> {
+        self.conn
+            .query_row("SELECT COUNT(*) FROM mcp_calls", [], |row| {
+                Ok(row.get::<_, i64>(0)? as u64)
+            })
+    }
+
     // -----------------------------------------------------------------
     // History: exec_events + audit_events
     // -----------------------------------------------------------------
@@ -2277,6 +2289,24 @@ mod tests {
         assert_eq!(stats.by_server[0].count, 1);
         assert_eq!(stats.by_server[1].server_name, "github");
         assert_eq!(stats.by_server[1].count, 1);
+    }
+
+    #[test]
+    fn raw_mcp_call_count_matches_ledger_rows_without_status_filtering() {
+        let r = DbReader::open_in_memory().unwrap();
+        r.conn
+            .execute_batch(
+                "INSERT INTO mcp_calls (timestamp, server_name, method, tool_name, decision, duration_ms)
+                 VALUES
+                    ('2026-01-01T00:00:00Z', 'capsem', 'initialize', NULL, 'allowed', 1),
+                    ('2026-01-01T00:00:01Z', 'capsem', 'tools/list', NULL, 'allowed', 1),
+                    ('2026-01-01T00:00:02Z', 'capsem', 'tools/call', 'local__snapshots_changes', 'allowed', 4),
+                    ('2026-01-01T00:00:03Z', 'capsem', 'tools/call', 'local__fetch_http', 'allowed', 9);",
+            )
+            .unwrap();
+
+        assert_eq!(r.mcp_call_stats().unwrap().total, 1);
+        assert_eq!(r.raw_mcp_call_count().unwrap(), 4);
     }
 
     // -----------------------------------------------------------------------
