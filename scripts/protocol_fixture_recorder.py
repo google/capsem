@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Record sanitized protocol fixtures from capsem-debug-upstream."""
+"""Record sanitized protocol fixtures from capsem-debug-upstream.
+
+Ironbank note: recorder fixtures are inputs, not proof. The release proof lives
+in tests/ironbank/ and must replay through Capsem as a black box, then assert
+logs, DB rows, UDS/HTTP routes, counters, and UI-facing JSON without reading
+Rust internals.
+"""
 
 import argparse
 import json

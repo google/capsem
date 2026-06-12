@@ -1,0 +1,48 @@
+---
+name: ironbank
+description: Use when Capsem VM, network, model, MCP, credential broker, security, package-manager, doctor, benchmark, or release-gate behavior needs black-box acceptance proof
+---
+
+# Ironbank
+
+Ironbank is Capsem's full black-box ledger discipline. Use it for release,
+VM, network, model, MCP, credential broker, package-manager, doctor,
+benchmark, and security acceptance work.
+
+## Core Rule
+
+Do not look at Rust/product internals to decide expected behavior. Ironbank
+tests are written from public contracts, CLI help, docs, route responses,
+generated schemas, hermetic fixture definitions, logs, DB rows, and installed
+package metadata. If the contract is missing, write the RED test for the
+missing contract.
+
+## Required Shape
+
+- Suite home: `tests/ironbank/`.
+- Runner: Python black-box tests through Capsem, `capsem-doctor`, VM sessions,
+  hermetic local services, UDS routes, HTTP routes, logs, and SQLite ledgers.
+- One deterministic stimulus asserts the full path: client result, parsed
+  facts, CEL/security decision, detection/enforcement rows, protocol rows,
+  structured logs, status counters, UDS route, HTTP route, and UI JSON shape.
+- Every emitted field is exact-value asserted, typed-invariant asserted, or
+  explicitly marked not applicable.
+- Unknown DB/log/route fields fail the test until the field ledger is updated.
+
+## Forbidden
+
+- Rust parser/unit proof as an Ironbank gate.
+- Public-network dependencies.
+- Mocks of the Capsem path.
+- Fallback routes.
+- Status-code-only replay.
+- Row-exists checks.
+- `skip`, `skipif`, `slow`, optional markers, or manual OAuth/client dances as
+  release proof.
+
+## Package Managers
+
+Installing is not proof. For apt, npm, uv, pip, node, or profile package
+rails, assert binary presence/version/hash where relevant and run a command
+that proves the package does its job. Example: `zstd` must compress and
+decompress known bytes and match the original.

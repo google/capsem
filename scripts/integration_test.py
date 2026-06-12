@@ -13,6 +13,11 @@ Exercises:
 Usage:
     python3 scripts/integration_test.py              # uses target/debug/capsem
     python3 scripts/integration_test.py --binary ./capsem --assets ./assets
+
+Ironbank note: this is black-box product proof. Do not close a release gate
+with status-only replay, row-exists checks, skipped/slow cases, public
+services, or expectations copied from Rust internals. The ledger contract is
+client result + parsed facts + security rows + protocol rows + logs + routes.
 """
 
 import argparse

@@ -365,7 +365,10 @@ test-artifacts:
     echo "  cat $DIR/.../service.log | less"
     echo "  cat $DIR/.../sessions/<vm>/process.log | less"
 
-test: _install-tools _clean-stale _pnpm-install _generate-settings _check-assets _pack-initrd _materialize-config
+_bootstrap:
+    sh {{justfile_directory()}}/bootstrap.sh -y
+
+test: _bootstrap _install-tools _clean-stale _pnpm-install _generate-settings _check-assets _pack-initrd _materialize-config
     #!/bin/bash
     set -euo pipefail
     export CAPSEM_HOME="{{justfile_directory()}}/target/test-home/.capsem"

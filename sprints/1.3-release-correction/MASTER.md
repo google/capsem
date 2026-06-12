@@ -44,10 +44,10 @@ prove the same rails without user credentials.
 | S1 | Profile/config authority | Planned | `user.toml` rail burned; profile linter always runs; invalid profiles cannot be materialized. |
 | S2 | Materialization/assets/resources | Planned | `code` and `co-work` materialize from `capsem-admin`; assets and VM resources verified end to end. |
 | S3 | Route contract and API coverage | Complete | Every UI/TUI-used profile/session/stats route has contract tests for both profiles; no 404/501. |
-| S4 | Hermetic protocol lab and recorder | In progress | Local lab covers HTTP/HTTPS/SSE/WS/DNS/MCP/model/OAuth/broker without public services; host Ollama `gemma4:latest` is proven through the Capsem-routed VM path with DB ledger rows. |
+| S4 | Hermetic protocol lab and recorder | In progress | Local lab covers HTTP/HTTPS/SSE/WS/DNS/MCP/model/OAuth/broker without public services, and every protocol case is a full-chain spec: one stimulus, at least ten assertions across parser, security/CEL, DB ledger, logs, UDS, HTTP routes, status counters, and UI-facing serialization. |
 | S5 | Doctor/just/benchmark unification | In progress | `just test` and `just smoke` run doctor/E2E/bench through the hermetic lab, no `--fast` release escape; full doctor now passes in 26.20s wall time versus the prior 104.41s failing public-network run. |
 | S6 | CEL/security event correction | Complete | IP/TCP/UDP facts and `valid` booleans are first-party CEL objects; no `security.*` predicates. |
-| S7 | Runtime protocol fixes | Planned | AGY/Claude/Codex model, MCP, broker, SSE, and tool-call paths pass replay and DB-ledger assertions. |
+| S7 | Runtime protocol fixes | Planned | AGY/Claude/Codex model, MCP, broker, SSE, and tool-call paths pass full-chain acceptance specs with response text/thinking/tool output, token counts, detection/security rows, route output, and no phantom calls. |
 | S8 | UI/TUI contract repair | Planned | Sessions/profiles/settings/stats/plugin/MCP/security/file/process views reflect routes and enums only. |
 | S9 | Agent bootstrap repair | Planned | AGY, Claude, Codex, MCP, aliases, and profile root files are packaged from profile-owned bootstrap. |
 | S10 | Packaging/install/release gate | Planned | Package payload closed contract, `just install`, status/debug, changelog/docs, and benchmark report pass. |
@@ -59,10 +59,21 @@ prove the same rails without user credentials.
 - Hold: no old policy/domain/MCP fallback rails may be reintroduced.
 - Hold: no package may include rootfs/initrd/kernel asset blobs.
 - Hold: no profile route may return 404/501 from installed UI/TUI surfaces.
+- Hold: no S4/S7 protocol slice may close on status-code replay or row-exists
+  tests; every protocol needs the full-chain assertion matrix in the tracker.
+- Hold: project dev skills must live under top-level `skills/` with
+  `.codex/skills -> ../skills`; `config/skills/` is profile/product payload
+  only.
+- Hold: Ironbank is the release ledger for VM/security/network/protocol/broker
+  proof. Ironbank lives in `tests/ironbank/`, is authored from public
+  contracts only, and cannot use Rust internals, `skip`, `slow`, public
+  services, status-only replay, or row-exists checks as proof.
 
 ## Source Evidence
 
 - Active hotlist: `sprints/1.3-debug-loop/current-hotlist.md`
+- Lost surface audit: `sprints/1.3-release-correction/lost-surface-audit.md`
+- Ironbank contract: `sprints/1.3-release-correction/IRONBANK.md`
 - Historical debug tracker: `sprints/1.3-debug-loop/tracker.md`
 - Existing narrow Claude note: `sprints/1.3-claude-mcp-bootstrap/`
 - Local baseline confirmed on 2026-06-11: host Ollama is reachable at

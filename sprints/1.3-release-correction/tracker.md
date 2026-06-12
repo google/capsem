@@ -5,6 +5,14 @@
 No new AGY/Claude/Codex/OAuth manual run until the local due-diligence gates
 below pass. Manual credentials are not the debugger.
 
+Ironbank is the black-box release ledger under `tests/ironbank/`. For VM,
+security, network, protocol, credential broker, package-manager, doctor,
+benchmark, and release-gate behavior, Ironbank proof must be authored from
+public contracts and observed outputs only. Do not inspect Rust/product
+internals to decide expected behavior. No `skip`, `skipif`, `slow`, optional
+marker, public network, status-code-only replay, or row-exists proof can close
+an Ironbank task.
+
 Commit discipline is part of the gate: one fixed bug or functional slice gets
 its focused verification and its own commit before the next bug starts. Do not
 batch unrelated fixes, do not leave a solved bug uncommitted while opening the
@@ -20,6 +28,18 @@ next one, and stage only the files for that slice.
   - Dirty tree already existed with code/config/test/docs/benchmark changes;
     this sprint creation added/updated sprint docs only.
 - [x] Confirm no implementation starts before S0 tracker is coherent.
+- [x] Audit lost project surfaces against `origin/main` after discovering
+  top-level dev skills were missing from this branch.
+  - Finding: `92fa3bd2` created top-level `skills/`; `5489ff10` moved the
+    dev skill library into `config/skills/`, which violates the contract.
+    `config/skills/` is profile/product payload, not project Codex/dev-agent
+    operating manual.
+  - Finding: `origin/main` has `.codex/skills -> ../skills`; this branch did
+    not preserve it.
+  - Evidence: `sprints/1.3-release-correction/lost-surface-audit.md`.
+  - Correction in progress: restore top-level `skills/`, restore
+    `.codex/skills`, add `/ironbank`, and keep `config/skills/` out of dev
+    agent instruction flow.
 
 ## S1. Profile/Config Authority
 
@@ -101,6 +121,16 @@ next one, and stage only the files for that slice.
     `/var/cache/apt`, `/tmp`, `/var/tmp`, and `/root`; `_apt` must be able to
     write `/var/cache/apt/archives/partial` so apt does not fall back to
     unsandboxed root downloads.
+- [ ] RED/GREEN: Ironbank package-manager probes prove installed packages
+  function through apt, npm, uv, pip, and node rails.
+  - Required proof: binary presence, version/hash where relevant, and an
+    execution that demonstrates the installed package does its intended work.
+  - Apt example: install `zstd`, compress known bytes, decompress, compare
+    exact output, and inspect logs/DB/routes/status evidence for the VM path.
+  - Python/uv/pip example: install a tiny dependency, import it, execute a
+    deterministic behavior, and prove no package path needed public fallback.
+  - Node/npm example: install/run a tiny CLI/module and prove stdout/exit code
+    plus ledger evidence, not just `npm list`.
 
 ## S3. Route Contract and API Coverage
 
@@ -241,6 +271,101 @@ next one, and stage only the files for that slice.
     broker/recorder tests can prove capture and sanitization without touching
     real credentials.
   - Proof: `cargo test -p capsem-debug-upstream -- --nocapture` (`8 passed`).
+- [ ] RED/GREEN: every protocol lab case is a full-chain acceptance spec, not
+  a status-code replay.
+  - Suite home: `tests/ironbank/`.
+  - Contract: `sprints/1.3-release-correction/IRONBANK.md`.
+  - Authoring rule: use public route contracts, CLI docs/help, generated
+    schemas, hermetic fixture definitions, observed client behavior, logs, DB
+    rows, and route responses only. Do not read Rust/product internals to
+    choose expected behavior.
+  - Required assertion floor for each network/protocol test: at least ten
+    explicit assertions covering (1) client-visible response, (2) parser
+    family/type classification, (3) parsed request fields, (4) parsed response
+    fields, (5) protocol-specific DB row, (6) unified security ledger row,
+    (7) detection level/rule row when expected, (8) structured service/gateway
+    log evidence, (9) in-memory status/stats counters, (10) UDS route output,
+    (11) HTTP gateway route output, and (12) UI-facing JSON serialization
+    shape when the route backs the UI.
+  - Field-coverage invariant: each protocol spec must inspect every field it
+    emits in all three public ledgers: structured log event, SQLite row(s), and
+    UDS/HTTP route response. For each field, the test must either assert the
+    exact value, assert a typed invariant/range/shape, or document it as
+    not-applicable for that case. No uninspected DB/log/route field can be
+    treated as covered. This includes nullable fields, defaults, timestamps,
+    IDs, trace IDs, credential refs, rule IDs, detection levels, counters,
+    byte counts, preview caps, body render metadata, status/decision/action
+    enums, provider/model/tool names, paths, headers, protocol family/type,
+    transport/IP/TCP/UDP facts, and error fields.
+  - Schema drift guard: each full-chain spec must fail if the route response,
+    DB table schema, or structured log schema gains a field that the field
+    coverage ledger does not know about. New fields require new assertions or
+    explicit not-applicable entries in the test fixture.
+  - Required protocol specs:
+    - HTTP must have at least twelve full-chain cases:
+      1. accepted plain JSON request/response;
+      2. denied request by CEL rule with client-visible denial body;
+      3. asked request with ask ledger/status evidence;
+      4. rewrite/preprocess request mutation with mutated upstream bytes and
+         original/mutated audit rows;
+      5. rewrite/postprocess response mutation with client-visible mutation;
+      6. HTTPS/MITM JSON request/response with cert path and no fallback;
+      7. gzip response decompression with parsed body and capped preview;
+      8. chunked response with complete bytes/counters;
+      9. SSE stream with event ordering, EOF, bytes, and no hyper error;
+      10. WebSocket handshake/frame evidence;
+      11. truncated upstream response with explicit error/partial ledger and
+          route-visible diagnostic;
+      12. large body/header preview capping with no raw credential leak.
+    - DNS must have at least six full-chain cases:
+      1. accepted A/AAAA query;
+      2. accepted TXT query;
+      3. denied domain by rule;
+      4. malformed/truncated packet;
+      5. long-label DNS-exfil detection;
+      6. local/private answer with IP/TCP/UDP facts and default ask rule.
+    - Model/OpenAI-compatible must have accepted, denied, truncated/error,
+      non-stream JSON, SSE stream, tool declaration, executed tool call,
+      tool response, token usage, thinking/reasoning, large prompt preview
+      cap, and unknown-compatible-provider detection cases.
+    - Model/Anthropic streaming must have accepted, denied, truncated/error,
+      SSE text delta, tool_use/tool_result, usage delta, stop reason, EOF,
+      response bytes, token counts, and no client-visible network error.
+    - Model/Gemini-AGY streaming must have accepted, denied, truncated/error,
+      Google internal endpoint classification, response text, thinking,
+      tool deltas, token counts, OAuth/broker interaction, route/latest rows,
+      and no client-visible network error.
+    - MCP tools/list must prove server identity, resources/prompts/tools
+      sections, no phantom executed calls, `mcp_calls`, security rows,
+      route-visible server/tool evidence, UDS output, HTTP gateway output,
+      counters, and UI serialization.
+    - MCP tools/call must prove accepted, denied, ask, truncated/error,
+      request args, response body, tool id/name, decision, `mcp_calls`,
+      security rows, route/latest, counters, duplicate suppression, and
+      separation from tools/list noise.
+    - Credential broker/plugin must have at least five full-chain cases:
+      1. OAuth auth-code/token response capture with `captured` verb;
+      2. header/query/cookie API key capture with `captured` verb;
+      3. stored-ref injection with `injected` verb and client success;
+      4. brokered substitution/rewrite with `brokered` verb and no raw secret
+         in DB/log/UI/debug;
+      5. plugin disabled/ask/block/error modes with counters, detection level,
+         structured logs, route status, and absolute block semantics.
+    - File events must have accepted, denied, import, export, create, read,
+      write/modify, delete, truncated/large content preview, symlink escape
+      denial, path/name/ext/mime/content facts, DB rows, security rows, routes,
+      counters, and logs.
+    - Process events must have process audit observation, explicit exec,
+      accepted exec, denied exec, failed exec, environment/argv preview caps,
+      parent/child identity, DB rows, security rows, routes, counters, and
+      logs.
+    - Snapshot must be route-only and hermetic: route-created snapshot,
+      compact created/modified/deleted summary, symlink escape denial, no
+      snapshot rows in generic user activity unless explicitly requested, no
+      DB hot-path read, route output, counters, and structured logs.
+  - Current gap: existing recorder/replay tests prove fixtures are stable, but
+    they do not yet prove Capsem's runtime parser/logger/security route
+    contract.
 - [x] RED/GREEN: recorder creates sanitized fixtures with client/version,
   protocol family, auth mode, expected ledger rows, and expected visible bytes.
   - 2026-06-12 progress: `scripts/protocol_fixture_recorder.py` records

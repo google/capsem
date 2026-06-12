@@ -19,6 +19,9 @@ that reflect those contracts exactly.
 - No synthetic UI vocabulary for profile/security/plugin states. If the UI
   displays it, the route contract owns it.
 - No asset blobs in `.pkg` or `.deb`.
+- No Ironbank escape hatch: no Rust internals, no public network, no mocks of
+  the Capsem path, no `skip`, no `slow`, no status-only replay, and no
+  row-exists proof for release-critical VM/security/protocol behavior.
 
 ## Key Decisions
 
@@ -39,6 +42,9 @@ that reflect those contracts exactly.
 9. Credential broker owns credential capture/broker/inject behavior and exposes
    opaque references/status only.
 10. Doctor is the canonical in-VM truth probe and must exercise real rails.
+11. Ironbank is the release ledger suite under `tests/ironbank/`; it is
+    authored from public contracts, hermetic fixtures, CLI/route behavior,
+    logs, DB rows, and generated schemas, not product internals.
 
 ## Execution Order
 
@@ -47,6 +53,8 @@ that reflect those contracts exactly.
 - Create this sprint and link older hotlists as evidence.
 - Add guardrail notes to older trackers so work resumes here first.
 - Snapshot dirty tree and branch before implementation begins.
+- Audit lost branch surfaces against `origin/main` and restore or explicitly
+  accept/reject each bucket before release.
 
 ### S1. Profile/Config Authority
 
@@ -67,6 +75,9 @@ that reflect those contracts exactly.
   host filesystem pressure.
 - Add bounded write/package-manager probes for `/usr/local`, `/var/cache/apt`,
   `/tmp`, `/var/tmp`, `/root`.
+- Add package-manager functional probes for apt, npm, uv, pip, and node rails:
+  binary/version/hash where relevant plus a real command that proves the
+  installed package does its job.
 
 ### S3. Route Contract and API Coverage
 
@@ -80,6 +91,8 @@ that reflect those contracts exactly.
 ### S4. Hermetic Protocol Lab and Recorder
 
 - Build one local protocol lab shared by doctor, tests, recorder, and bench.
+- Create the `tests/ironbank/` black-box suite as the full-chain acceptance
+  home for protocol/security/package-manager proof.
 - Cover HTTP, HTTPS/MITM, gzip, chunked, SSE, WebSocket, DNS, MCP, model
   protocols, OAuth/OIDC, and broker flows.
 - Add recorder/replay corpus for Claude/Anthropic, OpenAI/Codex-compatible,
@@ -88,6 +101,13 @@ that reflect those contracts exactly.
   current developer baseline is `gemma4:latest` on `127.0.0.1:11434`; tests
   must route to it through Capsem-owned host aliasing so the ledger sees normal
   network/MITM/model traffic.
+- Every network/protocol acceptance test is a full-chain spec. A single
+  stimulus must verify at least ten concrete facts across the path: client
+  visible result, parser classification, security/CEL decision, detection
+  ledger rows, DB rows for the protocol table, DB rows for the unified security
+  ledger, structured logs, stats/status counters, UDS route output, HTTP
+  gateway route output, and UI-facing serialization shape. A status-code-only
+  replay is not proof.
 
 ### S5. Doctor, Just, E2E, Benchmark
 
@@ -97,6 +117,16 @@ that reflect those contracts exactly.
   benchmark gates appropriate for release.
 - Benchmarks use scaled concurrency/request counts and emit report artifacts
   Linux can reproduce.
+- Doctor and E2E must use the same protocol lab and must assert the full
+  ledger contract for each protocol. Model checks must include request
+  parsing, response parsing, text/thinking/tool output, token counts, and
+  security/detection rows. MCP checks must include tools/list, tools/call,
+  response rows, route-visible server/tool evidence, and no phantom calls.
+- Ironbank package-manager checks must prove function, not presence: for
+  example, `zstd` must compress and decompress known bytes, Python packages
+  must import and execute a tiny behavior, npm/node packages must run a command
+  or module behavior, and uv/pip rails must prove the created environment can
+  execute the installed dependency.
 
 ### S6. CEL and Security Event Contract
 
@@ -121,6 +151,12 @@ that reflect those contracts exactly.
 - Detect unknown remote MCP and promote it to route-visible profile evidence.
 - Prove broker capture/broker/inject across OAuth, headers, query params,
   cookies, body tokens, config files, env-style files, and MCP/tool configs.
+- Add one full-chain acceptance spec per protocol family before runtime fixes:
+  HTTP, DNS, model/OpenAI-compatible, model/Anthropic streaming, model/Gemini
+  or AGY streaming, MCP tools/list, MCP tools/call, OAuth credential capture,
+  broker injection, file event, process event, and snapshot route. Each spec
+  must be programmatic, hermetic, and assert the entire chain, not only parser
+  helpers.
 
 ### S8. UI/TUI Contract Repair
 

@@ -13,6 +13,11 @@ that all of those events were captured.
 Usage:
     python3 scripts/doctor_session_test.py              # uses target/debug/capsem
     python3 scripts/doctor_session_test.py --binary ./capsem --assets ./assets
+
+Ironbank note: this script is a black-box ledger validator. Do not weaken it
+into status-only checks, row-exists checks, skipped cases, slow/optional cases,
+or Rust-internal expectations. Release-critical cases belong in
+tests/ironbank/ and must assert the full public ledger.
 """
 
 import argparse
