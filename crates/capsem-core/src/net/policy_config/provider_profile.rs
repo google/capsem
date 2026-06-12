@@ -10,7 +10,7 @@ use super::{
 };
 
 const DEFAULT_PROVIDER_RULES_TOML: &str = include_str!("default_provider_rules.toml");
-const REQUIRED_BUILTIN_PLUGINS: &[&str] = &["credential_broker"];
+const REQUIRED_BUILTIN_PLUGINS: &[&str] = &["credential_broker", "log_sanitizer"];
 const REQUIRED_DEFAULT_RULE_KEYS: &[&str] = &["http", "dns", "mcp", "model", "file", "process"];
 
 pub type AiProviderProfile = SecurityRuleProvider;
@@ -371,6 +371,9 @@ mod tests {
         assert!(ProviderRuleProfile::builtin_security_defaults()
             .plugins
             .contains_key("credential_broker"));
+        assert!(ProviderRuleProfile::builtin_security_defaults()
+            .plugins
+            .contains_key("log_sanitizer"));
         assert!(compiled
             .iter()
             .all(|rule| !rule.condition.contains("file.ingress")));
@@ -399,6 +402,9 @@ match = 'has(http.host)'
         let missing_defaults = SecurityRuleProfile::parse_toml(
             r#"
 [plugins.credential_broker]
+mode = "rewrite"
+
+[plugins.log_sanitizer]
 mode = "rewrite"
 "#,
         )

@@ -219,7 +219,7 @@ struct PluginListResponse {
 enum PluginStage {
     Preprocess,
     Postprocess,
-    PreAndPost,
+    Logging,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -6294,7 +6294,16 @@ fn plugin_catalog() -> BTreeMap<String, PluginCatalogEntry> {
             PluginCatalogEntry {
                 description: "captures observed credentials into brokered credential references",
                 default_config: default_plugin_config(SecurityPluginMode::Rewrite),
-                stage: PluginStage::PreAndPost,
+                stage: PluginStage::Preprocess,
+                version: "1",
+            },
+        ),
+        (
+            "log_sanitizer".to_string(),
+            PluginCatalogEntry {
+                description: "sanitizes credential material before durable security ledger writes",
+                default_config: default_plugin_config(SecurityPluginMode::Rewrite),
+                stage: PluginStage::Logging,
                 version: "1",
             },
         ),
@@ -6412,6 +6421,11 @@ fn plugin_capabilities(plugin_id: &str) -> PluginCapabilities {
             event_families: vec!["http", "model", "file", "mcp"],
             credential_providers: Vec::new(),
             credential_sources: Vec::new(),
+        },
+        "log_sanitizer" => PluginCapabilities {
+            event_families: vec!["http", "model", "file", "mcp"],
+            credential_providers: Vec::new(),
+            credential_sources: vec!["security_event.credential_observations"],
         },
         _ => PluginCapabilities {
             event_families: Vec::new(),

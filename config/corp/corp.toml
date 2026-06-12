@@ -15,3 +15,7 @@ remote_enforcement = "https://security.example.invalid/capsem/enforcement"
 [plugins.credential_broker]
 mode = "rewrite"
 detection_level = "informational"
+
+[plugins.log_sanitizer]
+mode = "rewrite"
+detection_level = "informational"

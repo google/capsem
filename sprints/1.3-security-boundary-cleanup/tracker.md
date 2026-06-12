@@ -19,6 +19,10 @@ failure first.
   ordering without splitting one plugin across unrelated responsibilities.
 - [x] Define explicit plugin object contracts: base metadata plus pre, post,
   and logging stages, all `SecurityEvent -> SecurityEvent`.
+- [x] Extend the profile/corp plugin policy and route-visible plugin catalog to
+  cover all three plugin stages explicitly: `credential_broker` is
+  preprocess, `dummy_post_allow` is postprocess, and `log_sanitizer` is
+  logging.
 - [ ] Split runtime materialization from ledger materialization.
 - [x] Burn credential-sensitive logic from network formatter/intercept helpers.
 - [ ] Rename/docs cleanup for touched boundaries: network engine, security
@@ -60,6 +64,12 @@ failure first.
   - `cargo test -p capsem-core security_event_log_sanitizer_logging_plugin_redacts_before_logger_emit -- --nocapture`
   - `cargo test -p capsem-core security_event_engine_ -- --nocapture`
   - `cargo test -p capsem-core security_plugin_ -- --nocapture`
+  - `cargo test -p capsem-core security_event_engine_runs_enabled_plugins_by_stage -- --nocapture`
+  - `cargo test -p capsem-core plugin_policy -- --nocapture`
+  - `cargo test -p capsem-core parses_real_provider_defaults_as_security_rules -- --nocapture`
+  - `cargo test -p capsem-core builtin_profile_contract_requires_plugins_and_visible_default_rules -- --nocapture`
+  - `cargo test -p capsem-process runtime_profile_source_loads_rules_plugins_mcp_without_settings -- --nocapture`
+  - `cargo test -p capsem-service profile_plugin_endpoint_matrix_dynamically_controls_enforcement_evaluation -- --nocapture`
   - `cargo test -p capsem-core builtin_dummy_plugins_block_eicar_and_cannot_be_downgraded_by_postprocess -- --nocapture`
   - `cargo test -p capsem-core credential_broker_plugin_uses_matched_security_rule_metadata -- --nocapture`
   - `cargo test -p capsem-core http_materializer_resolves_broker_ref_only_for_upstream_copy -- --nocapture`

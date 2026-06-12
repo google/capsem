@@ -324,23 +324,23 @@ fn write_file_descriptor_profile(profile: &mut ProfileConfigFile, path: &std::pa
             profile.files.enforcement =
                 Some(capsem_core::net::policy_config::ProfileFileDescriptor {
                     path: relative,
-                    hash: format!("blake3:{hash}"),
-                    size: bytes,
+                    hash: Some(format!("blake3:{hash}")),
+                    size: Some(bytes),
                 });
         }
         "detection.yaml" => {
             profile.files.detection =
                 Some(capsem_core::net::policy_config::ProfileFileDescriptor {
                     path: relative,
-                    hash: format!("blake3:{hash}"),
-                    size: bytes,
+                    hash: Some(format!("blake3:{hash}")),
+                    size: Some(bytes),
                 });
         }
         "mcp.json" => {
             profile.files.mcp = Some(capsem_core::net::policy_config::ProfileFileDescriptor {
                 path: relative,
-                hash: format!("blake3:{hash}"),
-                size: bytes,
+                hash: Some(format!("blake3:{hash}")),
+                size: Some(bytes),
             });
         }
         other => panic!("unsupported profile fixture descriptor {other}"),
@@ -371,8 +371,8 @@ fn install_file_asset_profile_fixture(dir: &tempfile::TempDir) -> (PathBuf, Prof
         let source = source_dir.join(&asset.name);
         let hash = capsem_core::asset_manager::hash_file(&source).unwrap();
         asset.url = format!("file://{}", source.display());
-        asset.hash = format!("blake3:{hash}");
-        asset.size = std::fs::metadata(&source).unwrap().len();
+        asset.hash = Some(format!("blake3:{hash}"));
+        asset.size = Some(std::fs::metadata(&source).unwrap().len());
     }
     for filename in ["enforcement.toml", "detection.yaml", "mcp.json"] {
         write_file_descriptor_profile(&mut profile, &profile_dir.join(filename));
@@ -459,7 +459,12 @@ async fn profile_asset_status_download_and_corruption_checks_use_profile_pins() 
         .join(arch)
         .join(capsem_core::asset_manager::hash_filename(
             &rootfs.name,
-            rootfs.hash.strip_prefix("blake3:").unwrap(),
+            rootfs
+                .hash
+                .as_deref()
+                .expect("rootfs hash")
+                .strip_prefix("blake3:")
+                .unwrap(),
         ));
 
     let (status, before) = route_request(
@@ -582,13 +587,13 @@ async fn profile_mcp_tool_edit_writes_profile_rule_and_mutation_ledger() {
     assert_eq!(descriptor.path, "profiles/code/enforcement.toml");
     assert_eq!(
         descriptor.hash,
-        format!(
+        Some(format!(
             "blake3:{}",
             capsem_core::asset_manager::hash_file(
                 &config_root.join("profiles/code/enforcement.toml")
             )
             .unwrap()
-        )
+        ))
     );
 
     let main_db = state.main_db_path();
@@ -693,13 +698,13 @@ async fn profile_mcp_default_edit_writes_default_rule_and_mutation_ledger() {
     assert_eq!(descriptor.path, "profiles/code/enforcement.toml");
     assert_eq!(
         descriptor.hash,
-        format!(
+        Some(format!(
             "blake3:{}",
             capsem_core::asset_manager::hash_file(
                 &config_root.join("profiles/code/enforcement.toml")
             )
             .unwrap()
-        )
+        ))
     );
 
     let main_db = state.main_db_path();
@@ -1873,7 +1878,7 @@ async fn profile_info_and_obom_route_expose_base_image_obom_hash() {
     assert_eq!(info["obom"]["scope"], "base_image");
     assert_eq!(
         info["obom"]["rootfs_hash"],
-        profile.assets.current_arch_assets().unwrap().rootfs.hash
+        serde_json::json!(profile.assets.current_arch_assets().unwrap().rootfs.hash)
     );
     assert_eq!(info["obom"]["route"], "/profiles/code/obom");
 
@@ -2434,6 +2439,30 @@ async fn profile_plugin_endpoint_matrix_dynamically_controls_enforcement_evaluat
             .any(|plugin| plugin.id == "dummy_pre_eicar"),
         "built-in plugin list must include dummy_pre_eicar"
     );
+    assert!(
+        list.plugins
+            .iter()
+            .any(|plugin| plugin.id == "log_sanitizer"),
+        "built-in plugin list must include the logging-stage sanitizer"
+    );
+    assert!(
+        list.plugins
+            .iter()
+            .any(|plugin| plugin.stage == PluginStage::Preprocess),
+        "plugin catalog must expose preprocess plugins"
+    );
+    assert!(
+        list.plugins
+            .iter()
+            .any(|plugin| plugin.stage == PluginStage::Postprocess),
+        "plugin catalog must expose postprocess plugins"
+    );
+    assert!(
+        list.plugins
+            .iter()
+            .any(|plugin| plugin.stage == PluginStage::Logging),
+        "plugin catalog must expose logging plugins"
+    );
     let dummy_pre = list
         .plugins
         .iter()
@@ -2462,7 +2491,7 @@ async fn profile_plugin_endpoint_matrix_dynamically_controls_enforcement_evaluat
         .iter()
         .find(|plugin| plugin.id == "credential_broker")
         .expect("built-in plugin list must include credential_broker");
-    assert_eq!(broker.stage, PluginStage::PreAndPost);
+    assert_eq!(broker.stage, PluginStage::Preprocess);
     assert_eq!(broker.version, "1");
     assert_eq!(
         broker.capabilities.event_families,
@@ -2496,6 +2525,25 @@ async fn profile_plugin_endpoint_matrix_dynamically_controls_enforcement_evaluat
     assert!(
         broker.runtime.brokered_credentials.is_empty(),
         "credential broker refs must be reported from plugin runtime state, not settings/providers"
+    );
+    let sanitizer = list
+        .plugins
+        .iter()
+        .find(|plugin| plugin.id == "log_sanitizer")
+        .expect("log_sanitizer exists");
+    assert_eq!(sanitizer.stage, PluginStage::Logging);
+    assert_eq!(
+        sanitizer.config.mode,
+        capsem_core::net::policy_config::SecurityPluginMode::Rewrite
+    );
+    assert!(sanitizer.runtime.enabled);
+    assert_eq!(
+        sanitizer.capabilities.credential_sources,
+        vec!["security_event.credential_observations"]
+    );
+    assert!(
+        sanitizer.detail_routes.is_empty(),
+        "logging plugins expose the same generic plugin contract unless they own a custom route"
     );
 
     let Json(info) = handle_profile_plugin_info(
@@ -2839,10 +2887,10 @@ async fn enforcement_rule_endpoints_add_delete_reload_and_reject_invalid_rules_a
     .unwrap();
     assert_eq!(
         profile_after_save.files.enforcement.unwrap().hash,
-        format!(
+        Some(format!(
             "blake3:{}",
             capsem_core::asset_manager::hash_file(&enforcement_path).unwrap()
-        )
+        ))
     );
 
     let Json(reload) =
@@ -3277,7 +3325,11 @@ fn asset_status_reports_reconcile_progress_fields() {
         &arch_assets.initrd,
         &arch_assets.rootfs,
     ] {
-        std::fs::write(arch_dir.join(profile_asset_hash_name(asset)), b"asset").unwrap();
+        std::fs::write(
+            arch_dir.join(profile_asset_hash_name(asset).expect("profile asset hash name")),
+            b"asset",
+        )
+        .unwrap();
     }
     {
         let mut reconcile = state.asset_reconcile.lock().unwrap();
@@ -3311,7 +3363,12 @@ fn profile_asset_status_uses_profile_current_arch_contract() {
     let profile = ProfileConfigFile::builtin_code();
     let arch_assets = profile.assets.current_arch_assets().unwrap();
     for asset in [&arch_assets.kernel, &arch_assets.rootfs] {
-        let hash = asset.hash.strip_prefix("blake3:").unwrap();
+        let hash = asset
+            .hash
+            .as_deref()
+            .expect("profile asset hash")
+            .strip_prefix("blake3:")
+            .unwrap();
         let name = capsem_core::asset_manager::hash_filename(&asset.name, hash);
         std::fs::write(arch_dir.join(name), b"asset").unwrap();
     }
@@ -3506,10 +3563,11 @@ fn asset_cleanup_preserves_profile_catalog_and_persistent_vm_pins() {
             .current_arch_assets()
             .expect("built-in profile has current arch assets")
             .rootfs,
-    );
+    )
+    .expect("catalog rootfs hash name");
     let pinned_rootfs = "rootfs-dddddddddddddddd.erofs";
     let disposable_rootfs = "rootfs-1111111111111111.erofs";
-    for filename in [&catalog_rootfs, pinned_rootfs, disposable_rootfs] {
+    for filename in [catalog_rootfs.as_str(), pinned_rootfs, disposable_rootfs] {
         std::fs::write(base.join(filename), filename.as_bytes()).unwrap();
     }
 
@@ -3579,7 +3637,12 @@ fn resolve_profile_asset_paths_uses_profile_hash_prefixed_assets() {
         &arch_assets.initrd,
         &arch_assets.rootfs,
     ] {
-        let hash = asset.hash.strip_prefix("blake3:").unwrap();
+        let hash = asset
+            .hash
+            .as_deref()
+            .expect("profile asset hash")
+            .strip_prefix("blake3:")
+            .unwrap();
         let name = capsem_core::asset_manager::hash_filename(&asset.name, hash);
         std::fs::write(arch_dir.join(name), b"asset").unwrap();
     }
@@ -3620,11 +3683,11 @@ async fn ensure_profile_assets_downloads_profile_descriptors() {
             let source = source_dir.join(&descriptor.name);
             std::fs::write(&source, bytes).unwrap();
             descriptor.url = format!("file://{}", source.display());
-            descriptor.hash = format!(
+            descriptor.hash = Some(format!(
                 "blake3:{}",
                 capsem_core::asset_manager::hash_file(&source).unwrap()
-            );
-            descriptor.size = bytes.len() as u64;
+            ));
+            descriptor.size = Some(bytes.len() as u64);
         }
     }
     let state = make_asset_state(assets_dir.clone());

@@ -167,6 +167,10 @@ fn security_event_engine_runs_enabled_plugins_by_stage() {
                 "trace_post".to_string(),
                 plugin_config(SecurityPluginMode::Rewrite, DetectionLevel::Low),
             ),
+            (
+                "trace_logging".to_string(),
+                plugin_config(SecurityPluginMode::Rewrite, DetectionLevel::Informational),
+            ),
         ]))
         .register_plugin(TracePlugin {
             id: "trace_post",
@@ -176,6 +180,11 @@ fn security_event_engine_runs_enabled_plugins_by_stage() {
         .register_plugin(TracePlugin {
             id: "trace_pre",
             stage: SecurityPluginStage::Pre,
+        })
+        .unwrap()
+        .register_plugin(TracePlugin {
+            id: "trace_logging",
+            stage: SecurityPluginStage::Logging,
         })
         .unwrap();
     let engine = SecurityEventEngine::new(registry, Arc::clone(&emitter));
@@ -191,6 +200,7 @@ fn security_event_engine_runs_enabled_plugins_by_stage() {
     assert_eq!(
         returned.action_trace,
         [
+            PolicyActionId::CredentialBrokerSubstitute,
             PolicyActionId::CredentialBrokerSubstitute,
             PolicyActionId::CredentialBrokerSubstitute
         ],
@@ -215,6 +225,11 @@ fn security_event_engine_runs_enabled_plugins_by_stage() {
             (
                 SecurityDetectionSource::Plugin,
                 Some("trace_post"),
+                Some(SecurityPluginMode::Rewrite)
+            ),
+            (
+                SecurityDetectionSource::Plugin,
+                Some("trace_logging"),
                 Some(SecurityPluginMode::Rewrite)
             ),
         ]

@@ -51,6 +51,10 @@ sigma = "profiles/co-work/detection.yaml"
 mode = "rewrite"
 detection_level = "informational"
 
+[plugins.log_sanitizer]
+mode = "rewrite"
+detection_level = "informational"
+
 [mcp]
 health_check_interval_secs = 60
 servers = []

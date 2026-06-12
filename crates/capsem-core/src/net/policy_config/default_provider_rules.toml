@@ -7,6 +7,10 @@
 mode = "rewrite"
 detection_level = "informational"
 
+[plugins.log_sanitizer]
+mode = "rewrite"
+detection_level = "informational"
+
 [default.000_local_network]
 name = "local_network"
 action = "ask"
