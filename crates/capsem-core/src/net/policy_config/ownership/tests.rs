@@ -179,7 +179,7 @@ mode = "block"
 
     let corp = parse(
         r#"
-refresh_interval_hours = 24
+refresh_policy = "24h"
 
 [corp_rule_files]
 sigma_output_endpoint = "https://security.example.invalid/sigma"
@@ -192,7 +192,7 @@ sigma_output_endpoint = "https://security.example.invalid/sigma"
 fn corp_toml_accepts_constraints_and_rejects_ui_preferences() {
     let valid = parse(
         r#"
-refresh_interval_hours = 24
+refresh_policy = "24h"
 
 [settings."vm.resources.cpu_count"]
 value = 8

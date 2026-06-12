@@ -102,7 +102,7 @@ fn load_corp_settings_file_accepts_constraints() {
     std::fs::write(
         tmp.path(),
         r#"
-refresh_interval_hours = 24
+refresh_policy = "24h"
 
 [settings."vm.resources.cpu_count"]
 value = 8

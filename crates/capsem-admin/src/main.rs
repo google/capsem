@@ -9,8 +9,9 @@ use std::{
 use anyhow::{anyhow, Context, Result};
 use capsem_core::asset_manager::ManifestV2;
 use capsem_core::net::policy_config::{
-    resolve_profile_rule_file_path, CompiledSecurityRule, ProfileConfigFile, ProfileObomConfig,
-    ProfileObomDescriptor, SecurityRuleProfile, SecurityRuleSet, SecurityRuleSource,
+    resolve_profile_rule_file_path, validate_corp_toml_contract, CompiledSecurityRule,
+    ProfileCatalog, ProfileConfigFile, ProfileObomConfig, ProfileObomDescriptor,
+    SecurityRuleProfile, SecurityRuleSet, SecurityRuleSource, SettingsFile,
 };
 use clap::{Parser, Subcommand};
 use serde::{Deserialize, Serialize};
@@ -362,6 +363,16 @@ struct ProfileCheckReport {
     validation: ProfileValidationReport,
     assets: Vec<LocalAssetCheckReport>,
     profile_files: Vec<LocalAssetCheckReport>,
+}
+
+#[derive(Debug, Serialize)]
+struct ConfigRootCheckReport {
+    schema: &'static str,
+    ok: bool,
+    config_root: String,
+    settings: SettingsValidationReport,
+    corp_rules: usize,
+    profiles: Vec<ProfileCheckReport>,
 }
 
 #[derive(Debug, Serialize)]
@@ -871,6 +882,78 @@ fn profile_materialize_command(args: ProfileMaterializeArgs) -> Result<()> {
     Ok(())
 }
 
+fn check_config_root(config_root: &Path, arch: Option<&str>) -> Result<ConfigRootCheckReport> {
+    let settings = validate_settings(&config_root.join("settings.toml"))?;
+    let corp_rules = validate_corp_config(&config_root.join("corp.toml"), config_root)?;
+    let catalog =
+        ProfileCatalog::load_from_dir(&config_root.join("profiles")).map_err(|error| {
+            anyhow!(
+                "load profile catalog {}: {error}",
+                config_root.join("profiles").display()
+            )
+        })?;
+    let mut profiles = Vec::new();
+    for profile in catalog.profiles() {
+        profiles.push(check_profile(&ProfileCheckArgs {
+            path: config_root
+                .join("profiles")
+                .join(&profile.id)
+                .join("profile.toml"),
+            config_root: Some(config_root.to_path_buf()),
+            arch: arch.map(ToOwned::to_owned),
+            json: true,
+        })?);
+    }
+    Ok(ConfigRootCheckReport {
+        schema: "capsem.admin.config_root_check.v1",
+        ok: true,
+        config_root: config_root.display().to_string(),
+        settings,
+        corp_rules,
+        profiles,
+    })
+}
+
+fn validate_corp_config(path: &Path, config_root: &Path) -> Result<usize> {
+    let content =
+        fs::read_to_string(path).with_context(|| format!("read corp {}", path.display()))?;
+    let file: SettingsFile =
+        toml::from_str(&content).with_context(|| format!("parse corp {}", path.display()))?;
+    file.validate_metadata_contract()
+        .map_err(|error| anyhow!("validate corp {}: {error}", path.display()))?;
+    validate_corp_toml_contract(&file)
+        .map_err(|error| anyhow!("validate corp ownership {}: {error}", path.display()))?;
+
+    let inline_profile = SecurityRuleProfile {
+        default: file.default.clone(),
+        corp: file.corp.clone(),
+        profiles: file.profiles.clone(),
+        ai: file.ai.clone(),
+        plugins: file.plugins.clone(),
+    };
+    let mut compiled = inline_profile
+        .compile(SecurityRuleSource::Corp)
+        .map_err(|error| anyhow!("compile corp inline rules {}: {error}", path.display()))?
+        .len();
+    if let Some(enforcement) = file.corp_rule_files.enforcement.as_deref() {
+        compiled += compile_rule_file(
+            "enforcement",
+            &config_root.join(enforcement),
+            RuleFileSourceArg::Corp,
+        )?
+        .compiled_rules;
+    }
+    if let Some(sigma) = file.corp_rule_files.sigma.as_deref() {
+        compiled += compile_rule_file(
+            "detection",
+            &config_root.join(sigma),
+            RuleFileSourceArg::Corp,
+        )?
+        .compiled_rules;
+    }
+    Ok(compiled)
+}
+
 fn validate_settings_command(args: SettingsValidateArgs) -> Result<()> {
     let report = validate_settings(&args.path)?;
     if args.json {
@@ -1233,6 +1316,7 @@ fn check_profile_root_manifest(path: &Path) -> Result<Vec<LocalAssetCheckReport>
 }
 
 fn materialize_profile_config(args: &ProfileMaterializeArgs) -> Result<ProfileMaterializeReport> {
+    check_config_root(&args.config_root, args.arch.as_deref())?;
     if args.output_root == args.config_root {
         return Err(anyhow!(
             "output root {} must differ from source config root {}",
@@ -1828,6 +1912,7 @@ fn verify_image_outputs(args: &ImageVerifyArgs) -> Result<ImageVerifyReport> {
 }
 
 fn materialize_image_workspace(args: &ImageWorkspaceArgs) -> Result<ImageWorkspaceReport> {
+    check_config_root(&args.config_root, args.arch.as_deref())?;
     check_profile(&ProfileCheckArgs {
         path: args.profile.clone(),
         config_root: Some(args.config_root.clone()),
@@ -2612,6 +2697,51 @@ code = true
             format!("{error:#}").contains("unknown field `profiles`"),
             "{error:#}"
         );
+    }
+
+    #[test]
+    fn checked_in_config_root_passes_admin_lint() {
+        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let repo_root = manifest_dir
+            .parent()
+            .and_then(Path::parent)
+            .expect("repo root");
+
+        let report = check_config_root(&repo_root.join("config"), Some("arm64"))
+            .expect("config root checks");
+
+        assert!(report.ok);
+        assert!(report
+            .profiles
+            .iter()
+            .any(|profile| profile.validation.profile_id == "code"));
+        assert!(report
+            .profiles
+            .iter()
+            .any(|profile| profile.validation.profile_id == "co-work"));
+    }
+
+    #[test]
+    fn config_root_lint_rejects_profile_catalog_id_mismatch() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let config_root = temp.path().join("config");
+        fs::create_dir_all(config_root.join("profiles/wrong")).expect("profile dir");
+        fs::write(
+            config_root.join("settings.toml"),
+            include_str!("../../../config/settings.toml"),
+        )
+        .expect("settings");
+        fs::write(config_root.join("corp.toml"), "refresh_policy = \"24h\"\n").expect("corp");
+        fs::write(
+            config_root.join("profiles/wrong/profile.toml"),
+            include_str!("../../../config/profiles/code/profile.toml"),
+        )
+        .expect("profile");
+
+        let error = check_config_root(&config_root, Some("arm64"))
+            .expect_err("catalog id mismatch rejected");
+
+        assert!(format!("{error:#}").contains("id mismatch"), "{error:#}");
     }
 
     #[test]

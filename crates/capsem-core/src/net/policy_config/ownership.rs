@@ -31,7 +31,7 @@ pub fn validate_settings_toml_contract(file: &SettingsFile) -> Result<(), String
 }
 
 pub fn validate_profile_toml_contract(file: &SettingsFile) -> Result<(), String> {
-    if file.refresh_interval_hours.is_some() {
+    if file.refresh_policy.is_some() {
         return Err("profile.toml cannot define corp refresh metadata".to_string());
     }
     if !file.corp.is_empty() {
@@ -54,7 +54,7 @@ fn reject_non_settings_sections(file: &SettingsFile) -> Result<(), String> {
     if !file.default.is_empty() {
         return Err("settings.toml cannot define default rules".to_string());
     }
-    if file.refresh_interval_hours.is_some() {
+    if file.refresh_policy.is_some() {
         return Err("settings.toml cannot define corp refresh metadata".to_string());
     }
     if !file.profiles.is_empty() {

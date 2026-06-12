@@ -38,8 +38,14 @@ below pass. Manual credentials are not the debugger.
     source profiles, rejects malformed pinned `mcp.json` even when its
     BLAKE3/size match, and rejects empty pinned package files through the same
     parser used by image workspace generation. Remaining S1 work: make
-    profile catalog/corp semantic checks equally explicit before closing this
-    checklist.
+    any still-missing generated config surfaces equally explicit before closing
+    this checklist.
+  - 2026-06-11 progress: `capsem-admin` now has a config-root check that loads
+    `settings.toml`, typed `corp.toml`, every profile catalog entry, external
+    corp enforcement/Sigma rule files, and every pinned profile payload before
+    materializing runtime config or image workspaces. It rejects profile
+    catalog id mismatch and caught/fixed the stale corp `refresh_interval_hours`
+    TOML contract.
 
 ## S2. Materialization, Assets, VM Resources
 
@@ -221,6 +227,17 @@ below pass. Manual credentials are not the debugger.
 - S1 package proof: `cargo test -p capsem-admin
   profile_check_rejects_empty_profile_package_file_even_when_hash_matches --
   --nocapture` passes; the full capsem-admin suite is now 29/29 green.
+- S1 config-root proof: `cargo test -p capsem-admin -- --nocapture` passes
+  31/31; `cargo test -p capsem-core --lib policy_config::ownership --
+  --nocapture`, `cargo test -p capsem-core --lib policy_config::corp_provision
+  -- --nocapture`, and `cargo test -p capsem-core --lib policy_config::loader
+  -- --nocapture` pass after moving authored corp TOML to
+  `refresh_policy = "24h"` while keeping internal `CorpSource`
+  refresh-interval metadata numeric.
+- S1 service proof: `cargo build -p capsem-service && uv run python -m pytest
+  tests/capsem-service/test_svc_install.py -q` passes 16/16. The Python
+  service fixture initially failed before rebuilding `target/debug/capsem-service`,
+  confirming this route was testing the runnable service binary.
 - `code-mq9ymjb2` shows apt/mandb permission and guest ENOSPC evidence.
 - `code-mq9x5edq` shows AGY OAuth token reached guest disk; broker must own it.
 - `code-mq9ye61s` shows Claude install/bootstrap and streaming failures.

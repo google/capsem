@@ -115,7 +115,7 @@ class TestCorpConfig:
         Empty [settings] is a valid corp config that locks no settings.
         """
         toml_content = (
-            "refresh_interval_hours = 24\n"
+            "refresh_policy = \"24h\"\n"
             "\n"
             "[settings]\n"
             '"repository.providers.github.allow" = { value = false, modified = "2026-04-21T00:00:00Z" }\n'
@@ -137,7 +137,7 @@ class TestCorpConfig:
 
     def test_corp_validate_accepts_valid_inline_toml(self, client):
         resp = client.post("/corp/validate", {
-            "toml": "refresh_interval_hours = 24\n\n[settings]\n",
+            "toml": "refresh_policy = \"24h\"\n\n[settings]\n",
         })
         assert resp is not None and resp.get("success") is True, (
             f"valid corp TOML should validate: {resp}"

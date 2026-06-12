@@ -408,9 +408,9 @@ pub struct SettingsFile {
     /// Visible default security rules (`[default.<domain>]`).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub default: BTreeMap<String, super::security_rule_profile::SecurityRule>,
-    /// Optional corp provisioning refresh interval metadata.
+    /// Optional corp provisioning refresh policy metadata, e.g. "24h".
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub refresh_interval_hours: Option<u32>,
+    pub refresh_policy: Option<String>,
     /// First-principle profile-owned security rules (`[profiles.rules.*]`).
     #[serde(
         default,
@@ -497,19 +497,45 @@ impl RuleFileReferences {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]
 #[serde(deny_unknown_fields)]
 pub struct CorpRuleFileReferences {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enforcement: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sigma: Option<String>,
     /// FIXME: Wire this once corp Sigma export/output delivery is implemented.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sigma_output_endpoint: Option<String>,
+    /// FIXME: Wire corporate OpenTelemetry export once remote reporting ships.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub open_telemetry: Option<String>,
+    /// FIXME: Wire corporate remote enforcement polling once fleet control ships.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote_enforcement: Option<String>,
 }
 
 impl CorpRuleFileReferences {
     pub fn is_empty(&self) -> bool {
-        self.sigma_output_endpoint.is_none()
+        self.enforcement.is_none()
+            && self.sigma.is_none()
+            && self.sigma_output_endpoint.is_none()
+            && self.open_telemetry.is_none()
+            && self.remote_enforcement.is_none()
     }
 
     pub fn merge_first_wins(&mut self, other: Self) {
+        if self.enforcement.is_none() {
+            self.enforcement = other.enforcement;
+        }
+        if self.sigma.is_none() {
+            self.sigma = other.sigma;
+        }
         if self.sigma_output_endpoint.is_none() {
             self.sigma_output_endpoint = other.sigma_output_endpoint;
+        }
+        if self.open_telemetry.is_none() {
+            self.open_telemetry = other.open_telemetry;
+        }
+        if self.remote_enforcement.is_none() {
+            self.remote_enforcement = other.remote_enforcement;
         }
     }
 }
