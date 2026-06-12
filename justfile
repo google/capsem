@@ -157,10 +157,10 @@ _ensure-service: _sign
     # Close fd 3 on the service; otherwise the backgrounded service inherits
     # the execution-lock fd from `just smoke` / `just test` and keeps the
     # flock held after the outer shell exits, blocking subsequent runs.
-    CAPSEM_PROFILES_DIR="$GENERATED_PROFILES" RUST_LOG=capsem=debug {{service_binary}} \
+    nohup env CAPSEM_PROFILES_DIR="$GENERATED_PROFILES" RUST_LOG=capsem=debug {{service_binary}} \
         --assets-dir {{assets_dir}}/$arch \
         --process-binary {{process_binary}} \
-        --foreground 3>&- &
+        --foreground 3>&- >/dev/null 2>&1 &
     SVC_PID=$!
     echo "$SVC_PID" > "$PIDFILE"
     for i in $(seq 1 30); do
