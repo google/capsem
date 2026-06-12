@@ -13,7 +13,7 @@ impl SecurityPlugin for CredentialBrokerPlugin {
     }
 
     fn stage(&self) -> SecurityPluginStage {
-        SecurityPluginStage::Pre
+        SecurityPluginStage::Preprocess
     }
 
     fn apply(&self, mut event: SecurityEvent) -> Result<SecurityPluginResult, SecurityActionError> {
@@ -60,7 +60,7 @@ impl SecurityPlugin for DummyPreEicarPlugin {
     }
 
     fn stage(&self) -> SecurityPluginStage {
-        SecurityPluginStage::Pre
+        SecurityPluginStage::Preprocess
     }
 
     fn apply(&self, mut event: SecurityEvent) -> Result<SecurityPluginResult, SecurityActionError> {

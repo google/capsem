@@ -1121,7 +1121,7 @@ pub fn evaluate_security_boundary(
     let action_registry =
         SecurityActionRegistry::with_builtin_actions().with_plugin_policy(plugin_policy);
 
-    event = action_registry.apply_security_plugins(SecurityPluginStage::Pre, event)?;
+    event = action_registry.apply_security_plugins(SecurityPluginStage::Preprocess, event)?;
 
     let evaluation = rules.evaluate(&event).map_err(SecurityActionError::new)?;
     for rule in evaluation.matched_rules() {
@@ -1141,7 +1141,7 @@ pub fn evaluate_security_boundary(
         enforcement.action = SecurityEnforcementAction::Ask;
     }
 
-    event = action_registry.apply_security_plugins(SecurityPluginStage::Post, event)?;
+    event = action_registry.apply_security_plugins(SecurityPluginStage::Postprocess, event)?;
     if matches!(event.decision.effective, SecurityDecisionKind::Block) {
         enforcement.action = SecurityEnforcementAction::Block;
     }
@@ -2184,8 +2184,8 @@ impl std::error::Error for SecurityActionError {}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SecurityPluginStage {
-    Pre,
-    Post,
+    Preprocess,
+    Postprocess,
     Logging,
 }
 
@@ -2432,7 +2432,7 @@ impl<E: SecurityEventEmitter> SecurityEventEngine<E> {
     ) -> Result<SecurityEvent, SecurityActionError> {
         event = self
             .action_registry
-            .apply_security_plugins(SecurityPluginStage::Pre, event)?;
+            .apply_security_plugins(SecurityPluginStage::Preprocess, event)?;
 
         let evaluation = rules.evaluate(&event).map_err(SecurityActionError::new)?;
         for rule in evaluation.matched_rules() {
@@ -2441,7 +2441,7 @@ impl<E: SecurityEventEmitter> SecurityEventEngine<E> {
         }
         event = self
             .action_registry
-            .apply_security_plugins(SecurityPluginStage::Post, event)?;
+            .apply_security_plugins(SecurityPluginStage::Postprocess, event)?;
         event = self
             .action_registry
             .apply_security_plugins(SecurityPluginStage::Logging, event)?;

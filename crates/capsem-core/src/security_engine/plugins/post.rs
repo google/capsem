@@ -12,7 +12,7 @@ impl SecurityPlugin for DummyPostAllowPlugin {
     }
 
     fn stage(&self) -> SecurityPluginStage {
-        SecurityPluginStage::Post
+        SecurityPluginStage::Postprocess
     }
 
     fn apply(&self, mut event: SecurityEvent) -> Result<SecurityPluginResult, SecurityActionError> {

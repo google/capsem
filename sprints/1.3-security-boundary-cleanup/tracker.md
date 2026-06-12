@@ -15,14 +15,16 @@ failure first.
   provider-sensitive redaction.
 - [x] RED: security engine logging-plugin sanitizes raw credential-bearing
   events before logger/storage materialization.
-- [x] Implement explicit pre-plugin / post-plugin / logging-plugin stage
+- [x] Implement explicit preprocess / postprocess / logging plugin stage
   ordering without splitting one plugin across unrelated responsibilities.
-- [x] Define explicit plugin object contracts: base metadata plus pre, post,
-  and logging stages, all `SecurityEvent -> SecurityEvent`.
+- [x] Define explicit plugin object contracts: base metadata plus preprocess,
+  postprocess, and logging stages, all `SecurityEvent -> SecurityEvent`.
 - [x] Extend the profile/corp plugin policy and route-visible plugin catalog to
   cover all three plugin stages explicitly: `credential_broker` is
   preprocess, `dummy_post_allow` is postprocess, and `log_sanitizer` is
   logging.
+- [x] Align the core `SecurityPluginStage` enum and action benchmark matrix
+  with the same three stage names: preprocess, postprocess, and logging.
 - [ ] Split runtime materialization from ledger materialization.
 - [x] Burn credential-sensitive logic from network formatter/intercept helpers.
 - [ ] Rename/docs cleanup for touched boundaries: network engine, security
@@ -100,5 +102,7 @@ failure first.
     `tool_calls`, `fs_events`, `exec_events`, `security_rule_events`, and
     `substitution_events` exact fields for the local OpenAI-compatible path.
 - Performance: pending plugin counters/latency evidence.
+  - `cargo bench -p capsem-core --bench security_actions --no-run` now
+    compiles the preprocess, postprocess, and logging plugin benchmark matrix.
 - Docs/skills: boundary note added to `/dev-mitm-proxy`; architecture docs still pending.
 - Missing/deferred: none accepted for release blocker scope.

@@ -8,13 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed (route surfaces and diagnostics)
-- Split security plugins into explicit pre, post, and logging stages while
-  preserving the single `SecurityEvent -> SecurityEvent` plugin contract; the
-  credential broker now owns credential observation/storage as a security
-  plugin, and the log sanitizer owns the ledger-safe projection before
+- Split security plugins into explicit preprocess, postprocess, and logging
+  stages while preserving the single `SecurityEvent -> SecurityEvent` plugin
+  contract; the credential broker now owns credential observation/storage as a
+  security plugin, and the log sanitizer owns the ledger-safe projection before
   emission. The profile/corp plugin policy and route-visible plugin catalog now
   expose all three stages instead of hiding logging plugins behind a
   compatibility bucket.
+- Renamed the core security plugin stage contract to
+  `preprocess`/`postprocess`/`logging` and extended the security action
+  benchmark matrix to cover all three plugin kinds, including the logging
+  sanitizer.
 - Hardened the local OpenAI-compatible model path: bounded request sniffing now
   promotes unknown localhost model traffic before CEL/plugin evaluation, the
   credential broker uses the parsed provider hint for SDK bearer headers, and

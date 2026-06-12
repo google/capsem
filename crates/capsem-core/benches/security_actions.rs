@@ -301,22 +301,28 @@ fn bench_rule_match(c: &mut Criterion) {
 }
 
 fn bench_action_chain(c: &mut Criterion) {
-    for (label, plugin) in [
+    for (label, plugin, stage) in [
         (
             "security_action_plugin_credential_broker",
             "credential_broker",
+            SecurityPluginStage::Preprocess,
         ),
-        ("security_action_plugin_dummy_pre_eicar", "dummy_pre_eicar"),
+        (
+            "security_action_plugin_dummy_pre_eicar",
+            "dummy_pre_eicar",
+            SecurityPluginStage::Preprocess,
+        ),
         (
             "security_action_plugin_dummy_post_allow",
             "dummy_post_allow",
+            SecurityPluginStage::Postprocess,
+        ),
+        (
+            "security_action_plugin_log_sanitizer",
+            "log_sanitizer",
+            SecurityPluginStage::Logging,
         ),
     ] {
-        let stage = if plugin == "dummy_post_allow" {
-            SecurityPluginStage::PostDecision
-        } else {
-            SecurityPluginStage::PreDecision
-        };
         let registry = registry_for_plugin(plugin);
         c.bench_function(label, |b| {
             b.iter(|| {
@@ -340,7 +346,7 @@ fn bench_broker_substitute(c: &mut Criterion) {
         b.iter(|| {
             let event = registry
                 .apply_security_plugins(
-                    black_box(SecurityPluginStage::PreDecision),
+                    black_box(SecurityPluginStage::Preprocess),
                     black_box(event.clone()),
                 )
                 .unwrap();

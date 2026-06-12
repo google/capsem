@@ -72,7 +72,7 @@ impl SecurityPlugin for MarkDecisionPlugin {
     }
 
     fn stage(&self) -> SecurityPluginStage {
-        SecurityPluginStage::Pre
+        SecurityPluginStage::Preprocess
     }
 
     fn apply(&self, mut event: SecurityEvent) -> Result<SecurityPluginResult, SecurityActionError> {
@@ -174,12 +174,12 @@ fn security_event_engine_runs_enabled_plugins_by_stage() {
         ]))
         .register_plugin(TracePlugin {
             id: "trace_post",
-            stage: SecurityPluginStage::Post,
+            stage: SecurityPluginStage::Postprocess,
         })
         .unwrap()
         .register_plugin(TracePlugin {
             id: "trace_pre",
-            stage: SecurityPluginStage::Pre,
+            stage: SecurityPluginStage::Preprocess,
         })
         .unwrap()
         .register_plugin(TracePlugin {
@@ -247,7 +247,7 @@ fn security_event_engine_skips_disabled_plugins() {
         )]))
         .register_plugin(TracePlugin {
             id: "trace",
-            stage: SecurityPluginStage::Post,
+            stage: SecurityPluginStage::Postprocess,
         })
         .unwrap();
     let engine = SecurityEventEngine::new(registry, Arc::clone(&emitter));
@@ -284,7 +284,7 @@ fn security_event_engine_applies_postprocess_after_preprocess_mutation() {
         .unwrap()
         .register_plugin(TracePlugin {
             id: "trace",
-            stage: SecurityPluginStage::Post,
+            stage: SecurityPluginStage::Postprocess,
         })
         .unwrap();
     let engine = SecurityEventEngine::new(registry, Arc::clone(&emitter));
@@ -325,7 +325,7 @@ fn security_plugin_policy_supports_rewrite_and_disable_modes() {
         )]))
         .register_plugin(TracePlugin {
             id: "trace",
-            stage: SecurityPluginStage::Post,
+            stage: SecurityPluginStage::Postprocess,
         })
         .unwrap();
     let rewrite_returned =
@@ -350,7 +350,7 @@ fn security_plugin_policy_supports_rewrite_and_disable_modes() {
         )]))
         .register_plugin(TracePlugin {
             id: "trace",
-            stage: SecurityPluginStage::Post,
+            stage: SecurityPluginStage::Postprocess,
         })
         .unwrap();
     let disabled_returned =
@@ -379,13 +379,13 @@ fn security_plugin_policy_block_is_absolute_after_later_allow() {
         ]))
         .register_plugin(DecisionPlugin {
             id: "blocker",
-            stage: SecurityPluginStage::Pre,
+            stage: SecurityPluginStage::Preprocess,
             requested: SecurityDecisionKind::Block,
         })
         .unwrap()
         .register_plugin(DecisionPlugin {
             id: "allow_after",
-            stage: SecurityPluginStage::Post,
+            stage: SecurityPluginStage::Postprocess,
             requested: SecurityDecisionKind::Allow,
         })
         .unwrap();
