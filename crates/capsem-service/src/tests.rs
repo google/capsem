@@ -1350,18 +1350,15 @@ async fn profile_mutation_routes_fail_explicitly_until_profile_files_exist() {
 }
 
 #[tokio::test]
-async fn profile_skills_routes_reflect_manifest_and_gate_mutations() {
-    let Json(info) = handle_profile_skills_info(Path("code".to_string()))
-        .await
-        .expect("skills info should reflect profile manifest");
-    assert_eq!(info["profile_id"], "code");
-    assert_eq!(info["skill_count"], 0);
+async fn profile_skills_routes_persist_profile_and_mutation_ledger() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
 
-    let Json(list) = handle_profile_skills_list(Path("code".to_string()))
-        .await
-        .expect("skills list should reflect profile manifest");
-    assert_eq!(list["profile_id"], "code");
-    assert!(list["skills"].as_array().unwrap().is_empty());
+    let dir = tempfile::tempdir().unwrap();
+    let (config_root, _) = install_file_asset_profile_fixture(&dir);
+    let _profiles_guard = EnvVarGuard::set("CAPSEM_PROFILES_DIR", config_root.join("profiles"));
+    let _home_guard = EnvVarGuard::set("CAPSEM_HOME", dir.path());
+    let state = make_asset_state(dir.path().join("assets"));
+    let app = build_service_router(Arc::clone(&state));
 
     let unknown_field = serde_json::from_value::<ProfileSkillAddRequest>(json!({
         "path": "/root/.codex/skills/security/SKILL.md",
@@ -1372,40 +1369,110 @@ async fn profile_skills_routes_reflect_manifest_and_gate_mutations() {
         "skill mutation payloads must reject credential/provider theater fields"
     );
 
-    let empty_path = handle_profile_skill_add(
-        Path("code".to_string()),
-        Json(ProfileSkillAddRequest {
-            path: " ".to_string(),
-        }),
+    let (status, info) = route_request(
+        app.clone(),
+        axum::http::Method::GET,
+        "/profiles/code/skills/info",
+        None,
     )
-    .await
-    .unwrap_err();
-    assert_eq!(empty_path.0, StatusCode::BAD_REQUEST);
+    .await;
+    assert_eq!(status, StatusCode::OK, "{info}");
+    assert_eq!(info["profile_id"], "code");
+    assert_eq!(info["skill_count"], 0);
 
-    let add = handle_profile_skill_add(
-        Path("code".to_string()),
-        Json(ProfileSkillAddRequest {
-            path: "/root/.codex/skills/security/SKILL.md".to_string(),
-        }),
+    let (status, list) = route_request(
+        app.clone(),
+        axum::http::Method::GET,
+        "/profiles/code/skills/list",
+        None,
     )
-    .await
-    .unwrap_err();
-    assert_eq!(add.0, StatusCode::NOT_IMPLEMENTED);
+    .await;
+    assert_eq!(status, StatusCode::OK, "{list}");
+    assert_eq!(list["profile_id"], "code");
+    assert!(list["skills"].as_array().unwrap().is_empty());
 
-    let edit = handle_profile_skill_edit(
-        Path(("code".to_string(), "build".to_string())),
-        Json(ProfileSkillEditRequest {
-            path: "/root/.codex/skills/build/SKILL.md".to_string(),
-        }),
+    let (status, empty_path) = route_request(
+        app.clone(),
+        axum::http::Method::POST,
+        "/profiles/code/skills/add",
+        Some(json!({ "path": " " })),
     )
-    .await
-    .unwrap_err();
-    assert_eq!(edit.0, StatusCode::NOT_IMPLEMENTED);
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{empty_path}");
 
-    let delete = handle_profile_skill_delete(Path(("code".to_string(), "build".to_string())))
-        .await
-        .unwrap_err();
-    assert_eq!(delete.0, StatusCode::NOT_IMPLEMENTED);
+    let (status, added) = route_request(
+        app.clone(),
+        axum::http::Method::POST,
+        "/profiles/code/skills/add",
+        Some(json!({ "path": "/root/.codex/skills/security/SKILL.md" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{added}");
+    assert_eq!(added["profile_id"], "code");
+    assert_eq!(added["skill_id"], "security");
+    assert_eq!(added["mutation"]["category"], "skills");
+    assert_eq!(added["mutation"]["filename"], "profile.toml");
+    assert_eq!(added["mutation"]["operation"], "add");
+    assert_eq!(added["mutation"]["status"], "applied");
+
+    let (status, edited) = route_request(
+        app.clone(),
+        axum::http::Method::PATCH,
+        "/profiles/code/skills/security/edit",
+        Some(json!({ "path": "/root/.codex/skills/review/SKILL.md" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{edited}");
+    assert_eq!(edited["skill_id"], "review");
+    assert_eq!(edited["mutation"]["operation"], "edit");
+
+    let (status, list) = route_request(
+        app.clone(),
+        axum::http::Method::GET,
+        "/profiles/code/skills/list",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{list}");
+    assert_eq!(
+        list["skills"],
+        json!([{ "id": "review", "path": "/root/.codex/skills/review/SKILL.md" }])
+    );
+
+    let (status, deleted) = route_request(
+        app,
+        axum::http::Method::DELETE,
+        "/profiles/code/skills/review/delete",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{deleted}");
+    assert_eq!(deleted["skill_id"], "review");
+    assert_eq!(deleted["mutation"]["operation"], "delete");
+
+    let profile: ProfileConfigFile = toml::from_str(
+        &std::fs::read_to_string(config_root.join("profiles/code/profile.toml")).unwrap(),
+    )
+    .unwrap();
+    assert!(profile.skills.paths.is_empty());
+
+    let main_db = state.main_db_path();
+    let reader = capsem_logger::DbReader::open(&main_db).expect("main.db mutation ledger");
+    let rows = reader
+        .query_raw(
+            "SELECT profile_id, category, filename, target_kind, target_key, operation, status \
+             FROM profile_mutation_events ORDER BY rowid ASC",
+        )
+        .expect("query profile mutation events");
+    let rows: serde_json::Value = serde_json::from_str(&rows).unwrap();
+    assert_eq!(
+        rows["rows"],
+        json!([
+            ["code", "skills", "profile.toml", "skill", "security", "add", "applied"],
+            ["code", "skills", "profile.toml", "skill", "review", "edit", "applied"],
+            ["code", "skills", "profile.toml", "skill", "review", "delete", "applied"]
+        ])
+    );
 }
 
 #[tokio::test]
@@ -1627,24 +1694,6 @@ async fn mounted_fail_closed_stub_routes_return_explicit_errors() {
             "/profiles/code/assets/edit",
             None,
             "profile assets edit requires profile file persistence",
-        ),
-        (
-            axum::http::Method::POST,
-            "/profiles/code/skills/add",
-            Some(json!({ "path": "/root/.codex/skills/security/SKILL.md" })),
-            "profile skill add requires profile file persistence",
-        ),
-        (
-            axum::http::Method::PATCH,
-            "/profiles/code/skills/security/edit",
-            Some(json!({ "path": "/root/.codex/skills/security/SKILL.md" })),
-            "profile skill edit requires profile file persistence",
-        ),
-        (
-            axum::http::Method::DELETE,
-            "/profiles/code/skills/security/delete",
-            None,
-            "profile skill delete requires profile file persistence",
         ),
         (
             axum::http::Method::PATCH,

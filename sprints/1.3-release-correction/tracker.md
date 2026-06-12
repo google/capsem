@@ -130,6 +130,21 @@ next one, and stage only the files for that slice.
     profile assets edit, profile skill add/edit/delete, VM edit, VM restart,
     VM reload-profile. Each must either persist through the contract object or
     be unmounted in a later S3 slice.
+  - 2026-06-11 progress: profile skill add/edit/delete are no longer mounted
+    501 stubs. They now mutate through `Profile::add_skill_path`,
+    `Profile::edit_skill_path`, and `Profile::delete_skill`, persist
+    `profile.toml`, derive route-visible ids from skill paths, and write
+    `profile_mutation_events`.
+  - Proof: `cargo test -p capsem-core
+    profile_skill_mutations_persist_profile_toml -- --nocapture`; `cargo test
+    -p capsem-service
+    profile_skills_routes_persist_profile_and_mutation_ledger -- --nocapture`;
+    `cargo test -p capsem-service
+    mounted_fail_closed_stub_routes_return_explicit_errors -- --nocapture`;
+    `cargo check -p capsem-core -p capsem-service`.
+  - Remaining mounted mutation stubs after skill burn: profile
+    create/edit/delete/clone, profile assets edit, VM edit, VM restart, VM
+    reload-profile.
 - [ ] RED/GREEN: session state enum controls available actions for running,
   stopped, incompatible, defunct, paused, and deleted sessions.
 - [ ] Proof: profile routes are scoped by profile id; service-global routes are

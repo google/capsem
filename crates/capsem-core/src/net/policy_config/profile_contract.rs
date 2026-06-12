@@ -833,6 +833,102 @@ impl Profile {
         })
     }
 
+    pub fn add_skill_path(
+        &mut self,
+        path: &str,
+        actor: &str,
+    ) -> Result<ProfileMutationSummary, String> {
+        validate_profile_skill_path(path)?;
+        let skill_id = skill_id_for_path(path)?;
+        let profile_path = self.profile_dir.join("profile.toml");
+        let (old_hash, old_size) = file_hash_and_size(&profile_path)?;
+        if self.config.skills.paths.iter().any(|existing| existing == path) {
+            return Err(format!("profile skill already exists: {skill_id}"));
+        }
+        if self
+            .config
+            .skills
+            .paths
+            .iter()
+            .any(|existing| skill_id_for_path(existing).as_deref() == Ok(skill_id.as_str()))
+        {
+            return Err(format!("profile skill id already exists: {skill_id}"));
+        }
+        self.config.skills.paths.push(path.to_string());
+        self.config.validate()?;
+        self.save()?;
+        let (new_hash, new_size) = file_hash_and_size(&profile_path)?;
+        Ok(self.profile_toml_mutation_summary(
+            actor, "skills", "skill", &skill_id, "add", old_hash, old_size, new_hash, new_size,
+        ))
+    }
+
+    pub fn edit_skill_path(
+        &mut self,
+        skill_id: &str,
+        path: &str,
+        actor: &str,
+    ) -> Result<ProfileMutationSummary, String> {
+        validate_profile_target("skill id", skill_id)?;
+        validate_profile_skill_path(path)?;
+        let new_skill_id = skill_id_for_path(path)?;
+        let profile_path = self.profile_dir.join("profile.toml");
+        let (old_hash, old_size) = file_hash_and_size(&profile_path)?;
+        let index = self
+            .config
+            .skills
+            .paths
+            .iter()
+            .position(|existing| skill_id_for_path(existing).as_deref() == Ok(skill_id))
+            .ok_or_else(|| format!("profile skill not found: {skill_id}"))?;
+        if new_skill_id != skill_id
+            && self.config.skills.paths.iter().any(|existing| {
+                skill_id_for_path(existing).as_deref() == Ok(new_skill_id.as_str())
+            })
+        {
+            return Err(format!("profile skill id already exists: {new_skill_id}"));
+        }
+        self.config.skills.paths[index] = path.to_string();
+        self.config.validate()?;
+        self.save()?;
+        let (new_hash, new_size) = file_hash_and_size(&profile_path)?;
+        Ok(self.profile_toml_mutation_summary(
+            actor,
+            "skills",
+            "skill",
+            &new_skill_id,
+            "edit",
+            old_hash,
+            old_size,
+            new_hash,
+            new_size,
+        ))
+    }
+
+    pub fn delete_skill(
+        &mut self,
+        skill_id: &str,
+        actor: &str,
+    ) -> Result<ProfileMutationSummary, String> {
+        validate_profile_target("skill id", skill_id)?;
+        let profile_path = self.profile_dir.join("profile.toml");
+        let (old_hash, old_size) = file_hash_and_size(&profile_path)?;
+        let index = self
+            .config
+            .skills
+            .paths
+            .iter()
+            .position(|existing| skill_id_for_path(existing).as_deref() == Ok(skill_id))
+            .ok_or_else(|| format!("profile skill not found: {skill_id}"))?;
+        self.config.skills.paths.remove(index);
+        self.config.validate()?;
+        self.save()?;
+        let (new_hash, new_size) = file_hash_and_size(&profile_path)?;
+        Ok(self.profile_toml_mutation_summary(
+            actor, "skills", "skill", skill_id, "delete", old_hash, old_size, new_hash, new_size,
+        ))
+    }
+
     pub fn save(&self) -> Result<(), String> {
         let path = self.profile_dir.join("profile.toml");
         let content = toml::to_string_pretty(&self.config)
@@ -843,6 +939,36 @@ impl Profile {
 
     fn profile_toml_relative_path(&self) -> String {
         format!("profiles/{}/profile.toml", self.config.id)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn profile_toml_mutation_summary(
+        &self,
+        actor: &str,
+        category: &str,
+        target_kind: &str,
+        target_key: &str,
+        operation: &str,
+        old_hash: String,
+        old_size: u64,
+        new_hash: String,
+        new_size: u64,
+    ) -> ProfileMutationSummary {
+        ProfileMutationSummary {
+            profile_id: self.config.id.clone(),
+            actor: actor.to_string(),
+            category: category.to_string(),
+            filename: "profile.toml".to_string(),
+            affected_path: self.profile_toml_relative_path(),
+            target_kind: target_kind.to_string(),
+            target_key: target_key.to_string(),
+            operation: operation.to_string(),
+            rule_id: None,
+            old_hash: format!("blake3:{old_hash}"),
+            old_size,
+            new_hash: format!("blake3:{new_hash}"),
+            new_size,
+        }
     }
 
     fn load_verified_enforcement_rules(
@@ -1552,6 +1678,28 @@ fn validate_profile_target(kind: &str, value: &str) -> Result<(), String> {
         return Err(format!("{kind} must not contain traversal or padding"));
     }
     Ok(())
+}
+
+fn validate_profile_skill_path(value: &str) -> Result<(), String> {
+    validate_non_empty("profile skill path", value)?;
+    if value.trim() != value || value.contains("..") || value.contains('\\') {
+        return Err("profile skill path must not contain traversal or padding".to_string());
+    }
+    skill_id_for_path(value).map(|_| ())
+}
+
+pub fn skill_id_for_path(path: &str) -> Result<String, String> {
+    let path = Path::new(path);
+    let id = if path.file_name().and_then(|name| name.to_str()) == Some("SKILL.md") {
+        path.parent()
+            .and_then(Path::file_name)
+            .and_then(|name| name.to_str())
+    } else {
+        path.file_stem().and_then(|name| name.to_str())
+    }
+    .ok_or_else(|| "profile skill path must identify a skill".to_string())?;
+    validate_profile_target("skill id", id)?;
+    Ok(id.to_string())
 }
 
 const fn default_true() -> bool {

@@ -13,6 +13,7 @@ use capsem_core::{
         ProfileCatalogSource, ProfileConfigFile, ProviderRuleProfile, SecurityPluginConfig,
         SecurityPluginMode, SecurityRule, SecurityRuleAction, SecurityRuleGroup,
         SecurityRuleProfile, SecurityRuleSet, SecurityRuleSource, SettingsFile,
+        skill_id_for_path,
     },
     security_engine::{
         FileSecurityEvent, RuntimeSecurityEventType, SecurityActionRegistry, SecurityEmitError,
@@ -5063,54 +5064,144 @@ async fn handle_profile_skills_list(
     let manifest = profile_manifest_for_route(profile_id)?;
     Ok(Json(json!({
         "profile_id": manifest.id,
-        "skills": manifest.skills.paths.into_iter().map(|path| json!({ "path": path })).collect::<Vec<_>>(),
+        "skills": manifest.skills.paths.into_iter().map(|path| {
+            let id = skill_id_for_path(&path).unwrap_or_else(|_| path.clone());
+            json!({ "id": id, "path": path })
+        }).collect::<Vec<_>>(),
     })))
 }
 
 async fn handle_profile_skill_add(
+    State(state): State<Arc<ServiceState>>,
     Path(profile_id): Path<String>,
     Json(request): Json<ProfileSkillAddRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let _profile_id = validate_profile_route_id(profile_id)?;
-    validate_skill_path(&request.path)?;
-    Err(profile_persistence_not_implemented("profile skill add"))
+    log_profile_mutation_route_request(
+        "profile_skill_add",
+        &profile_id,
+        "skill",
+        &request.path,
+        "add",
+    );
+    let mut profile = profile_for_route(profile_id.clone()).inspect_err(|error| {
+        log_profile_mutation_route_rejected(
+            "profile_skill_add",
+            &profile_id,
+            "skill",
+            &request.path,
+            "add",
+            &error.1,
+        );
+    })?;
+    let summary = profile
+        .add_skill_path(&request.path, "service-api")
+        .map_err(|error| {
+            log_profile_mutation_route_rejected(
+                "profile_skill_add",
+                &profile_id,
+                "skill",
+                &request.path,
+                "add",
+                &error,
+            );
+            AppError(StatusCode::BAD_REQUEST, error)
+        })?;
+    let event = write_profile_mutation_event(&state, summary).await?;
+    log_profile_mutation_applied("profile_skill_add", &event);
+    Ok(Json(json!({
+        "profile_id": event.profile_id,
+        "skill_id": event.target_key,
+        "path": request.path,
+        "mutation": event,
+    })))
 }
 
 async fn handle_profile_skill_edit(
+    State(state): State<Arc<ServiceState>>,
     Path((profile_id, _skill_id)): Path<(String, String)>,
     Json(request): Json<ProfileSkillEditRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let _profile_id = validate_profile_route_id(profile_id)?;
-    validate_skill_path(&request.path)?;
-    Err(profile_persistence_not_implemented("profile skill edit"))
+    log_profile_mutation_route_request(
+        "profile_skill_edit",
+        &profile_id,
+        "skill",
+        &_skill_id,
+        "edit",
+    );
+    let mut profile = profile_for_route(profile_id.clone()).inspect_err(|error| {
+        log_profile_mutation_route_rejected(
+            "profile_skill_edit",
+            &profile_id,
+            "skill",
+            &_skill_id,
+            "edit",
+            &error.1,
+        );
+    })?;
+    let summary = profile
+        .edit_skill_path(&_skill_id, &request.path, "service-api")
+        .map_err(|error| {
+            log_profile_mutation_route_rejected(
+                "profile_skill_edit",
+                &profile_id,
+                "skill",
+                &_skill_id,
+                "edit",
+                &error,
+            );
+            AppError(StatusCode::BAD_REQUEST, error)
+        })?;
+    let event = write_profile_mutation_event(&state, summary).await?;
+    log_profile_mutation_applied("profile_skill_edit", &event);
+    Ok(Json(json!({
+        "profile_id": event.profile_id,
+        "skill_id": event.target_key,
+        "path": request.path,
+        "mutation": event,
+    })))
 }
 
 async fn handle_profile_skill_delete(
+    State(state): State<Arc<ServiceState>>,
     Path((profile_id, _skill_id)): Path<(String, String)>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let _profile_id = validate_profile_route_id(profile_id)?;
-    validate_skill_id(&_skill_id)?;
-    Err(profile_persistence_not_implemented("profile skill delete"))
-}
-
-fn validate_skill_path(path: &str) -> Result<(), AppError> {
-    if path.trim().is_empty() {
-        return Err(AppError(
-            StatusCode::BAD_REQUEST,
-            "profile skill path must not be empty".to_string(),
-        ));
-    }
-    Ok(())
-}
-
-fn validate_skill_id(skill_id: &str) -> Result<(), AppError> {
-    if skill_id.trim().is_empty() {
-        return Err(AppError(
-            StatusCode::BAD_REQUEST,
-            "profile skill id must not be empty".to_string(),
-        ));
-    }
-    Ok(())
+    log_profile_mutation_route_request(
+        "profile_skill_delete",
+        &profile_id,
+        "skill",
+        &_skill_id,
+        "delete",
+    );
+    let mut profile = profile_for_route(profile_id.clone()).inspect_err(|error| {
+        log_profile_mutation_route_rejected(
+            "profile_skill_delete",
+            &profile_id,
+            "skill",
+            &_skill_id,
+            "delete",
+            &error.1,
+        );
+    })?;
+    let summary = profile
+        .delete_skill(&_skill_id, "service-api")
+        .map_err(|error| {
+            log_profile_mutation_route_rejected(
+                "profile_skill_delete",
+                &profile_id,
+                "skill",
+                &_skill_id,
+                "delete",
+                &error,
+            );
+            AppError(StatusCode::BAD_REQUEST, error)
+        })?;
+    let event = write_profile_mutation_event(&state, summary).await?;
+    log_profile_mutation_applied("profile_skill_delete", &event);
+    Ok(Json(json!({
+        "profile_id": event.profile_id,
+        "skill_id": event.target_key,
+        "mutation": event,
+    })))
 }
 
 fn resolve_mcp_tool_id(server_id: &str, tool_id: &str) -> Result<String, AppError> {

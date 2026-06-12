@@ -597,6 +597,54 @@ fn profile_mcp_server_mutation_persists_profile_toml_and_permissions() {
 }
 
 #[test]
+fn profile_skill_mutations_persist_profile_toml() {
+    let fixture = ProfileFixture::new();
+    let mut profile = Profile::load_from_dir(fixture.profile_dir()).expect("profile loads");
+
+    let add = profile
+        .add_skill_path("/root/.codex/skills/security/SKILL.md", "ui")
+        .expect("skill add mutation succeeds");
+    assert_eq!(add.profile_id, "code");
+    assert_eq!(add.category, "skills");
+    assert_eq!(add.filename, "profile.toml");
+    assert_eq!(add.affected_path, "profiles/code/profile.toml");
+    assert_eq!(add.target_kind, "skill");
+    assert_eq!(add.target_key, "security");
+    assert_eq!(add.operation, "add");
+    assert!(add.rule_id.is_none());
+
+    let reloaded = Profile::load_from_dir(fixture.profile_dir()).expect("profile reloads");
+    assert_eq!(
+        reloaded.config().skills.paths,
+        vec!["/root/.codex/skills/security/SKILL.md".to_string()]
+    );
+
+    let mut profile = reloaded;
+    let edit = profile
+        .edit_skill_path("security", "/root/.codex/skills/review/SKILL.md", "ui")
+        .expect("skill edit mutation succeeds");
+    assert_eq!(edit.target_key, "review");
+    assert_eq!(edit.operation, "edit");
+
+    let reloaded = Profile::load_from_dir(fixture.profile_dir()).expect("profile reloads");
+    assert_eq!(
+        reloaded.config().skills.paths,
+        vec!["/root/.codex/skills/review/SKILL.md".to_string()]
+    );
+
+    let mut profile = reloaded;
+    let delete = profile
+        .delete_skill("review", "ui")
+        .expect("skill delete mutation succeeds");
+    assert_eq!(delete.target_kind, "skill");
+    assert_eq!(delete.target_key, "review");
+    assert_eq!(delete.operation, "delete");
+
+    let reloaded = Profile::load_from_dir(fixture.profile_dir()).expect("profile reloads");
+    assert!(reloaded.config().skills.paths.is_empty());
+}
+
+#[test]
 fn profile_mcp_tool_permission_override_wins_after_default_mutation() {
     let fixture = ProfileFixture::new();
     let mut profile = Profile::load_from_dir(fixture.profile_dir()).expect("profile loads");
