@@ -61,9 +61,13 @@ field coverage ledger is updated.
   unknown-compatible-provider, non-stream JSON, SSE, tool declarations,
   executed tool calls, tool responses, usage/tokens, thinking/reasoning,
   truncation/error, denied and accepted cases.
-- MCP: tools/list, tools/call, resources/prompts, accepted/denied/ask,
-  request args, response body, no phantom executed calls, duplicate
-  suppression, route-visible server/tool evidence.
+- MCP: every configured MCP server/tool path must work black-box and be
+  faithfully accounted for. Ironbank must exercise server list, tool list,
+  refresh, tool call, resources/prompts, accepted/denied/ask, request args,
+  response body, no phantom executed calls, duplicate suppression,
+  route-visible server/tool evidence, session DB rows, security ledger rows,
+  structured logs, UDS output, HTTP gateway output, and UI-facing JSON. A
+  command existing in `--help` is not proof.
 - Credential broker/plugins: OAuth token capture, header/query/cookie/body
   capture, stored-ref injection, brokered substitution/rewrite, disabled,
   ask, block, and error modes with no raw-secret leak.

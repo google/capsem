@@ -16,6 +16,10 @@ Rules:
   invariant, or explicitly marked not applicable.
 - Package-manager tests must prove the package works, not merely that it was
   installed.
+- MCP tests must drive the installed `capsem mcp` CLI through the real service
+  socket and then assert the full ledger: CLI output, UDS route, HTTP gateway
+  route, session DB rows, security ledger rows, MCP protocol rows, structured
+  logs, counters, and UI-facing JSON.
 
 If a public contract is missing, write the RED test against the missing
 contract and fix the product contract before relying on implementation details.
