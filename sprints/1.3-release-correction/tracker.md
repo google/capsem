@@ -198,8 +198,16 @@ next one, and stage only the files for that slice.
     `cargo test -p capsem-gateway status_response_serializes -- --nocapture`;
     `pnpm --dir frontend test src/lib/__tests__/api.test.ts`; `cargo check -p
     capsem-service -p capsem-gateway`; `pnpm --dir frontend check`.
-- [ ] Proof: profile routes are scoped by profile id; service-global routes are
+- [x] Proof: profile routes are scoped by profile id; service-global routes are
   only service/runtime summaries.
+  - Proof: `cargo test -p capsem-service
+    mounted_read_routes_reflect_profile_settings_corp_mcp_and_assets_contracts
+    -- --nocapture`; `cargo test -p capsem-service
+    mounted_mcp_routes_are_profile_scoped_mechanics_only -- --nocapture`;
+    `cargo test -p capsem-gateway
+    gateway_does_not_forward_retired_mcp_policy_route -- --nocapture`; `cargo
+    test -p capsem-gateway gateway_does_not_forward_retired_plugin_authoring_routes
+    -- --nocapture`.
 
 ## S4. Hermetic Protocol Lab and Recorder
 
