@@ -152,18 +152,15 @@ describes virtualization state.
 | `GET` | `/vms/list` | List sessions. |
 | `GET` | `/vms/{id}/info` | Session config/runtime info, including profile, process, and storage diagnostics. |
 | `GET` | `/vms/{id}/status` | In-memory session liveness, readiness, state, and counters. |
-| `PATCH` | `/vms/{id}/edit` | Edit mutable runtime session fields. |
 | `POST` | `/vms/{id}/stop` | Stop a running session. |
 | `POST` | `/vms/{id}/pause` | Pause or suspend a running session. |
 | `POST` | `/vms/{id}/start` | Start a stopped session. |
 | `POST` | `/vms/{id}/resume` | Resume a paused or stopped session through the service path. |
-| `POST` | `/vms/{id}/restart` | Restart a session. |
 | `DELETE` | `/vms/{id}/delete` | Delete a session. |
 | `POST` | `/vms/{id}/save` | Persist session state. |
 | `GET` | `/vms/{id}/save/status` | Save progress/status. |
 | `POST` | `/vms/{id}/fork` | Fork a session. |
 | `GET` | `/vms/{id}/fork/status` | Fork progress/status. |
-| `POST` | `/vms/{id}/reload-profile` | Reconcile the running session with profile changes where supported. |
 | `GET` | `/vms/{id}/logs` | Session log stream. |
 | `POST` | `/vms/{id}/inspect` | Run an explicit inspection operation. |
 | `POST` | `/vms/{id}/exec` | Execute a command through the audited control path. |

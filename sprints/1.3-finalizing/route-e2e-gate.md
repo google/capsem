@@ -21,7 +21,7 @@ must distinguish those states.
 | Area | Routes | Status | Notes |
 | --- | --- | --- | --- |
 | VM lifecycle | `/vms/create`, `/vms/list`, `/vms/{id}/info`, `/status`, `/start`, `/resume`, `/pause`, `/stop`, `/delete`, `/save`, `/fork` | real, needs_e2e | Existing service/VM suites cover much of this; final route gate must name exact tests. |
-| VM edit/restart/reload | `/vms/{id}/edit`, `/restart`, `/reload-profile` | fail_closed_stub, mounted_proof | `mounted_fail_closed_stub_routes_return_explicit_errors` asserts the public `501` error shape. |
+| VM edit/restart/reload | `/vms/{id}/edit`, `/restart`, `/reload-profile` | unmounted | VM mutation routes stay absent until they persist state or perform a real operation; `fake_vm_mutation_routes_are_not_mounted` and `gateway_fake_vm_mutation_routes_are_not_forwarded` prove no fake public route remains. |
 | VM operation status | `/vms/{id}/save/status`, `/fork/status` | real-minimal | Returns truthful synchronous `idle` state; no async progress yet. |
 | VM files/history/timeline | `/vms/{id}/files/*`, `/history/*`, `/timeline` | real, partial_mounted_proof | `mounted_file_import_export_routes_log_boundary_events` proves mounted file import/export routes send ledger boundary IPC before bytes move. History/timeline still need mounted route proof. |
 | Service ledger | `/security/latest|status`, `/enforcement/latest|status`, `/detection/latest|status` | real, mounted_proof | `mounted_service_ledger_routes_read_real_session_db_rows` proves service-wide latest/status read real session DB rows. |
@@ -35,7 +35,7 @@ must distinguish those states.
 | Detection rules | `/profiles/{id}/detection/info`, `/rules/list`, `/evaluate`, `/reload`, `/rules/{rule_id}/edit|delete` | real/dry_run | Same rule rail as enforcement; detection edit requires `detection_level`. |
 | Plugins | `/profiles/{id}/plugins/list`, `/info`, `/{plugin_id}/info`, `/{plugin_id}/edit` | real, mounted_proof | `mounted_plugin_routes_control_profile_evaluation` proves list/edit and evaluation effect through mounted routes. |
 | Skills read | `/profiles/{id}/skills/info`, `/list` | read_only | Reads profile manifest paths; handler proof exists, mounted proof still needed. |
-| Skills write | `/profiles/{id}/skills/add`, `/{skill_id}/edit|delete` | fail_closed_stub, mounted_proof | `mounted_fail_closed_stub_routes_return_explicit_errors` asserts the public `501` error shape. |
+| Skills write | `/profiles/{id}/skills/add`, `/{skill_id}/edit|delete` | real, mounted_proof | `profile_skills_routes_persist_profile_and_mutation_ledger` proves profile.toml persistence and mutation ledger rows. |
 | MCP mechanics | `/profiles/{id}/mcp/info`, `/servers/list`, `/servers/{server}/tools/list`, `/refresh`, `/tools/{tool}/edit|call` | real, partial_mounted_proof | `mounted_mcp_routes_are_profile_scoped_mechanics_only` proves profile/server isolation and refresh. `local_http_mcp_e2e_uses_brokered_oauth_and_records_tool_call` proves the production MCP manager can connect to a local recording Streamable HTTP MCP server, resolve broker-owned auth, list a tool, and dispatch a call without remote services. Route-level tool edit/call still need named mounted proof. |
 | Settings | `/settings/info`, `/settings/edit` | real, partial_mounted_proof | Mounted read proof covers `/settings/info`; edit still needs named mounted proof. |
 | Corp | `/corp/info`, `/corp/edit`, `/corp/validate`, `/corp/reload` | real, mounted_proof | `mounted_corp_routes_validate_install_report_and_reload_inline_toml` proves validate/edit/info/reload with temp `CAPSEM_HOME`. |
@@ -88,7 +88,9 @@ cargo test -p capsem-service route_enforcement_evaluate_is_dry_run_and_does_not_
 
 Implemented in `crates/capsem-service/src/tests.rs`:
 
-- `mounted_fail_closed_stub_routes_return_explicit_errors`
+- `profile_assets_edit_route_is_not_mounted`
+- `profile_lifecycle_write_routes_are_not_mounted`
+- `fake_vm_mutation_routes_are_not_mounted`
 - `mounted_read_routes_reflect_profile_settings_corp_mcp_and_assets_contracts`
 - `mounted_corp_routes_validate_install_report_and_reload_inline_toml`
 - `mounted_plugin_routes_control_profile_evaluation`

@@ -1510,6 +1510,34 @@ async fn profile_lifecycle_write_routes_are_not_mounted() {
 }
 
 #[tokio::test]
+async fn fake_vm_mutation_routes_are_not_mounted() {
+    let state = make_test_state();
+    insert_fake_instance(&state, "ops-vm", std::process::id());
+    let app = build_service_router(state);
+
+    for (method, uri, body) in [
+        (
+            axum::http::Method::PATCH,
+            "/vms/ops-vm/edit",
+            Some(json!({ "ram_mb": 8192 })),
+        ),
+        (axum::http::Method::POST, "/vms/ops-vm/restart", None),
+        (
+            axum::http::Method::POST,
+            "/vms/ops-vm/reload-profile",
+            None,
+        ),
+    ] {
+        let (status, _) = route_request(app.clone(), method, uri, body).await;
+        assert_eq!(
+            status,
+            StatusCode::NOT_FOUND,
+            "{uri} must stay unmounted until the VM mutation persists or performs a real operation"
+        );
+    }
+}
+
+#[tokio::test]
 async fn profile_plugins_info_summarizes_effective_plugin_policy() {
     let state = make_test_state();
 
@@ -1606,18 +1634,6 @@ async fn t1_adversarial_route_inputs_fail_closed() {
             .unwrap_err();
     assert_eq!(unknown_profile.0, StatusCode::NOT_FOUND);
 
-    let unknown_vm = handle_vm_edit(
-        State(make_test_state()),
-        Path("missing-vm".to_string()),
-        Json(api::VmEditRequest {
-            ram_mb: Some(2048),
-            ..Default::default()
-        }),
-    )
-    .await
-    .unwrap_err();
-    assert_eq!(unknown_vm.0, StatusCode::NOT_FOUND);
-
     let bad_rule = capsem_core::net::policy_config::SecurityRule {
         name: "bad_rule".to_string(),
         action: capsem_core::net::policy_config::SecurityRuleAction::Allow,
@@ -1656,55 +1672,6 @@ async fn t1_adversarial_route_inputs_fail_closed() {
         "plugin edit payloads must reject credential/provider theater fields"
     );
 
-    let immutable_profile = handle_vm_edit(
-        State(make_test_state()),
-        Path("missing-vm".to_string()),
-        Json(api::VmEditRequest {
-            profile_id: Some("strict".to_string()),
-            ..Default::default()
-        }),
-    )
-    .await
-    .unwrap_err();
-    assert_eq!(immutable_profile.0, StatusCode::BAD_REQUEST);
-}
-
-#[tokio::test]
-async fn mounted_fail_closed_stub_routes_return_explicit_errors() {
-    let state = make_test_state();
-    insert_fake_instance(&state, "ops-vm", std::process::id());
-    let app = build_service_router(state);
-
-    for (method, uri, body, expected_error) in [
-        (
-            axum::http::Method::PATCH,
-            "/vms/ops-vm/edit",
-            Some(json!({ "ram_mb": 8192 })),
-            "live VM resource/persistence edits are not supported yet",
-        ),
-        (
-            axum::http::Method::POST,
-            "/vms/ops-vm/restart",
-            None,
-            "restart is not supported yet",
-        ),
-        (
-            axum::http::Method::POST,
-            "/vms/ops-vm/reload-profile",
-            None,
-            "reload-profile is not supported yet",
-        ),
-    ] {
-        let (status, body) = route_request(app.clone(), method, uri, body).await;
-        assert_eq!(status, StatusCode::NOT_IMPLEMENTED, "{uri}: {body}");
-        assert!(
-            body["error"]
-                .as_str()
-                .unwrap_or_default()
-                .contains(expected_error),
-            "{uri}: expected {expected_error:?}, got {body}"
-        );
-    }
 }
 
 #[tokio::test]
@@ -5234,54 +5201,6 @@ async fn handle_info_marks_profile_payload_drift_incompatible() {
 }
 
 #[tokio::test]
-async fn handle_vm_edit_rejects_profile_id_mutation() {
-    let state = make_test_state();
-    insert_fake_instance(&state, "edit-vm", 4242);
-    let request: api::VmEditRequest = serde_json::from_value(serde_json::json!({
-        "profile_id": "other-profile"
-    }))
-    .unwrap();
-
-    let err = handle_vm_edit(State(state), Path("edit-vm".into()), Json(request))
-        .await
-        .unwrap_err();
-    assert_eq!(err.0, StatusCode::BAD_REQUEST);
-    assert!(err.1.contains("profile_id is immutable"));
-}
-
-#[tokio::test]
-async fn handle_vm_edit_rejects_unknown_fields() {
-    let state = make_test_state();
-    insert_fake_instance(&state, "edit-vm", 4242);
-    let request: api::VmEditRequest = serde_json::from_value(serde_json::json!({
-        "surprise": true
-    }))
-    .unwrap();
-
-    let err = handle_vm_edit(State(state), Path("edit-vm".into()), Json(request))
-        .await
-        .unwrap_err();
-    assert_eq!(err.0, StatusCode::BAD_REQUEST);
-    assert!(err.1.contains("unknown VM edit fields"));
-}
-
-#[tokio::test]
-async fn handle_vm_edit_resource_changes_fail_explicitly() {
-    let state = make_test_state();
-    insert_fake_instance(&state, "edit-vm", 4242);
-    let request: api::VmEditRequest = serde_json::from_value(serde_json::json!({
-        "ram_mb": 8192
-    }))
-    .unwrap();
-
-    let err = handle_vm_edit(State(state), Path("edit-vm".into()), Json(request))
-        .await
-        .unwrap_err();
-    assert_eq!(err.0, StatusCode::NOT_IMPLEMENTED);
-    assert!(err.1.contains("not supported yet"));
-}
-
-#[tokio::test]
 async fn handle_vm_operation_status_reports_idle_for_existing_vm() {
     let state = make_test_state();
     insert_fake_instance(&state, "ops-vm", 5150);
@@ -5310,24 +5229,6 @@ async fn handle_vm_operation_status_rejects_unknown_vm() {
         .await
         .unwrap_err();
     assert_eq!(err.0, StatusCode::NOT_FOUND);
-}
-
-#[tokio::test]
-async fn handle_unsupported_vm_operations_fail_explicitly() {
-    let state = make_test_state();
-    insert_fake_instance(&state, "ops-vm", 5150);
-
-    let restart = handle_vm_restart(State(Arc::clone(&state)), Path("ops-vm".into()))
-        .await
-        .unwrap_err();
-    assert_eq!(restart.0, StatusCode::NOT_IMPLEMENTED);
-    assert!(restart.1.contains("restart is not supported yet"));
-
-    let reload = handle_vm_reload_profile(State(state), Path("ops-vm".into()))
-        .await
-        .unwrap_err();
-    assert_eq!(reload.0, StatusCode::NOT_IMPLEMENTED);
-    assert!(reload.1.contains("reload-profile is not supported yet"));
 }
 
 #[tokio::test]

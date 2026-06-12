@@ -123,13 +123,10 @@ next one, and stage only the files for that slice.
     profile_mcp_server_mutation_persists_profile_toml_and_permissions --
     --nocapture`; `cargo test -p capsem-service
     profile_mcp_server_edit_delete_persist_profile_and_mutation_ledger --
-    --nocapture`; `cargo test -p capsem-service
-    mounted_fail_closed_stub_routes_return_explicit_errors -- --nocapture`;
-    `cargo check -p capsem-core -p capsem-service`.
-  - Remaining mounted mutation stubs: profile create/edit/delete/clone,
-    profile skill add/edit/delete, VM edit, VM restart, VM reload-profile. Each
-    must either persist through the contract object or be unmounted in a later
-    S3 slice.
+    --nocapture`; `cargo check -p capsem-core -p capsem-service`.
+  - Historical note: at this checkpoint, profile create/edit/delete/clone,
+    profile skill add/edit/delete, VM edit, VM restart, and VM reload-profile
+    still needed either persistence through the contract object or unmounting.
   - 2026-06-11 progress: profile skill add/edit/delete are no longer mounted
     501 stubs. They now mutate through `Profile::add_skill_path`,
     `Profile::edit_skill_path`, and `Profile::delete_skill`, persist
@@ -139,8 +136,6 @@ next one, and stage only the files for that slice.
     profile_skill_mutations_persist_profile_toml -- --nocapture`; `cargo test
     -p capsem-service
     profile_skills_routes_persist_profile_and_mutation_ledger -- --nocapture`;
-    `cargo test -p capsem-service
-    mounted_fail_closed_stub_routes_return_explicit_errors -- --nocapture`;
     `cargo check -p capsem-core -p capsem-service`.
   - 2026-06-11 progress: profile assets edit is not a route anymore. Asset
     references are materialized by capsem-admin/profile manifests; the runtime
@@ -149,9 +144,7 @@ next one, and stage only the files for that slice.
   - Proof: `cargo test -p capsem-service
     profile_assets_edit_route_is_not_mounted -- --nocapture`; `cargo test -p
     capsem-gateway gateway_profile_assets_edit_is_not_forwarded --
-    --nocapture`; `cargo test -p capsem-service
-    mounted_fail_closed_stub_routes_return_explicit_errors -- --nocapture`;
-    `cargo test -p capsem-gateway
+    --nocapture`; `cargo test -p capsem-gateway
     gateway_security_routes_are_explicitly_forwarded -- --nocapture`; `cargo
     check -p capsem-service -p capsem-gateway`; `pnpm --dir frontend test
     src/lib/__tests__/api.test.ts`; `pnpm --dir docs build`.
@@ -163,14 +156,20 @@ next one, and stage only the files for that slice.
     profile_lifecycle_write_routes_are_not_mounted -- --nocapture`; `cargo
     test -p capsem-gateway
     gateway_profile_lifecycle_writes_are_not_forwarded -- --nocapture`;
-    `cargo test -p capsem-service
-    mounted_fail_closed_stub_routes_return_explicit_errors -- --nocapture`;
     `cargo test -p capsem-gateway
     gateway_security_routes_are_explicitly_forwarded -- --nocapture`; `cargo
     check -p capsem-service -p capsem-gateway`; `pnpm --dir frontend test
     src/lib/__tests__/api.test.ts`; `pnpm --dir docs build`.
-  - Remaining mounted mutation stubs after profile lifecycle route burn: VM
-    edit, VM restart, VM reload-profile.
+  - 2026-06-11 progress: VM mutation routes `edit|restart|reload-profile`
+    are unmounted rather than fake 501 contracts. VM mutation returns only
+    when it persists state or performs a real operation.
+  - Proof: `cargo test -p capsem-service
+    fake_vm_mutation_routes_are_not_mounted -- --nocapture`; `cargo test -p
+    capsem-gateway gateway_fake_vm_mutation_routes_are_not_forwarded --
+    --nocapture`; `cargo test -p capsem-gateway
+    gateway_security_routes_are_explicitly_forwarded -- --nocapture`; `cargo
+    check -p capsem-service -p capsem-gateway`; `pnpm --dir docs build`.
+  - Remaining mounted mutation stubs after VM route burn: none known in S3.
 - [ ] RED/GREEN: session state enum controls available actions for running,
   stopped, incompatible, defunct, paused, and deleted sessions.
 - [ ] Proof: profile routes are scoped by profile id; service-global routes are

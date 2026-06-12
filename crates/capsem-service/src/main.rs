@@ -2889,39 +2889,6 @@ fn snapshot_status_from_session_dir(
     }
 }
 
-async fn handle_vm_edit(
-    State(state): State<Arc<ServiceState>>,
-    Path(id): Path<String>,
-    Json(request): Json<api::VmEditRequest>,
-) -> Result<Json<api::VmStatusResponse>, AppError> {
-    if request.profile_id.is_some() {
-        return Err(AppError(
-            StatusCode::BAD_REQUEST,
-            "VM profile_id is immutable; fork or create a new VM to change profiles".into(),
-        ));
-    }
-    if !request.extra.is_empty() {
-        let fields = request.extra.keys().cloned().collect::<Vec<_>>().join(", ");
-        return Err(AppError(
-            StatusCode::BAD_REQUEST,
-            format!("unknown VM edit fields: {fields}"),
-        ));
-    }
-
-    let Json(status) = handle_vm_status(State(Arc::clone(&state)), Path(id.clone())).await?;
-    let requested_resource_edit = request.ram_mb.is_some()
-        || request.cpus.is_some()
-        || request.persistent.is_some()
-        || request.name.is_some();
-    if requested_resource_edit {
-        return Err(AppError(
-            StatusCode::NOT_IMPLEMENTED,
-            "live VM resource/persistence edits are not supported yet".into(),
-        ));
-    }
-    Ok(Json(status))
-}
-
 async fn vm_operation_status(
     state: Arc<ServiceState>,
     id: String,
@@ -2949,32 +2916,6 @@ async fn handle_vm_fork_status(
     Path(id): Path<String>,
 ) -> Result<Json<api::VmOperationStatusResponse>, AppError> {
     vm_operation_status(state, id, "fork").await
-}
-
-async fn unsupported_vm_operation(
-    state: Arc<ServiceState>,
-    id: String,
-    operation: &'static str,
-) -> Result<Json<api::VmOperationStatusResponse>, AppError> {
-    let _ = handle_vm_status(State(Arc::clone(&state)), Path(id)).await?;
-    Err(AppError(
-        StatusCode::NOT_IMPLEMENTED,
-        format!("{operation} is not supported yet"),
-    ))
-}
-
-async fn handle_vm_restart(
-    State(state): State<Arc<ServiceState>>,
-    Path(id): Path<String>,
-) -> Result<Json<api::VmOperationStatusResponse>, AppError> {
-    unsupported_vm_operation(state, id, "restart").await
-}
-
-async fn handle_vm_reload_profile(
-    State(state): State<Arc<ServiceState>>,
-    Path(id): Path<String>,
-) -> Result<Json<api::VmOperationStatusResponse>, AppError> {
-    unsupported_vm_operation(state, id, "reload-profile").await
 }
 
 /// GET /stats -- return full main.db aggregation in one response.
@@ -8241,7 +8182,6 @@ fn build_service_router(state: Arc<ServiceState>) -> Router {
             get(handle_vm_snapshots_status),
         )
         .route("/vms/{id}/snapshots/list", get(handle_vm_snapshots_list))
-        .route("/vms/{id}/edit", patch(handle_vm_edit))
         .route("/vms/{id}/logs", get(handle_logs))
         .route("/vms/{id}/inspect", post(handle_inspect))
         .route("/vms/{id}/exec", post(handle_exec))
@@ -8252,11 +8192,9 @@ fn build_service_router(state: Arc<ServiceState>) -> Router {
         .route("/vms/{id}/delete", delete(handle_delete))
         .route("/vms/{id}/start", post(handle_resume))
         .route("/vms/{id}/resume", post(handle_resume))
-        .route("/vms/{id}/restart", post(handle_vm_restart))
         .route("/vms/{id}/save", post(handle_persist))
         .route("/vms/{id}/save/status", get(handle_vm_save_status))
         .route("/vms/{id}/fork/status", get(handle_vm_fork_status))
-        .route("/vms/{id}/reload-profile", post(handle_vm_reload_profile))
         .route("/purge", post(handle_purge))
         .route("/run", post(handle_run))
         .route("/stats", get(handle_stats))

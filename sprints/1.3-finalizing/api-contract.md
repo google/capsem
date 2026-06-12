@@ -279,18 +279,15 @@ VM must name a profile.
 | `POST` | `/vms/create` | Create/start a VM from `profile_id`. |
 | `GET` | `/vms/{vm_id}/info` | Read VM config identity, including assigned profile id. |
 | `GET` | `/vms/{vm_id}/status` | Read live VM runtime status. |
-| `PATCH` | `/vms/{vm_id}/edit` | Edit VM-specific mutable config such as CPU, memory, disk sizing, or persistence metadata where technically supported. The assigned profile is immutable. |
 | `DELETE` | `/vms/{vm_id}/delete` | Stop/delete VM. |
 | `POST` | `/vms/{vm_id}/start` | Start VM using its assigned profile. |
 | `POST` | `/vms/{vm_id}/resume` | Resume a stopped/suspended VM using its assigned immutable profile. |
 | `POST` | `/vms/{vm_id}/pause` | Pause/suspend a running VM when supported. |
 | `POST` | `/vms/{vm_id}/stop` | Stop VM. |
-| `POST` | `/vms/{vm_id}/restart` | Restart VM using its assigned profile. |
 | `POST` | `/vms/{vm_id}/save` | Persist this VM/session record and its current VM-specific config. |
 | `GET` | `/vms/{vm_id}/save/status` | Runtime status/progress for the most recent save operation. |
 | `POST` | `/vms/{vm_id}/fork` | Fork this VM into a reusable image/profile target. |
 | `GET` | `/vms/{vm_id}/fork/status` | Runtime status/progress for the most recent fork operation. |
-| `POST` | `/vms/{vm_id}/reload-profile` | Apply the current profile config to this VM when supported. |
 | `POST` | `/vms/{vm_id}/exec` | Execute a command in the VM. |
 | `GET` | `/vms/{vm_id}/logs` | Read VM serial/process logs. |
 | `POST` | `/vms/{vm_id}/inspect` | Run an explicit diagnostic query against the VM session ledger. |
@@ -361,9 +358,9 @@ These are not final 1.3 contracts:
 | `/enforcements/list` | `/profiles/{profile_id}/enforcement/rules/list` for authoring; `/enforcement/latest|status` for runtime ledger. |
 | `/enforcements/rules/{rule_id}` | `/profiles/{profile_id}/enforcement/rules/{rule_id}/edit|delete`. |
 | `/enforcements/evaluate` | `/profiles/{profile_id}/enforcement/evaluate`. |
-| `/enforcements/reload` | `/profiles/{profile_id}/enforcement/reload` or `/vms/{vm_id}/reload-profile`. |
+| `/enforcements/reload` | `/profiles/{profile_id}/enforcement/reload`. |
 | `/profiles/{profile_id}/vm/info` | Fold into `/profiles/{profile_id}/info`. |
-| `/profiles/{profile_id}/vm/resources/edit` | Burn. Profile defaults belong in profile files; use `/vms/{vm_id}/edit` for a specific runtime VM only when that route persists state. |
+| `/profiles/{profile_id}/vm/resources/edit` | Burn. Profile defaults belong in profile files; VM-specific mutation remains absent until it persists state. |
 | `/profiles/{profile_id}/vm/network/edit` | Burn. Too vague; profile network mechanics belong in profile files, and security decisions belong in rules. |
 | `/plugins` | `/profiles/{profile_id}/plugins/list` for config; optional runtime diagnostic must be ledger/status only. |
 | `/plugins/global/{plugin_id}` | Burn. Plugins are profile/corp config, not global behavior config. |

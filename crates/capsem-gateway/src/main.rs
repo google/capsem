@@ -221,7 +221,6 @@ fn service_proxy_routes() -> Router<Arc<AppState>> {
         .route("/vms/list", get(proxy::handle_proxy))
         .route("/vms/{id}/info", get(proxy::handle_proxy))
         .route("/vms/{id}/status", get(proxy::handle_proxy))
-        .route("/vms/{id}/edit", patch(proxy::handle_proxy))
         .route("/vms/{id}/logs", get(proxy::handle_proxy))
         .route("/vms/{id}/inspect", post(proxy::handle_proxy))
         .route("/vms/{id}/exec", post(proxy::handle_proxy))
@@ -232,11 +231,9 @@ fn service_proxy_routes() -> Router<Arc<AppState>> {
         .route("/vms/{id}/delete", delete(proxy::handle_proxy))
         .route("/vms/{id}/start", post(proxy::handle_proxy))
         .route("/vms/{id}/resume", post(proxy::handle_proxy))
-        .route("/vms/{id}/restart", post(proxy::handle_proxy))
         .route("/vms/{id}/save", post(proxy::handle_proxy))
         .route("/vms/{id}/save/status", get(proxy::handle_proxy))
         .route("/vms/{id}/fork/status", get(proxy::handle_proxy))
-        .route("/vms/{id}/reload-profile", post(proxy::handle_proxy))
         .route("/purge", post(proxy::handle_proxy))
         .route("/run", post(proxy::handle_proxy))
         .route("/stats", get(proxy::handle_proxy))
@@ -578,6 +575,29 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn gateway_fake_vm_mutation_routes_are_not_forwarded() {
+        let app = service_proxy_app("/tmp/capsem-gateway-must-not-connect.sock");
+        for (method, uri) in [
+            ("PATCH", "/vms/test-vm/edit"),
+            ("POST", "/vms/test-vm/restart"),
+            ("POST", "/vms/test-vm/reload-profile"),
+        ] {
+            let resp = app
+                .clone()
+                .oneshot(
+                    http::Request::builder()
+                        .method(method)
+                        .uri(uri)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), http::StatusCode::NOT_FOUND, "{method} {uri}");
+        }
+    }
+
+    #[tokio::test]
     async fn gateway_security_routes_are_explicitly_forwarded() {
         for (method, uri) in [
             ("GET", "/vms/test-vm/security/latest"),
@@ -602,7 +622,6 @@ mod tests {
             ("GET", "/vms/list"),
             ("GET", "/vms/test-vm/info"),
             ("GET", "/vms/test-vm/status"),
-            ("PATCH", "/vms/test-vm/edit"),
             ("GET", "/vms/test-vm/logs"),
             ("POST", "/vms/test-vm/inspect"),
             ("POST", "/vms/test-vm/exec"),
@@ -621,12 +640,10 @@ mod tests {
             ("DELETE", "/vms/test-vm/delete"),
             ("POST", "/vms/test-vm/start"),
             ("POST", "/vms/test-vm/resume"),
-            ("POST", "/vms/test-vm/restart"),
             ("POST", "/vms/test-vm/save"),
             ("GET", "/vms/test-vm/save/status"),
             ("GET", "/vms/test-vm/fork/status"),
             ("POST", "/vms/test-vm/fork"),
-            ("POST", "/vms/test-vm/reload-profile"),
             ("POST", "/profiles/code/enforcement/evaluate"),
             ("GET", "/profiles/code/enforcement/info"),
             ("PUT", "/profiles/code/enforcement/rules/eicar_block/edit"),

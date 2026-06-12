@@ -165,19 +165,16 @@ the root.
 | GET | `/vms/list` | List VMs and their profile/status metadata |
 | GET | `/vms/{id}/info` | VM identity, profile, config, plugin descriptors, and non-hot metadata |
 | GET | `/vms/{id}/status` | Runtime state for one VM |
-| PATCH | `/vms/{id}/edit` | Edit mutable VM runtime resources |
 | POST | `/vms/{id}/exec` | Execute command, return stdout/stderr/exit_code |
 | POST | `/run` | One-shot: provision + exec + destroy |
 | POST | `/vms/{id}/stop` | Stop a VM |
 | POST | `/vms/{id}/pause` | Suspend a VM to disk when supported |
 | POST | `/vms/{id}/start` | Start a stopped VM |
 | POST | `/vms/{id}/resume` | Resume a stopped or paused VM |
-| POST | `/vms/{id}/restart` | Restart a VM |
 | POST | `/vms/{id}/save` | Save current VM state |
 | GET | `/vms/{id}/save/status` | Save operation status |
 | POST | `/vms/{id}/fork` | Fork VM into a reusable image/VM state |
 | GET | `/vms/{id}/fork/status` | Fork operation status |
-| POST | `/vms/{id}/reload-profile` | Reload the VM's profile-derived runtime state |
 | DELETE | `/vms/{id}/delete` | Destroy VM and wipe state |
 | POST | `/purge` | Stop/delete matching VMs according to the request |
 | POST | `/vms/{id}/files/write` | Write file to guest |
