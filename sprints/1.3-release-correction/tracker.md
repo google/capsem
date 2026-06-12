@@ -221,6 +221,13 @@ next one, and stage only the files for that slice.
 - [ ] RED: integration tests fail if protocol paths hit public services.
 - [ ] GREEN: one local protocol lab serves HTTP, HTTPS/MITM, DNS, SSE,
   WebSocket, MCP JSON-RPC, OAuth/OIDC, and model fixture replay.
+  - 2026-06-12 progress: `capsem-debug-upstream` now serves protocol-shaped
+    OAuth authorize/token fixtures and MCP JSON-RPC fixtures alongside the
+    existing HTTP/gzip/SSE/WebSocket/OpenAI-compatible model fixtures. The
+    token endpoint deliberately emits `capsem_test_*` secret-shaped values so
+    broker/recorder tests can prove capture and sanitization without touching
+    real credentials.
+  - Proof: `cargo test -p capsem-debug-upstream -- --nocapture` (`8 passed`).
 - [ ] RED/GREEN: recorder creates sanitized fixtures with client/version,
   protocol family, auth mode, expected ledger rows, and expected visible bytes.
 - [ ] RED/GREEN: replay covers Claude/Anthropic, OpenAI/Codex-compatible,

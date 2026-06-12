@@ -112,6 +112,9 @@ pub fn ready_payload(addr: SocketAddr) -> ReadyPayload {
             "/sse/model",
             "/model/response",
             "/v1/chat/completions",
+            "/oauth/authorize",
+            "/oauth/token",
+            "/mcp",
             "/slow-chunks",
             "/credential/response",
             "/echo",
@@ -143,6 +146,9 @@ pub fn app() -> Router {
         .route("/sse/model", get(sse_model))
         .route("/model/response", get(model_response))
         .route("/v1/chat/completions", post(model_response))
+        .route("/oauth/authorize", get(oauth_authorize))
+        .route("/oauth/token", post(oauth_token))
+        .route("/mcp", post(mcp_json_rpc))
         .route("/slow-chunks", get(slow_chunks))
         .route("/credential/response", get(credential_response))
         .route("/echo", post(echo))
@@ -254,6 +260,112 @@ async fn model_response() -> impl IntoResponse {
             "total_tokens": 12
         }
     }))
+}
+
+async fn oauth_authorize() -> impl IntoResponse {
+    Json(serde_json::json!({
+        "kind": "synthetic_oauth_authorization_fixture",
+        "authorization_code": "capsem_test_oauth_code_0123456789abcdef",
+        "redirect_uri": "https://capsem.invalid/oauth/callback",
+        "state": "capsem-debug-state",
+        "scope": "openid profile email offline_access"
+    }))
+}
+
+async fn oauth_token() -> impl IntoResponse {
+    Json(serde_json::json!({
+        "kind": "synthetic_oauth_token_fixture",
+        "token_type": "Bearer",
+        "access_token": "capsem_test_oauth_access_0123456789abcdef",
+        "refresh_token": "capsem_test_oauth_refresh_0123456789abcdef",
+        "id_token": "capsem_test_oauth_id_0123456789abcdef",
+        "expires_in": 3600,
+        "scope": "openid profile email offline_access"
+    }))
+}
+
+async fn mcp_json_rpc(Json(payload): Json<serde_json::Value>) -> impl IntoResponse {
+    let id = payload
+        .get("id")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    let method = payload
+        .get("method")
+        .and_then(|value| value.as_str())
+        .unwrap_or_default();
+    let response = match method {
+        "initialize" => serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "result": {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {
+                    "tools": {"listChanged": false},
+                    "resources": {}
+                },
+                "serverInfo": {
+                    "name": "capsem-debug-upstream",
+                    "version": env!("CARGO_PKG_VERSION")
+                }
+            }
+        }),
+        "tools/list" => serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "result": {
+                "tools": [
+                    {
+                        "name": "debug_lookup",
+                        "description": "Return deterministic debug content.",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "query": {"type": "string"}
+                            }
+                        }
+                    },
+                    {
+                        "name": "fetch_http",
+                        "description": "Fetch a local debug upstream URL.",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "url": {"type": "string"}
+                            }
+                        }
+                    }
+                ]
+            }
+        }),
+        "tools/call" => {
+            let name = payload
+                .pointer("/params/name")
+                .and_then(|value| value.as_str())
+                .unwrap_or("unknown");
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "result": {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": format!("capsem-debug-upstream:mcp:{name}")
+                        }
+                    ],
+                    "isError": false
+                }
+            })
+        }
+        _ => serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "error": {
+                "code": -32601,
+                "message": "method not found"
+            }
+        }),
+    };
+    Json(response)
 }
 
 async fn slow_chunks() -> Response {
@@ -557,6 +669,133 @@ mod tests {
             body["choices"][0]["message"]["tool_calls"][0]["function"]["name"],
             "debug_lookup"
         );
+
+        upstream.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn oauth_fixtures_are_protocol_shaped_and_secret_marked() {
+        let upstream = spawn_debug_upstream().await.unwrap();
+        let client = reqwest::Client::new();
+
+        let authorize: serde_json::Value = client
+            .get(format!("{}/oauth/authorize", upstream.base_url()))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(
+            authorize["authorization_code"],
+            "capsem_test_oauth_code_0123456789abcdef"
+        );
+        assert_eq!(authorize["state"], "capsem-debug-state");
+
+        let token: serde_json::Value = client
+            .post(format!("{}/oauth/token", upstream.base_url()))
+            .header(
+                http::header::CONTENT_TYPE,
+                "application/x-www-form-urlencoded",
+            )
+            .body("grant_type=authorization_code&code=capsem_test_oauth_code_0123456789abcdef")
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(token["token_type"], "Bearer");
+        assert_eq!(
+            token["access_token"],
+            "capsem_test_oauth_access_0123456789abcdef"
+        );
+        assert_eq!(
+            token["refresh_token"],
+            "capsem_test_oauth_refresh_0123456789abcdef"
+        );
+
+        upstream.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn mcp_json_rpc_fixture_supports_initialize_list_and_call() {
+        let upstream = spawn_debug_upstream().await.unwrap();
+        let client = reqwest::Client::new();
+
+        let initialize: serde_json::Value = client
+            .post(format!("{}/mcp", upstream.base_url()))
+            .json(&serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {"protocolVersion": "2024-11-05"}
+            }))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(initialize["id"], 1);
+        assert_eq!(
+            initialize["result"]["serverInfo"]["name"],
+            "capsem-debug-upstream"
+        );
+
+        let tools: serde_json::Value = client
+            .post(format!("{}/mcp", upstream.base_url()))
+            .json(&serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/list"
+            }))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(tools["result"]["tools"][0]["name"], "debug_lookup");
+        assert_eq!(tools["result"]["tools"][1]["name"], "fetch_http");
+
+        let call: serde_json::Value = client
+            .post(format!("{}/mcp", upstream.base_url()))
+            .json(&serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "tools/call",
+                "params": {
+                    "name": "debug_lookup",
+                    "arguments": {"query": "capsem"}
+                }
+            }))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(call["result"]["isError"], false);
+        assert_eq!(
+            call["result"]["content"][0]["text"],
+            "capsem-debug-upstream:mcp:debug_lookup"
+        );
+
+        let unknown: serde_json::Value = client
+            .post(format!("{}/mcp", upstream.base_url()))
+            .json(&serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 4,
+                "method": "not/real"
+            }))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(unknown["error"]["code"], -32601);
 
         upstream.shutdown().await.unwrap();
     }
