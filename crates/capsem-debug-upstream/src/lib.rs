@@ -111,6 +111,7 @@ pub fn ready_payload(addr: SocketAddr) -> ReadyPayload {
             "/gzip/{size}",
             "/sse/model",
             "/model/response",
+            "/v1/chat/completions",
             "/slow-chunks",
             "/credential/response",
             "/echo",
@@ -141,6 +142,7 @@ pub fn app() -> Router {
         .route("/gzip/{size}", get(gzip_endpoint))
         .route("/sse/model", get(sse_model))
         .route("/model/response", get(model_response))
+        .route("/v1/chat/completions", post(model_response))
         .route("/slow-chunks", get(slow_chunks))
         .route("/credential/response", get(credential_response))
         .route("/echo", post(echo))
@@ -524,6 +526,32 @@ mod tests {
                 .unwrap();
 
         assert_eq!(body["provider"], "debug");
+        assert_eq!(body["model"], "debug-local");
+        assert_eq!(
+            body["choices"][0]["message"]["tool_calls"][0]["function"]["name"],
+            "debug_lookup"
+        );
+
+        upstream.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn openai_compatible_chat_completions_fixture_works() {
+        let upstream = spawn_debug_upstream().await.unwrap();
+        let body: serde_json::Value = reqwest::Client::new()
+            .post(format!("{}/v1/chat/completions", upstream.base_url()))
+            .json(&serde_json::json!({
+                "model": "debug-local",
+                "messages": [{"role": "user", "content": "hello"}]
+            }))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+
+        assert_eq!(body["object"], "chat.completion");
         assert_eq!(body["model"], "debug-local");
         assert_eq!(
             body["choices"][0]["message"]["tool_calls"][0]["function"]["name"],

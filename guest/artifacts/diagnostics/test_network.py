@@ -411,6 +411,98 @@ def test_http_port_80_is_proxied():
         f"unexpected local HTTP response: {result.stdout}"
 
 
+def test_local_http_gzip_decompression_path():
+    """Gzip response bodies must travel through the local MITM rail."""
+    local_url = _require_local_debug_url("/gzip/10kb", "local gzip smoke")
+    result = run(
+        f"curl -sS --compressed --connect-timeout 5 {local_url} | wc -c",
+        timeout=15,
+    )
+    assert result.returncode == 0, f"gzip curl failed: {result.stdout}"
+    assert result.stdout.strip() == str(10 * 1024), \
+        f"unexpected decoded gzip byte count: {result.stdout}"
+
+
+def test_local_http_slow_chunk_stream():
+    """Chunked response streaming must complete through the local MITM rail."""
+    local_url = _require_local_debug_url("/slow-chunks", "local chunk smoke")
+    result = run(
+        f"curl -sS --connect-timeout 5 {local_url}",
+        timeout=15,
+    )
+    assert result.returncode == 0, f"chunk curl failed: {result.stdout}"
+    assert "chunk-0" in result.stdout and "chunk-3" in result.stdout, \
+        f"missing chunk fixture output: {result.stdout}"
+
+
+def test_local_sse_model_fixture():
+    """SSE model-shaped traffic must traverse the local MITM rail."""
+    local_url = _require_local_debug_url("/sse/model", "local SSE model smoke")
+    result = run(
+        f"curl -sS --connect-timeout 5 {local_url}",
+        timeout=15,
+    )
+    assert result.returncode == 0, f"SSE curl failed: {result.stdout}"
+    assert "model.tool_call" in result.stdout and "debug_lookup" in result.stdout, \
+        f"unexpected SSE model fixture: {result.stdout}"
+
+
+def test_local_openai_compatible_model_fixture():
+    """OpenAI-compatible model traffic must be observed without public services."""
+    local_url = _require_local_debug_url(
+        "/v1/chat/completions",
+        "local OpenAI-compatible model smoke",
+    )
+    payload = '{"model":"debug-local","messages":[{"role":"user","content":"hello"}]}'
+    result = run(
+        f"curl -sS --connect-timeout 5"
+        f" -H 'content-type: application/json'"
+        f" -d '{payload}'"
+        f" {local_url}",
+        timeout=15,
+    )
+    assert result.returncode == 0, f"model fixture curl failed: {result.stdout}"
+    assert '"model":"debug-local"' in result.stdout.replace(" ", ""), \
+        f"model fixture did not report debug-local: {result.stdout}"
+    assert "tool_calls" in result.stdout and "debug_lookup" in result.stdout, \
+        f"model fixture did not include tool call: {result.stdout}"
+
+
+def test_local_credential_fixture_is_broker_stimulus_only():
+    """Credential-shaped fixture traffic should trigger broker logging without
+    dumping synthetic secret values into doctor output."""
+    local_url = _require_local_debug_url("/credential/response", "local broker smoke")
+    result = run(
+        f"curl -sS -o /dev/null -w '%{{http_code}} %{{size_download}}'"
+        f" --connect-timeout 5 {local_url}",
+        timeout=15,
+    )
+    assert result.returncode == 0, f"credential fixture curl failed: {result.stdout}"
+    assert result.stdout.strip().startswith("200 "), \
+        f"credential fixture did not return HTTP 200: {result.stdout}"
+    assert "capsem_test_" not in result.stdout
+
+
+def test_local_websocket_echo_fixture():
+    """WebSocket upgrade and frame echo must work against the local lab."""
+    local_url = _require_local_debug_url("/ws/echo", "local WebSocket smoke")
+    ws_url = local_url.replace("http://", "ws://", 1).replace("https://", "wss://", 1)
+    result = run(
+        "python3 - <<'PY'\n"
+        "import sys\n"
+        "from websockets.sync.client import connect\n"
+        f"with connect({ws_url!r}, proxy=None, open_timeout=5, close_timeout=5) as ws:\n"
+        "    ws.send('doctor-websocket')\n"
+        "    reply = ws.recv(timeout=5)\n"
+        "    print(reply)\n"
+        "PY",
+        timeout=15,
+    )
+    assert result.returncode == 0, f"websocket fixture failed: {result.stdout}"
+    assert "doctor-websocket" in result.stdout, \
+        f"unexpected websocket echo: {result.stdout}"
+
+
 def test_non_standard_port_fails():
     """Connections to non-443 ports must fail."""
     result = run(

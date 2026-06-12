@@ -6,8 +6,9 @@ the session.db and main.db to verify that all telemetry pipelines recorded
 data correctly during the diagnostic run.
 
 Capsem-doctor exercises network (allowed + denied domains), filesystem
-(test file writes), and MCP (tool discovery + invocation) -- but NOT
-AI model calls. This test validates that all of those events were captured.
+(test file writes), MCP (tool discovery + invocation), and hermetic
+model-shaped traffic through the local debug upstream. This test validates
+that all of those events were captured.
 
 Usage:
     python3 scripts/doctor_session_test.py              # uses target/debug/capsem
@@ -290,28 +291,56 @@ def verify_session(session_id: str) -> bool:
             "MCP tools/call NOT logged",
         )
 
-    # -- model_calls (should be empty) -------------------------------------
-    print(f"\n{BOLD}model_calls (regression check){RESET}")
+    # -- model_calls -------------------------------------------------------
+    print(f"\n{BOLD}model_calls{RESET}")
     model_count = conn.execute("SELECT COUNT(*) FROM model_calls").fetchone()[0]
     r.check(
-        model_count == 0,
-        "0 model_calls (capsem-doctor does not call LLMs)",
-        f"{model_count} model_calls found (regression: something is misidentifying traffic as LLM calls)",
+        model_count > 0,
+        f"{model_count} model_calls recorded",
+        "no model_calls recorded (local OpenAI-compatible fixture parsing may have failed)",
     )
+    if model_count > 0:
+        debug_model = conn.execute(
+            "SELECT * FROM model_calls"
+            " WHERE provider = 'openai'"
+            " AND model = 'debug-local'"
+            " AND path = '/v1/chat/completions'"
+            " ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        r.check(
+            debug_model is not None,
+            "debug-local OpenAI-compatible model_call recorded",
+            "debug-local OpenAI-compatible model_call missing",
+        )
+        if debug_model is not None:
+            r.check(
+                (debug_model["input_tokens"] or 0) > 0
+                and (debug_model["output_tokens"] or 0) > 0,
+                "debug-local model_call has token usage",
+                "debug-local model_call missing token usage",
+            )
 
-    # -- tool_calls / tool_responses (should be empty) ---------------------
-    print(f"\n{BOLD}tool_calls / tool_responses (regression check){RESET}")
+    # -- tool_calls / tool_responses ---------------------------------------
+    print(f"\n{BOLD}tool_calls / tool_responses{RESET}")
     tc_count = conn.execute("SELECT COUNT(*) FROM tool_calls").fetchone()[0]
     tr_count = conn.execute("SELECT COUNT(*) FROM tool_responses").fetchone()[0]
     r.check(
-        tc_count == 0,
-        "0 tool_calls (no AI agent tool use in capsem-doctor)",
-        f"{tc_count} tool_calls found (regression)",
+        tc_count > 0,
+        f"{tc_count} tool_calls recorded",
+        "no tool_calls recorded (debug model fixture tool call parsing may have failed)",
+    )
+    debug_tool_call = conn.execute(
+        "SELECT COUNT(*) FROM tool_calls WHERE tool_name = 'debug_lookup'"
+    ).fetchone()[0]
+    r.check(
+        debug_tool_call > 0,
+        f"debug_lookup tool_calls recorded: {debug_tool_call}",
+        "debug_lookup tool_call missing",
     )
     r.check(
         tr_count == 0,
-        "0 tool_responses (no AI agent tool use in capsem-doctor)",
-        f"{tr_count} tool_responses found (regression)",
+        "0 tool_responses (fixture emits a request-side tool call only)",
+        f"{tr_count} tool_responses found (unexpected)",
     )
 
     conn.close()
@@ -345,12 +374,18 @@ def verify_session(session_id: str) -> bool:
                 f"main.db total_mcp_calls = {row['total_mcp_calls']}",
                 "main.db total_mcp_calls = 0 (rollup failed)",
             )
+            r.check(
+                row["total_tool_calls"] > 0,
+                f"main.db total_tool_calls = {row['total_tool_calls']}",
+                "main.db total_tool_calls = 0 (rollup failed)",
+            )
 
             # Cross-check: main.db rollup matches session.db actuals.
             sconn = sqlite3.connect(str(SESSIONS_DIR / session_id / "session.db"))
             actual_fs = sconn.execute("SELECT COUNT(*) FROM fs_events").fetchone()[0]
             actual_net = sconn.execute("SELECT COUNT(*) FROM net_events").fetchone()[0]
             actual_mcp = sconn.execute("SELECT COUNT(*) FROM mcp_calls").fetchone()[0]
+            actual_tools = sconn.execute("SELECT COUNT(*) FROM tool_calls").fetchone()[0]
             sconn.close()
 
             r.check(
@@ -367,6 +402,11 @@ def verify_session(session_id: str) -> bool:
                 row["total_mcp_calls"] == actual_mcp,
                 f"rollup total_mcp_calls ({row['total_mcp_calls']}) matches session.db ({actual_mcp})",
                 f"rollup total_mcp_calls ({row['total_mcp_calls']}) != session.db ({actual_mcp})",
+            )
+            r.check(
+                row["total_tool_calls"] == actual_tools,
+                f"rollup total_tool_calls ({row['total_tool_calls']}) matches session.db ({actual_tools})",
+                f"rollup total_tool_calls ({row['total_tool_calls']}) != session.db ({actual_tools})",
             )
         else:
             r.fail(f"session {session_id} not found in main.db")
