@@ -7,6 +7,15 @@ description: MITM proxy development for Capsem -- the air-gapped network interce
 
 The MITM proxy is the most complex subsystem in Capsem. It intercepts all HTTPS traffic from the air-gapped guest VM, inspects it, applies policy, and records telemetry. Treat it as a system, not a collection of hacks -- every capability must be general-purpose.
 
+## Security boundary
+
+Network code parses transport bytes, routes traffic, and emits typed
+`SecurityEvent` facts. It must not broker credentials, create credential refs,
+run CEL/security decisions, or sanitize ledger projections. Those belong to the
+security engine plugin rail. Every security plugin has the same data contract:
+it receives a `SecurityEvent` and returns a `SecurityEvent`; the plugin stage
+only controls ordering (`Pre`, `Post`, or `Logging`).
+
 ## Pipeline
 
 ```

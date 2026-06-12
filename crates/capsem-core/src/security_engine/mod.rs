@@ -23,6 +23,11 @@ use crate::net::policy_config::{
     SecurityPluginConfig, SecurityPluginMode, SecurityRuleAction, SecurityRuleSet,
 };
 
+mod plugins;
+use plugins::{
+    CredentialBrokerPlugin, DummyPostAllowPlugin, DummyPreEicarPlugin, LogSanitizerPlugin,
+};
+
 pub const SECURITY_EVENT_EMIT_SPAN: &str = "capsem.security_event.emit";
 pub const SECURITY_EVENT_EMIT_TOTAL: &str = "security_event.emit_total";
 pub const SECURITY_EVENT_EMIT_DURATION_MS: &str = "security_event.emit_duration_ms";
@@ -1116,7 +1121,7 @@ pub fn evaluate_security_boundary(
     let action_registry =
         SecurityActionRegistry::with_builtin_actions().with_plugin_policy(plugin_policy);
 
-    event = action_registry.apply_security_plugins(SecurityPluginStage::PreDecision, event)?;
+    event = action_registry.apply_security_plugins(SecurityPluginStage::Pre, event)?;
 
     let evaluation = rules.evaluate(&event).map_err(SecurityActionError::new)?;
     for rule in evaluation.matched_rules() {
@@ -1136,7 +1141,7 @@ pub fn evaluate_security_boundary(
         enforcement.action = SecurityEnforcementAction::Ask;
     }
 
-    event = action_registry.apply_security_plugins(SecurityPluginStage::PostDecision, event)?;
+    event = action_registry.apply_security_plugins(SecurityPluginStage::Post, event)?;
     if matches!(event.decision.effective, SecurityDecisionKind::Block) {
         enforcement.action = SecurityEnforcementAction::Block;
     }
@@ -2179,8 +2184,9 @@ impl std::error::Error for SecurityActionError {}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SecurityPluginStage {
-    PreDecision,
-    PostDecision,
+    Pre,
+    Post,
+    Logging,
 }
 
 pub struct SecurityPluginResult {
@@ -2205,7 +2211,8 @@ impl SecurityPluginResult {
 }
 
 /// A plugin that mutates or annotates the canonical security event on the same
-/// rail as CEL enforcement.
+/// rail as CEL enforcement. Every stage has the same data contract:
+/// `SecurityEvent -> SecurityEvent`. Stage only controls ordering.
 pub trait SecurityPlugin: Send + Sync {
     fn id(&self) -> &'static str;
     fn stage(&self) -> SecurityPluginStage;
@@ -2231,6 +2238,8 @@ impl SecurityActionRegistry {
             .register_plugin(DummyPreEicarPlugin)
             .expect("built-in security plugin ids are unique")
             .register_plugin(DummyPostAllowPlugin)
+            .expect("built-in security plugin ids are unique")
+            .register_plugin(LogSanitizerPlugin)
             .expect("built-in security plugin ids are unique")
     }
 
@@ -2322,81 +2331,7 @@ fn plugin_mode_decision(mode: SecurityPluginMode) -> Option<SecurityDecisionKind
     }
 }
 
-pub struct CredentialBrokerPlugin;
-
-impl SecurityPlugin for CredentialBrokerPlugin {
-    fn id(&self) -> &'static str {
-        "credential_broker"
-    }
-
-    fn stage(&self) -> SecurityPluginStage {
-        SecurityPluginStage::PostDecision
-    }
-
-    fn apply(&self, mut event: SecurityEvent) -> Result<SecurityPluginResult, SecurityActionError> {
-        if event.credential_observations.is_empty() {
-            return Ok(SecurityPluginResult::skipped(event));
-        }
-        for observation in &event.credential_observations {
-            let brokered = crate::credential_broker::broker_observed_credential(observation)
-                .map_err(SecurityActionError::new)?;
-            if event.credential_ref.is_none() {
-                event.credential_ref = Some(brokered.credential_ref);
-            }
-        }
-        event
-            .action_trace
-            .push(PolicyActionId::CredentialBrokerCapture);
-        Ok(SecurityPluginResult::applied(event))
-    }
-}
-
-pub struct DummyPreEicarPlugin;
-
-impl SecurityPlugin for DummyPreEicarPlugin {
-    fn id(&self) -> &'static str {
-        "dummy_pre_eicar"
-    }
-
-    fn stage(&self) -> SecurityPluginStage {
-        SecurityPluginStage::PreDecision
-    }
-
-    fn apply(&self, mut event: SecurityEvent) -> Result<SecurityPluginResult, SecurityActionError> {
-        if !security_event_contains_text(&event, DUMMY_EICAR_TEST_STRING)
-            && !security_event_contains_text(&event, "EICAR")
-        {
-            return Ok(SecurityPluginResult::skipped(event));
-        }
-        event.request_decision(SecurityDecisionKind::Block);
-        event
-            .action_trace
-            .push(PolicyActionId::CredentialBrokerCapture);
-        Ok(SecurityPluginResult::applied(event))
-    }
-}
-
-pub struct DummyPostAllowPlugin;
-
-impl SecurityPlugin for DummyPostAllowPlugin {
-    fn id(&self) -> &'static str {
-        "dummy_post_allow"
-    }
-
-    fn stage(&self) -> SecurityPluginStage {
-        SecurityPluginStage::PostDecision
-    }
-
-    fn apply(&self, mut event: SecurityEvent) -> Result<SecurityPluginResult, SecurityActionError> {
-        event.request_decision(SecurityDecisionKind::Allow);
-        event
-            .action_trace
-            .push(PolicyActionId::CredentialBrokerSubstitute);
-        Ok(SecurityPluginResult::applied(event))
-    }
-}
-
-fn security_event_contains_text(event: &SecurityEvent, needle: &str) -> bool {
+pub(super) fn security_event_contains_text(event: &SecurityEvent, needle: &str) -> bool {
     if needle.is_empty() {
         return false;
     }
@@ -2497,7 +2432,7 @@ impl<E: SecurityEventEmitter> SecurityEventEngine<E> {
     ) -> Result<SecurityEvent, SecurityActionError> {
         event = self
             .action_registry
-            .apply_security_plugins(SecurityPluginStage::PreDecision, event)?;
+            .apply_security_plugins(SecurityPluginStage::Pre, event)?;
 
         let evaluation = rules.evaluate(&event).map_err(SecurityActionError::new)?;
         for rule in evaluation.matched_rules() {
@@ -2506,7 +2441,10 @@ impl<E: SecurityEventEmitter> SecurityEventEngine<E> {
         }
         event = self
             .action_registry
-            .apply_security_plugins(SecurityPluginStage::PostDecision, event)?;
+            .apply_security_plugins(SecurityPluginStage::Post, event)?;
+        event = self
+            .action_registry
+            .apply_security_plugins(SecurityPluginStage::Logging, event)?;
         self.emitter
             .emit(event.clone())
             .map_err(|error| SecurityActionError::new(error.to_string()))?;

@@ -1,9 +1,7 @@
 //! Pure helpers used by the MITM pipeline: LLM-API path detection,
-//! URI splitting, and header formatting with sensitive-value substitution.
+//! URI splitting, and header formatting.
 
-use crate::credential_broker::{
-    detect_http_credential, is_broker_reference, CredentialObservation,
-};
+use crate::credential_broker::CredentialObservation;
 use crate::net::ai_traffic::provider::ProviderKind;
 
 /// Returns true only for paths that are actual LLM API endpoints
@@ -73,9 +71,9 @@ pub(super) fn parse_http_host_target(
 }
 
 /// Headers whose values are safe to store verbatim in telemetry logs.
-/// Everything else keeps its name but the value is replaced with either
-/// a broker credential reference (when a known credential is detected)
-/// or a short BLAKE3 hash for unknown sensitive material.
+/// Everything else keeps its name but the value is replaced with a short hash.
+/// Provider-aware credential handling belongs to the security-engine plugin
+/// rail, not this network formatting helper.
 const HEADER_ALLOWLIST: &[&str] = &[
     "accept",
     "content-encoding",
@@ -98,56 +96,22 @@ pub(super) struct FormattedHeaders {
 /// Format HTTP headers for telemetry storage.
 ///
 /// Allowlisted headers are stored verbatim. All other headers keep their
-/// name but the value is replaced with `credential:blake3:<hex>` when the
-/// broker recognizes the credential provider, otherwise `hash:<12-char-hex>`
-/// for non-credential sensitive material. This prevents credential leakage
-/// while preserving header presence and enabling same-key correlation.
+/// name but the value is replaced with `hash:<12-char-hex>`. This helper
+/// must not classify providers, broker credentials, or create credential refs.
 pub(super) fn format_headers(headers: &hyper::HeaderMap) -> String {
     format_headers_for_domain("", headers).formatted
 }
 
 pub(super) fn format_headers_for_domain(
-    domain: &str,
+    _domain: &str,
     headers: &hyper::HeaderMap,
 ) -> FormattedHeaders {
-    let mut observations = Vec::new();
-    let mut credential_ref = None;
     let formatted = headers
         .iter()
         .map(|(name, value)| {
             if HEADER_ALLOWLIST.contains(&name.as_str()) {
                 let v = value.to_str().unwrap_or("<binary>");
                 format!("{}: {}", name, v)
-            } else if let Ok(v) = value.to_str() {
-                if is_broker_reference(v) {
-                    if credential_ref.is_none() {
-                        credential_ref = Some(v.to_string());
-                    }
-                    format!("{}: {}", name, v)
-                } else if let Some(observation) =
-                    detect_http_credential(domain, name.as_str(), value.as_bytes())
-                {
-                    let reference = observation.credential_ref();
-                    if credential_ref.is_none() {
-                        credential_ref = Some(reference.clone());
-                    }
-                    observations.push(observation);
-                    format!("{}: {}", name, reference)
-                } else {
-                    let raw = value.as_bytes();
-                    let digest = blake3::hash(raw);
-                    let hex = &digest.to_hex()[..12];
-                    format!("{}: hash:{}", name, hex)
-                }
-            } else if let Some(observation) =
-                detect_http_credential(domain, name.as_str(), value.as_bytes())
-            {
-                let reference = observation.credential_ref();
-                if credential_ref.is_none() {
-                    credential_ref = Some(reference.clone());
-                }
-                observations.push(observation);
-                format!("{}: {}", name, reference)
             } else {
                 let raw = value.as_bytes();
                 let digest = blake3::hash(raw);
@@ -160,7 +124,36 @@ pub(super) fn format_headers_for_domain(
 
     FormattedHeaders {
         formatted,
-        observations,
-        credential_ref,
+        observations: Vec::new(),
+        credential_ref: None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn header_formatter_does_not_broker_or_classify_credentials() {
+        let mut headers = hyper::HeaderMap::new();
+        headers.insert(
+            hyper::header::AUTHORIZATION,
+            hyper::header::HeaderValue::from_static("Bearer sk-network-format-secret"),
+        );
+
+        let formatted = format_headers_for_domain("api.openai.com", &headers);
+
+        assert!(
+            formatted.observations.is_empty(),
+            "credential observations belong to credential broker plugins"
+        );
+        assert_eq!(
+            formatted.credential_ref, None,
+            "network header formatting must not create broker references"
+        );
+        assert!(
+            !formatted.formatted.contains("credential:blake3:"),
+            "network header formatting must not broker credential values"
+        );
     }
 }

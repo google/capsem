@@ -8,15 +8,19 @@ failure first.
 ## Tasks
 
 - [x] Capture sprint boundary and end posture.
-- [ ] RED: security-engine contract proves broker pre-plugin plus sanitizer
-  final-plugin are required to keep runtime bytes working and ledger bytes safe.
-- [ ] RED: network header formatter cannot create credential refs, hashes, or
+- [x] RED: security-engine contract proves plugins receive a `SecurityEvent`
+  and emit/return a `SecurityEvent`; no stage gets network/logger side-channel
+  objects.
+- [x] RED: network header formatter cannot create credential refs or
   provider-sensitive redaction.
-- [ ] RED: logger write path fails closed when final log sanitizer is absent or
-  disabled for security-event materialization.
-- [ ] Implement explicit broker pre-plugin / sanitizer final-plugin split.
+- [x] RED: security engine logging-plugin sanitizes raw credential-bearing
+  events before logger/storage materialization.
+- [x] Implement explicit pre-plugin / post-plugin / logging-plugin stage
+  ordering without splitting one plugin across unrelated responsibilities.
+- [x] Define explicit plugin object contracts: base metadata plus pre, post,
+  and logging stages, all `SecurityEvent -> SecurityEvent`.
 - [ ] Split runtime materialization from ledger materialization.
-- [ ] Burn credential-sensitive logic from network formatter/intercept helpers.
+- [x] Burn credential-sensitive logic from network formatter/intercept helpers.
 - [ ] Rename/docs cleanup for touched boundaries: network engine, security
   engine, credential broker, log sanitizer.
 - [ ] Update architecture docs with the explicit runtime-vs-ledger
@@ -29,7 +33,7 @@ failure first.
   replay get the same no-raw-ledger proof.
 - [ ] Add plugin latency/counter evidence for broker and sanitizer.
 - [ ] Update CHANGELOG.md.
-- [ ] Focused test gate.
+- [x] Focused test gate.
 - [ ] Commit and push this slice before returning to broader bug hotlist.
 
 ## Invariants
@@ -37,21 +41,33 @@ failure first.
 - Network engine parses and routes; it does not decide, broker, redact, or
   credential-classify.
 - Security engine is the only rule/plugin/decision rail.
-- Credential broker pre-plugin owns capture/store/inject metadata.
-- Log sanitizer final-plugin owns durable projection.
+- Plugins receive a `SecurityEvent` and emit/return a `SecurityEvent`; no
+  network, logger, DB, route, or formatter object can enter the plugin contract.
+- Credential broker plugin owns capture/store/inject metadata and does not own
+  logging projection.
+- Log sanitizer logging-plugin owns durable projection before
+  logger/materializer handoff and does not care whether brokering happened.
 - Upstream/runtime bytes and ledger bytes are separate materializations.
 - Raw credential material must never reach session DB, structured logs, route
   JSON, or frontend stats.
-- Missing sanitizer is a failure, not a fallback to raw logging.
-- No compatibility rail, no fallback logger, no formatter side-channel.
+- No logger-specific sanitizer fallback, compatibility rail, or formatter
+  side-channel.
 
 ## Coverage Ledger
 
-- Unit/contract: pending.
+- Unit/contract:
+  - `cargo test -p capsem-core header_formatter_does_not_broker_or_classify_credentials -- --nocapture`
+  - `cargo test -p capsem-core security_event_log_sanitizer_logging_plugin_redacts_before_logger_emit -- --nocapture`
+  - `cargo test -p capsem-core security_event_engine_ -- --nocapture`
+  - `cargo test -p capsem-core security_plugin_ -- --nocapture`
+  - `cargo test -p capsem-core builtin_dummy_plugins_block_eicar_and_cannot_be_downgraded_by_postprocess -- --nocapture`
+  - `cargo test -p capsem-core credential_broker_plugin_uses_matched_security_rule_metadata -- --nocapture`
+  - `cargo test -p capsem-core http_materializer_resolves_broker_ref_only_for_upstream_copy -- --nocapture`
+  - `cargo test -p capsem-core` passed: 1560 unit tests, 29 MITM integration tests, 2 platform gating tests, 12 settings tests, 11 VM integration tests, doc tests ok; only existing ignored tests remained ignored.
 - Functional: pending.
 - Adversarial: pending.
 - E2E/VM: pending in `tests/ironbank/`.
 - Telemetry: pending.
 - Performance: pending plugin counters/latency evidence.
-- Docs/skills: pending architecture docs and developer skill updates.
+- Docs/skills: boundary note added to `/dev-mitm-proxy`; architecture docs still pending.
 - Missing/deferred: none accepted for release blocker scope.

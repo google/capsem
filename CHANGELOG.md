@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed (route surfaces and diagnostics)
+- Split security plugins into explicit pre, post, and logging stages while
+  preserving the single `SecurityEvent -> SecurityEvent` plugin contract; the
+  credential broker now owns credential observation/storage as a security
+  plugin, and the log sanitizer owns the ledger-safe projection before
+  emission.
+- Removed provider-aware credential brokering from MITM header formatting so
+  network helpers no longer create credential refs or credential observations.
 - Replaced the Rust mock-server crate with the shared Python mock server
   runtime for doctor, integration, recorder, benchmark, and Ironbank tests, so
   there is one hermetic protocol lab and no duplicate fixture implementation.

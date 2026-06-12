@@ -72,7 +72,7 @@ impl SecurityPlugin for MarkDecisionPlugin {
     }
 
     fn stage(&self) -> SecurityPluginStage {
-        SecurityPluginStage::PreDecision
+        SecurityPluginStage::Pre
     }
 
     fn apply(&self, mut event: SecurityEvent) -> Result<SecurityPluginResult, SecurityActionError> {
@@ -170,12 +170,12 @@ fn security_event_engine_runs_enabled_plugins_by_stage() {
         ]))
         .register_plugin(TracePlugin {
             id: "trace_post",
-            stage: SecurityPluginStage::PostDecision,
+            stage: SecurityPluginStage::Post,
         })
         .unwrap()
         .register_plugin(TracePlugin {
             id: "trace_pre",
-            stage: SecurityPluginStage::PreDecision,
+            stage: SecurityPluginStage::Pre,
         })
         .unwrap();
     let engine = SecurityEventEngine::new(registry, Arc::clone(&emitter));
@@ -232,7 +232,7 @@ fn security_event_engine_skips_disabled_plugins() {
         )]))
         .register_plugin(TracePlugin {
             id: "trace",
-            stage: SecurityPluginStage::PostDecision,
+            stage: SecurityPluginStage::Post,
         })
         .unwrap();
     let engine = SecurityEventEngine::new(registry, Arc::clone(&emitter));
@@ -269,7 +269,7 @@ fn security_event_engine_applies_postprocess_after_preprocess_mutation() {
         .unwrap()
         .register_plugin(TracePlugin {
             id: "trace",
-            stage: SecurityPluginStage::PostDecision,
+            stage: SecurityPluginStage::Post,
         })
         .unwrap();
     let engine = SecurityEventEngine::new(registry, Arc::clone(&emitter));
@@ -310,7 +310,7 @@ fn security_plugin_policy_supports_rewrite_and_disable_modes() {
         )]))
         .register_plugin(TracePlugin {
             id: "trace",
-            stage: SecurityPluginStage::PostDecision,
+            stage: SecurityPluginStage::Post,
         })
         .unwrap();
     let rewrite_returned =
@@ -335,7 +335,7 @@ fn security_plugin_policy_supports_rewrite_and_disable_modes() {
         )]))
         .register_plugin(TracePlugin {
             id: "trace",
-            stage: SecurityPluginStage::PostDecision,
+            stage: SecurityPluginStage::Post,
         })
         .unwrap();
     let disabled_returned =
@@ -364,13 +364,13 @@ fn security_plugin_policy_block_is_absolute_after_later_allow() {
         ]))
         .register_plugin(DecisionPlugin {
             id: "blocker",
-            stage: SecurityPluginStage::PreDecision,
+            stage: SecurityPluginStage::Pre,
             requested: SecurityDecisionKind::Block,
         })
         .unwrap()
         .register_plugin(DecisionPlugin {
             id: "allow_after",
-            stage: SecurityPluginStage::PostDecision,
+            stage: SecurityPluginStage::Post,
             requested: SecurityDecisionKind::Allow,
         })
         .unwrap();
@@ -575,6 +575,78 @@ fn credential_broker_plugin_uses_matched_security_rule_metadata() {
         Some(raw)
     );
     assert_eq!(emitter.events.lock().unwrap().as_slice(), [returned]);
+}
+
+#[test]
+fn security_event_log_sanitizer_logging_plugin_redacts_before_logger_emit() {
+    let _lock = crate::credential_broker::TEST_ENV_LOCK.blocking_lock();
+    let tmp = tempfile::tempdir().unwrap();
+    let store_path = tmp.path().join("broker-store.json");
+    let _store_guard = EnvVarGuard::set(crate::credential_broker::TEST_STORE_ENV, &store_path);
+    let _user_guard = EnvVarGuard::set("CAPSEM_HOME", tmp.path());
+    let emitter = Arc::new(RecordingEmitter::new());
+    let registry =
+        SecurityActionRegistry::with_builtin_actions().with_plugin_policy(BTreeMap::from([
+            (
+                "credential_broker".to_string(),
+                plugin_config(SecurityPluginMode::Rewrite, DetectionLevel::Informational),
+            ),
+            (
+                "log_sanitizer".to_string(),
+                plugin_config(SecurityPluginMode::Rewrite, DetectionLevel::Informational),
+            ),
+        ]));
+    let engine = SecurityEventEngine::new(registry, Arc::clone(&emitter));
+    let raw = "sk-security-event-raw-header";
+    let mut headers = http::HeaderMap::new();
+    headers.insert(
+        http::header::AUTHORIZATION,
+        http::HeaderValue::from_str(&format!("Bearer {raw}")).unwrap(),
+    );
+    let event = SecurityEvent::new(RuntimeSecurityEventType::HttpRequest)
+        .with_http_request(HttpRequestSecurityEvent::new(
+            "api.openai.com",
+            Some(ProviderKind::OpenAi),
+            headers,
+            None,
+        ))
+        .with_credential_observations(vec![CredentialObservation {
+            provider: CredentialProvider::OpenAi,
+            raw_value: raw.to_string(),
+            source: "http.request.headers.authorization".to_string(),
+            event_type: Some("http.request".to_string()),
+            confidence: 1.0,
+            trace_id: None,
+            context_json: None,
+        }]);
+
+    let returned = engine
+        .apply_matching_rules_and_emit(&SecurityRuleSet::new(Vec::new()), event)
+        .expect("credential broker plus logging sanitizer should emit a safe event");
+
+    let events = emitter.events.lock().unwrap();
+    assert_eq!(events.as_slice(), [returned.clone()]);
+    let emitted = events.first().expect("sanitized event emitted");
+    assert_eq!(
+        emitted.credential_observations,
+        Vec::<CredentialObservation>::new(),
+        "raw observations are runtime-only and must not cross the logging-plugin handoff"
+    );
+    let auth = emitted
+        .http_request
+        .as_ref()
+        .and_then(|request| request.headers.get(http::header::AUTHORIZATION))
+        .and_then(|value| value.to_str().ok())
+        .expect("sanitized auth header is preserved as a broker reference");
+    assert!(
+        auth.contains("credential:blake3:"),
+        "sanitized header must preserve auth shape while replacing raw credential: {auth}"
+    );
+    assert_ne!(auth, raw);
+    assert!(
+        !format!("{emitted:?}").contains(raw),
+        "logging-plugin output must not contain raw credential material"
+    );
 }
 
 #[test]
