@@ -4492,13 +4492,6 @@ async fn handle_profile_assets_info(
     })))
 }
 
-async fn handle_profile_assets_edit(
-    Path(profile_id): Path<String>,
-) -> Result<Json<serde_json::Value>, AppError> {
-    let _profile_id = validate_profile_route_id(profile_id)?;
-    Err(profile_persistence_not_implemented("profile assets edit"))
-}
-
 /// PUT /corp/edit -- apply corporate config from URL or inline TOML.
 async fn handle_corp_config(
     Json(payload): Json<CorpConfigRequest>,
@@ -8411,10 +8404,6 @@ fn build_service_router(state: Arc<ServiceState>) -> Router {
         .route(
             "/profiles/{profile_id}/assets/info",
             get(handle_profile_assets_info),
-        )
-        .route(
-            "/profiles/{profile_id}/assets/edit",
-            patch(handle_profile_assets_edit),
         )
         .route(
             "/profiles/{profile_id}/assets/ensure",

@@ -80,7 +80,6 @@ skills, assets, and profile metadata all belong here.
 | `POST` | `/profiles/{profile_id}/reload` | Reload one profile. |
 | `GET` | `/profiles/{profile_id}/assets/info` | Profile asset declaration and origins. |
 | `GET` | `/profiles/{profile_id}/assets/status` | Per-asset readiness, hash, and missing/download state. |
-| `PATCH` | `/profiles/{profile_id}/assets/edit` | Edit profile asset references. |
 | `POST` | `/profiles/{profile_id}/assets/ensure` | Download or materialize missing profile assets. |
 
 ### Enforcement and Detection

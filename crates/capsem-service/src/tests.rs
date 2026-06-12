@@ -1492,10 +1492,24 @@ async fn profile_assets_info_reflects_manifest_and_edit_is_gated() {
         "profile assets info must not expose build compression metadata"
     );
 
-    let edit = handle_profile_assets_edit(Path("code".to_string()))
-        .await
-        .unwrap_err();
-    assert_eq!(edit.0, StatusCode::NOT_IMPLEMENTED);
+}
+
+#[tokio::test]
+async fn profile_assets_edit_route_is_not_mounted() {
+    let state = make_test_state();
+    let app = build_service_router(state);
+    let (status, _) = route_request(
+        app,
+        axum::http::Method::PATCH,
+        "/profiles/code/assets/edit",
+        Some(json!({})),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::NOT_FOUND,
+        "profile asset edits have no typed mutation contract; do not mount a fake route"
+    );
 }
 
 #[tokio::test]
@@ -1688,12 +1702,6 @@ async fn mounted_fail_closed_stub_routes_return_explicit_errors() {
             "/profiles/code/clone",
             None,
             "profile clone requires profile file persistence",
-        ),
-        (
-            axum::http::Method::PATCH,
-            "/profiles/code/assets/edit",
-            None,
-            "profile assets edit requires profile file persistence",
         ),
         (
             axum::http::Method::PATCH,

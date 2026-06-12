@@ -127,9 +127,9 @@ next one, and stage only the files for that slice.
     mounted_fail_closed_stub_routes_return_explicit_errors -- --nocapture`;
     `cargo check -p capsem-core -p capsem-service`.
   - Remaining mounted mutation stubs: profile create/edit/delete/clone,
-    profile assets edit, profile skill add/edit/delete, VM edit, VM restart,
-    VM reload-profile. Each must either persist through the contract object or
-    be unmounted in a later S3 slice.
+    profile skill add/edit/delete, VM edit, VM restart, VM reload-profile. Each
+    must either persist through the contract object or be unmounted in a later
+    S3 slice.
   - 2026-06-11 progress: profile skill add/edit/delete are no longer mounted
     501 stubs. They now mutate through `Profile::add_skill_path`,
     `Profile::edit_skill_path`, and `Profile::delete_skill`, persist
@@ -142,9 +142,21 @@ next one, and stage only the files for that slice.
     `cargo test -p capsem-service
     mounted_fail_closed_stub_routes_return_explicit_errors -- --nocapture`;
     `cargo check -p capsem-core -p capsem-service`.
-  - Remaining mounted mutation stubs after skill burn: profile
-    create/edit/delete/clone, profile assets edit, VM edit, VM restart, VM
-    reload-profile.
+  - 2026-06-11 progress: profile assets edit is not a route anymore. Asset
+    references are materialized by capsem-admin/profile manifests; the runtime
+    API exposes assets through status/info/ensure only until there is a typed
+    profile mutation contract.
+  - Proof: `cargo test -p capsem-service
+    profile_assets_edit_route_is_not_mounted -- --nocapture`; `cargo test -p
+    capsem-gateway gateway_profile_assets_edit_is_not_forwarded --
+    --nocapture`; `cargo test -p capsem-service
+    mounted_fail_closed_stub_routes_return_explicit_errors -- --nocapture`;
+    `cargo test -p capsem-gateway
+    gateway_security_routes_are_explicitly_forwarded -- --nocapture`; `cargo
+    check -p capsem-service -p capsem-gateway`; `pnpm --dir frontend test
+    src/lib/__tests__/api.test.ts`; `pnpm --dir docs build`.
+  - Remaining mounted mutation stubs after asset route burn: profile
+    create/edit/delete/clone, VM edit, VM restart, VM reload-profile.
 - [ ] RED/GREEN: session state enum controls available actions for running,
   stopped, incompatible, defunct, paused, and deleted sessions.
 - [ ] Proof: profile routes are scoped by profile id; service-global routes are

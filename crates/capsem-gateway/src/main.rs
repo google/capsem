@@ -344,10 +344,6 @@ fn service_proxy_routes() -> Router<Arc<AppState>> {
             get(proxy::handle_proxy),
         )
         .route(
-            "/profiles/{profile_id}/assets/edit",
-            patch(proxy::handle_proxy),
-        )
-        .route(
             "/profiles/{profile_id}/assets/ensure",
             post(proxy::handle_proxy),
         )
@@ -546,6 +542,22 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn gateway_profile_assets_edit_is_not_forwarded() {
+        let app = service_proxy_app("/tmp/capsem-gateway-must-not-connect.sock");
+        let resp = app
+            .oneshot(
+                http::Request::builder()
+                    .method("PATCH")
+                    .uri("/profiles/code/assets/edit")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), http::StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
     async fn gateway_security_routes_are_explicitly_forwarded() {
         for (method, uri) in [
             ("GET", "/vms/test-vm/security/latest"),
@@ -619,7 +631,6 @@ mod tests {
             ("GET", "/profiles/code/detection/rules/list"),
             ("GET", "/profiles/code/assets/status"),
             ("GET", "/profiles/code/assets/info"),
-            ("PATCH", "/profiles/code/assets/edit"),
             ("POST", "/profiles/code/assets/ensure"),
             ("GET", "/profiles/code/skills/info"),
             ("GET", "/profiles/code/skills/list"),

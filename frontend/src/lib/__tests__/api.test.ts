@@ -577,10 +577,6 @@ describe('api', () => {
       await api.getProfileAssetsInfo('code');
       expect(mockFetch.mock.calls[mockFetch.mock.calls.length - 1][0]).toContain('/profiles/code/assets/info');
 
-      await api.editProfileAssets('code', {});
-      expect(mockFetch.mock.calls[mockFetch.mock.calls.length - 1][0]).toContain('/profiles/code/assets/edit');
-      expect(mockFetch.mock.calls[mockFetch.mock.calls.length - 1][1].method).toBe('PATCH');
-
       await api.getProfilePluginsInfo('code');
       expect(mockFetch.mock.calls[mockFetch.mock.calls.length - 1][0]).toContain('/profiles/code/plugins/info');
 

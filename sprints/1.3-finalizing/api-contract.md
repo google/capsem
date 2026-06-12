@@ -141,12 +141,12 @@ contract.
 | Method | Path | Purpose |
 | --- | --- | --- |
 | `GET` | `/profiles/{profile_id}/assets/info` | Read asset references selected by the profile. |
-| `PATCH` | `/profiles/{profile_id}/assets/edit` | Change asset references selected by the profile. |
 | `GET` | `/profiles/{profile_id}/assets/status` | Runtime/cache status for assets required by this profile. |
 | `POST` | `/profiles/{profile_id}/assets/ensure` | Download/build/install missing assets required by this profile. |
 
-Profile asset selection is profile-owned. Service-wide status may report
-runtime readiness, but asset authoring and reconciliation are profile-routed.
+Profile asset selection is authored by capsem-admin and materialized profile
+manifests. Service-wide status may report runtime readiness, but there is no
+runtime asset edit route until it is backed by the typed profile contract.
 
 ### Enforcement
 

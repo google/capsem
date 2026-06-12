@@ -242,7 +242,6 @@ the root.
 | PATCH | `/profiles/{profile_id}/plugins/{plugin_id}/edit` | Edit one plugin config |
 | GET | `/profiles/{profile_id}/assets/status` | Profile asset readiness |
 | GET | `/profiles/{profile_id}/assets/info` | Profile asset descriptors |
-| PATCH | `/profiles/{profile_id}/assets/edit` | Edit profile asset descriptors |
 | POST | `/profiles/{profile_id}/assets/ensure` | Download/verify profile assets |
 | GET | `/profiles/{profile_id}/mcp/info` | Profile MCP config info |
 | GET | `/profiles/{profile_id}/mcp/servers/list` | Profile MCP servers |
