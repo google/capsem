@@ -425,7 +425,7 @@ name = "allow_after_eicar"
 action = "postprocess"
 detection_level = "low"
 priority = 20
-match = 'security.decision == "block"'
+match = 'file.import.content.contains("EICAR")'
 "#,
     );
     let event =
@@ -631,6 +631,26 @@ fn security_event_cel_rejects_credential_and_snapshot_roots() {
 }
 
 #[test]
+fn security_event_cel_roots_accept_network_facts_and_reject_decision_state() {
+    for condition in [
+        r#"ip.value == "127.0.0.1""#,
+        r#"tcp.port == "11434""#,
+        r#"udp.port == "53""#,
+    ] {
+        crate::net::policy_config::validate_security_event_match(condition)
+            .unwrap_or_else(|error| panic!("{condition} should be an accepted CEL root: {error}"));
+    }
+
+    let error =
+        crate::net::policy_config::validate_security_event_match(r#"security.decision == "allow""#)
+            .expect_err("rules must not predicate on decisions emitted by the rule engine");
+    assert!(
+        error.contains("not a first-party security-event root"),
+        "{error}"
+    );
+}
+
+#[test]
 fn security_event_cel_missing_roots_are_non_matches() {
     let condition = r#"
 http.host.matches("(^|.*\.)openai\.com$")
@@ -703,45 +723,77 @@ fn security_event_cel_exposes_all_first_party_roots() {
         .with_process(ProcessSecurityEvent {
             command: Some("python main.py".to_string()),
             ..Default::default()
+        })
+        .with_ip(IpSecurityEvent {
+            value: Some("127.0.0.1".to_string()),
+            version: Some("4".to_string()),
+        })
+        .with_tcp(TcpSecurityEvent {
+            port: Some("11434".to_string()),
+        })
+        .with_udp(UdpSecurityEvent {
+            port: Some("53".to_string()),
         });
 
     let conditions = [
+        r#"http.valid == "true""#,
         r#"http.host == "example.com""#,
+        r#"dns.valid == "true""#,
         r#"dns.qname == "example.com""#,
+        r#"mcp.valid == "true""#,
+        r#"mcp.tool_call.valid == "true""#,
         r#"mcp.tool_call.name.contains("email")"#,
+        r#"model.valid == "true""#,
+        r#"model.request.valid == "false""#,
+        r#"model.response.valid == "false""#,
         r#"model.provider == "openai""#,
+        r#"file.valid == "true""#,
+        r#"file.import.valid == "true""#,
         r#"file.import.path.endsWith("input.txt")"#,
         r#"file.import.name == "input.txt""#,
         r#"file.import.ext == "txt""#,
         r#"file.import.mime_type == "text/plain""#,
         r#"file.import.content.contains("incoming")"#,
+        r#"file.export.valid == "true""#,
         r#"file.export.path.endsWith("output.json")"#,
         r#"file.export.name == "output.json""#,
         r#"file.export.ext == "json""#,
         r#"file.export.mime_type == "application/json""#,
         r#"file.export.content.contains("ok")"#,
+        r#"file.read.valid == "true""#,
         r#"file.read.path.matches("(^|.*/)skills/.+\.md$")"#,
         r#"file.read.name == "SKILL.md""#,
         r#"file.read.ext == "md""#,
         r#"file.read.mime_type == "text/markdown""#,
         r#"file.read.content.contains("Development Sprint")"#,
+        r#"file.create.valid == "true""#,
         r#"file.create.path.endsWith("report.md")"#,
         r#"file.create.name == "report.md""#,
         r#"file.create.ext == "md""#,
         r#"file.create.mime_type == "text/markdown""#,
         r#"file.create.content.contains("Report")"#,
+        r#"file.write.valid == "true""#,
         r#"file.write.path.endsWith("report.md")"#,
         r#"file.write.name == "report.md""#,
         r#"file.write.ext == "md""#,
         r#"file.write.mime_type == "text/markdown""#,
         r#"file.write.content.contains("updated")"#,
+        r#"file.delete.valid == "true""#,
         r#"file.delete.path.endsWith("old.txt")"#,
         r#"file.delete.name == "old.txt""#,
         r#"file.delete.ext == "txt""#,
         r#"file.delete.mime_type == "text/plain""#,
         r#"file.delete.content.contains("stale")"#,
+        r#"process.valid == "true""#,
+        r#"process.audit.valid == "true""#,
         r#"process.command.contains("python")"#,
-        r#"security.decision == "allow""#,
+        r#"ip.valid == "true""#,
+        r#"ip.value == "127.0.0.1""#,
+        r#"ip.version == "4""#,
+        r#"tcp.valid == "true""#,
+        r#"tcp.port == "11434""#,
+        r#"udp.valid == "true""#,
+        r#"udp.port == "53""#,
     ];
     let covered_roots = conditions
         .iter()

@@ -276,18 +276,48 @@ next one, and stage only the files for that slice.
 
 ## S6. CEL and Security Event Contract
 
-- [ ] RED/GREEN: `ip`, `tcp`, and `udp` are first-party typed CEL facts.
-- [ ] RED/GREEN: family and subobject `valid` booleans exist and are true CEL
+- [x] RED/GREEN: `ip`, `tcp`, and `udp` are first-party typed CEL facts.
+  - 2026-06-11 progress: `SecurityEvent` now carries typed `ip`, `tcp`, and
+    `udp` facts, exposes them through CEL, and serializes them through the
+    public security-event DTO.
+  - Proof: `cargo test -p capsem-core security_event_cel_ --lib --
+    --nocapture`.
+- [x] RED/GREEN: family and subobject `valid` booleans exist and are true CEL
   booleans.
-- [ ] RED/GREEN: rule predicates cannot use `security.*`.
-- [ ] RED/GREEN: default local/private/non-routable network rule is `ask`.
-- [ ] RED/GREEN: Ollama/local backend access changes only through explicit
+  - 2026-06-11 progress: `valid` booleans exist for first-party roots and
+    subobjects such as `model.request.valid`, `mcp.tool_call.valid`,
+    `file.read.valid`, and `process.audit.valid`.
+  - Proof: `cargo test -p capsem-core security_event_cel_ --lib --
+    --nocapture`.
+- [x] RED/GREEN: rule predicates cannot use `security.*`.
+  - 2026-06-11 progress: `security.*` is no longer a first-party CEL root or
+    `SecurityEvent` predicate surface; stale tests now match the original
+    security event payload instead of rule-emitted decision state.
+  - Proof: `cargo test -p capsem-core security_engine --lib -- --nocapture`.
+- [x] RED/GREEN: default local/private/non-routable network rule is `ask`.
+  - 2026-06-11 progress: built-in defaults now include
+    `default.000_local_network`, an ordinary late default CEL rule whose action
+    is `ask` for localhost/private/non-routable IP or host access.
+  - Proof: `cargo test -p capsem-core security_rule_profile --lib --
+    --nocapture`.
+- [x] RED/GREEN: Ollama/local backend access changes only through explicit
   profile-owned rule actions: `allow`, `ask`, `block`, `disable`.
-- [ ] RED/GREEN: existing Ollama default/provider rules are audited so
+  - 2026-06-11 progress: profile-owned Ollama rules are proven for
+    `allow`/`ask`/`block`; `disable` is represented by `enabled = false`, which
+    keeps the rule in inventory and falls back to the default local ask guard.
+  - Proof: `cargo test -p capsem-core security_rule_profile --lib --
+    --nocapture`.
+- [x] RED/GREEN: existing Ollama default/provider rules are audited so
   `localhost`, `127.0.0.1`, `host.docker.internal`, and `local.ollama` do not
   bypass the default local/private-network guard unless the profile's Ollama
   rule explicitly allows them.
-- [ ] RED/GREEN: all security ledger rows retain event id, trace id, rule id,
+  - 2026-06-11 progress: built-in Ollama local host access is an explicit
+    `ai.ollama.rules.http_local_host` allow rule that wins before the default
+    guard when enabled; the default guard still matches and remains visible for
+    ledger evidence.
+  - Proof: `cargo test -p capsem-core security_rule_profile --lib --
+    --nocapture`.
+- [x] RED/GREEN: all security ledger rows retain event id, trace id, rule id,
   action, detection level, plugin evidence, and event payload needed for
   forensics.
   - 2026-06-11 progress: runtime rule evaluation now records each matched
@@ -295,6 +325,7 @@ next one, and stage only the files for that slice.
     pre/postprocess plugins run, so later plugin/action ledger rows can be
     reconstructed against the rule decision that triggered them.
   - Proof: `cargo test -p capsem-core security_engine --lib -- --nocapture`.
+  - 2026-06-11 proof refresh: `cargo check -p capsem-core`.
 
 ## S7. Runtime Protocol Fixes
 

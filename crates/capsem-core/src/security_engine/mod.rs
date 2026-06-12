@@ -64,7 +64,6 @@ impl RuntimeSecurityEventFamily {
                 | RuntimeSecurityEventFamily::Dns
                 | RuntimeSecurityEventFamily::File
                 | RuntimeSecurityEventFamily::Process
-                | RuntimeSecurityEventFamily::Security
         )
     }
 
@@ -1608,6 +1607,9 @@ pub struct SecurityEvent {
     pub model: Option<ModelSecurityEvent>,
     pub file: Option<FileSecurityEvent>,
     pub process: Option<ProcessSecurityEvent>,
+    pub ip: Option<IpSecurityEvent>,
+    pub tcp: Option<TcpSecurityEvent>,
+    pub udp: Option<UdpSecurityEvent>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -1624,6 +1626,9 @@ pub struct SerializableSecurityEvent {
     pub model: Option<ModelSecurityEvent>,
     pub file: Option<FileSecurityEvent>,
     pub process: Option<ProcessSecurityEvent>,
+    pub ip: Option<IpSecurityEvent>,
+    pub tcp: Option<TcpSecurityEvent>,
+    pub udp: Option<UdpSecurityEvent>,
 }
 
 impl From<&SecurityEvent> for SerializableSecurityEvent {
@@ -1645,6 +1650,9 @@ impl From<&SecurityEvent> for SerializableSecurityEvent {
             model: event.model.clone(),
             file: event.file.clone(),
             process: event.process.clone(),
+            ip: event.ip.clone(),
+            tcp: event.tcp.clone(),
+            udp: event.udp.clone(),
         }
     }
 }
@@ -1666,6 +1674,9 @@ impl SecurityEvent {
             model: None,
             file: None,
             process: None,
+            ip: None,
+            tcp: None,
+            udp: None,
         }
     }
 
@@ -1722,6 +1733,21 @@ impl SecurityEvent {
         self
     }
 
+    pub fn with_ip(mut self, ip: IpSecurityEvent) -> Self {
+        self.ip = Some(ip);
+        self
+    }
+
+    pub fn with_tcp(mut self, tcp: TcpSecurityEvent) -> Self {
+        self.tcp = Some(tcp);
+        self
+    }
+
+    pub fn with_udp(mut self, udp: UdpSecurityEvent) -> Self {
+        self.udp = Some(udp);
+        self
+    }
+
     pub fn trace_id(&self) -> Option<String> {
         self.trace_id.clone().or_else(|| {
             self.credential_observations
@@ -1766,21 +1792,16 @@ impl PolicySubject for SecurityEvent {
         if let Some(rest) = field.strip_prefix("process.") {
             return self.process.as_ref().and_then(|event| event.get(rest));
         }
-        if let Some(rest) = field.strip_prefix("security.") {
-            return self.security_get(rest);
+        if let Some(rest) = field.strip_prefix("ip.") {
+            return self.ip.as_ref().and_then(|event| event.get(rest));
+        }
+        if let Some(rest) = field.strip_prefix("tcp.") {
+            return self.tcp.as_ref().and_then(|event| event.get(rest));
+        }
+        if let Some(rest) = field.strip_prefix("udp.") {
+            return self.udp.as_ref().and_then(|event| event.get(rest));
         }
         None
-    }
-}
-
-impl SecurityEvent {
-    fn security_get(&self, field: &str) -> Option<PolicySubjectValue<'_>> {
-        match field {
-            "decision" | "decision.effective" => Some(PolicySubjectValue::String(Cow::Borrowed(
-                self.decision.effective.as_str(),
-            ))),
-            _ => None,
-        }
     }
 }
 
@@ -1796,6 +1817,7 @@ pub struct HttpSecurityEvent {
 impl HttpSecurityEvent {
     fn get(&self, field: &str) -> Option<PolicySubjectValue<'_>> {
         match field {
+            "valid" => Some(PolicySubjectValue::Bool(true)),
             "host" => borrowed_string(self.host.as_deref()),
             "method" => borrowed_string(self.method.as_deref()),
             "path" => borrowed_string(self.path.as_deref()),
@@ -1815,6 +1837,7 @@ pub struct DnsSecurityEvent {
 impl DnsSecurityEvent {
     fn get(&self, field: &str) -> Option<PolicySubjectValue<'_>> {
         match field {
+            "valid" => Some(PolicySubjectValue::Bool(true)),
             "qname" => borrowed_string(self.qname.as_deref()),
             "qtype" => borrowed_string(self.qtype.as_deref()),
             _ => None,
@@ -1833,10 +1856,15 @@ pub struct McpSecurityEvent {
 impl McpSecurityEvent {
     fn get(&self, field: &str) -> Option<PolicySubjectValue<'_>> {
         match field {
+            "valid" => Some(PolicySubjectValue::Bool(true)),
             "method" => borrowed_string(self.method.as_deref()),
             "server.name" => borrowed_string(self.server_name.as_deref()),
+            "server.valid" => Some(PolicySubjectValue::Bool(self.server_name.is_some())),
+            "tool_call.valid" => Some(PolicySubjectValue::Bool(self.tool_call_name.is_some())),
             "tool_call.name" => borrowed_string(self.tool_call_name.as_deref()),
+            "tool_list.valid" => Some(PolicySubjectValue::Bool(self.tool_list.is_some())),
             "tool_list" => borrowed_string(self.tool_list.as_deref()),
+            "event.valid" => Some(PolicySubjectValue::Bool(self.method.is_some())),
             _ => None,
         }
     }
@@ -1854,10 +1882,16 @@ pub struct ModelSecurityEvent {
 impl ModelSecurityEvent {
     fn get(&self, field: &str) -> Option<PolicySubjectValue<'_>> {
         match field {
+            "valid" => Some(PolicySubjectValue::Bool(true)),
             "provider" => borrowed_string(self.provider.as_deref()),
             "name" => borrowed_string(self.name.as_deref()),
+            "request.valid" => Some(PolicySubjectValue::Bool(
+                self.request_body.is_some() || self.tool_calls.is_some(),
+            )),
             "request.body" => borrowed_string(self.request_body.as_deref()),
+            "response.valid" => Some(PolicySubjectValue::Bool(self.response_body.is_some())),
             "response.body" => borrowed_string(self.response_body.as_deref()),
+            "tool_call.valid" => Some(PolicySubjectValue::Bool(self.tool_calls.is_some())),
             "request.tool_calls" => borrowed_string(self.tool_calls.as_deref()),
             _ => None,
         }
@@ -1902,31 +1936,38 @@ pub struct FileSecurityEvent {
 impl FileSecurityEvent {
     fn get(&self, field: &str) -> Option<PolicySubjectValue<'_>> {
         match field {
+            "valid" => Some(PolicySubjectValue::Bool(true)),
+            "import.valid" => Some(PolicySubjectValue::Bool(self.import_path.is_some())),
             "import.path" => borrowed_string(self.import_path.as_deref()),
             "import.name" => borrowed_string(self.import_name.as_deref()),
             "import.ext" => borrowed_string(self.import_ext.as_deref()),
             "import.mime_type" => borrowed_string(self.import_mime_type.as_deref()),
             "import.content" => borrowed_string(self.import_content.as_deref()),
+            "export.valid" => Some(PolicySubjectValue::Bool(self.export_path.is_some())),
             "export.path" => borrowed_string(self.export_path.as_deref()),
             "export.name" => borrowed_string(self.export_name.as_deref()),
             "export.ext" => borrowed_string(self.export_ext.as_deref()),
             "export.mime_type" => borrowed_string(self.export_mime_type.as_deref()),
             "export.content" => borrowed_string(self.export_content.as_deref()),
+            "read.valid" => Some(PolicySubjectValue::Bool(self.read_path.is_some())),
             "read.path" => borrowed_string(self.read_path.as_deref()),
             "read.name" => borrowed_string(self.read_name.as_deref()),
             "read.ext" => borrowed_string(self.read_ext.as_deref()),
             "read.mime_type" => borrowed_string(self.read_mime_type.as_deref()),
             "read.content" => borrowed_string(self.read_content.as_deref()),
+            "create.valid" => Some(PolicySubjectValue::Bool(self.create_path.is_some())),
             "create.path" => borrowed_string(self.create_path.as_deref()),
             "create.name" => borrowed_string(self.create_name.as_deref()),
             "create.ext" => borrowed_string(self.create_ext.as_deref()),
             "create.mime_type" => borrowed_string(self.create_mime_type.as_deref()),
             "create.content" => borrowed_string(self.create_content.as_deref()),
+            "write.valid" => Some(PolicySubjectValue::Bool(self.write_path.is_some())),
             "write.path" => borrowed_string(self.write_path.as_deref()),
             "write.name" => borrowed_string(self.write_name.as_deref()),
             "write.ext" => borrowed_string(self.write_ext.as_deref()),
             "write.mime_type" => borrowed_string(self.write_mime_type.as_deref()),
             "write.content" => borrowed_string(self.write_content.as_deref()),
+            "delete.valid" => Some(PolicySubjectValue::Bool(self.delete_path.is_some())),
             "delete.path" => borrowed_string(self.delete_path.as_deref()),
             "delete.name" => borrowed_string(self.delete_name.as_deref()),
             "delete.ext" => borrowed_string(self.delete_ext.as_deref()),
@@ -1951,12 +1992,67 @@ pub struct ProcessSecurityEvent {
 impl ProcessSecurityEvent {
     fn get(&self, field: &str) -> Option<PolicySubjectValue<'_>> {
         match field {
+            "valid" => Some(PolicySubjectValue::Bool(true)),
+            "exec.valid" => Some(PolicySubjectValue::Bool(
+                self.exec_id.is_some()
+                    || self.exec_path.is_some()
+                    || self.command.is_some()
+                    || self.exit_code.is_some(),
+            )),
             "exec.id" => borrowed_string(self.exec_id.as_deref()),
             "exec.path" => borrowed_string(self.exec_path.as_deref()),
             "exec.exit_code" => borrowed_string(self.exit_code.as_deref()),
             "exec.stdout" => borrowed_string(self.stdout.as_deref()),
             "exec.stderr" => borrowed_string(self.stderr.as_deref()),
+            "audit.valid" => Some(PolicySubjectValue::Bool(self.command.is_some())),
             "command" => borrowed_string(self.command.as_deref()),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize)]
+pub struct IpSecurityEvent {
+    pub value: Option<String>,
+    pub version: Option<String>,
+}
+
+impl IpSecurityEvent {
+    fn get(&self, field: &str) -> Option<PolicySubjectValue<'_>> {
+        match field {
+            "valid" => Some(PolicySubjectValue::Bool(true)),
+            "value" => borrowed_string(self.value.as_deref()),
+            "version" => borrowed_string(self.version.as_deref()),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize)]
+pub struct TcpSecurityEvent {
+    pub port: Option<String>,
+}
+
+impl TcpSecurityEvent {
+    fn get(&self, field: &str) -> Option<PolicySubjectValue<'_>> {
+        match field {
+            "valid" => Some(PolicySubjectValue::Bool(true)),
+            "port" => borrowed_string(self.port.as_deref()),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize)]
+pub struct UdpSecurityEvent {
+    pub port: Option<String>,
+}
+
+impl UdpSecurityEvent {
+    fn get(&self, field: &str) -> Option<PolicySubjectValue<'_>> {
+        match field {
+            "valid" => Some(PolicySubjectValue::Bool(true)),
+            "port" => borrowed_string(self.port.as_deref()),
             _ => None,
         }
     }

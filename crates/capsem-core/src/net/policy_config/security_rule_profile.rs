@@ -11,8 +11,9 @@ pub const USER_PRIORITY_MIN: i32 = 10;
 pub const USER_PRIORITY_MAX: i32 = 1000;
 pub const DEFAULT_RULE_PRIORITY: i32 = USER_PRIORITY_MAX + 1;
 
-pub const SECURITY_EVENT_CEL_ROOTS: &[&str] =
-    &["http", "dns", "mcp", "model", "file", "process", "security"];
+pub const SECURITY_EVENT_CEL_ROOTS: &[&str] = &[
+    "http", "dns", "mcp", "model", "file", "process", "ip", "tcp", "udp",
+];
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

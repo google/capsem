@@ -1,7 +1,8 @@
 use super::*;
 use crate::security_engine::{
-    DnsSecurityEvent, FileSecurityEvent, HttpSecurityEvent, McpSecurityEvent, ModelSecurityEvent,
-    ProcessSecurityEvent, RuntimeSecurityEventType, SecurityEvent,
+    DnsSecurityEvent, FileSecurityEvent, HttpSecurityEvent, IpSecurityEvent, McpSecurityEvent,
+    ModelSecurityEvent, ProcessSecurityEvent, RuntimeSecurityEventType, SecurityEvent,
+    TcpSecurityEvent,
 };
 
 const RULE_FIXTURE: &str = include_str!(concat!(
@@ -534,6 +535,10 @@ fn built_in_defaults_cover_each_runtime_boundary_last() {
 
     let expected = [
         (
+            "profiles.rules.default_000_local_network",
+            "Default ask before local, private, or non-routable network access.",
+        ),
+        (
             "profiles.rules.default_http",
             "Default allow for HTTP requests.",
         ),
@@ -565,11 +570,155 @@ fn built_in_defaults_cover_each_runtime_boundary_last() {
             .iter()
             .find(|rule| rule.rule_id == rule_id)
             .unwrap_or_else(|| panic!("missing {rule_id}"));
-        assert_eq!(rule.action, SecurityRuleAction::Allow);
+        let expected_action = if rule_id == "profiles.rules.default_000_local_network" {
+            SecurityRuleAction::Ask
+        } else {
+            SecurityRuleAction::Allow
+        };
+        assert_eq!(rule.action, expected_action);
         assert_eq!(rule.priority, DEFAULT_RULE_PRIORITY);
         assert_eq!(rule.reason.as_deref(), Some(reason));
         assert!(rule.detection_level.is_none());
     }
+}
+
+#[test]
+fn built_in_local_network_guard_asks_unless_explicit_ollama_rule_allows() {
+    let profile = SecurityRuleProfile::parse_toml(DEFAULT_PROVIDER_RULES).expect("defaults parse");
+    let compiled = SecurityRuleSet::compile_profile(&profile, SecurityRuleSource::BuiltinDefault)
+        .expect("defaults compile");
+
+    let private_network_event = SecurityEvent::new(RuntimeSecurityEventType::HttpRequest)
+        .with_ip(IpSecurityEvent {
+            value: Some("10.0.0.7".to_string()),
+            version: Some("4".to_string()),
+        })
+        .with_tcp(TcpSecurityEvent {
+            port: Some("8080".to_string()),
+        });
+    let private_eval = compiled
+        .evaluate(&private_network_event)
+        .expect("private network event evaluates");
+    assert_eq!(
+        private_eval
+            .enforcement_rules()
+            .iter()
+            .map(|rule| (rule.rule_id.as_str(), rule.action))
+            .next(),
+        Some((
+            "profiles.rules.default_000_local_network",
+            SecurityRuleAction::Ask,
+        )),
+        "local/private/non-routable network access must ask by default"
+    );
+
+    let ollama_event = SecurityEvent::new(RuntimeSecurityEventType::HttpRequest)
+        .with_http(HttpSecurityEvent {
+            host: Some("local.ollama".to_string()),
+            path: Some("/api/chat".to_string()),
+            ..Default::default()
+        })
+        .with_ip(IpSecurityEvent {
+            value: Some("127.0.0.1".to_string()),
+            version: Some("4".to_string()),
+        })
+        .with_tcp(TcpSecurityEvent {
+            port: Some("11434".to_string()),
+        });
+    let ollama_eval = compiled
+        .evaluate(&ollama_event)
+        .expect("ollama event evaluates");
+    assert_eq!(
+        ollama_eval
+            .enforcement_rules()
+            .iter()
+            .map(|rule| (rule.rule_id.as_str(), rule.action))
+            .next(),
+        Some((
+            "profiles.rules.ai_ollama_http_local_host",
+            SecurityRuleAction::Allow,
+        )),
+        "Ollama/local backend access is controlled by the explicit profile-owned Ollama rule"
+    );
+    assert!(
+        ollama_eval
+            .enforcement_rules()
+            .iter()
+            .any(|rule| rule.rule_id == "profiles.rules.default_000_local_network"
+                && rule.action == SecurityRuleAction::Ask),
+        "the default guard must still be visible in the ledger when local backend access is allowed"
+    );
+}
+
+#[test]
+fn ollama_local_backend_policy_is_owned_by_explicit_profile_rule() {
+    fn profile_for(action: &str, enabled: bool) -> SecurityRuleProfile {
+        SecurityRuleProfile::parse_toml(&format!(
+            r#"
+[default.000_local_network]
+name = "local_network"
+action = "ask"
+priority = "default"
+reason = "Default ask before local, private, or non-routable network access."
+match = 'ip.value.matches("^(127\.|10\.)") || http.host.matches("^(localhost|127\..*|local\.ollama)$")'
+
+[profiles.rules.ollama_local_backend]
+name = "ollama_local_backend"
+action = "{action}"
+enabled = {enabled}
+priority = 10
+reason = "Profile-owned Ollama local backend policy."
+match = 'http.host == "local.ollama" && tcp.port == "11434"'
+"#
+        ))
+        .expect("profile parses")
+    }
+
+    let event = SecurityEvent::new(RuntimeSecurityEventType::HttpRequest)
+        .with_http(HttpSecurityEvent {
+            host: Some("local.ollama".to_string()),
+            path: Some("/api/chat".to_string()),
+            ..Default::default()
+        })
+        .with_ip(IpSecurityEvent {
+            value: Some("127.0.0.1".to_string()),
+            version: Some("4".to_string()),
+        })
+        .with_tcp(TcpSecurityEvent {
+            port: Some("11434".to_string()),
+        });
+
+    for (action, expected) in [
+        ("allow", SecurityRuleAction::Allow),
+        ("ask", SecurityRuleAction::Ask),
+        ("block", SecurityRuleAction::Block),
+    ] {
+        let compiled =
+            SecurityRuleSet::compile_profile(&profile_for(action, true), SecurityRuleSource::User)
+                .unwrap_or_else(|error| panic!("{action} profile compiles: {error}"));
+        let first = compiled
+            .evaluate(&event)
+            .expect("event evaluates")
+            .enforcement_rules()
+            .into_iter()
+            .next()
+            .expect("explicit ollama rule matches");
+        assert_eq!(first.rule_id, "profiles.rules.ollama_local_backend");
+        assert_eq!(first.action, expected);
+    }
+
+    let compiled =
+        SecurityRuleSet::compile_profile(&profile_for("allow", false), SecurityRuleSource::User)
+            .expect("disabled profile compiles");
+    let first = compiled
+        .evaluate(&event)
+        .expect("event evaluates")
+        .enforcement_rules()
+        .into_iter()
+        .next()
+        .expect("default guard matches");
+    assert_eq!(first.rule_id, "profiles.rules.default_000_local_network");
+    assert_eq!(first.action, SecurityRuleAction::Ask);
 }
 
 #[test]

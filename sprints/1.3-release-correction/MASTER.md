@@ -46,7 +46,7 @@ prove the same rails without user credentials.
 | S3 | Route contract and API coverage | Complete | Every UI/TUI-used profile/session/stats route has contract tests for both profiles; no 404/501. |
 | S4 | Hermetic protocol lab and recorder | Planned | Local lab covers HTTP/HTTPS/SSE/WS/DNS/MCP/model/OAuth/broker without public services. |
 | S5 | Doctor/just/benchmark unification | Planned | `just test` and `just smoke` run doctor/E2E/bench through the hermetic lab, no `--fast` release escape. |
-| S6 | CEL/security event correction | Planned | IP/TCP/UDP facts and `valid` booleans are first-party CEL objects; no `security.*` predicates. |
+| S6 | CEL/security event correction | Complete | IP/TCP/UDP facts and `valid` booleans are first-party CEL objects; no `security.*` predicates. |
 | S7 | Runtime protocol fixes | Planned | AGY/Claude/Codex model, MCP, broker, SSE, and tool-call paths pass replay and DB-ledger assertions. |
 | S8 | UI/TUI contract repair | Planned | Sessions/profiles/settings/stats/plugin/MCP/security/file/process views reflect routes and enums only. |
 | S9 | Agent bootstrap repair | Planned | AGY, Claude, Codex, MCP, aliases, and profile root files are packaged from profile-owned bootstrap. |

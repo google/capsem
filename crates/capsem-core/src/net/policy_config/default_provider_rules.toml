@@ -7,6 +7,16 @@
 mode = "rewrite"
 detection_level = "informational"
 
+[default.000_local_network]
+name = "local_network"
+action = "ask"
+priority = "default"
+reason = "Default ask before local, private, or non-routable network access."
+match = '''
+ip.value.matches("^(127\.|10\.|192\.168\.|169\.254\.|172\.(1[6-9]|2[0-9]|3[0-1])\.|0\.|::1$|fc|fd|fe80)")
+|| http.host.matches("^(localhost|127\..*|0\..*|10\..*|192\.168\..*|169\.254\..*|172\.(1[6-9]|2[0-9]|3[0-1])\..*|host\.docker\.internal|local\.ollama)$")
+'''
+
 [default.http]
 name = "http"
 action = "allow"
