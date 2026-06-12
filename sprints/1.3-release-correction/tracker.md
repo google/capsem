@@ -86,6 +86,11 @@ next one, and stage only the files for that slice.
     scripts/generate_schema.py src/capsem/builder/config.py
     tests/test_config.py tests/test_skills.py
     tests/capsem-build-chain/test_source_profiles_unpinned.py`.
+  - Gate wiring proof: `just test` runs root `bootstrap.sh`, validates project
+    skills/site shape, and reaches `_materialize-config`; both `just test` and
+    `just smoke` materialize every checked-in profile through
+    `capsem-admin profile materialize`, so source profile `hash`/`size` pins
+    fail the normal release gates instead of only a one-off linter.
 
 ## S2. Materialization, Assets, VM Resources
 
