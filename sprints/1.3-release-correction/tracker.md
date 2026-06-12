@@ -97,7 +97,12 @@ next one, and stage only the files for that slice.
 
 ## S3. Route Contract and API Coverage
 
-- [ ] Inventory every UI/TUI/service route in one contract doc.
+- [x] Inventory every UI/TUI/service route in one contract doc.
+  - Contract doc: `docs/src/content/docs/architecture/service-api.md`.
+  - Scope: service-global, profile-scoped, and session-scoped routes are
+    separated; verb discipline for `info`, `status`, `list`, `latest`,
+    `evaluate`, `edit`, `reload`, and `ensure` is explicit; UI/TUI route rules
+    forbid invented names and fallback paths.
 - [x] RED: route test fails for missing profile overview/enforcement/detection
   /plugins/MCP/assets route for `code` and `co-work`.
 - [x] GREEN: implement routes with no 404/501 for declared UI/TUI surfaces.
