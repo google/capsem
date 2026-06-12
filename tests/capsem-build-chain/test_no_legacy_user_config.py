@@ -13,6 +13,8 @@ LIVE_PATHS = [
     PROJECT_ROOT / "tests",
     PROJECT_ROOT / "justfile",
     PROJECT_ROOT / "config",
+    PROJECT_ROOT / "site",
+    PROJECT_ROOT / "benchmarks",
 ]
 
 FORBIDDEN = [
