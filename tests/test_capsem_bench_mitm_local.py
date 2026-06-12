@@ -339,6 +339,11 @@ def test_env_defaults_are_fast_and_overrideable(monkeypatch):
     assert calls[0] == ("tiny_http", 3, 2, 4.0)
 
 
+def test_local_mitm_defaults_are_release_grade():
+    assert mitm_local.DEFAULT_TOTAL_REQUESTS >= 50_000
+    assert mitm_local.DEFAULT_CONCURRENCY >= 64
+
+
 def test_global_load_config_parses_count_and_duration_modes(monkeypatch):
     monkeypatch.setenv(load_harness.GLOBAL_CONCURRENCY_ENV, "64")
     monkeypatch.setenv(load_harness.GLOBAL_DURATION_ENV, "7.5")

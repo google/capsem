@@ -28,3 +28,14 @@ def test_smoke_runs_full_doctor_without_fast_escape_hatch() -> None:
     assert "{{cli_binary}} doctor" in block
     assert "doctor --fast" not in block
     assert "{{cli_binary}} doctor --fast" not in block
+
+
+def test_guest_network_doctor_is_hermetic_by_default() -> None:
+    diagnostics = PROJECT_ROOT / "guest" / "artifacts" / "diagnostics" / "test_network.py"
+    source = diagnostics.read_text()
+
+    assert "CAPSEM_RUN_PUBLIC_NETWORK_SMOKE" not in source
+    assert "google.com" not in source
+    assert "api.openai.com" not in source
+    assert "api.anthropic.com" not in source
+    assert "cdn.elie.net" not in source

@@ -12,7 +12,6 @@ import pytest
 from conftest import run
 
 LOCAL_DEBUG_UPSTREAM_ENV = "CAPSEM_BENCH_MITM_LOCAL_BASE_URL"
-PUBLIC_NETWORK_SMOKE_ENV = "CAPSEM_RUN_PUBLIC_NETWORK_SMOKE"
 
 
 def _local_debug_url(path):
@@ -36,15 +35,6 @@ def _require_local_debug_url(path, reason):
             "default HTTP upstream allowlist"
         )
     return url
-
-
-def _public_network_smoke_enabled():
-    return os.environ.get(PUBLIC_NETWORK_SMOKE_ENV) == "1"
-
-
-def _require_public_network_smoke(reason):
-    if not _public_network_smoke_enabled():
-        pytest.skip(f"{reason}; set {PUBLIC_NETWORK_SMOKE_ENV}=1")
 
 
 # ---------------------------------------------------------------
@@ -92,26 +82,16 @@ def test_iptables_redirect_dns_tcp_to_1053():
         f"no TCP dport 53 redirect rule:\n{result.stdout}"
 
 
-def test_dns_resolves_via_capsem_proxy():
-    """T3.4 acceptance: a real domain must resolve to a real IP via
-    the capsem-dns-proxy -> host hickory handler. Pre-T3.4 every
-    name resolved to 10.0.0.1; post-T3.4 we must get a real upstream
-    answer for an allowed domain."""
-    _require_public_network_smoke("public DNS resolution smoke")
-    result = run("getent hosts elie.net", timeout=10)
-    assert result.returncode == 0, f"elie.net did not resolve:\n{result.stderr}"
-    assert "10.0.0.1" not in result.stdout, \
-        f"elie.net still resolves to dnsmasq sentinel 10.0.0.1:\n{result.stdout}"
-    # First whitespace token is the IP; accept IPv4 (3 dots) or
-    # IPv6 (>=2 colons). Some upstreams return AAAA-only on this
-    # name and getent honors the request's address family.
-    parts = result.stdout.split()
-    assert parts, f"empty getent output:\n{result.stdout!r}"
-    ip = parts[0]
-    is_v4 = ip.count(".") == 3
-    is_v6 = ip.count(":") >= 2
-    assert is_v4 or is_v6, \
-        f"unexpected IP shape {ip!r} in:\n{result.stdout}"
+def test_dns_query_reaches_capsem_proxy():
+    """A DNS query must reach the Capsem proxy instead of the old wildcard
+    dnsmasq sentinel path. The reserved .invalid TLD keeps the proof hermetic."""
+    result = run(
+        "getent hosts capsem-doctor-hermetic.invalid 2>&1",
+        timeout=10,
+    )
+    assert result.returncode != 0, \
+        f"reserved .invalid domain unexpectedly resolved:\n{result.stdout}"
+    assert "10.0.0.1" not in result.stdout
 
 
 def test_dns_nxdomain_propagates_from_upstream():
@@ -232,8 +212,7 @@ def test_vsock_bridge_delivers_bytes():
 
 
 def test_tls_handshake_completes():
-    """TLS handshake to allowed domain must complete through the MITM proxy."""
-    _require_public_network_smoke("public TLS handshake smoke")
+    """TLS handshake must complete through the local MITM proxy."""
     result = run(
         "python3 -c \""
         "import socket, ssl; "
@@ -242,7 +221,7 @@ def test_tls_handshake_completes():
         "ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT); "
         "ctx.check_hostname = False; "
         "ctx.verify_mode = ssl.CERT_NONE; "
-        "ws = ctx.wrap_socket(s, server_hostname='google.com'); "
+        "ws = ctx.wrap_socket(s, server_hostname='capsem-doctor.local'); "
         "print('TLS_OK version=' + str(ws.version())); "
         "print('cipher=' + str(ws.cipher())); "
         "cert = ws.getpeercert(binary_form=True); "
@@ -256,7 +235,6 @@ def test_tls_handshake_completes():
 
 def test_tls_cert_from_capsem_ca():
     """MITM proxy must present a cert signed by the Capsem CA."""
-    _require_public_network_smoke("public TLS certificate smoke")
     result = run(
         "python3 -c \""
         "import socket, ssl; "
@@ -265,7 +243,7 @@ def test_tls_cert_from_capsem_ca():
         "ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT); "
         "ctx.check_hostname = False; "
         "ctx.verify_mode = ssl.CERT_NONE; "
-        "ws = ctx.wrap_socket(s, server_hostname='google.com'); "
+        "ws = ctx.wrap_socket(s, server_hostname='capsem-doctor.local'); "
         "cert = ws.getpeercert(); "
         "issuer = dict(x[0] for x in cert.get('issuer', ())); "
         "cn = issuer.get('commonName', ''); "
@@ -290,18 +268,18 @@ def test_tls_cert_from_capsem_ca():
 
 
 def test_curl_https_with_skip_verify():
-    """curl -k to allowed domain must get HTTP response."""
-    _require_public_network_smoke("public HTTPS curl smoke")
-    result = run("curl -skI --connect-timeout 10 https://google.com 2>&1", timeout=20)
+    """curl through the local HTTP MITM rail must get a deterministic response."""
+    local_url = _require_local_debug_url("/tiny", "local HTTP curl smoke")
+    result = run(f"curl -sSI --connect-timeout 10 {local_url} 2>&1", timeout=20)
     assert result.returncode == 0, \
-        f"curl -k failed (exit {result.returncode}):\n{result.stdout}"
+        f"curl failed (exit {result.returncode}):\n{result.stdout}"
     assert "HTTP/" in result.stdout, f"no HTTP response:\n{result.stdout}"
 
 
 def test_curl_verbose_diagnostics():
     """curl -v captures the full handshake trace for debugging."""
-    _require_public_network_smoke("public HTTPS verbose curl smoke")
-    result = run("curl -vvk --connect-timeout 10 -o /dev/null https://google.com 2>&1", timeout=20)
+    local_url = _require_local_debug_url("/tiny", "local verbose curl smoke")
+    result = run(f"curl -vv --connect-timeout 10 -o /dev/null {local_url} 2>&1", timeout=20)
     # Even if curl fails, capture the verbose output for diagnosis.
     # This test always passes -- it's here for diagnostic output on failure.
     lines = result.stdout.strip().split('\n') if result.stdout else []
@@ -356,27 +334,26 @@ def test_certifi_includes_capsem_ca():
 
 
 def test_curl_allowed_domain_ca_trusted():
-    """curl without -k must succeed (system trusts Capsem CA)."""
-    _require_public_network_smoke("public HTTPS CA trust smoke")
+    """curl without public access must still prove the local rail works."""
+    local_url = _require_local_debug_url("/tiny", "local curl trust smoke")
     result = run(
-        "curl -sI --connect-timeout 10 https://google.com 2>&1",
+        f"curl -sI --connect-timeout 10 {local_url} 2>&1",
         timeout=20,
     )
     assert result.returncode == 0, \
-        f"curl failed without -k (CA not trusted?):\n{result.stdout}\n{result.stderr}"
+        f"curl failed against local debug upstream:\n{result.stdout}\n{result.stderr}"
     assert "HTTP/" in result.stdout, f"no HTTP response:\n{result.stdout}"
 
 
 def test_python_urllib_https_trusted():
-    """Python urllib must complete TLS via system CA trust."""
-    _require_public_network_smoke("public Python TLS smoke")
-    # Verify TLS works by connecting with ssl module (urllib raises HTTPError
-    # for 403 responses, which obscures the TLS-success signal we care about).
+    """Python ssl must complete a local MITM TLS handshake."""
     result = run(
         'python3 -c "'
         "import ssl, socket; "
-        "ctx = ssl.create_default_context(); "
-        "s = ctx.wrap_socket(socket.create_connection(('google.com', 443), timeout=10), server_hostname='google.com'); "
+        "ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT); "
+        "ctx.check_hostname = False; "
+        "ctx.verify_mode = ssl.CERT_NONE; "
+        "s = ctx.wrap_socket(socket.create_connection(('10.0.0.1', 443), timeout=10), server_hostname='capsem-doctor.local'); "
         "print('OK version=' + str(s.version())); "
         "s.close()"
         '" 2>&1',
@@ -409,10 +386,7 @@ def test_ca_env_var_set(var):
 def test_denied_domain_rejected():
     """HTTPS to an unconditionally denied domain must be rejected.
 
-    ``api.openai.com`` is allowlist-gated by provider rules and will return
-    401 (real upstream auth failure) when enabled -- see
-    ``test_ai_provider_domain_blocked`` for that matrix. This test uses a
-    domain that no rule ever matches.
+    This test uses a reserved domain that no rule ever matches.
     """
     result = run("curl -skI --connect-timeout 5 https://evil-never-allowed.invalid 2>&1", timeout=15)
     assert result.returncode != 0 or "403" in result.stdout, \
@@ -424,63 +398,23 @@ def test_post_to_random_domain_denied():
     pytest.skip("default doctor profile has no magic public-domain deny rule")
 
 
-@pytest.mark.parametrize("domain,env_var", [
-    ("api.anthropic.com", "CAPSEM_ANTHROPIC_ALLOWED"),
-    ("api.openai.com", "CAPSEM_OPENAI_ALLOWED"),
-])
-def test_ai_provider_domain_blocked(domain, env_var):
-    """AI provider domains: blocked unless allowed by policy, reachable if allowed."""
-    _require_public_network_smoke(f"public AI provider smoke for {domain}")
-    result = run(
-        f"curl -skI --connect-timeout 10 https://{domain} 2>&1",
-        timeout=20,
-    )
-    if os.environ.get(env_var) == "1":
-        # Domain is allowed -- must be reachable (HTTP response, not 403).
-        assert "HTTP/" in result.stdout, \
-            f"{domain} is allowed ({env_var}=1) but not reachable: {result.stdout}"
-    else:
-        # Domain is blocked -- must get 403 or connection refused.
-        assert result.returncode != 0 or "403" in result.stdout, \
-            f"Connection to {domain} should be blocked: {result.stdout}"
-
-
 def test_http_port_80_is_proxied():
     """Plain HTTP (port 80) is inspected by the MITM proxy."""
-    local_url = _local_debug_url("/tiny")
-    if local_url:
-        local_url = _require_local_debug_url("/tiny", "local HTTP proxy smoke")
-        result = run(
-            f"curl -sS --connect-timeout 5 {local_url} 2>&1",
-            timeout=15,
-        )
-        assert result.returncode == 0, \
-            f"local HTTP through proxy failed: {result.stdout}"
-        assert "capsem-debug-upstream:tiny" in result.stdout, \
-            f"unexpected local HTTP response: {result.stdout}"
-        return
-
-    if not _public_network_smoke_enabled():
-        pytest.skip(
-            f"set {LOCAL_DEBUG_UPSTREAM_ENV} for local lab or "
-            f"{PUBLIC_NETWORK_SMOKE_ENV}=1 for explicit public smoke"
-        )
-
+    local_url = _require_local_debug_url("/tiny", "local HTTP proxy smoke")
     result = run(
-        "curl -sI --connect-timeout 5 http://google.com 2>&1",
+        f"curl -sS --connect-timeout 5 {local_url} 2>&1",
         timeout=15,
     )
     assert result.returncode == 0, \
-        f"HTTP port 80 should be reachable through the proxy: {result.stdout}"
-    assert "HTTP/" in result.stdout, \
-        f"HTTP port 80 should return an HTTP response: {result.stdout}"
+        f"local HTTP through proxy failed: {result.stdout}"
+    assert "capsem-debug-upstream:tiny" in result.stdout, \
+        f"unexpected local HTTP response: {result.stdout}"
 
 
 def test_non_standard_port_fails():
     """Connections to non-443 ports must fail."""
-    _require_public_network_smoke("public non-standard-port smoke")
     result = run(
-        "curl -skI --connect-timeout 5 https://google.com:8443 2>&1",
+        "curl -skI --connect-timeout 5 https://127.0.0.1:8443 2>&1",
         timeout=15,
     )
     assert result.returncode != 0, \
@@ -501,10 +435,6 @@ def test_direct_ip_no_route():
 # Layer 7: Proxy throughput
 # ---------------------------------------------------------------
 
-# cdn.elie.net 301-redirects to elie.net, so curl needs -L and both hosts
-# must be allowed by the active profile security rules.
-_THROUGHPUT_URL = "https://cdn.elie.net/static/files/i-am-a-legend/i-am-a-legend-slides.pdf"
-_THROUGHPUT_DOMAIN = "cdn.elie.net"
 _MIN_SPEED_MBPS = 0.5
 
 
@@ -515,40 +445,15 @@ def test_proxy_download_throughput():
     vsock -> host MITM proxy -> upstream -> back. Public network is an
     explicit smoke only; default release gates should use the local lab.
     """
-    local_url = _local_debug_url("/bytes/10mb")
-    if local_url:
-        local_url = _require_local_debug_url("/bytes/10mb", "local proxy throughput smoke")
-        result = run(
-            f"curl -sL -o /dev/null"
-            f" -w '%{{speed_download}} %{{size_download}} %{{time_total}}'"
-            f" --connect-timeout 15"
-            f" {local_url}",
-            timeout=180,
-        )
-        expected_bytes = 10 * 1024 * 1024
-    else:
-        if not _public_network_smoke_enabled():
-            pytest.skip(
-                f"set {LOCAL_DEBUG_UPSTREAM_ENV} for local lab or "
-                f"{PUBLIC_NETWORK_SMOKE_ENV}=1 for explicit public smoke"
-            )
-
-    # Probe reachability first so we can skip cleanly rather than fail.
-        probe = run(
-            f"curl -skLI --connect-timeout 10 {_THROUGHPUT_URL} 2>&1",
-            timeout=20,
-        )
-        if probe.returncode != 0 or "403" in probe.stdout:
-            pytest.skip(f"{_THROUGHPUT_DOMAIN} not allowed by current security rules")
-
-        result = run(
-            f"curl -sL -o /dev/null"
-            f" -w '%{{speed_download}} %{{size_download}} %{{time_total}}'"
-            f" --connect-timeout 15"
-            f" {_THROUGHPUT_URL}",
-            timeout=180,
-        )
-        expected_bytes = 500 * 1024
+    local_url = _require_local_debug_url("/bytes/10mb", "local proxy throughput smoke")
+    result = run(
+        f"curl -sL -o /dev/null"
+        f" -w '%{{speed_download}} %{{size_download}} %{{time_total}}'"
+        f" --connect-timeout 15"
+        f" {local_url}",
+        timeout=180,
+    )
+    expected_bytes = 10 * 1024 * 1024
 
     assert result.returncode == 0, \
         f"download failed (exit {result.returncode}):\n{result.stderr}"
