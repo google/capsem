@@ -52,6 +52,15 @@ protocol rows, structured logs, counters, and route/UI JSON when those surfaces
 exist. No feature is done with a single-entry proof. What goes in must come out
 exactly, and every transformation must be accounted for.
 
+### Profile Build Hook Memory
+
+When image-build work touches `config/profiles/<profile_id>/build.sh`, load the
+`build-images` skill. `build.sh` is not an installer, setup step, boot hook, or
+runtime customization rail. It is the profile-owned rootfs build hook executed
+by the admin/just image pipeline before EROFS assets are produced. The profile
+ledger owns the file descriptor, and the change is only real in a VM after the
+profile assets are rebuilt through that same pipeline.
+
 ## SKILL.md format
 
 ```yaml

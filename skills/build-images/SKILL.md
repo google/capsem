@@ -127,6 +127,27 @@ when they cannot be represented as apt/npm/Python package inputs. It must
 install stable runtime binaries under system paths such as `/usr/local/bin`;
 anything left only under `/root` can be hidden by the runtime overlay.
 
+## Profile `build.sh` contract
+
+Remember this rail when touching profile image contents:
+
+- `config/profiles/<profile_id>/build.sh` is a profile-owned build hook.
+- It runs inside the rootfs Docker build, before the EROFS image is produced.
+- It does not run during `just install`, service startup, VM boot, or user
+  session creation.
+- It is for image construction work that cannot be cleanly expressed through
+  `apt-packages.txt`, `python-requirements.txt`, or `npm-packages.txt`.
+- It may install public runtime tools such as Claude, AGY, and Ollama into
+  stable system paths.
+- It must not bake credentials, per-user state, corp policy, rules, MCP
+  decisions, or runtime settings.
+- The owning `profile.toml` must reference it through `[files.build]` and keep
+  the descriptor hash/size current.
+- Changing `build.sh` changes future rootfs assets only. Rebuild assets through
+  the admin/just rail before claiming a VM contains the change.
+- The same admin materialization path must be used locally and in CI; no
+  one-off Docker or installer path is release proof.
+
 ## Dockerfile templates
 
 Templates live in `config/docker/`:
