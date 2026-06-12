@@ -17,6 +17,11 @@
       "size": 134
     },
     {
+      "path": "root/.claude/settings.local.json",
+      "hash": "blake3:8077c4c062c6674ba40a6aeb194a672f85df2273cc7939bc7e209f8215a5a400",
+      "size": 50
+    },
+    {
       "path": "root/.codex/config.toml",
       "hash": "blake3:ff995858bdcca58a03fa9e3b559e6343443d4df96defca98078543c6674bb305",
       "size": 56

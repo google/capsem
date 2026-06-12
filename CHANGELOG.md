@@ -125,6 +125,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Pruned Ollama CUDA libraries from profile-built images and added the Python
   Ollama SDK to Code and Co-work profiles so local Ollama client tests do not
   require ad-hoc VM package repair or waste guest disk on unused GPU payloads.
+- Added non-secret Claude MCP approval state to Code and Co-work profile roots
+  so fresh profile-built sessions do not prompt users to trust the built-in
+  `capsem` MCP server before agents can use it.
 - Added OpenAI, Anthropic, and LiteLLM Python SDKs to the Code and Co-work
   profile package ledgers so Ironbank real-client model tests can run from the
   VM without ad-hoc guest installs.

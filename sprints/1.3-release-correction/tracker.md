@@ -785,8 +785,19 @@ next one, and stage only the files for that slice.
 
 - [ ] RED/GREEN: profile root contains non-secret AGY config/wrapper and does
   not contain OAuth token/log/conversation/history/cache files.
-- [ ] RED/GREEN: Claude install/bootstrap includes MCP approval and dangerous
+- [x] RED/GREEN: Claude install/bootstrap includes MCP approval and dangerous
   mode acknowledgement without first-run prompts.
+  - 2026-06-12 progress: Code and Co-work profile roots now package
+    `/root/.claude/settings.local.json` with `enabledMcpjsonServers =
+    ["capsem"]`, matching the live accepted Claude evidence from preserved
+    sessions, and both `root.manifest.json` files pin the non-secret approval
+    payload. The profile payload contract fails if a profile declares the
+    built-in `capsem` MCP server without the Claude approval file.
+  - Proof: `uv run python -m pytest
+    tests/capsem-build-chain/test_profile_payload_contract.py -q`; `cargo run
+    -p capsem-admin -- profile check config/profiles/code/profile.toml
+    --config-root config --json`; `cargo run -p capsem-admin -- profile check
+    config/profiles/co-work/profile.toml --config-root config --json`.
 - [ ] RED/GREEN: Claude binary/install path is valid or doctor reports exact
   remediation; no broken symlink in shipped profile.
 - [ ] RED/GREEN: Codex config/MCP/bootstrap files are profile-owned and pinned.
