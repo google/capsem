@@ -100,14 +100,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the rootfs hash it describes, and `/profiles/{id}/info` plus
   `/profiles/{id}/obom` expose that base-image-only contract.
 - Added profile-owned image payload pinning for the code profile: MCP config,
-  apt/Python/npm package lists, manual install script, tips, and packaged
+  apt/Python/npm package lists, build-time hook script, tips, and packaged
   guest-root seed files are now declared from `profile.toml` with BLAKE3/size
   pins. `capsem-admin profile check` verifies those pins plus the root seed
   manifest, and `capsem-admin image build` materializes a self-contained
   generated guest workspace before invoking the backend builder.
+- Renamed profile image hooks from `install.sh`/`files.install` to
+  `build.sh`/`files.build` and added Ollama to the shipped Code and Co-work
+  profile images through that builder rail, with `zstd` included for the
+  official Ollama installer.
 - Expanded per-architecture VM build ledgers with a `rootfs.config_inputs`
   stage that records declared package config, rendered rootfs install inputs,
-  profile root/install-script inputs, and EROFS settings. Installed package
+  profile root/build-script inputs, and EROFS settings. Installed package
   names and versions remain OBOM evidence, not build-ledger claims.
 - Cleaned active architecture/development docs and internal skills around the
   profile/admin image contract: public guidance now points at profile-owned

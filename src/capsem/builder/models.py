@@ -410,5 +410,5 @@ class GuestImageConfig(BaseModel):
     vm_environment: VmEnvironmentConfig = Field(default_factory=VmEnvironmentConfig)
     profile_root_seed: bool = False
     profile_root_seed_path: str | None = None
-    profile_install_script: bool = False
-    profile_install_script_path: str | None = None
+    profile_build_script: bool = False
+    profile_build_script_path: str | None = None

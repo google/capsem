@@ -97,10 +97,21 @@ that reflect those contracts exactly.
   protocols, OAuth/OIDC, and broker flows.
 - Add recorder/replay corpus for Claude/Anthropic, OpenAI/Codex-compatible,
   Gemini/AGY-compatible, MCP JSON-RPC, and credential flows.
-- Local Ollama is a host/lab backend, not a guest install requirement. The
-  current developer baseline is `gemma4:latest` on `127.0.0.1:11434`; tests
-  must route to it through Capsem-owned host aliasing so the ledger sees normal
+- Local Ollama is the host/lab model backend target, with the current developer
+  baseline `gemma4:latest` on `127.0.0.1:11434`. Shipped profile images also
+  include Ollama through the profile-owned `build.sh` hook so users and
+  Ironbank clients do not perform ad-hoc VM installs; tests still route model
+  traffic through Capsem-owned host aliasing so the ledger sees normal
   network/MITM/model traffic.
+- Ironbank model/client proof must include real client stacks, not only
+  synthetic curl fixtures: OpenAI Python SDK, Anthropic/Claude SDK or CLI
+  path, Codex configured for Ollama/OpenAI-compatible traffic, AGY configured
+  for Ollama/OpenAI-compatible traffic, and LiteLLM. Each runnable client must
+  create a deterministic poem file in the guest and prove the model
+  request/response, optional tool call/tool response, file write, token counts,
+  byte counts, security/detection rows, UDS route, HTTP route, and session DB
+  ledger all agree. Unsupported manual OAuth flows stay out of release proof
+  until they have a recorder/replay or route-backed automation.
 - Every network/protocol acceptance test is a full-chain spec. A single
   stimulus must verify at least ten concrete facts across the path: client
   visible result, parser classification, security/CEL decision, detection

@@ -82,8 +82,8 @@ size = 90
 
 [files.apt_packages]
 path = "profiles/code/apt-packages.txt"
-hash = "blake3:2371ed38190aca157a69164ddc03beb05ace3aac244d14155b0b85f506763259"
-size = 226
+hash = "blake3:35cb8afcdfbd151958637cdf0038bce4e41ffd585a1cd02935c5bbe872bf9d93"
+size = 231
 
 [files.python_requirements]
 path = "profiles/code/python-requirements.txt"
@@ -95,10 +95,10 @@ path = "profiles/code/npm-packages.txt"
 hash = "blake3:28a0ccfa0a3cc7187c226b4412b73a5fec2549b6ac19e0ef6da148b1884262bf"
 size = 33
 
-[files.install]
-path = "profiles/code/install.sh"
-hash = "blake3:0a5afde96bab137812743f2608a96ed0c302f04b7f829f9b220f8b06f39edf89"
-size = 936
+[files.build]
+path = "profiles/code/build.sh"
+hash = "blake3:ce89adfe840de90c0b90342fd97e836dd34cf67fdc38a8c938346590938c2a82"
+size = 1017
 
 [files.tips]
 path = "profiles/code/tips.txt"

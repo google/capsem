@@ -77,6 +77,11 @@ path = "profiles/developer/root.manifest.json"
 hash = "blake3:1111111111111111111111111111111111111111111111111111111111111111"
 size = 1
 
+[files.build]
+path = "profiles/developer/build.sh"
+hash = "blake3:2222222222222222222222222222222222222222222222222222222222222222"
+size = 1
+
 [default.http]
 name = "default_http"
 action = "allow"
@@ -143,6 +148,14 @@ paths = ["/root/.codex/skills/security/SKILL.md"]
             .map(|descriptor| descriptor.path.as_str()),
         Some("profiles/developer/mcp.json")
     );
+    assert_eq!(
+        profile
+            .files
+            .build
+            .as_ref()
+            .map(|descriptor| descriptor.path.as_str()),
+        Some("profiles/developer/build.sh")
+    );
     assert!(profile.default.contains_key("http"));
     assert!(profile.profiles.rules.contains_key("skill_loaded"));
     assert!(profile.ai.contains_key("openai"));
@@ -150,6 +163,30 @@ paths = ["/root/.codex/skills/security/SKILL.md"]
     assert_eq!(
         profile.mcp.unwrap().server_enabled.get("local").copied(),
         Some(true)
+    );
+}
+
+#[test]
+fn profile_config_rejects_stale_install_file_reference() {
+    let error = toml::from_str::<ProfileConfigFile>(
+        r#"
+id = "developer"
+name = "Developer"
+description = "Developer profile"
+revision = "2026.06.12.1"
+refresh_policy = "24h"
+
+[files.install]
+path = "profiles/developer/install.sh"
+hash = "blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+size = 1
+"#,
+    )
+    .expect_err("files.install is not a supported profile contract");
+
+    assert!(
+        error.to_string().contains("unknown field `install`"),
+        "unexpected parse error: {error}"
     );
 }
 

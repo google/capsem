@@ -110,7 +110,7 @@ def _rootfs_context(config: GuestImageConfig, arch_name: str) -> dict[str, Any]:
         "curl_installs": curl_installs,
         "guest_binaries": GUEST_BINARIES,
         "profile_root_seed": config.profile_root_seed,
-        "profile_install_script": config.profile_install_script,
+        "profile_build_script": config.profile_build_script,
     }
 
 
@@ -992,9 +992,9 @@ def _rootfs_config_input_record(
                 "enabled": config.profile_root_seed,
                 "source": _path_input_record(config.profile_root_seed_path),
             },
-            "install_script": {
-                "enabled": config.profile_install_script,
-                "source": _path_input_record(config.profile_install_script_path),
+            "build_script": {
+                "enabled": config.profile_build_script,
+                "source": _path_input_record(config.profile_build_script_path),
             },
         },
         "erofs": {
@@ -1209,13 +1209,13 @@ def prepare_build_context(
                 str(context_dir / "profile-root"),
                 dirs_exist_ok=True,
             )
-        if config.profile_install_script:
-            if not config.profile_install_script_path:
-                raise FileNotFoundError("profile_install_script_path")
-            profile_install = Path(config.profile_install_script_path)
-            if not profile_install.is_file():
-                raise FileNotFoundError(profile_install)
-            shutil.copy2(str(profile_install), str(context_dir / "profile-install.sh"))
+        if config.profile_build_script:
+            if not config.profile_build_script_path:
+                raise FileNotFoundError("profile_build_script_path")
+            profile_build = Path(config.profile_build_script_path)
+            if not profile_build.is_file():
+                raise FileNotFoundError(profile_build)
+            shutil.copy2(str(profile_build), str(context_dir / "profile-build.sh"))
         # Agent binaries (if they exist in context already from cross_compile_agent)
         # They may have been copied to context_dir by the pipeline before this call
 

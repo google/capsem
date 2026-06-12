@@ -7,37 +7,55 @@ description: Building Capsem VM images with capsem-builder. Use when working wit
 
 ## Overview
 
-capsem-builder is a config-driven build system. It reads TOML configs from `guest/config/`, renders Jinja2 Dockerfile templates, and builds kernel + rootfs via Docker. Assets output to `assets/{arch}/`.
+Capsem image builds are profile-led.
 
-## Guest config layout
+- `config/profiles/<profile_id>/profile.toml` is the profile ledger.
+- Profile sibling files own packages, MCP declarations, rule files, detection
+  files, tips, build-time hooks, and packaged guest root seed files.
+- `capsem-admin` validates and materializes profile-owned inputs into the
+  backend build workspace.
+- The Python `capsem-builder` backend renders Docker templates and emits
+  assets, build ledgers, and OBOMs. Do not add product truth directly to the
+  backend image-spec path.
+
+## Source Layout
 
 ```
-guest/config/
-  build.toml              Architectures, compression, base images
-  manifest.toml           Image name, version, changelog
-  ai/*.toml               AI provider configs (Claude, Gemini, Codex)
-  packages/*.toml         Package sets (apt, python)
-  mcp/*.toml              MCP server configs
-  security/web.toml       Web security (allow/block domains)
-  vm/resources.toml       CPU, RAM, disk
-  vm/environment.toml     Shell, TLS, env vars
-  kernel/*.defconfig      Kernel defconfigs per architecture
+config/
+  host/                   Host/corp/settings source contracts
+  docker/                 Dockerfile/build templates
+  profiles/<profile_id>/
+    profile.toml          Profile ledger and hash pins
+    enforcement.toml      Profile enforcement rules
+    detection.yaml        Profile Sigma detections
+    mcp.json              Profile MCP declarations
+    apt-packages.txt      Profile apt package input
+    python-requirements.txt
+    npm-packages.txt
+    build.sh              Profile image build hook
+    tips.txt              Profile guest tips
+    root/                 Guest / seed, projected by capsem-init
+target/config/            Generated runtime config
+guest/artifacts/          Core guest payloads: init, doctor, diagnostics, bench
+assets/                   Generated VM assets
+packages/                 Generated native packages
 ```
 
-All configs use Pydantic models for validation. Run `uv run capsem-builder validate guest/` to lint.
+The materialized backend workspace may contain generated files such as
+`guest/config/packages/*.toml` and `guest/profile-build.sh`. Treat those as
+implementation details, not authoring surfaces.
 
 ## CLI commands
 
 ```bash
-uv run capsem-builder doctor guest/          # Check build prerequisites
-uv run capsem-builder validate guest/        # Lint all configs (E001-E302, W001-W012)
-uv run capsem-builder build guest/ --dry-run # Preview rendered Dockerfiles
-uv run capsem-builder build guest/ --arch arm64 --template rootfs  # Build rootfs
-uv run capsem-builder build guest/ --arch arm64 --template kernel  # Build kernel
-uv run capsem-builder inspect guest/         # Show config summary
-uv run capsem-builder new my-image/ --from guest/  # Scaffold new image from base
+just build-assets code [arch]                # Profile-derived asset rebuild
+just build-kernel arm64 code                 # Kernel slice
+just build-rootfs arm64 code                 # Rootfs slice
 uv run capsem-builder audit                  # Parse trivy/grype vulnerability output
 ```
+
+Prefer admin/just recipes over direct `capsem-builder build` calls unless the
+task is explicitly inside the backend.
 
 ## Building assets
 
@@ -60,34 +78,58 @@ assets/
   B3SUMS                 BLAKE3 checksums
   arm64/
     vmlinuz              Kernel
-    rootfs.squashfs      Root filesystem
+    rootfs.erofs         Root filesystem
     initrd.img           Initial ramdisk (repacked by just run)
 ```
 
-Rootfs squashfs settings live under `[build]` in `guest/config/build.toml`.
-The current default is `compression = "zstd"`, `compression_level = 15`, and
-`squashfs_block_size = "128K"`, balancing sequential rootfs reads, CLI startup,
-image size, and small-file reads.
+Rootfs EROFS settings are profile/admin resolved. The approved release default
+is EROFS with `lz4hc` compression level 12.
+
+## Build Ledger
+
+Each per-arch build emits `build-ledger.log` JSONL. The
+`rootfs.config_inputs` record captures declared profile package inputs,
+rendered rootfs package lists, profile root/build-script inputs, EROFS config,
+git revision, and project version. Installed-package/component truth belongs in
+the CycloneDX OBOM, not the build ledger.
 
 ## Adding packages to the VM
 
-1. Edit the appropriate config in `guest/config/packages/` (apt or python TOML)
-2. Run `uv run capsem-builder validate guest/` to check
-3. Run `just build-assets` to rebuild the rootfs
-4. Verify: `just run "capsem-doctor"`
+1. Edit the profile-owned package file, for example
+   `config/profiles/code/apt-packages.txt`,
+   `python-requirements.txt`, or `npm-packages.txt`.
+2. Update the owning `profile.toml` file descriptor hash/size.
+3. Run the admin/profile validation path.
+4. Run `just build-assets code` to rebuild the rootfs.
+5. Verify with `capsem-doctor` inside a booted VM.
 
-Do not edit Dockerfiles directly -- they are rendered from Jinja2 templates in `src/capsem/builder/templates/`.
+Do not edit generated Dockerfiles. Docker templates live under `config/docker/`.
 
-## Adding a new AI provider
+## Adding a guest CLI/tool
 
-1. Create `guest/config/ai/<provider>.toml` with provider config
-2. Add domain entries to `guest/config/security/web.toml` if needed
-3. Validate: `uv run capsem-builder validate guest/`
-4. Rebuild: `just build-assets`
+There are no image-owned AI providers. A CLI/tool exists only if the active
+profile declares the package/build hook and any required guest root seed files.
+
+1. Add package input to the profile package files, or add build-time shell work
+   to profile-owned `build.sh`.
+2. Add config files under `config/profiles/<profile_id>/root/` so they project
+   into the VM at boot.
+3. Add MCP declarations to profile-owned `mcp.json` when relevant.
+4. Add network/model/security behavior through profile/corp rules, not builder
+   provider config.
+5. Let the credential broker plugin capture/materialize credentials at runtime;
+   do not add settings-owned boot secrets.
+6. Rebuild with `just build-assets code` and verify with `capsem-doctor`.
+
+`build.sh` is executed only while constructing the rootfs image. It is the
+right place for official installer commands such as Claude, AGY, or Ollama
+when they cannot be represented as apt/npm/Python package inputs. It must
+install stable runtime binaries under system paths such as `/usr/local/bin`;
+anything left only under `/root` can be hidden by the runtime overlay.
 
 ## Dockerfile templates
 
-Templates live in `src/capsem/builder/templates/`:
+Templates live in `config/docker/`:
 - `Dockerfile.rootfs.j2` -- rootfs image (apt packages, Python packages, AI CLIs, diagnostics)
 - `Dockerfile.kernel.j2` -- kernel build (defconfig, modules, vmlinuz extraction)
 
@@ -97,24 +139,26 @@ Templates use Jinja2 with variables from the merged guest config. Preview with `
 
 # Builder Internals (for modifying the builder itself)
 
-## Architecture: TOML -> Pydantic -> context dict -> Jinja2 -> Dockerfile
+## Architecture: Profile -> admin materialization -> Pydantic -> context dict -> Jinja2 -> Dockerfile
 
 The data flows through four layers:
 
-1. **TOML configs** (`guest/config/`) -- user-facing, declarative
-2. **Pydantic models** (`src/capsem/builder/models.py`) -- validation + types
-3. **Context dict** (`src/capsem/builder/docker.py`) -- template variables
-4. **Jinja2 templates** (`src/capsem/builder/templates/`) -- Dockerfile output
+1. **Profile ledger** (`config/profiles/<id>/profile.toml`) and hash-pinned
+   sibling files.
+2. **capsem-admin** validates and materializes a backend build workspace.
+3. **Pydantic models** (`src/capsem/builder/models.py`) parse that workspace.
+4. **Context dict** (`src/capsem/builder/docker.py`) feeds Jinja2 templates.
+5. **Jinja2 templates** (`config/docker/`) produce Dockerfiles.
 
 ### Key files
 
 | File | Role |
 |------|------|
 | `src/capsem/builder/models.py` | All Pydantic models (enums, configs, top-level `GuestImageConfig`) |
-| `src/capsem/builder/config.py` | TOML loader: walks `guest/config/`, returns `GuestImageConfig` |
+| `src/capsem/builder/config.py` | Backend loader for admin-materialized build workspaces |
 | `src/capsem/builder/docker.py` | Context builders (`_rootfs_context`, `_kernel_context`), rendering, build execution |
-| `src/capsem/builder/templates/Dockerfile.rootfs.j2` | Rootfs Dockerfile template |
-| `src/capsem/builder/templates/Dockerfile.kernel.j2` | Kernel Dockerfile template |
+| `config/docker/Dockerfile.rootfs.j2` | Rootfs Dockerfile template |
+| `config/docker/Dockerfile.kernel.j2` | Kernel Dockerfile template |
 | `src/capsem/builder/scaffold.py` | `_INSTALL_CMDS` dict + scaffolding for `capsem-builder new` |
 | `src/capsem/builder/validate.py` | Validation rules (E001-E302, W001-W012) |
 | `src/capsem/builder/cli.py` | Click CLI entry points |
@@ -147,85 +191,28 @@ The data flows through four layers:
 }
 ```
 
-## How to: Add a new install manager
+## How to: Change a shipped CLI
 
-Example: adding a `curl` manager so a CLI can be installed via `curl | bash` instead of npm.
+1. Prefer a profile package file (`apt-packages.txt`, `npm-packages.txt`, or
+   `python-requirements.txt`) when the tool has a normal package manager.
+2. Use profile-owned `build.sh` when the vendor ships an official shell
+   installer. The build hook runs during rootfs construction only.
+3. Make sure binaries end up in stable system paths such as `/usr/local/bin`.
+4. Update profile file descriptor hashes/sizes in `profile.toml`.
+5. Add or update capsem-admin materialization tests and Docker context tests.
+6. Rebuild: `just build-assets code` and verify with `capsem-doctor`.
 
-### Step 1: Add enum value to `PackageManager`
-
-In `src/capsem/builder/models.py`:
-
-```python
-class PackageManager(str, Enum):
-    APT = "apt"
-    UV = "uv"
-    PIP = "pip"
-    NPM = "npm"
-    CURL = "curl"  # <-- new
-```
-
-### Step 2: Collect packages in `_rootfs_context()`
-
-In `src/capsem/builder/docker.py`, add a new list and populate it from providers:
-
-```python
-curl_installs: list[str] = []
-for provider in config.ai_providers.values():
-    if provider.enabled and provider.install:
-        if provider.install.manager == PackageManager.CURL:
-            curl_installs.extend(provider.install.packages)
-```
-
-Add `"curl_installs": curl_installs` to the returned dict.
-
-### Step 3: Add template block
-
-In `src/capsem/builder/templates/Dockerfile.rootfs.j2`:
-
-```jinja2
-{% for url in curl_installs %}
-# CLI installed via installer script
-RUN curl -fsSL {{ url }} | bash
-{% endfor %}
-```
-
-### Step 4: Add to scaffold
-
-In `src/capsem/builder/scaffold.py`, add to `_INSTALL_CMDS`:
-
-```python
-"curl": "curl -fsSL",
-```
-
-### Step 5: Update the TOML config
-
-In `guest/config/ai/<provider>.toml`:
-
-```toml
-[provider.install]
-manager = "curl"
-packages = ["https://example.com/install.sh"]
-```
-
-### Step 6: Update tests
-
-- `tests/test_docker.py` -- context dict assertions (what's in npm_packages vs curl_installs)
-- `tests/test_cli.py` -- Dockerfile rendering assertions (corporate config tests)
-
-## How to: Change how an AI CLI is installed
-
-1. Edit `guest/config/ai/<provider>.toml` -- change `[provider.install]` section
-2. If changing install manager type, may need to update `_rootfs_context()` in `docker.py`
-3. Check `extract_tool_versions()` in `docker.py` -- it hardcodes version-check paths
-4. Update tests in `test_docker.py` and `test_cli.py`
-5. Rebuild: `just build-assets && just run "capsem-doctor"`
+Ollama is intentionally installed by `config/profiles/<id>/build.sh`, not by a
+VM one-off command. That keeps Codex, Claude, AGY, and OpenAI-compatible local
+testing available in every shipped profile image that declares the hook.
 
 ## How to: Add a new package to an existing set
 
-1. Edit `guest/config/packages/apt.toml` or `guest/config/packages/python.toml`
-2. Add the package name to the `packages` list
-3. Validate: `uv run capsem-builder validate guest/`
-4. Rebuild: `just build-assets`
+1. Edit `config/profiles/<profile_id>/apt-packages.txt`,
+   `python-requirements.txt`, or `npm-packages.txt`.
+2. Update the matching `profile.toml` descriptor hash and size.
+3. Validate through capsem-admin.
+4. Rebuild: `just build-assets <profile_id>`.
 
 ## How to: Add a new guest binary
 
@@ -285,7 +272,7 @@ For rootfs:
 3. Render Dockerfile from template
 4. `docker build`
 5. Export container filesystem as tar
-6. Create squashfs from tar (`create_squashfs` -- runs mksquashfs in a container)
+6. Create EROFS from tar (`create_erofs` -- runs mkfs.erofs in a container)
 7. Extract tool versions (`extract_tool_versions`)
 8. Clean up container image
 
@@ -336,4 +323,4 @@ This can occur with any container VM backend on macOS.
 Files affected:
 - `Dockerfile.kernel.j2` (line 11)
 - `Dockerfile.rootfs.j2` (line 11)
-- `docker.py` `create_squashfs()` function
+- `docker.py` `create_erofs()` function

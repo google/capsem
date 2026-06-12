@@ -28,7 +28,7 @@ config/
             apt-packages.txt          System packages
             python-requirements.txt   Python packages
             npm-packages.txt          Node CLI packages
-            install.sh                Manual install steps
+            build.sh                  Profile image build hook
             mcp.json                  Profile MCP config
             enforcement.toml          Enforcement rules
             detection.yaml            Sigma detection rules
@@ -248,7 +248,7 @@ remote_enforcement = "https://security.example.invalid/capsem/enforcement"
 3. Edit profile/corp security rules to allow, ask, or block network/model/MCP
    boundaries.
 4. Add internal guest tools only if they must be baked into the image, using
-   profile package files or `install.sh`.
+   profile package files or `build.sh`.
 5. Keep credentials brokered at runtime; do not add them to image config.
 6. Validate with `capsem-admin profile check`.
 7. Build with `capsem-admin image build`.
@@ -280,7 +280,7 @@ Use profile-owned package files for normal package managers:
 - `apt-packages.txt` for apt packages
 - `python-requirements.txt` for Python packages
 - `npm-packages.txt` for Node CLI packages
-- `install.sh` for manual installers that cannot be expressed as a package list
+- `build.sh` for build-time installers that cannot be expressed as a package list
 
 The build ledger records these declared inputs for debugging. The CI/release
 asset rail publishes the CycloneDX OBOM, which records the installed base-image
@@ -290,7 +290,7 @@ component names and versions after the rootfs is produced.
 Anything installed under `/root/` during the Docker build can be hidden at
 runtime by the tmpfs overlay. If a manual installer puts binaries in
 `~/.local/bin/` or a tool-specific home directory, copy them to a stable system
-path from `install.sh` and verify with `capsem-doctor`.
+path from `build.sh` and verify with `capsem-doctor`.
 :::
 
 ## Troubleshooting

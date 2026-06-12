@@ -396,7 +396,7 @@ next one, and stage only the files for that slice.
     scripts/protocol_fixture_recorder.py tests/test_protocol_fixture_recorder.py`.
 - [x] RED/GREEN: live-local Ollama probe uses host `gemma4:latest` through the
   Capsem-routed path and records/replays the resulting native Ollama and
-  OpenAI-compatible traffic without installing Ollama in the guest.
+  OpenAI-compatible traffic without relying on an ad-hoc VM install.
   - 2026-06-12 proof: a fresh isolated `CAPSEM_HOME`/UDS service booted a
     named disposable session and reached host Ollama from inside the guest via
     `http://127.0.0.1:11434`, without installing Ollama in the guest. Native
@@ -411,6 +411,31 @@ next one, and stage only the files for that slice.
     `/v1/chat/completions`, status `200`, and one parsed message. This proves
     the local backend path is routed and parsed through Capsem, not a guest
     install shortcut.
+- [x] RED/GREEN: profile images ship Ollama through the builder/profile rail,
+  not through manual VM repair.
+  - 2026-06-12 progress: `config/profiles/{code,co-work}/build.sh` runs the
+    official Ollama installer alongside Claude and AGY, `apt-packages.txt`
+    includes `zstd`, and `profile.toml` hash-pins the new `files.build`
+    descriptor.
+  - Proof: `cargo test -p capsem-core profile_config -- --nocapture`; `cargo
+    test -p capsem-admin profile_build -- --nocapture`; `cargo test -p
+    capsem-admin image_workspace_materializes_self_contained_profile_config --
+    --nocapture`; `uv run python -m pytest tests/test_docker.py -q -k
+    'rootfs_keys or profile_root_and_build_script or config_input_record'`;
+    `cargo run -p capsem-admin -- profile check config/profiles/code/profile.toml
+    --config-root config --json`; `cargo run -p capsem-admin -- profile check
+    config/profiles/co-work/profile.toml --config-root config --json`.
+- [ ] RED/GREEN: Ironbank real-client Ollama proof covers OpenAI Python SDK,
+  Anthropic/Claude SDK or CLI path, Codex, AGY, and LiteLLM where the client is
+  scriptable without manual OAuth.
+  - Required shape: each client routes through Capsem to host Ollama, writes a
+    deterministic poem file in the guest, and proves model request/response,
+    token counts, byte counts, tool-call/tool-response rows when applicable,
+    file write rows, security/detection rows, UDS route output, HTTP route
+    output, and session DB rows all agree.
+  - Current debt: existing recorder/replay and live Ollama proof are useful,
+    but they are still too thin; they do not yet prove real SDK/client
+    behavior or file-writing agent outcomes.
 - [x] Proof: lab is shared by doctor, integration tests, recorder, and
   benchmark.
   - 2026-06-12 progress: renamed the canonical deterministic fixture service

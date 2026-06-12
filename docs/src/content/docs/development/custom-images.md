@@ -22,7 +22,7 @@ config/
             apt-packages.txt          System packages
             python-requirements.txt   Python packages
             npm-packages.txt          Node CLI packages
-            install.sh                Manual/profile install steps
+            build.sh                  Profile image build hook
             mcp.json                  Profile MCP config
             enforcement.toml          Profile enforcement rules
             detection.yaml            Profile Sigma detection rules
@@ -60,8 +60,8 @@ your-package
 
 ### Add a guest AI CLI
 
-Add the package to `config/profiles/code/npm-packages.txt` or the installer to
-`config/profiles/code/install.sh`. This installs the binary into the base image;
+Add the package to `config/profiles/code/npm-packages.txt` or the build hook to
+`config/profiles/code/build.sh`. This installs the binary into the base image;
 it does not grant network access or inject credentials. Add provider behavior
 through profile/corp enforcement rules and the credential broker plugin.
 
@@ -137,7 +137,7 @@ just run "capsem-doctor"
 | `config/profiles/code/apt-packages.txt` | `just build-rootfs <arch> code` |
 | `config/profiles/code/python-requirements.txt` | `just build-rootfs <arch> code` |
 | `config/profiles/code/npm-packages.txt` | `just build-rootfs <arch> code` |
-| `config/profiles/code/install.sh` | `just build-rootfs <arch> code` |
+| `config/profiles/code/build.sh` | `just build-rootfs <arch> code` |
 | `config/profiles/code/root/**` | `just build-rootfs <arch> code` |
 | `config/profiles/code/mcp.json` | No rootfs rebuild unless it changes projected root seed files |
 | `config/profiles/code/enforcement.toml` | No rootfs rebuild |

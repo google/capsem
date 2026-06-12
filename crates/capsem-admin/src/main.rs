@@ -750,7 +750,7 @@ fn rewrite_profile_owned_paths(profile: &mut ProfileConfigFile, profile_id: &str
         profile_id,
         "npm-packages.txt",
     );
-    rewrite_descriptor_path(&mut profile.files.install, profile_id, "install.sh");
+    rewrite_descriptor_path(&mut profile.files.build, profile_id, "build.sh");
     rewrite_descriptor_path(&mut profile.files.tips, profile_id, "tips.txt");
     rewrite_descriptor_path(
         &mut profile.files.root_manifest,
@@ -2129,9 +2129,9 @@ fn materialize_profile_guest_inputs(
             &packages,
         )?;
     }
-    if let Some(descriptor) = profile.files.install.as_ref() {
+    if let Some(descriptor) = profile.files.build.as_ref() {
         let source = config_root.join(&descriptor.path);
-        let destination = workspace_guest_dir.join("profile-install.sh");
+        let destination = workspace_guest_dir.join("profile-build.sh");
         fs::copy(&source, &destination)
             .with_context(|| format!("copy {} to {}", source.display(), destination.display()))?;
     }
@@ -3005,22 +3005,26 @@ enforcement = "profiles/code/enforcement.toml"
     }
 
     #[test]
-    fn checked_in_profile_install_wraps_agy_with_skip_permissions() {
+    fn checked_in_profile_build_wraps_agy_with_skip_permissions() {
         let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let repo_root = manifest_dir
             .parent()
             .and_then(Path::parent)
             .expect("repo root");
-        let path = repo_root.join("config/profiles/code/install.sh");
-        let content = fs::read_to_string(path).expect("profile install script");
+        let path = repo_root.join("config/profiles/code/build.sh");
+        let content = fs::read_to_string(path).expect("profile build script");
 
         assert!(
             content.contains("/usr/local/bin/agy-real"),
-            "profile install script must preserve the real AGY binary behind a wrapper"
+            "profile build script must preserve the real AGY binary behind a wrapper"
         );
         assert!(
             content.contains("--dangerously-skip-permissions"),
             "profile-owned AGY wrapper must opt into the Capsem permission model"
+        );
+        assert!(
+            content.contains("https://ollama.com/install.sh"),
+            "profile build script must ship Ollama through its official installer"
         );
     }
 
@@ -3535,12 +3539,22 @@ decision = "block"
         assert!(args.output.join("build-plan.json").is_file());
         assert!(args.output.join("workspace.json").is_file());
         assert!(args.output.join("guest/config/packages/apt.toml").is_file());
+        let apt_packages =
+            fs::read_to_string(args.output.join("guest/config/packages/apt.toml"))
+                .expect("materialized apt packages");
+        assert!(
+            apt_packages.contains("\"zstd\""),
+            "Ollama's official installer consumes .tar.zst payloads, so shipped profiles must include zstd"
+        );
         assert!(args
             .output
             .join("guest/config/packages/python.toml")
             .is_file());
         assert!(args.output.join("guest/config/packages/npm.toml").is_file());
-        assert!(args.output.join("guest/profile-install.sh").is_file());
+        assert!(args.output.join("guest/profile-build.sh").is_file());
+        let profile_build = fs::read_to_string(args.output.join("guest/profile-build.sh"))
+            .expect("materialized profile build script");
+        assert!(profile_build.contains("https://ollama.com/install.sh"));
         assert!(args
             .output
             .join("guest/profile-root/root/.codex/config.toml")

@@ -115,7 +115,7 @@ def load_guest_config(guest_dir: Path) -> GuestImageConfig:
     """
     config_dir = guest_dir / "config"
     profile_root = guest_dir / "profile-root"
-    profile_install = guest_dir / "profile-install.sh"
+    profile_build = guest_dir / "profile-build.sh"
     return GuestImageConfig(
         build=_load_build(config_dir),
         manifest=_load_manifest(config_dir),
@@ -128,8 +128,8 @@ def load_guest_config(guest_dir: Path) -> GuestImageConfig:
         vm_environment=_load_vm_environment(config_dir),
         profile_root_seed=profile_root.is_dir(),
         profile_root_seed_path=str(profile_root) if profile_root.is_dir() else None,
-        profile_install_script=profile_install.is_file(),
-        profile_install_script_path=str(profile_install) if profile_install.is_file() else None,
+        profile_build_script=profile_build.is_file(),
+        profile_build_script_path=str(profile_build) if profile_build.is_file() else None,
     )
 
 

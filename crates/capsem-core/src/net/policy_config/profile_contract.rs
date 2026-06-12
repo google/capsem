@@ -139,7 +139,7 @@ pub struct ProfileFileReferences {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub npm_packages: Option<ProfileFileDescriptor>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub install: Option<ProfileFileDescriptor>,
+    pub build: Option<ProfileFileDescriptor>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tips: Option<ProfileFileDescriptor>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1435,7 +1435,7 @@ impl ProfileFileReferences {
             && self.apt_packages.is_none()
             && self.python_requirements.is_none()
             && self.npm_packages.is_none()
-            && self.install.is_none()
+            && self.build.is_none()
             && self.tips.is_none()
             && self.root_manifest.is_none()
     }
@@ -1451,7 +1451,7 @@ impl ProfileFileReferences {
                 self.python_requirements.as_ref(),
             ),
             ("profile.files.npm_packages", self.npm_packages.as_ref()),
-            ("profile.files.install", self.install.as_ref()),
+            ("profile.files.build", self.build.as_ref()),
             ("profile.files.tips", self.tips.as_ref()),
             ("profile.files.root_manifest", self.root_manifest.as_ref()),
         ] {
@@ -1470,7 +1470,7 @@ impl ProfileFileReferences {
             ("apt_packages", self.apt_packages.as_ref()),
             ("python_requirements", self.python_requirements.as_ref()),
             ("npm_packages", self.npm_packages.as_ref()),
-            ("install", self.install.as_ref()),
+            ("build", self.build.as_ref()),
             ("tips", self.tips.as_ref()),
             ("root_manifest", self.root_manifest.as_ref()),
         ]

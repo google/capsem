@@ -24,6 +24,9 @@ install_from_url() {
 install_from_url "https://claude.ai/install.sh" "claude"
 install_from_url "https://antigravity.google/cli/install.sh" "agy"
 
+curl -fsSL https://ollama.com/install.sh | sh
+command -v ollama >/dev/null 2>&1
+
 if [ ! -x /usr/local/bin/agy-real ]; then
     install -m 555 /usr/local/bin/agy /usr/local/bin/agy-real
 fi

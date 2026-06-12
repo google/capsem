@@ -11,7 +11,7 @@ The product contract is profile-led:
 
 - `config/profiles/<profile_id>/profile.toml` is the profile ledger.
 - Profile sibling files own packages, MCP declarations, rule files, detection
-  files, tips, manual installer scripts, and packaged guest root seed files.
+  files, tips, build-time hook scripts, and packaged guest root seed files.
 - `target/config/` is generated runtime config produced by the same admin/just
   rail used by CI and release.
 - `assets/` and `packages/` are generated outputs.
@@ -36,7 +36,7 @@ config/
     apt-packages.txt      Profile apt package input
     python-requirements.txt
     npm-packages.txt
-    install.sh            Profile manual installer input
+    build.sh              Profile image build hook
     tips.txt              Profile guest tips
     root/                 Guest / seed, projected by capsem-init
 target/config/            Generated runtime config
@@ -92,7 +92,7 @@ Each per-arch build emits `build-ledger.log` JSONL with hashes for rendered
 Dockerfiles, build contexts, rootfs tar, final EROFS, kernel assets, tool
 version output, compression settings, git revision, project version, and a
 `rootfs.config_inputs` stage. That stage records declared profile package
-inputs, rendered rootfs package lists, profile root/install-script inputs, and
+inputs, rendered rootfs package lists, profile root/build-script inputs, and
 EROFS config.
 
 The build ledger is a debug/retrace ledger for what went into the build. It is
@@ -118,10 +118,10 @@ Do not edit generated Dockerfiles. Docker build templates live under
 ## Adding a guest CLI/tool
 
 There are no image-owned AI providers. A CLI/tool exists only if the active
-profile declares the package/manual installer and any required guest root seed
-files.
+profile declares the package/build hook and any required guest root seed files.
 
-1. Add install input to the profile package files or profile-owned `install.sh`.
+1. Add package input to the profile package files, or add build-time shell work
+   to profile-owned `build.sh`.
 2. Add config files under `config/profiles/<profile_id>/root/` so they project
    into the VM at boot.
 3. Add MCP declarations to profile-owned `mcp.json` when relevant.
@@ -130,6 +130,12 @@ files.
 5. Let the credential broker plugin capture/materialize credentials at runtime;
    do not add settings-owned boot secrets.
 6. Rebuild with `just build-assets code` and verify with `capsem-doctor`.
+
+`build.sh` is executed only while constructing the rootfs image. It is the
+right place for official installer commands such as Claude, AGY, or Ollama
+when they cannot be represented as apt/npm/Python package inputs. It must
+install stable runtime binaries under system paths such as `/usr/local/bin`;
+anything left only under `/root` can be hidden by the runtime overlay.
 
 ## Dockerfile templates
 

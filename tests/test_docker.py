@@ -93,7 +93,7 @@ def generated_profile_guest(tmp_path):
     (guest / "profile-root" / "root" / ".codex" / "config.toml").write_text(
         '[mcp_servers.capsem]\ncommand = "/run/capsem-mcp-server"\n'
     )
-    (guest / "profile-install.sh").write_text("#!/bin/sh\nexit 0\n")
+    (guest / "profile-build.sh").write_text("#!/bin/sh\nexit 0\n")
     return load_guest_config(guest)
 
 
@@ -462,6 +462,8 @@ class TestGenerateBuildContext:
         assert "npm_packages" in ctx
         assert "npm_prefix" in ctx
         assert "guest_binaries" in ctx
+        assert "profile_build_script" in ctx
+        assert "profile_install_script" not in ctx
 
     def test_kernel_keys(self, real_config):
         ctx = generate_build_context(
@@ -482,7 +484,7 @@ class TestGenerateBuildContext:
         assert ctx["npm_packages"] == ["@openai/codex"]
         rendered = render_dockerfile("Dockerfile.rootfs.j2", generated_profile_guest, "arm64")
         assert "@openai/codex" in rendered
-        assert "profile-install.sh" in rendered
+        assert "profile-build.sh" in rendered
         assert "profile-root/" in rendered
 
     def test_rootfs_curl_installs(self, real_config):
@@ -1052,7 +1054,7 @@ class TestBuildLedger:
             "uv pip install --system --break-system-packages"
         )
         assert record["profile_inputs"]["root_seed"]["enabled"] is True
-        assert record["profile_inputs"]["install_script"]["enabled"] is True
+        assert record["profile_inputs"]["build_script"]["enabled"] is True
         assert record["erofs"] == {
             "enabled": True,
             "compression": "lz4hc",
@@ -1393,7 +1395,7 @@ class TestPrepareBuildContext:
         assert (context_dir / "kernel" / "defconfig.arm64").is_file()
         assert (context_dir / "capsem-init").is_file()
 
-    def test_rootfs_context_copies_profile_root_and_install_script(
+    def test_rootfs_context_copies_profile_root_and_build_script(
         self, generated_profile_guest, tmp_path
     ):
         context_dir = tmp_path / "ctx"
@@ -1405,7 +1407,7 @@ class TestPrepareBuildContext:
             context_dir,
             PROJECT_ROOT,
         )
-        assert (context_dir / "profile-install.sh").is_file()
+        assert (context_dir / "profile-build.sh").is_file()
         assert (context_dir / "profile-root/root/.codex/config.toml").is_file()
         assert (context_dir / "tips.txt").read_text() == "tip\n"
 

@@ -17,6 +17,7 @@ tar
 gzip
 bzip2
 xz-utils
+zstd
 vim-tiny
 git
 gh

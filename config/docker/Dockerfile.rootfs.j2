@@ -41,9 +41,9 @@ RUN npm install -g --prefix {{ npm_prefix }} \
 ENV PATH="{{ npm_prefix }}/bin:$PATH"
 {% endif %}
 
-{% if profile_install_script %}
-COPY profile-install.sh /tmp/profile-install.sh
-RUN chmod 555 /tmp/profile-install.sh && /tmp/profile-install.sh && rm -f /tmp/profile-install.sh
+{% if profile_build_script %}
+COPY profile-build.sh /tmp/profile-build.sh
+RUN chmod 555 /tmp/profile-build.sh && /tmp/profile-build.sh && rm -f /tmp/profile-build.sh
 {% endif %}
 
 # Install MITM CA certificate into system trust store
