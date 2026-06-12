@@ -1449,11 +1449,20 @@ _materialize-config:
     arch=$(uname -m)
     [[ "$arch" == "arm64" ]] || arch="x86_64"
     echo "=== Materialize runtime config ==="
-    cargo run -p capsem-admin -- profile materialize \
-        --profile "$ROOT/config/profiles/code/profile.toml" \
-        --config-root "$ROOT/config" \
-        --manifest "$ROOT/{{assets_dir}}/manifest.json" \
-        --assets-dir "$ROOT/{{assets_dir}}" \
-        --output-root "$ROOT/target/config" \
-        --arch "$arch" \
-        --clean
+    rm -rf "$ROOT/target/config"
+    profile_paths=("$ROOT"/config/profiles/*/profile.toml)
+    if [ "${#profile_paths[@]}" -eq 0 ] || [ ! -f "${profile_paths[0]}" ]; then
+        echo "ERROR: no checked-in profiles found under $ROOT/config/profiles" >&2
+        exit 1
+    fi
+    for profile_path in "${profile_paths[@]}"; do
+        profile_id="$(basename "$(dirname "$profile_path")")"
+        echo "  materializing profile: $profile_id"
+        cargo run -p capsem-admin -- profile materialize \
+            --profile "$profile_path" \
+            --config-root "$ROOT/config" \
+            --manifest "$ROOT/{{assets_dir}}/manifest.json" \
+            --assets-dir "$ROOT/{{assets_dir}}" \
+            --output-root "$ROOT/target/config" \
+            --arch "$arch"
+    done

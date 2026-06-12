@@ -65,6 +65,13 @@ next one, and stage only the files for that slice.
   - Proof: `uv run python -m pytest tests/test_build_assets_profile.py -q`;
     `just _materialize-config`; generated `target/config/profiles/{code,co-work}/profile.toml`
     points at current `file://` arm64 EROFS assets with manifest BLAKE3 hashes.
+  - 2026-06-11 progress: `_materialize-config` now cleans `target/config` once
+    and materializes every checked-in `config/profiles/*/profile.toml` through
+    `capsem-admin`; it no longer hard-codes `code` or clobbers `co-work`.
+  - Proof: `uv run python -m pytest tests/test_build_assets_profile.py -q`;
+    `just _materialize-config`; `target/config/profiles/{code,co-work}` both
+    contain `profile.toml`, rule files, MCP config, root manifest, package
+    lists, and tips, with current arm64 `file://` VM assets.
   - Proof: `cargo test -p capsem-process -- --nocapture`; includes
     `prepare_session_layout_uses_requested_scratch_disk_size` proving a 64 GiB
     sparse `rootfs.img` logical size from the process layout rail.

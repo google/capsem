@@ -60,6 +60,16 @@ def test_materialize_config_uses_admin_profile_command() -> None:
     assert "target/config" in block
 
 
+def test_materialize_config_materializes_entire_checked_in_profile_catalog() -> None:
+    block = _recipe_block("_materialize-config:")
+
+    assert 'rm -rf "$ROOT/target/config"' in block
+    assert 'profile_paths=("$ROOT"/config/profiles/*/profile.toml)' in block
+    assert 'for profile_path in "${profile_paths[@]}"; do' in block
+    assert '--profile "$profile_path"' in block
+    assert '--profile "$ROOT/config/profiles/code/profile.toml"' not in block
+
+
 def test_ensure_service_uses_generated_profiles() -> None:
     block = _recipe_block("_ensure-service:")
 
