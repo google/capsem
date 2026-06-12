@@ -48,3 +48,11 @@ describe('StatsView credential broker contract', () => {
     expect(processBlock).not.toContain('Credential Broker Events');
   });
 });
+
+describe('StatsView detail drawer contract', () => {
+  it('does not render the selected event twice as raw JSON plus repeated fields', () => {
+    expect(source).not.toContain("formatAndHighlight(detail.data, 'json')");
+    expect(source).toContain('visibleDetailEntries(detail.data)');
+    expect(source).toContain('detailPayloadSections(detail.data)');
+  });
+});

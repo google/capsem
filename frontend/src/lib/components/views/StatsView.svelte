@@ -87,10 +87,87 @@
     return Object.entries(obj);
   }
 
+  const DETAIL_PAYLOAD_KEYS = new Set([
+    'request_headers',
+    'response_headers',
+    'request_body_preview',
+    'response_body_preview',
+    'request_preview',
+    'response_preview',
+    'text_content',
+    'context_json',
+  ]);
+
+  const DETAIL_STRUCTURED_KEYS = new Set([
+    'rule_json',
+    'event_json',
+  ]);
+
+  function isPresent(value: unknown): boolean {
+    if (value == null) return false;
+    if (typeof value === 'string') return value.trim().length > 0;
+    return true;
+  }
+
+  function labelForDetailKey(key: string): string {
+    return key
+      .split('_')
+      .map(part => part.charAt(0).toUpperCase() + part.slice(1))
+      .join(' ');
+  }
+
+  function visibleDetailEntries(obj: Record<string, unknown>): [string, unknown][] {
+    return entries(obj).filter(([key, value]) => (
+      isPresent(value)
+      && !DETAIL_PAYLOAD_KEYS.has(key)
+      && !DETAIL_STRUCTURED_KEYS.has(key)
+    ));
+  }
+
+  function detailPayloadSections(obj: Record<string, unknown>): { key: string; label: string; value: unknown; lang: string }[] {
+    return entries(obj)
+      .filter(([key, value]) => DETAIL_PAYLOAD_KEYS.has(key) && isPresent(value))
+      .map(([key, value]) => ({
+        key,
+        label: labelForDetailKey(key),
+        value,
+        lang: 'json',
+      }));
+  }
+
+  function formatDetailValue(value: unknown): string {
+    if (value == null) return 'NULL';
+    if (typeof value === 'object') return JSON.stringify(value);
+    return String(value);
+  }
+
+  function normalizePreviewContent(content: string): string {
+    const trimmed = content.trim();
+    if (!trimmed) return content;
+    if (
+      (trimmed.startsWith('{') || trimmed.startsWith('['))
+      && (trimmed.includes('\\"') || trimmed.includes('\\n') || trimmed.includes('\\t'))
+    ) {
+      const unescaped = trimmed
+        .replace(/\\n/g, '\n')
+        .replace(/\\r/g, '\r')
+        .replace(/\\t/g, '\t')
+        .replace(/\\"/g, '"');
+      try {
+        JSON.parse(unescaped);
+        return unescaped;
+      } catch {
+        return content;
+      }
+    }
+    return content;
+  }
+
   function formatAndHighlight(value: unknown, lang?: string): string {
     shikiTick;
     if (value == null) return '';
     let content = typeof value === 'string' ? value : JSON.stringify(value, null, 2);
+    content = normalizePreviewContent(content);
     const trimmed = content.trim();
     if (!trimmed) return '';
     const isJson = trimmed.startsWith('{') || trimmed.startsWith('[');
@@ -496,7 +573,20 @@
         </button>
       </div>
       <div class="flex-1 overflow-auto p-3 text-xs space-y-3">
-        <div class="detail-shiki rounded overflow-auto bg-background-1">{@html formatAndHighlight(detail.data, 'json')}</div>
+        <div class="space-y-1">
+          {#each visibleDetailEntries(detail.data) as [key, value]}
+            <div class="grid grid-cols-[130px_1fr] gap-x-2">
+              <span class="text-muted-foreground">{key}</span>
+              <span class="font-mono text-foreground break-all">{formatDetailValue(value)}</span>
+            </div>
+          {/each}
+        </div>
+        {#each detailPayloadSections(detail.data) as section (section.key)}
+          <div>
+            <div class="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1">{section.label}</div>
+            <div class="detail-shiki rounded overflow-auto max-h-80 bg-background-1">{@html formatAndHighlight(section.value, section.lang)}</div>
+          </div>
+        {/each}
         {#if detail.type === 'security' || detail.type === 'detection' || detail.type === 'enforcement'}
           <div>
             <div class="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1">Rule Snapshot</div>
@@ -507,14 +597,6 @@
             <div class="detail-shiki rounded overflow-auto max-h-80 bg-background-1">{@html formatAndHighlight(detail.data.event_json, 'json')}</div>
           </div>
         {/if}
-        <div class="space-y-1">
-          {#each entries(detail.data) as [key, value]}
-            <div class="grid grid-cols-[130px_1fr] gap-x-2">
-              <span class="text-muted-foreground">{key}</span>
-              <span class="font-mono text-foreground break-all">{typeof value === 'object' ? JSON.stringify(value) : value ?? 'NULL'}</span>
-            </div>
-          {/each}
-        </div>
       </div>
     </div>
   {/if}

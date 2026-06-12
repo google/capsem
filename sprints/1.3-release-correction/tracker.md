@@ -303,8 +303,15 @@ next one, and stage only the files for that slice.
   profiles with no 404/501.
 - [ ] RED/GREEN: plugin/MCP/rule modes use enum-backed selects/icons and
   disabled rows are visibly disabled.
-- [ ] RED/GREEN: stats detail panels show one canonical presentation and move
+- [x] RED/GREEN: stats detail panels show one canonical presentation and move
   raw JSON to debug-only.
+  - 2026-06-11 progress: stats detail drawers no longer render the selected
+    row once as full raw JSON and again as repeated fields. Scalar fields are
+    shown once; payload/header/body fields render as dedicated highlighted
+    sections.
+  - Proof: `pnpm --dir frontend test
+    src/lib/__tests__/stats-view-contract.test.ts`; `pnpm --dir frontend
+    check`.
 - [ ] RED/GREEN: HTTP/DNS/file/process/security/credentials panels use correct
   labels, counts, syntax highlighting, and no duplicate payload fields.
 
