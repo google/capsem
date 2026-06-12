@@ -399,7 +399,7 @@
                         <p class="text-muted-foreground-2 truncate">{credential.provider ?? 'unknown'} · {credential.last_seen ?? 'never'}</p>
                       </div>
                       <p class="text-muted-foreground-1">{credential.observed_count} seen</p>
-                      <p class="text-muted-foreground-1">{credential.substituted_count} used</p>
+                      <p class="text-muted-foreground-1">{credential.injected_count} used</p>
                     </div>
                   {/each}
                 </div>

@@ -858,7 +858,7 @@ fn brokered_substitution_persists_reference_and_not_secret() {
                         event_type: Some("http.request".into()),
                         algorithm: "blake3".into(),
                         substitution_ref: credential_ref.clone(),
-                        outcome: "substituted".into(),
+                        outcome: "captured".into(),
                         provider: Some("github".into()),
                         confidence: Some(1.0),
                         trace_id: Some("trace-credential".into()),

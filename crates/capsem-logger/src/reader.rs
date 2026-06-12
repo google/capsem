@@ -230,7 +230,7 @@ pub struct BrokeredCredentialStat {
     pub provider: Option<String>,
     pub credential_ref: String,
     pub observed_count: u64,
-    pub substituted_count: u64,
+    pub injected_count: u64,
     pub last_seen: Option<String>,
 }
 
@@ -766,7 +766,7 @@ impl DbReader {
     pub fn brokered_credential_stats(&self) -> rusqlite::Result<Vec<BrokeredCredentialStat>> {
         let mut stmt = self.conn.prepare(
             "SELECT provider, substitution_ref, COUNT(*),
-                    SUM(CASE WHEN outcome = 'substituted' THEN 1 ELSE 0 END),
+                    SUM(CASE WHEN outcome = 'injected' THEN 1 ELSE 0 END),
                     MAX(timestamp)
              FROM substitution_events
              WHERE material_class = 'credential'
@@ -779,7 +779,7 @@ impl DbReader {
                 provider: row.get(0)?,
                 credential_ref: row.get(1)?,
                 observed_count: row.get::<_, i64>(2)? as u64,
-                substituted_count: row.get::<_, i64>(3)? as u64,
+                injected_count: row.get::<_, i64>(3)? as u64,
                 last_seen: row.get(4)?,
             })
         })?;

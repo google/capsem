@@ -259,7 +259,7 @@ pub async fn broker_and_log_observations(
         })
         .await
         {
-            Ok(Ok(_)) => "substituted",
+            Ok(Ok(_)) => "captured",
             Ok(Err(error)) => {
                 warn!(
                     provider = observation.provider.as_str(),

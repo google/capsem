@@ -323,7 +323,6 @@
   function brokerVerb(row: Row): string {
     const outcome = text(row.outcome).toLowerCase();
     if (outcome === 'brokered' || outcome === 'captured' || outcome === 'injected') return outcome;
-    if (outcome === 'substituted') return 'brokered';
     return 'captured';
   }
 

@@ -89,7 +89,7 @@ export interface BrokeredCredentialStatus {
   provider: string | null;
   credential_ref: string;
   observed_count: number;
-  substituted_count: number;
+  injected_count: number;
   last_seen: string | null;
 }
 

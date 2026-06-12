@@ -2705,7 +2705,7 @@ async fn credential_broker_detail_route_exposes_inventory_and_grant_surface() {
 }
 
 #[tokio::test]
-async fn credential_broker_plugin_runtime_reports_session_db_substitutions() {
+async fn credential_broker_plugin_runtime_reports_session_db_captures() {
     let state = make_test_state();
     let app = build_service_router(Arc::clone(&state));
     let dir = tempfile::tempdir().unwrap();
@@ -2731,7 +2731,7 @@ async fn credential_broker_plugin_runtime_reports_session_db_substitutions() {
                 substitution_ref:
                     "credential:blake3:1111111111111111111111111111111111111111111111111111111111111111"
                         .to_string(),
-                outcome: "substituted".to_string(),
+                outcome: "captured".to_string(),
                 provider: Some("google".to_string()),
                 confidence: Some(1.0),
                 trace_id: None,
@@ -2756,7 +2756,7 @@ async fn credential_broker_plugin_runtime_reports_session_db_substitutions() {
         .find(|plugin| plugin["id"] == "credential_broker")
         .expect("credential broker plugin is listed");
     assert_eq!(broker["runtime"]["event_count"], 1);
-    assert_eq!(broker["runtime"]["rewrite_count"], 1);
+    assert_eq!(broker["runtime"]["rewrite_count"], 0);
     assert_eq!(
         broker["runtime"]["brokered_credentials"][0]["credential_ref"],
         "credential:blake3:1111111111111111111111111111111111111111111111111111111111111111"

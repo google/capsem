@@ -80,7 +80,7 @@ fn http_detector_detects_github_authorization_without_raw_leak() {
     )
     .expect("github token should be detected");
     assert_eq!(obs.provider, CredentialProvider::Github);
-    let event = obs.redacted_event("substituted");
+    let event = obs.redacted_event("captured");
     assert!(is_broker_reference(&event.substitution_ref));
     assert!(!event.substitution_ref.contains("github_pat_secret"));
     assert!(!event.context_json.unwrap().contains("github_pat_secret"));

@@ -4,6 +4,8 @@ const CREDENTIAL_REF_CHECK: &str =
     "CHECK (credential_ref IS NULL OR (length(credential_ref) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f]*'))";
 const SUBSTITUTION_REF_CHECK: &str =
     "CHECK (substitution_ref IS NULL OR (length(substitution_ref) = 82 AND substitution_ref GLOB 'credential:blake3:[0-9a-f]*'))";
+const SUBSTITUTION_OUTCOME_CHECK: &str =
+    "CHECK (outcome IN ('captured', 'brokered', 'injected', 'error'))";
 const RULE_ACTION_CHECK: &str =
     "CHECK (rule_action IN ('allow', 'ask', 'block', 'preprocess', 'rewrite', 'postprocess'))";
 const DETECTION_LEVEL_CHECK: &str =
@@ -262,7 +264,7 @@ pub const CREATE_SCHEMA: &str = "
         event_type TEXT,
         algorithm TEXT NOT NULL,
         substitution_ref TEXT NOT NULL CHECK (length(substitution_ref) = 82 AND substitution_ref GLOB 'credential:blake3:[0-9a-f]*'),
-        outcome TEXT NOT NULL,
+        outcome TEXT NOT NULL CHECK (outcome IN ('captured', 'brokered', 'injected', 'error')),
         provider TEXT,
         confidence REAL,
         trace_id TEXT,
@@ -624,7 +626,7 @@ pub fn migrate(conn: &Connection) {
             event_type TEXT,
             algorithm TEXT NOT NULL,
             substitution_ref TEXT NOT NULL {SUBSTITUTION_REF_CHECK},
-            outcome TEXT NOT NULL,
+            outcome TEXT NOT NULL {SUBSTITUTION_OUTCOME_CHECK},
             provider TEXT,
             confidence REAL,
             trace_id TEXT,
@@ -998,7 +1000,7 @@ mod tests {
                 '2026-01-01T00:00:00Z', 'credential', 'http.authorization',
                 'http.request', 'blake3',
                 'credential:blake3:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
-                'substituted'
+                'captured'
              )",
             [],
         )
@@ -1011,7 +1013,7 @@ mod tests {
                     substitution_ref, outcome
                  ) VALUES (
                     '2026-01-01T00:00:00Z', 'credential', 'http.authorization',
-                    'blake3', 'Bearer raw-secret', 'substituted'
+                    'blake3', 'Bearer raw-secret', 'captured'
                  )",
                 [],
             )
@@ -1020,6 +1022,27 @@ mod tests {
             err.to_string().contains("CHECK"),
             "expected CHECK constraint failure, got: {err}"
         );
+
+        for outcome in ["substituted", "ignored"] {
+            let err = conn
+                .execute(
+                    "INSERT INTO substitution_events (
+                        timestamp, material_class, source, event_type,
+                        algorithm, substitution_ref, outcome
+                     ) VALUES (
+                        '2026-01-01T00:00:00Z', 'credential', 'http.authorization',
+                        'http.request', 'blake3',
+                        'credential:blake3:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+                        ?1
+                     )",
+                    [outcome],
+                )
+                .expect_err("substitution_events outcome must be a closed broker verb");
+            assert!(
+                err.to_string().contains("CHECK"),
+                "expected CHECK constraint failure for outcome {outcome}, got: {err}"
+            );
+        }
     }
 
     #[test]

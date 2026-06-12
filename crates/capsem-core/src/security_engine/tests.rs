@@ -2124,7 +2124,7 @@ async fn emit_substitution_security_write_and_rules_keeps_ref_without_fake_root(
             event_type: Some("http.request".to_string()),
             algorithm: "blake3".to_string(),
             substitution_ref: credential_ref.clone(),
-            outcome: "substituted".to_string(),
+            outcome: "captured".to_string(),
             provider: Some("openai".to_string()),
             confidence: Some(1.0),
             trace_id: Some("trace_credential".to_string()),

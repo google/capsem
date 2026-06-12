@@ -527,7 +527,7 @@ async fn hook_writes_substitution_event_and_shared_credential_ref() {
             .unwrap();
         let sub_count: i64 = conn
             .query_row(
-                "SELECT COUNT(*) FROM substitution_events WHERE substitution_ref = ?1 AND outcome = 'substituted'",
+                "SELECT COUNT(*) FROM substitution_events WHERE substitution_ref = ?1 AND outcome = 'captured'",
                 [&credential_ref],
                 |row| row.get(0),
             )

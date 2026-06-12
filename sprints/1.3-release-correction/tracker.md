@@ -321,6 +321,23 @@ next one, and stage only the files for that slice.
   evidence.
 - [ ] RED/GREEN: credential broker logs `captured`, `brokered`, `injected`, and
   errors without raw secret leakage or generic status fields.
+  - 2026-06-11 progress: new `substitution_events` tables now CHECK broker
+    outcomes against the closed verb set `captured|brokered|injected|error`;
+    successful observed credential saves emit `captured`, stale `substituted`
+    outcomes are rejected, and credential inventory exposes `injected_count`
+    instead of stale substitution language.
+  - Proof: `cargo test -p capsem-logger
+    substitution_events_require_brokered_reference -- --nocapture`; `cargo
+    test -p capsem-logger --lib
+    brokered_substitution_persists_reference_and_not_secret -- --nocapture`;
+    `cargo test -p capsem-core --lib
+    hook_writes_substitution_event_and_shared_credential_ref -- --nocapture`;
+    `cargo test -p capsem-service
+    credential_broker_plugin_runtime_reports_session_db_captures --
+    --nocapture`; `pnpm --dir frontend test
+    src/lib/__tests__/stats-view-contract.test.ts src/lib/__tests__/api.test.ts`;
+    `cargo check -p capsem-core -p capsem-logger -p capsem-service`; `pnpm
+    --dir frontend check`.
 
 ## S8. UI/TUI Contract Repair
 
