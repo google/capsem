@@ -26,6 +26,7 @@ install_from_url "https://antigravity.google/cli/install.sh" "agy"
 
 curl -fsSL https://ollama.com/install.sh | sh
 command -v ollama >/dev/null 2>&1
+rm -rf /usr/local/lib/ollama/cuda_*
 
 if [ ! -x /usr/local/bin/agy-real ]; then
     install -m 555 /usr/local/bin/agy /usr/local/bin/agy-real

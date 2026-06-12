@@ -453,14 +453,24 @@ next one, and stage only the files for that slice.
   not through manual VM repair.
   - 2026-06-12 progress: `config/profiles/{code,co-work}/build.sh` runs the
     official Ollama installer alongside Claude and AGY, `apt-packages.txt`
-    includes `zstd`, and `profile.toml` hash-pins the new `files.build`
-    descriptor.
+    includes `zstd`, and source `profile.toml` declares the `files.build`
+    descriptor without generated pins.
   - Proof: `cargo test -p capsem-core profile_config -- --nocapture`; `cargo
     test -p capsem-admin profile_build -- --nocapture`; `cargo test -p
     capsem-admin image_workspace_materializes_self_contained_profile_config --
     --nocapture`; `uv run python -m pytest tests/test_docker.py -q -k
     'rootfs_keys or profile_root_and_build_script or config_input_record'`;
     `cargo run -p capsem-admin -- profile check config/profiles/code/profile.toml
+    --config-root config --json`; `cargo run -p capsem-admin -- profile check
+    config/profiles/co-work/profile.toml --config-root config --json`.
+  - 2026-06-12 progress: profile build scripts now prune
+    `/usr/local/lib/ollama/cuda_*` after the official install and both Code and
+    Co-work Python requirement payloads include the `ollama` SDK. Source
+    profile payload tests derive the paths from `profile.toml`, so this stays
+    tied to the profile ledger rather than a hand-maintained file list.
+  - Proof: `uv run python -m pytest
+    tests/capsem-build-chain/test_profile_payload_contract.py -q`; `cargo run
+    -p capsem-admin -- profile check config/profiles/code/profile.toml
     --config-root config --json`; `cargo run -p capsem-admin -- profile check
     config/profiles/co-work/profile.toml --config-root config --json`.
 - [ ] RED/GREEN: Ironbank real-client Ollama proof covers OpenAI Python SDK,
@@ -477,10 +487,11 @@ next one, and stage only the files for that slice.
   - 2026-06-12 progress: a black-box SDK presence probe against a fresh Code
     session showed `openai` and `anthropic` are missing from the current VM
     image while `httpx` and `requests` are present. The Code and Co-work
-    profile package ledgers now include `openai`, `anthropic`, and `litellm`
-    with updated BLAKE3/size pins. Remaining debt: rebuild EROFS assets from
-    the profile rail, then add the real-client Ironbank test that exercises
-    those SDKs through Capsem to host Ollama and validates DB/routes/logs.
+    profile package ledgers now include `openai`, `anthropic`, `litellm`, and
+    `ollama` in source package files that capsem-admin validates and pins only
+    during materialization. Remaining debt: rebuild EROFS assets from the
+    profile rail, then add the real-client Ironbank test that exercises those
+    SDKs through Capsem to host Ollama and validates DB/routes/logs.
   - Proof: `cargo run -p capsem-admin -- profile check
     config/profiles/code/profile.toml --config-root config --json`; `cargo run
     -p capsem-admin -- profile check config/profiles/co-work/profile.toml

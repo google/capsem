@@ -16,3 +16,4 @@ fastmcp
 openai
 anthropic
 litellm
+ollama

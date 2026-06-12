@@ -112,16 +112,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pin `obom.cdx.json` with BLAKE3 hash, size, cdxgen generator metadata, and
   the rootfs hash it describes, and `/profiles/{id}/info` plus
   `/profiles/{id}/obom` expose that base-image-only contract.
-- Added profile-owned image payload pinning for the code profile: MCP config,
-  apt/Python/npm package lists, build-time hook script, tips, and packaged
-  guest-root seed files are now declared from `profile.toml` with BLAKE3/size
-  pins. `capsem-admin profile check` verifies those pins plus the root seed
-  manifest, and `capsem-admin image build` materializes a self-contained
-  generated guest workspace before invoking the backend builder.
+- Added profile-owned image payload declarations for the code profile: MCP
+  config, apt/Python/npm package lists, build-time hook script, tips, and
+  packaged guest-root seed files are now declared from `profile.toml`.
+  `capsem-admin profile check` verifies those source payloads plus the root
+  seed manifest, and `capsem-admin image build` materializes a pinned,
+  self-contained generated guest workspace before invoking the backend builder.
 - Renamed profile image hooks from `install.sh`/`files.install` to
   `build.sh`/`files.build` and added Ollama to the shipped Code and Co-work
   profile images through that builder rail, with `zstd` included for the
   official Ollama installer.
+- Pruned Ollama CUDA libraries from profile-built images and added the Python
+  Ollama SDK to Code and Co-work profiles so local Ollama client tests do not
+  require ad-hoc VM package repair or waste guest disk on unused GPU payloads.
 - Added OpenAI, Anthropic, and LiteLLM Python SDKs to the Code and Co-work
   profile package ledgers so Ironbank real-client model tests can run from the
   VM without ad-hoc guest installs.
