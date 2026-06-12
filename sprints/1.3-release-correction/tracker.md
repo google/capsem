@@ -275,6 +275,18 @@ next one, and stage only the files for that slice.
     /var/cache/apt/archives/partial/.capsem_apt_probe && rm -f
     /var/cache/apt/archives/partial/.capsem_apt_probe'"` returned `/` as
     `755 root root /` and `_apt` probe `OK`.
+  - 2026-06-12 progress: pip, uv, npm, and apt doctor probes no longer hit
+    public package registries. They generate local wheel/npm/deb fixtures
+    inside the guest and install them through the real package managers.
+    `capsem run "capsem-doctor -q -k 'term_is_xterm_256color or pip_install or
+    uv_pip_install or uv_add_package or npm_install or apt_install or
+    apt_partial_cache'"` passed `9 selected` tests in `1.53s` after repack.
+    Previous public-registry doctor proof failed after `104.41s`, including two
+    30s npm timeouts and uv retry delays, so this gate is now both hermetic and
+    materially faster.
+  - Proof: `uv run python -m pytest tests/test_release_doctor_contract.py -q`;
+    `python3 -m py_compile guest/artifacts/diagnostics/test_runtimes.py`;
+    selected in-VM doctor command above.
 - [x] RED/GREEN: cargo test runner codesigning is serialized so parallel test
   shards do not race while replacing ad-hoc signatures.
   - 2026-06-11 progress: `scripts/run_signed.sh` now uses a portable

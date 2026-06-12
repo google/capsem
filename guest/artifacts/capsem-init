@@ -453,6 +453,7 @@ ulimit -n 65536
 # The interactive shell PATH is set by the host via BootConfig SetEnv later.
 export PATH=/opt/ai-clis/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 export HOME=/root
+export TERM=xterm-256color
 export COLORTERM=truecolor
 export IS_SANDBOX=1
 export SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
@@ -486,6 +487,7 @@ case ":$PATH:" in
     *:/opt/ai-clis/bin:*) ;;
     *) export PATH="/opt/ai-clis/bin:/root/.local/bin:$PATH" ;;
 esac
+export TERM=xterm-256color
 export SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 export REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
 export NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt

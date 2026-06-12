@@ -1,10 +1,92 @@
 """Dev runtime version checks and execution tests."""
 
 import json
+import textwrap
+import zipfile
 
 import pytest
 
 from conftest import run
+
+
+def _write_python_wheel(output_dir, distribution, module, module_source):
+    """Create a tiny pure-Python wheel without touching a package index."""
+    version = "0.1.0"
+    wheel_name = f"{distribution.replace('-', '_')}-{version}-py3-none-any.whl"
+    wheel_path = output_dir / wheel_name
+    dist_info = f"{distribution.replace('-', '_')}-{version}.dist-info"
+    files = {
+        f"{module}/__init__.py": textwrap.dedent(module_source).lstrip(),
+        f"{dist_info}/METADATA": (
+            "Metadata-Version: 2.1\n"
+            f"Name: {distribution}\n"
+            f"Version: {version}\n"
+        ),
+        f"{dist_info}/WHEEL": (
+            "Wheel-Version: 1.0\n"
+            "Generator: capsem-doctor\n"
+            "Root-Is-Purelib: true\n"
+            "Tag: py3-none-any\n"
+        ),
+    }
+    record_rows = [f"{path},," for path in files]
+    record_rows.append(f"{dist_info}/RECORD,,")
+    files[f"{dist_info}/RECORD"] = "\n".join(record_rows) + "\n"
+    with zipfile.ZipFile(wheel_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for path, data in files.items():
+            zf.writestr(path, data)
+    return wheel_path
+
+
+def _write_npm_package(output_dir, name):
+    package_dir = output_dir / name
+    bin_dir = package_dir / "bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    (package_dir / "package.json").write_text(
+        json.dumps(
+            {
+                "name": name,
+                "version": "0.1.0",
+                "main": "index.js",
+                "bin": {name: "bin/cli.js"},
+            }
+        )
+    )
+    (package_dir / "index.js").write_text(
+        "exports.capitalize = (value) => value.charAt(0).toUpperCase() + value.slice(1);\n"
+    )
+    cli = bin_dir / "cli.js"
+    cli.write_text("#!/usr/bin/env node\nconsole.log('capsem-npm-ok')\n")
+    cli.chmod(0o755)
+    return package_dir
+
+
+def _write_deb_package(output_dir):
+    root = output_dir / "capsem-apt-hello"
+    debian = root / "DEBIAN"
+    bin_dir = root / "usr/local/bin"
+    debian.mkdir(parents=True, exist_ok=True)
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    (debian / "control").write_text(
+        textwrap.dedent(
+            """\
+            Package: capsem-apt-hello
+            Version: 0.1.0
+            Section: utils
+            Priority: optional
+            Architecture: all
+            Maintainer: Capsem Doctor <doctor@capsem.local>
+            Description: Hermetic local package-manager probe
+            """
+        )
+    )
+    binary = bin_dir / "capsem-apt-hello"
+    binary.write_text("#!/bin/sh\necho capsem-apt-ok\n")
+    binary.chmod(0o755)
+    deb_path = output_dir / "capsem-apt-hello.deb"
+    result = run(f"dpkg-deb --build {root} {deb_path}", timeout=15)
+    assert result.returncode == 0, f"dpkg-deb --build failed: {result.stdout} {result.stderr}"
+    return deb_path
 
 
 @pytest.mark.parametrize("runtime", ["python3", "node", "npm", "pip3", "uv", "git"])
@@ -14,54 +96,96 @@ def test_runtime_version(runtime):
     assert result.returncode == 0, f"{runtime} --version failed: {result.stderr}"
 
 
-def test_pip_install_works():
+def test_pip_install_works(output_dir):
     """pip install must work without PEP 668 or permission errors.
 
     The guest VM activates a venv at /root/.venv so packages install
     to a writable location (rootfs is read-only).
     """
-    # Install a small, pure-Python package
-    result = run("pip install six 2>&1", timeout=30)
+    wheel = _write_python_wheel(
+        output_dir,
+        "capsem-pip-hello",
+        "capsem_pip_hello",
+        """
+        __version__ = "0.1.0"
+        def ping():
+            return "capsem-pip-ok"
+        """,
+    )
+    result = run(f"pip install --no-index {wheel} 2>&1", timeout=30)
     assert result.returncode == 0, f"pip install failed: {result.stdout}"
     assert "externally-managed" not in result.stdout.lower(), (
         "PEP 668 EXTERNALLY-MANAGED error not suppressed"
     )
-    # Verify the package is importable
-    result = run("python3 -c 'import six; print(six.__version__)'")
-    assert result.returncode == 0, f"import six failed: {result.stderr}"
+    result = run("python3 -c 'import capsem_pip_hello; print(capsem_pip_hello.ping())'")
+    assert result.returncode == 0, f"import local pip wheel failed: {result.stderr}"
+    assert "capsem-pip-ok" in result.stdout
 
 
-def test_uv_pip_install_works():
+def test_uv_pip_install_works(output_dir):
     """uv pip install must work inside the activated venv."""
-    result = run("uv pip install wheel 2>&1", timeout=30)
+    wheel = _write_python_wheel(
+        output_dir,
+        "capsem-uv-wheel",
+        "capsem_uv_wheel",
+        """
+        def marker():
+            return "capsem-uv-wheel-ok"
+        """,
+    )
+    result = run(
+        "uv pip install --python /root/.venv/bin/python "
+        f"--no-index --find-links {wheel.parent} capsem-uv-wheel==0.1.0 2>&1",
+        timeout=30,
+    )
     assert result.returncode == 0, f"uv pip install failed: {result.stdout}"
-    result = run("python3 -c 'import wheel; print(wheel.__version__)'")
-    assert result.returncode == 0, f"import wheel failed: {result.stderr}"
+    result = run("/root/.venv/bin/python -c 'import capsem_uv_wheel; print(capsem_uv_wheel.marker())'")
+    assert result.returncode == 0, f"import local uv wheel failed: {result.stderr}"
+    assert "capsem-uv-wheel-ok" in result.stdout
 
 
-def test_uv_add_package_works():
+def test_uv_add_package_works(output_dir):
     """uv pip install a real package and verify it imports."""
-    result = run("uv pip install humanize 2>&1", timeout=30)
-    assert result.returncode == 0, f"uv pip install humanize failed: {result.stdout}"
-    result = run("python3 -c 'import humanize; print(humanize.naturalsize(1024))'")
-    assert result.returncode == 0, f"import humanize failed: {result.stderr}"
+    wheel = _write_python_wheel(
+        output_dir,
+        "capsem-uv-extra",
+        "capsem_uv_extra",
+        """
+        def naturalsize(value):
+            return f"{value} bytes"
+        """,
+    )
+    result = run(
+        f"uv pip install --python /root/.venv/bin/python --no-index {wheel} 2>&1",
+        timeout=30,
+    )
+    assert result.returncode == 0, f"uv pip install local wheel failed: {result.stdout}"
+    result = run(
+        "/root/.venv/bin/python -c 'import capsem_uv_extra; "
+        "print(capsem_uv_extra.naturalsize(1024))'"
+    )
+    assert result.returncode == 0, f"import local uv package failed: {result.stderr}"
+    assert "1024 bytes" in result.stdout
 
 
-def test_npm_install_global_works():
+def test_npm_install_global_works(output_dir):
     """npm install -g must work (prefix set to /opt/ai-clis, writable via overlayfs)."""
-    result = run("npm install -g cowsay 2>&1", timeout=30)
+    package = _write_npm_package(output_dir, "capsem-npm-global")
+    result = run(f"npm install -g file:{package} 2>&1", timeout=30)
     assert result.returncode == 0, f"npm install -g failed: {result.stdout}"
-    result = run("cowsay hello 2>&1")
-    assert result.returncode == 0, f"cowsay not found after npm install -g: {result.stderr}"
-    assert "hello" in result.stdout
+    result = run("capsem-npm-global 2>&1")
+    assert result.returncode == 0, f"local npm bin not found after npm install -g: {result.stderr}"
+    assert "capsem-npm-ok" in result.stdout
 
 
-def test_apt_install_works():
+def test_apt_install_works(output_dir):
     """apt-get install must work (overlayfs upper is writable)."""
-    result = run("apt-get update -qq 2>&1 && apt-get install -y -qq htop 2>&1", timeout=60)
-    assert result.returncode == 0, f"apt-get install htop failed: {result.stdout}"
-    result = run("htop --version")
-    assert result.returncode == 0, f"htop not found after apt install: {result.stderr}"
+    deb = _write_deb_package(output_dir)
+    result = run(f"apt-get install -y -qq {deb} 2>&1", timeout=60)
+    assert result.returncode == 0, f"apt-get install local deb failed: {result.stdout}"
+    result = run("capsem-apt-hello")
+    assert result.returncode == 0, f"local deb binary not found after apt install: {result.stderr}"
+    assert "capsem-apt-ok" in result.stdout
 
 
 def test_tmux_works():
@@ -74,12 +198,13 @@ def test_tmux_works():
 def test_npm_install_local_works(output_dir):
     """npm install (local) must work in a writable directory."""
     project = output_dir / "npm_test"
+    package = _write_npm_package(output_dir, "capsem-npm-local")
     cmds = " && ".join([
         f"mkdir -p {project}",
         f"cd {project}",
         "npm init -y",
-        "npm install lodash",
-        "node -e 'const _ = require(\"lodash\"); console.log(_.capitalize(\"works\"))'",
+        f"npm install file:{package}",
+        "node -e 'const pkg = require(\"capsem-npm-local\"); console.log(pkg.capitalize(\"works\"))'",
     ])
     result = run(cmds, timeout=30)
     assert result.returncode == 0, f"npm install failed: {result.stdout}\n{result.stderr}"

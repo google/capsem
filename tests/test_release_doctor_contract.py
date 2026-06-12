@@ -66,6 +66,15 @@ def test_guest_init_exports_ca_bundle_for_runtime_and_login_shells() -> None:
         assert export in profile_block
 
 
+def test_guest_init_exports_terminal_type_for_exec_and_doctor() -> None:
+    init = (PROJECT_ROOT / "guest" / "artifacts" / "capsem-init").read_text()
+    runtime_block = init.split("cat > /newroot/etc/profile.d/capsem.sh", maxsplit=1)[0]
+    profile_block = init.split("cat > /newroot/etc/profile.d/capsem.sh", maxsplit=1)[1]
+
+    assert "export TERM=xterm-256color" in runtime_block
+    assert "export TERM=xterm-256color" in profile_block
+
+
 def test_guest_init_repairs_overlay_root_traversal_for_unprivileged_tools() -> None:
     init = (PROJECT_ROOT / "guest" / "artifacts" / "capsem-init").read_text()
 
@@ -78,3 +87,26 @@ def test_guest_init_repairs_overlay_root_traversal_for_unprivileged_tools() -> N
     assert launch_pos != -1
     assert chmod_pos < launch_pos
     assert chroot_chmod_pos < launch_pos
+
+
+def test_guest_runtime_doctor_package_probes_are_hermetic() -> None:
+    source = (
+        PROJECT_ROOT / "guest" / "artifacts" / "diagnostics" / "test_runtimes.py"
+    ).read_text()
+
+    forbidden_fragments = [
+        "pip install six",
+        "uv pip install wheel",
+        "uv pip install humanize",
+        "npm install -g cowsay",
+        "npm install lodash",
+        "apt-get update",
+        "apt-get install -y -qq htop",
+    ]
+    for fragment in forbidden_fragments:
+        assert fragment not in source
+
+    assert "--no-index" in source
+    assert "file:" in source
+    assert "dpkg-deb --build" in source
+    assert "--python /root/.venv/bin/python" in source
