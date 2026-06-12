@@ -251,9 +251,23 @@ next one, and stage only the files for that slice.
   - Proof: `uv run python -m pytest tests/test_protocol_fixture_recorder.py
     -q` (`2 passed in 0.92s`); `uv run ruff check
     scripts/protocol_fixture_recorder.py tests/test_protocol_fixture_recorder.py`.
-- [ ] RED/GREEN: live-local Ollama probe uses host `gemma4:latest` through the
+- [x] RED/GREEN: live-local Ollama probe uses host `gemma4:latest` through the
   Capsem-routed path and records/replays the resulting native Ollama and
   OpenAI-compatible traffic without installing Ollama in the guest.
+  - 2026-06-12 proof: a fresh isolated `CAPSEM_HOME`/UDS service booted a
+    named disposable session and reached host Ollama from inside the guest via
+    `http://127.0.0.1:11434`, without installing Ollama in the guest. Native
+    `/api/tags` returned `gemma4:latest`; OpenAI-compatible
+    `/v1/chat/completions` returned model `gemma4:latest` and visible content
+    `capsem`.
+  - Ledger proof from that session DB:
+    `net_events` contained `GET /api/tags` and
+    `POST /v1/chat/completions` rows for `127.0.0.1:11434`, status `200`,
+    decision `allowed`, and nonzero bytes. `model_calls` contained
+    provider `ollama`, model `gemma4:latest`, method `POST`, path
+    `/v1/chat/completions`, status `200`, and one parsed message. This proves
+    the local backend path is routed and parsed through Capsem, not a guest
+    install shortcut.
 - [ ] Proof: lab is shared by doctor, integration tests, recorder, and
   benchmark.
   - 2026-06-12 progress: benchmark tests no longer carry a private fake HTTP
@@ -326,6 +340,14 @@ next one, and stage only the files for that slice.
     `13 skipped`, pytest time `23.72s`, wall time `26.20s`. The slowest tests
     are now snapshot/MCP filesystem checks (`2.28s` max), not network/package
     retries.
+  - Stability/speed note for release reporting: before hermetic package
+    fixtures, the comparable doctor run failed after `104.41s`, dominated by
+    public registry retries and two 30s npm timeouts. After local wheel/npm/deb
+    fixtures and CA propagation fixes, full doctor is passing in `26.20s` wall
+    time, roughly a 4x improvement while removing public-network variance. The
+    targeted package-manager probe is now `9 passed` in `1.53s`, so this gate
+    can be run repeatedly while broadening coverage instead of burning minutes
+    on registry instability.
 - [x] RED/GREEN: cargo test runner codesigning is serialized so parallel test
   shards do not race while replacing ad-hoc signatures.
   - 2026-06-11 progress: `scripts/run_signed.sh` now uses a portable

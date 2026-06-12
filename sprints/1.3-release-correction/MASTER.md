@@ -44,8 +44,8 @@ prove the same rails without user credentials.
 | S1 | Profile/config authority | Planned | `user.toml` rail burned; profile linter always runs; invalid profiles cannot be materialized. |
 | S2 | Materialization/assets/resources | Planned | `code` and `co-work` materialize from `capsem-admin`; assets and VM resources verified end to end. |
 | S3 | Route contract and API coverage | Complete | Every UI/TUI-used profile/session/stats route has contract tests for both profiles; no 404/501. |
-| S4 | Hermetic protocol lab and recorder | Planned | Local lab covers HTTP/HTTPS/SSE/WS/DNS/MCP/model/OAuth/broker without public services. |
-| S5 | Doctor/just/benchmark unification | Planned | `just test` and `just smoke` run doctor/E2E/bench through the hermetic lab, no `--fast` release escape. |
+| S4 | Hermetic protocol lab and recorder | In progress | Local lab covers HTTP/HTTPS/SSE/WS/DNS/MCP/model/OAuth/broker without public services; host Ollama `gemma4:latest` is proven through the Capsem-routed VM path with DB ledger rows. |
+| S5 | Doctor/just/benchmark unification | In progress | `just test` and `just smoke` run doctor/E2E/bench through the hermetic lab, no `--fast` release escape; full doctor now passes in 26.20s wall time versus the prior 104.41s failing public-network run. |
 | S6 | CEL/security event correction | Complete | IP/TCP/UDP facts and `valid` booleans are first-party CEL objects; no `security.*` predicates. |
 | S7 | Runtime protocol fixes | Planned | AGY/Claude/Codex model, MCP, broker, SSE, and tool-call paths pass replay and DB-ledger assertions. |
 | S8 | UI/TUI contract repair | Planned | Sessions/profiles/settings/stats/plugin/MCP/security/file/process views reflect routes and enums only. |
