@@ -54,6 +54,25 @@ def test_system_overlay_block_device_present():
     assert "53 ef" in result.stdout.lower(), f"/dev/vdb not ext4-formatted: {result.stdout!r}"
 
 
+def test_storage_capacity_report_is_available():
+    """Doctor must surface block and inode availability for storage triage."""
+    block_result = run("df -h / /root /tmp")
+    assert block_result.returncode == 0, f"df -h failed: {block_result.stdout}\n{block_result.stderr}"
+    assert "/root" in block_result.stdout, f"df -h missing /root row: {block_result.stdout}"
+
+    inode_result = run("df -i / /root /tmp")
+    assert inode_result.returncode == 0, f"df -i failed: {inode_result.stdout}\n{inode_result.stderr}"
+    assert "IUse%" in inode_result.stdout, f"df -i missing inode utilization: {inode_result.stdout}"
+
+
+def test_overlay_mount_options_are_reported():
+    """Doctor must expose overlay mount options when package writes fail."""
+    result = run("awk '$2 == \"/\" && $3 == \"overlay\" { print $4 }' /proc/mounts")
+    assert result.returncode == 0
+    assert result.stdout.strip(), f"overlay mount options missing from /proc/mounts: {result.stdout}"
+    assert "upperdir=" in result.stdout, f"overlay options missing upperdir: {result.stdout}"
+
+
 def test_workspace_write_read():
     """Write a file to /root and read it back."""
     test_file = pathlib.Path("/root/virtiofs_write_test.txt")

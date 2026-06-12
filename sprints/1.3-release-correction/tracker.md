@@ -71,9 +71,19 @@ next one, and stage only the files for that slice.
   - Proof: `cargo test -p capsem-service provision_ -- --nocapture`; `cargo
     test -p capsem-service profile_vm_resources_drive_new_session_defaults --
     --nocapture`; `cargo check -p capsem-service -p capsem-process`.
-- [ ] RED/GREEN: doctor/status/debug report guest `df -h`, `df -i`, `/dev/vdb`,
+- [x] RED/GREEN: doctor/status/debug report guest `df -h`, `df -i`, `/dev/vdb`,
   overlay mount options, host sparse-image logical/physical size, and host free
   space.
+  - Proof: `cargo test -p capsem-service storage_diagnostics -- --nocapture`;
+    `cargo check -p capsem-service`; `uv run python -m py_compile
+    guest/artifacts/diagnostics/test_virtiofs.py`.
+  - Runtime route contract: `/vms/{id}/info` and `/vms/{id}/status` expose
+    `storage.rootfs_image_{logical,physical}_bytes`,
+    `storage.host_{total,free,available}_bytes`, and the guest overlay
+    identity `/dev/vdb` mounted at `/`.
+  - Doctor contract: guest diagnostics now collect `df -h`, `df -i`, and
+    `/proc/mounts` overlay mount options alongside the existing `/dev/vdb`
+    ext4 probe.
 - [ ] RED/GREEN: bounded write/install probes cover `/usr/local`,
   `/var/cache/apt`, `/tmp`, `/var/tmp`, and `/root`.
 

@@ -262,6 +262,28 @@ fn install_test_profile_assets(state: &ServiceState) {
     }
 }
 
+fn test_persistent_entry(name: &str, session_dir: PathBuf) -> PersistentVmEntry {
+    PersistentVmEntry {
+        name: name.into(),
+        profile_id: "code".into(),
+        profile_revision: test_profile_revision(),
+        profile_payload_hash: test_profile_payload_hash(),
+        asset_pins: test_asset_pins(),
+        ram_mb: 2048,
+        cpus: 2,
+        base_version: "0.0.0".into(),
+        created_at: "0".into(),
+        session_dir,
+        forked_from: None,
+        description: None,
+        suspended: false,
+        defunct: false,
+        last_error: None,
+        checkpoint_path: None,
+        env: None,
+    }
+}
+
 fn copy_dir_all(src: &std::path::Path, dst: &std::path::Path) {
     std::fs::create_dir_all(dst).unwrap();
     for entry in std::fs::read_dir(src).unwrap() {
@@ -4861,6 +4883,74 @@ async fn handle_info_shows_suspended_status() {
     let result = handle_info(State(state), Path("info-susp".into())).await;
     let Json(info) = result.unwrap();
     assert_eq!(info.status, VmLifecycleState::Suspended);
+}
+
+#[tokio::test]
+async fn handle_info_reports_storage_diagnostics_for_persistent_vm() {
+    let (state, _dir) = make_test_state_with_tempdir();
+    install_test_profile_assets(&state);
+    let session_dir = state.run_dir.join("persistent/storage-info");
+    std::fs::create_dir_all(session_dir.join("guest/system")).unwrap();
+    let rootfs = session_dir.join("guest/system/rootfs.img");
+    let file = std::fs::File::create(&rootfs).unwrap();
+    file.set_len(8 * 1024 * 1024 * 1024).unwrap();
+
+    {
+        let mut reg = state.persistent_registry.lock().unwrap();
+        reg.data.vms.insert(
+            "storage-info".into(),
+            test_persistent_entry("storage-info", session_dir.clone()),
+        );
+    }
+
+    let Json(info) = handle_info(State(state), Path("storage-info".into()))
+        .await
+        .unwrap();
+    let storage = info.storage.expect("info must include storage diagnostics");
+    assert_eq!(
+        storage.rootfs_image_path,
+        rootfs.to_string_lossy().to_string()
+    );
+    assert_eq!(storage.rootfs_image_logical_bytes, 8 * 1024 * 1024 * 1024);
+    assert!(
+        storage.rootfs_image_physical_bytes < storage.rootfs_image_logical_bytes,
+        "sparse rootfs image should report allocated blocks separately from logical size"
+    );
+    assert!(storage.host_available_bytes > 0);
+    assert_eq!(storage.guest_overlay_device, "/dev/vdb");
+    assert_eq!(storage.guest_overlay_mount, "/");
+}
+
+#[tokio::test]
+async fn handle_vm_status_reports_storage_diagnostics_for_persistent_vm() {
+    let (state, _dir) = make_test_state_with_tempdir();
+    install_test_profile_assets(&state);
+    let session_dir = state.run_dir.join("persistent/storage-status");
+    capsem_core::create_virtiofs_session(&session_dir, 4).unwrap();
+    let rootfs = session_dir.join("guest/system/rootfs.img");
+
+    {
+        let mut reg = state.persistent_registry.lock().unwrap();
+        reg.data.vms.insert(
+            "storage-status".into(),
+            test_persistent_entry("storage-status", session_dir),
+        );
+    }
+
+    let Json(status) = handle_vm_status(State(state), Path("storage-status".into()))
+        .await
+        .unwrap();
+    let storage = status
+        .storage
+        .expect("status must include storage diagnostics");
+    assert_eq!(
+        storage.rootfs_image_path,
+        rootfs.to_string_lossy().to_string()
+    );
+    assert_eq!(storage.rootfs_image_logical_bytes, 4 * 1024 * 1024 * 1024);
+    assert!(storage.host_free_bytes > 0);
+    assert_eq!(storage.guest_overlay_device, "/dev/vdb");
+    assert_eq!(storage.guest_overlay_mount, "/");
 }
 
 #[tokio::test]

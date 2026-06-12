@@ -73,6 +73,18 @@ pub enum VmLifecycleState {
     Incompatible,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct StorageDiagnostics {
+    pub rootfs_image_path: String,
+    pub rootfs_image_logical_bytes: u64,
+    pub rootfs_image_physical_bytes: u64,
+    pub host_total_bytes: u64,
+    pub host_free_bytes: u64,
+    pub host_available_bytes: u64,
+    pub guest_overlay_device: String,
+    pub guest_overlay_mount: String,
+}
+
 #[derive(Serialize, Deserialize, Debug)]
 pub struct SandboxInfo {
     pub id: String,
@@ -98,6 +110,8 @@ pub struct SandboxInfo {
     /// overlay and not a bloated sparse file.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub size_bytes: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub storage: Option<StorageDiagnostics>,
     // -- Telemetry (populated for /info, omitted when absent) --
     #[serde(skip_serializing_if = "Option::is_none")]
     pub created_at: Option<String>,
@@ -161,6 +175,7 @@ impl SandboxInfo {
             forked_from: None,
             description: None,
             size_bytes: None,
+            storage: None,
             created_at: None,
             uptime_secs: None,
             total_input_tokens: None,
@@ -198,6 +213,8 @@ pub struct VmStatusResponse {
     pub can_resume: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub resume_blocked_reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub storage: Option<StorageDiagnostics>,
 }
 
 #[derive(Deserialize, Debug, Default)]
