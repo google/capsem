@@ -63,3 +63,11 @@ def test_no_live_code_mentions_legacy_user_config_rail() -> None:
                 failures.append(f"{path.relative_to(PROJECT_ROOT)} contains {needle!r}")
 
     assert not failures, "legacy user config rail survived:\n" + "\n".join(sorted(failures))
+
+
+def test_mitm_local_benchmark_does_not_write_settings_policy() -> None:
+    benchmark = PROJECT_ROOT / "tests/capsem-serial/test_mitm_local_benchmark.py"
+    text = benchmark.read_text()
+
+    assert "settings.toml" not in text
+    assert "security.web.http_upstream_ports" not in text

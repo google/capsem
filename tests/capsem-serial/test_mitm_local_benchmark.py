@@ -136,19 +136,6 @@ def _assert_mitm_local_succeeded(data):
         assert row["frames"] > 0, f"{row['name']} should relay frames: {row}"
 
 
-def _write_local_benchmark_policy(capsem_home, base_url):
-    parsed = urlsplit(base_url)
-    port = parsed.port or (443 if parsed.scheme == "https" else 80)
-    capsem_home.mkdir(parents=True, exist_ok=True)
-    (capsem_home / "user.toml").write_text(
-        f"""
-[settings."security.web.http_upstream_ports"]
-value = [80, 3128, 3713, 8080, 11434, {port}]
-modified = "2026-06-06T00:00:00Z"
-""".lstrip()
-    )
-
-
 def _assert_session_db_contains_mitm_events(capsem_home, vm_name, total_requests):
     db_path = capsem_home / "sessions" / vm_name / "session.db"
     expected_paths = {
@@ -237,7 +224,6 @@ def test_mitm_local_benchmark_artifact():
     concurrency = int(os.environ.get("CAPSEM_BENCH_CONCURRENCY", "1"))
 
     svc = ServiceInstance()
-    _write_local_benchmark_policy(svc.tmp_dir, base_url)
     svc.start()
     client = svc.client()
     name = f"mitm-local-{uuid.uuid4().hex[:8]}"

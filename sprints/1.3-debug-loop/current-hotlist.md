@@ -28,6 +28,10 @@ This is the active debug list for the 1.3 release loop. Older captured bugs in
     inspect the session DB/logs before any user credential is involved.
   - Manual real-client auth is a final capture/compatibility confirmation, not
     the debugging strategy.
+  - Proof slice closed 2026-06-11: `tests/capsem-serial/test_mitm_local_benchmark.py`
+    no longer writes a `user.toml`/`settings.toml` policy side channel for
+    local MITM ports; focused contract test covers this so benchmark helpers
+    cannot rename the old rail.
 
 - [ ] Profile/config format linter
   - Add a fast always-on config linter, ruff-style: boring, quick, clear
