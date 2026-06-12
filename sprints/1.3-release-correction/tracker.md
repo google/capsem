@@ -155,8 +155,22 @@ next one, and stage only the files for that slice.
     gateway_security_routes_are_explicitly_forwarded -- --nocapture`; `cargo
     check -p capsem-service -p capsem-gateway`; `pnpm --dir frontend test
     src/lib/__tests__/api.test.ts`; `pnpm --dir docs build`.
-  - Remaining mounted mutation stubs after asset route burn: profile
-    create/edit/delete/clone, VM edit, VM restart, VM reload-profile.
+  - 2026-06-11 progress: profile lifecycle write routes
+    `create|edit|delete|clone` are unmounted rather than fake 501 contracts.
+    Profile lifecycle authoring remains capsem-admin/materialized profile
+    files until a typed runtime mutation contract exists.
+  - Proof: `cargo test -p capsem-service
+    profile_lifecycle_write_routes_are_not_mounted -- --nocapture`; `cargo
+    test -p capsem-gateway
+    gateway_profile_lifecycle_writes_are_not_forwarded -- --nocapture`;
+    `cargo test -p capsem-service
+    mounted_fail_closed_stub_routes_return_explicit_errors -- --nocapture`;
+    `cargo test -p capsem-gateway
+    gateway_security_routes_are_explicitly_forwarded -- --nocapture`; `cargo
+    check -p capsem-service -p capsem-gateway`; `pnpm --dir frontend test
+    src/lib/__tests__/api.test.ts`; `pnpm --dir docs build`.
+  - Remaining mounted mutation stubs after profile lifecycle route burn: VM
+    edit, VM restart, VM reload-profile.
 - [ ] RED/GREEN: session state enum controls available actions for running,
   stopped, incompatible, defunct, paused, and deleted sessions.
 - [ ] Proof: profile routes are scoped by profile id; service-global routes are

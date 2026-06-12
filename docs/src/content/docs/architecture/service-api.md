@@ -56,7 +56,6 @@ catalog entry points. They are not profile behavior.
 | `GET` | `/profiles/list` | Profile catalog visible to this service. |
 | `GET` | `/profiles/status` | Profile readiness and asset status summary. |
 | `POST` | `/profiles/reload` | Reload the profile catalog. |
-| `POST` | `/profiles/create` | Create a profile through the profile contract. |
 | `GET` | `/settings/info` | UI/application settings, not VM behavior. |
 | `PATCH` | `/settings/edit` | Edit UI/application settings. |
 | `GET` | `/corp/info` | Corporate constraints and reporting config. |
@@ -73,9 +72,6 @@ skills, assets, and profile metadata all belong here.
 |---|---|---|
 | `GET` | `/profiles/{profile_id}/info` | Profile descriptor, icon, description, VM defaults, and file origins. |
 | `GET` | `/profiles/{profile_id}/obom` | Base-image OBOM evidence for this profile. |
-| `PATCH` | `/profiles/{profile_id}/edit` | Edit profile metadata and profile-owned config. |
-| `DELETE` | `/profiles/{profile_id}/delete` | Delete a profile where policy allows it. |
-| `POST` | `/profiles/{profile_id}/clone` | Clone one profile into another profile. |
 | `POST` | `/profiles/{profile_id}/validate` | Validate the profile and pinned files. |
 | `POST` | `/profiles/{profile_id}/reload` | Reload one profile. |
 | `GET` | `/profiles/{profile_id}/assets/info` | Profile asset declaration and origins. |

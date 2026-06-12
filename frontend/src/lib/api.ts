@@ -889,26 +889,6 @@ export async function validateProfile(
   return await resp.json();
 }
 
-export async function createProfile(request: Record<string, unknown>): Promise<unknown> {
-  const resp = await _post('/profiles/create', request);
-  return await resp.json();
-}
-
-export async function editProfile(profileId: string, request: Record<string, unknown>): Promise<unknown> {
-  const resp = await _patch(`/profiles/${encodeURIComponent(profileId)}/edit`, request);
-  return await resp.json();
-}
-
-export async function deleteProfile(profileId: string): Promise<unknown> {
-  const resp = await _delete(`/profiles/${encodeURIComponent(profileId)}/delete`);
-  return await resp.json();
-}
-
-export async function cloneProfile(profileId: string, request: Record<string, unknown>): Promise<unknown> {
-  const resp = await _post(`/profiles/${encodeURIComponent(profileId)}/clone`, request);
-  return await resp.json();
-}
-
 export async function getProfileSkillsInfo(profileId: string): Promise<unknown> {
   const resp = await _get(`/profiles/${encodeURIComponent(profileId)}/skills/info`);
   return await resp.json();

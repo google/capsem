@@ -529,26 +529,6 @@ describe('api', () => {
       expect(call[1].method).toBe('POST');
     });
 
-    it('profile mutation helpers use explicit profile routes', async () => {
-      mockFetch.mockReturnValue(jsonResponse({ ok: true }));
-
-      await api.createProfile({});
-      expect(mockFetch.mock.calls[mockFetch.mock.calls.length - 1][0]).toContain('/profiles/create');
-      expect(mockFetch.mock.calls[mockFetch.mock.calls.length - 1][1].method).toBe('POST');
-
-      await api.editProfile('code', {});
-      expect(mockFetch.mock.calls[mockFetch.mock.calls.length - 1][0]).toContain('/profiles/code/edit');
-      expect(mockFetch.mock.calls[mockFetch.mock.calls.length - 1][1].method).toBe('PATCH');
-
-      await api.deleteProfile('code');
-      expect(mockFetch.mock.calls[mockFetch.mock.calls.length - 1][0]).toContain('/profiles/code/delete');
-      expect(mockFetch.mock.calls[mockFetch.mock.calls.length - 1][1].method).toBe('DELETE');
-
-      await api.cloneProfile('code', {});
-      expect(mockFetch.mock.calls[mockFetch.mock.calls.length - 1][0]).toContain('/profiles/code/clone');
-      expect(mockFetch.mock.calls[mockFetch.mock.calls.length - 1][1].method).toBe('POST');
-    });
-
     it('profile skill helpers use profile-scoped routes', async () => {
       mockFetch.mockReturnValue(jsonResponse({ ok: true }));
 

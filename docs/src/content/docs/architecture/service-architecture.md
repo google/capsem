@@ -216,11 +216,7 @@ the root.
 | GET | `/profiles/list` | List configured profiles |
 | GET | `/profiles/status` | Profile readiness, asset status, and validation state |
 | POST | `/profiles/reload` | Reload the profile catalog |
-| POST | `/profiles/create` | Create a profile |
 | GET | `/profiles/{profile_id}/info` | Profile identity/config truth |
-| PATCH | `/profiles/{profile_id}/edit` | Edit profile-owned config |
-| DELETE | `/profiles/{profile_id}/delete` | Delete a profile |
-| POST | `/profiles/{profile_id}/clone` | Clone a profile |
 | POST | `/profiles/{profile_id}/validate` | Validate a profile |
 | POST | `/profiles/{profile_id}/reload` | Reload one profile |
 | GET | `/profiles/{profile_id}/obom` | Base-image CycloneDX OBOM metadata and local document when installed |

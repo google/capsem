@@ -260,12 +260,8 @@ fn service_proxy_routes() -> Router<Arc<AppState>> {
         .route("/profiles/list", get(proxy::handle_proxy))
         .route("/profiles/status", get(proxy::handle_proxy))
         .route("/profiles/reload", post(proxy::handle_proxy))
-        .route("/profiles/create", post(proxy::handle_proxy))
         .route("/profiles/{profile_id}/info", get(proxy::handle_proxy))
         .route("/profiles/{profile_id}/obom", get(proxy::handle_proxy))
-        .route("/profiles/{profile_id}/edit", patch(proxy::handle_proxy))
-        .route("/profiles/{profile_id}/delete", delete(proxy::handle_proxy))
-        .route("/profiles/{profile_id}/clone", post(proxy::handle_proxy))
         .route("/profiles/{profile_id}/validate", post(proxy::handle_proxy))
         .route(
             "/profiles/{profile_id}/enforcement/evaluate",
@@ -558,6 +554,30 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn gateway_profile_lifecycle_writes_are_not_forwarded() {
+        let app = service_proxy_app("/tmp/capsem-gateway-must-not-connect.sock");
+        for (method, uri) in [
+            ("POST", "/profiles/create"),
+            ("PATCH", "/profiles/code/edit"),
+            ("DELETE", "/profiles/code/delete"),
+            ("POST", "/profiles/code/clone"),
+        ] {
+            let resp = app
+                .clone()
+                .oneshot(
+                    http::Request::builder()
+                        .method(method)
+                        .uri(uri)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), http::StatusCode::NOT_FOUND, "{method} {uri}");
+        }
+    }
+
+    #[tokio::test]
     async fn gateway_security_routes_are_explicitly_forwarded() {
         for (method, uri) in [
             ("GET", "/vms/test-vm/security/latest"),
@@ -575,12 +595,8 @@ mod tests {
             ("GET", "/profiles/list"),
             ("GET", "/profiles/status"),
             ("POST", "/profiles/reload"),
-            ("POST", "/profiles/create"),
             ("GET", "/profiles/code/info"),
             ("GET", "/profiles/code/obom"),
-            ("PATCH", "/profiles/code/edit"),
-            ("DELETE", "/profiles/code/delete"),
-            ("POST", "/profiles/code/clone"),
             ("POST", "/profiles/code/validate"),
             ("POST", "/vms/create"),
             ("GET", "/vms/list"),

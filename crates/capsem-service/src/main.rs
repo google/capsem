@@ -4962,13 +4962,6 @@ fn read_local_profile_obom(
     })
 }
 
-fn profile_persistence_not_implemented(operation: &str) -> AppError {
-    AppError(
-        StatusCode::NOT_IMPLEMENTED,
-        format!("{operation} requires profile file persistence, which is not enabled yet"),
-    )
-}
-
 fn profile_manifest_for_route(profile_id: String) -> Result<ProfileConfigFile, AppError> {
     let profile_id = validate_profile_route_id(profile_id)?;
     let catalog = load_profile_catalog_for_service()?;
@@ -4978,31 +4971,6 @@ fn profile_manifest_for_route(profile_id: String) -> Result<ProfileConfigFile, A
             format!("profile not found: {profile_id}"),
         )
     })
-}
-
-async fn handle_profile_create() -> Result<Json<serde_json::Value>, AppError> {
-    Err(profile_persistence_not_implemented("profile create"))
-}
-
-async fn handle_profile_edit(
-    Path(profile_id): Path<String>,
-) -> Result<Json<serde_json::Value>, AppError> {
-    let _profile_id = validate_profile_route_id(profile_id)?;
-    Err(profile_persistence_not_implemented("profile edit"))
-}
-
-async fn handle_profile_delete(
-    Path(profile_id): Path<String>,
-) -> Result<Json<serde_json::Value>, AppError> {
-    let _profile_id = validate_profile_route_id(profile_id)?;
-    Err(profile_persistence_not_implemented("profile delete"))
-}
-
-async fn handle_profile_clone(
-    Path(profile_id): Path<String>,
-) -> Result<Json<serde_json::Value>, AppError> {
-    let _profile_id = validate_profile_route_id(profile_id)?;
-    Err(profile_persistence_not_implemented("profile clone"))
 }
 
 async fn handle_profile_validate(
@@ -8312,15 +8280,8 @@ fn build_service_router(state: Arc<ServiceState>) -> Router {
         .route("/profiles/list", get(handle_profiles_list))
         .route("/profiles/status", get(handle_profiles_status))
         .route("/profiles/reload", post(handle_profiles_reload))
-        .route("/profiles/create", post(handle_profile_create))
         .route("/profiles/{profile_id}/info", get(handle_profile_info))
         .route("/profiles/{profile_id}/obom", get(handle_profile_obom))
-        .route("/profiles/{profile_id}/edit", patch(handle_profile_edit))
-        .route(
-            "/profiles/{profile_id}/delete",
-            delete(handle_profile_delete),
-        )
-        .route("/profiles/{profile_id}/clone", post(handle_profile_clone))
         .route(
             "/profiles/{profile_id}/validate",
             post(handle_profile_validate),

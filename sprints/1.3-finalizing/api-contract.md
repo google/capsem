@@ -121,20 +121,16 @@ plugins are exempt and only exist for tests.
 | Method | Path | Purpose |
 | --- | --- | --- |
 | `GET` | `/profiles/list` | List profiles with summary metadata. |
-| `POST` | `/profiles/create` | Create a profile. |
 | `GET` | `/profiles/{profile_id}/info` | Read the full profile contract. |
-| `PATCH` | `/profiles/{profile_id}/edit` | Update profile metadata and profile-owned fields. |
-| `DELETE` | `/profiles/{profile_id}/delete` | Delete a profile if no VM/session depends on it. |
-| `POST` | `/profiles/{profile_id}/clone` | Clone a profile under a new id/name. |
 | `POST` | `/profiles/{profile_id}/validate` | Validate profile plus corp overlay without applying it. |
 | `POST` | `/profiles/{profile_id}/reload` | Re-read/apply the profile contract and push to running VMs using it where applicable. |
 
 Profile-owned VM defaults, including CPU, memory, disk sizing, selected assets,
 network mechanics, capture limits, MCP, skills, plugin config, detection, and
-enforcement, are part of `/profiles/{profile_id}/info` and
-`/profiles/{profile_id}/edit`. Do not add vague profile subresources such as
-`/vm/network/edit`; if a field is profile behavior, it belongs in the profile
-contract.
+enforcement, are read through `/profiles/{profile_id}/info` and authored by
+capsem-admin/materialized profile files until a typed runtime mutation contract
+exists. Do not add vague profile subresources such as `/vm/network/edit`; if a
+field is profile behavior, it belongs in the profile contract.
 
 ### Profile Assets
 
@@ -367,8 +363,8 @@ These are not final 1.3 contracts:
 | `/enforcements/evaluate` | `/profiles/{profile_id}/enforcement/evaluate`. |
 | `/enforcements/reload` | `/profiles/{profile_id}/enforcement/reload` or `/vms/{vm_id}/reload-profile`. |
 | `/profiles/{profile_id}/vm/info` | Fold into `/profiles/{profile_id}/info`. |
-| `/profiles/{profile_id}/vm/resources/edit` | Fold profile defaults into `/profiles/{profile_id}/edit`; use `/vms/{vm_id}/edit` for a specific VM. |
-| `/profiles/{profile_id}/vm/network/edit` | Burn. Too vague; profile network mechanics belong in profile info/edit, and security decisions belong in rules. |
+| `/profiles/{profile_id}/vm/resources/edit` | Burn. Profile defaults belong in profile files; use `/vms/{vm_id}/edit` for a specific runtime VM only when that route persists state. |
+| `/profiles/{profile_id}/vm/network/edit` | Burn. Too vague; profile network mechanics belong in profile files, and security decisions belong in rules. |
 | `/plugins` | `/profiles/{profile_id}/plugins/list` for config; optional runtime diagnostic must be ledger/status only. |
 | `/plugins/global/{plugin_id}` | Burn. Plugins are profile/corp config, not global behavior config. |
 | `/plugins/{plugin_id}/man` | Burn. Plugin docs live on the docs site under `/plugins/...`. |

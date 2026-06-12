@@ -1328,28 +1328,6 @@ async fn handle_profile_validate_rejects_payload_route_mismatch() {
 }
 
 #[tokio::test]
-async fn profile_mutation_routes_fail_explicitly_until_profile_files_exist() {
-    let create = handle_profile_create().await.unwrap_err();
-    assert_eq!(create.0, StatusCode::NOT_IMPLEMENTED);
-    assert!(create.1.contains("profile file persistence"));
-
-    let edit = handle_profile_edit(Path("code".to_string()))
-        .await
-        .unwrap_err();
-    assert_eq!(edit.0, StatusCode::NOT_IMPLEMENTED);
-
-    let delete = handle_profile_delete(Path("code".to_string()))
-        .await
-        .unwrap_err();
-    assert_eq!(delete.0, StatusCode::NOT_IMPLEMENTED);
-
-    let clone = handle_profile_clone(Path("code".to_string()))
-        .await
-        .unwrap_err();
-    assert_eq!(clone.0, StatusCode::NOT_IMPLEMENTED);
-}
-
-#[tokio::test]
 async fn profile_skills_routes_persist_profile_and_mutation_ledger() {
     let _env_lock = SETTINGS_ENV_LOCK.lock().await;
 
@@ -1510,6 +1488,25 @@ async fn profile_assets_edit_route_is_not_mounted() {
         StatusCode::NOT_FOUND,
         "profile asset edits have no typed mutation contract; do not mount a fake route"
     );
+}
+
+#[tokio::test]
+async fn profile_lifecycle_write_routes_are_not_mounted() {
+    let state = make_test_state();
+    let app = build_service_router(state);
+    for (method, uri) in [
+        (axum::http::Method::POST, "/profiles/create"),
+        (axum::http::Method::PATCH, "/profiles/code/edit"),
+        (axum::http::Method::DELETE, "/profiles/code/delete"),
+        (axum::http::Method::POST, "/profiles/code/clone"),
+    ] {
+        let (status, _) = route_request(app.clone(), method, uri, Some(json!({}))).await;
+        assert_eq!(
+            status,
+            StatusCode::NOT_FOUND,
+            "{uri} must stay unmounted until profile lifecycle writes persist through the typed profile contract"
+        );
+    }
 }
 
 #[tokio::test]
@@ -1679,30 +1676,6 @@ async fn mounted_fail_closed_stub_routes_return_explicit_errors() {
     let app = build_service_router(state);
 
     for (method, uri, body, expected_error) in [
-        (
-            axum::http::Method::POST,
-            "/profiles/create",
-            None,
-            "profile create requires profile file persistence",
-        ),
-        (
-            axum::http::Method::PATCH,
-            "/profiles/code/edit",
-            None,
-            "profile edit requires profile file persistence",
-        ),
-        (
-            axum::http::Method::DELETE,
-            "/profiles/code/delete",
-            None,
-            "profile delete requires profile file persistence",
-        ),
-        (
-            axum::http::Method::POST,
-            "/profiles/code/clone",
-            None,
-            "profile clone requires profile file persistence",
-        ),
         (
             axum::http::Method::PATCH,
             "/vms/ops-vm/edit",
