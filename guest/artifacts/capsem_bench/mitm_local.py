@@ -1,8 +1,8 @@
-"""Deterministic local MITM scenarios against capsem-debug-upstream.
+"""Deterministic local MITM scenarios against capsem-mock-server.
 
 The standard `capsem-bench all` run includes these scenarios when a host-side
-harness starts capsem-debug-upstream and passes its routable base URL through
-CAPSEM_BENCH_MITM_LOCAL_BASE_URL. That keeps benchmark traffic local,
+harness starts capsem-mock-server and passes its routable base URL through
+CAPSEM_MOCK_SERVER_BASE_URL. That keeps benchmark traffic local,
 repeatable, and free of public-network variance.
 """
 
@@ -16,7 +16,7 @@ from rich.table import Table
 from .helpers import console, percentile
 from .load_harness import CountLoadConfig
 
-BASE_URL_ENV = "CAPSEM_BENCH_MITM_LOCAL_BASE_URL"
+BASE_URL_ENV = "CAPSEM_MOCK_SERVER_BASE_URL"
 DEFAULT_TOTAL_REQUESTS = 50_000
 DEFAULT_CONCURRENCY = 64
 DEFAULT_TIMEOUT_S = 30.0
@@ -27,7 +27,7 @@ HTTP_SCENARIOS = (
         "name": "tiny_http",
         "path": "/tiny",
         "expected_status": 200,
-        "expected_bytes": len(b"capsem-debug-upstream:tiny\n"),
+        "expected_bytes": len(b"capsem-mock-server:tiny\n"),
         "body_kind": "tiny",
     },
     {
@@ -106,7 +106,7 @@ def _base_url(base_url):
     if not url:
         raise ValueError(
             f"mitm-local requires BASE_URL or {BASE_URL_ENV}; "
-            "start capsem-debug-upstream and pass its base_url"
+            "start capsem-mock-server and pass its base_url"
         )
     parts = urlsplit(url)
     if parts.scheme not in ("http", "https") or not parts.netloc:

@@ -6,19 +6,19 @@ import uuid
 import pytest
 
 from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB
-from helpers.debug_upstream import DEBUG_UPSTREAM_BINARY, start_debug_upstream, stop_process
+from helpers.mock_server import MOCK_SERVER_BINARY, start_mock_server, stop_process
 from helpers.service import ServiceInstance, wait_exec_ready
 
 pytestmark = pytest.mark.session_lifecycle
 
 
 @pytest.fixture
-def lifecycle_debug_upstream():
-    if not DEBUG_UPSTREAM_BINARY.exists():
+def lifecycle_mock_server():
+    if not MOCK_SERVER_BINARY.exists():
         pytest.skip(
-            f"{DEBUG_UPSTREAM_BINARY} not found; run `cargo build -p capsem-debug-upstream`"
+            f"{MOCK_SERVER_BINARY} not found; run `cargo build -p capsem-mock-server`"
         )
-    proc, ready = start_debug_upstream()
+    proc, ready = start_mock_server()
     try:
         yield ready["base_url"]
     finally:

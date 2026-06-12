@@ -12,7 +12,7 @@ VALID_MODES = (
     "mitm-load", "mcp-load", "dns-load", "all",
 )
 
-MITM_LOCAL_BASE_URL_ENV = "CAPSEM_BENCH_MITM_LOCAL_BASE_URL"
+MITM_LOCAL_BASE_URL_ENV = "CAPSEM_MOCK_SERVER_BASE_URL"
 
 
 def _should_run_local_mitm(mode):
@@ -46,7 +46,7 @@ def main():
         console.print("Environment:")
         console.print("  CAPSEM_BENCH_DIR      Test directory (default: /root)")
         console.print("  CAPSEM_BENCH_SIZE_MB  Write test size in MB (default: 256)")
-        console.print("  CAPSEM_BENCH_MITM_LOCAL_BASE_URL  Base URL for local MITM scenarios in all")
+        console.print("  CAPSEM_MOCK_SERVER_BASE_URL  Base URL for local MITM scenarios in all")
         console.print("  CAPSEM_BENCH_CONCURRENCY          Load concurrency, e.g. 64 or 1,64")
         console.print("  CAPSEM_BENCH_DURATION_S           Seconds per load level")
         console.print("  CAPSEM_BENCH_TOTAL_REQUESTS       Total requests per count scenario")
@@ -100,7 +100,7 @@ def main():
         output["snapshot"] = snapshot_bench()
 
     # Local MITM scenarios are part of the standard `all` benchmark when the
-    # shared doctor/debug upstream is configured. There is no separate local
+    # shared doctor/mock server is configured. There is no separate local
     # MITM release escape hatch.
     if _should_run_local_mitm(mode):
         from .mitm_local import mitm_local_bench

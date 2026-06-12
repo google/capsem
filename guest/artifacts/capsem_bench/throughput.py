@@ -6,10 +6,10 @@ from rich.table import Table
 from rich.text import Text
 
 from .helpers import (
-    LOCAL_DEBUG_UPSTREAM_ENV,
+    LOCAL_MOCK_SERVER_ENV,
     console,
     fmt_bytes,
-    local_debug_upstream_url,
+    local_mock_server_url,
     public_network_allowed,
 )
 
@@ -30,7 +30,7 @@ def throughput_bench():
         stats = {
             "skipped": True,
             "reason": (
-                f"set {LOCAL_DEBUG_UPSTREAM_ENV} for local lab or "
+                f"set {LOCAL_MOCK_SERVER_ENV} for local lab or "
                 "CAPSEM_BENCH_ALLOW_PUBLIC_NETWORK=1 for explicit public smoke"
             ),
         }
@@ -106,7 +106,7 @@ def throughput_bench():
 
 
 def _throughput_target():
-    local_url = local_debug_upstream_url(LOCAL_THROUGHPUT_PATH)
+    local_url = local_mock_server_url(LOCAL_THROUGHPUT_PATH)
     if local_url:
         return (local_url, LOCAL_THROUGHPUT_EXPECTED_BYTES, "local")
     if public_network_allowed():

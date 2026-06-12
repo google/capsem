@@ -14,7 +14,7 @@
 ## VM/MITM Matrix
 
 10 requests, concurrency 1, through guest -> net-proxy -> vsock -> MITM ->
-local debug upstream. The gated test also queried `session.db` before teardown
+local mock server. The gated test also queried `session.db` before teardown
 and proved expected paths, WebSocket `101`, all `allowed`, and no raw
 `capsem_test_` marker in audited text columns.
 

@@ -17,7 +17,7 @@ members = [
     "crates/capsem-tray",
     "crates/capsem-gateway",
     "crates/capsem-guard",
-    "crates/capsem-debug-upstream",
+    "crates/capsem-mock-server",
 ]
 
 [workspace.package]

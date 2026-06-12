@@ -7,7 +7,7 @@ data correctly during the diagnostic run.
 
 Capsem-doctor exercises network (allowed + denied domains), filesystem
 (test file writes), MCP (tool discovery + invocation), and hermetic
-model-shaped traffic through the local debug upstream. This test validates
+model-shaped traffic through the local mock server. This test validates
 that all of those events were captured.
 
 Usage:
@@ -33,7 +33,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
-from debug_upstream import start_debug_upstream, stop_process  # noqa: E402
+from mock_server import start_mock_server, stop_process  # noqa: E402
 
 BOLD = "\033[1m"
 DIM = "\033[2m"
@@ -46,7 +46,7 @@ RESET = "\033[0m"
 SESSIONS_DIR = Path.home() / ".capsem" / "run" / "sessions"
 MAIN_DB = Path.home() / ".capsem" / "sessions" / "main.db"
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-DEBUG_UPSTREAM_ENV = "CAPSEM_BENCH_MITM_LOCAL_BASE_URL"
+MOCK_SERVER_ENV = "CAPSEM_MOCK_SERVER_BASE_URL"
 
 
 class Results:
@@ -80,7 +80,7 @@ class Results:
         return len(self.failed) == 0
 
 
-def run_doctor(binary: str, assets_dir: str, debug_base_url: str) -> tuple[str, int]:
+def run_doctor(binary: str, assets_dir: str, mock_base_url: str) -> tuple[str, int]:
     """Boot the VM with capsem-doctor, return (session_id, exit_code).
 
     Finds the session by looking for the newest run-* dir created during
@@ -89,7 +89,7 @@ def run_doctor(binary: str, assets_dir: str, debug_base_url: str) -> tuple[str, 
     env = {
         **os.environ,
         "CAPSEM_ASSETS_DIR": assets_dir,
-        DEBUG_UPSTREAM_ENV: debug_base_url,
+        MOCK_SERVER_ENV: mock_base_url,
         "RUST_LOG": "capsem=warn",
     }
 
@@ -243,24 +243,24 @@ def verify_session(session_id: str) -> bool:
         "no model_calls recorded (local OpenAI-compatible fixture parsing may have failed)",
     )
     if model_count > 0:
-        debug_model = conn.execute(
+        fixture_model = conn.execute(
             "SELECT * FROM model_calls"
             " WHERE provider = 'openai'"
-            " AND model = 'debug-local'"
+            " AND model = 'mock-local'"
             " AND path = '/v1/chat/completions'"
             " ORDER BY id DESC LIMIT 1"
         ).fetchone()
         r.check(
-            debug_model is not None,
-            "debug-local OpenAI-compatible model_call recorded",
-            "debug-local OpenAI-compatible model_call missing",
+            fixture_model is not None,
+            "mock-local OpenAI-compatible model_call recorded",
+            "mock-local OpenAI-compatible model_call missing",
         )
-        if debug_model is not None:
+        if fixture_model is not None:
             r.check(
-                (debug_model["input_tokens"] or 0) > 0
-                and (debug_model["output_tokens"] or 0) > 0,
-                "debug-local model_call has token usage",
-                "debug-local model_call missing token usage",
+                (fixture_model["input_tokens"] or 0) > 0
+                and (fixture_model["output_tokens"] or 0) > 0,
+                "mock-local model_call has token usage",
+                "mock-local model_call missing token usage",
             )
 
     # -- tool_calls / tool_responses ---------------------------------------
@@ -270,15 +270,15 @@ def verify_session(session_id: str) -> bool:
     r.check(
         tc_count > 0,
         f"{tc_count} tool_calls recorded",
-        "no tool_calls recorded (debug model fixture tool call parsing may have failed)",
+        "no tool_calls recorded (mock model fixture tool call parsing may have failed)",
     )
-    debug_tool_call = conn.execute(
-        "SELECT COUNT(*) FROM tool_calls WHERE tool_name = 'debug_lookup'"
+    fixture_tool_call = conn.execute(
+        "SELECT COUNT(*) FROM tool_calls WHERE tool_name = 'fixture_lookup'"
     ).fetchone()[0]
     r.check(
-        debug_tool_call > 0,
-        f"debug_lookup tool_calls recorded: {debug_tool_call}",
-        "debug_lookup tool_call missing",
+        fixture_tool_call > 0,
+        f"fixture_lookup tool_calls recorded: {fixture_tool_call}",
+        "fixture_lookup tool_call missing",
     )
     r.check(
         tr_count == 0,
@@ -452,14 +452,14 @@ def main():
     )
     args = parser.parse_args()
 
-    debug_proc = None
+    mock_proc = None
     try:
-        debug_proc, ready = start_debug_upstream()
-        debug_base_url = ready["base_url"]
-        print(f"{BOLD}Local debug upstream:{RESET} {debug_base_url}")
-        session_id, exit_code = run_doctor(args.binary, args.assets, debug_base_url)
+        mock_proc, ready = start_mock_server()
+        mock_base_url = ready["base_url"]
+        print(f"{BOLD}Local mock server:{RESET} {mock_base_url}")
+        session_id, exit_code = run_doctor(args.binary, args.assets, mock_base_url)
     finally:
-        stop_process(debug_proc)
+        stop_process(mock_proc)
 
     # capsem-doctor must pass -- a failure is itself a test failure.
     if exit_code != 0:

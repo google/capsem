@@ -75,7 +75,7 @@ Component-level targets in `codecov.yml`:
 | Guard | lifecycle guard primitives |
 | UI | frontend app |
 | Builder | Python builder/schema package |
-| Debug Upstream | upstream/service debug helper |
+| Mock Server | deterministic local fixture server |
 
 `tests/capsem-build-chain/test_coverage_infra_contract.py` is the drift guard:
 adding a workspace crate must update both the PR coverage commands and the

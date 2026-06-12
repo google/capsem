@@ -11,27 +11,27 @@ import pytest
 
 from conftest import run
 
-LOCAL_DEBUG_UPSTREAM_ENV = "CAPSEM_BENCH_MITM_LOCAL_BASE_URL"
+LOCAL_MOCK_SERVER_ENV = "CAPSEM_MOCK_SERVER_BASE_URL"
 
 
-def _local_debug_url(path):
-    base_url = os.environ.get(LOCAL_DEBUG_UPSTREAM_ENV)
+def _local_mock_url(path):
+    base_url = os.environ.get(LOCAL_MOCK_SERVER_ENV)
     if not base_url:
         return None
     return f"{base_url.rstrip('/')}/{path.lstrip('/')}"
 
 
-def _require_local_debug_url(path, reason):
-    url = _local_debug_url(path)
+def _require_local_mock_url(path, reason):
+    url = _local_mock_url(path)
     if not url:
         pytest.skip(
-            f"{reason}; set {LOCAL_DEBUG_UPSTREAM_ENV} for deterministic local proof"
+            f"{reason}; set {LOCAL_MOCK_SERVER_ENV} for deterministic local proof"
         )
     parsed = urlsplit(url)
     port = parsed.port or (443 if parsed.scheme == "https" else 80)
     if parsed.scheme == "http" and port not in (80, 3128, 3713, 8080, 11434):
         pytest.skip(
-            f"{reason}; local debug upstream port {port} is outside the "
+            f"{reason}; local mock server port {port} is outside the "
             "default HTTP upstream allowlist"
         )
     return url
@@ -269,7 +269,7 @@ def test_tls_cert_from_capsem_ca():
 
 def test_curl_https_with_skip_verify():
     """curl through the local HTTP MITM rail must get a deterministic response."""
-    local_url = _require_local_debug_url("/tiny", "local HTTP curl smoke")
+    local_url = _require_local_mock_url("/tiny", "local HTTP curl smoke")
     result = run(f"curl -sSI --connect-timeout 10 {local_url} 2>&1", timeout=20)
     assert result.returncode == 0, \
         f"curl failed (exit {result.returncode}):\n{result.stdout}"
@@ -278,7 +278,7 @@ def test_curl_https_with_skip_verify():
 
 def test_curl_verbose_diagnostics():
     """curl -v captures the full handshake trace for debugging."""
-    local_url = _require_local_debug_url("/tiny", "local verbose curl smoke")
+    local_url = _require_local_mock_url("/tiny", "local verbose curl smoke")
     result = run(f"curl -vv --connect-timeout 10 -o /dev/null {local_url} 2>&1", timeout=20)
     # Even if curl fails, capture the verbose output for diagnosis.
     # This test always passes -- it's here for diagnostic output on failure.
@@ -335,13 +335,13 @@ def test_certifi_includes_capsem_ca():
 
 def test_curl_allowed_domain_ca_trusted():
     """curl without public access must still prove the local rail works."""
-    local_url = _require_local_debug_url("/tiny", "local curl trust smoke")
+    local_url = _require_local_mock_url("/tiny", "local curl trust smoke")
     result = run(
         f"curl -sI --connect-timeout 10 {local_url} 2>&1",
         timeout=20,
     )
     assert result.returncode == 0, \
-        f"curl failed against local debug upstream:\n{result.stdout}\n{result.stderr}"
+        f"curl failed against local mock server:\n{result.stdout}\n{result.stderr}"
     assert "HTTP/" in result.stdout, f"no HTTP response:\n{result.stdout}"
 
 
@@ -400,20 +400,20 @@ def test_post_to_random_domain_denied():
 
 def test_http_port_80_is_proxied():
     """Plain HTTP (port 80) is inspected by the MITM proxy."""
-    local_url = _require_local_debug_url("/tiny", "local HTTP proxy smoke")
+    local_url = _require_local_mock_url("/tiny", "local HTTP proxy smoke")
     result = run(
         f"curl -sS --connect-timeout 5 {local_url} 2>&1",
         timeout=15,
     )
     assert result.returncode == 0, \
         f"local HTTP through proxy failed: {result.stdout}"
-    assert "capsem-debug-upstream:tiny" in result.stdout, \
+    assert "capsem-mock-server:tiny" in result.stdout, \
         f"unexpected local HTTP response: {result.stdout}"
 
 
 def test_local_http_gzip_decompression_path():
     """Gzip response bodies must travel through the local MITM rail."""
-    local_url = _require_local_debug_url("/gzip/10kb", "local gzip smoke")
+    local_url = _require_local_mock_url("/gzip/10kb", "local gzip smoke")
     result = run(
         f"curl -sS --compressed --connect-timeout 5 {local_url} | wc -c",
         timeout=15,
@@ -425,7 +425,7 @@ def test_local_http_gzip_decompression_path():
 
 def test_local_http_slow_chunk_stream():
     """Chunked response streaming must complete through the local MITM rail."""
-    local_url = _require_local_debug_url("/slow-chunks", "local chunk smoke")
+    local_url = _require_local_mock_url("/slow-chunks", "local chunk smoke")
     result = run(
         f"curl -sS --connect-timeout 5 {local_url}",
         timeout=15,
@@ -437,23 +437,23 @@ def test_local_http_slow_chunk_stream():
 
 def test_local_sse_model_fixture():
     """SSE model-shaped traffic must traverse the local MITM rail."""
-    local_url = _require_local_debug_url("/sse/model", "local SSE model smoke")
+    local_url = _require_local_mock_url("/sse/model", "local SSE model smoke")
     result = run(
         f"curl -sS --connect-timeout 5 {local_url}",
         timeout=15,
     )
     assert result.returncode == 0, f"SSE curl failed: {result.stdout}"
-    assert "model.tool_call" in result.stdout and "debug_lookup" in result.stdout, \
+    assert "model.tool_call" in result.stdout and "fixture_lookup" in result.stdout, \
         f"unexpected SSE model fixture: {result.stdout}"
 
 
 def test_local_openai_compatible_model_fixture():
     """OpenAI-compatible model traffic must be observed without public services."""
-    local_url = _require_local_debug_url(
+    local_url = _require_local_mock_url(
         "/v1/chat/completions",
         "local OpenAI-compatible model smoke",
     )
-    payload = '{"model":"debug-local","messages":[{"role":"user","content":"hello"}]}'
+    payload = '{"model":"mock-local","messages":[{"role":"user","content":"hello"}]}'
     result = run(
         f"curl -sS --connect-timeout 5"
         f" -H 'content-type: application/json'"
@@ -462,16 +462,16 @@ def test_local_openai_compatible_model_fixture():
         timeout=15,
     )
     assert result.returncode == 0, f"model fixture curl failed: {result.stdout}"
-    assert '"model":"debug-local"' in result.stdout.replace(" ", ""), \
-        f"model fixture did not report debug-local: {result.stdout}"
-    assert "tool_calls" in result.stdout and "debug_lookup" in result.stdout, \
+    assert '"model":"mock-local"' in result.stdout.replace(" ", ""), \
+        f"model fixture did not report mock-local: {result.stdout}"
+    assert "tool_calls" in result.stdout and "fixture_lookup" in result.stdout, \
         f"model fixture did not include tool call: {result.stdout}"
 
 
 def test_local_credential_fixture_is_broker_stimulus_only():
     """Credential-shaped fixture traffic should trigger broker logging without
     dumping synthetic secret values into doctor output."""
-    local_url = _require_local_debug_url("/credential/response", "local broker smoke")
+    local_url = _require_local_mock_url("/credential/response", "local broker smoke")
     result = run(
         f"curl -sS -o /dev/null -w '%{{http_code}} %{{size_download}}'"
         f" --connect-timeout 5 {local_url}",
@@ -486,7 +486,7 @@ def test_local_credential_fixture_is_broker_stimulus_only():
 def test_local_oauth_token_fixture_is_broker_stimulus_only():
     """OAuth token exchange traffic must be exercised hermetically without
     dumping synthetic token values into doctor output."""
-    local_url = _require_local_debug_url("/oauth/token", "local OAuth token smoke")
+    local_url = _require_local_mock_url("/oauth/token", "local OAuth token smoke")
     form = (
         "grant_type=authorization_code"
         "&code=capsem_test_oauth_code_0123456789abcdef"
@@ -508,7 +508,7 @@ def test_local_oauth_token_fixture_is_broker_stimulus_only():
 
 def test_local_websocket_echo_fixture():
     """WebSocket upgrade and frame echo must work against the local lab."""
-    local_url = _require_local_debug_url("/ws/echo", "local WebSocket smoke")
+    local_url = _require_local_mock_url("/ws/echo", "local WebSocket smoke")
     ws_url = local_url.replace("http://", "ws://", 1).replace("https://", "wss://", 1)
     result = run(
         "python3 - <<'PY'\n"
@@ -560,7 +560,7 @@ def test_proxy_download_throughput():
     vsock -> host MITM proxy -> upstream -> back. Public network is an
     explicit smoke only; default release gates should use the local lab.
     """
-    local_url = _require_local_debug_url("/bytes/10mb", "local proxy throughput smoke")
+    local_url = _require_local_mock_url("/bytes/10mb", "local proxy throughput smoke")
     result = run(
         f"curl -sL -o /dev/null"
         f" -w '%{{speed_download}} %{{size_download}} %{{time_total}}'"

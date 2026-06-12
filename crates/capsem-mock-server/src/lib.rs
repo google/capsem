@@ -21,13 +21,13 @@ use serde::Serialize;
 use tokio::net::TcpListener;
 use tokio::sync::oneshot;
 
-const TINY_BODY: &[u8] = b"capsem-debug-upstream:tiny\n";
+const TINY_BODY: &[u8] = b"capsem-mock-server:tiny\n";
 const HTML_ABOUT: &str = r#"<!doctype html>
 <html>
-  <head><title>Capsem Debug About</title></head>
+  <head><title>Capsem Mock Server About</title></head>
   <body>
     <div id="about">
-      <p>Capsem debug upstream about page for local MCP fetch tests.</p>
+      <p>Capsem mock server about page for local MCP fetch tests.</p>
       <p>Google, Anthropic, and OpenAI appear here as fixture text only.</p>
       <a href="https://example.invalid/local">Local fixture link</a>
     </div>
@@ -45,13 +45,13 @@ pub struct ReadyPayload {
 }
 
 #[derive(Debug)]
-pub struct DebugUpstreamHandle {
+pub struct MockServerHandle {
     addr: SocketAddr,
     shutdown_tx: Option<oneshot::Sender<()>>,
     task: tokio::task::JoinHandle<anyhow::Result<()>>,
 }
 
-impl DebugUpstreamHandle {
+impl MockServerHandle {
     pub fn addr(&self) -> SocketAddr {
         self.addr
     }
@@ -64,34 +64,30 @@ impl DebugUpstreamHandle {
         if let Some(tx) = self.shutdown_tx.take() {
             let _ = tx.send(());
         }
-        self.task.await.context("join debug upstream task")?
+        self.task.await.context("join mock server task")?
     }
 }
 
-pub async fn spawn_debug_upstream() -> anyhow::Result<DebugUpstreamHandle> {
-    spawn_debug_upstream_on(
+pub async fn spawn_mock_server() -> anyhow::Result<MockServerHandle> {
+    spawn_mock_server_on(
         "127.0.0.1:0"
             .parse()
-            .expect("valid debug upstream bind address"),
+            .expect("valid mock server bind address"),
     )
     .await
 }
 
-pub async fn spawn_debug_upstream_on(addr: SocketAddr) -> anyhow::Result<DebugUpstreamHandle> {
-    let listener = TcpListener::bind(addr)
-        .await
-        .context("bind debug upstream")?;
-    let addr = listener
-        .local_addr()
-        .context("read debug upstream address")?;
+pub async fn spawn_mock_server_on(addr: SocketAddr) -> anyhow::Result<MockServerHandle> {
+    let listener = TcpListener::bind(addr).await.context("bind mock server")?;
+    let addr = listener.local_addr().context("read mock server address")?;
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
     let task = tokio::spawn(async move {
-        serve_debug_upstream(listener, async {
+        serve_mock_server(listener, async {
             let _ = shutdown_rx.await;
         })
         .await
     });
-    Ok(DebugUpstreamHandle {
+    Ok(MockServerHandle {
         addr,
         shutdown_tx: Some(shutdown_tx),
         task,
@@ -100,7 +96,7 @@ pub async fn spawn_debug_upstream_on(addr: SocketAddr) -> anyhow::Result<DebugUp
 
 pub fn ready_payload(addr: SocketAddr) -> ReadyPayload {
     ReadyPayload {
-        service: "capsem-debug-upstream",
+        service: "capsem-mock-server",
         http_addr: addr.to_string(),
         base_url: format!("http://{addr}"),
         endpoints: vec![
@@ -126,14 +122,14 @@ pub fn ready_payload(addr: SocketAddr) -> ReadyPayload {
     }
 }
 
-pub async fn serve_debug_upstream<S>(listener: TcpListener, shutdown: S) -> anyhow::Result<()>
+pub async fn serve_mock_server<S>(listener: TcpListener, shutdown: S) -> anyhow::Result<()>
 where
     S: Future<Output = ()> + Send + 'static,
 {
     axum::serve(listener, app())
         .with_graceful_shutdown(shutdown)
         .await
-        .context("serve debug upstream")
+        .context("serve mock server")
 }
 
 pub fn app() -> Router {
@@ -170,7 +166,7 @@ async fn html_large() -> impl IntoResponse {
     let mut body = String::from("<!doctype html><html><body><main>\n");
     for idx in 0..80 {
         body.push_str(&format!(
-            "<p>Capsem local pagination fixture paragraph {idx}: debug upstream content for MCP fetch tests.</p>\n"
+            "<p>Capsem local pagination fixture paragraph {idx}: mock server content for MCP fetch tests.</p>\n"
         ));
     }
     body.push_str("</main></body></html>\n");
@@ -217,10 +213,10 @@ async fn sse_model() -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
     let events = vec![
         Event::default()
             .event("model.delta")
-            .data(r#"{"provider":"debug","model":"debug-local","content":"hello"}"#),
+            .data(r#"{"provider":"mock","model":"mock-local","content":"hello"}"#),
         Event::default()
             .event("model.tool_call")
-            .data(r#"{"id":"tool_0001","name":"debug_lookup","arguments":{"query":"capsem"}}"#),
+            .data(r#"{"id":"tool_0001","name":"fixture_lookup","arguments":{"query":"capsem"}}"#),
         Event::default()
             .event("model.done")
             .data(r#"{"finish_reason":"stop"}"#),
@@ -230,22 +226,22 @@ async fn sse_model() -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
 
 async fn model_response() -> impl IntoResponse {
     Json(serde_json::json!({
-        "id": "chatcmpl-debug-local",
+        "id": "chatcmpl-mock-local",
         "object": "chat.completion",
-        "provider": "debug",
-        "model": "debug-local",
+        "provider": "mock",
+        "model": "mock-local",
         "choices": [
             {
                 "index": 0,
                 "message": {
                     "role": "assistant",
-                    "content": "hello from capsem-debug-upstream",
+                    "content": "hello from capsem-mock-server",
                     "tool_calls": [
                         {
                             "id": "tool_0001",
                             "type": "function",
                             "function": {
-                                "name": "debug_lookup",
+                                "name": "fixture_lookup",
                                 "arguments": "{\"query\":\"capsem\"}"
                             }
                         }
@@ -267,7 +263,7 @@ async fn oauth_authorize() -> impl IntoResponse {
         "kind": "synthetic_oauth_authorization_fixture",
         "authorization_code": "capsem_test_oauth_code_0123456789abcdef",
         "redirect_uri": "https://capsem.invalid/oauth/callback",
-        "state": "capsem-debug-state",
+        "state": "capsem-fixture-state",
         "scope": "openid profile email offline_access"
     }))
 }
@@ -304,7 +300,7 @@ async fn mcp_json_rpc(Json(payload): Json<serde_json::Value>) -> impl IntoRespon
                     "resources": {}
                 },
                 "serverInfo": {
-                    "name": "capsem-debug-upstream",
+                    "name": "capsem-mock-server",
                     "version": env!("CARGO_PKG_VERSION")
                 }
             }
@@ -315,7 +311,7 @@ async fn mcp_json_rpc(Json(payload): Json<serde_json::Value>) -> impl IntoRespon
             "result": {
                 "tools": [
                     {
-                        "name": "debug_lookup",
+                        "name": "fixture_lookup",
                         "description": "Return deterministic debug content.",
                         "inputSchema": {
                             "type": "object",
@@ -326,7 +322,7 @@ async fn mcp_json_rpc(Json(payload): Json<serde_json::Value>) -> impl IntoRespon
                     },
                     {
                         "name": "fetch_http",
-                        "description": "Fetch a local debug upstream URL.",
+                        "description": "Fetch a local mock server URL.",
                         "inputSchema": {
                             "type": "object",
                             "properties": {
@@ -349,7 +345,7 @@ async fn mcp_json_rpc(Json(payload): Json<serde_json::Value>) -> impl IntoRespon
                     "content": [
                         {
                             "type": "text",
-                            "text": format!("capsem-debug-upstream:mcp:{name}")
+                            "text": format!("capsem-mock-server:mcp:{name}")
                         }
                     ],
                     "isError": false
@@ -413,7 +409,7 @@ async fn echo(headers: HeaderMap, body: Bytes) -> impl IntoResponse {
 async fn deny_target() -> impl IntoResponse {
     (
         [(CONTENT_TYPE, "text/plain; charset=utf-8")],
-        "capsem-debug-upstream:deny-target\n",
+        "capsem-mock-server:deny-target\n",
     )
 }
 
@@ -447,7 +443,7 @@ async fn ws_close(ws: WebSocketUpgrade) -> impl IntoResponse {
     ws.on_upgrade(|mut socket| async move {
         let frame = CloseFrame {
             code: close_code::NORMAL,
-            reason: "capsem-debug-close".into(),
+            reason: "capsem-fixture-close".into(),
         };
         let _ = socket.send(Message::Close(Some(frame))).await;
     })
@@ -522,7 +518,7 @@ mod tests {
 
     #[tokio::test]
     async fn deterministic_http_endpoints_work() {
-        let upstream = spawn_debug_upstream().await.unwrap();
+        let upstream = spawn_mock_server().await.unwrap();
         let client = reqwest::Client::new();
 
         let tiny = client
@@ -543,7 +539,7 @@ mod tests {
             .text()
             .await
             .unwrap();
-        assert!(html_about.contains("Capsem debug upstream about page"));
+        assert!(html_about.contains("Capsem mock server about page"));
         assert!(html_about.contains("Google"));
 
         let html_large = client
@@ -588,7 +584,7 @@ mod tests {
 
     #[tokio::test]
     async fn echo_reports_metadata_without_raw_secret_values() {
-        let upstream = spawn_debug_upstream().await.unwrap();
+        let upstream = spawn_mock_server().await.unwrap();
         let secret = "capsem_test_secret_should_not_echo";
         let response: serde_json::Value = reqwest::Client::new()
             .post(format!("{}/echo", upstream.base_url()))
@@ -612,7 +608,7 @@ mod tests {
 
     #[tokio::test]
     async fn sse_model_contains_tool_call_fixture() {
-        let upstream = spawn_debug_upstream().await.unwrap();
+        let upstream = spawn_mock_server().await.unwrap();
         let body = reqwest::get(format!("{}/sse/model", upstream.base_url()))
             .await
             .unwrap()
@@ -621,14 +617,14 @@ mod tests {
             .unwrap();
 
         assert!(body.contains("event: model.tool_call"));
-        assert!(body.contains("debug_lookup"));
+        assert!(body.contains("fixture_lookup"));
 
         upstream.shutdown().await.unwrap();
     }
 
     #[tokio::test]
     async fn model_response_contains_tool_call_fixture() {
-        let upstream = spawn_debug_upstream().await.unwrap();
+        let upstream = spawn_mock_server().await.unwrap();
         let body: serde_json::Value =
             reqwest::get(format!("{}/model/response", upstream.base_url()))
                 .await
@@ -637,11 +633,11 @@ mod tests {
                 .await
                 .unwrap();
 
-        assert_eq!(body["provider"], "debug");
-        assert_eq!(body["model"], "debug-local");
+        assert_eq!(body["provider"], "mock");
+        assert_eq!(body["model"], "mock-local");
         assert_eq!(
             body["choices"][0]["message"]["tool_calls"][0]["function"]["name"],
-            "debug_lookup"
+            "fixture_lookup"
         );
 
         upstream.shutdown().await.unwrap();
@@ -649,11 +645,11 @@ mod tests {
 
     #[tokio::test]
     async fn openai_compatible_chat_completions_fixture_works() {
-        let upstream = spawn_debug_upstream().await.unwrap();
+        let upstream = spawn_mock_server().await.unwrap();
         let body: serde_json::Value = reqwest::Client::new()
             .post(format!("{}/v1/chat/completions", upstream.base_url()))
             .json(&serde_json::json!({
-                "model": "debug-local",
+                "model": "mock-local",
                 "messages": [{"role": "user", "content": "hello"}]
             }))
             .send()
@@ -664,10 +660,10 @@ mod tests {
             .unwrap();
 
         assert_eq!(body["object"], "chat.completion");
-        assert_eq!(body["model"], "debug-local");
+        assert_eq!(body["model"], "mock-local");
         assert_eq!(
             body["choices"][0]["message"]["tool_calls"][0]["function"]["name"],
-            "debug_lookup"
+            "fixture_lookup"
         );
 
         upstream.shutdown().await.unwrap();
@@ -675,7 +671,7 @@ mod tests {
 
     #[tokio::test]
     async fn oauth_fixtures_are_protocol_shaped_and_secret_marked() {
-        let upstream = spawn_debug_upstream().await.unwrap();
+        let upstream = spawn_mock_server().await.unwrap();
         let client = reqwest::Client::new();
 
         let authorize: serde_json::Value = client
@@ -690,7 +686,7 @@ mod tests {
             authorize["authorization_code"],
             "capsem_test_oauth_code_0123456789abcdef"
         );
-        assert_eq!(authorize["state"], "capsem-debug-state");
+        assert_eq!(authorize["state"], "capsem-fixture-state");
 
         let token: serde_json::Value = client
             .post(format!("{}/oauth/token", upstream.base_url()))
@@ -720,7 +716,7 @@ mod tests {
 
     #[tokio::test]
     async fn mcp_json_rpc_fixture_supports_initialize_list_and_call() {
-        let upstream = spawn_debug_upstream().await.unwrap();
+        let upstream = spawn_mock_server().await.unwrap();
         let client = reqwest::Client::new();
 
         let initialize: serde_json::Value = client
@@ -740,7 +736,7 @@ mod tests {
         assert_eq!(initialize["id"], 1);
         assert_eq!(
             initialize["result"]["serverInfo"]["name"],
-            "capsem-debug-upstream"
+            "capsem-mock-server"
         );
 
         let tools: serde_json::Value = client
@@ -756,7 +752,7 @@ mod tests {
             .json()
             .await
             .unwrap();
-        assert_eq!(tools["result"]["tools"][0]["name"], "debug_lookup");
+        assert_eq!(tools["result"]["tools"][0]["name"], "fixture_lookup");
         assert_eq!(tools["result"]["tools"][1]["name"], "fetch_http");
 
         let call: serde_json::Value = client
@@ -766,7 +762,7 @@ mod tests {
                 "id": 3,
                 "method": "tools/call",
                 "params": {
-                    "name": "debug_lookup",
+                    "name": "fixture_lookup",
                     "arguments": {"query": "capsem"}
                 }
             }))
@@ -779,7 +775,7 @@ mod tests {
         assert_eq!(call["result"]["isError"], false);
         assert_eq!(
             call["result"]["content"][0]["text"],
-            "capsem-debug-upstream:mcp:debug_lookup"
+            "capsem-mock-server:mcp:fixture_lookup"
         );
 
         let unknown: serde_json::Value = client
@@ -802,7 +798,7 @@ mod tests {
 
     #[tokio::test]
     async fn websocket_echo_ping_and_close_work() {
-        let upstream = spawn_debug_upstream().await.unwrap();
+        let upstream = spawn_mock_server().await.unwrap();
 
         let (mut echo, _) =
             tokio_tungstenite::connect_async(format!("ws://{}/ws/echo", upstream.addr()))
@@ -833,7 +829,7 @@ mod tests {
                     frame.code,
                     tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode::Normal
                 );
-                assert_eq!(frame.reason.to_string(), "capsem-debug-close");
+                assert_eq!(frame.reason.to_string(), "capsem-fixture-close");
             }
             other => panic!("expected close, got {other:?}"),
         }

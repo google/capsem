@@ -110,9 +110,9 @@ Measures wall-clock time to run `<cli> --version` with page cache dropped betwee
 
 Measures HTTP throughput through the MITM proxy using concurrent GET requests.
 
-- **Default**: skipped unless `CAPSEM_BENCH_MITM_LOCAL_BASE_URL` is set.
-- **Local release proof**: set `CAPSEM_BENCH_MITM_LOCAL_BASE_URL` to the
-  host-side `capsem-debug-upstream` base URL; `http` targets `/tiny`.
+- **Default**: skipped unless `CAPSEM_MOCK_SERVER_BASE_URL` is set.
+- **Local release proof**: set `CAPSEM_MOCK_SERVER_BASE_URL` to the
+  host-side `capsem-mock-server` base URL; `http` targets `/tiny`.
 - **Custom**: `capsem-bench http <URL> <N> <C>`
 - **Reports**: successful/failed count, requests/sec, latency percentiles (p50, p95, p99, min, max)
 
@@ -123,7 +123,7 @@ upstream -> response back.
 ### Proxy throughput (`throughput`)
 
 Downloads a deterministic 10 MB local fixture through the MITM proxy and
-reports end-to-end throughput when `CAPSEM_BENCH_MITM_LOCAL_BASE_URL` is set.
+reports end-to-end throughput when `CAPSEM_MOCK_SERVER_BASE_URL` is set.
 Public throughput is explicit opt-in only via
 `CAPSEM_BENCH_ALLOW_PUBLIC_NETWORK=1`; it is not release proof.
 
@@ -145,8 +145,8 @@ All load tests use the same concurrency and duration contract:
 
 - `CAPSEM_BENCH_CONCURRENCY`: one value (`64`) or a comma-separated sweep (`1,10,50,200`).
 - `CAPSEM_BENCH_DURATION_S`: seconds per concurrency level for duration-based load tests.
-When `CAPSEM_BENCH_MITM_LOCAL_BASE_URL` is set, `capsem-bench all` also runs
-deterministic local debug-upstream scenarios: tiny HTTP, 1 MiB body, gzip, SSE
+When `CAPSEM_MOCK_SERVER_BASE_URL` is set, `capsem-bench all` also runs
+deterministic local mock-server scenarios: tiny HTTP, 1 MiB body, gzip, SSE
 model stream, JSON model response, denied-target, credential-shaped response,
 and WebSocket control frames.
 
@@ -156,7 +156,7 @@ and WebSocket control frames.
 The same values are available as CLI arguments:
 
 ```bash
-CAPSEM_BENCH_MITM_LOCAL_BASE_URL=http://127.0.0.1:3713 CAPSEM_BENCH_TOTAL_REQUESTS=50000 CAPSEM_BENCH_CONCURRENCY=64 CAPSEM_BENCH_SCENARIOS=model_json_response,credential_response capsem-bench all
+CAPSEM_MOCK_SERVER_BASE_URL=http://127.0.0.1:3713 CAPSEM_BENCH_TOTAL_REQUESTS=50000 CAPSEM_BENCH_CONCURRENCY=64 CAPSEM_BENCH_SCENARIOS=model_json_response,credential_response capsem-bench all
 capsem-bench mcp-load 64 5
 capsem-bench dns-load 64 5
 ```

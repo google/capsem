@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
-from helpers.debug_upstream import DEBUG_UPSTREAM_BINARY, DEBUG_UPSTREAM_ADDR, start_debug_upstream, stop_process
+from helpers.mock_server import MOCK_SERVER_BINARY, MOCK_SERVER_ADDR, start_mock_server, stop_process
 from helpers.service import ServiceInstance, wait_exec_ready
 
 pytestmark = pytest.mark.gateway
@@ -18,12 +18,12 @@ PROJECT_ROOT = Path(__file__).parent.parent.parent
 
 
 @pytest.fixture(scope="module")
-def debug_upstream():
-    if not DEBUG_UPSTREAM_BINARY.exists():
+def mock_server():
+    if not MOCK_SERVER_BINARY.exists():
         pytest.skip(
-            f"{DEBUG_UPSTREAM_BINARY} not found; run `cargo build -p capsem-debug-upstream`"
+            f"{MOCK_SERVER_BINARY} not found; run `cargo build -p capsem-mock-server`"
         )
-    proc, ready = start_debug_upstream()
+    proc, ready = start_mock_server()
     try:
         yield ready["base_url"]
     finally:
@@ -31,7 +31,7 @@ def debug_upstream():
 
 
 @pytest.fixture(scope="module")
-def service_env(debug_upstream):
+def service_env(mock_server):
     """Start a real capsem-service on an isolated temp socket."""
     old_corp_config = os.environ.get("CAPSEM_CORP_CONFIG")
     os.environ["CAPSEM_CORP_CONFIG"] = str(PROJECT_ROOT / "config" / "integration-test-corp.toml")
@@ -75,7 +75,7 @@ def test_mitm_policy_telemetry(service_env, client):
         # upstream path. This proves the single CEL/security-event rail without
         # resurrecting the retired default-domain block path.
         client.post(f"/vms/{vm_name}/exec", {
-            "command": f"curl -s -o /dev/null -w '%{{http_code}}' --max-time 5 http://{DEBUG_UPSTREAM_ADDR}/deny-target || true"
+            "command": f"curl -s -o /dev/null -w '%{{http_code}}' --max-time 5 http://{MOCK_SERVER_ADDR}/deny-target || true"
         })
 
         # Wait a bit for telemetry to be flushed to DB

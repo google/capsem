@@ -78,6 +78,13 @@ Write code. Follow the project skills:
 - `/dev-rust-patterns` for async/cross-compile patterns
 - `/dev-mitm-proxy`, `/dev-mcp` for subsystem-specific guidance
 
+Names are part of the architecture contract. Prefer boring,
+self-explanatory names that state what a thing is (`mock_server`,
+`profile_loader`, `security_rule`) over origin-story names, lore names, or
+names tied to the first caller (`debug_upstream`, benchmark-only labels,
+temporary sprint names). If a developer cannot infer the contract from the
+name before opening the file, rename it before the pattern spreads.
+
 ## 4. Commit at functional milestones
 
 Do NOT commit after every file edit. Do NOT batch everything into one giant commit at the end. Commit when:

@@ -1561,8 +1561,8 @@ S4 progress note:
   `mcp_brokered_oauth_resolve 10.100us`; runtime classify `http 1.2224us`,
   `model 1.3006us`, `mcp 1.2326us`, `dns 1.1686us`, `file 1.1429us`,
   `process 1.1912us`.
-- [x] Add model-shaped local debug-upstream fixture to release benchmark path.
-  Proof: `capsem-debug-upstream` now exposes `/model/response` alongside
+- [x] Add model-shaped local mock-server fixture to release benchmark path.
+  Proof: `capsem-mock-server` now exposes `/model/response` alongside
   `/sse/model`; `uv run pytest tests/test_capsem_bench_mitm_local.py -q`
   passed 25 tests after the shared harness/reporting refactor; host-direct local smoke
   `PYTHONPATH=guest/artifacts uv run --with rich --with requests --with

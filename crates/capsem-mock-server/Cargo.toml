@@ -1,5 +1,5 @@
 [package]
-name = "capsem-debug-upstream"
+name = "capsem-mock-server"
 version.workspace = true
 edition = "2021"
 rust-version.workspace = true
@@ -10,7 +10,7 @@ repository.workspace = true
 authors.workspace = true
 
 [[bin]]
-name = "capsem-debug-upstream"
+name = "capsem-mock-server"
 path = "src/main.rs"
 
 [dependencies]

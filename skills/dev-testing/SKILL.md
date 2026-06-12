@@ -70,6 +70,18 @@ Package-manager tests prove function. Installing `zstd`, for example, means
 compressing known bytes, decompressing them, and comparing the exact output;
 not just checking dpkg output.
 
+## Mock server boundary
+
+`capsem-mock-server` is the single reusable local fixture server for
+benchmarks, doctor, protocol recording/replay, gateway/integration tests, and
+Ironbank. It owns mock protocol responses and deterministic local upstream
+behavior. Tests may contract it through `scripts/mock_server.py`,
+`tests/helpers/mock_server.py`, or `CAPSEM_MOCK_SERVER_BASE_URL`.
+
+Do not add another local HTTP/MCP/OAuth/model mock server for a feature. Extend
+`capsem-mock-server` and its fixtures instead, then assert the route through
+the relevant black-box test.
+
 ## Parallel tests as dogfooding (n=4 is non-negotiable)
 
 `just test` runs the python suite under `pytest -n 4 --dist=loadfile`. Four real VMs boot simultaneously. **This is the canary, not just a speed-up.** We ship Capsem as a multi-VM sandbox for AI agents -- if our own test suite cannot safely boot 4 concurrent VMs, real users running an agent farm will hit the exact same bug. Treat any concurrency flake as a Capsem-side bug, not a test-tuning problem:

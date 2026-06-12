@@ -8,8 +8,8 @@ from rich.text import Text
 
 from .helpers import (
     DEFAULT_HTTP_C, DEFAULT_HTTP_N, DEFAULT_HTTP_URL,
-    LOCAL_DEBUG_UPSTREAM_ENV, PUBLIC_HTTP_URL,
-    console, fmt_bytes, local_debug_upstream_url, percentile,
+    LOCAL_MOCK_SERVER_ENV, PUBLIC_HTTP_URL,
+    console, fmt_bytes, local_mock_server_url, percentile,
     public_network_allowed,
 )
 
@@ -43,7 +43,7 @@ def http_bench(url=None, total_requests=None, concurrency=None):
         stats = {
             "skipped": True,
             "reason": (
-                f"set {LOCAL_DEBUG_UPSTREAM_ENV} for local lab or "
+                f"set {LOCAL_MOCK_SERVER_ENV} for local lab or "
                 "CAPSEM_BENCH_ALLOW_PUBLIC_NETWORK=1 for explicit public smoke"
             ),
         }
@@ -148,7 +148,7 @@ def http_bench(url=None, total_requests=None, concurrency=None):
 def _default_http_url():
     if DEFAULT_HTTP_URL:
         return DEFAULT_HTTP_URL
-    local_url = local_debug_upstream_url("/tiny")
+    local_url = local_mock_server_url("/tiny")
     if local_url:
         return local_url
     if public_network_allowed():

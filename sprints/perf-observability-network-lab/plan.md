@@ -123,7 +123,7 @@ Validation proof:
 
 ## T1: Local Network Lab
 
-Build a local deterministic debug upstream usable by tests and benchmarks.
+Build a local deterministic mock server usable by tests and benchmarks.
 
 Recommended implementation:
 
@@ -135,9 +135,9 @@ Recommended implementation:
 
 Implementation:
 
-- Workspace crate: `crates/capsem-debug-upstream`.
-- Binary: `capsem-debug-upstream --addr 127.0.0.1:0`.
-- Library helper: `spawn_debug_upstream()` with `addr()`, `base_url()`, and
+- Workspace crate: `crates/capsem-mock-server`.
+- Binary: `capsem-mock-server --addr 127.0.0.1:0`.
+- Library helper: `spawn_mock_server()` with `addr()`, `base_url()`, and
   `shutdown()`.
 - Ready output: one JSON object containing `service`, `http_addr`, `base_url`,
   and endpoint paths.
@@ -249,8 +249,8 @@ Add repeatable benchmark modes:
 
 Implementation status:
 
-- `capsem-bench mitm-local` requires a local debug-upstream base URL from the
-  first CLI argument or `CAPSEM_BENCH_MITM_LOCAL_BASE_URL`. It does not run as
+- `capsem-bench mitm-local` requires a local mock-server base URL from the
+  first CLI argument or `CAPSEM_MOCK_SERVER_BASE_URL`. It does not run as
   part of `capsem-bench all`.
 - The host-side artifact writer is gated by
   `CAPSEM_RUN_MITM_LOCAL_BENCH=1`, provisions a VM, runs the in-guest
@@ -294,11 +294,11 @@ Implementation status:
 
 - `capsem-bench http` and `capsem-bench throughput` no longer use public
   network targets by default. They prefer
-  `CAPSEM_BENCH_MITM_LOCAL_BASE_URL`, require
+  `CAPSEM_MOCK_SERVER_BASE_URL`, require
   `CAPSEM_BENCH_ALLOW_PUBLIC_NETWORK=1` for the old public targets, and
   otherwise emit structured skipped results.
 - Guest diagnostics for plain HTTP proxying and proxy throughput now prefer the
-  local debug-upstream URL and require
+  local mock-server URL and require
   `CAPSEM_RUN_PUBLIC_NETWORK_SMOKE=1` before running public Google/CDN probes.
 - Public DNS/TLS/curl/provider diagnostics in `test_network.py`, public
   DNS/allowed-domain checks in `test_sandbox.py`, and the Google AI domain
@@ -353,7 +353,7 @@ Implementation status:
   27.0200/27.8743/28.0951 ms.
 - `security.web.http_upstream_ports` is now a real settings-backed
   `int_list`, defaulting to `[80, 11434]`, so local benchmark policy can
-  intentionally allow its dynamic debug-upstream port without weakening
+  intentionally allow its dynamic mock-server port without weakening
   release defaults.
 - Final hotspot report, litmus table, launch-number table, and optimization
   recommendation are complete. Live per-request metric export remains a future

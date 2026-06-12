@@ -13,23 +13,23 @@ import pytest
 
 from conftest import run
 
-LOCAL_DEBUG_UPSTREAM_ENV = "CAPSEM_BENCH_MITM_LOCAL_BASE_URL"
+LOCAL_MOCK_SERVER_ENV = "CAPSEM_MOCK_SERVER_BASE_URL"
 SECRET_PATTERN = re.compile(
     r"(sk-[A-Za-z0-9_-]{20,}|ghp_[A-Za-z0-9_]{20,}|AIza[0-9A-Za-z_-]{20,})"
 )
 
 
-def _local_debug_url(path):
-    base_url = os.environ.get(LOCAL_DEBUG_UPSTREAM_ENV)
+def _local_mock_url(path):
+    base_url = os.environ.get(LOCAL_MOCK_SERVER_ENV)
     if not base_url:
         return None
     return f"{base_url.rstrip('/')}/{path.lstrip('/')}"
 
 
-def _require_local_debug_url(path, reason):
-    url = _local_debug_url(path)
+def _require_local_mock_url(path, reason):
+    url = _local_mock_url(path)
     if not url:
-        pytest.skip(f"{reason}; set {LOCAL_DEBUG_UPSTREAM_ENV}")
+        pytest.skip(f"{reason}; set {LOCAL_MOCK_SERVER_ENV}")
     return url
 
 
@@ -225,8 +225,8 @@ def test_mcp_oversized_request_returns_local_error_and_recovers():
 
 
 def test_mcp_fetch_http_allowed_domain():
-    """fetch_http on the local debug upstream succeeds."""
-    url = _require_local_debug_url("/tiny", "local MCP fetch_http smoke")
+    """fetch_http on the local mock server succeeds."""
+    url = _require_local_mock_url("/tiny", "local MCP fetch_http smoke")
     responses = _mcp_call([
         {
             "jsonrpc": "2.0",
@@ -255,7 +255,7 @@ def test_mcp_fetch_http_allowed_domain():
     assert result.get("isError") is not True
     content_text = result["content"][0]["text"]
     assert f"URL: {url}" in content_text
-    assert "capsem-debug-upstream:tiny" in content_text
+    assert "capsem-mock-server:tiny" in content_text
 
 
 def test_mcp_fetch_http_blocked_domain():
@@ -340,14 +340,14 @@ def _init_and_call(tool_name, arguments, call_id=10, timeout=15):
 
 def test_mcp_fetch_http_returns_real_content():
     """fetch_http returns actual local fixture content, not empty text."""
-    url = _require_local_debug_url("/tiny", "local MCP fetch_http content smoke")
+    url = _require_local_mock_url("/tiny", "local MCP fetch_http content smoke")
     result = _init_and_call(
         "fetch_http",
         {"url": url, "max_length": 5000},
     )
     assert result.get("isError") is not True, f"fetch failed: {result}"
     text = result["content"][0]["text"]
-    assert "capsem-debug-upstream:tiny" in text, (
+    assert "capsem-mock-server:tiny" in text, (
         f"fetch_http returned no real local fixture content: {text[:500]}"
     )
 
@@ -357,8 +357,8 @@ def test_mcp_fetch_http_returns_real_content():
 # ---------------------------------------------------------------------------
 
 def test_mcp_grep_http_finds_matches():
-    """grep_http on the local debug upstream must find matches."""
-    url = _require_local_debug_url("/html/about", "local MCP grep_http smoke")
+    """grep_http on the local mock server must find matches."""
+    url = _require_local_mock_url("/html/about", "local MCP grep_http smoke")
     result = _init_and_call(
         "grep_http",
         {"url": url, "pattern": "Google"},
@@ -402,8 +402,8 @@ def test_mcp_http_headers_blocked_domain():
 # ---------------------------------------------------------------------------
 
 def test_mcp_http_headers_allowed_domain():
-    """http_headers on the local debug upstream returns status and headers."""
-    url = _require_local_debug_url("/tiny", "local MCP http_headers smoke")
+    """http_headers on the local mock server returns status and headers."""
+    url = _require_local_mock_url("/tiny", "local MCP http_headers smoke")
     result = _init_and_call(
         "http_headers",
         {"url": url},
@@ -597,21 +597,21 @@ def test_mcp_fetch_http_invalid_url():
 
 def test_mcp_fetch_http_subpath():
     """fetch_http on the local HTML fixture returns real page content."""
-    url = _require_local_debug_url("/html/about", "local MCP fetch_http subpath smoke")
+    url = _require_local_mock_url("/html/about", "local MCP fetch_http subpath smoke")
     result = _init_and_call(
         "fetch_http",
         {"url": url, "max_length": 2000},
     )
     assert result.get("isError") is not True, f"fetch failed: {result}"
     text = result["content"][0]["text"]
-    assert "Capsem debug upstream about page" in text, (
+    assert "Capsem mock server about page" in text, (
         f"fetch_http on /html/about must contain fixture text: {text[:500]}"
     )
 
 
 def test_mcp_fetch_http_raw_mode():
     """fetch_http with format=raw returns HTML tags."""
-    url = _require_local_debug_url("/html/about", "local MCP fetch_http raw smoke")
+    url = _require_local_mock_url("/html/about", "local MCP fetch_http raw smoke")
     result = _init_and_call(
         "fetch_http",
         {"url": url, "format": "raw", "max_length": 10000},
@@ -625,7 +625,7 @@ def test_mcp_fetch_http_raw_mode():
 
 def test_mcp_grep_http_with_pattern():
     """grep_http on the local HTML fixture finds 'Google' matches."""
-    url = _require_local_debug_url("/html/about", "local MCP grep_http pattern smoke")
+    url = _require_local_mock_url("/html/about", "local MCP grep_http pattern smoke")
     result = _init_and_call(
         "grep_http",
         {"url": url, "pattern": "Google"},
@@ -639,7 +639,7 @@ def test_mcp_grep_http_with_pattern():
 
 def test_mcp_fetch_http_pagination():
     """fetch_http with small max_length shows pagination hint."""
-    url = _require_local_debug_url("/html/large", "local MCP fetch_http pagination smoke")
+    url = _require_local_mock_url("/html/large", "local MCP fetch_http pagination smoke")
     result = _init_and_call(
         "fetch_http",
         {"url": url, "max_length": 500},

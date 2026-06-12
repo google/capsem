@@ -66,7 +66,7 @@ database-style writes.
 
 ## Local Network And Model Fixtures
 
-Release network proof uses `capsem-debug-upstream`, not public internet. The
+Release network proof uses `capsem-mock-server`, not public internet. The
 current VM MITM-local artifact is
 `benchmarks/mitm-local/data_1.0.1780954707_arm64.json` and was recorded through
 the profile-selected VM path against local HTTP, gzip, SSE model, JSON model,
@@ -88,9 +88,9 @@ WebSocket control fixture: echo `10` frames at `2,499.5` frames/sec with
 Host-direct control smoke after adding the JSON model fixture proved only that
 `/model/response` is routable and returns model-shaped JSON. Do not use its
 localhost latency or requests/sec as release performance evidence; the release
-gate must rerun `capsem-bench all` with `CAPSEM_BENCH_MITM_LOCAL_BASE_URL`
+gate must rerun `capsem-bench all` with `CAPSEM_MOCK_SERVER_BASE_URL`
 from inside a profile-selected VM so the request crosses guest redirect, vsock,
-MITM parsing, CEL/security evaluation, logging, and the local debug upstream.
+MITM parsing, CEL/security evaluation, logging, and the local mock server.
 
 Corrected host-direct calibration with meaningful sample size:
 `50,000` requests per selected scenario at concurrency `64` completed with zero

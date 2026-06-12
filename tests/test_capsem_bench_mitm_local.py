@@ -45,7 +45,7 @@ from capsem_bench import __main__ as bench_main  # noqa: E402
 from capsem_bench import http_bench, throughput  # noqa: E402
 from capsem_bench import mitm_local  # noqa: E402
 from capsem_bench import load_harness  # noqa: E402
-from helpers.debug_upstream import start_debug_upstream, stop_process  # noqa: E402
+from helpers.mock_server import start_mock_server, stop_process  # noqa: E402
 
 
 def test_mitm_local_is_not_a_top_level_escape_hatch():
@@ -54,7 +54,7 @@ def test_mitm_local_is_not_a_top_level_escape_hatch():
     assert "all" in bench_main.VALID_MODES
 
 
-def test_all_mode_includes_local_mitm_when_debug_upstream_is_configured(monkeypatch):
+def test_all_mode_includes_local_mitm_when_mock_server_is_configured(monkeypatch):
     monkeypatch.setenv(mitm_local.BASE_URL_ENV, "http://127.0.0.1:3713")
 
     assert bench_main._should_run_local_mitm("all") is True
@@ -62,29 +62,29 @@ def test_all_mode_includes_local_mitm_when_debug_upstream_is_configured(monkeypa
 
 
 def test_http_bench_default_skips_without_local_or_public(monkeypatch):
-    monkeypatch.delenv(http_bench.LOCAL_DEBUG_UPSTREAM_ENV, raising=False)
+    monkeypatch.delenv(http_bench.LOCAL_MOCK_SERVER_ENV, raising=False)
     monkeypatch.delenv("CAPSEM_BENCH_ALLOW_PUBLIC_NETWORK", raising=False)
     result = http_bench.http_bench()
     assert result["skipped"] is True
     assert "local lab" in result["reason"]
 
 
-def test_http_bench_prefers_local_debug_upstream(monkeypatch):
-    monkeypatch.setenv(http_bench.LOCAL_DEBUG_UPSTREAM_ENV, "http://127.0.0.1:1234/")
+def test_http_bench_prefers_local_mock_server(monkeypatch):
+    monkeypatch.setenv(http_bench.LOCAL_MOCK_SERVER_ENV, "http://127.0.0.1:1234/")
     monkeypatch.delenv("CAPSEM_BENCH_ALLOW_PUBLIC_NETWORK", raising=False)
     assert http_bench._default_http_url() == "http://127.0.0.1:1234/tiny"
 
 
 def test_throughput_default_skips_without_local_or_public(monkeypatch):
-    monkeypatch.delenv(throughput.LOCAL_DEBUG_UPSTREAM_ENV, raising=False)
+    monkeypatch.delenv(throughput.LOCAL_MOCK_SERVER_ENV, raising=False)
     monkeypatch.delenv("CAPSEM_BENCH_ALLOW_PUBLIC_NETWORK", raising=False)
     result = throughput.throughput_bench()
     assert result["skipped"] is True
     assert "local lab" in result["reason"]
 
 
-def test_throughput_prefers_local_debug_upstream(monkeypatch):
-    monkeypatch.setenv(throughput.LOCAL_DEBUG_UPSTREAM_ENV, "http://127.0.0.1:1234/")
+def test_throughput_prefers_local_mock_server(monkeypatch):
+    monkeypatch.setenv(throughput.LOCAL_MOCK_SERVER_ENV, "http://127.0.0.1:1234/")
     monkeypatch.delenv("CAPSEM_BENCH_ALLOW_PUBLIC_NETWORK", raising=False)
     target = throughput._throughput_target()
     assert target == (
@@ -107,7 +107,7 @@ def test_base_url_accepts_env_and_strips_trailing_slash(monkeypatch):
 
 def test_base_url_rejects_non_http():
     with pytest.raises(ValueError, match="invalid mitm-local base URL"):
-        mitm_local._base_url("file:///tmp/debug-upstream")
+        mitm_local._base_url("file:///tmp/mock-server")
 
 
 def test_ws_url_matches_base_scheme():
@@ -378,10 +378,10 @@ def test_scenario_selection_rejects_unknown_name():
         )
 
 
-def test_mitm_local_drives_debug_http_fixture():
+def test_mitm_local_drives_mock_http_fixture():
     proc = None
     try:
-        proc, ready = start_debug_upstream()
+        proc, ready = start_mock_server()
         result = mitm_local.mitm_local_bench(
             base_url=ready["base_url"],
             total_requests=1,

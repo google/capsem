@@ -6,7 +6,7 @@ Exercises:
   1. fs_events   -- create, modify, and delete files inside the VM
   2. net_events   -- curl an allowed domain + a denied domain (policy enforcement)
   3. mcp_calls    -- run capsem-doctor MCP tests (init, tools/list, fetch, grep)
-  4. model_calls  -- call the local OpenAI-compatible debug fixture
+  4. model_calls  -- call the local OpenAI-compatible mock fixture
   5. tool_calls   -- validate tool-call ledger shape when model fixtures emit it
   6. main.db      -- rollup counters match session.db actuals
 
@@ -37,7 +37,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
-from debug_upstream import local_fixture_env, start_debug_upstream, stop_process  # noqa: E402
+from mock_server import local_fixture_env, start_mock_server, stop_process  # noqa: E402
 
 BOLD = "\033[1m"
 DIM = "\033[2m"
@@ -84,7 +84,7 @@ def _vm_command(local_base_url: str) -> str:
     deny_url = shlex.quote(f"{local_base_url.rstrip('/')}/deny-target")
     model_url = shlex.quote(f"{local_base_url.rstrip('/')}/v1/chat/completions")
     model_payload = shlex.quote(json.dumps({
-        "model": "debug-openai",
+        "model": "mock-openai",
         "messages": [{"role": "user", "content": "say capsem"}],
         "stream": False,
     }))
@@ -248,7 +248,7 @@ def run_vm(binary: str, assets_dir: str) -> tuple[str, int]:
         "CAPSEM_CORP_CONFIG": "config/integration-test-corp.toml",
     }
 
-    debug_proc = None
+    mock_proc = None
 
     # Restart the dev service with CAPSEM_HOME/CAPSEM_CORP_CONFIG in its env so
     # the policy rules from `config/integration-test-settings.toml` actually
@@ -267,17 +267,17 @@ def run_vm(binary: str, assets_dir: str) -> tuple[str, int]:
     existing = set(p.name for p in SESSIONS_DIR.iterdir()) if SESSIONS_DIR.exists() else set()
 
     try:
-        debug_proc, ready = start_debug_upstream()
-        debug_base_url = ready["base_url"]
-        print(f"{BOLD}Local debug upstream:{RESET} {debug_base_url}")
+        mock_proc, ready = start_mock_server()
+        mock_base_url = ready["base_url"]
+        print(f"{BOLD}Local mock server:{RESET} {mock_base_url}")
 
         # Pass deterministic local fixture settings via --env so they reach the
         # VM through the service. Do not inject proxy variables: guest traffic
         # must prove the iptables-nft redirect rail.
         cmd = [binary, "run", "--timeout", "300"]
-        for key, value in local_fixture_env(debug_base_url).items():
+        for key, value in local_fixture_env(mock_base_url).items():
             cmd.extend(["--env", f"{key}={value}"])
-        cmd.append(_vm_command(local_base_url=debug_base_url))
+        cmd.append(_vm_command(local_base_url=mock_base_url))
 
         print(f"{BOLD}Booting VM with test command ...{RESET}")
         proc = subprocess.run(
@@ -285,7 +285,7 @@ def run_vm(binary: str, assets_dir: str) -> tuple[str, int]:
             env=env, capture_output=True, text=True, timeout=300,
         )
     finally:
-        stop_process(debug_proc)
+        stop_process(mock_proc)
         # Always tear down the test service. Subsequent smoke steps spawn
         # their own fixtures, and leaving this one around would shadow any
         # default-config service the pipeline expects next.

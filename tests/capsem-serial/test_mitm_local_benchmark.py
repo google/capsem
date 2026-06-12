@@ -1,18 +1,16 @@
 """Archive an in-VM local MITM benchmark artifact.
 
 This is intentionally gated by CAPSEM_RUN_MITM_LOCAL_BENCH=1 because it boots a
-VM and needs the debug upstream URL to be routable through the Capsem network
-path. When no explicit CAPSEM_BENCH_MITM_LOCAL_BASE_URL is supplied, the test
-starts capsem-debug-upstream on host localhost and passes that URL to the guest.
+VM and needs the mock server URL to be routable through the Capsem network
+path. When no explicit CAPSEM_MOCK_SERVER_BASE_URL is supplied, the test
+starts capsem-mock-server on host localhost and passes that URL to the guest.
 """
 
 import json
 import os
 import re
-import selectors
 import shlex
 import sqlite3
-import subprocess
 import time
 import uuid
 from pathlib import Path
@@ -21,13 +19,12 @@ from urllib.parse import urlsplit
 import pytest
 
 from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
+from helpers.mock_server import start_mock_server, stop_process
 from helpers.service import ServiceInstance, wait_exec_ready
 
 pytestmark = [pytest.mark.serial, pytest.mark.benchmark]
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
-DEBUG_UPSTREAM_BINARY = PROJECT_ROOT / "target" / "debug" / "capsem-debug-upstream"
-DEBUG_UPSTREAM_ADDR = "127.0.0.1:3713"
 
 
 def _project_version():
@@ -46,72 +43,6 @@ def _archive(data):
         json.dump(data, handle, indent=2)
     print(f"mitm-local benchmark archived to {out_path}")
     return out_path
-
-
-def _read_ready_json(proc, timeout_s=10):
-    selector = selectors.DefaultSelector()
-    selector.register(proc.stdout, selectors.EVENT_READ)
-    deadline = time.monotonic() + timeout_s
-    lines = []
-    while time.monotonic() < deadline:
-        if proc.poll() is not None:
-            raise RuntimeError(
-                f"capsem-debug-upstream exited early with code {proc.returncode}: "
-                f"{''.join(lines)}"
-            )
-        events = selector.select(timeout=0.2)
-        for key, _ in events:
-            line = key.fileobj.readline()
-            if not line:
-                continue
-            lines.append(line)
-            try:
-                payload = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if payload.get("service") == "capsem-debug-upstream":
-                return payload
-    raise TimeoutError(
-        "capsem-debug-upstream did not print ready JSON; "
-        f"stdout={''.join(lines)!r}"
-    )
-
-
-def _start_debug_upstream():
-    if not DEBUG_UPSTREAM_BINARY.exists():
-        pytest.skip(
-            f"{DEBUG_UPSTREAM_BINARY} not found; run `cargo build -p capsem-debug-upstream`"
-        )
-    proc = subprocess.Popen(
-        [str(DEBUG_UPSTREAM_BINARY), "--addr", DEBUG_UPSTREAM_ADDR],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        bufsize=1,
-    )
-    try:
-        ready = _read_ready_json(proc)
-        return proc, ready
-    except Exception:
-        proc.terminate()
-        try:
-            proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-        raise
-
-
-def _stop_process(proc):
-    if proc is None:
-        return
-    proc.terminate()
-    try:
-        proc.wait(timeout=5)
-    except subprocess.TimeoutExpired:
-        proc.kill()
-        proc.wait(timeout=5)
-    if proc.stdout is not None:
-        proc.stdout.close()
 
 
 def _assert_mitm_local_succeeded(data):
@@ -208,15 +139,15 @@ def test_mitm_local_benchmark_artifact():
         pytest.skip("set CAPSEM_RUN_MITM_LOCAL_BENCH=1 to run the VM benchmark")
 
     upstream_proc = None
-    base_url = os.environ.get("CAPSEM_BENCH_MITM_LOCAL_BASE_URL")
+    base_url = os.environ.get("CAPSEM_MOCK_SERVER_BASE_URL")
     if not base_url:
-        upstream_proc, ready = _start_debug_upstream()
+        upstream_proc, ready = start_mock_server()
         base_url = ready["base_url"]
     parsed_base = urlsplit(base_url)
     if parsed_base.hostname != "127.0.0.1" or (parsed_base.port or 80) != 3713:
         pytest.skip(
             "mitm-local benchmark release proof requires "
-            "CAPSEM_BENCH_MITM_LOCAL_BASE_URL=http://127.0.0.1:3713 "
+            "CAPSEM_MOCK_SERVER_BASE_URL=http://127.0.0.1:3713 "
             "so guest traffic traverses iptables-nft redirection"
         )
 
@@ -242,7 +173,7 @@ def test_mitm_local_benchmark_artifact():
         command = shlex.join(
             [
                 "env",
-                f"CAPSEM_BENCH_MITM_LOCAL_BASE_URL={base_url}",
+                f"CAPSEM_MOCK_SERVER_BASE_URL={base_url}",
                 f"CAPSEM_BENCH_TOTAL_REQUESTS={total_requests}",
                 f"CAPSEM_BENCH_CONCURRENCY={concurrency}",
                 "capsem-bench",
@@ -276,7 +207,7 @@ def test_mitm_local_benchmark_artifact():
 
         data["host_recorded_at"] = time.time()
         data["arch"] = os.uname().machine
-        data["debug_upstream_base_url"] = base_url
+        data["mock_server_base_url"] = base_url
         _archive(data)
     finally:
         try:
@@ -284,4 +215,4 @@ def test_mitm_local_benchmark_artifact():
         except Exception:
             pass
         svc.stop()
-        _stop_process(upstream_proc)
+        stop_process(upstream_proc)

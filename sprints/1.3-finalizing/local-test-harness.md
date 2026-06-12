@@ -21,16 +21,16 @@ The discipline is:
 - Add a reusable local HTTP recorder for request/header/body capture.
 - Add reusable static HTTP fixture responses so builtin HTTP tools can fetch,
   grep, paginate, and inspect headers without remote services.
-- Extend `capsem-debug-upstream` with deterministic text, HTML, large HTML,
+- Extend `capsem-mock-server` with deterministic text, HTML, large HTML,
   bytes, gzip, SSE, credential-shaped, deny-target, and WebSocket fixtures.
 - Add a reusable local Streamable HTTP MCP server with a real rmcp tool.
 - Replace remote MCP manager tests with local proofs.
 - Replace builtin HTTP fetch/grep/header tests with local fixture proofs.
-- Make `capsem doctor` start a host-side local debug upstream on
-  `127.0.0.1:3713` and inject only `CAPSEM_BENCH_MITM_LOCAL_BASE_URL`; guest
+- Make `capsem doctor` start a host-side local mock server on
+  `127.0.0.1:3713` and inject only `CAPSEM_MOCK_SERVER_BASE_URL`; guest
   HTTP/WebSocket clients must reach it through normal iptables-nft redirection,
   not direct proxy environment variables or socket overrides.
-- Replace integration-test Google/CDN traffic with the local debug upstream
+- Replace integration-test Google/CDN traffic with the local mock server
   `/tiny`, `/bytes/10mb`, and corp-blocked `/deny-target` fixtures.
 - Replace session DB row-generation curls with deterministic denied-domain
   probes so logging tests do not need public reachability.
@@ -47,7 +47,7 @@ The discipline is:
     it through the production manager dispatch path.
   - Builtin `fetch_http`, `grep_http`, and `http_headers` call a local HTTP
     fixture through the production reqwest path.
-  - `capsem doctor` provisions its VM with a local debug upstream base URL so
+  - `capsem doctor` provisions its VM with a local mock server base URL so
     doctor MCP and network diagnostics exercise the real iptables-nft/MITM spine
     locally.
 - Adversarial:
@@ -58,7 +58,7 @@ The discipline is:
 - E2E/integration:
   - Local in-process TCP server exercises real HTTP and rmcp transport without
     remote services.
-  - `scripts/integration_test.py` starts `capsem-debug-upstream` on
+  - `scripts/integration_test.py` starts `capsem-mock-server` on
     `127.0.0.1:3713` and no longer curls Google or a public CDN for release
     proof.
 - Telemetry/observability:
@@ -67,7 +67,7 @@ The discipline is:
     throughput rows directly from `session.db`.
 - Performance:
   - `capsem-bench http` and `throughput` consume
-    `CAPSEM_BENCH_MITM_LOCAL_BASE_URL` when present; public benchmarking remains
+    `CAPSEM_MOCK_SERVER_BASE_URL` when present; public benchmarking remains
     explicit opt-in only.
 
 ## Done

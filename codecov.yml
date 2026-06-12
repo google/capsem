@@ -211,11 +211,11 @@ component_management:
       paths:
         - src/capsem/**
 
-    # Debug helper binaries used for upstream/service diagnostics.
-    - component_id: debug-upstream
-      name: Debug Upstream
+    # Local fixture server used for doctor, benchmark, recorder, and Ironbank proof.
+    - component_id: mock-server
+      name: Mock Server
       paths:
-        - crates/capsem-debug-upstream/src/**
+        - crates/capsem-mock-server/src/**
 
 ignore:
   - crates/*/tests/**

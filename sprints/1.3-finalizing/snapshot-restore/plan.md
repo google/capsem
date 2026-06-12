@@ -197,7 +197,7 @@ Required posture:
   credential-broker substitution, runtime event classification for HTTP, DNS,
   MCP, model, file, and process, local HTTP/model fixtures, MCP brokered auth,
   DNS load, DB writer, and EROFS/storage/lifecycle gates.
-- Local network/model release proof uses `capsem-debug-upstream`: tiny HTTP,
+- Local network/model release proof uses `capsem-mock-server`: tiny HTTP,
   1 MiB body, gzip, SSE model stream, JSON model response, denied-target,
   credential-shaped response, and WebSocket control frames.
 - DNS release proof runs `capsem-bench dns-load` inside a VM; public-network DNS

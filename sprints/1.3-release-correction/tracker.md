@@ -253,24 +253,24 @@ next one, and stage only the files for that slice.
     `GEMINI_API_KEY`, `GOOGLE_API_KEY`, `settings.toml` credentials, or
     `googleapis.com` live provider traffic. The model proof is now a
     deterministic local OpenAI-compatible request to
-    `capsem-debug-upstream` `/v1/chat/completions`, and DB verification checks
+    `capsem-mock-server` `/v1/chat/completions`, and DB verification checks
     the resulting `model_calls` row directly.
   - Proof: `uv run python -m pytest tests/test_release_doctor_contract.py -q`
     (`9 passed`); `uv run ruff check scripts/integration_test.py
     tests/test_release_doctor_contract.py`; `python3 -m py_compile
-    scripts/debug_upstream.py scripts/doctor_session_test.py
+    scripts/mock_server.py scripts/doctor_session_test.py
     scripts/integration_test.py`; `rg -n
     "GEMINI_API_KEY|GOOGLE_API_KEY|googleapis\\.com|include_gemini_probe|expect_model_calls"
     scripts/integration_test.py` is quiet.
 - [ ] GREEN: one local protocol lab serves HTTP, HTTPS/MITM, DNS, SSE,
   WebSocket, MCP JSON-RPC, OAuth/OIDC, and model fixture replay.
-  - 2026-06-12 progress: `capsem-debug-upstream` now serves protocol-shaped
+  - 2026-06-12 progress: `capsem-mock-server` now serves protocol-shaped
     OAuth authorize/token fixtures and MCP JSON-RPC fixtures alongside the
     existing HTTP/gzip/SSE/WebSocket/OpenAI-compatible model fixtures. The
     token endpoint deliberately emits `capsem_test_*` secret-shaped values so
     broker/recorder tests can prove capture and sanitization without touching
     real credentials.
-  - Proof: `cargo test -p capsem-debug-upstream -- --nocapture` (`8 passed`).
+  - Proof: `cargo test -p capsem-mock-server -- --nocapture` (`8 passed`).
 - [ ] RED/GREEN: every protocol lab case is a full-chain acceptance spec, not
   a status-code replay.
   - Suite home: `tests/ironbank/`.
@@ -369,7 +369,7 @@ next one, and stage only the files for that slice.
 - [x] RED/GREEN: recorder creates sanitized fixtures with client/version,
   protocol family, auth mode, expected ledger rows, and expected visible bytes.
   - 2026-06-12 progress: `scripts/protocol_fixture_recorder.py` records
-    schema-validated JSON fixtures from `capsem-debug-upstream` for
+    schema-validated JSON fixtures from `capsem-mock-server` for
     Claude/Anthropic-shaped, Codex/OpenAI-compatible, AGY/Gemini-shaped,
     Ollama/OpenAI-compatible, OAuth token exchange, MCP tools/list,
     MCP tools/call, and credential-capture flows. Synthetic `capsem_test_*`
@@ -408,27 +408,33 @@ next one, and stage only the files for that slice.
     install shortcut.
 - [x] Proof: lab is shared by doctor, integration tests, recorder, and
   benchmark.
+  - 2026-06-12 progress: renamed the canonical deterministic fixture service
+    from `capsem-debug-upstream` to `capsem-mock-server`. The public contract
+    is now `CAPSEM_MOCK_SERVER_BASE_URL`, with `scripts/mock_server.py` and
+    `tests/helpers/mock_server.py` as the only launcher/helper path. This is
+    the reusable mock boundary for doctor, integration, protocol recording,
+    benchmark, and Ironbank; new feature-specific local servers are rejected.
   - 2026-06-12 progress: benchmark tests no longer carry a private fake HTTP
     fixture. `tests/test_capsem_bench_mitm_local.py` now starts the real
-    `capsem-debug-upstream` binary through the shared helper used by other
+    `capsem-mock-server` binary through the shared helper used by other
     hermetic tests, so HTTP/gzip/SSE/model/credential/WebSocket benchmark
     proof and doctor/integration proof cannot drift silently.
-  - Proof: `cargo build -p capsem-debug-upstream`; `cargo test -p
-    capsem-debug-upstream -- --nocapture`; `uv run python -m pytest
+  - Proof: `cargo build -p capsem-mock-server`; `cargo test -p
+    capsem-mock-server -- --nocapture`; `uv run python -m pytest
     tests/test_capsem_bench_mitm_local.py -q` (`23 passed in 1.06s`).
   - 2026-06-12 progress: release scripts no longer carry private
-    `capsem-debug-upstream` process bootstrap code. `scripts/debug_upstream.py`
+    `capsem-mock-server` process bootstrap code. `scripts/mock_server.py`
     is the single launcher/ready/lock/teardown helper, used by
     `scripts/doctor_session_test.py`, `scripts/integration_test.py`, the
     recorder tests, and benchmark tests.
   - Proof: `uv run python -m pytest tests/test_release_doctor_contract.py -q`
-    (`8 passed`); `uv run ruff check scripts/debug_upstream.py
+    (`8 passed`); `uv run ruff check scripts/mock_server.py
     scripts/doctor_session_test.py scripts/integration_test.py
-    tests/helpers/debug_upstream.py tests/test_release_doctor_contract.py`;
+    tests/helpers/mock_server.py tests/test_release_doctor_contract.py`;
     `uv run python -m pytest tests/test_protocol_fixture_recorder.py
     tests/test_capsem_bench_mitm_local.py -q` (`25 passed`); `python3 -m
-    py_compile scripts/debug_upstream.py scripts/doctor_session_test.py
-    scripts/integration_test.py tests/helpers/debug_upstream.py`.
+    py_compile scripts/mock_server.py scripts/doctor_session_test.py
+    scripts/integration_test.py tests/helpers/mock_server.py`.
 
 ## S5. Doctor, Just, E2E, Benchmark
 
@@ -444,8 +450,8 @@ next one, and stage only the files for that slice.
   server modes into standard `capsem-bench`.
   - 2026-06-11 progress: `mitm-local` is no longer a top-level
     `capsem-bench` mode. Local MITM scenarios run only through
-    `capsem-bench all` when `CAPSEM_BENCH_MITM_LOCAL_BASE_URL` points at the
-    shared hermetic debug upstream.
+    `capsem-bench all` when `CAPSEM_MOCK_SERVER_BASE_URL` points at the
+    shared hermetic mock server.
   - Proof: `uv run python -m pytest tests/test_capsem_bench_mitm_local.py
     -q`; `uv run python -m pytest
     tests/capsem-serial/test_mitm_local_benchmark.py -q`; `pnpm --dir docs
@@ -454,7 +460,7 @@ next one, and stage only the files for that slice.
   DNS, MCP, model, OAuth/broker, file, process, import/export, local backend,
   snapshot route, blocked/error paths.
   - 2026-06-12 progress: in-VM doctor now posts a synthetic OAuth
-    authorization-code token exchange to the local `capsem-debug-upstream`
+    authorization-code token exchange to the local `capsem-mock-server`
     `/oauth/token` fixture. The test verifies HTTP 200 and response size while
     keeping synthetic `capsem_test_*` token values out of doctor output, so
     OAuth/broker stimulus is covered without real credentials or public

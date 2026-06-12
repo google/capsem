@@ -122,7 +122,7 @@ work in flight:
 
 - `crates/capsem-tui/src/*`
 - `crates/capsem-tui/Cargo.toml` was effectively replaced by
-  `crates/capsem-debug-upstream/Cargo.toml`
+  `crates/capsem-mock-server/Cargo.toml`
 - `sprints/tui-control/*`
 
 Impact:

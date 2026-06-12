@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed (route surfaces and diagnostics)
+- Renamed the deterministic local fixture upstream to `capsem-mock-server` and
+  made `CAPSEM_MOCK_SERVER_BASE_URL` the shared contract for doctor,
+  integration, recorder, benchmark, and Ironbank-style black-box tests.
 - Added a real checked-in `co-work` profile created through
   `capsem-admin profile init --from`, and tightened Profile UI/TUI/service
   tests so profile-aware surfaces consume route-provided profile ids instead of
@@ -220,11 +223,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fast-fail stages.
 
 ### Added (benchmarks)
-- Added a deterministic `/model/response` fixture to `capsem-debug-upstream`
+- Added a deterministic `/model/response` fixture to `capsem-mock-server`
   and wired `capsem-bench mitm-local` to exercise both SSE model streams and
   JSON model responses without public-network dependencies.
 - Added a shared `capsem-bench` load harness for MITM, MCP, DNS, and local
-  debug-upstream tests: `CAPSEM_BENCH_CONCURRENCY`,
+  mock-server tests: `CAPSEM_BENCH_CONCURRENCY`,
   `CAPSEM_BENCH_DURATION_S`, `CAPSEM_BENCH_TOTAL_REQUESTS`, and
   `CAPSEM_BENCH_SCENARIOS` now drive one tested config path, and load rows
   share the same request/error/rps/p50/p95/p99/p999/RSS schema.
@@ -302,7 +305,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   harness into the current EROFS/LZ4HC rail, including bounded VM proof for
   `capsem-bench storage` from the generated profile-selected asset chain.
 - Replaced public-service release proof with deterministic local fixtures:
-  `capsem doctor` now starts/passes a local `capsem-debug-upstream`, doctor MCP
+  `capsem doctor` now starts/passes a local `capsem-mock-server`, doctor MCP
   content checks use local text/HTML fixtures, integration tests use local
   allowed/throughput/blocked HTTP paths, and session DB row-generation tests no
   longer curl public services.

@@ -117,7 +117,7 @@ const DEFAULT_MAX_BODY_CAPTURE: usize = 4096;
 /// "no plain HTTP at all". Post-T2.2 defaults match the guest-side
 /// iptables redirect list in `capsem-init`: port 80 (generic plain
 /// HTTP), common HTTP proxy/dev ports 3128 and 8080, the deterministic
-/// local debug-upstream fixture port 3713, and 11434 (Ollama default;
+/// local mock-server fixture port 3713, and 11434 (Ollama default;
 /// the canonical local-LLM workflow this protocol path was designed
 /// for). Adding a new port to this list and to the iptables redirects
 /// in tandem is the configurable allowlist promise from the T2.2 plan.

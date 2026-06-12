@@ -341,7 +341,7 @@
     `31593.206 ms`.
   - The capsem-bench HTTP/proxy throughput section is still explicitly skipped
     unless a hermetic local MITM lab URL is supplied via
-    `CAPSEM_BENCH_MITM_LOCAL_BASE_URL`; that is not counted as green HTTP
+    `CAPSEM_MOCK_SERVER_BASE_URL`; that is not counted as green HTTP
     performance proof.
 
 - Red inventory:

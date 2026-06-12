@@ -49,23 +49,55 @@ def test_guest_network_doctor_exercises_oauth_fixture() -> None:
     assert "grant_type=authorization_code" in source
 
 
-def test_doctor_session_validation_starts_hermetic_upstream() -> None:
+def test_doctor_session_validation_starts_mock_server() -> None:
     source = (PROJECT_ROOT / "scripts" / "doctor_session_test.py").read_text()
 
-    assert "from debug_upstream import start_debug_upstream, stop_process" in source
-    assert "CAPSEM_BENCH_MITM_LOCAL_BASE_URL" in source
+    assert "from mock_server import start_mock_server, stop_process" in source
+    assert "CAPSEM_MOCK_SERVER_BASE_URL" in source
     assert "[binary, \"run\", \"capsem-doctor\"]" in source
 
 
-def test_release_scripts_use_shared_debug_upstream_helper() -> None:
-    helper = PROJECT_ROOT / "scripts" / "debug_upstream.py"
-    assert helper.exists(), "release scripts need one shared debug-upstream helper"
+def test_release_scripts_use_shared_mock_server_helper() -> None:
+    helper = PROJECT_ROOT / "scripts" / "mock_server.py"
+    assert helper.exists(), "release scripts need one shared mock-server helper"
 
-    for rel in ["scripts/doctor_session_test.py", "scripts/integration_test.py"]:
+    direct_imports = [
+        "scripts/doctor_session_test.py",
+        "scripts/integration_test.py",
+    ]
+    helper_imports = [
+        "tests/capsem-serial/test_mitm_local_benchmark.py",
+    ]
+    for rel in direct_imports:
         source = (PROJECT_ROOT / rel).read_text()
-        assert "from debug_upstream import" in source
-        assert "def _read_debug_upstream_ready" not in source
-        assert "def _start_debug_upstream" not in source
+        assert "from mock_server import" in source
+        assert "def _read_mock_server_ready" not in source
+        assert "def _start_mock_server" not in source
+    for rel in helper_imports:
+        source = (PROJECT_ROOT / rel).read_text()
+        assert "from helpers.mock_server import" in source
+        assert "def _read_mock_server_ready" not in source
+        assert "def _start_mock_server" not in source
+
+
+def test_mock_server_is_the_only_hermetic_fixture_server_contract() -> None:
+    current_files = [
+        PROJECT_ROOT / "scripts" / "mock_server.py",
+        PROJECT_ROOT / "tests" / "helpers" / "mock_server.py",
+        PROJECT_ROOT / "crates" / "capsem-mock-server" / "Cargo.toml",
+        PROJECT_ROOT / "guest" / "artifacts" / "capsem_bench" / "__main__.py",
+        PROJECT_ROOT / "guest" / "artifacts" / "capsem_bench" / "helpers.py",
+    ]
+
+    for path in current_files:
+        text = path.read_text()
+        assert "capsem-debug-upstream" not in text
+        assert "debug_upstream" not in text
+        assert "CAPSEM_BENCH_MITM_LOCAL_BASE_URL" not in text
+
+    assert (PROJECT_ROOT / "crates" / "capsem-debug-upstream").exists() is False
+    assert (PROJECT_ROOT / "scripts" / "debug_upstream.py").exists() is False
+    assert (PROJECT_ROOT / "tests" / "helpers" / "debug_upstream.py").exists() is False
 
 
 def test_integration_script_has_no_live_ai_provider_escape_hatch() -> None:

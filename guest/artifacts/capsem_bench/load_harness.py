@@ -2,7 +2,7 @@
 
 The load-style benches all need the same accounting contract: explicit
 concurrency, enough samples, percentile latency rows, error counts, and stable
-JSON. Keep that machinery here so DNS, MCP, MITM, and local debug-upstream
+JSON. Keep that machinery here so DNS, MCP, MITM, and local mock-server
 benchmarks cannot drift into incompatible result shapes.
 """
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Record sanitized protocol fixtures from capsem-debug-upstream.
+"""Record sanitized protocol fixtures from capsem-mock-server.
 
 Ironbank note: recorder fixtures are inputs, not proof. The release proof lives
 in tests/ironbank/ and must replay through Capsem as a black box, then assert
@@ -157,13 +157,13 @@ def _http_exchange(
 
 def _scenario_definitions() -> list[dict[str, Any]]:
     model_body = {
-        "model": "debug-local",
+        "model": "mock-local",
         "messages": [{"role": "user", "content": "hello from capsem recorder"}],
         "tools": [
             {
                 "type": "function",
                 "function": {
-                    "name": "debug_lookup",
+                    "name": "fixture_lookup",
                     "parameters": {
                         "type": "object",
                         "properties": {"query": {"type": "string"}},
@@ -181,7 +181,7 @@ def _scenario_definitions() -> list[dict[str, Any]]:
             "method": "POST",
             "path": "/v1/chat/completions",
             "headers": {"authorization": "Bearer capsem_test_claude_bearer"},
-            "body": {**model_body, "model": "claude-debug"},
+            "body": {**model_body, "model": "claude-mock"},
             "expected_ledger_rows": [
                 "net_events:/v1/chat/completions",
                 "model_calls:request",
@@ -196,11 +196,11 @@ def _scenario_definitions() -> list[dict[str, Any]]:
             "method": "POST",
             "path": "/v1/chat/completions",
             "headers": {"authorization": "Bearer capsem_test_openai_api_key"},
-            "body": {**model_body, "model": "gpt-debug"},
+            "body": {**model_body, "model": "gpt-mock"},
             "expected_ledger_rows": [
                 "net_events:/v1/chat/completions",
                 "model_calls:request",
-                "tool_calls:debug_lookup",
+                "tool_calls:fixture_lookup",
             ],
         },
         {
@@ -211,7 +211,7 @@ def _scenario_definitions() -> list[dict[str, Any]]:
             "method": "POST",
             "path": "/v1/chat/completions",
             "headers": {"authorization": "Bearer capsem_test_agy_oauth_access"},
-            "body": {**model_body, "model": "gemini-debug"},
+            "body": {**model_body, "model": "gemini-mock"},
             "expected_ledger_rows": [
                 "net_events:/v1/chat/completions",
                 "model_calls:request",
@@ -271,7 +271,7 @@ def _scenario_definitions() -> list[dict[str, Any]]:
                 "jsonrpc": "2.0",
                 "id": 2,
                 "method": "tools/call",
-                "params": {"name": "debug_lookup", "arguments": {"query": "capsem"}},
+                "params": {"name": "fixture_lookup", "arguments": {"query": "capsem"}},
             },
             "expected_ledger_rows": ["net_events:/mcp", "mcp_events:tools/call"],
         },
@@ -290,7 +290,7 @@ def _scenario_definitions() -> list[dict[str, Any]]:
     ]
 
 
-def record_debug_upstream(
+def record_mock_server(
     base_url: str,
     output_dir: str | Path,
     *,
@@ -357,7 +357,7 @@ def replay_fixtures(base_url: str, fixture_paths: list[str | Path]) -> list[Repl
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--base-url", required=True, help="capsem-debug-upstream base URL")
+    parser.add_argument("--base-url", required=True, help="capsem-mock-server base URL")
     parser.add_argument("--out-dir", required=True, type=Path, help="fixture output directory")
     parser.add_argument(
         "--replay",
@@ -371,7 +371,7 @@ def main() -> int:
         help="scenario name to record; may be repeated",
     )
     args = parser.parse_args()
-    written = record_debug_upstream(
+    written = record_mock_server(
         args.base_url,
         args.out_dir,
         scenarios=set(args.scenarios) if args.scenarios else None,

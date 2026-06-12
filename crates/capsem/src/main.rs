@@ -22,7 +22,7 @@ use client::{
 };
 
 const DEFAULT_PROFILE_ID: &str = "code";
-const DOCTOR_DEBUG_UPSTREAM_ADDR: &str = "127.0.0.1:3713";
+const DOCTOR_MOCK_SERVER_ADDR: &str = "127.0.0.1:3713";
 
 const fn cli_styles() -> Styles {
     Styles::styled()
@@ -1778,25 +1778,25 @@ async fn main() -> Result<()> {
             println!("Running capsem-doctor...");
             println!("Log: {}", log_path.display());
 
-            let preferred_debug_addr = DOCTOR_DEBUG_UPSTREAM_ADDR
+            let preferred_mock_addr = DOCTOR_MOCK_SERVER_ADDR
                 .parse()
-                .expect("valid doctor debug upstream bind address");
-            let debug_upstream =
-                capsem_debug_upstream::spawn_debug_upstream_on(preferred_debug_addr)
+                .expect("valid doctor mock server bind address");
+            let mock_server =
+                capsem_mock_server::spawn_mock_server_on(preferred_mock_addr)
                     .await
                     .with_context(|| {
                         format!(
-                            "start local debug upstream for capsem-doctor at {DOCTOR_DEBUG_UPSTREAM_ADDR}; \
+                            "start local mock server for capsem-doctor at {DOCTOR_MOCK_SERVER_ADDR}; \
                              this address is required so guest traffic proves the iptables-nft redirect rail"
                         )
                     })?;
-            let debug_base_url = debug_upstream.base_url();
-            println!("Local debug upstream: {debug_base_url}");
+            let mock_base_url = mock_server.base_url();
+            println!("Local mock server: {mock_base_url}");
 
             let mut doctor_env = std::collections::HashMap::new();
             doctor_env.insert(
-                "CAPSEM_BENCH_MITM_LOCAL_BASE_URL".to_string(),
-                debug_base_url.clone(),
+                "CAPSEM_MOCK_SERVER_BASE_URL".to_string(),
+                mock_base_url.clone(),
             );
 
             let req = ProvisionRequest {
@@ -2018,7 +2018,7 @@ async fn main() -> Result<()> {
             }
 
             delete_vm(&client, &vm_id).await;
-            let _ = debug_upstream.shutdown().await;
+            let _ = mock_server.shutdown().await;
             if exit_code != 0 {
                 eprintln!("Full log: {}", log_path.display());
                 std::process::exit(exit_code);
@@ -2567,8 +2567,8 @@ mod tests {
     }
 
     #[test]
-    fn doctor_debug_upstream_addr_is_iptables_redirect_target() {
-        assert_eq!(DOCTOR_DEBUG_UPSTREAM_ADDR, "127.0.0.1:3713");
+    fn doctor_mock_server_addr_is_iptables_redirect_target() {
+        assert_eq!(DOCTOR_MOCK_SERVER_ADDR, "127.0.0.1:3713");
     }
 
     #[test]

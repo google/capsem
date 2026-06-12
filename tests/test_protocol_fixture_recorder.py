@@ -5,7 +5,7 @@ import json
 import subprocess
 from pathlib import Path
 
-from helpers.debug_upstream import start_debug_upstream, stop_process
+from helpers.mock_server import start_mock_server, stop_process
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 RECORDER_PATH = PROJECT_ROOT / "scripts" / "protocol_fixture_recorder.py"
@@ -19,17 +19,17 @@ def _load_recorder():
     return module
 
 
-def test_protocol_fixture_recorder_uses_debug_upstream_and_sanitizes(tmp_path):
+def test_protocol_fixture_recorder_uses_mock_server_and_sanitizes(tmp_path):
     recorder = _load_recorder()
     subprocess.run(
-        ["cargo", "build", "-p", "capsem-debug-upstream"],
+        ["cargo", "build", "-p", "capsem-mock-server"],
         cwd=PROJECT_ROOT,
         check=True,
     )
     proc = None
     try:
-        proc, ready = start_debug_upstream()
-        written = recorder.record_debug_upstream(ready["base_url"], tmp_path)
+        proc, ready = start_mock_server()
+        written = recorder.record_mock_server(ready["base_url"], tmp_path)
     finally:
         stop_process(proc)
 
@@ -70,14 +70,14 @@ def test_protocol_fixture_recorder_uses_debug_upstream_and_sanitizes(tmp_path):
 def test_protocol_fixture_replay_covers_recorded_flows(tmp_path):
     recorder = _load_recorder()
     subprocess.run(
-        ["cargo", "build", "-p", "capsem-debug-upstream"],
+        ["cargo", "build", "-p", "capsem-mock-server"],
         cwd=PROJECT_ROOT,
         check=True,
     )
     proc = None
     try:
-        proc, ready = start_debug_upstream()
-        written = recorder.record_debug_upstream(ready["base_url"], tmp_path)
+        proc, ready = start_mock_server()
+        written = recorder.record_mock_server(ready["base_url"], tmp_path)
         results = recorder.replay_fixtures(ready["base_url"], written)
     finally:
         stop_process(proc)
