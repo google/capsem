@@ -5,6 +5,14 @@
 No new AGY/Claude/Codex/OAuth manual run until the local due-diligence gates
 below pass. Manual credentials are not the debugger.
 
+Security boundary cleanup is now split into
+`sprints/1.3-security-boundary-cleanup/` and blocks any claim that credential
+broker or model/client traffic is release-ready. The release contract is:
+network engine parses/routes only; security engine owns rules/plugins/decisions;
+credential broker handles runtime capture/store/injection as a pre-plugin; log
+sanitizer is the final plugin before logger materialization; raw credentials
+must never reach session DB, route JSON, structured logs, or frontend stats.
+
 Ironbank is the black-box release ledger under `tests/ironbank/`. For VM,
 security, network, protocol, credential broker, package-manager, doctor,
 benchmark, and release-gate behavior, Ironbank proof must be authored from
