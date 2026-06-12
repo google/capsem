@@ -375,11 +375,8 @@ enum MiscCommands {
     /// Run diagnostic tests in a fresh session
     ///
     /// Boots a temporary session, runs the capsem-doctor test suite, and reports
-    /// results. Use --fast to skip slow network tests.
+    /// results.
     Doctor {
-        /// Skip slow tests (throughput download, etc.)
-        #[arg(long)]
-        fast: bool,
         /// Tell the in-VM doctor to package its diagnostic surface
         /// (pytest output + junit, /var/log, dmesg, /proc/{mounts,cmdline},
         /// session.db) into a tar that capsem support-bundle picks up
@@ -1770,7 +1767,7 @@ async fn main() -> Result<()> {
         ) => {
             unreachable!("handled before UdsClient creation")
         }
-        Commands::Misc(MiscCommands::Doctor { fast, bundle }) => {
+        Commands::Misc(MiscCommands::Doctor { bundle }) => {
             use capsem_proto::ipc::{ProcessToService, ServiceToProcess};
             use tokio_unix_ipc::channel_from_std;
 
@@ -1929,12 +1926,7 @@ async fn main() -> Result<()> {
             } else {
                 ""
             };
-            let cmd: Vec<u8> = if *fast {
-                format!("capsem-doctor --durations=10 -k 'not throughput'{bundle_arg}\n")
-                    .into_bytes()
-            } else {
-                format!("capsem-doctor --durations=10{bundle_arg}\n").into_bytes()
-            };
+            let cmd: Vec<u8> = format!("capsem-doctor --durations=10{bundle_arg}\n").into_bytes();
             capsem_core::try_send!(
                 "cli_doctor_terminal_input",
                 tx.send(ServiceToProcess::TerminalInput { data: cmd }).await
@@ -2546,7 +2538,6 @@ mod tests {
         assert!(matches!(
             cli.command.unwrap(),
             Commands::Misc(MiscCommands::Doctor {
-                fast: false,
                 bundle: false
             })
         ));
@@ -2558,10 +2549,21 @@ mod tests {
         assert!(matches!(
             cli.command.unwrap(),
             Commands::Misc(MiscCommands::Doctor {
-                fast: false,
                 bundle: true
             })
         ));
+    }
+
+    #[test]
+    fn parse_doctor_rejects_fast_escape_hatch() {
+        let err = match Cli::try_parse_from(["capsem", "doctor", "--fast"]) {
+            Ok(_) => panic!("doctor --fast must not be accepted"),
+            Err(err) => err,
+        };
+        assert!(
+            err.to_string().contains("--fast"),
+            "error should identify the retired flag: {err}"
+        );
     }
 
     #[test]

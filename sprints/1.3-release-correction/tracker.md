@@ -226,8 +226,14 @@ next one, and stage only the files for that slice.
 
 ## S5. Doctor, Just, E2E, Benchmark
 
-- [ ] RED: `just smoke` fails if doctor is skipped or run in a reduced release
+- [x] RED: `just smoke` fails if doctor is skipped or run in a reduced release
   mode.
+  - 2026-06-11 progress: `capsem doctor --fast` is rejected by the CLI and
+    `just smoke` invokes the full doctor command. The old reduced doctor rail
+    is no longer an accepted release path.
+  - Proof: `cargo test -p capsem parse_doctor -- --nocapture`; `uv run python
+    -m pytest tests/test_release_doctor_contract.py -q`; `cargo check -p
+    capsem`.
 - [ ] GREEN: remove release `--fast` escape and fold benchmark-only local
   server modes into standard `capsem-bench`.
 - [ ] RED/GREEN: doctor exercises HTTP/HTTPS, gzip, chunked, SSE, WebSocket,

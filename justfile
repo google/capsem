@@ -17,7 +17,7 @@
 #   build-ui         -> _pnpm-install (pnpm build + cargo build -p capsem-app, in lockstep)
 #   run-ui *ARGS     -> build-ui (launch ./target/debug/capsem-app)
 #   smoke            -> _install-tools + _pnpm-install + _check-assets + _pack-initrd + _materialize-config + _ensure-service
-#                       (audit, doctor --fast, injection, integration, parallel pytest groups)
+#                       (audit, full doctor, injection, integration, parallel pytest groups)
 #   test             -> _install-tools + _clean-stale + _pnpm-install + _generate-settings
 #                       + _check-assets + _pack-initrd + _materialize-config (everything: audit, cov, cross-compile,
 #                       frontend, python, injection, integration, bench, test-install)
@@ -699,8 +699,8 @@ smoke: _install-tools _pnpm-install _check-assets _pack-initrd _materialize-conf
     wait $FE_CHECK_PID   || { echo "pnpm check failed";   FAIL=1; }
     [ $FAIL -eq 0 ] || exit 1
     step_done
-    step "capsem-doctor --fast (in-VM diagnostics, no throughput)"
-    {{cli_binary}} doctor --fast
+    step "capsem-doctor (in-VM diagnostics)"
+    {{cli_binary}} doctor
     step_done
     step "Injection test"
     python3 scripts/injection_test.py --binary {{binary}} --assets {{assets_dir}}
