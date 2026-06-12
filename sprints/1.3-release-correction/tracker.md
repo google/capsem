@@ -230,6 +230,14 @@ next one, and stage only the files for that slice.
   OpenAI-compatible traffic without installing Ollama in the guest.
 - [ ] Proof: lab is shared by doctor, integration tests, recorder, and
   benchmark.
+  - 2026-06-12 progress: benchmark tests no longer carry a private fake HTTP
+    fixture. `tests/test_capsem_bench_mitm_local.py` now starts the real
+    `capsem-debug-upstream` binary through the shared helper used by other
+    hermetic tests, so HTTP/gzip/SSE/model/credential/WebSocket benchmark
+    proof and doctor/integration proof cannot drift silently.
+  - Proof: `cargo build -p capsem-debug-upstream`; `cargo test -p
+    capsem-debug-upstream -- --nocapture`; `uv run python -m pytest
+    tests/test_capsem_bench_mitm_local.py -q` (`23 passed in 1.06s`).
 
 ## S5. Doctor, Just, E2E, Benchmark
 

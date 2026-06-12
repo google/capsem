@@ -1,10 +1,7 @@
 import sys
 import types
-import gzip
 import json
-import threading
 from pathlib import Path
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
@@ -48,86 +45,7 @@ from capsem_bench import __main__ as bench_main  # noqa: E402
 from capsem_bench import http_bench, throughput  # noqa: E402
 from capsem_bench import mitm_local  # noqa: E402
 from capsem_bench import load_harness  # noqa: E402
-
-
-class _DebugHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        if self.path == "/tiny":
-            self._send(200, b"capsem-debug-upstream:tiny\n", "text/plain")
-            return
-        if self.path == "/bytes/1mb":
-            self._send(200, b"x" * (1024 * 1024), "application/octet-stream")
-            return
-        if self.path == "/gzip/1mb":
-            payload = gzip.compress(b"x" * (1024 * 1024))
-            self._send(
-                200, payload, "application/octet-stream", {"Content-Encoding": "gzip"}
-            )
-            return
-        if self.path == "/sse/model":
-            self._send(
-                200,
-                b'event: model.tool_call\ndata: {"name":"debug_lookup"}\n\n',
-                "text/event-stream",
-            )
-            return
-        if self.path == "/model/response":
-            self._send(
-                200,
-                json.dumps({
-                    "id": "chatcmpl-debug-local",
-                    "object": "chat.completion",
-                    "provider": "debug",
-                    "model": "debug-local",
-                    "choices": [{
-                        "message": {
-                            "role": "assistant",
-                            "content": "hello",
-                            "tool_calls": [{
-                                "id": "tool_0001",
-                                "type": "function",
-                                "function": {
-                                    "name": "debug_lookup",
-                                    "arguments": "{\"query\":\"capsem\"}",
-                                },
-                            }],
-                        },
-                        "finish_reason": "tool_calls",
-                    }],
-                    "usage": {
-                        "prompt_tokens": 7,
-                        "completion_tokens": 5,
-                        "total_tokens": 12,
-                    },
-                }).encode(),
-                "application/json",
-            )
-            return
-        if self.path == "/deny-target":
-            self._send(200, b"capsem-debug-upstream:deny-target\n", "text/plain")
-            return
-        if self.path == "/credential/response":
-            self._send(
-                200,
-                json.dumps({
-                    "api_key": "capsem_test_api_key_0123456789abcdef",
-                }).encode(),
-                "application/json",
-            )
-            return
-        self._send(404, b"not found\n", "text/plain")
-
-    def log_message(self, *_args):
-        pass
-
-    def _send(self, status, body, content_type, extra_headers=None):
-        self.send_response(status)
-        self.send_header("Content-Type", content_type)
-        self.send_header("Content-Length", str(len(body)))
-        for name, value in (extra_headers or {}).items():
-            self.send_header(name, value)
-        self.end_headers()
-        self.wfile.write(body)
+from helpers.debug_upstream import start_debug_upstream, stop_process  # noqa: E402
 
 
 def test_mitm_local_is_not_a_top_level_escape_hatch():
@@ -461,21 +379,17 @@ def test_scenario_selection_rejects_unknown_name():
 
 
 def test_mitm_local_drives_debug_http_fixture():
-    server = ThreadingHTTPServer(("127.0.0.1", 0), _DebugHandler)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
+    proc = None
     try:
-        base_url = f"http://127.0.0.1:{server.server_port}"
+        proc, ready = start_debug_upstream()
         result = mitm_local.mitm_local_bench(
-            base_url=base_url,
+            base_url=ready["base_url"],
             total_requests=1,
             concurrency=1,
             timeout_s=5,
         )
     finally:
-        server.shutdown()
-        server.server_close()
-        thread.join(timeout=2)
+        stop_process(proc)
 
     by_name = {row["name"]: row for row in result["scenarios"]}
     assert by_name["tiny_http"]["successful"] == 1
