@@ -1158,7 +1158,7 @@ def _mcp_history(path):
 
 def _mcp_list():
     """MCP path: list snapshots."""
-    result = _init_and_call("snapshots_list", {"format": "json"})
+    result = _init_and_call("snapshots_list", {"format": "json", "include_changes": True})
     assert result.get("isError") is not True, f"snapshots_list failed: {result}"
     return json.loads(result["content"][0]["text"])
 
@@ -1205,7 +1205,7 @@ def test_bug1_list_changes_vs_previous():
     )
 
     # CLI path (belt and suspenders)
-    r = run("snapshots list --json")
+    r = run("snapshots list --json --include-changes")
     cli_listing = json.loads(r.stdout)
     cli_snaps = {s["checkpoint"]: s for s in cli_listing["snapshots"]}
     cli_cp1_ops = {c["path"]: c["op"] for c in cli_snaps[cp1].get("changes", [])}

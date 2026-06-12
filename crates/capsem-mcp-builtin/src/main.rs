@@ -92,6 +92,9 @@ struct SnapshotPaginationParams {
     /// Output format: 'text' (default) or 'json'.
     #[serde(default)]
     format: Option<String>,
+    /// Include full per-file snapshot changes. Defaults to compact summaries.
+    #[serde(default)]
+    include_changes: Option<bool>,
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
@@ -463,7 +466,7 @@ async fn main() -> Result<()> {
         }
     }
 
-    let (user_sf, corp_sf) = capsem_core::net::policy_config::load_settings_files();
+    let (user_sf, corp_sf) = capsem_core::net::policy_config::load_settings_and_corp_files();
     let merged = capsem_core::net::policy_config::MergedPolicies::from_files(&user_sf, &corp_sf);
     let security_rules = Arc::new(merged.security_rules);
     let plugin_policy = Arc::new(merged.plugins);
@@ -524,4 +527,22 @@ async fn main() -> Result<()> {
 
     info!("capsem-mcp-builtin shutting down");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn snapshot_pagination_params_preserve_include_changes() {
+        let params: SnapshotPaginationParams = serde_json::from_value(serde_json::json!({
+            "format": "json",
+            "include_changes": true
+        }))
+        .expect("snapshot pagination params should deserialize");
+
+        let args = to_args(&params);
+        assert_eq!(args["format"], "json");
+        assert_eq!(args["include_changes"], true);
+    }
 }

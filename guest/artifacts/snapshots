@@ -9,7 +9,8 @@ Usage:
     snapshots delete <cp>            Delete a manual snapshot
 
 Options:
-    --json    Output raw JSON instead of formatted tables
+    --json               Output raw JSON instead of formatted tables
+    --include-changes    Include full per-file changes in snapshots list JSON
 """
 
 import asyncio
@@ -93,9 +94,13 @@ def cmd_create(args, as_json):
         print(data)
 
 
-def cmd_list(_args, as_json):
+def cmd_list(args, as_json):
+    include_changes = "--include-changes" in args
     if as_json:
-        text = asyncio.run(call_tool("local__snapshots_list", {"format": "json"}))
+        arguments = {"format": "json"}
+        if include_changes:
+            arguments["include_changes"] = True
+        text = asyncio.run(call_tool("local__snapshots_list", arguments))
         data = parse_json_text(text)
         print(json.dumps(data, indent=2))
     else:
@@ -264,7 +269,8 @@ Commands:
     delete <cp>            Delete a manual snapshot
 
 Options:
-    --json                 Output raw JSON"""
+    --json                 Output raw JSON
+    --include-changes      Include full per-file changes in snapshots list JSON"""
 
 
 def main():
@@ -272,6 +278,9 @@ def main():
     as_json = "--json" in args
     if as_json:
         args.remove("--json")
+    include_changes = "--include-changes" in args
+    if include_changes:
+        args.remove("--include-changes")
 
     if not args or args[0] in ("-h", "--help"):
         print(USAGE)
@@ -284,7 +293,14 @@ def main():
         sys.exit(1)
 
     try:
-        COMMANDS[cmd](args[1:], as_json)
+        command_args = args[1:]
+        if cmd == "list" and include_changes:
+            command_args.append("--include-changes")
+        elif include_changes:
+            print("--include-changes only applies to 'snapshots list'", file=sys.stderr)
+            sys.exit(1)
+
+        COMMANDS[cmd](command_args, as_json)
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)

@@ -302,6 +302,16 @@ next one, and stage only the files for that slice.
     equal raw `mcp_calls` ledger rows.
   - Proof: `cargo test -p capsem-logger mcp_call -- --nocapture`; `cargo
     check -p capsem-logger -p capsem-service`.
+- [x] RED/GREEN: snapshot listing does not emit full per-file changes unless
+  the MCP/CLI caller explicitly opts in.
+  - 2026-06-11 progress: `snapshots_list` accepts `include_changes`, the
+    guest `snapshots list --json --include-changes` flag forwards it, and
+    doctor tests that require per-file change assertions opt in explicitly.
+  - Proof: `cargo test -p capsem-core list_snapshots --lib -- --nocapture`;
+    `cargo test -p capsem-mcp-builtin
+    snapshot_pagination_params_preserve_include_changes -- --nocapture`; `uv
+    run python -m py_compile guest/artifacts/snapshots
+    guest/artifacts/diagnostics/test_mcp.py`.
 - [ ] RED/GREEN: unknown AI-compatible protocol shape on unknown host emits
   model provider plus host and triggers detection.
 - [ ] RED/GREEN: unknown remote MCP activity becomes route-visible profile
