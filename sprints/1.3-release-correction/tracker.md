@@ -328,6 +328,17 @@ next one, and stage only the files for that slice.
 - [ ] RED/GREEN: doctor exercises HTTP/HTTPS, gzip, chunked, SSE, WebSocket,
   DNS, MCP, model, OAuth/broker, file, process, import/export, local backend,
   snapshot route, blocked/error paths.
+  - 2026-06-12 progress: in-VM doctor now posts a synthetic OAuth
+    authorization-code token exchange to the local `capsem-debug-upstream`
+    `/oauth/token` fixture. The test verifies HTTP 200 and response size while
+    keeping synthetic `capsem_test_*` token values out of doctor output, so
+    OAuth/broker stimulus is covered without real credentials or public
+    providers.
+  - Proof: `uv run python -m pytest tests/test_release_doctor_contract.py -q`
+    (`10 passed`); `python3 -m py_compile
+    guest/artifacts/diagnostics/test_network.py`; `(cd
+    guest/artifacts/diagnostics && uv run python -m pytest --collect-only
+    test_network.py -q)` (`39 tests collected`).
 - [ ] RED/GREEN: doctor verifies DB ledger rows and rule/plugin evidence for
   allow/ask/block/disable/rewrite/pre/post/detection levels.
 - [ ] RED/GREEN: doctor/toolchain probes cover apt/dpkg triggers, Python, pip,

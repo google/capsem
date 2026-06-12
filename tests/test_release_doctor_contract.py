@@ -41,6 +41,14 @@ def test_guest_network_doctor_is_hermetic_by_default() -> None:
     assert "cdn.elie.net" not in source
 
 
+def test_guest_network_doctor_exercises_oauth_fixture() -> None:
+    diagnostics = PROJECT_ROOT / "guest" / "artifacts" / "diagnostics" / "test_network.py"
+    source = diagnostics.read_text()
+
+    assert "/oauth/token" in source
+    assert "grant_type=authorization_code" in source
+
+
 def test_doctor_session_validation_starts_hermetic_upstream() -> None:
     source = (PROJECT_ROOT / "scripts" / "doctor_session_test.py").read_text()
 

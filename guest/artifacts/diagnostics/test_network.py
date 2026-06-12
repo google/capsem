@@ -483,6 +483,29 @@ def test_local_credential_fixture_is_broker_stimulus_only():
     assert "capsem_test_" not in result.stdout
 
 
+def test_local_oauth_token_fixture_is_broker_stimulus_only():
+    """OAuth token exchange traffic must be exercised hermetically without
+    dumping synthetic token values into doctor output."""
+    local_url = _require_local_debug_url("/oauth/token", "local OAuth token smoke")
+    form = (
+        "grant_type=authorization_code"
+        "&code=capsem_test_oauth_code_0123456789abcdef"
+        "&client_secret=capsem_test_oauth_client_secret"
+    )
+    result = run(
+        f"curl -sS -o /dev/null -w '%{{http_code}} %{{size_download}}'"
+        f" --connect-timeout 5"
+        f" -H 'content-type: application/x-www-form-urlencoded'"
+        f" --data '{form}'"
+        f" {local_url}",
+        timeout=15,
+    )
+    assert result.returncode == 0, f"OAuth fixture curl failed: {result.stdout}"
+    assert result.stdout.strip().startswith("200 "), \
+        f"OAuth fixture did not return HTTP 200: {result.stdout}"
+    assert "capsem_test_" not in result.stdout
+
+
 def test_local_websocket_echo_fixture():
     """WebSocket upgrade and frame echo must work against the local lab."""
     local_url = _require_local_debug_url("/ws/echo", "local WebSocket smoke")
