@@ -9,8 +9,14 @@ from .helpers import console
 
 VALID_MODES = (
     "disk", "rootfs", "storage", "startup", "http", "throughput", "snapshot",
-    "mitm-local", "mitm-load", "mcp-load", "dns-load", "all",
+    "mitm-load", "mcp-load", "dns-load", "all",
 )
+
+MITM_LOCAL_BASE_URL_ENV = "CAPSEM_BENCH_MITM_LOCAL_BASE_URL"
+
+
+def _should_run_local_mitm(mode):
+    return mode == "all" and bool(os.environ.get(MITM_LOCAL_BASE_URL_ENV))
 
 
 def main():
@@ -20,7 +26,7 @@ def main():
     if mode in ("-h", "--help"):
         console.print(
             "Usage: capsem-bench "
-            "[disk|rootfs|storage|startup|http|throughput|snapshot|mitm-local|all] "
+            "[disk|rootfs|storage|startup|http|throughput|snapshot|all] "
             "[OPTIONS]"
         )
         console.print()
@@ -32,9 +38,6 @@ def main():
         console.print("  http [URL] [N] [C]  HTTP benchmarks (ab-style)")
         console.print("  throughput          100 MB download through MITM proxy")
         console.print("  snapshot            Snapshot ops (create/list/revert/delete via MCP)")
-        console.print(
-            "  mitm-local URL [N] [C] [SCENARIOS]  Local debug-upstream MITM benchmark"
-        )
         console.print("  mitm-load [C[,C]] [SECONDS]  MITM proxy load test")
         console.print("  mcp-load [C[,C]] [SECONDS]   MCP path load test")
         console.print("  dns-load [C[,C]] [SECONDS]   DNS proxy load test")
@@ -43,11 +46,11 @@ def main():
         console.print("Environment:")
         console.print("  CAPSEM_BENCH_DIR      Test directory (default: /root)")
         console.print("  CAPSEM_BENCH_SIZE_MB  Write test size in MB (default: 256)")
-        console.print("  CAPSEM_BENCH_MITM_LOCAL_BASE_URL  Base URL for mitm-local")
+        console.print("  CAPSEM_BENCH_MITM_LOCAL_BASE_URL  Base URL for local MITM scenarios in all")
         console.print("  CAPSEM_BENCH_CONCURRENCY          Load concurrency, e.g. 64 or 1,64")
         console.print("  CAPSEM_BENCH_DURATION_S           Seconds per load level")
         console.print("  CAPSEM_BENCH_TOTAL_REQUESTS       Total requests per count scenario")
-        console.print("  CAPSEM_BENCH_SCENARIOS            Comma-separated mitm-local scenarios")
+        console.print("  CAPSEM_BENCH_SCENARIOS            Comma-separated local MITM scenarios")
         console.print("  CAPSEM_STORAGE_BENCH_PATHS      Storage paths for split diagnostics")
         console.print("  CAPSEM_STORAGE_BENCH_SIZE_MB    Storage split write size in MB")
         console.print("  CAPSEM_STORAGE_IO_PROFILE_SIZE_MB    Storage IOPS profile size")
@@ -96,17 +99,12 @@ def main():
         from .snapshot import snapshot_bench
         output["snapshot"] = snapshot_bench()
 
-    # mitm-local requires a host-side debug upstream URL, so it is explicit
-    # and never runs as part of `all`.
-    if mode == "mitm-local":
+    # Local MITM scenarios are part of the standard `all` benchmark when the
+    # shared doctor/debug upstream is configured. There is no separate local
+    # MITM release escape hatch.
+    if _should_run_local_mitm(mode):
         from .mitm_local import mitm_local_bench
-        url = args[1] if len(args) > 1 else None
-        n = int(args[2]) if len(args) > 2 else None
-        c = int(args[3]) if len(args) > 3 else None
-        scenarios = args[4] if len(args) > 4 else None
-        output["mitm_local"] = mitm_local_bench(
-            base_url=url, total_requests=n, concurrency=c, scenarios=scenarios
-        )
+        output["mitm_local"] = mitm_local_bench()
 
     # mitm-load runs only when explicitly requested -- it's a long-running
     # proxy stress test (default 10s per concurrency level x 4 levels = ~40s

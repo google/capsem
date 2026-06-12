@@ -257,11 +257,10 @@ def test_mitm_local_benchmark_artifact():
             [
                 "env",
                 f"CAPSEM_BENCH_MITM_LOCAL_BASE_URL={base_url}",
+                f"CAPSEM_BENCH_TOTAL_REQUESTS={total_requests}",
+                f"CAPSEM_BENCH_CONCURRENCY={concurrency}",
                 "capsem-bench",
-                "mitm-local",
-                base_url,
-                str(total_requests),
-                str(concurrency),
+                "all",
             ]
         )
         resp = client.post(
@@ -270,7 +269,7 @@ def test_mitm_local_benchmark_artifact():
             timeout=310,
         )
         assert resp and resp.get("exit_code") == 0, (
-            f"capsem-bench mitm-local failed: "
+            f"capsem-bench all failed to run local MITM scenarios: "
             f"exit={resp.get('exit_code') if resp else None}\n"
             f"stdout: {(resp or {}).get('stdout', '')[:1000]}\n"
             f"stderr: {(resp or {}).get('stderr', '')[:1000]}"
@@ -282,7 +281,7 @@ def test_mitm_local_benchmark_artifact():
             timeout=20,
         )
         assert resp and resp.get("exit_code") == 0, (
-            "capsem-bench mitm-local did not write /tmp/capsem-benchmark.json"
+            "capsem-bench all did not write /tmp/capsem-benchmark.json"
         )
         data = json.loads(resp.get("stdout", "").strip())
         _assert_mitm_local_succeeded(data)

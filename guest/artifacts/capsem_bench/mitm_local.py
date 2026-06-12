@@ -1,9 +1,9 @@
-"""Deterministic MITM benchmark against capsem-debug-upstream.
+"""Deterministic local MITM scenarios against capsem-debug-upstream.
 
-This mode is intentionally explicit. A host-side harness starts
-capsem-debug-upstream and passes its routable base URL into the guest through
-CAPSEM_BENCH_MITM_LOCAL_BASE_URL or the first CLI argument. That keeps this
-benchmark local, repeatable, and free of public-network variance.
+The standard `capsem-bench all` run includes these scenarios when a host-side
+harness starts capsem-debug-upstream and passes its routable base URL through
+CAPSEM_BENCH_MITM_LOCAL_BASE_URL. That keeps benchmark traffic local,
+repeatable, and free of public-network variance.
 """
 
 import os

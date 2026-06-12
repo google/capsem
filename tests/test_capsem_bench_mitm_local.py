@@ -130,10 +130,17 @@ class _DebugHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
 
-def test_mitm_local_is_explicit_mode_not_all():
-    assert "mitm-local" in bench_main.VALID_MODES
+def test_mitm_local_is_not_a_top_level_escape_hatch():
+    assert "mitm-local" not in bench_main.VALID_MODES
     assert "storage" in bench_main.VALID_MODES
     assert "all" in bench_main.VALID_MODES
+
+
+def test_all_mode_includes_local_mitm_when_debug_upstream_is_configured(monkeypatch):
+    monkeypatch.setenv(mitm_local.BASE_URL_ENV, "http://127.0.0.1:3713")
+
+    assert bench_main._should_run_local_mitm("all") is True
+    assert bench_main._should_run_local_mitm("disk") is False
 
 
 def test_http_bench_default_skips_without_local_or_public(monkeypatch):

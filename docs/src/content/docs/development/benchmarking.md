@@ -133,7 +133,6 @@ These modes are opt-in because they stress hot paths more aggressively than the 
 
 | Mode | What it exercises |
 |------|-------------------|
-| `mitm-local` | Deterministic local debug-upstream scenarios: tiny HTTP, 1 MiB body, gzip, SSE model stream, JSON model response, denied-target, credential-shaped response, and WebSocket control frames |
 | `mitm-load` | Concurrent HTTPS requests through the MITM proxy |
 | `mcp-load` | Guest MCP framed transport and host endpoint dispatch |
 | `dns-load` | DNS redirect, capsem-dns-proxy, host DNS policy, and resolver path |
@@ -146,15 +145,20 @@ All load tests use the same concurrency and duration contract:
 
 - `CAPSEM_BENCH_CONCURRENCY`: one value (`64`) or a comma-separated sweep (`1,10,50,200`).
 - `CAPSEM_BENCH_DURATION_S`: seconds per concurrency level for duration-based load tests.
-- `CAPSEM_BENCH_TOTAL_REQUESTS`: requests per selected scenario for `mitm-local`.
-- `CAPSEM_BENCH_SCENARIOS`: comma-separated `mitm-local` scenario names, for example `model_json_response,credential_response`.
+When `CAPSEM_BENCH_MITM_LOCAL_BASE_URL` is set, `capsem-bench all` also runs
+deterministic local debug-upstream scenarios: tiny HTTP, 1 MiB body, gzip, SSE
+model stream, JSON model response, denied-target, credential-shaped response,
+and WebSocket control frames.
+
+- `CAPSEM_BENCH_TOTAL_REQUESTS`: requests per selected local MITM scenario.
+- `CAPSEM_BENCH_SCENARIOS`: comma-separated local MITM scenario names, for example `model_json_response,credential_response`.
 
 The same values are available as CLI arguments:
 
 ```bash
+CAPSEM_BENCH_MITM_LOCAL_BASE_URL=http://127.0.0.1:3713 CAPSEM_BENCH_TOTAL_REQUESTS=50000 CAPSEM_BENCH_CONCURRENCY=64 CAPSEM_BENCH_SCENARIOS=model_json_response,credential_response capsem-bench all
 capsem-bench mcp-load 64 5
 capsem-bench dns-load 64 5
-capsem-bench mitm-local http://127.0.0.1:3713 50000 64 model_json_response,credential_response
 ```
 
 Host-side benchmark artifacts can be validated and rendered with:

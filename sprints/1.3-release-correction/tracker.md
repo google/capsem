@@ -234,8 +234,16 @@ next one, and stage only the files for that slice.
   - Proof: `cargo test -p capsem parse_doctor -- --nocapture`; `uv run python
     -m pytest tests/test_release_doctor_contract.py -q`; `cargo check -p
     capsem`.
-- [ ] GREEN: remove release `--fast` escape and fold benchmark-only local
+- [x] GREEN: remove release `--fast` escape and fold benchmark-only local
   server modes into standard `capsem-bench`.
+  - 2026-06-11 progress: `mitm-local` is no longer a top-level
+    `capsem-bench` mode. Local MITM scenarios run only through
+    `capsem-bench all` when `CAPSEM_BENCH_MITM_LOCAL_BASE_URL` points at the
+    shared hermetic debug upstream.
+  - Proof: `uv run python -m pytest tests/test_capsem_bench_mitm_local.py
+    -q`; `uv run python -m pytest
+    tests/capsem-serial/test_mitm_local_benchmark.py -q`; `pnpm --dir docs
+    build`.
 - [ ] RED/GREEN: doctor exercises HTTP/HTTPS, gzip, chunked, SSE, WebSocket,
   DNS, MCP, model, OAuth/broker, file, process, import/export, local backend,
   snapshot route, blocked/error paths.

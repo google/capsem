@@ -88,9 +88,9 @@ WebSocket control fixture: echo `10` frames at `2,499.5` frames/sec with
 Host-direct control smoke after adding the JSON model fixture proved only that
 `/model/response` is routable and returns model-shaped JSON. Do not use its
 localhost latency or requests/sec as release performance evidence; the release
-gate must rerun `mitm-local` from inside a profile-selected VM so the request
-crosses guest redirect, vsock, MITM parsing, CEL/security evaluation, logging,
-and the local debug upstream.
+gate must rerun `capsem-bench all` with `CAPSEM_BENCH_MITM_LOCAL_BASE_URL`
+from inside a profile-selected VM so the request crosses guest redirect, vsock,
+MITM parsing, CEL/security evaluation, logging, and the local debug upstream.
 
 Corrected host-direct calibration with meaningful sample size:
 `50,000` requests per selected scenario at concurrency `64` completed with zero
