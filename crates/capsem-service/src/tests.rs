@@ -15,6 +15,7 @@ fn process_env_allowlist_forwards_mcp_timeout_knobs() {
 
     for key in [
         "CAPSEM_CORP_CONFIG",
+        "CAPSEM_CREDENTIAL_BROKER_TEST_STORE",
         "CAPSEM_MCP_DEFAULT_TIMEOUT_SECS",
         "CAPSEM_MCP_TOOL_CALL_TIMEOUT_SECS",
         "CAPSEM_MCP_TOOL_CALL_TIMEOUT_CEILING_SECS",
@@ -772,7 +773,10 @@ async fn profile_mcp_server_edit_delete_persist_profile_and_mutation_ledger() {
     assert_eq!(edited["enabled"], true);
     assert_eq!(edited["mutation"]["category"], "mcp");
     assert_eq!(edited["mutation"]["filename"], "profile.toml");
-    assert_eq!(edited["mutation"]["affected_path"], "profiles/code/profile.toml");
+    assert_eq!(
+        edited["mutation"]["affected_path"],
+        "profiles/code/profile.toml"
+    );
     assert_eq!(edited["mutation"]["target_kind"], "mcp_server");
     assert_eq!(edited["mutation"]["target_key"], "github");
     assert_eq!(edited["mutation"]["operation"], "upsert");
@@ -1252,7 +1256,8 @@ async fn profile_ui_route_matrix_is_registered_for_all_profiles() {
         .join("../..")
         .components()
         .collect::<PathBuf>();
-    let _profiles_guard = EnvVarGuard::set("CAPSEM_PROFILES_DIR", repo_root.join("config/profiles"));
+    let _profiles_guard =
+        EnvVarGuard::set("CAPSEM_PROFILES_DIR", repo_root.join("config/profiles"));
     let state = make_test_state();
     let routes = [
         "/profiles/{profile}/info",
@@ -1446,9 +1451,33 @@ async fn profile_skills_routes_persist_profile_and_mutation_ledger() {
     assert_eq!(
         rows["rows"],
         json!([
-            ["code", "skills", "profile.toml", "skill", "security", "add", "applied"],
-            ["code", "skills", "profile.toml", "skill", "review", "edit", "applied"],
-            ["code", "skills", "profile.toml", "skill", "review", "delete", "applied"]
+            [
+                "code",
+                "skills",
+                "profile.toml",
+                "skill",
+                "security",
+                "add",
+                "applied"
+            ],
+            [
+                "code",
+                "skills",
+                "profile.toml",
+                "skill",
+                "review",
+                "edit",
+                "applied"
+            ],
+            [
+                "code",
+                "skills",
+                "profile.toml",
+                "skill",
+                "review",
+                "delete",
+                "applied"
+            ]
         ])
     );
 }
@@ -1469,7 +1498,6 @@ async fn profile_assets_info_reflects_manifest_and_edit_is_gated() {
         info.get("compression").is_none(),
         "profile assets info must not expose build compression metadata"
     );
-
 }
 
 #[tokio::test]
@@ -1522,11 +1550,7 @@ async fn fake_vm_mutation_routes_are_not_mounted() {
             Some(json!({ "ram_mb": 8192 })),
         ),
         (axum::http::Method::POST, "/vms/ops-vm/restart", None),
-        (
-            axum::http::Method::POST,
-            "/vms/ops-vm/reload-profile",
-            None,
-        ),
+        (axum::http::Method::POST, "/vms/ops-vm/reload-profile", None),
     ] {
         let (status, _) = route_request(app.clone(), method, uri, body).await;
         assert_eq!(
@@ -1671,7 +1695,6 @@ async fn t1_adversarial_route_inputs_fail_closed() {
         smuggled_credential_ref.is_err(),
         "plugin edit payloads must reject credential/provider theater fields"
     );
-
 }
 
 #[tokio::test]
@@ -5241,7 +5264,10 @@ async fn handle_list_marks_profile_rootfs_size_drift_incompatible() {
     assert_eq!(vm.status, VmLifecycleState::Incompatible);
     assert!(!vm.can_resume);
     let reason = vm.resume_blocked_reason.as_deref().unwrap_or_default();
-    assert!(reason.contains("rootfs.img logical size mismatch"), "{reason}");
+    assert!(
+        reason.contains("rootfs.img logical size mismatch"),
+        "{reason}"
+    );
     assert!(reason.contains("2 GiB"), "{reason}");
     assert!(reason.contains("64 GiB"), "{reason}");
     assert_eq!(
@@ -5442,7 +5468,12 @@ fn vm_lifecycle_available_actions_are_contractual() {
 
     assert_eq!(
         VmLifecycleState::Running.available_actions(false),
-        vec![VmAction::Pause, VmAction::Stop, VmAction::Fork, VmAction::Delete]
+        vec![
+            VmAction::Pause,
+            VmAction::Stop,
+            VmAction::Fork,
+            VmAction::Delete
+        ]
     );
     assert_eq!(
         VmLifecycleState::Stopped.available_actions(true),
@@ -5527,8 +5558,7 @@ fn profile_vm_resources_drive_new_session_defaults() {
     assert_eq!(customized_resources.cpus, 2);
     assert_eq!(customized_resources.ram_mb, 3072);
     assert_eq!(
-        customized_resources.scratch_disk_size_gb,
-        profile.vm.scratch_disk_size_gb,
+        customized_resources.scratch_disk_size_gb, profile.vm.scratch_disk_size_gb,
         "scratch image size is profile-owned and must not fall back to hidden service defaults"
     );
 }

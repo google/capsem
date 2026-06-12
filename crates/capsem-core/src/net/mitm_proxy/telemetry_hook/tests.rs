@@ -37,6 +37,7 @@ struct EnvGuard {
     old_home_override: Option<String>,
     old_home: Option<String>,
     old_store: Option<String>,
+    old_trace: Option<String>,
 }
 
 impl EnvGuard {
@@ -48,6 +49,7 @@ impl EnvGuard {
         let old_home_override = std::env::var("CAPSEM_HOME").ok();
         let old_home = std::env::var("HOME").ok();
         let old_store = std::env::var(crate::credential_broker::TEST_STORE_ENV).ok();
+        let old_trace = std::env::var("CAPSEM_TRACE_ID").ok();
         std::env::set_var("CAPSEM_HOME", capsem_home);
         std::env::set_var("HOME", home);
         std::env::set_var(crate::credential_broker::TEST_STORE_ENV, test_store);
@@ -55,6 +57,21 @@ impl EnvGuard {
             old_home_override,
             old_home,
             old_store,
+            old_trace,
+        }
+    }
+
+    fn trace_only(trace_id: &str) -> Self {
+        let old_home_override = std::env::var("CAPSEM_HOME").ok();
+        let old_home = std::env::var("HOME").ok();
+        let old_store = std::env::var(crate::credential_broker::TEST_STORE_ENV).ok();
+        let old_trace = std::env::var("CAPSEM_TRACE_ID").ok();
+        std::env::set_var("CAPSEM_TRACE_ID", trace_id);
+        Self {
+            old_home_override,
+            old_home,
+            old_store,
+            old_trace,
         }
     }
 }
@@ -72,6 +89,10 @@ impl Drop for EnvGuard {
         match &self.old_store {
             Some(v) => std::env::set_var(crate::credential_broker::TEST_STORE_ENV, v),
             None => std::env::remove_var(crate::credential_broker::TEST_STORE_ENV),
+        }
+        match &self.old_trace {
+            Some(v) => std::env::set_var("CAPSEM_TRACE_ID", v),
+            None => std::env::remove_var("CAPSEM_TRACE_ID"),
         }
     }
 }
@@ -302,6 +323,69 @@ fn agy_google_tool_call_survives_into_session_stats() {
     assert_eq!(
         tool_rows[0].arguments.as_deref(),
         Some(r#"{"query":"capsem"}"#)
+    );
+}
+
+#[test]
+fn openai_non_streaming_tool_call_carries_request_trace() {
+    let _trace_guard = EnvGuard::trace_only("feedfacecafebeef");
+    let mut req_ctx = anthropic_req_ctx();
+    req_ctx.domain = "127.0.0.1".into();
+    req_ctx.ai_provider = Some(ProviderKind::OpenAi);
+    req_ctx.path = "/v1/chat/completions".into();
+    req_ctx.request_body_stats =
+        req_stats(br#"{"model":"mock-local","messages":[{"role":"user","content":"hello"}]}"#);
+    let response = br#"{
+        "id": "chatcmpl-mock-local",
+        "object": "chat.completion",
+        "model": "mock-local",
+        "choices": [{
+            "index": 0,
+            "message": {
+                "role": "assistant",
+                "content": "hello from capsem-mock-server",
+                "tool_calls": [{
+                    "id": "tool_0001",
+                    "type": "function",
+                    "function": {
+                        "name": "fixture_lookup",
+                        "arguments": "{\"query\":\"capsem\"}"
+                    }
+                }]
+            },
+            "finish_reason": "tool_calls"
+        }],
+        "usage": {
+            "prompt_tokens": 7,
+            "completion_tokens": 5,
+            "total_tokens": 12
+        }
+    }"#;
+    let resp_stats = TelemetryResponseStats {
+        bytes: response.len() as u64,
+        preview: response.to_vec(),
+        max_preview: response.len(),
+    };
+    let pricing = Arc::new(PricingTable::load());
+    let trace = Arc::new(Mutex::new(TraceState::new()));
+    let model_call = maybe_build_model_call(&req_ctx, &resp_stats, &[], &pricing, &trace)
+        .expect("OpenAI-compatible chat completion should produce model telemetry");
+
+    assert_eq!(model_call.trace_id.as_deref(), Some("feedfacecafebeef"));
+    assert_eq!(model_call.provider, "openai");
+    assert_eq!(model_call.model.as_deref(), Some("mock-local"));
+    assert_eq!(model_call.input_tokens, Some(7));
+    assert_eq!(model_call.output_tokens, Some(5));
+    assert_eq!(model_call.tool_calls.len(), 1);
+    assert_eq!(model_call.tool_calls[0].call_id, "tool_0001");
+    assert_eq!(model_call.tool_calls[0].tool_name, "fixture_lookup");
+    assert_eq!(
+        model_call.tool_calls[0].arguments.as_deref(),
+        Some(r#"{"query":"capsem"}"#)
+    );
+    assert_eq!(
+        model_call.tool_calls[0].trace_id.as_deref(),
+        Some("feedfacecafebeef")
     );
 }
 

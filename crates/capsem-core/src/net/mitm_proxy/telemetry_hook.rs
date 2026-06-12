@@ -525,8 +525,10 @@ pub fn maybe_build_model_call(
     let tool_call_ids: Vec<String> = tool_calls.iter().map(|tc| tc.call_id.clone()).collect();
     let trace_id = {
         let mut state = trace_state.lock().unwrap_or_else(|e| e.into_inner());
+        let ambient_trace_id = crate::telemetry::ambient_capsem_trace_id();
         let tid = state
             .lookup(&tool_response_ids)
+            .or(ambient_trace_id)
             .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
         let is_tool_use = !tool_call_ids.is_empty()
             || stop_reason_str

@@ -43,7 +43,6 @@ impl CredentialProvider {
             Self::Mcp => "mcp",
         }
     }
-
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -215,6 +214,8 @@ pub fn detect_http_body_credentials(
 pub fn is_http_body_credential_candidate(domain: &str, path: &str) -> bool {
     (domain.ends_with("googleapis.com") && (path.contains("/token") || path.contains("oauth")))
         || (domain.ends_with("github.com") && path.contains("oauth"))
+        || (is_local_oauth_fixture_domain(domain)
+            && (path.contains("/token") || path.contains("oauth")))
 }
 
 pub fn substitute_credential_value(provider: CredentialProvider, raw_value: &str) -> String {
@@ -626,7 +627,14 @@ fn provider_for_oauth_field(
     if domain.ends_with("github.com") && is_http_body_credential_candidate(domain, path) {
         return Some(CredentialProvider::Github);
     }
+    if is_local_oauth_fixture_domain(domain) && is_http_body_credential_candidate(domain, path) {
+        return Some(CredentialProvider::Google);
+    }
     None
+}
+
+fn is_local_oauth_fixture_domain(domain: &str) -> bool {
+    matches!(domain, "127.0.0.1" | "localhost" | "::1")
 }
 
 fn bearer_value(value: &str) -> Option<&str> {

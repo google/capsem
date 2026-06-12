@@ -371,6 +371,29 @@ next one, and stage only the files for that slice.
   - Current gap: existing recorder/replay tests prove fixtures are stable, but
     they do not yet prove Capsem's runtime parser/logger/security route
     contract.
+  - 2026-06-12 progress: added the first Ironbank doctor ledger proof at
+    `tests/ironbank/test_doctor_ledger.py`. It boots a VM through
+    `/vms/create`, runs `capsem-doctor` against `capsem-mock-server`, and
+    verifies `/history`, `/history/counts`, `/security/latest`, plus
+    `net_events`, `dns_events`, `mcp_calls`, `model_calls`, `tool_calls`,
+    `fs_events`, `exec_events`, `security_rule_events`, and
+    `substitution_events` in the session DB. This caught and fixed model trace
+    drift, missing non-streaming OpenAI-compatible tool-call ledger rows, and
+    hermetic credential-broker storage/env propagation.
+  - Proof: `cargo test -p capsem-core
+    net::mitm_proxy::telemetry_hook::tests::openai_non_streaming_tool_call_carries_request_trace
+    -- --nocapture`; `cargo test -p capsem-core
+    net::ai_traffic::events::tests::non_streaming_openai_tool_calls --
+    --nocapture`; `cargo test -p capsem-core
+    credential_broker::tests::http_body_detector_finds_local_oauth_fixture_response
+    -- --nocapture`; `cargo test -p capsem-core
+    credential_broker::tests::http_body_credential_candidate_is_limited_to_known_exchange_paths
+    -- --nocapture`; `cargo test -p capsem-service
+    process_env_allowlist_forwards_mcp_timeout_knobs -- --nocapture`;
+    `cargo build -p capsem-service -p capsem-process -p capsem-gateway -p
+    capsem-mock-server`; `CAPSEM_TEST_PRESERVE_ALWAYS=1 uv run python -m
+    pytest tests/ironbank/test_doctor_ledger.py -q -s` (`1 passed in
+    34.55s`).
 - [x] RED/GREEN: recorder creates sanitized fixtures with client/version,
   protocol family, auth mode, expected ledger rows, and expected visible bytes.
   - 2026-06-12 progress: `scripts/protocol_fixture_recorder.py` records
@@ -502,6 +525,13 @@ next one, and stage only the files for that slice.
     test_network.py -q)` (`39 tests collected`).
 - [ ] RED/GREEN: doctor verifies DB ledger rows and rule/plugin evidence for
   allow/ask/block/disable/rewrite/pre/post/detection levels.
+  - 2026-06-12 progress: `tests/ironbank/test_doctor_ledger.py` now proves the
+    baseline doctor DB ledger for allow/default detection flow across HTTP,
+    DNS, MCP, model/tool calls, file, exec, security-rule rows, and credential
+    capture rows. Remaining debt: explicit ask/block/disable/rewrite/pre/post
+    plugin and detection-level matrix.
+  - Proof: `CAPSEM_TEST_PRESERVE_ALWAYS=1 uv run python -m pytest
+    tests/ironbank/test_doctor_ledger.py -q -s` (`1 passed in 34.55s`).
 - [ ] RED/GREEN: doctor/toolchain probes cover apt/dpkg triggers, Python, pip,
   uv, Node, npm, npx, packaged CLIs, aliases, MCP bootstrap, DNS, TLS, FS
   writes.

@@ -143,6 +143,28 @@ fn http_body_detector_finds_google_oauth_form_request() {
 }
 
 #[test]
+fn http_body_detector_finds_local_oauth_fixture_response() {
+    let body = br#"{"access_token":"capsem_test_oauth_access_0123456789abcdef","refresh_token":"capsem_test_oauth_refresh_0123456789abcdef"}"#;
+    let found = detect_http_body_credentials("127.0.0.1", "/oauth/token", "response", body);
+
+    assert_eq!(found.len(), 2);
+    assert!(found
+        .iter()
+        .all(|obs| obs.provider == CredentialProvider::Google));
+    assert!(found
+        .iter()
+        .any(|obs| obs.source == "http.body.response.$.access_token"));
+    assert!(found
+        .iter()
+        .any(|obs| obs.source == "http.body.response.$.refresh_token"));
+
+    let redacted = String::from_utf8(redact_observed_credentials_in_bytes(body, &found)).unwrap();
+    assert!(redacted.contains("credential:blake3:"));
+    assert!(!redacted.contains("capsem_test_oauth_access_0123456789abcdef"));
+    assert!(!redacted.contains("capsem_test_oauth_refresh_0123456789abcdef"));
+}
+
+#[test]
 fn http_body_credential_candidate_is_limited_to_known_exchange_paths() {
     assert!(is_http_body_credential_candidate(
         "oauth2.googleapis.com",
@@ -155,6 +177,14 @@ fn http_body_credential_candidate_is_limited_to_known_exchange_paths() {
     assert!(!is_http_body_credential_candidate(
         "daily-cloudcode-pa.googleapis.com",
         "/v1internal:streamGenerateContent"
+    ));
+    assert!(is_http_body_credential_candidate(
+        "127.0.0.1",
+        "/oauth/token"
+    ));
+    assert!(is_http_body_credential_candidate(
+        "localhost",
+        "/oauth/token"
     ));
     assert!(!is_http_body_credential_candidate("example.com", "/token"));
 }

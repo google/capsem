@@ -86,14 +86,18 @@ pub const CREATE_SCHEMA: &str = "
 
     CREATE TABLE IF NOT EXISTS tool_calls (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
+        event_id TEXT NOT NULL DEFAULT (lower(hex(randomblob(6)))) CHECK (length(event_id) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
         model_call_id INTEGER NOT NULL,
+        provider TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'observed' CHECK (status IN ('requested', 'observed', 'responded', 'error')),
         call_index INTEGER NOT NULL,
         call_id TEXT NOT NULL,
         tool_name TEXT NOT NULL,
         arguments TEXT,
         origin TEXT NOT NULL DEFAULT 'native',
         mcp_call_id INTEGER,
-        trace_id TEXT
+        trace_id TEXT,
+        credential_ref TEXT CHECK (credential_ref IS NULL OR (length(credential_ref) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f]*'))
     );
 
     CREATE TABLE IF NOT EXISTS tool_responses (
@@ -430,6 +434,22 @@ pub fn migrate(conn: &Connection) {
         [],
     );
     let _ = conn.execute("ALTER TABLE tool_calls ADD COLUMN mcp_call_id INTEGER", []);
+    let _ = conn.execute(
+        "ALTER TABLE tool_calls ADD COLUMN event_id TEXT NOT NULL DEFAULT '000000000000' CHECK (length(event_id) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]')",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE tool_calls ADD COLUMN provider TEXT NOT NULL DEFAULT ''",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE tool_calls ADD COLUMN status TEXT NOT NULL DEFAULT 'observed' CHECK (status IN ('requested', 'observed', 'responded', 'error'))",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE tool_calls ADD COLUMN credential_ref TEXT CHECK (credential_ref IS NULL OR (length(credential_ref) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f]*'))",
+        [],
+    );
     // Add bytes_sent/bytes_received to mcp_calls (for DBs created before this feature).
     let _ = conn.execute(
         "ALTER TABLE mcp_calls ADD COLUMN bytes_sent INTEGER DEFAULT 0",

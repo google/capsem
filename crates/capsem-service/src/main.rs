@@ -9,11 +9,10 @@ use capsem_core::poll::{poll_until, PollOpts};
 use capsem_core::{
     mcp::policy::{McpManualServer, McpUserConfig},
     net::policy_config::{
-        CompiledSecurityRule, DetectionLevel, Profile, ProfileAssetDescriptor, ProfileCatalog,
-        ProfileCatalogSource, ProfileConfigFile, ProviderRuleProfile, SecurityPluginConfig,
-        SecurityPluginMode, SecurityRule, SecurityRuleAction, SecurityRuleGroup,
-        SecurityRuleProfile, SecurityRuleSet, SecurityRuleSource, SettingsFile,
-        skill_id_for_path,
+        skill_id_for_path, CompiledSecurityRule, DetectionLevel, Profile, ProfileAssetDescriptor,
+        ProfileCatalog, ProfileCatalogSource, ProfileConfigFile, ProviderRuleProfile,
+        SecurityPluginConfig, SecurityPluginMode, SecurityRule, SecurityRuleAction,
+        SecurityRuleGroup, SecurityRuleProfile, SecurityRuleSet, SecurityRuleSource, SettingsFile,
     },
     security_engine::{
         FileSecurityEvent, RuntimeSecurityEventType, SecurityActionRegistry, SecurityEmitError,
@@ -91,6 +90,9 @@ const PROCESS_ENV_ALLOWLIST: &[&str] = &[
     "TMPDIR",
     "CAPSEM_HOME",
     "CAPSEM_CORP_CONFIG",
+    // Hermetic integration/Ironbank rail: keeps credential broker tests out of
+    // the user's macOS Keychain while exercising the real broker path.
+    "CAPSEM_CREDENTIAL_BROKER_TEST_STORE",
     // Tunable: bounded MITM MCP endpoint in-flight handler cap.
     "CAPSEM_MCP_INFLIGHT",
     // Tunable: pool size for the local builtin MCP server (rmcp stdio funnel).

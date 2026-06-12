@@ -533,16 +533,23 @@ fn insert_model_call(conn: &Connection, call: &ModelCall) -> rusqlite::Result<()
         // trace_id (they belong to the same agent turn).
         let tc_trace = tc.trace_id.clone().or_else(|| call.trace_id.clone());
         conn.execute(
-            "INSERT INTO tool_calls (model_call_id, call_index, call_id, tool_name, arguments, origin, trace_id)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            "INSERT INTO tool_calls (
+                event_id, model_call_id, provider, status, call_index, call_id,
+                tool_name, arguments, origin, trace_id, credential_ref
+             )
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
             params![
+                new_event_id(),
                 model_call_id,
+                call.provider,
+                "observed",
                 tc.call_index as i64,
                 tc.call_id,
                 tc.tool_name,
                 tc.arguments,
                 tc.origin,
                 tc_trace,
+                call.credential_ref,
             ],
         )?;
     }

@@ -330,6 +330,7 @@ pub fn parse_non_streaming_tool_calls(
     };
     match kind {
         super::provider::ProviderKind::Google => google_non_streaming_tool_calls(&json),
+        super::provider::ProviderKind::OpenAi => openai_non_streaming_tool_calls(&json),
         _ => Vec::new(),
     }
 }
@@ -386,6 +387,62 @@ fn google_non_streaming_tool_calls(json: &serde_json::Value) -> Vec<ToolCall> {
             });
         }
     }
+    calls
+}
+
+fn openai_non_streaming_tool_calls(json: &serde_json::Value) -> Vec<ToolCall> {
+    let mut calls = Vec::new();
+    let Some(choices) = json.get("choices").and_then(|value| value.as_array()) else {
+        return calls;
+    };
+    for choice in choices {
+        let Some(tool_calls) = choice
+            .get("message")
+            .and_then(|message| message.get("tool_calls"))
+            .and_then(|tool_calls| tool_calls.as_array())
+        else {
+            continue;
+        };
+        for tool_call in tool_calls {
+            let index = tool_call
+                .get("index")
+                .and_then(|index| index.as_u64())
+                .map(|index| index as u32)
+                .unwrap_or(calls.len() as u32);
+            let call_id = tool_call
+                .get("id")
+                .and_then(|id| id.as_str())
+                .unwrap_or_default()
+                .to_string();
+            let Some(function) = tool_call.get("function") else {
+                continue;
+            };
+            let name = function
+                .get("name")
+                .and_then(|name| name.as_str())
+                .unwrap_or_default()
+                .to_string();
+            if name.is_empty() {
+                continue;
+            }
+            let arguments = function
+                .get("arguments")
+                .and_then(|arguments| arguments.as_str())
+                .map(str::to_string)
+                .unwrap_or_else(|| "{}".to_string());
+            calls.push(ToolCall {
+                index,
+                call_id: if call_id.is_empty() {
+                    format!("openai_{}_{}", name, index)
+                } else {
+                    call_id
+                },
+                name,
+                arguments,
+            });
+        }
+    }
+    calls.sort_by_key(|call| call.index);
     calls
 }
 

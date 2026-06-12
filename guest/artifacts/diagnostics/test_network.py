@@ -457,6 +457,7 @@ def test_local_openai_compatible_model_fixture():
     result = run(
         f"curl -sS --connect-timeout 5"
         f" -H 'content-type: application/json'"
+        f" -H 'authorization: Bearer sk-capsem_test_openai_api_key_0123456789abcdef'"
         f" -d '{payload}'"
         f" {local_url}",
         timeout=15,

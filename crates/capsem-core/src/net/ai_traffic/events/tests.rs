@@ -451,6 +451,40 @@ fn non_streaming_ollama_usage() {
 }
 
 #[test]
+fn non_streaming_openai_tool_calls() {
+    let body = br#"{
+        "id": "chatcmpl-mock-local",
+        "object": "chat.completion",
+        "model": "mock-local",
+        "choices": [
+            {
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "tool_calls": [
+                        {
+                            "id": "tool_0001",
+                            "type": "function",
+                            "function": {
+                                "name": "fixture_lookup",
+                                "arguments": "{\"query\":\"capsem\"}"
+                            }
+                        }
+                    ]
+                },
+                "finish_reason": "tool_calls"
+            }
+        ]
+    }"#;
+    let calls = parse_non_streaming_tool_calls(ProviderKind::OpenAi, body);
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].index, 0);
+    assert_eq!(calls[0].call_id, "tool_0001");
+    assert_eq!(calls[0].name, "fixture_lookup");
+    assert_eq!(calls[0].arguments, r#"{"query":"capsem"}"#);
+}
+
+#[test]
 fn non_streaming_invalid_json() {
     let (model, input, output, details) =
         parse_non_streaming_usage(ProviderKind::Google, b"not json");

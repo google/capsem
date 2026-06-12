@@ -43,10 +43,27 @@ YELLOW = "\033[33m"
 CYAN = "\033[36m"
 RESET = "\033[0m"
 
-SESSIONS_DIR = Path.home() / ".capsem" / "run" / "sessions"
-MAIN_DB = Path.home() / ".capsem" / "sessions" / "main.db"
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 MOCK_SERVER_ENV = "CAPSEM_MOCK_SERVER_BASE_URL"
+
+
+def _capsem_home() -> Path:
+    env = os.environ.get("CAPSEM_HOME")
+    if env:
+        return Path(env)
+    return Path.home() / ".capsem"
+
+
+def _run_dir() -> Path:
+    env = os.environ.get("CAPSEM_RUN_DIR")
+    if env:
+        return Path(env)
+    return _capsem_home() / "run"
+
+
+CAPSEM_HOME = _capsem_home()
+SESSIONS_DIR = _run_dir() / "sessions"
+MAIN_DB = CAPSEM_HOME / "sessions" / "main.db"
 
 
 class Results:

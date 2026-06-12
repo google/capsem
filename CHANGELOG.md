@@ -70,6 +70,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   write a durable `~/.capsem/logs/install.log`, package builders accept local
   paths plus `file://`, `http://`, and `https://` manifest overrides, and
   service status reports the installed manifest hash and package provenance.
+- Hardened macOS `.pkg` and Linux `.deb` package composition so closed
+  packages contain the app/binaries, profile config, and selected
+  `manifest.json`/`manifest-origin.json` only; VM asset payloads are never
+  embedded and are reconciled by the service from the installed manifest.
 - Added per-install timestamped logs under `~/.capsem/logs/install-*.log` plus
   `install-latest.log`, while preserving the aggregate `install.log`.
 - Expanded manifest status reporting with mutable-manifest semantics:
@@ -109,6 +113,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `build.sh`/`files.build` and added Ollama to the shipped Code and Co-work
   profile images through that builder rail, with `zstd` included for the
   official Ollama installer.
+- Added an Ironbank `capsem-doctor` ledger proof that boots a VM through public
+  service routes, runs the hermetic mock protocol lab, and verifies HTTP, DNS,
+  MCP, model, tool-call, file, exec, security-rule, and credential broker rows
+  agree in `session.db`.
 - Expanded per-architecture VM build ledgers with a `rootfs.config_inputs`
   stage that records declared package config, rendered rootfs install inputs,
   profile root/build-script inputs, and EROFS settings. Installed package
