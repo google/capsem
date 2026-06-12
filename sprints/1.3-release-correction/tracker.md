@@ -307,6 +307,9 @@ next one, and stage only the files for that slice.
   - 2026-06-11 progress: `snapshots_list` accepts `include_changes`, the
     guest `snapshots list --json --include-changes` flag forwards it, and
     doctor tests that require per-file change assertions opt in explicitly.
+  - 2026-06-11 progress: the generated MCP tool catalog exposes
+    `include_changes` on `snapshots_list`, so UI/TUI/tooling see the same
+    explicit opt-in contract as the runtime handler.
   - Proof: `cargo test -p capsem-core list_snapshots --lib -- --nocapture`;
     `cargo test -p capsem-mcp-builtin
     snapshot_pagination_params_preserve_include_changes -- --nocapture`; `uv

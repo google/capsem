@@ -180,6 +180,10 @@
           ],
           "type": "string"
         },
+        "include_changes": {
+          "description": "Include full per-file change arrays. Defaults to false; compact created/edited/deleted counts are always returned.",
+          "type": "boolean"
+        },
         "max_length": {
           "description": "Maximum characters to return (default: 5000). If truncated, a pagination hint shows the next start_index.",
           "type": "integer"
