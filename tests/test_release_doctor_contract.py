@@ -60,6 +60,15 @@ def test_release_scripts_use_shared_debug_upstream_helper() -> None:
         assert "def _start_debug_upstream" not in source
 
 
+def test_integration_script_has_no_live_ai_provider_escape_hatch() -> None:
+    source = (PROJECT_ROOT / "scripts" / "integration_test.py").read_text()
+
+    assert "GEMINI_API_KEY" not in source
+    assert "GOOGLE_API_KEY" not in source
+    assert "googleapis.com" not in source
+    assert "include_gemini_probe" not in source
+
+
 def test_guest_init_exports_ca_bundle_for_runtime_and_login_shells() -> None:
     init = (PROJECT_ROOT / "guest" / "artifacts" / "capsem-init").read_text()
     expected = {

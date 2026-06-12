@@ -218,7 +218,20 @@ next one, and stage only the files for that slice.
 
 ## S4. Hermetic Protocol Lab and Recorder
 
-- [ ] RED: integration tests fail if protocol paths hit public services.
+- [x] RED/GREEN: integration tests fail if protocol paths hit public services.
+  - 2026-06-12 progress: `scripts/integration_test.py` no longer reads
+    `GEMINI_API_KEY`, `GOOGLE_API_KEY`, `settings.toml` credentials, or
+    `googleapis.com` live provider traffic. The model proof is now a
+    deterministic local OpenAI-compatible request to
+    `capsem-debug-upstream` `/v1/chat/completions`, and DB verification checks
+    the resulting `model_calls` row directly.
+  - Proof: `uv run python -m pytest tests/test_release_doctor_contract.py -q`
+    (`9 passed`); `uv run ruff check scripts/integration_test.py
+    tests/test_release_doctor_contract.py`; `python3 -m py_compile
+    scripts/debug_upstream.py scripts/doctor_session_test.py
+    scripts/integration_test.py`; `rg -n
+    "GEMINI_API_KEY|GOOGLE_API_KEY|googleapis\\.com|include_gemini_probe|expect_model_calls"
+    scripts/integration_test.py` is quiet.
 - [ ] GREEN: one local protocol lab serves HTTP, HTTPS/MITM, DNS, SSE,
   WebSocket, MCP JSON-RPC, OAuth/OIDC, and model fixture replay.
   - 2026-06-12 progress: `capsem-debug-upstream` now serves protocol-shaped

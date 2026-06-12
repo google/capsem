@@ -6,8 +6,8 @@ Exercises:
   1. fs_events   -- create, modify, and delete files inside the VM
   2. net_events   -- curl an allowed domain + a denied domain (policy enforcement)
   3. mcp_calls    -- run capsem-doctor MCP tests (init, tools/list, fetch, grep)
-  4. model_calls  -- ask Gemini to write a poem (verifies cost estimation)
-  5. tool_calls   -- Gemini tool use (write_file) with origin tracking
+  4. model_calls  -- call the local OpenAI-compatible debug fixture
+  5. tool_calls   -- validate tool-call ledger shape when model fixtures emit it
   6. main.db      -- rollup counters match session.db actuals
 
 Usage:
@@ -27,7 +27,6 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Optional
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
@@ -68,24 +67,8 @@ MAIN_DB = CAPSEM_HOME / "sessions" / "main.db"
 SERVICE_SOCKET = _run_dir() / "service.sock"
 SERVICE_PIDFILE = _run_dir() / "service.pid"
 
-def _gemini_api_key() -> Optional[str]:
-    """Find a Gemini API key for the optional live model telemetry probe."""
-    google_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
-    if google_key:
-        return google_key
 
-    user_toml = Path.home() / ".capsem" / "settings.toml"
-    if user_toml.exists():
-        with open(user_toml) as f:
-            for line in f:
-                if line.strip().startswith("value") and "AIza" in line:
-                    m = re.search(r'value\s*=\s*"(AIza[^"]*)"', line)
-                    if m:
-                        return m.group(1)
-    return None
-
-
-def _vm_command(include_gemini_probe: bool, local_base_url: str) -> str:
+def _vm_command(local_base_url: str) -> str:
     """Build the compound command executed inside the VM.
 
     Semicolons ensure every step runs even if an earlier one fails -- the
@@ -94,6 +77,12 @@ def _vm_command(include_gemini_probe: bool, local_base_url: str) -> str:
     tiny_url = shlex.quote(f"{local_base_url.rstrip('/')}/tiny")
     bytes_url = shlex.quote(f"{local_base_url.rstrip('/')}/bytes/10mb")
     deny_url = shlex.quote(f"{local_base_url.rstrip('/')}/deny-target")
+    model_url = shlex.quote(f"{local_base_url.rstrip('/')}/v1/chat/completions")
+    model_payload = shlex.quote(json.dumps({
+        "model": "debug-openai",
+        "messages": [{"role": "user", "content": "say capsem"}],
+        "stream": False,
+    }))
 
     commands = [
     # -- fs_events: create, modify, and delete files --
@@ -118,33 +107,29 @@ def _vm_command(include_gemini_probe: bool, local_base_url: str) -> str:
 
     # -- mcp_calls: capsem-doctor MCP test subset --
     "capsem-doctor -k mcp",
-    ]
 
-    if include_gemini_probe:
-        commands.extend([
-            # -- model_calls + tool_calls: ask Gemini to write a poem into a file --
-            (
-                "gemini --yolo -p "
-                "'Use the write_file tool to write a four line poem about sandboxes"
-                " to the file /root/gemini_poem.txt'"
-            ),
-            # Fallback: if Gemini printed instead of using write_file, create the
-            # file so the fs_events assertion doesn't flake on nondeterministic LLM behavior.
-            "test -f /root/gemini_poem.txt || echo 'sandboxes hold the grains of time' > /root/gemini_poem.txt",
-        ])
-    else:
-        commands.extend([
-            "echo CAPSEM_INTEGRATION_GEMINI_SKIPPED",
-            "echo 'sandboxes hold the grains of time' > /root/gemini_poem.txt",
-        ])
+    # -- model_calls: deterministic local OpenAI-compatible fixture --
+    (
+        "curl -sf -X POST"
+        " -H 'content-type: application/json'"
+        " -H 'authorization: Bearer capsem_test_openai_api_key'"
+        f" --data {model_payload}"
+        f" {model_url}"
+        " -o /root/model_fixture.json"
+    ),
+    (
+        "python3 -c \"import json;"
+        " data=json.load(open('/root/model_fixture.json'));"
+        " print('model-fixture:', data.get('choices',[{}])[0].get('message',{}).get('content',''))\""
+    ),
+    "echo 'sandboxes hold the grains of time' > /root/model_fixture_poem.txt",
 
-    commands.extend([
         # -- debouncer flush: fs_events uses a 100ms debouncer --
         "sleep 2",
 
         # -- sentinel so the host can confirm full execution --
         "echo CAPSEM_INTEGRATION_DONE",
-    ])
+    ]
     return "; ".join(commands)
 
 
@@ -243,7 +228,7 @@ def _start_service_with_test_config(
     raise RuntimeError(f"capsem-service did not become ready in 15s; see {log_path}")
 
 
-def run_vm(binary: str, assets_dir: str) -> tuple[str, int, bool]:
+def run_vm(binary: str, assets_dir: str) -> tuple[str, int]:
     """Boot a temp VM via `capsem run`, return (session_id, exit_code).
 
     The service preserves the session dir after `run` completes, so we
@@ -258,7 +243,6 @@ def run_vm(binary: str, assets_dir: str) -> tuple[str, int, bool]:
         "CAPSEM_CORP_CONFIG": "config/integration-test-corp.toml",
     }
 
-    google_key = _gemini_api_key()
     debug_proc = None
 
     # Restart the dev service with CAPSEM_HOME/CAPSEM_CORP_CONFIG in its env so
@@ -282,18 +266,13 @@ def run_vm(binary: str, assets_dir: str) -> tuple[str, int, bool]:
         debug_base_url = ready["base_url"]
         print(f"{BOLD}Local debug upstream:{RESET} {debug_base_url}")
 
-        # Pass API key and deterministic local fixture settings via --env so
-        # they reach the VM through the service. Do not inject proxy variables:
-        # guest traffic must prove the iptables-nft redirect rail.
+        # Pass deterministic local fixture settings via --env so they reach the
+        # VM through the service. Do not inject proxy variables: guest traffic
+        # must prove the iptables-nft redirect rail.
         cmd = [binary, "run", "--timeout", "300"]
         for key, value in local_fixture_env(debug_base_url).items():
             cmd.extend(["--env", f"{key}={value}"])
-        if google_key:
-            cmd.extend(["--env", f"GEMINI_API_KEY={google_key}"])
-        cmd.append(_vm_command(
-            include_gemini_probe=google_key is not None,
-            local_base_url=debug_base_url,
-        ))
+        cmd.append(_vm_command(local_base_url=debug_base_url))
 
         print(f"{BOLD}Booting VM with test command ...{RESET}")
         proc = subprocess.run(
@@ -336,7 +315,7 @@ def run_vm(binary: str, assets_dir: str) -> tuple[str, int, bool]:
 
     session_id = new_sessions[0].name
     print(f"  session: {CYAN}{session_id}{RESET}  exit_code: {exit_code}")
-    return session_id, exit_code, google_key is not None
+    return session_id, exit_code
 
 
 # ── assertions ───────────────────────────────────────────────────────────
@@ -373,7 +352,7 @@ class Results:
         return len(self.failed) == 0
 
 
-def verify_session(session_id: str, expect_model_calls: bool) -> bool:
+def verify_session(session_id: str) -> bool:
     """Open the session DB, run all assertions, return True on success."""
     db_path = SESSIONS_DIR / session_id / "session.db"
     gz_path = SESSIONS_DIR / session_id / "session.db.gz"
@@ -441,21 +420,6 @@ def verify_session(session_id: str, expect_model_calls: bool) -> bool:
             "local debug /tiny decision = allowed",
             f"local debug /tiny decision = {local_tiny['decision']} (expected allowed)",
         )
-
-    # Google/Gemini API requests are live-credential dependent. Smoke must pass
-    # on clean machines without API keys; deterministic parser/policy behavior is
-    # covered by offline Rust and e2e suites.
-    google_net = conn.execute(
-        "SELECT COUNT(*) FROM net_events WHERE domain LIKE '%.googleapis.com'"
-    ).fetchone()[0]
-    if expect_model_calls:
-        r.check(
-            google_net > 0,
-            f"{google_net} googleapis.com net_events (Gemini API calls)",
-            "no googleapis.com net_events (Gemini API call not captured)",
-        )
-    else:
-        r.warn("Gemini live model probe skipped (no GEMINI_API_KEY/GOOGLE_API_KEY)")
 
     # Local deterministic 10MB fixture throughput download.
     throughput_rows = conn.execute(
@@ -626,61 +590,41 @@ def verify_session(session_id: str, expect_model_calls: bool) -> bool:
     # ── model_calls ──────────────────────────────────────────────────
     print(f"\n{BOLD}model_calls{RESET}")
     model_count = conn.execute("SELECT COUNT(*) FROM model_calls").fetchone()[0]
-    if expect_model_calls:
-        r.check(
-            model_count > 0,
-            f"{model_count} model_calls recorded",
-            "no model_calls recorded (Gemini API parsing may have failed)",
-        )
-    elif model_count > 0:
-        r.ok(f"{model_count} model_calls recorded")
-    else:
-        r.warn("model_calls live assertion skipped (no Gemini API key)")
+    r.check(
+        model_count > 0,
+        f"{model_count} model_calls recorded",
+        "no model_calls recorded for local OpenAI-compatible fixture",
+    )
 
-    if model_count > 0:
-        # Provider should be google.
-        google_calls = conn.execute(
-            "SELECT * FROM model_calls WHERE provider = 'google'"
-        ).fetchone()
+    fixture_call = conn.execute(
+        """
+        SELECT *
+        FROM model_calls
+        WHERE path = '/v1/chat/completions'
+        ORDER BY id LIMIT 1
+        """
+    ).fetchone()
+    r.check(
+        fixture_call is not None,
+        "local OpenAI-compatible model_call recorded",
+        "no model_call for local /v1/chat/completions fixture",
+    )
+    if fixture_call:
         r.check(
-            google_calls is not None,
-            "Gemini model_call has provider = google",
-            "no model_call with provider = google",
+            fixture_call["status_code"] == 200,
+            "local model_call status_code = 200",
+            f"local model_call status_code = {fixture_call['status_code']}",
         )
-
-        # Token counts should be non-zero.  The first model_call may be a
-        # preflight with no model/tokens, so query for one that has a model.
-        google_with_model = conn.execute(
-            "SELECT * FROM model_calls"
-            " WHERE provider = 'google' AND model IS NOT NULL"
-            " ORDER BY id LIMIT 1"
-        ).fetchone()
-        if google_with_model:
-            in_tok = google_with_model["input_tokens"] or 0
-            out_tok = google_with_model["output_tokens"] or 0
-            model_name = google_with_model["model"]
-            r.check(
-                in_tok > 0 and out_tok > 0,
-                f"Gemini tokens: {in_tok} in / {out_tok} out (model={model_name})",
-                f"Gemini token counts are zero: {in_tok} in / {out_tok} out (API key may be invalid)",
-            )
-        else:
-            r.fail("no Gemini model_call with a model name (stream parsing incomplete)")
-
-    # Cost estimation -- at least one model_call should have a positive cost.
-    with_cost = conn.execute(
-        "SELECT COUNT(*) FROM model_calls WHERE estimated_cost_usd > 0"
-    ).fetchone()[0]
-    if expect_model_calls:
         r.check(
-            with_cost >= 1,
-            f"{with_cost} model_calls with positive estimated_cost_usd",
-            "no model_calls with positive cost (API may have returned an error)",
+            bool(fixture_call["provider"]) and bool(fixture_call["model"]),
+            f"local model_call provider/model = {fixture_call['provider']}/{fixture_call['model']}",
+            "local model_call missing provider or model",
         )
-    elif with_cost > 0:
-        r.ok(f"{with_cost} model_calls with positive estimated_cost_usd")
-    else:
-        r.warn("model cost assertion skipped (no Gemini API key)")
+        r.check(
+            (fixture_call["response_bytes"] or 0) > 0,
+            f"local model_call response_bytes = {fixture_call['response_bytes']}",
+            "local model_call response_bytes is zero",
+        )
 
     # ── tool_calls / tool_responses ──────────────────────────────────
     print(f"\n{BOLD}tool_calls / tool_responses{RESET}")
@@ -698,12 +642,11 @@ def verify_session(session_id: str, expect_model_calls: bool) -> bool:
             f"DUPLICATE tool_responses: {tr_count} total but only {unique_tr} unique",
         )
 
-    # Gemini may or may not use tools -- it's non-deterministic.
     # We validate tool_calls metadata when present, but don't fail on 0.
     if tc_count > 0:
-        r.ok(f"{tc_count} tool_calls recorded (Gemini used tools)")
+        r.ok(f"{tc_count} tool_calls recorded")
     else:
-        r.ok("0 tool_calls (Gemini printed instead of using tools -- non-deterministic)")
+        r.ok("0 tool_calls recorded for this deterministic fixture")
 
     if tc_count > 0:
         # Origin column should be populated on all tool_calls.
@@ -716,14 +659,14 @@ def verify_session(session_id: str, expect_model_calls: bool) -> bool:
             f"only {with_origin}/{tc_count} tool_calls have origin",
         )
 
-        # Gemini's streaming format does not always produce a parseable
+        # Some streaming formats do not always produce a parseable
         # tool_response turn, so tool_responses may lag behind tool_calls.
         if tr_count >= tc_count:
             r.ok(f"{tr_count} tool_responses match {tc_count} tool_calls")
         else:
             r.ok(
                 f"tool_responses ({tr_count}) < tool_calls ({tc_count})"
-                " -- Gemini stream parser limitation (non-blocking)"
+                " -- stream parser limitation (non-blocking)"
             )
 
     conn.close()
@@ -1034,14 +977,14 @@ def main():
     )
     args = parser.parse_args()
 
-    session_id, exit_code, expect_model_calls = run_vm(args.binary, args.assets)
+    session_id, exit_code = run_vm(args.binary, args.assets)
 
     # The VM command uses semicolons so individual failures don't abort.
     # We don't fail on a non-zero exit code -- the DB assertions decide.
     if exit_code != 0:
         print(f"{YELLOW}VM exited with code {exit_code} (non-fatal, checking DB){RESET}")
 
-    telemetry_ok = verify_session(session_id, expect_model_calls)
+    telemetry_ok = verify_session(session_id)
     ephemeral_ok = check_persistence(args.binary, args.assets)
     sys.exit(0 if (telemetry_ok and ephemeral_ok) else 1)
 
