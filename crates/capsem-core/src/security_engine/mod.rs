@@ -2406,6 +2406,7 @@ impl<E: SecurityEventEmitter> SecurityEventEngine<E> {
         let evaluation = rules.evaluate(&event).map_err(SecurityActionError::new)?;
         for rule in evaluation.matched_rules() {
             record_rule_detection(&mut event, rule);
+            event.request_decision(requested_decision_for_rule(rule.action));
         }
         event = self
             .action_registry

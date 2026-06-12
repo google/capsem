@@ -279,6 +279,11 @@ next one, and stage only the files for that slice.
 - [ ] RED/GREEN: all security ledger rows retain event id, trace id, rule id,
   action, detection level, plugin evidence, and event payload needed for
   forensics.
+  - 2026-06-11 progress: runtime rule evaluation now records each matched
+    rule's requested decision on the in-flight `SecurityEvent` before
+    pre/postprocess plugins run, so later plugin/action ledger rows can be
+    reconstructed against the rule decision that triggered them.
+  - Proof: `cargo test -p capsem-core security_engine --lib -- --nocapture`.
 
 ## S7. Runtime Protocol Fixes
 
