@@ -228,8 +228,18 @@ next one, and stage only the files for that slice.
     broker/recorder tests can prove capture and sanitization without touching
     real credentials.
   - Proof: `cargo test -p capsem-debug-upstream -- --nocapture` (`8 passed`).
-- [ ] RED/GREEN: recorder creates sanitized fixtures with client/version,
+- [x] RED/GREEN: recorder creates sanitized fixtures with client/version,
   protocol family, auth mode, expected ledger rows, and expected visible bytes.
+  - 2026-06-12 progress: `scripts/protocol_fixture_recorder.py` records
+    schema-validated JSON fixtures from `capsem-debug-upstream` for
+    Claude/Anthropic-shaped, Codex/OpenAI-compatible, AGY/Gemini-shaped,
+    Ollama/OpenAI-compatible, OAuth token exchange, MCP tools/list,
+    MCP tools/call, and credential-capture flows. Synthetic `capsem_test_*`
+    secrets are recursively substituted as `credential:blake3:*` before
+    writing.
+  - Proof: `uv run python -m pytest tests/test_protocol_fixture_recorder.py
+    -q` (`1 passed in 1.81s`); `uv run ruff check
+    scripts/protocol_fixture_recorder.py tests/test_protocol_fixture_recorder.py`.
 - [ ] RED/GREEN: replay covers Claude/Anthropic, OpenAI/Codex-compatible,
   Gemini/AGY-compatible, Ollama/OpenAI-compatible, MCP, and credential flows.
 - [ ] RED/GREEN: live-local Ollama probe uses host `gemma4:latest` through the

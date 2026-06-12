@@ -1,0 +1,67 @@
+from __future__ import annotations
+
+import importlib.util
+import json
+import subprocess
+from pathlib import Path
+
+from helpers.debug_upstream import start_debug_upstream, stop_process
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+RECORDER_PATH = PROJECT_ROOT / "scripts" / "protocol_fixture_recorder.py"
+
+
+def _load_recorder():
+    spec = importlib.util.spec_from_file_location("protocol_fixture_recorder", RECORDER_PATH)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_protocol_fixture_recorder_uses_debug_upstream_and_sanitizes(tmp_path):
+    recorder = _load_recorder()
+    subprocess.run(
+        ["cargo", "build", "-p", "capsem-debug-upstream"],
+        cwd=PROJECT_ROOT,
+        check=True,
+    )
+    proc = None
+    try:
+        proc, ready = start_debug_upstream()
+        written = recorder.record_debug_upstream(ready["base_url"], tmp_path)
+    finally:
+        stop_process(proc)
+
+    names = {path.stem for path in written}
+    assert {
+        "anthropic_claude_messages",
+        "openai_codex_chat_completions",
+        "gemini_agy_generate_content",
+        "ollama_openai_chat_completions",
+        "oauth_token_exchange",
+        "mcp_tools_list",
+        "mcp_tool_call",
+        "credential_response_capture",
+    }.issubset(names)
+
+    combined = "\n".join(path.read_text() for path in written)
+    assert "capsem_test_" not in combined
+    assert "credential:blake3:" in combined
+
+    for path in written:
+        payload = json.loads(path.read_text())
+        fixture = recorder.ProtocolFixture.model_validate(payload)
+        assert fixture.schema_ == "capsem.protocol_fixture.v1"
+        assert fixture.client.name
+        assert fixture.client.version
+        assert fixture.protocol_family in {
+            "http",
+            "model",
+            "mcp",
+            "oauth",
+            "credential",
+        }
+        assert fixture.auth_mode in {"none", "bearer", "api_key", "oauth_code"}
+        assert fixture.expected_ledger_rows
+        assert fixture.expected_visible_bytes >= 0
