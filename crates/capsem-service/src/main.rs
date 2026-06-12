@@ -1422,6 +1422,9 @@ impl ServiceState {
         ) {
             return (VmLifecycleState::Incompatible, false, Some(err.to_string()));
         }
+        if let Err(err) = validate_session_rootfs_size(&profile, entry) {
+            return (VmLifecycleState::Incompatible, false, Some(err.to_string()));
+        }
 
         let status = if entry.suspended {
             VmLifecycleState::Suspended
@@ -1434,6 +1437,35 @@ impl ServiceState {
             Err(err) => (status, false, Some(err.to_string())),
         }
     }
+}
+
+fn gib(bytes: u64) -> u64 {
+    bytes / 1024 / 1024 / 1024
+}
+
+fn validate_session_rootfs_size(
+    profile: &ProfileConfigFile,
+    entry: &PersistentVmEntry,
+) -> Result<()> {
+    let expected_bytes = profile.vm.scratch_disk_size_gb as u64 * 1024 * 1024 * 1024;
+    let rootfs = capsem_core::guest_share_dir(&entry.session_dir).join("system/rootfs.img");
+    let metadata = std::fs::metadata(&rootfs).with_context(|| {
+        format!(
+            "VM '{}' rootfs.img unavailable at {}",
+            entry.name,
+            rootfs.display()
+        )
+    })?;
+    if metadata.len() != expected_bytes {
+        return Err(anyhow!(
+            "VM '{}' rootfs.img logical size mismatch: current {} GiB, profile '{}' requires {} GiB",
+            entry.name,
+            gib(metadata.len()),
+            profile.id,
+            profile.vm.scratch_disk_size_gb
+        ));
+    }
+    Ok(())
 }
 
 fn profile_asset_pins(profile: &ProfileConfigFile) -> Result<BootAssetPins> {

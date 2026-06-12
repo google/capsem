@@ -5201,6 +5201,78 @@ async fn handle_info_marks_profile_payload_drift_incompatible() {
 }
 
 #[tokio::test]
+async fn handle_list_marks_profile_rootfs_size_drift_incompatible() {
+    let (state, _dir) = make_test_state_with_tempdir();
+    install_test_profile_assets(&state);
+    let session_dir = state.run_dir.join("persistent/rootfs-size-drift");
+    capsem_core::create_virtiofs_session(&session_dir, 2).unwrap();
+    {
+        let mut reg = state.persistent_registry.lock().unwrap();
+        reg.data.vms.insert(
+            "rootfs-size-drift".into(),
+            PersistentVmEntry {
+                name: "rootfs-size-drift".into(),
+                profile_id: "code".into(),
+                profile_revision: test_profile_revision(),
+                profile_payload_hash: test_profile_payload_hash(),
+                asset_pins: test_asset_pins(),
+                ram_mb: 2048,
+                cpus: 2,
+                base_version: "0.0.0".into(),
+                created_at: "0".into(),
+                session_dir,
+                forked_from: None,
+                description: None,
+                suspended: false,
+                defunct: false,
+                last_error: None,
+                checkpoint_path: None,
+                env: None,
+            },
+        );
+    }
+
+    let Json(list) = handle_list(State(state.clone())).await;
+    let vm = list
+        .sandboxes
+        .iter()
+        .find(|s| s.id == "rootfs-size-drift")
+        .unwrap();
+    assert_eq!(vm.status, VmLifecycleState::Incompatible);
+    assert!(!vm.can_resume);
+    let reason = vm.resume_blocked_reason.as_deref().unwrap_or_default();
+    assert!(reason.contains("rootfs.img logical size mismatch"), "{reason}");
+    assert!(reason.contains("2 GiB"), "{reason}");
+    assert!(reason.contains("64 GiB"), "{reason}");
+    assert_eq!(
+        vm.available_actions,
+        VmLifecycleState::Incompatible.available_actions(false)
+    );
+
+    let Json(info) = handle_info(State(state.clone()), Path("rootfs-size-drift".into()))
+        .await
+        .unwrap();
+    assert_eq!(info.status, VmLifecycleState::Incompatible);
+    assert!(!info.can_resume);
+    assert!(info
+        .resume_blocked_reason
+        .as_deref()
+        .unwrap_or_default()
+        .contains("rootfs.img logical size mismatch"));
+
+    let Json(status) = handle_vm_status(State(state), Path("rootfs-size-drift".into()))
+        .await
+        .unwrap();
+    assert_eq!(status.status, VmLifecycleState::Incompatible);
+    assert!(!status.can_resume);
+    assert!(status
+        .resume_blocked_reason
+        .as_deref()
+        .unwrap_or_default()
+        .contains("rootfs.img logical size mismatch"));
+}
+
+#[tokio::test]
 async fn handle_vm_operation_status_reports_idle_for_existing_vm() {
     let state = make_test_state();
     insert_fake_instance(&state, "ops-vm", 5150);

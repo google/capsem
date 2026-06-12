@@ -84,6 +84,11 @@ This is the active debug list for the 1.3 release loop. Older captured bugs in
     that proves `/usr/local`, `/var/cache/apt`, `/tmp`, `/var/tmp`, and `/root`
     have expected capacity and fail with actionable diagnostics before any
     partial package extraction corrupts the session.
+  - Proof slice closed 2026-06-11: live Ollama test session
+    `code-mq9ymjb2` had a 2GiB logical `guest/system/rootfs.img` under a
+    profile that now requires 64GiB. Service list/info/status now mark this
+    class as `Incompatible` with a rootfs logical-size mismatch reason and
+    delete-only actions instead of offering resume/start.
 
 - [ ] Package payload closed contract
   - `.pkg` and `.deb` must contain the app/binaries, runtime config, selected
