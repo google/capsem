@@ -3,6 +3,7 @@ mod ipc;
 mod job_store;
 mod mcp_runtime;
 mod pty_log;
+mod runtime_config;
 mod terminal;
 mod vsock;
 
@@ -65,6 +66,8 @@ struct Args {
     initrd: Option<PathBuf>,
     #[arg(long)]
     session_dir: PathBuf,
+    #[arg(long)]
+    profile_dir: PathBuf,
     #[arg(long, default_value_t = 2)]
     cpus: u32,
     #[arg(long, default_value_t = 2048)]
@@ -305,35 +308,28 @@ async fn run_async_main_loop(
     // starts, we still want a clean checkpoint.
     shutdown.lock().await.db = Some(Arc::clone(&db));
 
-    // Load settings files once and derive everything from them before any
-    // producer starts emitting security events.
-    let (user_sf, corp_sf) = capsem_core::net::policy_config::load_settings_and_corp_files();
-    let merged = capsem_core::net::policy_config::MergedPolicies::from_files(&user_sf, &corp_sf);
-    let settings_config_path = capsem_core::net::policy_config::settings_config_path()
-        .map(|path| path.display().to_string())
-        .unwrap_or_else(|| "none".to_string());
-    let corp_config_paths = capsem_core::net::policy_config::corp_config_paths()
-        .into_iter()
-        .map(|path| path.display().to_string())
-        .collect::<Vec<_>>();
-    let security_rule_ids = merged
+    let runtime_source = runtime_config::RuntimeProfileSource::new(args.profile_dir.clone());
+    let runtime_config = runtime_source.load()?;
+    let security_rule_ids = runtime_config
         .security_rules
         .rules()
         .iter()
         .map(|rule| rule.rule_id.as_str())
         .collect::<Vec<_>>();
     info!(
-        settings_config_path = %settings_config_path,
-        corp_config_paths = ?corp_config_paths,
+        profile_id = %runtime_config.profile_id,
+        profile_dir = %runtime_config.profile_dir.display(),
+        config_root = %runtime_config.config_root.display(),
         security_rule_count = security_rule_ids.len(),
         security_rule_ids = ?security_rule_ids,
-        plugin_count = merged.plugins.len(),
-        "capsem-process loaded runtime security config"
+        plugin_count = runtime_config.plugins.len(),
+        "capsem-process loaded profile runtime config"
     );
-    let snap_settings = capsem_core::net::policy_config::resolve_settings(&user_sf, &corp_sf);
-    let guest_config = merged.guest.clone();
-    let security_rules = Arc::new(std::sync::RwLock::new(Arc::new(merged.security_rules)));
-    let plugin_policy = Arc::new(std::sync::RwLock::new(merged.plugins));
+    let guest_config = capsem_core::net::policy_config::GuestConfig::default();
+    let security_rules = Arc::new(std::sync::RwLock::new(Arc::new(
+        runtime_config.security_rules.clone(),
+    )));
+    let plugin_policy = Arc::new(std::sync::RwLock::new(runtime_config.plugins.clone()));
 
     // Start host file monitor to record fs_events.
     let workspace_dir = session_dir.join("workspace");
@@ -355,7 +351,7 @@ async fn run_async_main_loop(
     let net_state = Arc::new(capsem_core::create_net_state_with_policy(
         &args.id,
         Arc::clone(&db),
-        merged.network.clone(),
+        runtime_config.network.clone(),
     )?);
     // Locate the builtin MCP server binary next to our own binary.
     let builtin_bin = std::env::current_exe()
@@ -371,27 +367,13 @@ async fn run_async_main_loop(
         "CAPSEM_SESSION_DB".into(),
         db_path.to_string_lossy().to_string(),
     );
-    let mcp_servers = capsem_core::mcp::build_server_list_with_builtin(
-        &user_sf.mcp.clone().unwrap_or_default(),
-        &corp_sf.mcp.clone().unwrap_or_default(),
+    let mcp_servers = runtime_config.mcp_servers(
         builtin_bin.as_deref(),
         builtin_env,
     );
-    let snap_auto_max = snap_settings
-        .iter()
-        .find(|s| s.id == "vm.snapshots.auto_max")
-        .and_then(|s| s.effective_value.as_number())
-        .unwrap_or(10) as usize;
-    let snap_manual_max = snap_settings
-        .iter()
-        .find(|s| s.id == "vm.snapshots.manual_max")
-        .and_then(|s| s.effective_value.as_number())
-        .unwrap_or(12) as usize;
-    let snap_interval = snap_settings
-        .iter()
-        .find(|s| s.id == "vm.snapshots.auto_interval")
-        .and_then(|s| s.effective_value.as_number())
-        .unwrap_or(300) as u64;
+    let snap_auto_max = 10usize;
+    let snap_manual_max = 12usize;
+    let snap_interval = 300u64;
 
     let scheduler = capsem_core::auto_snapshot::AutoSnapshotScheduler::new(
         session_dir.clone(),
@@ -463,7 +445,9 @@ async fn run_async_main_loop(
 
     let inflight_cap = capsem_core::mcp::resolve_inflight_cap();
     info!(inflight_cap, "MITM MCP endpoint in-flight handler cap");
-    let model_endpoints = Arc::new(std::sync::RwLock::new(Arc::new(merged.model_endpoints)));
+    let model_endpoints = Arc::new(std::sync::RwLock::new(Arc::new(
+        runtime_config.model_endpoints.clone(),
+    )));
     let mcp_inflight = Arc::new(tokio::sync::Semaphore::new(inflight_cap));
     let mcp_endpoint = Arc::new(capsem_core::net::mitm_proxy::McpEndpointState::new(
         aggregator_client.clone(),
@@ -686,6 +670,7 @@ async fn run_async_main_loop(
         let job_c = Arc::clone(&job_store);
         let net_c = Arc::clone(&net_state);
         let mcp_c = Arc::clone(&mcp_runtime);
+        let runtime_source_c = runtime_source.clone();
         let sched_c = Arc::clone(&scheduler);
         let ready_c = Arc::clone(&vm_ready);
 
@@ -698,6 +683,7 @@ async fn run_async_main_loop(
                 job_c,
                 net_c,
                 mcp_c,
+                runtime_source_c,
                 sched_c,
                 ready_c,
             )
@@ -899,6 +885,8 @@ mod tests {
             "/tmp/rootfs.img",
             "--session-dir",
             "/tmp/session",
+            "--profile-dir",
+            "/tmp/config/profiles/code",
             "--uds-path",
             "/tmp/vm.sock",
         ])
@@ -907,6 +895,7 @@ mod tests {
         assert_eq!(args.assets_dir, PathBuf::from("/tmp/assets"));
         assert_eq!(args.rootfs, PathBuf::from("/tmp/rootfs.img"));
         assert_eq!(args.session_dir, PathBuf::from("/tmp/session"));
+        assert_eq!(args.profile_dir, PathBuf::from("/tmp/config/profiles/code"));
         assert_eq!(args.uds_path, PathBuf::from("/tmp/vm.sock"));
     }
 
@@ -922,6 +911,8 @@ mod tests {
             "/r",
             "--session-dir",
             "/s",
+            "--profile-dir",
+            "/profiles/code",
             "--uds-path",
             "/u",
         ])
@@ -941,6 +932,8 @@ mod tests {
             "/r",
             "--session-dir",
             "/s",
+            "--profile-dir",
+            "/profiles/code",
             "--uds-path",
             "/u",
         ])
@@ -960,6 +953,8 @@ mod tests {
             "/r",
             "--session-dir",
             "/s",
+            "--profile-dir",
+            "/profiles/code",
             "--uds-path",
             "/u",
         ])
@@ -979,6 +974,8 @@ mod tests {
             "/r",
             "--session-dir",
             "/s",
+            "--profile-dir",
+            "/profiles/code",
             "--uds-path",
             "/u",
             "--cpus",
@@ -1017,6 +1014,8 @@ mod tests {
             "/r",
             "--session-dir",
             "/s",
+            "--profile-dir",
+            "/profiles/code",
             "--uds-path",
             "/u",
         ]);
@@ -1029,6 +1028,26 @@ mod tests {
             "capsem-process",
             "--id",
             "vm",
+            "--rootfs",
+            "/r",
+            "--session-dir",
+            "/s",
+            "--profile-dir",
+            "/profiles/code",
+            "--uds-path",
+            "/u",
+        ]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn args_missing_required_profile_dir_fails() {
+        let result = Args::try_parse_from([
+            "capsem-process",
+            "--id",
+            "vm",
+            "--assets-dir",
+            "/a",
             "--rootfs",
             "/r",
             "--session-dir",
@@ -1051,6 +1070,8 @@ mod tests {
             "/r",
             "--session-dir",
             "/s",
+            "--profile-dir",
+            "/profiles/code",
             "--uds-path",
             "/u",
             "--cpus",
@@ -1071,6 +1092,8 @@ mod tests {
             "/r",
             "--session-dir",
             "/s",
+            "--profile-dir",
+            "/profiles/code",
             "--uds-path",
             "/u",
         ])
@@ -1090,6 +1113,8 @@ mod tests {
             "/r",
             "--session-dir",
             "/s",
+            "--profile-dir",
+            "/profiles/code",
             "--uds-path",
             "/u",
             "--checkpoint-path",
@@ -1114,6 +1139,8 @@ mod tests {
             "/r",
             "--session-dir",
             "/s",
+            "--profile-dir",
+            "/profiles/code",
             "--uds-path",
             "/u",
             "--env",

@@ -9,6 +9,7 @@ use tracing::{debug, error, info, warn};
 
 use crate::job_store::{JobResult, JobStore};
 use crate::mcp_runtime::McpRuntime;
+use crate::runtime_config::RuntimeProfileSource;
 use crate::terminal::TerminalRelay;
 
 type SharedSnapshotScheduler =
@@ -52,6 +53,7 @@ pub(crate) async fn handle_ipc_connection(
     job_store: Arc<JobStore>,
     net_state: Arc<capsem_core::SandboxNetworkState>,
     mcp_runtime: Arc<McpRuntime>,
+    runtime_source: RuntimeProfileSource,
     snapshot_scheduler: SharedSnapshotScheduler,
     vm_ready: Arc<AtomicBool>,
 ) -> Result<()> {
@@ -607,15 +609,16 @@ pub(crate) async fn handle_ipc_connection(
                 });
             }
             ServiceToProcess::ReloadConfig => {
-                info!("Reloading policies from disk");
-                let (user_sf, corp_sf) = capsem_core::net::policy_config::load_settings_and_corp_files();
-                let merged =
-                    capsem_core::net::policy_config::MergedPolicies::from_files(&user_sf, &corp_sf);
+                info!(
+                    profile_dir = %runtime_source.profile_dir().display(),
+                    "Reloading profile runtime config"
+                );
+                let runtime_config = runtime_source.load()?;
 
-                let new_network = Arc::new(merged.network);
-                let new_security_rules = Arc::new(merged.security_rules);
-                let new_plugin_policy = merged.plugins;
-                let new_model_endpoints = Arc::new(merged.model_endpoints);
+                let new_network = Arc::new(runtime_config.network);
+                let new_security_rules = Arc::new(runtime_config.security_rules);
+                let new_plugin_policy = runtime_config.plugins;
+                let new_model_endpoints = Arc::new(runtime_config.model_endpoints);
 
                 *net_state.policy.write().unwrap() = new_network;
                 *mcp_runtime.security_rules.write().unwrap() = new_security_rules;
@@ -722,13 +725,25 @@ pub(crate) async fn handle_ipc_connection(
             ServiceToProcess::McpRefreshTools { id } => {
                 let mcp = Arc::clone(&mcp_runtime);
                 let ipc_tx_out = ipc_tx_out.clone();
+                let runtime_source = runtime_source.clone();
                 tokio::spawn(async move {
-                    // Reload config from disk and refresh aggregator.
-                    let (user_sf, corp_sf) = capsem_core::net::policy_config::load_settings_and_corp_files();
-                    let servers = capsem_core::mcp::build_server_list(
-                        &user_sf.mcp.clone().unwrap_or_default(),
-                        &corp_sf.mcp.clone().unwrap_or_default(),
-                    );
+                    let runtime_config = match runtime_source.load() {
+                        Ok(config) => config,
+                        Err(e) => {
+                            capsem_core::try_send!(
+                                "ipc_mcp_refresh_profile_load_err",
+                                ipc_tx_out
+                                    .send(ProcessToService::McpRefreshResult {
+                                        id,
+                                        success: false,
+                                        error: Some(e.to_string())
+                                    })
+                                    .await
+                            );
+                            return;
+                        }
+                    };
+                    let servers = runtime_config.mcp_servers(None, std::collections::HashMap::new());
                     match mcp.aggregator.refresh(servers).await {
                         Ok(()) => {
                             capsem_core::try_send!(

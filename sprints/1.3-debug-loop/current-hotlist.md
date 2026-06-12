@@ -32,6 +32,11 @@ This is the active debug list for the 1.3 release loop. Older captured bugs in
     no longer writes a `user.toml`/`settings.toml` policy side channel for
     local MITM ports; focused contract test covers this so benchmark helpers
     cannot rename the old rail.
+  - Proof slice closed 2026-06-11: `capsem-process` startup, policy reload,
+    and MCP refresh now load runtime rules/plugins/MCP/model endpoints from
+    the selected profile directory passed by the service. A build-chain guard
+    fails if `capsem-process/src` reintroduces settings/corp runtime loaders or
+    old MCP server builders; process CLI tests require `--profile-dir`.
 
 - [ ] Profile/config format linter
   - Add a fast always-on config linter, ruff-style: boring, quick, clear

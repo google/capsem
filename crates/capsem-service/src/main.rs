@@ -746,17 +746,18 @@ impl ServiceState {
                 .context("failed to clone sandbox state")?;
         }
 
-        let profile = self.profile_config(&profile_id)?;
+        let runtime_profile = self.profile_for_runtime(&profile_id)?;
+        let profile = runtime_profile.config();
         let profile_revision = profile.revision.clone();
-        let profile_payload_hash = profile_payload_hash(&profile)?;
-        let asset_pins = profile_asset_pins(&profile)?;
+        let profile_payload_hash = profile_payload_hash(profile)?;
+        let asset_pins = profile_asset_pins(profile)?;
         self.validate_profile_pins(
-            &profile,
+            profile,
             &profile_revision,
             &profile_payload_hash,
             &asset_pins,
         )?;
-        let resolved = self.resolve_profile_asset_paths(&profile)?;
+        let resolved = self.resolve_profile_asset_paths(profile)?;
 
         info!(process_binary = %self.process_binary.display(), exists = self.process_binary.exists(), "checking process_binary");
 
@@ -828,6 +829,8 @@ impl ServiceState {
                 .arg(&resolved.initrd)
                 .arg("--session-dir")
                 .arg(&session_dir)
+                .arg("--profile-dir")
+                .arg(runtime_profile.profile_dir())
                 .arg("--cpus")
                 .arg(cpus.to_string())
                 .arg("--ram-mb")
@@ -1043,14 +1046,15 @@ impl ServiceState {
         let _ = std::fs::remove_file(&uds_path);
         let _ = std::fs::remove_file(uds_path.with_extension("ready"));
 
-        let profile = self.profile_config(&entry.profile_id)?;
+        let runtime_profile = self.profile_for_runtime(&entry.profile_id)?;
+        let profile = runtime_profile.config();
         self.validate_profile_pins(
-            &profile,
+            profile,
             &entry.profile_revision,
             &entry.profile_payload_hash,
             &entry.asset_pins,
         )?;
-        let resolved = self.resolve_profile_asset_paths(&profile)?;
+        let resolved = self.resolve_profile_asset_paths(profile)?;
 
         let process_log_path = entry.session_dir.join("process.log");
         let process_log_file = std::fs::OpenOptions::new()
@@ -1131,6 +1135,8 @@ impl ServiceState {
                 .arg(&resolved.initrd)
                 .arg("--session-dir")
                 .arg(&entry.session_dir)
+                .arg("--profile-dir")
+                .arg(runtime_profile.profile_dir())
                 .arg("--cpus")
                 .arg(cpus.to_string())
                 .arg("--ram-mb")
@@ -1306,6 +1312,35 @@ impl ServiceState {
             .get(profile_id)
             .cloned()
             .ok_or_else(|| anyhow!("profile not found: {profile_id}"))
+    }
+
+    fn profile_for_runtime(&self, profile_id: &str) -> Result<Profile> {
+        #[cfg(test)]
+        let catalog = if let Some(path) = test_profile_dir_override() {
+            ProfileCatalog::load_from_dir(&path)
+                .map_err(|e| anyhow!("load profile catalog: {e}"))?
+        } else {
+            ProfileCatalog::builtin()
+        };
+        #[cfg(not(test))]
+        let catalog =
+            ProfileCatalog::load_default().map_err(|e| anyhow!("load profile catalog: {e}"))?;
+        let profile = catalog
+            .get(profile_id)
+            .cloned()
+            .ok_or_else(|| anyhow!("profile not found: {profile_id}"))?;
+        match catalog.source() {
+            ProfileCatalogSource::BuiltIn => {
+                let config_root = builtin_profile_config_root();
+                let profile_dir = config_root.join("profiles").join(&profile.id);
+                Profile::from_config(config_root, profile_dir, profile)
+                    .map_err(|e| anyhow!("load builtin profile {profile_id}: {e}"))
+            }
+            ProfileCatalogSource::Directory(profiles_dir) => {
+                Profile::load_from_dir(profiles_dir.join(profile_id))
+                    .map_err(|e| anyhow!("load profile {profile_id}: {e}"))
+            }
+        }
     }
 
     fn resolve_profile_asset_paths(
