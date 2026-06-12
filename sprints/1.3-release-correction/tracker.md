@@ -350,8 +350,17 @@ next one, and stage only the files for that slice.
 
 ## S10. Packaging, Install, Docs, Release Gate
 
-- [ ] RED/GREEN: `.pkg` and `.deb` fail if they contain rootfs/initrd/kernel
+- [x] RED/GREEN: `.pkg` and `.deb` fail if they contain rootfs/initrd/kernel
   asset blobs.
+  - 2026-06-11 progress: package builders now stage only the selected
+    manifest, manifest provenance, binaries, and profile ledger. VM asset
+    blobs remain external and are reconciled by the service from the installed
+    manifest.
+  - Proof: `uv run python -m pytest
+    tests/capsem-build-chain/test_install_asset_payload.py
+    tests/test_repack_deb.py tests/test_build_pkg.py -q`; `bash -n
+    scripts/build-pkg.sh scripts/repack-deb.sh scripts/deb-postinst.sh
+    scripts/pkg-scripts/postinstall`.
 - [ ] GREEN: package accepts local/remote manifest override, copies it to the
   service-owned location, and records origin/hash in status/debug/install log.
 - [ ] GREEN: install logs are timestamped and actionable.

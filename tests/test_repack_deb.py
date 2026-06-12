@@ -15,6 +15,7 @@ executed in Linux CI and inside the capsem-install-test container.
 
 import shutil
 import subprocess
+import json
 from pathlib import Path
 
 import pytest
@@ -85,6 +86,37 @@ def _seed_config(config_dir: Path):
     (profiles / "code" / "enforcement.toml").write_text("# enforcement\n")
 
 
+def _seed_manifest_and_local_assets(manifest: Path, assets_dir: Path) -> None:
+    """Drop a v2 manifest plus tiny fake VM payloads for both supported arches."""
+    digest = "a" * 64
+    manifest.write_text(
+        json.dumps(
+            {
+                "format": 2,
+                "version": "9.9.9-test",
+                "assets": {
+                    "current": "test-release",
+                    "releases": {
+                        "test-release": {
+                            "arches": {
+                                "arm64": {"rootfs.erofs": {"hash": digest}},
+                                "x86_64": {"rootfs.erofs": {"hash": digest}},
+                            }
+                        }
+                    },
+                },
+                "binaries": {},
+            },
+            sort_keys=True,
+        )
+        + "\n"
+    )
+    for arch in ("arm64", "x86_64"):
+        arch_dir = assets_dir / arch
+        arch_dir.mkdir(parents=True, exist_ok=True)
+        (arch_dir / f"rootfs-{digest[:16]}.erofs").write_bytes(b"fake-rootfs")
+
+
 def _run_repack(
     input_deb: Path,
     bin_dir: Path,
@@ -92,9 +124,20 @@ def _run_repack(
     output_deb: Path = None,
     timeout: int = 30,
 ) -> subprocess.CompletedProcess:
-    args = [str(SCRIPT), str(input_deb), str(bin_dir), str(config_dir)]
+    manifest = input_deb.parent / "manifest.json"
+    assets_dir = input_deb.parent / "assets"
+    if not manifest.exists():
+        _seed_manifest_and_local_assets(manifest, assets_dir)
+    args = [
+        str(SCRIPT),
+        "--manifest",
+        str(manifest),
+        str(input_deb),
+        str(bin_dir),
+        str(config_dir),
+        str(assets_dir),
+    ]
     if output_deb is not None:
-        args.append("")
         args.append(str(output_deb))
     return subprocess.run(args, capture_output=True, text=True, timeout=timeout)
 
@@ -241,7 +284,18 @@ def test_explicit_manifest_is_packaged_without_current_arch_assets(tmp_path):
     manifest = tmp_path / "corp-manifest.json"
     _seed_binaries(bin_dir)
     _seed_config(config_dir)
-    manifest.write_text('{"format":2,"assets":{"current":"corp"},"binaries":{"current":"test"}}\n')
+    manifest.write_text(
+        json.dumps(
+            {
+                "format": 2,
+                "version": "9.9.9-test",
+                "assets": {"current": "corp", "releases": {"corp": {"arches": {}}}},
+                "binaries": {"current": "test"},
+            },
+            sort_keys=True,
+        )
+        + "\n"
+    )
     output = tmp_path / "out.deb"
 
     res = subprocess.run(
@@ -264,8 +318,75 @@ def test_explicit_manifest_is_packaged_without_current_arch_assets(tmp_path):
     )
 
     extracted = _deb_contents(output, tmp_path / "extracted")
-    packaged_manifest = extracted / "usr" / "share" / "capsem" / "assets" / "manifest.json"
+    assets_dir = extracted / "usr" / "share" / "capsem" / "assets"
+    packaged_manifest = assets_dir / "manifest.json"
     assert packaged_manifest.read_text() == manifest.read_text()
+    assert (assets_dir / "manifest-origin.json").is_file()
+    assert sorted(path.name for path in assets_dir.iterdir()) == [
+        "manifest-origin.json",
+        "manifest.json",
+    ]
+
+
+def test_repacked_deb_payload_is_closed_and_manifest_only_for_assets(tmp_path):
+    """The .deb carries binaries, profiles, and manifest metadata; VM assets stay external."""
+    fixture = _build_fixture_deb(tmp_path)
+    bin_dir = tmp_path / "bin"
+    config_dir = tmp_path / "target-config"
+    assets_dir = tmp_path / "assets"
+    manifest = tmp_path / "manifest.json"
+    _seed_binaries(bin_dir)
+    _seed_config(config_dir)
+    _seed_manifest_and_local_assets(manifest, assets_dir)
+    output = tmp_path / "out.deb"
+
+    res = subprocess.run(
+        [
+            str(SCRIPT),
+            "--manifest",
+            str(manifest),
+            str(fixture),
+            str(bin_dir),
+            str(config_dir),
+            str(assets_dir),
+            str(output),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert res.returncode == 0, (
+        f"repack-deb.sh failed: stdout={res.stdout!r} stderr={res.stderr!r}"
+    )
+
+    extracted = _deb_contents(output, tmp_path / "extracted")
+    assets_dir = extracted / "usr" / "share" / "capsem" / "assets"
+    assert sorted(path.name for path in assets_dir.iterdir()) == [
+        "manifest-origin.json",
+        "manifest.json",
+    ]
+
+    unexpected = []
+    for path in extracted.rglob("*"):
+        rel = path.relative_to(extracted).as_posix()
+        if path.is_dir():
+            continue
+        if rel.startswith("DEBIAN/"):
+            continue
+        if rel.startswith("usr/bin/") and rel.removeprefix("usr/bin/") in REQUIRED_BINARIES:
+            continue
+        if rel in {
+            "usr/share/capsem/assets/manifest.json",
+            "usr/share/capsem/assets/manifest-origin.json",
+        }:
+            continue
+        if rel.startswith("usr/share/capsem/profiles/"):
+            continue
+        if rel == "usr/share/capsem-fixture/marker.txt":
+            continue
+        unexpected.append(rel)
+
+    assert unexpected == []
 
 
 def test_output_defaults_to_overwriting_input(tmp_path):

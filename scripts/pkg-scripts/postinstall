@@ -65,10 +65,14 @@ if [ -f "$PKG_SHARE/entitlements.plist" ]; then
     echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=postinstall event=binaries_codesigned"
 fi
 
-# Copy assets (manifest + versioned dir)
-if [ -d "$PKG_SHARE/assets" ]; then
-    cp -R "$PKG_SHARE/assets/"* "$CAPSEM_DIR/assets/" 2>/dev/null || true
-    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=postinstall event=assets_copied"
+# Copy the package-selected manifest and provenance. VM asset payloads are
+# external to the package and are reconciled by the service from this manifest.
+if [ -f "$PKG_SHARE/assets/manifest.json" ]; then
+    install -m 0644 "$PKG_SHARE/assets/manifest.json" "$CAPSEM_DIR/assets/manifest.json"
+    if [ -f "$PKG_SHARE/assets/manifest-origin.json" ]; then
+        install -m 0644 "$PKG_SHARE/assets/manifest-origin.json" "$CAPSEM_DIR/assets/manifest-origin.json"
+    fi
+    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=postinstall event=manifest_copied"
 fi
 
 # Copy the materialized profile catalog and its rule files. Profiles pin the

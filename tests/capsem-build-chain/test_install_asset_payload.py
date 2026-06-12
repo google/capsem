@@ -40,11 +40,12 @@ def test_manifest_generation_public_path_is_capsem_admin() -> None:
         assert "scripts/gen_manifest.py" not in text
 
 
-def test_package_builders_move_selected_manifest_payload() -> None:
+def test_package_builders_stage_manifest_only_not_vm_asset_payload() -> None:
     build_pkg = (PROJECT_ROOT / "scripts" / "build-pkg.sh").read_text()
     repack_deb = (PROJECT_ROOT / "scripts" / "repack-deb.sh").read_text()
     deb_postinst = (PROJECT_ROOT / "scripts" / "deb-postinst.sh").read_text()
     pkg_preinstall = (PROJECT_ROOT / "scripts" / "pkg-scripts" / "preinstall").read_text()
+    pkg_postinstall = (PROJECT_ROOT / "scripts" / "pkg-scripts" / "postinstall").read_text()
 
     assert "CAPSEM_PKG_ASSET_MODE" not in build_pkg
     assert "ASSET_MODE=" not in build_pkg
@@ -61,7 +62,12 @@ def test_package_builders_move_selected_manifest_payload() -> None:
     assert 'install -m 0644 "$ASSETS_VIEW/manifest.json" "$SHARE_DIR/assets/manifest.json"' in build_pkg
     assert 'SELECTED_MANIFEST_SOURCE="$MANIFEST_PATH"' in build_pkg
     assert 'write_manifest_origin "$SELECTED_MANIFEST_SOURCE" "$SHARE_DIR/assets/manifest-origin.json"' in build_pkg
-    assert 'materialize_manifest_assets "$ASSETS_VIEW" "$SHARE_DIR/assets" "$ASSETS_DIR"' in build_pkg
+    assert "materialize_manifest_assets" not in build_pkg
+    assert "Added asset:" not in build_pkg
+    assert "rootfs-" not in build_pkg
+    assert "initrd-" not in build_pkg
+    assert "vmlinuz-" not in build_pkg
+    assert "obom-" not in build_pkg
     assert "sync-dev-assets.sh" not in build_pkg
     assert 'CONFIG_ROOT="${POSITIONAL[3]}"' in build_pkg
     assert 'ditto --norsrc --noextattr "$src" "$dst"' in build_pkg
@@ -96,14 +102,22 @@ def test_package_builders_move_selected_manifest_payload() -> None:
     assert 'cp "$ASSETS_VIEW/manifest.json" "$WORK_DIR/deb/usr/share/capsem/assets/manifest.json"' in repack_deb
     assert 'SELECTED_MANIFEST_SOURCE="$MANIFEST_PATH"' in repack_deb
     assert 'write_manifest_origin "$SELECTED_MANIFEST_SOURCE" "$WORK_DIR/deb/usr/share/capsem/assets/manifest-origin.json"' in repack_deb
-    assert 'materialize_manifest_assets "$ASSETS_VIEW" "$WORK_DIR/deb/usr/share/capsem/assets" "$ASSETS_DIR"' in repack_deb
+    assert "materialize_manifest_assets" not in repack_deb
+    assert "Added asset:" not in repack_deb
+    assert "rootfs-" not in repack_deb
+    assert "initrd-" not in repack_deb
+    assert "vmlinuz-" not in repack_deb
+    assert "obom-" not in repack_deb
     assert 'cp -R "$CONFIG_ROOT/profiles/." "$WORK_DIR/deb/usr/share/capsem/profiles/"' in repack_deb
     assert "sync-dev-assets.sh" not in repack_deb
     assert "capsem-admin" in repack_deb
     assert "capsem-tui" in repack_deb
     assert "/usr/share/capsem/assets" in deb_postinst
     assert "/usr/share/capsem/profiles" in deb_postinst
-    assert 'cp -R /usr/share/capsem/assets/. "$CAPSEM_DIR/assets/"' in deb_postinst
+    assert 'install -m 0644 /usr/share/capsem/assets/manifest.json "$CAPSEM_DIR/assets/manifest.json"' in deb_postinst
+    assert 'install -m 0644 /usr/share/capsem/assets/manifest-origin.json "$CAPSEM_DIR/assets/manifest-origin.json"' in deb_postinst
+    assert "event=manifest_copied" in deb_postinst
+    assert "event=assets_copied" not in deb_postinst
     assert 'INSTALL_LOG="$CAPSEM_DIR/logs/install.log"' in deb_postinst
     assert 'INSTALL_RUN_LOG="$CAPSEM_DIR/logs/install-$INSTALL_RUN_ID.log"' in deb_postinst
     assert 'install-current-run' in deb_postinst
@@ -112,6 +126,11 @@ def test_package_builders_move_selected_manifest_payload() -> None:
     assert "capsem-admin" in deb_postinst
     assert "capsem-tui" in deb_postinst
 
+    assert 'install -m 0644 "$PKG_SHARE/assets/manifest.json" "$CAPSEM_DIR/assets/manifest.json"' in pkg_postinstall
+    assert 'install -m 0644 "$PKG_SHARE/assets/manifest-origin.json" "$CAPSEM_DIR/assets/manifest-origin.json"' in pkg_postinstall
+    assert "event=manifest_copied" in pkg_postinstall
+    assert "event=assets_copied" not in pkg_postinstall
+
 
 def test_macos_postinstall_adds_capsem_bin_to_fish_path() -> None:
     postinstall = (PROJECT_ROOT / "scripts" / "pkg-scripts" / "postinstall").read_text()
@@ -119,7 +138,7 @@ def test_macos_postinstall_adds_capsem_bin_to_fish_path() -> None:
     assert ".config/fish/config.fish" in postinstall
     assert "fish_add_path" in postinstall
     assert "grep -qF 'fish_add_path --path \"$HOME/.capsem/bin\"'" in postinstall
-    assert 'cp -R "$PKG_SHARE/assets/"* "$CAPSEM_DIR/assets/"' in postinstall
+    assert 'cp -R "$PKG_SHARE/assets/"* "$CAPSEM_DIR/assets/"' not in postinstall
     assert "pkill -x capsem-app" in postinstall
     assert 'INSTALL_LOG="$CAPSEM_DIR/logs/install.log"' in postinstall
     assert 'INSTALL_RUN_ID=$(cat "$INSTALL_RUN_FILE" 2>/dev/null || date' in postinstall

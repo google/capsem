@@ -39,11 +39,14 @@ chown -R "$TARGET_USER:$(id -gn "$TARGET_USER")" "$CAPSEM_DIR/logs"
 exec > >(tee -a "$INSTALL_LOG" "$INSTALL_RUN_LOG") 2>&1
 echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=start user=$TARGET_USER install_run_id=$INSTALL_RUN_ID install_run_log=$INSTALL_RUN_LOG"
 
-# Copy package-provided assets, if present. Packages provide the selected
-# manifest and its provenance; the service reconciles asset payloads from it.
-if [ -d "/usr/share/capsem/assets" ]; then
-    cp -R /usr/share/capsem/assets/. "$CAPSEM_DIR/assets/" 2>/dev/null || true
-    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=assets_copied"
+# Copy the package-selected manifest and provenance. VM asset payloads are
+# external to the package and are reconciled by the service from this manifest.
+if [ -f "/usr/share/capsem/assets/manifest.json" ]; then
+    install -m 0644 /usr/share/capsem/assets/manifest.json "$CAPSEM_DIR/assets/manifest.json"
+    if [ -f "/usr/share/capsem/assets/manifest-origin.json" ]; then
+        install -m 0644 /usr/share/capsem/assets/manifest-origin.json "$CAPSEM_DIR/assets/manifest-origin.json"
+    fi
+    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=manifest_copied"
 fi
 
 if [ -d "/usr/share/capsem/profiles" ]; then
