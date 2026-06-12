@@ -84,8 +84,16 @@ next one, and stage only the files for that slice.
   - Doctor contract: guest diagnostics now collect `df -h`, `df -i`, and
     `/proc/mounts` overlay mount options alongside the existing `/dev/vdb`
     ext4 probe.
-- [ ] RED/GREEN: bounded write/install probes cover `/usr/local`,
+- [x] RED/GREEN: bounded write/install probes cover `/usr/local`,
   `/var/cache/apt`, `/tmp`, `/var/tmp`, and `/root`.
+  - Proof: `uv run python -m py_compile
+    guest/artifacts/diagnostics/test_storage_write_probes.py`; `(cd
+    guest/artifacts/diagnostics && uv run python -m pytest --collect-only
+    test_storage_write_probes.py -q)`.
+  - Doctor contract: bounded create/read/delete probes cover `/usr/local`,
+    `/var/cache/apt`, `/tmp`, `/var/tmp`, and `/root`; `_apt` must be able to
+    write `/var/cache/apt/archives/partial` so apt does not fall back to
+    unsandboxed root downloads.
 
 ## S3. Route Contract and API Coverage
 
