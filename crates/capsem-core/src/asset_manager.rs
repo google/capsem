@@ -421,6 +421,14 @@ pub fn asset_download_url(binary_version: &str, arch: &str, logical_name: &str) 
     format!("{}/{}-{}", release_url(binary_version), arch, logical_name)
 }
 
+fn asset_storage_dir(base_dir: &Path, arch: &str) -> PathBuf {
+    if base_dir.file_name().and_then(|name| name.to_str()) == Some(arch) {
+        base_dir.to_path_buf()
+    } else {
+        base_dir.join(arch)
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Cleanup
 // ---------------------------------------------------------------------------
@@ -543,7 +551,7 @@ where
         .get(arch)
         .with_context(|| format!("arch {arch} not found in asset release {asset_version}"))?;
 
-    let arch_dir = base_dir.join(arch);
+    let arch_dir = asset_storage_dir(base_dir, arch);
     std::fs::create_dir_all(&arch_dir)
         .with_context(|| format!("cannot create {}", arch_dir.display()))?;
 
@@ -563,22 +571,31 @@ where
         let hname = hash_filename(name, &entry.hash);
         let target = arch_dir.join(&hname);
 
-        if target.exists() {
-            match hash_file(&target) {
-                Ok(h) if h == entry.hash => {
-                    on_progress(DownloadProgress {
-                        logical_name: name.clone(),
-                        bytes_done: entry.size,
-                        bytes_total: Some(entry.size),
-                        done: true,
-                    });
-                    continue;
-                }
-                _ => {
-                    info!(path = %target.display(), "existing file hash mismatch, redownloading");
-                    let _ = std::fs::remove_file(&target);
+        let mut candidates = vec![base_dir.join(&hname), target.clone()];
+        candidates.dedup();
+        let mut needs_download = true;
+        for candidate in candidates {
+            if candidate.exists() {
+                match hash_file(&candidate) {
+                    Ok(h) if h == entry.hash => {
+                        needs_download = false;
+                        break;
+                    }
+                    _ => {
+                        info!(path = %candidate.display(), "existing file hash mismatch, redownloading");
+                        let _ = std::fs::remove_file(&candidate);
+                    }
                 }
             }
+        }
+        if !needs_download {
+            on_progress(DownloadProgress {
+                logical_name: name.clone(),
+                bytes_done: entry.size,
+                bytes_total: Some(entry.size),
+                done: true,
+            });
+            continue;
         }
 
         let url = asset_download_url(binary_version, arch, name);
@@ -1056,6 +1073,78 @@ mod tests {
             !url.contains("2026."),
             "asset version leaked into URL: {url}"
         );
+    }
+
+    #[tokio::test]
+    async fn download_missing_assets_skips_direct_arch_dev_layout() {
+        let dir = tempfile::tempdir().unwrap();
+        let base_dir = dir.path().join("arm64");
+        std::fs::create_dir(&base_dir).unwrap();
+        let files = [
+            ("vmlinuz", b"kernel".as_slice()),
+            ("initrd.img", b"initrd".as_slice()),
+            ("rootfs.erofs", b"rootfs".as_slice()),
+        ];
+        let mut assets = std::collections::HashMap::new();
+        for (name, bytes) in files {
+            let hash = blake3::hash(bytes).to_hex().to_string();
+            assets.insert(
+                name.to_string(),
+                AssetEntry {
+                    hash,
+                    size: bytes.len() as u64,
+                },
+            );
+        }
+        let manifest = ManifestV2 {
+            format: 2,
+            refresh_policy: "24h".to_string(),
+            assets: AssetsSection {
+                current: "2030.0101.1".to_string(),
+                releases: [(
+                    "2030.0101.1".to_string(),
+                    AssetRelease {
+                        date: "2030-01-01".to_string(),
+                        deprecated: false,
+                        deprecated_date: None,
+                        min_binary: "1.0.0".to_string(),
+                        arches: [("arm64".to_string(), assets)].into(),
+                    },
+                )]
+                .into(),
+            },
+            binaries: BinariesSection {
+                current: "9.9.9".to_string(),
+                releases: [(
+                    "9.9.9".to_string(),
+                    BinaryRelease {
+                        date: "2030-01-01".to_string(),
+                        deprecated: false,
+                        deprecated_date: None,
+                        min_assets: "2030.0101.1".to_string(),
+                        version: String::new(),
+                        files: Vec::new(),
+                    },
+                )]
+                .into(),
+            },
+        };
+        for (name, entry) in &manifest.assets.releases["2030.0101.1"].arches["arm64"] {
+            let hname = hash_filename(name, &entry.hash);
+            let bytes = match name.as_str() {
+                "vmlinuz" => b"kernel".as_slice(),
+                "initrd.img" => b"initrd".as_slice(),
+                "rootfs.erofs" => b"rootfs".as_slice(),
+                _ => unreachable!(),
+            };
+            std::fs::write(base_dir.join(hname), bytes).unwrap();
+        }
+
+        let downloaded = download_missing_assets(&manifest, "9.9.9", "arm64", &base_dir, |_| {})
+            .await
+            .expect("direct arch layout should not try to download");
+
+        assert!(downloaded.is_empty());
     }
 
     // CAPSEM_RELEASE_URL override is exercised end-to-end by the Python
