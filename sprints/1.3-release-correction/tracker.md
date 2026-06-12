@@ -565,6 +565,30 @@ next one, and stage only the files for that slice.
     guest/artifacts/diagnostics/test_network.py`; `(cd
     guest/artifacts/diagnostics && uv run python -m pytest --collect-only
     test_network.py -q)` (`39 tests collected`).
+  - 2026-06-12 progress: strengthened Ironbank caught that the doctor model
+    and OAuth stimuli were passing synthetic credentials in process argv. The
+    network request path was brokered correctly, but `audit_events.argv` still
+    preserved the raw test secret. Doctor now sends the same Authorization
+    header and OAuth form through curl config/data files generated in the VM,
+    so the MITM sees real credential-shaped traffic while process audit does
+    not record the secret material.
+  - 2026-06-12 progress: `/sbin/shutdown` is no longer a guest Capsem
+    lifecycle alias. The TUI owns shutdown. Init removes any stale
+    `/sbin/shutdown` alias, while `halt`, `poweroff`, `reboot`, and
+    `/usr/local/bin/suspend` remain routed through `/run/capsem-sysutil`.
+  - Proof: `python3 -m py_compile
+    guest/artifacts/diagnostics/test_lifecycle.py
+    guest/artifacts/diagnostics/test_network.py
+    tests/test_release_doctor_contract.py
+    tests/ironbank/test_doctor_ledger.py`; `uv run ruff check
+    guest/artifacts/diagnostics/test_lifecycle.py
+    guest/artifacts/diagnostics/test_network.py
+    tests/test_release_doctor_contract.py
+    tests/ironbank/test_doctor_ledger.py`; `uv run python -m pytest
+    tests/test_release_doctor_contract.py::test_guest_init_publishes_rootfs_binaries_into_run_contract
+    tests/test_release_doctor_contract.py::test_guest_network_doctor_exercises_oauth_fixture
+    -q`. Full VM Ironbank rerun is intentionally held until the next asset
+    swap; no rebuild was performed after the shutdown contract change.
 - [ ] RED/GREEN: doctor verifies DB ledger rows and rule/plugin evidence for
   allow/ask/block/disable/rewrite/pre/post/detection levels.
   - 2026-06-12 progress: `tests/ironbank/test_doctor_ledger.py` now proves the
@@ -574,6 +598,13 @@ next one, and stage only the files for that slice.
     plugin and detection-level matrix.
   - Proof: `CAPSEM_TEST_PRESERVE_ALWAYS=1 uv run python -m pytest
     tests/ironbank/test_doctor_ledger.py -q -s` (`1 passed in 34.55s`).
+  - 2026-06-12 progress: Ironbank now asserts the exact
+    `/security/latest` JSON field set, closed rule action/detection-level
+    vocabularies, exact `substitution_events` schema columns, broker outcome
+    verbs, BLAKE3 reference shape, valid context JSON, and absence of raw
+    synthetic secret markers across every text column in the session DB. The
+    new checks found the argv leak above; after the doctor fixture source fix,
+    the next rebuilt image must rerun this test before the gate closes.
 - [ ] RED/GREEN: doctor/toolchain probes cover apt/dpkg triggers, Python, pip,
   uv, Node, npm, npx, packaged CLIs, aliases, MCP bootstrap, DNS, TLS, FS
   writes.

@@ -88,6 +88,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `/profiles/status`, `/profiles/{id}/assets/status`, and CLI status output now
   report the current manifest hash, source, refresh timestamp, and validation
   result instead of treating the install-time hash as immutable.
+- Hardened doctor/Ironbank diagnostics so credential-shaped model and OAuth
+  probes no longer place synthetic secrets in process argv, and removed the
+  guest `shutdown` sysutil alias now that VM shutdown is owned by the TUI.
 - Made `capsem-admin manifest generate <assets_dir>` the documented manifest
   production rail for local, release, and corp custom builds; package builders
   consume the selected manifest but no longer document or rely on direct

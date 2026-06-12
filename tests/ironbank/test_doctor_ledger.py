@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 import shlex
 import sqlite3
@@ -19,6 +20,46 @@ ASSETS_DIR = PROJECT_ROOT / "assets"
 PROFILES_DIR = PROJECT_ROOT / "target" / "config" / "profiles"
 
 pytestmark = pytest.mark.integration
+
+EXPECTED_SUBSTITUTION_COLUMNS = {
+    "id",
+    "event_id",
+    "timestamp",
+    "material_class",
+    "source",
+    "event_type",
+    "algorithm",
+    "substitution_ref",
+    "outcome",
+    "provider",
+    "confidence",
+    "trace_id",
+    "context_json",
+}
+
+EXPECTED_SECURITY_LATEST_FIELDS = {
+    "timestamp_unix_ms",
+    "event_id",
+    "event_type",
+    "rule_id",
+    "rule_action",
+    "detection_level",
+    "rule_json",
+    "event_json",
+    "trace_id",
+}
+
+BROKER_OUTCOMES = {"captured", "brokered", "injected", "error"}
+HAPPY_PATH_BROKER_OUTCOMES = {"captured", "brokered", "injected"}
+RAW_SECRET_MARKERS = {
+    "capsem_test_openai_api_key",
+    "capsem_test_api_key",
+    "capsem_test_oauth_access",
+    "capsem_test_oauth_refresh",
+    "capsem_test_oauth_id",
+    "capsem_test_oauth_code",
+    "capsem_test_oauth_client_secret",
+}
 
 
 def _connect_session_db(session_root: Path, session_id: str) -> sqlite3.Connection:
@@ -46,6 +87,27 @@ def _count(conn: sqlite3.Connection, table: str, where: str = "1 = 1") -> int:
 def _assert_ledger_id(value: object) -> None:
     assert isinstance(value, str)
     assert re.fullmatch(r"[0-9a-f]{12}", value), value
+
+
+def _assert_no_raw_secret_markers_in_session_db(conn: sqlite3.Connection) -> None:
+    tables = [
+        row[0]
+        for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name"
+        ).fetchall()
+    ]
+    for table in tables:
+        columns = conn.execute(f"PRAGMA table_info({table})").fetchall()
+        text_columns = [row[1] for row in columns if str(row[2]).upper() in {"TEXT", ""}]
+        if not text_columns:
+            continue
+        selected = ", ".join(f'"{column}"' for column in text_columns)
+        for row in conn.execute(f'SELECT {selected} FROM "{table}"').fetchall():
+            for column, value in zip(text_columns, row, strict=True):
+                if not isinstance(value, str):
+                    continue
+                leaked = [marker for marker in RAW_SECRET_MARKERS if marker in value]
+                assert not leaked, f"raw secret marker leaked in {table}.{column}: {leaked}"
 
 
 def test_capsem_doctor_pays_protocol_and_security_ledger_debt():
@@ -111,6 +173,13 @@ def test_capsem_doctor_pays_protocol_and_security_ledger_debt():
         security_latest = client.get(f"/vms/{session_id}/security/latest?limit=25", timeout=30)
         assert isinstance(security_latest, list)
         assert len(security_latest) > 0
+        assert all(set(row) == EXPECTED_SECURITY_LATEST_FIELDS for row in security_latest)
+        assert all(row["event_id"] for row in security_latest)
+        assert all(row["rule_id"] for row in security_latest)
+        assert all(row["rule_action"] in {"allow", "ask", "block", "preprocess", "rewrite", "postprocess"} for row in security_latest)
+        assert all(row["detection_level"] in {"none", "informational", "low", "medium", "high", "critical"} for row in security_latest)
+        assert all(json.loads(row["rule_json"]) for row in security_latest)
+        assert all(json.loads(row["event_json"]) for row in security_latest)
 
         conn = _connect_session_db(service.tmp_dir / "sessions", session_id)
         for table in (
@@ -126,6 +195,7 @@ def test_capsem_doctor_pays_protocol_and_security_ledger_debt():
         ):
             assert _count(conn, table) > 0, f"{table} should contain doctor evidence"
             assert "event_id" in _table_columns(conn, table), f"{table} must carry event_id"
+        assert _table_columns(conn, "substitution_events") == EXPECTED_SUBSTITUTION_COLUMNS
 
         model_net = _single(
             conn,
@@ -228,6 +298,13 @@ def test_capsem_doctor_pays_protocol_and_security_ledger_debt():
         assert mcp_call["server_name"]
         assert mcp_call["tool_name"]
 
+        broker_outcomes = {
+            row["outcome"]
+            for row in conn.execute("SELECT DISTINCT outcome FROM substitution_events").fetchall()
+        }
+        assert broker_outcomes
+        assert broker_outcomes <= BROKER_OUTCOMES
+        assert broker_outcomes <= HAPPY_PATH_BROKER_OUTCOMES
         credential_sources = {
             row["source"]
             for row in conn.execute(
@@ -246,6 +323,21 @@ def test_capsem_doctor_pays_protocol_and_security_ledger_debt():
         assert credential_refs
         assert all(ref.startswith("credential:blake3:") for ref in credential_refs)
         assert all(len(ref.removeprefix("credential:blake3:")) == 64 for ref in credential_refs)
+        substitution_rows = conn.execute("SELECT * FROM substitution_events").fetchall()
+        assert all(row["material_class"] == "credential" for row in substitution_rows)
+        assert all(row["algorithm"] == "blake3" for row in substitution_rows)
+        assert all(
+            row["event_type"] in {"http.request", "http.response", "model.call"}
+            for row in substitution_rows
+        )
+        assert all(
+            row["confidence"] is None or 0.0 <= float(row["confidence"]) <= 1.0
+            for row in substitution_rows
+        )
+        assert all(
+            json.loads(row["context_json"]) if row["context_json"] else True
+            for row in substitution_rows
+        )
 
         dns = _single(conn, "SELECT * FROM dns_events ORDER BY id DESC LIMIT 1")
         _assert_ledger_id(dns["event_id"])
@@ -266,6 +358,7 @@ def test_capsem_doctor_pays_protocol_and_security_ledger_debt():
         assert exec_row["exit_code"] == 0
         assert exec_row["source"] in {"api", "cli", "mcp"}
         assert exec_row["stdout_bytes"] > 0
+        _assert_no_raw_secret_markers_in_session_db(conn)
         conn.close()
     finally:
         stop_process(mock_proc)

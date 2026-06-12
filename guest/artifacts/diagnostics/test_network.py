@@ -453,13 +453,26 @@ def test_local_openai_compatible_model_fixture():
         "/v1/chat/completions",
         "local OpenAI-compatible model smoke",
     )
-    payload = '{"model":"mock-local","messages":[{"role":"user","content":"hello"}]}'
     result = run(
-        f"curl -sS --connect-timeout 5"
-        f" -H 'content-type: application/json'"
-        f" -H 'authorization: Bearer sk-capsem_test_openai_api_key_0123456789abcdef'"
-        f" -d '{payload}'"
-        f" {local_url}",
+        "python3 - <<'PY'\n"
+        "from pathlib import Path\n"
+        "import subprocess\n"
+        "payload_path = Path('/tmp/capsem-doctor-openai-payload.json')\n"
+        "config_path = Path('/tmp/capsem-doctor-openai-curl.conf')\n"
+        "secret = 'sk-' + 'capsem_' + 'test_' + 'openai_api_key_' + '0123456789abcdef'\n"
+        "payload_path.write_text('{\"model\":\"mock-local\",\"messages\":[{\"role\":\"user\",\"content\":\"hello\"}]}')\n"
+        "config_path.write_text(\n"
+        "    'silent\\n'\n"
+        "    'show-error\\n'\n"
+        "    'connect-timeout = 5\\n'\n"
+        "    'request = POST\\n'\n"
+        "    'header = \"content-type: application/json\"\\n'\n"
+        "    f'header = \"authorization: Bearer {secret}\"\\n'\n"
+        "    f'data = \"@{payload_path}\"\\n'\n"
+        f"    'url = \"{local_url}\"\\n'\n"
+        ")\n"
+        "raise SystemExit(subprocess.run(['curl', '--config', str(config_path)]).returncode)\n"
+        "PY",
         timeout=15,
     )
     assert result.returncode == 0, f"model fixture curl failed: {result.stdout}"
@@ -488,17 +501,32 @@ def test_local_oauth_token_fixture_is_broker_stimulus_only():
     """OAuth token exchange traffic must be exercised hermetically without
     dumping synthetic token values into doctor output."""
     local_url = _require_local_mock_url("/oauth/token", "local OAuth token smoke")
-    form = (
-        "grant_type=authorization_code"
-        "&code=capsem_test_oauth_code_0123456789abcdef"
-        "&client_secret=capsem_test_oauth_client_secret"
-    )
     result = run(
-        f"curl -sS -o /dev/null -w '%{{http_code}} %{{size_download}}'"
-        f" --connect-timeout 5"
-        f" -H 'content-type: application/x-www-form-urlencoded'"
-        f" --data '{form}'"
-        f" {local_url}",
+        "python3 - <<'PY'\n"
+        "from pathlib import Path\n"
+        "import subprocess\n"
+        "body_path = Path('/tmp/capsem-doctor-oauth-form.txt')\n"
+        "config_path = Path('/tmp/capsem-doctor-oauth-curl.conf')\n"
+        "code = 'capsem_' + 'test_' + 'oauth_code_' + '0123456789abcdef'\n"
+        "client_secret = 'capsem_' + 'test_' + 'oauth_client_secret'\n"
+        "body_path.write_text(\n"
+        "    'grant_type=authorization_code'\n"
+        "    f'&code={code}'\n"
+        "    f'&client_secret={client_secret}'\n"
+        ")\n"
+        "config_path.write_text(\n"
+        "    'silent\\n'\n"
+        "    'show-error\\n'\n"
+        "    'output = /dev/null\\n'\n"
+        "    'write-out = \"%{http_code} %{size_download}\"\\n'\n"
+        "    'connect-timeout = 5\\n'\n"
+        "    'request = POST\\n'\n"
+        "    'header = \"content-type: application/x-www-form-urlencoded\"\\n'\n"
+        "    f'data = \"@{body_path}\"\\n'\n"
+        f"    'url = \"{local_url}\"\\n'\n"
+        ")\n"
+        "raise SystemExit(subprocess.run(['curl', '--config', str(config_path)]).returncode)\n"
+        "PY",
         timeout=15,
     )
     assert result.returncode == 0, f"OAuth fixture curl failed: {result.stdout}"

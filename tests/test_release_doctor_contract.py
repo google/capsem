@@ -149,6 +149,32 @@ def test_guest_init_repairs_overlay_root_traversal_for_unprivileged_tools() -> N
     assert chroot_chmod_pos < launch_pos
 
 
+def test_guest_init_publishes_rootfs_binaries_into_run_contract() -> None:
+    init = (PROJECT_ROOT / "guest" / "artifacts" / "capsem-init").read_text()
+
+    expected_rootfs_copies = {
+        "capsem-net-proxy": "/newroot/usr/local/bin/capsem-net-proxy",
+        "capsem-dns-proxy": "/newroot/usr/local/bin/capsem-dns-proxy",
+        "capsem-pty-agent": "/newroot/usr/local/bin/capsem-pty-agent",
+        "capsem-sysutil": "/newroot/usr/local/bin/capsem-sysutil",
+    }
+    for binary, rootfs_path in expected_rootfs_copies.items():
+        assert rootfs_path in init
+        assert f"cp {rootfs_path} /newroot/run/{binary}" in init
+        assert f"chmod 555 /newroot/run/{binary}" in init
+
+    assert "ln -sf /run/capsem-sysutil /newroot/sbin/shutdown" not in init
+    assert "rm -f /newroot/sbin/shutdown" in init
+
+    for link in (
+        "/newroot/sbin/halt",
+        "/newroot/sbin/poweroff",
+        "/newroot/sbin/reboot",
+        "/newroot/usr/local/bin/suspend",
+    ):
+        assert f"ln -sf /run/capsem-sysutil {link}" in init
+
+
 def test_guest_runtime_doctor_package_probes_are_hermetic() -> None:
     source = (
         PROJECT_ROOT / "guest" / "artifacts" / "diagnostics" / "test_runtimes.py"

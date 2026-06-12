@@ -321,14 +321,16 @@ echo "[capsem-init] network ready"
 boot_mark "network"
 
 # Launch net proxy (TCP->vsock bridge) as background process.
-# Prefer initrd-bundled copy, fall back to rootfs.
+# Publish the selected binary into /run so the guest-visible contract is stable.
 NET_PROXY_PATH=""
 if [ -x /capsem-net-proxy ]; then
     cp /capsem-net-proxy /newroot/run/capsem-net-proxy
     chmod 555 /newroot/run/capsem-net-proxy
     NET_PROXY_PATH=/run/capsem-net-proxy
 elif [ -x /newroot/usr/local/bin/capsem-net-proxy ]; then
-    NET_PROXY_PATH=/usr/local/bin/capsem-net-proxy
+    cp /newroot/usr/local/bin/capsem-net-proxy /newroot/run/capsem-net-proxy
+    chmod 555 /newroot/run/capsem-net-proxy
+    NET_PROXY_PATH=/run/capsem-net-proxy
 fi
 if [ -n "$NET_PROXY_PATH" ]; then
     chroot /newroot "$NET_PROXY_PATH" &
@@ -357,7 +359,9 @@ if [ -x /capsem-dns-proxy ]; then
     chmod 555 /newroot/run/capsem-dns-proxy
     DNS_PROXY_PATH=/run/capsem-dns-proxy
 elif [ -x /newroot/usr/local/bin/capsem-dns-proxy ]; then
-    DNS_PROXY_PATH=/usr/local/bin/capsem-dns-proxy
+    cp /newroot/usr/local/bin/capsem-dns-proxy /newroot/run/capsem-dns-proxy
+    chmod 555 /newroot/run/capsem-dns-proxy
+    DNS_PROXY_PATH=/run/capsem-dns-proxy
 fi
 if [ -n "$DNS_PROXY_PATH" ]; then
     chroot /newroot "$DNS_PROXY_PATH" &
@@ -377,8 +381,9 @@ else
 fi
 boot_mark "dns_proxy"
 
-# Deploy MCP server binary (stdio-to-vsock relay for AI agents).
-# Prefer initrd-bundled copy, fall back to rootfs.
+# Publish MCP server binary (stdio-to-vsock relay for AI agents) into /run.
+# The guest-visible path stays stable whether the selected copy comes from
+# initrd or the rootfs image.
 if [ -x /capsem-mcp-server ]; then
     cp /capsem-mcp-server /newroot/run/capsem-mcp-server
     chmod 555 /newroot/run/capsem-mcp-server
@@ -393,13 +398,18 @@ fi
 if [ -x /capsem-sysutil ]; then
     cp /capsem-sysutil /newroot/run/capsem-sysutil
     chmod 555 /newroot/run/capsem-sysutil
-    ln -sf /run/capsem-sysutil /newroot/sbin/shutdown
+elif [ -x /newroot/usr/local/bin/capsem-sysutil ]; then
+    cp /newroot/usr/local/bin/capsem-sysutil /newroot/run/capsem-sysutil
+    chmod 555 /newroot/run/capsem-sysutil
+fi
+if [ -x /newroot/run/capsem-sysutil ]; then
+    rm -f /newroot/sbin/shutdown
     ln -sf /run/capsem-sysutil /newroot/sbin/halt
     ln -sf /run/capsem-sysutil /newroot/sbin/poweroff
     ln -sf /run/capsem-sysutil /newroot/sbin/reboot
     mkdir -p /newroot/usr/local/bin
     ln -sf /run/capsem-sysutil /newroot/usr/local/bin/suspend
-    echo "[capsem-init] capsem-sysutil deployed (shutdown/halt/poweroff/reboot/suspend)"
+    echo "[capsem-init] capsem-sysutil deployed (halt/poweroff/reboot/suspend)"
 fi
 
 # Deploy initrd-bundled capsem-doctor and diagnostics (fast iteration).
@@ -515,8 +525,7 @@ echo "[capsem-init] about to chroot..."
 # This gives full terminal features (resize, job control, TUI apps) and
 # high-throughput I/O without serial bottlenecks.
 #
-# Prefer initrd-bundled agent (injected by `just repack`) over rootfs copy.
-# This allows fast agent iteration without a full rootfs rebuild.
+# Publish the selected agent into /run so tests and users see one stable path.
 AGENT_PATH=""
 if [ -x /capsem-pty-agent ]; then
     # Copy from initrd to writable tmpfs so chroot can access it.
@@ -526,7 +535,9 @@ if [ -x /capsem-pty-agent ]; then
     AGENT_PATH=/run/capsem-pty-agent
     echo "[capsem-init] using initrd-bundled agent"
 elif [ -x /newroot/usr/local/bin/capsem-pty-agent ]; then
-    AGENT_PATH=/usr/local/bin/capsem-pty-agent
+    cp /newroot/usr/local/bin/capsem-pty-agent /newroot/run/capsem-pty-agent
+    chmod 555 /newroot/run/capsem-pty-agent
+    AGENT_PATH=/run/capsem-pty-agent
     echo "[capsem-init] using rootfs agent"
 else
     echo "[capsem-init] FATAL: capsem-pty-agent not found"
