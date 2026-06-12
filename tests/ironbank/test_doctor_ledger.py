@@ -111,7 +111,7 @@ def _assert_no_raw_secret_markers_in_session_db(conn: sqlite3.Connection) -> Non
 
 
 def test_capsem_doctor_pays_protocol_and_security_ledger_debt():
-    assert MOCK_SERVER_BINARY.exists(), f"{MOCK_SERVER_BINARY} missing; build capsem-mock-server"
+    assert MOCK_SERVER_BINARY.exists(), f"{MOCK_SERVER_BINARY} missing; restore mock server runtime"
     assert ASSETS_DIR.exists(), f"{ASSETS_DIR} missing; build VM assets before Ironbank"
     assert PROFILES_DIR.exists(), f"{PROFILES_DIR} missing; materialize profile config before Ironbank"
 

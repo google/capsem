@@ -11,7 +11,11 @@ mod update;
 use anyhow::{anyhow, Context, Result};
 use clap::builder::styling::{AnsiColor, Color, Style, Styles};
 use clap::{Parser, Subcommand};
-use std::path::PathBuf;
+use std::{
+    io::BufRead,
+    path::PathBuf,
+    process::{Child, Command as StdCommand, Stdio},
+};
 use tokio::io::AsyncWriteExt;
 
 use client::{
@@ -23,6 +27,91 @@ use client::{
 
 const DEFAULT_PROFILE_ID: &str = "code";
 const DOCTOR_MOCK_SERVER_ADDR: &str = "127.0.0.1:3713";
+
+struct DoctorMockServer {
+    child: Child,
+    base_url: String,
+}
+
+impl DoctorMockServer {
+    fn base_url(&self) -> &str {
+        &self.base_url
+    }
+
+    fn shutdown(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+impl Drop for DoctorMockServer {
+    fn drop(&mut self) {
+        self.shutdown();
+    }
+}
+
+fn mock_server_runtime_path() -> Result<PathBuf> {
+    let cwd_candidate = std::env::current_dir()
+        .context("read current directory")?
+        .join("scripts/mock_server_runtime.py");
+    if cwd_candidate.exists() {
+        return Ok(cwd_candidate);
+    }
+
+    let manifest_candidate =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../scripts/mock_server_runtime.py");
+    if manifest_candidate.exists() {
+        return manifest_candidate
+            .canonicalize()
+            .context("resolve source-tree scripts/mock_server_runtime.py");
+    }
+
+    Err(anyhow!(
+        "scripts/mock_server_runtime.py not found; restore the shared Python mock server runtime"
+    ))
+}
+
+fn spawn_doctor_mock_server() -> Result<DoctorMockServer> {
+    let script = mock_server_runtime_path()?;
+    let mut child = StdCommand::new("python3")
+        .arg(&script)
+        .arg("--addr")
+        .arg(DOCTOR_MOCK_SERVER_ADDR)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .with_context(|| format!("start {}", script.display()))?;
+
+    let stdout = child
+        .stdout
+        .take()
+        .context("mock server stdout must be piped")?;
+    let mut reader = std::io::BufReader::new(stdout);
+    let mut line = String::new();
+    let bytes = reader
+        .read_line(&mut line)
+        .context("read mock server ready JSON")?;
+    if bytes == 0 {
+        let status = child.try_wait().context("read mock server status")?;
+        return Err(anyhow!(
+            "mock server exited before ready JSON; status={status:?}"
+        ));
+    }
+
+    let ready: serde_json::Value =
+        serde_json::from_str(&line).context("parse mock server ready JSON")?;
+    if ready.get("service").and_then(serde_json::Value::as_str) != Some("capsem-mock-server") {
+        child.kill().ok();
+        return Err(anyhow!("unexpected mock server ready payload: {line}"));
+    }
+    let base_url = ready
+        .get("base_url")
+        .and_then(serde_json::Value::as_str)
+        .context("mock server ready JSON missing base_url")?
+        .to_string();
+
+    Ok(DoctorMockServer { child, base_url })
+}
 
 const fn cli_styles() -> Styles {
     Styles::styled()
@@ -1778,19 +1867,13 @@ async fn main() -> Result<()> {
             println!("Running capsem-doctor...");
             println!("Log: {}", log_path.display());
 
-            let preferred_mock_addr = DOCTOR_MOCK_SERVER_ADDR
-                .parse()
-                .expect("valid doctor mock server bind address");
-            let mock_server =
-                capsem_mock_server::spawn_mock_server_on(preferred_mock_addr)
-                    .await
-                    .with_context(|| {
-                        format!(
-                            "start local mock server for capsem-doctor at {DOCTOR_MOCK_SERVER_ADDR}; \
-                             this address is required so guest traffic proves the iptables-nft redirect rail"
-                        )
-                    })?;
-            let mock_base_url = mock_server.base_url();
+            let mut mock_server = spawn_doctor_mock_server().with_context(|| {
+                format!(
+                    "start local mock server for capsem-doctor at {DOCTOR_MOCK_SERVER_ADDR}; \
+                     this address is required so guest traffic proves the iptables-nft redirect rail"
+                )
+            })?;
+            let mock_base_url = mock_server.base_url().to_string();
             println!("Local mock server: {mock_base_url}");
 
             let mut doctor_env = std::collections::HashMap::new();
@@ -2018,7 +2101,7 @@ async fn main() -> Result<()> {
             }
 
             delete_vm(&client, &vm_id).await;
-            let _ = mock_server.shutdown().await;
+            mock_server.shutdown();
             if exit_code != 0 {
                 eprintln!("Full log: {}", log_path.display());
                 std::process::exit(exit_code);
@@ -2537,9 +2620,7 @@ mod tests {
         let cli = Cli::parse_from(["capsem", "doctor"]);
         assert!(matches!(
             cli.command.unwrap(),
-            Commands::Misc(MiscCommands::Doctor {
-                bundle: false
-            })
+            Commands::Misc(MiscCommands::Doctor { bundle: false })
         ));
     }
 
@@ -2548,9 +2629,7 @@ mod tests {
         let cli = Cli::parse_from(["capsem", "doctor", "--bundle"]);
         assert!(matches!(
             cli.command.unwrap(),
-            Commands::Misc(MiscCommands::Doctor {
-                bundle: true
-            })
+            Commands::Misc(MiscCommands::Doctor { bundle: true })
         ));
     }
 

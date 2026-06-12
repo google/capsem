@@ -83,8 +83,8 @@ def test_release_scripts_use_shared_mock_server_helper() -> None:
 def test_mock_server_is_the_only_hermetic_fixture_server_contract() -> None:
     current_files = [
         PROJECT_ROOT / "scripts" / "mock_server.py",
+        PROJECT_ROOT / "scripts" / "mock_server_runtime.py",
         PROJECT_ROOT / "tests" / "helpers" / "mock_server.py",
-        PROJECT_ROOT / "crates" / "capsem-mock-server" / "Cargo.toml",
         PROJECT_ROOT / "guest" / "artifacts" / "capsem_bench" / "__main__.py",
         PROJECT_ROOT / "guest" / "artifacts" / "capsem_bench" / "helpers.py",
     ]
@@ -96,8 +96,18 @@ def test_mock_server_is_the_only_hermetic_fixture_server_contract() -> None:
         assert "CAPSEM_BENCH_MITM_LOCAL_BASE_URL" not in text
 
     assert (PROJECT_ROOT / "crates" / "capsem-debug-upstream").exists() is False
+    assert (PROJECT_ROOT / "crates" / "capsem-mock-server").exists() is False
     assert (PROJECT_ROOT / "scripts" / "debug_upstream.py").exists() is False
     assert (PROJECT_ROOT / "tests" / "helpers" / "debug_upstream.py").exists() is False
+
+
+def test_mock_server_has_no_rust_fixture_crate() -> None:
+    root_cargo = (PROJECT_ROOT / "Cargo.toml").read_text()
+    cli_cargo = (PROJECT_ROOT / "crates" / "capsem" / "Cargo.toml").read_text()
+
+    assert "crates/capsem-mock-server" not in root_cargo
+    assert "capsem-mock-server" not in cli_cargo
+    assert "capsem_mock_server" not in (PROJECT_ROOT / "crates" / "capsem" / "src" / "main.rs").read_text()
 
 
 def test_integration_script_has_no_live_ai_provider_escape_hatch() -> None:

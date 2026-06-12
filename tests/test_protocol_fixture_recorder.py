@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import importlib.util
 import json
-import subprocess
 from pathlib import Path
 
 from helpers.mock_server import start_mock_server, stop_process
@@ -21,11 +20,6 @@ def _load_recorder():
 
 def test_protocol_fixture_recorder_uses_mock_server_and_sanitizes(tmp_path):
     recorder = _load_recorder()
-    subprocess.run(
-        ["cargo", "build", "-p", "capsem-mock-server"],
-        cwd=PROJECT_ROOT,
-        check=True,
-    )
     proc = None
     try:
         proc, ready = start_mock_server()
@@ -69,11 +63,6 @@ def test_protocol_fixture_recorder_uses_mock_server_and_sanitizes(tmp_path):
 
 def test_protocol_fixture_replay_covers_recorded_flows(tmp_path):
     recorder = _load_recorder()
-    subprocess.run(
-        ["cargo", "build", "-p", "capsem-mock-server"],
-        cwd=PROJECT_ROOT,
-        check=True,
-    )
     proc = None
     try:
         proc, ready = start_mock_server()

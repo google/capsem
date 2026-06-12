@@ -289,13 +289,18 @@ next one, and stage only the files for that slice.
     scripts/integration_test.py` is quiet.
 - [ ] GREEN: one local protocol lab serves HTTP, HTTPS/MITM, DNS, SSE,
   WebSocket, MCP JSON-RPC, OAuth/OIDC, and model fixture replay.
-  - 2026-06-12 progress: `capsem-mock-server` now serves protocol-shaped
+  - 2026-06-12 progress: the shared mock server now serves protocol-shaped
     OAuth authorize/token fixtures and MCP JSON-RPC fixtures alongside the
     existing HTTP/gzip/SSE/WebSocket/OpenAI-compatible model fixtures. The
     token endpoint deliberately emits `capsem_test_*` secret-shaped values so
     broker/recorder tests can prove capture and sanitization without touching
     real credentials.
-  - Proof: `cargo test -p capsem-mock-server -- --nocapture` (`8 passed`).
+  - 2026-06-12 correction: the Rust `capsem-mock-server` crate was removed.
+    The single fixture implementation is now `scripts/mock_server_runtime.py`,
+    launched by `scripts/mock_server.py`; `capsem doctor`, recorder,
+    integration, benchmark, and Ironbank tests all use that same runtime.
+    `tests/test_release_doctor_contract.py` rejects a restored Rust fixture
+    crate or CLI dependency.
 - [ ] RED/GREEN: every protocol lab case is a full-chain acceptance spec, not
   a status-code replay.
   - Suite home: `tests/ironbank/`.
@@ -504,24 +509,24 @@ next one, and stage only the files for that slice.
 - [x] Proof: lab is shared by doctor, integration tests, recorder, and
   benchmark.
   - 2026-06-12 progress: renamed the canonical deterministic fixture service
-    from `capsem-debug-upstream` to `capsem-mock-server`. The public contract
+    from `capsem-debug-upstream` to the shared mock server. The public contract
     is now `CAPSEM_MOCK_SERVER_BASE_URL`, with `scripts/mock_server.py` and
     `tests/helpers/mock_server.py` as the only launcher/helper path. This is
     the reusable mock boundary for doctor, integration, protocol recording,
     benchmark, and Ironbank; new feature-specific local servers are rejected.
   - 2026-06-12 progress: benchmark tests no longer carry a private fake HTTP
     fixture. `tests/test_capsem_bench_mitm_local.py` now starts the real
-    `capsem-mock-server` binary through the shared helper used by other
+    shared mock server through the shared helper used by other
     hermetic tests, so HTTP/gzip/SSE/model/credential/WebSocket benchmark
     proof and doctor/integration proof cannot drift silently.
-  - Proof: `cargo build -p capsem-mock-server`; `cargo test -p
-    capsem-mock-server -- --nocapture`; `uv run python -m pytest
-    tests/test_capsem_bench_mitm_local.py -q` (`23 passed in 1.06s`).
   - 2026-06-12 progress: release scripts no longer carry private
-    `capsem-mock-server` process bootstrap code. `scripts/mock_server.py`
+    mock-server process bootstrap code. `scripts/mock_server.py`
     is the single launcher/ready/lock/teardown helper, used by
     `scripts/doctor_session_test.py`, `scripts/integration_test.py`, the
     recorder tests, and benchmark tests.
+  - 2026-06-12 correction: `capsem doctor` no longer links a Rust fixture
+    crate. It spawns `scripts/mock_server_runtime.py`, reads the same ready
+    JSON contract as Python tests, and fails loudly if the runtime is absent.
   - Proof: `uv run python -m pytest tests/test_release_doctor_contract.py -q`
     (`8 passed`); `uv run ruff check scripts/mock_server.py
     scripts/doctor_session_test.py scripts/integration_test.py

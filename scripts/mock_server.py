@@ -6,6 +6,7 @@ import fcntl
 import json
 import selectors
 import subprocess
+import sys
 import tempfile
 import time
 from pathlib import Path
@@ -13,7 +14,7 @@ from typing import Any
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-MOCK_SERVER_BINARY = PROJECT_ROOT / "target" / "debug" / "capsem-mock-server"
+MOCK_SERVER_BINARY = PROJECT_ROOT / "scripts" / "mock_server_runtime.py"
 MOCK_SERVER_ADDR = "127.0.0.1:3713"
 MOCK_SERVER_LOCK = Path(tempfile.gettempdir()) / "capsem-mock-server-3713.lock"
 
@@ -81,11 +82,11 @@ def stop_process(proc: subprocess.Popen[str] | None) -> None:
 def start_mock_server() -> tuple[subprocess.Popen[str], dict[str, Any]]:
     if not MOCK_SERVER_BINARY.exists():
         raise FileNotFoundError(
-            f"{MOCK_SERVER_BINARY} not found; run `cargo build -p capsem-mock-server`"
+            f"{MOCK_SERVER_BINARY} not found; restore scripts/mock_server_runtime.py"
         )
     lock_file = _acquire_lock()
     proc = subprocess.Popen(
-        [str(MOCK_SERVER_BINARY), "--addr", MOCK_SERVER_ADDR],
+        [sys.executable, str(MOCK_SERVER_BINARY), "--addr", MOCK_SERVER_ADDR],
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,

@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed (route surfaces and diagnostics)
+- Replaced the Rust mock-server crate with the shared Python mock server
+  runtime for doctor, integration, recorder, benchmark, and Ironbank tests, so
+  there is one hermetic protocol lab and no duplicate fixture implementation.
 - Clarified the shared skills contract for profile `build.sh`: it is a
   rootfs-only build hook, not an installer/runtime/config path, and changes
   require profile descriptor updates, asset rebuilds, and black-box VM proof.

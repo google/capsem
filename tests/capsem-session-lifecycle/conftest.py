@@ -15,9 +15,7 @@ pytestmark = pytest.mark.session_lifecycle
 @pytest.fixture
 def lifecycle_mock_server():
     if not MOCK_SERVER_BINARY.exists():
-        pytest.skip(
-            f"{MOCK_SERVER_BINARY} not found; run `cargo build -p capsem-mock-server`"
-        )
+        pytest.fail(f"{MOCK_SERVER_BINARY} not found; restore scripts/mock_server_runtime.py")
     proc, ready = start_mock_server()
     try:
         yield ready["base_url"]

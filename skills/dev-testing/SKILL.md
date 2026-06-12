@@ -75,14 +75,14 @@ not just checking dpkg output.
 
 ## Mock server boundary
 
-`capsem-mock-server` is the single reusable local fixture server for
+`scripts/mock_server_runtime.py` is the single reusable local fixture server for
 benchmarks, doctor, protocol recording/replay, gateway/integration tests, and
 Ironbank. It owns mock protocol responses and deterministic local upstream
 behavior. Tests may contract it through `scripts/mock_server.py`,
 `tests/helpers/mock_server.py`, or `CAPSEM_MOCK_SERVER_BASE_URL`.
 
 Do not add another local HTTP/MCP/OAuth/model mock server for a feature. Extend
-`capsem-mock-server` and its fixtures instead, then assert the route through
+the shared mock server and its fixtures instead, then assert the route through
 the relevant black-box test.
 
 ## Parallel tests as dogfooding (n=4 is non-negotiable)

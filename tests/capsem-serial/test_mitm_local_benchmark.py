@@ -3,7 +3,7 @@
 This is intentionally gated by CAPSEM_RUN_MITM_LOCAL_BENCH=1 because it boots a
 VM and needs the mock server URL to be routable through the Capsem network
 path. When no explicit CAPSEM_MOCK_SERVER_BASE_URL is supplied, the test
-starts capsem-mock-server on host localhost and passes that URL to the guest.
+starts the shared mock server on host localhost and passes that URL to the guest.
 """
 
 import json
