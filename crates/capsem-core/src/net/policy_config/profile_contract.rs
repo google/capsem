@@ -757,12 +757,92 @@ impl Profile {
         })
     }
 
+    pub fn upsert_mcp_server(
+        &mut self,
+        server: crate::mcp::policy::McpManualServer,
+        actor: &str,
+    ) -> Result<ProfileMutationSummary, String> {
+        validate_profile_target("MCP server", &server.name)?;
+        validate_non_empty("MCP server URL", &server.url)?;
+        let profile_path = self.profile_dir.join("profile.toml");
+        let (old_hash, old_size) = file_hash_and_size(&profile_path)?;
+
+        let mut mcp = self.config.mcp.clone().unwrap_or_default();
+        mcp.servers.retain(|existing| existing.name != server.name);
+        mcp.servers.push(server.clone());
+        mcp.validate("profile")?;
+        self.config.mcp = Some(mcp);
+        self.config.validate()?;
+        self.save()?;
+        let (new_hash, new_size) = file_hash_and_size(&profile_path)?;
+
+        Ok(ProfileMutationSummary {
+            profile_id: self.config.id.clone(),
+            actor: actor.to_string(),
+            category: "mcp".to_string(),
+            filename: "profile.toml".to_string(),
+            affected_path: self.profile_toml_relative_path(),
+            target_kind: "mcp_server".to_string(),
+            target_key: server.name,
+            operation: "upsert".to_string(),
+            rule_id: None,
+            old_hash: format!("blake3:{old_hash}"),
+            old_size,
+            new_hash: format!("blake3:{new_hash}"),
+            new_size,
+        })
+    }
+
+    pub fn delete_mcp_server(
+        &mut self,
+        server: &str,
+        actor: &str,
+    ) -> Result<ProfileMutationSummary, String> {
+        validate_profile_target("MCP server", server)?;
+        let profile_path = self.profile_dir.join("profile.toml");
+        let (old_hash, old_size) = file_hash_and_size(&profile_path)?;
+
+        let mut mcp = self.config.mcp.clone().unwrap_or_default();
+        let before_len = mcp.servers.len();
+        mcp.servers.retain(|existing| existing.name != server);
+        let removed_server = mcp.servers.len() != before_len;
+        let removed_enabled = mcp.server_enabled.remove(server).is_some();
+        if !removed_server && !removed_enabled {
+            return Err(format!("profile MCP server not found: {server}"));
+        }
+        mcp.validate("profile")?;
+        self.config.mcp = Some(mcp);
+        self.config.validate()?;
+        self.save()?;
+        let (new_hash, new_size) = file_hash_and_size(&profile_path)?;
+
+        Ok(ProfileMutationSummary {
+            profile_id: self.config.id.clone(),
+            actor: actor.to_string(),
+            category: "mcp".to_string(),
+            filename: "profile.toml".to_string(),
+            affected_path: self.profile_toml_relative_path(),
+            target_kind: "mcp_server".to_string(),
+            target_key: server.to_string(),
+            operation: "delete".to_string(),
+            rule_id: None,
+            old_hash: format!("blake3:{old_hash}"),
+            old_size,
+            new_hash: format!("blake3:{new_hash}"),
+            new_size,
+        })
+    }
+
     pub fn save(&self) -> Result<(), String> {
         let path = self.profile_dir.join("profile.toml");
         let content = toml::to_string_pretty(&self.config)
             .map_err(|error| format!("serialize profile: {error}"))?;
         fs::write(&path, content)
             .map_err(|error| format!("write profile {}: {error}", path.display()))
+    }
+
+    fn profile_toml_relative_path(&self) -> String {
+        format!("profiles/{}/profile.toml", self.config.id)
     }
 
     fn load_verified_enforcement_rules(
@@ -915,6 +995,14 @@ impl Profile {
                 .and_then(|mcp| mcp.server_enabled.get("local"))
                 .copied()
                 .unwrap_or(false)
+        {
+            return Ok(());
+        }
+        if self
+            .config
+            .mcp
+            .as_ref()
+            .is_some_and(|mcp| mcp.servers.iter().any(|entry| entry.name == server))
         {
             return Ok(());
         }

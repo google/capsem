@@ -5201,32 +5201,34 @@ fn validate_mcp_server_id(server_id: &str) -> Result<(), AppError> {
 fn validate_mcp_server_edit_request(
     server_id: &str,
     update: McpServerEditRequest,
-) -> Result<(), AppError> {
+) -> Result<McpManualServer, AppError> {
     validate_mcp_server_id(server_id)?;
-    if let Some(url) = update.url.as_deref() {
-        if url.trim().is_empty() {
-            return Err(AppError(
-                StatusCode::BAD_REQUEST,
-                "MCP server URL must not be empty".to_string(),
-            ));
-        }
+    let url = update.url.ok_or_else(|| {
+        AppError(
+            StatusCode::BAD_REQUEST,
+            "MCP server URL is required".to_string(),
+        )
+    })?;
+    if url.trim().is_empty() {
+        return Err(AppError(
+            StatusCode::BAD_REQUEST,
+            "MCP server URL must not be empty".to_string(),
+        ));
     }
     let server = McpManualServer {
         name: server_id.to_string(),
-        url: update
-            .url
-            .unwrap_or_else(|| "http://profile-persistence-placeholder.invalid".to_string()),
+        url,
         headers: update.headers,
         auth: None,
         enabled: update.enabled.unwrap_or(true),
     };
     McpUserConfig {
-        servers: vec![server],
+        servers: vec![server.clone()],
         ..McpUserConfig::default()
     }
     .validate("profile")
     .map_err(|error| AppError(StatusCode::BAD_REQUEST, error))?;
-    Ok(())
+    Ok(server)
 }
 
 fn unix_timestamp_ms() -> i64 {
@@ -5373,25 +5375,113 @@ fn log_profile_mutation_route_rejected(
 
 /// PUT /profiles/:profile_id/mcp/servers/:server_id/edit -- add or replace one MCP server.
 async fn handle_profile_mcp_server_edit(
+    State(state): State<Arc<ServiceState>>,
     Path((profile_id, server_id)): Path<(String, String)>,
     Json(update): Json<McpServerEditRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let _profile = profile_manifest_for_route(profile_id)?;
-    validate_mcp_server_edit_request(&server_id, update)?;
-    Err(profile_persistence_not_implemented(
-        "profile MCP server edit",
-    ))
+    log_profile_mutation_route_request(
+        "profile_mcp_server_edit",
+        &profile_id,
+        "mcp_server",
+        &server_id,
+        "upsert",
+    );
+    let server = validate_mcp_server_edit_request(&server_id, update).inspect_err(|error| {
+        log_profile_mutation_route_rejected(
+            "profile_mcp_server_edit",
+            &profile_id,
+            "mcp_server",
+            &server_id,
+            "upsert",
+            &error.1,
+        );
+    })?;
+    let mut profile = profile_for_route(profile_id.clone()).inspect_err(|error| {
+        log_profile_mutation_route_rejected(
+            "profile_mcp_server_edit",
+            &profile_id,
+            "mcp_server",
+            &server_id,
+            "upsert",
+            &error.1,
+        );
+    })?;
+    let summary = profile
+        .upsert_mcp_server(server.clone(), "service-api")
+        .map_err(|error| {
+            log_profile_mutation_route_rejected(
+                "profile_mcp_server_edit",
+                &profile_id,
+                "mcp_server",
+                &server_id,
+                "upsert",
+                &error,
+            );
+            AppError(StatusCode::BAD_REQUEST, error)
+        })?;
+    let event = write_profile_mutation_event(&state, summary).await?;
+    log_profile_mutation_applied("profile_mcp_server_edit", &event);
+    Ok(Json(json!({
+        "profile_id": event.profile_id,
+        "server_id": server_id,
+        "url": server.url,
+        "enabled": server.enabled,
+        "mutation": event,
+    })))
 }
 
 /// DELETE /profiles/:profile_id/mcp/servers/:server_id/delete -- remove one MCP server.
 async fn handle_profile_mcp_server_delete(
+    State(state): State<Arc<ServiceState>>,
     Path((profile_id, server_id)): Path<(String, String)>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let _profile = profile_manifest_for_route(profile_id)?;
-    validate_mcp_server_id(&server_id)?;
-    Err(profile_persistence_not_implemented(
-        "profile MCP server delete",
-    ))
+    log_profile_mutation_route_request(
+        "profile_mcp_server_delete",
+        &profile_id,
+        "mcp_server",
+        &server_id,
+        "delete",
+    );
+    validate_mcp_server_id(&server_id).inspect_err(|error| {
+        log_profile_mutation_route_rejected(
+            "profile_mcp_server_delete",
+            &profile_id,
+            "mcp_server",
+            &server_id,
+            "delete",
+            &error.1,
+        );
+    })?;
+    let mut profile = profile_for_route(profile_id.clone()).inspect_err(|error| {
+        log_profile_mutation_route_rejected(
+            "profile_mcp_server_delete",
+            &profile_id,
+            "mcp_server",
+            &server_id,
+            "delete",
+            &error.1,
+        );
+    })?;
+    let summary = profile
+        .delete_mcp_server(&server_id, "service-api")
+        .map_err(|error| {
+            log_profile_mutation_route_rejected(
+                "profile_mcp_server_delete",
+                &profile_id,
+                "mcp_server",
+                &server_id,
+                "delete",
+                &error,
+            );
+            AppError(StatusCode::BAD_REQUEST, error)
+        })?;
+    let event = write_profile_mutation_event(&state, summary).await?;
+    log_profile_mutation_applied("profile_mcp_server_delete", &event);
+    Ok(Json(json!({
+        "profile_id": event.profile_id,
+        "server_id": server_id,
+        "mutation": event,
+    })))
 }
 
 async fn handle_profile_mcp_servers(

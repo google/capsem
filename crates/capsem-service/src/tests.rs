@@ -744,6 +744,131 @@ async fn profile_mcp_default_edit_writes_default_rule_and_mutation_ledger() {
     assert_eq!(default_info["action"], "ask");
 }
 
+#[tokio::test]
+async fn profile_mcp_server_edit_delete_persist_profile_and_mutation_ledger() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+
+    let dir = tempfile::tempdir().unwrap();
+    let (config_root, _) = install_file_asset_profile_fixture(&dir);
+    let _profiles_guard = EnvVarGuard::set("CAPSEM_PROFILES_DIR", config_root.join("profiles"));
+    let _home_guard = EnvVarGuard::set("CAPSEM_HOME", dir.path());
+    let state = make_asset_state(dir.path().join("assets"));
+    let app = build_service_router(Arc::clone(&state));
+
+    let (status, edited) = route_request(
+        app.clone(),
+        axum::http::Method::PUT,
+        "/profiles/code/mcp/servers/github/edit",
+        Some(json!({
+            "url": "https://mcp.invalid/github",
+            "enabled": true
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{edited}");
+    assert_eq!(edited["profile_id"], "code");
+    assert_eq!(edited["server_id"], "github");
+    assert_eq!(edited["url"], "https://mcp.invalid/github");
+    assert_eq!(edited["enabled"], true);
+    assert_eq!(edited["mutation"]["category"], "mcp");
+    assert_eq!(edited["mutation"]["filename"], "profile.toml");
+    assert_eq!(edited["mutation"]["affected_path"], "profiles/code/profile.toml");
+    assert_eq!(edited["mutation"]["target_kind"], "mcp_server");
+    assert_eq!(edited["mutation"]["target_key"], "github");
+    assert_eq!(edited["mutation"]["operation"], "upsert");
+    assert_eq!(edited["mutation"]["status"], "applied");
+
+    let profile: ProfileConfigFile = toml::from_str(
+        &std::fs::read_to_string(config_root.join("profiles/code/profile.toml")).unwrap(),
+    )
+    .unwrap();
+    assert!(profile
+        .mcp
+        .as_ref()
+        .unwrap()
+        .servers
+        .iter()
+        .any(|server| server.name == "github"
+            && server.url == "https://mcp.invalid/github"
+            && server.enabled));
+
+    let (status, servers) = route_request(
+        app.clone(),
+        axum::http::Method::GET,
+        "/profiles/code/mcp/servers/list",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{servers}");
+    assert!(servers
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|server| server["name"] == "github"
+            && server["url"] == "https://mcp.invalid/github"
+            && server["enabled"] == true));
+
+    let (status, deleted) = route_request(
+        app,
+        axum::http::Method::DELETE,
+        "/profiles/code/mcp/servers/github/delete",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{deleted}");
+    assert_eq!(deleted["profile_id"], "code");
+    assert_eq!(deleted["server_id"], "github");
+    assert_eq!(deleted["mutation"]["target_kind"], "mcp_server");
+    assert_eq!(deleted["mutation"]["target_key"], "github");
+    assert_eq!(deleted["mutation"]["operation"], "delete");
+    assert_eq!(deleted["mutation"]["status"], "applied");
+
+    let profile: ProfileConfigFile = toml::from_str(
+        &std::fs::read_to_string(config_root.join("profiles/code/profile.toml")).unwrap(),
+    )
+    .unwrap();
+    assert!(!profile
+        .mcp
+        .as_ref()
+        .unwrap()
+        .servers
+        .iter()
+        .any(|server| server.name == "github"));
+
+    let main_db = state.main_db_path();
+    let reader = capsem_logger::DbReader::open(&main_db).expect("main.db mutation ledger");
+    let rows = reader
+        .query_raw(
+            "SELECT profile_id, category, filename, target_kind, target_key, operation, status \
+             FROM profile_mutation_events ORDER BY rowid ASC",
+        )
+        .expect("query profile mutation events");
+    let rows: serde_json::Value = serde_json::from_str(&rows).unwrap();
+    assert_eq!(
+        rows["rows"],
+        json!([
+            [
+                "code",
+                "mcp",
+                "profile.toml",
+                "mcp_server",
+                "github",
+                "upsert",
+                "applied"
+            ],
+            [
+                "code",
+                "mcp",
+                "profile.toml",
+                "mcp_server",
+                "github",
+                "delete",
+                "applied"
+            ]
+        ])
+    );
+}
+
 #[test]
 fn profile_mutation_log_fields_match_ledger_contract() {
     let event = capsem_logger::ProfileMutationEvent {
@@ -1520,18 +1645,6 @@ async fn mounted_fail_closed_stub_routes_return_explicit_errors() {
             "/profiles/code/skills/security/delete",
             None,
             "profile skill delete requires profile file persistence",
-        ),
-        (
-            axum::http::Method::PUT,
-            "/profiles/code/mcp/servers/github/edit",
-            Some(json!({ "url": "https://mcp.invalid/github", "enabled": true })),
-            "profile MCP server edit requires profile file persistence",
-        ),
-        (
-            axum::http::Method::DELETE,
-            "/profiles/code/mcp/servers/github/delete",
-            None,
-            "profile MCP server delete requires profile file persistence",
         ),
         (
             axum::http::Method::PATCH,

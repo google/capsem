@@ -114,6 +114,22 @@ next one, and stage only the files for that slice.
     plugins, credential broker detail, MCP, and skills info/list routes.
 - [ ] RED/GREEN: mutation routes either persist via profile object or do not
   exist; no fake success.
+  - 2026-06-11 progress: MCP server edit/delete are no longer mounted 501
+    stubs. They now mutate through `Profile::upsert_mcp_server` /
+    `Profile::delete_mcp_server`, persist `profile.toml`, update MCP
+    permission resolution for profile-owned manual servers, and write
+    `profile_mutation_events`.
+  - Proof: `cargo test -p capsem-core
+    profile_mcp_server_mutation_persists_profile_toml_and_permissions --
+    --nocapture`; `cargo test -p capsem-service
+    profile_mcp_server_edit_delete_persist_profile_and_mutation_ledger --
+    --nocapture`; `cargo test -p capsem-service
+    mounted_fail_closed_stub_routes_return_explicit_errors -- --nocapture`;
+    `cargo check -p capsem-core -p capsem-service`.
+  - Remaining mounted mutation stubs: profile create/edit/delete/clone,
+    profile assets edit, profile skill add/edit/delete, VM edit, VM restart,
+    VM reload-profile. Each must either persist through the contract object or
+    be unmounted in a later S3 slice.
 - [ ] RED/GREEN: session state enum controls available actions for running,
   stopped, incompatible, defunct, paused, and deleted sessions.
 - [ ] Proof: profile routes are scoped by profile id; service-global routes are

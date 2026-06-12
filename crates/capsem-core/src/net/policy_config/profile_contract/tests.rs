@@ -526,6 +526,77 @@ fn profile_mcp_default_permission_mutation_updates_rule_pin_and_fallback() {
 }
 
 #[test]
+fn profile_mcp_server_mutation_persists_profile_toml_and_permissions() {
+    let fixture = ProfileFixture::new();
+    let mut profile = Profile::load_from_dir(fixture.profile_dir()).expect("profile loads");
+
+    let summary = profile
+        .upsert_mcp_server(
+            crate::mcp::policy::McpManualServer {
+                name: "github".to_string(),
+                url: "https://mcp.invalid/github".to_string(),
+                headers: Default::default(),
+                auth: None,
+                enabled: true,
+            },
+            "ui",
+        )
+        .expect("MCP server mutation succeeds");
+
+    assert_eq!(summary.profile_id, "code");
+    assert_eq!(summary.category, "mcp");
+    assert_eq!(summary.filename, "profile.toml");
+    assert_eq!(summary.affected_path, "profiles/code/profile.toml");
+    assert_eq!(summary.target_kind, "mcp_server");
+    assert_eq!(summary.target_key, "github");
+    assert_eq!(summary.operation, "upsert");
+    assert!(summary.rule_id.is_none());
+
+    let reloaded = Profile::load_from_dir(fixture.profile_dir()).expect("profile reloads");
+    assert!(reloaded
+        .config()
+        .mcp
+        .as_ref()
+        .unwrap()
+        .servers
+        .iter()
+        .any(|server| server.name == "github"
+            && server.url == "https://mcp.invalid/github"
+            && server.enabled));
+
+    let permission = reloaded
+        .mcp_tool_permission("github", "search_repos")
+        .expect("profile-owned MCP server is known for tool permissions");
+    assert_eq!(permission.action, SecurityRuleAction::Allow);
+    assert_eq!(permission.source, "default");
+
+    let mut profile = reloaded;
+    let delete = profile
+        .delete_mcp_server("github", "ui")
+        .expect("MCP server delete mutation succeeds");
+    assert_eq!(delete.target_kind, "mcp_server");
+    assert_eq!(delete.target_key, "github");
+    assert_eq!(delete.operation, "delete");
+
+    let reloaded = Profile::load_from_dir(fixture.profile_dir()).expect("profile reloads");
+    assert!(!reloaded
+        .config()
+        .mcp
+        .as_ref()
+        .unwrap()
+        .servers
+        .iter()
+        .any(|server| server.name == "github"));
+    let error = reloaded
+        .mcp_tool_permission("github", "search_repos")
+        .expect_err("deleted MCP server is no longer known");
+    assert!(
+        error.contains("MCP server github is not declared"),
+        "{error}"
+    );
+}
+
+#[test]
 fn profile_mcp_tool_permission_override_wins_after_default_mutation() {
     let fixture = ProfileFixture::new();
     let mut profile = Profile::load_from_dir(fixture.profile_dir()).expect("profile loads");
