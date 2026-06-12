@@ -165,6 +165,34 @@ fn http_body_detector_finds_local_oauth_fixture_response() {
 }
 
 #[test]
+fn http_body_detector_finds_local_nested_credential_response() {
+    let body = br#"{"api_key":"sk-capsem_test_api_key_0123456789abcdef","oauth":{"access_token":"capsem_test_oauth_access_0123456789abcdef","refresh_token":"capsem_test_oauth_refresh_0123456789abcdef","id_token":"capsem_test_oauth_id_0123456789abcdef"}}"#;
+    let found = detect_http_body_credentials("127.0.0.1", "/credential/response", "response", body);
+
+    assert_eq!(found.len(), 4);
+    assert!(found
+        .iter()
+        .any(|obs| obs.provider == CredentialProvider::OpenAi
+            && obs.source == "http.body.response.$.api_key"));
+    assert!(found
+        .iter()
+        .filter(|obs| obs.provider == CredentialProvider::Google)
+        .all(|obs| matches!(
+            obs.source.as_str(),
+            "http.body.response.$.oauth.access_token"
+                | "http.body.response.$.oauth.refresh_token"
+                | "http.body.response.$.oauth.id_token"
+        )));
+
+    let redacted = String::from_utf8(redact_observed_credentials_in_bytes(body, &found)).unwrap();
+    assert!(redacted.contains("credential:blake3:"));
+    assert!(!redacted.contains("sk-capsem_test_api_key_0123456789abcdef"));
+    assert!(!redacted.contains("capsem_test_oauth_access_0123456789abcdef"));
+    assert!(!redacted.contains("capsem_test_oauth_refresh_0123456789abcdef"));
+    assert!(!redacted.contains("capsem_test_oauth_id_0123456789abcdef"));
+}
+
+#[test]
 fn http_body_credential_candidate_is_limited_to_known_exchange_paths() {
     assert!(is_http_body_credential_candidate(
         "oauth2.googleapis.com",
@@ -185,6 +213,10 @@ fn http_body_credential_candidate_is_limited_to_known_exchange_paths() {
     assert!(is_http_body_credential_candidate(
         "localhost",
         "/oauth/token"
+    ));
+    assert!(is_http_body_credential_candidate(
+        "127.0.0.1",
+        "/credential/response"
     ));
     assert!(!is_http_body_credential_candidate("example.com", "/token"));
 }

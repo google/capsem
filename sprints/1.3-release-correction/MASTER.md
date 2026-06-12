@@ -93,8 +93,9 @@ prove the same rails without user credentials.
   recorder/smoke tests, routed through Capsem, not as a guest install target.
 - Ironbank progress on 2026-06-12: `tests/ironbank/test_model_sdk_ledger.py`
   now proves the local OpenAI-compatible SDK path through a real VM, hermetic
-  mock server, credential broker capture, model response parsing, native tool
-  call ledger rows, file write, security latest route, session DB rows, and
-  raw-secret absence. Broker replay/injection remains a separate open proof.
+  mock server, credential broker capture and replay/injection, query
+  injection, JSON/form request credential capture, OAuth/generic credential
+  response capture, model response parsing, native tool call ledger rows, file
+  write, security latest route, session DB rows, and raw-secret absence.
 
 Those files remain evidence. This sprint is the execution authority.

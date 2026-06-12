@@ -49,8 +49,17 @@ failure first.
     broker ref, while `net_events.credential_ref` carries the typed ref,
     logged headers carry only `authorization: hash:*`, and
     `substitution_events` includes both `captured` and `injected`.
-- [ ] Ironbank: query, JSON body, form body, response token body, and model SDK
+- [x] Ironbank: query, JSON body, form body, response token body, and model SDK
   replay get the same no-raw-ledger proof.
+  - Proof: `uv run python -m pytest tests/ironbank/test_model_sdk_ledger.py -q`
+    now drives a captured broker ref through header replay, query replay,
+    JSON request body capture, form request body capture, OAuth token response
+    capture, generic credential response capture, and a second
+    OpenAI-compatible SDK model call. The mock server proves broker refs are
+    not sent upstream on query replay; DB assertions prove request/response
+    previews contain broker refs instead of raw credential material and
+    substitution ledger rows include `captured`/`injected` sources for all
+    exercised material classes.
 - [ ] Add plugin latency/counter evidence for broker and sanitizer.
 - [x] Update CHANGELOG.md.
 - [x] Focused test gate.
@@ -90,6 +99,8 @@ failure first.
   - `cargo test -p capsem-core credential_broker_plugin_uses_matched_security_rule_metadata -- --nocapture`
   - `cargo test -p capsem-core credential_broker_uses_ai_provider_hint_for_local_openai_compatible_headers -- --nocapture`
   - `cargo test -p capsem-core credential_broker_plugin_marks_broker_ref_for_injection_not_recapture -- --nocapture`
+  - `cargo test -p capsem-core http_body_detector_finds_local_nested_credential_response -- --nocapture`
+  - `cargo test -p capsem-core http_body_credential_candidate_is_limited_to_known_exchange_paths -- --nocapture`
   - `cargo test -p capsem-core http_materializer_resolves_broker_ref_only_for_upstream_copy -- --nocapture`
   - `cargo test -p capsem-core hook_writes_injected_substitution_event_for_broker_ref_replay -- --nocapture`
   - `cargo test -p capsem-core openai_non_streaming_tool_call_carries_request_trace -- --nocapture`
@@ -114,6 +125,9 @@ failure first.
     `substitution_events` exact fields for the local OpenAI-compatible path.
   - The broker replay extension asserts injected substitution rows and that
     sanitized request headers expose neither the raw secret nor the broker ref.
+  - The body/query extension asserts query injection rows and captured
+    substitution rows for JSON request bodies, form request bodies, OAuth token
+    response bodies, and nested credential response bodies.
 - Performance: pending plugin counters/latency evidence.
   - `cargo bench -p capsem-core --bench security_actions --no-run` now
     compiles the preprocess, postprocess, and logging plugin benchmark matrix.

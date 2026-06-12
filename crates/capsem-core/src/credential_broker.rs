@@ -314,7 +314,9 @@ pub fn is_http_body_credential_candidate(domain: &str, path: &str) -> bool {
     (domain.ends_with("googleapis.com") && (path.contains("/token") || path.contains("oauth")))
         || (domain.ends_with("github.com") && path.contains("oauth"))
         || (is_local_oauth_fixture_domain(domain)
-            && (path.contains("/token") || path.contains("oauth")))
+            && (path.contains("/token")
+                || path.contains("oauth")
+                || path.contains("/credential/response")))
 }
 
 pub fn substitute_credential_value(provider: CredentialProvider, raw_value: &str) -> String {

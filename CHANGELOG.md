@@ -23,6 +23,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   are treated as preprocess injection events, materialized only for upstream
   runtime bytes, and recorded in the substitution ledger as `injected` without
   leaking raw secrets or broker refs through sanitized header payloads.
+- Expanded the Ironbank credential broker ledger proof to cover query replay,
+  JSON request bodies, form request bodies, OAuth response token bodies, and
+  generic credential response bodies through the real VM path and hermetic
+  mock server.
 - Hardened the local OpenAI-compatible model path: bounded request sniffing now
   promotes unknown localhost model traffic before CEL/plugin evaluation, the
   credential broker uses the parsed provider hint for SDK bearer headers, and

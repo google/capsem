@@ -159,12 +159,15 @@ def _broker_replay_script(base_url: str, credential_ref: str) -> str:
     payload = {
         "base_url": f"{base_url.rstrip('/')}/v1",
         "echo_url": f"{base_url.rstrip('/')}/echo",
+        "token_url": f"{base_url.rstrip('/')}/oauth/token",
+        "credential_response_url": f"{base_url.rstrip('/')}/credential/response",
         "credential_ref": credential_ref,
         "model": "gemma4:latest",
     }
     return textwrap.dedent(
         f"""
         import json
+        import urllib.parse
         import urllib.request
 
         from openai import OpenAI
@@ -183,6 +186,36 @@ def _broker_replay_script(base_url: str, credential_ref: str) -> str:
         with urllib.request.urlopen(echo_req, timeout=30) as response:
             echo = json.loads(response.read().decode("utf-8"))
 
+        query_echo_req = urllib.request.Request(
+            cfg["echo_url"] + "?access_token=" + urllib.parse.quote(cfg["credential_ref"], safe=""),
+            data=b"broker query replay",
+            headers={{"Content-Type": "text/plain"}},
+            method="POST",
+        )
+        with urllib.request.urlopen(query_echo_req, timeout=30) as response:
+            query_echo = json.loads(response.read().decode("utf-8"))
+
+        json_token_req = urllib.request.Request(
+            cfg["token_url"],
+            data=json.dumps({{"access_token": "capsem_test_oauth_access_json_0123456789abcdef"}}).encode("utf-8"),
+            headers={{"Content-Type": "application/json"}},
+            method="POST",
+        )
+        with urllib.request.urlopen(json_token_req, timeout=30) as response:
+            json_token = json.loads(response.read().decode("utf-8"))
+
+        form_token_req = urllib.request.Request(
+            cfg["token_url"],
+            data=urllib.parse.urlencode({{"code": "capsem_test_oauth_code_form_0123456789abcdef"}}).encode("utf-8"),
+            headers={{"Content-Type": "application/x-www-form-urlencoded"}},
+            method="POST",
+        )
+        with urllib.request.urlopen(form_token_req, timeout=30) as response:
+            form_token = json.loads(response.read().decode("utf-8"))
+
+        with urllib.request.urlopen(cfg["credential_response_url"], timeout=30) as response:
+            credential_response = json.loads(response.read().decode("utf-8"))
+
         client = OpenAI(base_url=cfg["base_url"], api_key=cfg["credential_ref"])
         completion = client.chat.completions.create(
             model=cfg["model"],
@@ -192,6 +225,11 @@ def _broker_replay_script(base_url: str, credential_ref: str) -> str:
         result = {{
             "echo_has_authorization": echo["has_authorization"],
             "echo_authorization_is_broker_ref": echo["authorization_is_broker_ref"],
+            "query_echo_has_access_token": query_echo["query_has_access_token"],
+            "query_echo_has_broker_ref": query_echo["query_has_broker_ref"],
+            "json_token_kind": json_token["kind"],
+            "form_token_kind": form_token["kind"],
+            "credential_response_kind": credential_response["kind"],
             "model": completion.model,
             "content": message.content,
             "usage_total": completion.usage.total_tokens if completion.usage else 0,
@@ -361,9 +399,14 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
             replay_result = json.loads(replay_line.split("=", 1)[1])
             assert replay_result == {
                 "content": EXPECTED_POEM,
+                "credential_response_kind": "synthetic_credential_fixture",
                 "echo_authorization_is_broker_ref": False,
                 "echo_has_authorization": True,
+                "form_token_kind": "synthetic_oauth_token_fixture",
+                "json_token_kind": "synthetic_oauth_token_fixture",
                 "model": "gemma4:latest",
+                "query_echo_has_access_token": True,
+                "query_echo_has_broker_ref": False,
                 "usage_total": 12,
             }
 
@@ -403,7 +446,7 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
                 ).fetchall(),
                 lambda rows: len(rows) >= 1,
             )
-            replay_echo = echo_rows[-1]
+            replay_echo = next(row for row in echo_rows if not row["query"])
             _assert_event_id(replay_echo["event_id"])
             assert replay_echo["credential_ref"] == credential_ref
             assert replay_echo["decision"] == "allowed"
@@ -414,6 +457,60 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
             assert '"authorization_is_broker_ref":false' in (
                 replay_echo["response_body_preview"] or ""
             )
+
+            query_echo = next(
+                row for row in echo_rows if row["query"] and "access_token=" in row["query"]
+            )
+            assert query_echo["credential_ref"] == credential_ref
+            assert credential_ref not in (query_echo["query"] or "")
+            assert RAW_SDK_SECRET not in (query_echo["query"] or "")
+            assert '"query_has_broker_ref":false' in (query_echo["response_body_preview"] or "")
+
+            token_rows = _eventually(
+                lambda: conn.execute(
+                    """
+                    SELECT *
+                    FROM net_events
+                    WHERE path = '/oauth/token'
+                    ORDER BY id
+                    """
+                ).fetchall(),
+                lambda rows: len(rows) >= 2,
+            )
+            for row in token_rows:
+                _assert_event_id(row["event_id"])
+                assert row["method"] == "POST"
+                assert row["status_code"] == 200
+                assert row["decision"] == "allowed"
+                assert row["credential_ref"] is not None
+                _assert_credential_ref(row["credential_ref"])
+                assert "capsem_test_oauth_access_json_" not in (row["request_body_preview"] or "")
+                assert "capsem_test_oauth_code_form_" not in (row["request_body_preview"] or "")
+                assert "capsem_test_oauth_access_" not in (row["response_body_preview"] or "")
+                assert "capsem_test_oauth_refresh_" not in (row["response_body_preview"] or "")
+                assert "capsem_test_oauth_id_" not in (row["response_body_preview"] or "")
+                assert "credential:blake3:" in (row["request_body_preview"] or "") or "credential:blake3:" in (row["response_body_preview"] or "")
+
+            credential_response_rows = _eventually(
+                lambda: conn.execute(
+                    """
+                    SELECT *
+                    FROM net_events
+                    WHERE path = '/credential/response'
+                    ORDER BY id
+                    """
+                ).fetchall(),
+                lambda rows: len(rows) >= 1,
+            )
+            credential_response = credential_response_rows[-1]
+            _assert_event_id(credential_response["event_id"])
+            assert credential_response["status_code"] == 200
+            assert credential_response["credential_ref"] is not None
+            _assert_credential_ref(credential_response["credential_ref"])
+            assert "capsem_test_api_key_" not in (credential_response["response_body_preview"] or "")
+            assert "capsem_test_oauth_access_" not in (credential_response["response_body_preview"] or "")
+            assert "capsem_test_oauth_refresh_" not in (credential_response["response_body_preview"] or "")
+            assert "credential:blake3:" in (credential_response["response_body_preview"] or "")
 
             model_rows = _eventually(
                 lambda: conn.execute(
@@ -525,6 +622,25 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
             assert len(substitutions) >= len(net_rows)
             injected_sources = {row["source"] for row in substitutions if row["outcome"] == "injected"}
             assert "http.header.authorization" in injected_sources
+            assert "http.query.access_token" in injected_sources
+
+            body_substitutions = conn.execute(
+                """
+                SELECT *
+                FROM substitution_events
+                WHERE source LIKE 'http.body.%'
+                ORDER BY id
+                """
+            ).fetchall()
+            sources = {row["source"] for row in body_substitutions}
+            assert "http.body.request.$.access_token" in sources
+            assert "http.body.request.form.code" in sources
+            assert "http.body.response.$.access_token" in sources
+            assert "http.body.response.$.refresh_token" in sources
+            assert "http.body.response.$.id_token" in sources
+            assert "http.body.response.$.api_key" in sources
+            assert {row["outcome"] for row in body_substitutions} == {"captured"}
+            assert all(row["substitution_ref"].startswith("credential:blake3:") for row in body_substitutions)
 
             poem_rows = _eventually(
                 lambda: conn.execute(

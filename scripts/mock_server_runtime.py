@@ -183,7 +183,7 @@ class MockHandler(BaseHTTPRequestHandler):
             self._send_json(
                 {
                     "kind": "synthetic_credential_fixture",
-                    "api_key": "capsem_test_api_key_0123456789abcdef",
+                    "api_key": "sk-capsem_test_api_key_0123456789abcdef",
                     "oauth": {
                         "access_token": "capsem_test_oauth_access_0123456789abcdef",
                         "refresh_token": "capsem_test_oauth_refresh_0123456789abcdef",
@@ -232,6 +232,8 @@ class MockHandler(BaseHTTPRequestHandler):
                     "header_count": len(self.headers),
                     "has_authorization": "authorization" in lower_headers,
                     "authorization_is_broker_ref": "credential:blake3:" in authorization,
+                    "query_has_broker_ref": "credential:blake3:" in parsed.query,
+                    "query_has_access_token": "access_token=" in parsed.query,
                     "has_cookie": "cookie" in lower_headers,
                     "has_x_api_key": "x-api-key" in lower_headers,
                 }
