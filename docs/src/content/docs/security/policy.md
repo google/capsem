@@ -9,8 +9,9 @@ Capsem policy is a single rule rail over the normalized `SecurityEvent`.
 Network, MCP, model, file, and process parsers add typed fields to that event.
 Rules match those fields with CEL, then the same match is used for enforcement,
 detection, and forensic logging. Plugins are configured separately; each plugin
-owns its own filtering/scope, materialization hooks, display metadata, status,
-and stats.
+owns its own filtering/scope, display metadata, status, stats, and stage-specific
+mutation. Plugin stages are still one contract: `SecurityEvent` in,
+`SecurityEvent` out.
 
 There is no separate HTTP rule engine, MCP decision provider, or callback
 string list. If a rule does not match a first-party `SecurityEvent` field, it
@@ -92,9 +93,9 @@ telemetry name. Both are intentionally required and validated.
 | `allow` | Allow the event boundary to continue. It can still emit a detection when `detection_level` is set. |
 | `ask` | Pause materialization until an approval or denial is recorded. |
 | `block` | Deny the event boundary and log the matched rule. |
-| `preprocess` | Run before enforcement materialization for rule-driven preprocessing. |
+| `preprocess` | Mutate/enrich before enforcement decision. |
 | `rewrite` | Mutate the event or materialized boundary. Aliases `redact`, `mutate`, and `neutralize` canonicalize to `rewrite`. |
-| `postprocess` | Run after enforcement materialization for audited postprocessing. |
+| `postprocess` | Mutate/enrich after enforcement decision but before durable ledger projection. |
 
 Detection is not an action. A rule reports a detection by setting
 `detection_level`, and can still allow, ask, or block.
@@ -113,10 +114,10 @@ stages, status schemas, stats schemas, benchmark specs, and capability metadata
 for UI reflection. The UI reads those fields from the plugin object; it does
 not rename plugins or invent descriptions.
 
-Plugin descriptors expose typed `stages` such as `pre_decision`,
-`post_decision`, and `runtime_status`. Operators can see whether a plugin can
-mutate before CEL enforcement, mutate after CEL enforcement, or only report
-runtime state. Plugin descriptors also expose a benchmark spec so
+Plugin descriptors expose typed `stages`: `preprocess`, `postprocess`, and
+`logging`. Operators can see whether a plugin can mutate before CEL
+enforcement, mutate after CEL enforcement, or produce the final ledger-safe
+projection. Plugin descriptors also expose a benchmark spec so
 `capsem-bench` can measure plugin overhead with the same fixtures every time.
 Every plugin also exposes in-memory performance counters: invocation count,
 match/skip count, mutation count, allow/ask/block/rewrite count, error count,
@@ -127,6 +128,20 @@ total latency, p50/p95/p99 latency, max latency, and per-stage latency.
 mode = "rewrite"
 detection_level = "informational"
 ```
+
+## Runtime vs Ledger Materialization
+
+Capsem deliberately has two materialization paths:
+
+| Path | Purpose | Credential handling |
+|---|---|---|
+| Runtime/upstream | Preserve protocol behavior for allowed traffic. | May resolve broker refs back to real credential bytes when the upstream protocol requires them. |
+| Ledger/log/route/UI | Persist and display forensic truth. | Must contain only broker refs, hashes, bounded previews, typed detections, and plugin execution evidence. |
+
+The credential broker owns capture, storage, and runtime injection. The
+`log_sanitizer` logging plugin owns the final ledger projection. Network
+formatters, DB readers, frontend transforms, route adapters, and test harnesses
+must not add their own credential parsing, ref creation, or redaction.
 
 ## Runtime Endpoints
 

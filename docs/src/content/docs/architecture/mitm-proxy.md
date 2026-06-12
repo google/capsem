@@ -20,13 +20,16 @@ graph TD
     B --> C["TLS handshake<br/>MitmCertResolver captures SNI"]
     C --> D["Read HTTP request<br/>method, path, headers, body"]
     D --> E["Build SecurityEvent<br/>http + optional model roots"]
-    E --> F{"Security rules<br/>CEL over SecurityEvent"}
-    F -->|Block or unresolved ask| G["403 Forbidden<br/>+ log telemetry"]
-    F -->|Allow| I["Configured plugin stages<br/>credential broker, scanners"]
+    E --> P["Preprocess plugins<br/>credential broker, scanners"]
+    P --> F{"Security rules<br/>CEL over SecurityEvent"}
+    F -->|Block or unresolved ask| G["403 Forbidden<br/>+ ledger projection"]
+    F -->|Allow| Q["Postprocess plugins"]
+    Q --> I["Runtime materialization<br/>upstream-safe bytes"]
     I --> J["Upstream TLS connection<br/>(cached per-connection)"]
     J --> K["Forward request"]
     K --> L["Stream response to guest<br/>(inline SSE parsing for AI traffic)"]
-    L --> M["Emit telemetry<br/>primary row + security_rule_events"]
+    L --> M["Logging plugins<br/>ledger-safe projection"]
+    M --> N["Emit telemetry<br/>primary row + security_rule_events"]
 ```
 
 The proxy uses hyper for HTTP parsing and tokio-rustls for TLS. Each vsock connection can carry multiple HTTP requests via keep-alive -- upstream connections are cached per-connection to avoid re-establishing TLS for each request.
@@ -118,8 +121,16 @@ reference. Key properties:
 | Conflict resolution | Earlier/lower priority enforcement wins; `block` is absolute once effective |
 
 Network mechanics are hot-swappable via `RwLock`. Each HTTP request snapshots
-the `Arc<NetworkPolicy>` for mechanical settings, then evaluates the shared
-`SecurityRuleSet` after protocol parsing and before upstream materialization.
+the `Arc<NetworkPolicy>` for mechanical settings, then builds a normalized
+`SecurityEvent`. The shared `SecurityRuleSet` and plugin rail are the only
+security decision path.
+
+Runtime and ledger materialization are intentionally separate. Runtime
+materialization preserves allowed protocol bytes for upstream, including
+resolving broker refs when a real credential is required. Ledger materialization
+runs through logging plugins and writes only broker refs, hashes, bounded
+previews, typed detections, and plugin execution evidence to `session.db`,
+structured logs, service routes, and UI stats.
 
 ## HTTP Security Rules
 
@@ -149,7 +160,10 @@ roots.
 
 ## AI traffic handling
 
-For AI provider domains, the proxy parses SSE response streams inline to extract structured telemetry.
+For AI provider domains, the proxy parses SSE response streams inline to extract
+structured telemetry. The parser preserves response bytes for the guest and
+emits typed model facts into the same security-event rail used by HTTP, DNS,
+MCP, file, and process events.
 
 ### Provider detection
 

@@ -64,15 +64,16 @@ The host MITM proxy receives each connection on vsock:5002 and runs a full inspe
 ```mermaid
 graph TD
     A["vsock:5002 connection"] --> B["TLS ClientHello<br/>extract SNI domain"]
-    B --> C{"Security rules<br/>CEL over DNS/HTTP event"}
-    C -->|Denied| D["Return 403<br/>log to session.db"]
-    C -->|Allowed| E["Complete TLS handshake<br/>mint leaf cert for domain"]
-    E --> F["Parse HTTP request<br/>method + path + headers"]
-    F --> G{"HTTP policy<br/>check"}
-    G -->|Denied| H["Return 403<br/>log to session.db"]
-    G -->|Allowed| I["Forward to upstream<br/>real TLS connection"]
+    B --> E["Complete TLS handshake<br/>mint leaf cert for domain"]
+    E --> F["Parse HTTP request<br/>method + path + headers + body preview"]
+    F --> S["Build SecurityEvent<br/>HTTP + optional model roots"]
+    S --> P["Preprocess plugins"]
+    P --> G{"SecurityRuleSet<br/>CEL over SecurityEvent"}
+    G -->|Denied or unresolved ask| H["Return 403<br/>ledger-safe log"]
+    G -->|Allowed| I["Runtime materialization<br/>forward to upstream TLS"]
     I --> J["Stream response<br/>to guest"]
-    J --> K["Log telemetry<br/>domain, method, path, status, bytes, latency"]
+    J --> K["Logging plugins<br/>ledger projection"]
+    K --> L["Log telemetry<br/>domain, method, path, status, bytes, latency"]
 ```
 
 The proxy mints per-domain TLS certificates signed by a static Capsem CA (ECDSA P-256, 24-hour validity). The CA is baked into the guest rootfs and trusted by the system certificate store, Python certifi, and Node.js. See [MITM Proxy Architecture](/architecture/mitm-proxy/) for implementation details.

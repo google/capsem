@@ -25,13 +25,18 @@ failure first.
   logging.
 - [x] Align the core `SecurityPluginStage` enum and action benchmark matrix
   with the same three stage names: preprocess, postprocess, and logging.
-- [ ] Split runtime materialization from ledger materialization.
+- [x] Split runtime materialization from ledger materialization.
+  - Runtime/upstream materialization preserves allowed protocol bytes and may
+    resolve broker refs for real upstream credentials.
+  - Ledger materialization runs through logging plugins and writes only
+    broker refs, hashes, bounded previews, typed detections, and plugin
+    execution evidence to DB/log/routes/UI.
 - [x] Burn credential-sensitive logic from network formatter/intercept helpers.
-- [ ] Rename/docs cleanup for touched boundaries: network engine, security
+- [x] Rename/docs cleanup for touched boundaries: network engine, security
   engine, credential broker, log sanitizer.
-- [ ] Update architecture docs with the explicit runtime-vs-ledger
+- [x] Update architecture docs with the explicit runtime-vs-ledger
   materialization contract.
-- [ ] Update developer skills with the no-drift rule: no credential handling in
+- [x] Update developer skills with the no-drift rule: no credential handling in
   network formatters, DB readers, frontend transforms, or one-off harnesses.
 - [x] Ironbank: local OpenAI-compatible SDK credential header request reaches
   upstream while DB/log/route payloads contain no raw secret.
@@ -140,5 +145,16 @@ failure first.
     `security_rule_events` without double-counting multi-rule matches.
   - `cargo bench -p capsem-core --bench security_actions --no-run` now
     compiles the preprocess, postprocess, and logging plugin benchmark matrix.
-- Docs/skills: boundary note added to `/dev-mitm-proxy`; architecture docs still pending.
+- Docs/skills:
+  - `docs/src/content/docs/security/policy.md` documents plugin stages and
+    runtime-vs-ledger materialization.
+  - `docs/src/content/docs/architecture/mitm-proxy.md`,
+    `docs/src/content/docs/security/network-isolation.md`, and
+    `docs/src/content/docs/security/overview.md` show one security rail and
+    separate runtime/ledger projections.
+  - `/dev-mitm-proxy`, `/dev-capsem`, `/dev-debugging`,
+    `/dev-installation`, `/dev-mcp`, `/site-architecture`, `/asset-pipeline`,
+    `/build-initrd`, `/dev-setup`, and `/dev-testing` no longer teach the old
+    `user.toml`, setup-wizard, squashfs-default, domain-policy, HTTP-policy, or
+    MCP-decision-provider rails.
 - Missing/deferred: none accepted for release blocker scope.

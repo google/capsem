@@ -1,11 +1,15 @@
 ---
 name: dev-mitm-proxy
-description: MITM proxy development for Capsem -- the air-gapped network interception layer. Use when working on TLS termination, HTTP inspection, domain/HTTP policy, cert minting, SSE parsing, telemetry recording, or debugging network issues. Covers the full proxy pipeline, content-encoding handling, and lessons learned from past bugs.
+description: MITM/network intercept development for Capsem -- the air-gapped network interception layer. Use when working on TLS termination, HTTP inspection, cert minting, SSE parsing, telemetry recording, or debugging network issues. Covers the full proxy pipeline, content-encoding handling, and lessons learned from past bugs.
 ---
 
 # MITM Proxy
 
-The MITM proxy is the most complex subsystem in Capsem. It intercepts all HTTPS traffic from the air-gapped guest VM, inspects it, applies policy, and records telemetry. Treat it as a system, not a collection of hacks -- every capability must be general-purpose.
+The MITM proxy is the network engine's HTTPS interception boundary. It
+intercepts traffic from the air-gapped guest VM, normalizes it into typed facts,
+hands a `SecurityEvent` to the security engine, and preserves allowed runtime
+bytes for upstream. Treat it as a system, not a collection of hacks -- every
+capability must be general-purpose.
 
 ## Security boundary
 
@@ -14,17 +18,30 @@ Network code parses transport bytes, routes traffic, and emits typed
 run CEL/security decisions, or sanitize ledger projections. Those belong to the
 security engine plugin rail. Every security plugin has the same data contract:
 it receives a `SecurityEvent` and returns a `SecurityEvent`; the plugin stage
-only controls ordering (`Pre`, `Post`, or `Logging`).
+only controls ordering (`preprocess`, `postprocess`, or `logging`).
+
+There are two materialization paths and they must never be collapsed:
+
+- **Runtime materialization** prepares bytes for the real upstream. It may
+  resolve a broker ref back to a real credential because the protocol needs it.
+- **Ledger materialization** prepares the event stored in `session.db`,
+  structured logs, route JSON, and UI stats. It must contain only broker refs,
+  hashes, bounded previews, typed detections, and plugin execution evidence.
+
+No credential logic belongs in HTTP header formatters, DB readers, frontend
+transforms, debug harnesses, or route adapters. If a future change needs
+capture, injection, redaction, threat intel, or PII handling, implement it as a
+security plugin stage over `SecurityEvent -> SecurityEvent`.
 
 ## Pipeline
 
 ```
 Guest curl -> iptables REDIRECT -> capsem-net-proxy (guest, port 10443)
   -> vsock port 5002 -> Host MITM proxy
-  -> SNI parse -> domain policy check
+  -> SNI parse -> network metadata capture
   -> TLS terminate (rustls, per-domain cert minted from Capsem CA)
   -> HTTP request parse (hyper)
-  -> HTTP policy check (method + path rules)
+  -> SecurityEvent -> SecurityRuleSet + plugin rail
   -> Forward to real upstream over TLS
   -> Record telemetry to session DB
   -> Stream response back to guest
@@ -36,10 +53,8 @@ Guest curl -> iptables REDIRECT -> capsem-net-proxy (guest, port 10443)
 |------|------|
 | `crates/capsem-core/src/net/mitm_proxy.rs` | Async MITM proxy (rustls + hyper): TLS termination, HTTP inspection, upstream bridging |
 | `crates/capsem-core/src/net/cert_authority.rs` | CA loader + on-demand domain cert minting with RwLock cache |
-| `crates/capsem-core/src/net/http_policy.rs` | Method+path policy engine (extends domain-level policy) |
-| `crates/capsem-core/src/net/domain_policy.rs` | Domain allow/block evaluation |
+| `crates/capsem-core/src/security_engine/` | Rule/plugin/decision rail over `SecurityEvent` |
 | `crates/capsem-core/src/net/sni.rs` | SNI parser for TLS ClientHello |
-| `crates/capsem-core/src/net/policy_config.rs` | user.toml + corp.toml merge logic |
 | `crates/capsem-agent/src/net_proxy.rs` | Guest-side TCP-to-vsock relay |
 
 ## Content-Encoding: the systemic rule
@@ -66,12 +81,18 @@ SSE parsing happens AFTER decompression. The body must be plaintext UTF-8 by the
 
 Only emit `model_calls` telemetry for actual LLM API paths (e.g., `/v1/messages`, `/v1/chat/completions`), not every request to an AI provider domain. Health checks, auth endpoints, and static assets should not create model_call rows.
 
-## Policy evaluation order
+## Security evaluation order
 
-1. Corp config (`/etc/capsem/corp.toml`) overrides user config per field
-2. Domain policy: allow/block list evaluation
-3. HTTP policy: method+path rules per domain (only if domain is allowed)
-4. Default action: allow or deny (configurable)
+1. Network mechanics parse and normalize SNI, HTTP, DNS, model, and process
+   facts into a `SecurityEvent`.
+2. Profile and corp rules compile into one `SecurityRuleSet`; profile defaults
+   are normal late-priority rules.
+3. Security plugins run by stage over the same `SecurityEvent` object:
+   `preprocess`, rule evaluation, `postprocess`, then `logging` before ledger
+   handoff.
+4. Runtime materialization forwards allowed bytes upstream. Ledger
+   materialization writes the sanitized/enriched event to `session.db`, logs,
+   routes, and UI stats.
 
 ## Certificate authority
 

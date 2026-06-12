@@ -51,7 +51,7 @@ prove the same rails without user credentials.
 | S8 | UI/TUI contract repair | In progress | Sessions/profiles/settings/stats/plugin/MCP/security/file/process views reflect routes and enums only. |
 | S9 | Agent bootstrap repair | Planned | AGY, Claude, Codex, MCP, aliases, and profile root files are packaged from profile-owned bootstrap. |
 | S10 | Packaging/install/release gate | In progress | Package payload closed contract, `just install`, status/debug, changelog/docs, and benchmark report pass. |
-| S11 | Security boundary cleanup | In progress | `sprints/1.3-security-boundary-cleanup/` proves network engine parses/routes only, every plugin contract is `SecurityEvent -> SecurityEvent`, credential broker handles capture/storage/injection without owning logs, log sanitizer is an independent logging plugin that produces ledger projection, raw credentials cannot reach DB/log/route/UI output, and docs/skills teach the boundary. |
+| S11 | Security boundary cleanup | Complete | `sprints/1.3-security-boundary-cleanup/` proves network engine parses/routes only, every plugin contract is `SecurityEvent -> SecurityEvent`, credential broker handles capture/storage/injection without owning logs, log sanitizer is an independent logging plugin that produces ledger projection, raw credentials cannot reach DB/log/route/UI output, and docs/skills teach the boundary. |
 
 ## Release Holds
 
@@ -69,15 +69,12 @@ prove the same rails without user credentials.
   proof. Ironbank lives in `tests/ironbank/`, is authored from public
   contracts only, and cannot use Rust internals, `skip`, `slow`, public
   services, status-only replay, or row-exists checks as proof.
-- Hold: `sprints/1.3-security-boundary-cleanup/` must close before credential
-  broker, model/client traffic, or UI stats are called release-ready. Runtime
-  bytes and ledger bytes must be separate materializations; the credential
+- Hold satisfied for S11: `sprints/1.3-security-boundary-cleanup/` closed with
+  runtime bytes and ledger bytes as separate materializations; credential
   broker owns capture/storage/injection, logging plugins own final redaction or
-  enrichment inside the security engine before logger handoff, and every plugin
-  receives and emits only `SecurityEvent`. The logger must not grow a sanitizer
-  fallback path.
-  Architecture docs and developer skills must be updated in the same slice so
-  the old drift does not return.
+  enrichment inside the security engine before logger handoff, every plugin
+  receives and emits only `SecurityEvent`, and the logger has no sanitizer
+  fallback path. Remaining release readiness still depends on S4/S5/S7/S8/S10.
 
 ## Source Evidence
 

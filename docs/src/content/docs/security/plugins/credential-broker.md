@@ -8,14 +8,12 @@ Plugin id: `credential_broker`
 Version: supplied by the plugin registry descriptor and emitted in profile
 plugin lists, VM info/status, logs, and benchmark output.
 
-Stage: plugin-owned HTTP-boundary materialization. CEL rules do not invoke the
-credential broker.
+Stage: `preprocess`. CEL rules do not invoke the credential broker.
 
 Stages:
 
-- `pre_decision`: capture and substitute brokered references before CEL
-  enforcement sees the materialized boundary.
-- `runtime_status`: report opaque broker state and health from memory.
+- `preprocess`: capture observed credentials, attach broker refs, and resolve
+  broker refs for runtime/upstream materialization.
 
 Config:
 
@@ -29,7 +27,10 @@ Inputs: outbound HTTP boundaries, remote MCP auth boundaries, plus
 plugin-owned broker state. Raw credentials remain private to the broker and are
 not exposed as CEL fields.
 
-Mutation: stores observed credentials through the broker and writes the brokered `credential:blake3:*` reference back onto the event.
+Mutation: stores observed credentials through the broker and writes the
+brokered `credential:blake3:*` reference back onto the event. The broker does
+not sanitize durable logs; the `log_sanitizer` logging plugin owns ledger-safe
+projection.
 
 MCP contract: remote MCP server config may carry only brokered auth metadata in
 profile-owned `mcp.json`:
@@ -55,7 +56,9 @@ The broker owns OAuth/API-key material and resolution. MCP config must not
 store raw `bearer_token`, `bearerToken`, `Authorization`, `X-Api-Key`, refresh
 tokens, or access tokens.
 
-Decision: plugin policy can request `allow`, `ask`, `block`, or `rewrite`; `rewrite` keeps the effective decision at `allow` while recording mutation intent.
+Decision: plugin policy can request `allow`, `ask`, `block`, or `rewrite`;
+`rewrite` keeps the effective decision at `allow` while recording mutation
+intent.
 
 Status contract: credential state is opaque and VM-scoped. The UI must not
 infer credential state from AI/provider config. Profile plugin configuration is
@@ -69,10 +72,12 @@ capture, substitution, failed materialization, and status snapshot overhead.
 Benchmarks must report plugin id, version, stage, event count, latency, and
 mutation count.
 
-Detection contract: enabled executions append one `SecurityDetectionEvent` to `SecurityEvent.detections` with `source = "plugin"`, the configured `detection_level`, plugin id, plugin mode, and reason.
+Detection contract: enabled executions append one `SecurityDetectionEvent` to
+`SecurityEvent.detections` with `source = "plugin"`, the configured
+`detection_level`, plugin id, plugin mode, and reason.
 
-Failure: broker storage errors abort broker materialization and the event is not
-emitted by the security engine.
+Failure: broker storage errors abort runtime materialization and the event is
+not emitted by the security engine.
 
 Tests must prove capture, BLAKE3 reference logging, rewrite mutation, VM-scoped
 status/stats, and failure without raw credential leakage.

@@ -1,20 +1,18 @@
 ---
 name: dev-installation
-description: Capsem native CLI installer -- setup wizard, service registration, self-update, background asset download, corp config provisioning, and the Docker-based install test harness. Use when working on capsem setup/update/uninstall commands, service install/uninstall, asset management, corp config, install test infrastructure, or the installed layout (~/.capsem/).
+description: Capsem native package installer -- package install, service registration, self-update, manifest-driven asset download, corp config provisioning, and the install test harness. Use when working on package install/update/uninstall commands, service install/uninstall, asset management, corp config, install test infrastructure, or the installed layout (~/.capsem/).
 ---
 
-# Native CLI Installer
+# Native Package Installer
 
 ## Installed layout
 
 ```
 ~/.capsem/
   bin/capsem, capsem-service, capsem-process, capsem-mcp, capsem-gateway, capsem-tray
-  assets/manifest.json, v{ver}/
+  assets/manifest.json, {asset-name}-{hash16}.{ext}
   run/service.sock, service.pid, instances/, persistent/
-  setup-state.json
   update-check.json
-  user.toml
   corp.toml               (CLI-provisioned corp config)
   corp-source.json         (corp config source metadata)
 ```
@@ -26,7 +24,6 @@ These commands dispatch before UdsClient creation -- they work without the servi
 | Command | Module | What |
 |---------|--------|------|
 | `capsem version` | main.rs | Print version + build hash |
-| `capsem setup` | setup.rs | First-time setup wizard |
 | `capsem update` | update.rs | Self-update from GitHub |
 | `capsem service install\|uninstall\|status` | service_install.rs | Service registration |
 | `capsem completions bash\|zsh\|fish` | completions.rs | Shell completions |
@@ -37,7 +34,8 @@ These commands dispatch before UdsClient creation -- they work without the servi
 `discover_paths()` finds sibling binaries and assets:
 
 1. `current_exe().parent()` -> bin_dir -> capsem-service, capsem-process
-2. Assets: `~/.capsem/assets/` (the only layout -- no dev fallback, use `just install` or symlink)
+2. Assets: `~/.capsem/assets/` (the only installed layout -- packages install
+   a manifest and assets are resolved from that manifest)
 
 ## Auto-launch (main.rs UdsClient)
 
@@ -45,7 +43,8 @@ These commands dispatch before UdsClient creation -- they work without the servi
 
 1. Check socket connectivity
 2. Try systemd/LaunchAgent if unit installed (via `try_start_via_service_manager()`)
-3. Fall back to direct spawn with `--foreground --assets-dir --process-binary`
+3. Fall back to direct spawn only for explicit development commands; installed
+   package paths are otherwise authoritative
 4. Poll socket for 5s
 
 The `request()` method wraps all HTTP calls with retry-on-connect-fail.
@@ -61,19 +60,13 @@ Side-effecting:
 - `uninstall_service()` -> `launchctl bootout` / `systemctl --user disable --now` + delete
 - `service_status()` -> installed + running + pid + unit_path
 
-## Setup wizard (setup.rs)
+## Package install
 
-6 steps, corp-aware, state persisted to `setup-state.json`:
-
-0. Corp config provisioning (if `--corp-config`)
-1. Welcome
-2. (Doctor -- deferred)
-3. Security preset (skips corp-locked)
-4. AI providers (auto-detect credentials)
-5. Repositories (detect git/SSH/GitHub)
-6. Summary + PATH check + service install
-
-Flags: `--non-interactive`, `--preset`, `--force`, `--accept-detected`, `--corp-config`
+The package is the install unit. It may accept a manifest override for corp and
+development installs, copies that manifest into the installed asset directory,
+records manifest origin/hash in service status, installs/restarts service
+files, and writes timestamped install logs. It does not run an AI-provider setup
+wizard and it does not create a user policy file.
 
 ## Self-update (update.rs)
 
@@ -106,7 +99,6 @@ Docker-based e2e tests in `tests/capsem-install/`:
 | test_smoke.py | Harness works (systemd, binaries, build hash) |
 | test_auto_launch.py | Auto-launch, path discovery, asset resolution, error cases |
 | test_service_install.py | Install/uninstall/status, idempotent, systemd integration |
-| test_setup_wizard.py | Non-interactive, rerun skip, --force, user.toml |
 | test_corp_config.py | Provisioning, validation, precedence |
 | test_update.py | Dev build bail, layout detection, cache, preserve-on-fail |
 | test_completions.py | bash/zsh/fish output |
@@ -124,7 +116,7 @@ crates/capsem/src/
   main.rs              CLI entry, command dispatch, UdsClient with auto-launch
   paths.rs             Binary + asset path discovery
   platform.rs          Install layout detection
-  setup.rs             Setup wizard orchestrator
+  package.rs           Package install orchestration and manifest placement
   update.rs            Self-update + cache
   service_install.rs   LaunchAgent + systemd unit generation + registration
   completions.rs       Shell completions via clap_complete

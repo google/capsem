@@ -159,18 +159,12 @@ just dev              # Full Tauri app with hot-reload
 
 See `/dev-just` for the complete recipe reference.
 
-## API keys (optional, needed for integration tests)
+## Credentials
 
-Create `~/.capsem/user.toml`:
-```toml
-[providers.anthropic]
-api_key = "sk-ant-..."
-
-[providers.google]
-api_key = "AIza..."
-```
-
-Needed for: `just test` (integration tests exercise real AI API calls), interactive AI sessions inside the VM.
+Do not create `~/.capsem/user.toml`. Credentials are captured and replayed by
+the credential broker plugin through profile/corp policy. Hermetic tests use
+the local mock server and Ironbank fixtures; real OAuth/API-key manual runs are
+debug evidence, not release proof.
 
 ## Claude Code permissions
 
@@ -285,7 +279,7 @@ Fix: set `credsStore` to empty string in `~/.docker/config.json`:
 
 ### VM boot hangs
 - Check codesigning: `codesign -dvv target/debug/capsem 2>&1 | grep entitlements`
-- Check assets exist: `ls assets/arm64/vmlinuz assets/arm64/rootfs.squashfs`
+- Check assets exist: `ls assets/arm64/vmlinuz assets/arm64/rootfs.erofs`
 - Check kernel architecture matches host: wrong-arch kernel causes silent hang. `VmConfig::build()` now rejects mismatched kernels at config time.
 - Try with debug logs: `RUST_LOG=capsem=debug just run`
 

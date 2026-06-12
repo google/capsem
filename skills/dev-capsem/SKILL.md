@@ -11,7 +11,7 @@ Capsem sandboxes AI agents in air-gapped Linux VMs on macOS using Apple's Virtua
 
 | Crate | What | Key modules |
 |-------|------|-------------|
-| `capsem-core` | Shared library. All business logic lives here. | `vm/` (machine, config, vsock, serial), `net/` (MITM proxy, policy, CA, SSE), `mcp/` (gateway, tools, policy), `hypervisor/` (Apple VZ, KVM), `image.rs` (ImageRegistry, fork/clone) |
+| `capsem-core` | Shared library. All business logic lives here. | `vm/` (machine, profile, vsock, serial), `net/` (network intercept, CA, SSE/model parsing), `security_engine/` (CEL rules, plugins, decisions), `mcp/` (gateway, tools), `hypervisor/` (Apple VZ, KVM), `image.rs` (ImageRegistry, fork/clone) |
 | `capsem-service` | Daemon service. Axum HTTP over UDS, VM lifecycle. | `main.rs` (routes, IPC), `api.rs` (request/response types) |
 | `capsem-process` | Per-VM process. Boots VM, bridges vsock, job store. | `main.rs` (vsock setup, IPC handler) |
 | `capsem` | CLI client. HTTP over UDS to service. | `main.rs` (create, resume, shell, list, exec, run, stop, delete, persist, purge, info, logs, restart, version, doctor, fork, image) |
@@ -37,12 +37,11 @@ Rule: if logic could be reused or tested without a specific crate, it belongs in
 | `site/` | Marketing website (Astro + Svelte 5) | `/site-marketing` |
 | `docs/` | Documentation site (Astro Starlight) | `/site-infra` |
 | `src/capsem/builder/` | Python image builder CLI | `/build-images` |
-| `guest/config/` | Guest TOML configs | `/build-images` |
 | `guest/artifacts/` | capsem-init, bashrc, diagnostics | `/dev-capsem-doctor`, `/build-initrd` |
 | `assets/` | Built VM assets (gitignored, per-arch) | `/build-images` |
 | `graphics/` | Brand icons and app icons (source of truth) | `/dev-capsem` |
 | `skills/` | AI agent skills | `/dev-skills`, `/meta-organize-skills` |
-| `config/` | defaults.toml, CA keypair | `/site-architecture` |
+| `config/` | Profile/corp/admin source config and payloads | `/site-architecture`, `/build-images` |
 | `scripts/` | preflight, integration test, doctor session | `/release-process` |
 
 ## Skill map
@@ -57,7 +56,7 @@ When working on a specific area, consult the relevant skill:
 | `/dev-debugging` | Bug investigation workflow |
 | `/dev-rust-patterns` | Async, cross-compile, error handling |
 | `/dev-capsem-doctor` | In-VM diagnostic suite |
-| `/dev-installation` | Setup wizard, service registration, self-update, install tests |
+| `/dev-installation` | Package install, service registration, self-update, install tests |
 | `/dev-setup` | New developer onboarding |
 | `/dev-skills` | Skills system internals |
 
@@ -99,26 +98,37 @@ Vsock ports: 5000 (control), 5001 (terminal), 5002 (MITM + framed guest MCP), 50
 
 ## Config hierarchy
 
-1. Corp config (`/etc/capsem/corp.toml`) -- highest priority, MDM-distributed
-2. User config (`~/.capsem/user.toml`) -- user overrides
-3. Settings registry (`config/admin/settings-registry.toml`) -- compiled-in defaults
+1. Corp config -- enterprise constraints, reporting endpoints, and locked rule/plugin policy
+2. Profile config -- VM assets, rules, detections, MCP, plugins, packaged root, and profile defaults
+3. Settings config -- UI/app preferences only
+
+There is no `user.toml` policy rail. A VM boots a profile; profile/corp own
+security behavior. Settings are not policy.
 
 ## Key invariants
 
 - Guest VM is air-gapped. No real NIC, no real DNS, no direct internet.
 - Guest binaries are read-only (chmod 555). Rootfs mounted read-only.
-- **Everything is ephemeral unless asked otherwise.** VMs are temporary by default (destroyed on exit). Only named VMs (`capsem create -n <name>`) are persistent -- their workspace and rootfs overlay survive stops and can be resumed. `capsem create` is always detached; `capsem shell` is the interactive entry point (bare `capsem shell` = temp VM + auto-destroy).
+- **Sessions run profiles.** A session is created from a profile. The profile
+  selects assets, packaged root files, MCP config, plugins, rules, detections,
+  and UI-facing name/description/icon. Session status must reflect profile
+  readiness and compatibility.
 - The binary must be codesigned with `com.apple.security.virtualization`.
 - `capsem-core` owns all business logic. App crate and agent crate are thin shells.
-- **Fork images are first-class objects.** `capsem fork <vm> <image-name>` snapshots a VM into a reusable template. `capsem create --image <name>` boots from it. Images depend only on a base squashfs version (flat genealogy -- no image-to-image deps). Asset cleanup protects squashfs versions referenced by any image. Images live in `~/.capsem/images/`.
+- **Fork images are first-class objects.** `capsem fork <session> <image-name>`
+  snapshots a session into a reusable template. Forked images depend on the
+  base profile asset set and must remain compatible with the profile contract.
 
 ## Installation
 
-`capsem setup` is the primary install path. On first use, auto-runs non-interactively (detects credentials, installs service, downloads assets). Users can re-run `capsem setup --force` to reconfigure.
+Release packages are the primary install path. `just install` builds the same
+package shape as CI and invokes it with a manifest override for local
+development.
 
 **Install layout** (`~/.capsem/`):
 - `bin/` -- capsem, capsem-service, capsem-process, capsem-mcp, capsem-mcp-aggregator, capsem-mcp-builtin, capsem-gateway, capsem-tray
-- `assets/` -- manifest.json, v{VERSION}/{vmlinuz, initrd.img, rootfs.squashfs}
+- `assets/` -- manifest.json and profile-selected VM assets such as `vmlinuz`,
+  `initrd.img`, and EROFS rootfs images
 - `run/` -- service.sock, service.pid, gateway.token, gateway.port, gateway.pid, instances/
 
 **Service registration**: LaunchAgent (macOS: `com.capsem.service`) / systemd user unit (Linux: `capsem.service`). Auto-restarts on crash. See `/dev-installation` for the full wizard flow.

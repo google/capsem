@@ -159,7 +159,7 @@ Guest: suspend -> capsem-sysutil -> vsock:5004 -> capsem-process
 
 ### capsem-net-proxy
 
-Listens on localhost:10443 inside the guest. iptables redirects all port 443 traffic here. Each connection is bridged to host vsock:5002 where the MITM proxy handles TLS termination and policy.
+Listens on localhost:10443 inside the guest. iptables redirects all port 443 traffic here. Each connection is bridged to host vsock:5002 where the network intercept handles TLS termination, protocol parsing, and handoff to the security engine.
 
 ### capsem-mcp-server
 
@@ -177,7 +177,7 @@ Selected by kernel cmdline `capsem.storage=virtiofs` (default) or absence (block
   auto_snapshots/      # Rolling ring buffer (12 APFS clones, 5min interval)
 ```
 
-Boot sequence: squashfs -> VirtioFS mount -> loopback ext4 -> overlayfs -> bind-mount workspace.
+Boot sequence: profile-selected read-only rootfs asset -> VirtioFS mount -> loopback ext4 -> overlayfs -> bind-mount workspace.
 
 Why ext4 loopback: Apple VZ's VirtioFS doesn't support `mknod` (whiteout creation), so overlayfs can't use VirtioFS directly as upper.
 
@@ -200,16 +200,25 @@ The guest is air-gapped. No real NIC, no real DNS, no direct internet access.
 1. `capsem-init` creates a dummy0 NIC with fake DNS (dnsmasq)
 2. iptables redirects all port 443 traffic to `capsem-net-proxy` on localhost:10443
 3. `capsem-net-proxy` bridges each TCP connection to host vsock port 5002
-4. Host MITM proxy terminates TLS using per-domain minted certs (signed by static Capsem CA)
-5. Host inspects HTTP request, applies domain + HTTP policy, forwards to real upstream
-6. Full telemetry recorded to session DB (domain, method, path, status, headers, body preview)
+4. Host network intercept terminates TLS using per-domain minted certs (signed by static Capsem CA)
+5. Host parses HTTP/model facts into a `SecurityEvent` and calls the shared security engine
+6. Runtime materialization forwards allowed bytes to upstream
+7. Logging plugins produce a ledger-safe projection for session DB, routes, and UI stats
 
-### Network policy
+### Network/security policy
 
-- User config: `~/.capsem/user.toml` -- domain allow/block lists + HTTP rules
-- Corp config: `/etc/capsem/corp.toml` -- enterprise lockdown (MDM-distributed)
-- Merge: corp overrides user entirely per field; unspecified fields fall through
-- HTTP rules: `[[network.rules]]` with method+path matching per domain
+- Corp config owns enterprise constraints, reporting endpoints, and locked
+  rule/plugin policy.
+- Profile config owns VM assets, MCP config, rules, detections, plugins, and
+  defaults for sessions created from that profile.
+- Settings config owns UI/app preferences only.
+- All enforcement and detection compiles into one `SecurityRuleSet` over
+  `SecurityEvent`; there is no domain-policy, HTTP-policy, or MCP-policy
+  decision provider.
+- Credential capture/injection belongs to the credential broker plugin.
+  Durable log projection belongs to logging plugins such as `log_sanitizer`.
+  Network formatters, DB readers, frontend transforms, and debug harnesses must
+  not implement credential handling.
 
 ### MITM CA
 
@@ -225,17 +234,25 @@ The guest is air-gapped. No real NIC, no real DNS, no direct internet access.
 
 **Everything is ephemeral unless asked otherwise.** VMs are temporary by default. Named VMs (`capsem create -n <name>`) are persistent -- their workspace and rootfs overlay survive stops and can be resumed. Persistent VM data lives in `~/.capsem/run/persistent/`. Never make the overlay upper layer persistent for ephemeral VMs. To add packages: edit guest config and `just build-assets`.
 
-**Fork images** extend the ephemeral model with reusable templates. `capsem fork <vm> <image-name>` snapshots a VM (running or stopped) via APFS clonefile. `capsem create --image <name>` boots from the template. Images have flat genealogy: each depends only on a base squashfs version, never on other images. Deleting any image is always safe; asset cleanup protects referenced squashfs versions.
+**Fork images** extend the session model with reusable templates. `capsem fork
+<session> <image-name>` snapshots a session via APFS clonefile. Forks stay tied
+to their profile asset contract. Deleting any image is always safe; asset
+cleanup protects referenced profile assets.
 
 ## Installation and service lifecycle
 
-`capsem setup` is the primary install entry point. On first CLI use, auto-runs non-interactively if `~/.capsem/setup-state.json` is missing.
+Release packages are the primary install entry point. Local development uses
+the same package rail as CI: build the package, pass a manifest override, and
+let the package install service files plus manifest metadata.
 
-**Setup wizard** (6 steps): corp config provisioning, background asset download, security preset, AI provider detection, repository access, service installation.
+Package install handles service registration and manifest placement. Profile
+configuration handles security rules, plugins, MCP, assets, and packaged root
+content; credentials are brokered at runtime.
 
 **Install layout** (`~/.capsem/`):
 - `bin/` -- capsem, capsem-service, capsem-process, capsem-mcp, capsem-gateway, capsem-tray
-- `assets/` -- manifest.json, v{VERSION}/{vmlinuz, initrd.img, rootfs.squashfs}
+- `assets/` -- manifest.json and profile-selected VM assets such as `vmlinuz`,
+  `initrd.img`, and EROFS rootfs images
 - `run/` -- service.sock, service.pid, gateway.token, gateway.port, gateway.pid, instances/{id}.sock
 
 **Service registration**: LaunchAgent `com.capsem.service` (macOS) or systemd user unit `capsem.service` (Linux). KeepAlive/Restart=always. Service auto-launches gateway and tray as companion processes, passing `--parent-pid` so companions self-exit when the service dies (see capsem-guard, `/dev-rust-patterns` lesson 18).
@@ -276,7 +293,7 @@ capsem-process is a **low-privilege** per-VM process. Security invariants:
 3. **Session directory 0700**: created by the service via `create_virtiofs_session`. Contains workspace/, system/, serial.log (0600), session.db.
 4. **No guest-triggered process exit**: control channel read errors cause `break` (loop exit), not `process::exit()`. Guest cannot DoS the host process.
 5. **Gateway auth layer**: external access goes through capsem-gateway (Bearer token, rate limiting, localhost CORS). Per-VM sockets are not exposed to the network.
-6. **Rootfs read-only**: squashfs mounted read-only by Apple VZ. Guest binaries deployed chmod 555.
+6. **Rootfs read-only**: profile rootfs asset mounted read-only. Guest binaries deployed chmod 555.
 7. **Guest binary security**: all injected binaries are read-only. Guest cannot modify its own agent.
 8. **VirtioFS boundary**: only `session_dir/guest/` is shared via VirtioFS (contains `system/` and `workspace/`). Host-only files (`session.db`, `serial.log`, `auto_snapshots/`, `checkpoint.vzsave`) are outside the share. Compat symlinks at `session_dir/{system,workspace}` point into `guest/` so existing code paths work unchanged.
 
