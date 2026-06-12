@@ -13,3 +13,6 @@ lxml
 tqdm
 rich
 fastmcp
+openai
+anthropic
+litellm

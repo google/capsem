@@ -459,6 +459,17 @@ next one, and stage only the files for that slice.
   - Current debt: existing recorder/replay and live Ollama proof are useful,
     but they are still too thin; they do not yet prove real SDK/client
     behavior or file-writing agent outcomes.
+  - 2026-06-12 progress: a black-box SDK presence probe against a fresh Code
+    session showed `openai` and `anthropic` are missing from the current VM
+    image while `httpx` and `requests` are present. The Code and Co-work
+    profile package ledgers now include `openai`, `anthropic`, and `litellm`
+    with updated BLAKE3/size pins. Remaining debt: rebuild EROFS assets from
+    the profile rail, then add the real-client Ironbank test that exercises
+    those SDKs through Capsem to host Ollama and validates DB/routes/logs.
+  - Proof: `cargo run -p capsem-admin -- profile check
+    config/profiles/code/profile.toml --config-root config --json`; `cargo run
+    -p capsem-admin -- profile check config/profiles/co-work/profile.toml
+    --config-root config --json`.
 - [x] Proof: lab is shared by doctor, integration tests, recorder, and
   benchmark.
   - 2026-06-12 progress: renamed the canonical deterministic fixture service

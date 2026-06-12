@@ -113,6 +113,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `build.sh`/`files.build` and added Ollama to the shipped Code and Co-work
   profile images through that builder rail, with `zstd` included for the
   official Ollama installer.
+- Added OpenAI, Anthropic, and LiteLLM Python SDKs to the Code and Co-work
+  profile package ledgers so Ironbank real-client model tests can run from the
+  VM without ad-hoc guest installs.
 - Added an Ironbank `capsem-doctor` ledger proof that boots a VM through public
   service routes, runs the hermetic mock protocol lab, and verifies HTTP, DNS,
   MCP, model, tool-call, file, exec, security-rule, and credential broker rows

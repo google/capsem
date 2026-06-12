@@ -92,8 +92,8 @@ size = 231
 
 [files.python_requirements]
 path = "profiles/co-work/python-requirements.txt"
-hash = "blake3:75f08961e8fdfcfcf91719744847a2fbb202ca3f9c092e6c35e9c8842f816b00"
-size = 117
+hash = "blake3:21e6020d4477051c92b4a0fc1f1f1c0a115cf95d9f6f8de10a35a909bcb6fcd6"
+size = 142
 
 [files.npm_packages]
 path = "profiles/co-work/npm-packages.txt"
