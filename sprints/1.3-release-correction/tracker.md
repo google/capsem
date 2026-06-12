@@ -259,6 +259,13 @@ next one, and stage only the files for that slice.
 - [ ] RED/GREEN: doctor/toolchain probes cover apt/dpkg triggers, Python, pip,
   uv, Node, npm, npx, packaged CLIs, aliases, MCP bootstrap, DNS, TLS, FS
   writes.
+  - 2026-06-12 progress: CA propagation is no longer implicit. Guest init now
+    exports `SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`, and `NODE_EXTRA_CA_CERTS`
+    for both the initial agent process and login shells, so TLS-sensitive
+    doctor/toolchain probes inherit the Capsem CA consistently instead of
+    depending on per-tool defaults.
+  - Proof: `uv run python -m pytest tests/test_release_doctor_contract.py -q`;
+    `sh -n guest/artifacts/capsem-init`.
 - [x] RED/GREEN: cargo test runner codesigning is serialized so parallel test
   shards do not race while replacing ad-hoc signatures.
   - 2026-06-11 progress: `scripts/run_signed.sh` now uses a portable

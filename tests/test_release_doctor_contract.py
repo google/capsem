@@ -47,3 +47,20 @@ def test_doctor_session_validation_starts_hermetic_upstream() -> None:
     assert "capsem-debug-upstream" in source
     assert "CAPSEM_BENCH_MITM_LOCAL_BASE_URL" in source
     assert "[binary, \"run\", \"capsem-doctor\"]" in source
+
+
+def test_guest_init_exports_ca_bundle_for_runtime_and_login_shells() -> None:
+    init = (PROJECT_ROOT / "guest" / "artifacts" / "capsem-init").read_text()
+    expected = {
+        "SSL_CERT_FILE": "/etc/ssl/certs/ca-certificates.crt",
+        "REQUESTS_CA_BUNDLE": "/etc/ssl/certs/ca-certificates.crt",
+        "NODE_EXTRA_CA_CERTS": "/etc/ssl/certs/ca-certificates.crt",
+    }
+
+    runtime_block = init.split("cat > /newroot/etc/profile.d/capsem.sh", maxsplit=1)[0]
+    profile_block = init.split("cat > /newroot/etc/profile.d/capsem.sh", maxsplit=1)[1]
+
+    for key, value in expected.items():
+        export = f"export {key}={value}"
+        assert export in runtime_block
+        assert export in profile_block

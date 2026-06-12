@@ -448,6 +448,9 @@ export PATH=/opt/ai-clis/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/
 export HOME=/root
 export COLORTERM=truecolor
 export IS_SANDBOX=1
+export SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
+export REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
+export NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt
 
 # Optimize Node.js and Python for the sandboxed VM environment
 # 1. Prevent kernel OOMs by capping Node's V8 heap (VM has 4GB RAM by default)
@@ -476,6 +479,9 @@ case ":$PATH:" in
     *:/opt/ai-clis/bin:*) ;;
     *) export PATH="/opt/ai-clis/bin:/root/.local/bin:$PATH" ;;
 esac
+export SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
+export REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
+export NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt
 # Wait briefly for background venv creation if not ready yet.
 if [ ! -f /run/capsem-venv-ready ] && [ ! -f /root/.venv/bin/activate ]; then
     _i=0
