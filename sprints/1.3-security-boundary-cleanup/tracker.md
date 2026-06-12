@@ -32,9 +32,9 @@ failure first.
 - [ ] Ironbank: query, JSON body, form body, response token body, and model SDK
   replay get the same no-raw-ledger proof.
 - [ ] Add plugin latency/counter evidence for broker and sanitizer.
-- [ ] Update CHANGELOG.md.
+- [x] Update CHANGELOG.md.
 - [x] Focused test gate.
-- [ ] Commit and push this slice before returning to broader bug hotlist.
+- [x] Commit and push this slice before returning to broader bug hotlist.
 
 ## Invariants
 
