@@ -88,8 +88,8 @@ fn bundle_redacts_secrets_in_settings_toml() {
 
     let settings_toml_entry = entries
         .iter()
-        .find(|(p, _)| p.ends_with("config/settings.toml"))
-        .expect("config/settings.toml should be in bundle");
+        .find(|(p, _)| p.ends_with("config/admin/settings.toml"))
+        .expect("config/admin/settings.toml should be in bundle");
     let text = std::str::from_utf8(&settings_toml_entry.1).unwrap();
     assert!(
         !text.contains("sk-ant-real-secret-here-very-long-string"),
@@ -112,7 +112,7 @@ fn bundle_no_redact_keeps_secrets() {
 
     let settings_toml_entry = entries
         .iter()
-        .find(|(p, _)| p.ends_with("config/settings.toml"))
+        .find(|(p, _)| p.ends_with("config/admin/settings.toml"))
         .unwrap();
     let text = std::str::from_utf8(&settings_toml_entry.1).unwrap();
     assert!(

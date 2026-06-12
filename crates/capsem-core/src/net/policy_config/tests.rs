@@ -4451,14 +4451,14 @@ fn integration_corp_rule_beats_profile_default_allow_for_deny_target() {
     let _guard = crate::credential_broker::TEST_ENV_LOCK.blocking_lock();
     let capsem_home = tempfile::tempdir().unwrap();
     std::fs::copy(
-        root.join("config/integration-test-settings.toml"),
+        root.join("tests/fixtures/config/integration/settings.toml"),
         capsem_home.path().join("settings.toml"),
     )
     .unwrap();
     let _settings_home = EnvVarGuard::set("CAPSEM_HOME", capsem_home.path());
     let _corp_config = EnvVarGuard::set(
         "CAPSEM_CORP_CONFIG",
-        root.join("config/integration-test-corp.toml"),
+        root.join("tests/fixtures/config/integration/corp.toml"),
     );
     let (user, corp) = load_settings_and_corp_files();
     let policies = MergedPolicies::from_files(&user, &corp);

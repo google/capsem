@@ -78,6 +78,27 @@ Write code. Follow the project skills:
 - `/dev-rust-patterns` for async/cross-compile patterns
 - `/dev-mitm-proxy`, `/dev-mcp` for subsystem-specific guidance
 
+### Profile Source vs Generated Runtime Config
+
+Keep profile/config ownership crisp:
+
+- Read `config/README.md` and `tests/README.md` before changing config layout,
+  profile payloads, generated settings artifacts, or config test fixtures.
+- Checked-in `config/profiles/<id>/profile.toml` is source contract, not a
+  scratchpad for local asset or payload hashes.
+- Profile sibling payload pins are admin-owned. Do not hand-edit `hash` or
+  `size` fields after changing `build.sh`, package files, rules, MCP files,
+  tips, or root seed manifests. Refresh them through `capsem-admin`; if that
+  command does not exist, implementing it with tests is the next task.
+- Current asset URLs/hashes from `assets/manifest.json` are materialized into
+  `target/config` through the same `capsem-admin`/just rail used by CI and
+  release. Do not commit ad hoc `target/config` output.
+- `config/skills` does not exist. Developer skills live in repository-level
+  `skills/`. User/profile skills, when implemented, are profile-owned payloads
+  with their own contract, not Codex development instructions.
+- Any sprint that changes profile payloads must prove the admin rail, not a
+  manual TOML patch.
+
 Names are part of the architecture contract. Prefer boring,
 self-explanatory names that state what a thing is (`mock_server`,
 `profile_loader`, `security_rule`) over origin-story names, lore names, or

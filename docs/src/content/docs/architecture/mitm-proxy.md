@@ -198,7 +198,7 @@ Parsing runs inline during `poll_frame()` -- response bytes pass through unchang
 
 ### Cost estimation
 
-Model pricing is loaded from `config/genai-prices.json` (embedded at compile time via `include_str!`). Cost = `(input_tokens * input_price + output_tokens * output_price)`. Updated via `just update_prices`.
+Model pricing is loaded from `config/data/genai-prices.json` (embedded at compile time via `include_str!`). Cost = `(input_tokens * input_price + output_tokens * output_price)`. Updated via `just update_prices`.
 
 ## Trace state correlation
 

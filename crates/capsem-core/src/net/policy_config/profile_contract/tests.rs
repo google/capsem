@@ -459,7 +459,7 @@ fn profile_mcp_tool_permission_mutation_updates_rule_and_pin() {
         summary.rule_id.as_deref(),
         Some("profiles.rules.mcp_capsem_fetch_http_permission")
     );
-    assert_ne!(summary.new_hash, old_pin);
+    assert_ne!(Some(summary.new_hash.clone()), old_pin);
 
     let reloaded = Profile::load_from_dir(fixture.profile_dir()).expect("profile reloads");
     let permission = reloaded
@@ -480,7 +480,7 @@ fn profile_mcp_tool_permission_mutation_updates_rule_and_pin() {
         .unwrap()
         .hash
         .clone();
-    assert_eq!(new_pin, summary.new_hash);
+    assert_eq!(new_pin, Some(summary.new_hash));
     reloaded
         .check(&fixture.assets_dir(), "arm64")
         .expect("mutation keeps profile ledger valid");
@@ -533,7 +533,7 @@ fn profile_mcp_default_permission_mutation_updates_rule_pin_and_fallback() {
     assert_eq!(summary.target_kind, "mcp_default");
     assert_eq!(summary.target_key, "default.mcp");
     assert_eq!(summary.rule_id.as_deref(), Some("default.mcp"));
-    assert_ne!(summary.new_hash, old_pin);
+    assert_ne!(Some(summary.new_hash.clone()), old_pin);
 
     let reloaded = Profile::load_from_dir(fixture.profile_dir()).expect("profile reloads");
     let default = reloaded
@@ -556,7 +556,7 @@ fn profile_mcp_default_permission_mutation_updates_rule_pin_and_fallback() {
         .unwrap()
         .hash
         .clone();
-    assert_eq!(new_pin, summary.new_hash);
+    assert_eq!(new_pin, Some(summary.new_hash));
     reloaded
         .check(&fixture.assets_dir(), "arm64")
         .expect("default mutation keeps profile ledger valid");
@@ -881,16 +881,16 @@ fn profile_assets_reject_release_manifest_theater_and_build_knobs() {
     assert!(error.to_string().contains("filesystem"), "{error}");
 
     let bad_asset = profile.replace(
-        "size = 8786432\n",
-        "size = 8786432\nsignature = \"not-supported\"\n",
+        "url = \"https://github.com/google/capsem/releases/download/v1.0.1780954707/arm64-vmlinuz\"\n",
+        "url = \"https://github.com/google/capsem/releases/download/v1.0.1780954707/arm64-vmlinuz\"\nsignature = \"not-supported\"\n",
     );
     let error = toml::from_str::<ProfileConfigFile>(&bad_asset)
         .expect_err("profile assets must not pretend to carry per-asset signatures");
     assert!(error.to_string().contains("signature"), "{error}");
 
     let bad_content_type = profile.replace(
-        "size = 8786432\n",
-        "size = 8786432\ncontent_type = \"application/octet-stream\"\n",
+        "url = \"https://github.com/google/capsem/releases/download/v1.0.1780954707/arm64-vmlinuz\"\n",
+        "url = \"https://github.com/google/capsem/releases/download/v1.0.1780954707/arm64-vmlinuz\"\ncontent_type = \"application/octet-stream\"\n",
     );
     let error = toml::from_str::<ProfileConfigFile>(&bad_content_type)
         .expect_err("profile assets must not expose downloader content types");

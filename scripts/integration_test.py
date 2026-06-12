@@ -180,7 +180,7 @@ def _start_service_with_test_config(
 
     The service and each `capsem-process` share CAPSEM_HOME, so the per-VM
     runtime policy picks up `example.com` and the other overrides from
-    `config/integration-test-settings.toml`.
+    `tests/fixtures/config/integration/settings.toml`.
     """
     project_root = Path(__file__).resolve().parent.parent
     service_bin = project_root / "target/debug/capsem-service"
@@ -245,13 +245,13 @@ def run_vm(binary: str, assets_dir: str) -> tuple[str, int]:
         "CAPSEM_ASSETS_DIR": assets_dir,
         "RUST_LOG": "capsem=warn",
         "CAPSEM_HOME": str(Path("target/integration-capsem-home").resolve()),
-        "CAPSEM_CORP_CONFIG": "config/integration-test-corp.toml",
+        "CAPSEM_CORP_CONFIG": "tests/fixtures/config/integration/corp.toml",
     }
 
     mock_proc = None
 
     # Restart the dev service with CAPSEM_HOME/CAPSEM_CORP_CONFIG in its env so
-    # the policy rules from `config/integration-test-settings.toml` actually
+    # the policy rules from `tests/fixtures/config/integration/settings.toml` actually
     # reach the VM. Without this, the service inherits whatever env
     # `_ensure-service` was launched with (usually nothing), and the
     # per-VM policy falls back to the developer's real CAPSEM_HOME instead of
@@ -259,8 +259,8 @@ def run_vm(binary: str, assets_dir: str) -> tuple[str, int]:
     _kill_dev_service()
     service_proc = _start_service_with_test_config(
         assets_dir,
-        "config/integration-test-settings.toml",
-        "config/integration-test-corp.toml",
+        "tests/fixtures/config/integration/settings.toml",
+        "tests/fixtures/config/integration/corp.toml",
     )
 
     # Snapshot session dirs before so we can find the new one after.
@@ -916,14 +916,14 @@ def check_persistence(binary: str, assets_dir: str) -> bool:
         "CAPSEM_ASSETS_DIR": assets_dir,
         "RUST_LOG": "capsem=warn",
         "CAPSEM_HOME": str(Path("target/integration-capsem-home").resolve()),
-        "CAPSEM_CORP_CONFIG": "config/integration-test-corp.toml",
+        "CAPSEM_CORP_CONFIG": "tests/fixtures/config/integration/corp.toml",
     }
 
     _kill_dev_service()
     service_proc = _start_service_with_test_config(
         assets_dir,
-        "config/integration-test-settings.toml",
-        "config/integration-test-corp.toml",
+        "tests/fixtures/config/integration/settings.toml",
+        "tests/fixtures/config/integration/corp.toml",
     )
     try:
         print("  Invocation 1: writing sentinel file...")

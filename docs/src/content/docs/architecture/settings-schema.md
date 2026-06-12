@@ -12,8 +12,8 @@ Key files:
 | File | Role |
 |---|---|
 | `src/capsem/builder/schema.py` | Pydantic models (canonical schema) |
-| `config/settings-schema.json` | Generated JSON Schema |
-| `config/defaults.json` | Generated defaults from guest TOML configs |
+| `config/admin/settings-schema.generated.json` | Generated JSON Schema |
+| `config/admin/settings-registry.generated.json` | Generated defaults from guest TOML configs |
 | `crates/capsem-core/src/net/policy_config/types.rs` | Rust settings and Policy serde contract |
 | `frontend/src/lib/types/settings.ts` | TypeScript settings and Policy wire types |
 | `crates/capsem-core/tests/settings_spec.rs` | Rust conformance tests |
@@ -166,9 +166,9 @@ The schema generation pipeline runs from Pydantic models to two output files:
 ```mermaid
 flowchart LR
     PM["schema.py\nPydantic models"] --> MSJ["model_json_schema()"]
-    MSJ --> SCH["config/settings-schema.json"]
-    GC["config/host/settings.toml"] --> GD["generate_defaults_json()"]
-    GD --> DEF["config/defaults.json"]
+    MSJ --> SCH["config/admin/settings-schema.generated.json"]
+    GC["config/admin/settings.toml"] --> GD["generate_defaults_json()"]
+    GD --> DEF["config/admin/settings-registry.generated.json"]
 ```
 
 `just schema` regenerates both files:
@@ -177,8 +177,8 @@ flowchart LR
 just schema
 # Runs: uv run python scripts/generate_schema.py
 # Outputs:
-#   config/settings-schema.json  (JSON Schema from Pydantic)
-#   config/defaults.json         (defaults from host settings source)
+#   config/admin/settings-schema.generated.json  (JSON Schema from Pydantic)
+#   config/admin/settings-registry.generated.json         (defaults from host settings source)
 ```
 
 The JSON Schema is derived from `SettingsRoot.model_json_schema()`. It contains `$defs` for all model types (GroupNode, SettingNode, SettingMetadata, enums) and a `properties.settings` array at the root.
@@ -232,13 +232,13 @@ Two parallel paths connect the settings contract to the running application:
 flowchart TD
     subgraph "Schema Path (dev time)"
         PM["schema.py\nPydantic models"] --> JSG["model_json_schema()"]
-        JSG --> SCHEMA["config/settings-schema.json"]
+        JSG --> SCHEMA["config/admin/settings-schema.generated.json"]
         SCHEMA --> TESTS["Conformance tests\n(Python + Rust + TypeScript)"]
     end
 
     subgraph "Data Path (build time)"
-        TOML["config/host/settings.toml\n(UI/app preferences only)"] --> GEN["generate_defaults_json()"]
-        GEN --> DEF["config/defaults.json"]
+        TOML["config/admin/settings.toml\n(UI/app preferences only)"] --> GEN["generate_defaults_json()"]
+        GEN --> DEF["config/admin/settings-registry.generated.json"]
         DEF --> RUST["Rust include_str!()\nregistry.rs"]
         RUST --> BOOT["Settings route\nand UI defaults"]
     end
@@ -251,7 +251,7 @@ flowchart TD
 ```
 
 The data path: host settings source is processed by `generate_defaults_json()`
-into `config/defaults.json`. Rust embeds this file at compile time via
+into `config/admin/settings-registry.generated.json`. Rust embeds this file at compile time via
 `include_str!()` in `registry.rs`. Settings are UI/app preferences. Profiles
 own assets, rules, MCP, plugins, image payloads, and VM runtime posture.
 

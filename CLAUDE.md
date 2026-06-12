@@ -40,23 +40,24 @@ guest/config/             Guest image configuration (TOML configs)
 guest/artifacts/          Guest scripts and diagnostics (capsem-init, bashrc, tests)
 assets/                   Built VM assets (gitignored, per-arch: assets/{arch}/)
 graphics/                 Brand icons and Tauri app icons (source of truth)
-config/skills/            Shared AI agent skills (SKILL.md format)
+skills/                   Shared AI agent skills (SKILL.md format)
 ```
 
 ## Skills
 
-Skills live in `config/skills/` at the project root. This is the canonical
-checked-in skill library. Agent-specific discovery or VM injection must copy or
-mount from this path explicitly; root dot-dir symlinks are not product truth.
+Skills live in `skills/` at the project root. This is the canonical checked-in
+developer skill library. Agent-specific discovery may symlink or copy from this
+path; runtime product config must not mirror developer skills under `config/`.
 
 ```
-config/skills/<name>/SKILL.md    One skill per directory
+skills/<name>/SKILL.md    One skill per directory
 ```
 
 Prefix-based grouping: `dev-*`, `build-*`, `release-*`, `site-*`, `frontend-*`, `meta-*`. `asset-pipeline` covers the build-to-boot asset flow. See `/meta-organize-skills` for conventions.
 
-**Do not** put skill source files in `.claude/`, `.codex/`, or `.gemini/`.
-Those roots are agent-local settings only; `config/skills/` is the source.
+**Do not** put skill source files in `.claude/`, `.codex/`, `.gemini/`, or
+`config/skills/`. Those roots are agent-local settings or product config, not
+the developer skill source.
 
 ## Skills -- LOAD BEFORE CODING
 

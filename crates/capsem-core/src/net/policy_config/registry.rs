@@ -162,16 +162,17 @@ fn collect_settings(
     }
 }
 
-pub(super) const DEFAULTS_JSON: &str = include_str!("../../../../../config/defaults.json");
+pub(super) const DEFAULTS_JSON: &str =
+    include_str!("../../../../../config/admin/settings-registry.generated.json");
 
-/// Returns the setting definitions parsed from the embedded defaults.json.
+/// Returns the setting definitions parsed from the embedded settings registry.
 pub fn setting_definitions() -> Vec<SettingDef> {
     let root: serde_json::Value =
-        serde_json::from_str(DEFAULTS_JSON).expect("built-in defaults.json is invalid");
+        serde_json::from_str(DEFAULTS_JSON).expect("built-in settings registry is invalid");
     let settings = root
         .get("settings")
         .and_then(|v| v.as_object())
-        .expect("defaults.json missing settings");
+        .expect("settings registry missing settings");
     let mut defs = Vec::new();
     let root_group = GroupMeta::default();
     collect_settings("", settings, &root_group, &mut defs);

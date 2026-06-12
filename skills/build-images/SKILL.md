@@ -20,12 +20,15 @@ Capsem image builds are profile-led.
 
 ## Source Layout
 
+Read `config/README.md` before changing this layout.
+
 ```
 config/
-  host/                   Host/corp/settings source contracts
+  admin/                  Admin settings source + generated registries
+  corp/                   Corporate source contracts and rule files
   docker/                 Dockerfile/build templates
   profiles/<profile_id>/
-    profile.toml          Profile ledger and hash pins
+    profile.toml          Source ledger; no hash/size pins
     enforcement.toml      Profile enforcement rules
     detection.yaml        Profile Sigma detections
     mcp.json              Profile MCP declarations
@@ -35,7 +38,7 @@ config/
     build.sh              Profile image build hook
     tips.txt              Profile guest tips
     root/                 Guest / seed, projected by capsem-init
-target/config/            Generated runtime config
+target/config/            Generated runtime config with resolved pins
 guest/artifacts/          Core guest payloads: init, doctor, diagnostics, bench
 assets/                   Generated VM assets
 packages/                 Generated native packages
@@ -93,12 +96,27 @@ rendered rootfs package lists, profile root/build-script inputs, EROFS config,
 git revision, and project version. Installed-package/component truth belongs in
 the CycloneDX OBOM, not the build ledger.
 
+## Profile Payload Pins
+
+Profile sibling files are ledgered, but agents must not hand-edit their
+`hash` or `size` fields in `profile.toml`. Payload pins are produced by the
+admin rail. If editing `apt-packages.txt`, `python-requirements.txt`,
+`npm-packages.txt`, `build.sh`, rules, MCP declarations, tips, or root seed
+files makes `capsem-admin profile check` fail, run the supported admin pin
+refresh command. If that command is missing or incomplete, implement it in
+`capsem-admin` with tests before changing the payload. Do not "just fix the
+hash" in TOML.
+
+Generated runtime asset URLs/hashes belong in `target/config` after
+`capsem-admin profile materialize`, not in checked-in source TOML.
+
 ## Adding packages to the VM
 
 1. Edit the profile-owned package file, for example
    `config/profiles/code/apt-packages.txt`,
    `python-requirements.txt`, or `npm-packages.txt`.
-2. Update the owning `profile.toml` file descriptor hash/size.
+2. Refresh payload pins through `capsem-admin`; if that path is missing, add it
+   before proceeding.
 3. Run the admin/profile validation path.
 4. Run `just build-assets code` to rebuild the rootfs.
 5. Verify with `capsem-doctor` inside a booted VM.
@@ -143,8 +161,8 @@ Remember this rail when touching profile image contents:
   credential injection path, or local developer repair script.
 - It must not bake credentials, per-user state, corp policy, rules, MCP
   decisions, or runtime settings.
-- The owning `profile.toml` must reference it through `[files.build]` and keep
-  the descriptor hash/size current.
+- The owning `profile.toml` must reference it through `[files.build]`; the
+  descriptor hash/size is refreshed by the admin rail, never by hand.
 - Changing `build.sh` changes future rootfs assets only. Rebuild assets through
   the admin/just rail before claiming a VM contains the change.
 - The same admin materialization path must be used locally and in CI; no
@@ -178,7 +196,7 @@ Templates use Jinja2 with variables from the merged guest config. Preview with `
 
 The data flows through four layers:
 
-1. **Profile ledger** (`config/profiles/<id>/profile.toml`) and hash-pinned
+1. **Profile ledger** (`config/profiles/<id>/profile.toml`) and admin-pinned
    sibling files.
 2. **capsem-admin** validates and materializes a backend build workspace.
 3. **Pydantic models** (`src/capsem/builder/models.py`) parse that workspace.
@@ -233,7 +251,8 @@ The data flows through four layers:
 2. Use profile-owned `build.sh` when the vendor ships an official shell
    installer. The build hook runs during rootfs construction only.
 3. Make sure binaries end up in stable system paths such as `/usr/local/bin`.
-4. Update profile file descriptor hashes/sizes in `profile.toml`.
+4. Refresh profile file descriptor pins through `capsem-admin`; if the rail
+   cannot express the change, implement it with tests first.
 5. Add or update capsem-admin materialization tests and Docker context tests.
 6. Rebuild: `just build-assets code` and verify with `capsem-doctor`.
 
@@ -245,7 +264,7 @@ testing available in every shipped profile image that declares the hook.
 
 1. Edit `config/profiles/<profile_id>/apt-packages.txt`,
    `python-requirements.txt`, or `npm-packages.txt`.
-2. Update the matching `profile.toml` descriptor hash and size.
+2. Refresh the matching descriptor pin through `capsem-admin`.
 3. Validate through capsem-admin.
 4. Rebuild: `just build-assets <profile_id>`.
 

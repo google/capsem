@@ -61,13 +61,13 @@ If you change the settings schema (node types, metadata fields), all three must 
 ## Schema generation pipeline
 
 ```
-guest/config/*.toml -> Pydantic models -> config/settings-schema.json (JSON Schema)
-                                       -> config/defaults.json (settings interchange)
+guest/config/*.toml -> Pydantic models -> config/admin/settings-schema.generated.json (JSON Schema)
+                                       -> config/admin/settings-registry.generated.json (settings interchange)
 ```
 
 - `just schema` runs `generate_schema.py` which calls `export_json_schema()` and `generate_defaults_json()`
-- Rust reads `config/defaults.json` via `include_str!()` in `registry.rs`
-- TypeScript validates against `config/settings-schema.json` in conformance tests
+- Rust reads `config/admin/settings-registry.generated.json` via `include_str!()` in `registry.rs`
+- TypeScript validates against `config/admin/settings-schema.generated.json` in conformance tests
 
 ## In-VM tests (NOT pytest on host)
 

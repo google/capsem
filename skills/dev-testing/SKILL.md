@@ -5,6 +5,9 @@ description: Capsem testing policy and workflow. Use whenever running tests, wri
 
 # Testing
 
+Read `tests/README.md` before adding or moving test fixtures. Test-only config
+belongs under `tests/fixtures/`, not root `config/`.
+
 ## Test tiers
 
 Three tiers, fast to thorough. Every change must pass all three before it ships.

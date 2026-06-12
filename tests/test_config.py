@@ -463,7 +463,7 @@ defconfig = "kernel/defconfig.x86_64"
 
 
 def _collect_setting_ids(obj: dict, path: str = "") -> dict[str, dict]:
-    """Walk the defaults.json structure and collect setting leaf IDs with their data."""
+    """Walk the settings registry structure and collect setting leaf IDs with their data."""
     result: dict[str, dict] = {}
     if isinstance(obj, dict):
         if "type" in obj:
@@ -548,12 +548,12 @@ class TestGenerateDefaultsJsonStructure:
 
 
 # ---------------------------------------------------------------------------
-# generate_defaults_json -- conformance with current defaults.json
+# generate_defaults_json -- conformance with current settings registry
 # ---------------------------------------------------------------------------
 
 
 class TestGenerateDefaultsJsonConformance:
-    """Verify generated JSON matches the hand-authored defaults.json."""
+    """Verify generated JSON matches the checked-in settings registry."""
 
     @pytest.fixture
     def real_config(self):
@@ -565,11 +565,11 @@ class TestGenerateDefaultsJsonConformance:
 
     @pytest.fixture
     def current_defaults(self):
-        with open(PROJECT_ROOT / "config" / "defaults.json") as f:
+        with open(PROJECT_ROOT / "config" / "admin" / "settings-registry.generated.json") as f:
             return json.load(f)
 
     def test_same_setting_ids(self, generated, current_defaults):
-        """Every setting ID in defaults.json is in the generated JSON."""
+        """Every setting ID in the settings registry is in the generated JSON."""
         current_ids = set(_collect_setting_ids(current_defaults["settings"]).keys())
         gen_ids = set(_collect_setting_ids(generated["settings"]).keys())
         missing = current_ids - gen_ids
@@ -637,15 +637,15 @@ class TestGenerateDefaultsJsonConformance:
                 assert gen_provs[key].get("enabled_by") == cur_provs[key]["enabled_by"]
 
     def test_defaults_json_not_stale(self, generated):
-        """Generated defaults.json must exactly match the on-disk file.
+        """Generated settings registry must exactly match the on-disk file.
 
         If this fails, run: just _generate-settings
         """
         on_disk = json.loads(
-            (PROJECT_ROOT / "config" / "defaults.json").read_text()
+            (PROJECT_ROOT / "config" / "admin" / "settings-registry.generated.json").read_text()
         )
         assert generated == on_disk, (
-            "config/defaults.json is stale -- regenerate with: just _generate-settings"
+            "config/admin/settings-registry.generated.json is stale -- regenerate with: just _generate-settings"
         )
 
     def test_mock_ts_not_stale(self):
@@ -656,7 +656,7 @@ class TestGenerateDefaultsJsonConformance:
         config = load_guest_config(PROJECT_ROOT / "guest")
         defaults = generate_defaults_json(config)
         # Load MCP tool defs (exported by mcp_export binary)
-        mcp_tools_path = PROJECT_ROOT / "config" / "mcp-tools.json"
+        mcp_tools_path = PROJECT_ROOT / "config" / "admin" / "mcp-tools.generated.json"
         mcp_tools = json.loads(mcp_tools_path.read_text()) if mcp_tools_path.exists() else []
         expected = generate_mock_ts(defaults, mcp_tools=mcp_tools)
         on_disk = (

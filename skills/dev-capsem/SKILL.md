@@ -101,7 +101,7 @@ Vsock ports: 5000 (control), 5001 (terminal), 5002 (MITM + framed guest MCP), 50
 
 1. Corp config (`/etc/capsem/corp.toml`) -- highest priority, MDM-distributed
 2. User config (`~/.capsem/user.toml`) -- user overrides
-3. Settings registry (`config/defaults.toml`) -- compiled-in defaults
+3. Settings registry (`config/admin/settings-registry.toml`) -- compiled-in defaults
 
 ## Key invariants
 

@@ -17,7 +17,7 @@ use clap::{Parser, Subcommand};
 use serde::{Deserialize, Serialize};
 
 const CODE_PROFILE_TEMPLATE: &str = include_str!("../../../config/profiles/code/profile.toml");
-const SETTINGS_TEMPLATE: &str = include_str!("../../../config/settings.toml");
+const SETTINGS_TEMPLATE: &str = include_str!("../../../config/admin/settings.toml");
 
 #[derive(Debug, Parser)]
 #[command(name = "capsem-admin")]
@@ -883,8 +883,8 @@ fn profile_materialize_command(args: ProfileMaterializeArgs) -> Result<()> {
 }
 
 fn check_config_root(config_root: &Path, arch: Option<&str>) -> Result<ConfigRootCheckReport> {
-    let settings = validate_settings(&config_root.join("settings.toml"))?;
-    let corp_rules = validate_corp_config(&config_root.join("corp.toml"), config_root)?;
+    let settings = validate_settings(&config_root.join("admin/settings.toml"))?;
+    let corp_rules = validate_corp_config(&config_root.join("corp/corp.toml"), config_root)?;
     let catalog =
         ProfileCatalog::load_from_dir(&config_root.join("profiles")).map_err(|error| {
             anyhow!(
@@ -1128,7 +1128,28 @@ fn image_verify_command(args: ImageVerifyArgs) -> Result<()> {
     Ok(())
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ProfilePinMode {
+    Source,
+    Materialized,
+}
+
 fn validate_profile(path: &Path, config_root: Option<&Path>) -> Result<ProfileValidationReport> {
+    validate_profile_with_pin_mode(path, config_root, ProfilePinMode::Source)
+}
+
+fn validate_materialized_profile(
+    path: &Path,
+    config_root: Option<&Path>,
+) -> Result<ProfileValidationReport> {
+    validate_profile_with_pin_mode(path, config_root, ProfilePinMode::Materialized)
+}
+
+fn validate_profile_with_pin_mode(
+    path: &Path,
+    config_root: Option<&Path>,
+    pin_mode: ProfilePinMode,
+) -> Result<ProfileValidationReport> {
     let content =
         fs::read_to_string(path).with_context(|| format!("read profile {}", path.display()))?;
     let profile: ProfileConfigFile =
@@ -1136,6 +1157,10 @@ fn validate_profile(path: &Path, config_root: Option<&Path>) -> Result<ProfileVa
     profile
         .validate()
         .map_err(|error| anyhow!("validate profile {}: {error}", path.display()))?;
+    match pin_mode {
+        ProfilePinMode::Source => ensure_source_profile_unpinned(&profile, path)?,
+        ProfilePinMode::Materialized => ensure_materialized_profile_pinned(&profile, path)?,
+    }
 
     let config_root = match config_root {
         Some(root) => root.to_path_buf(),
@@ -1161,6 +1186,63 @@ fn validate_profile(path: &Path, config_root: Option<&Path>) -> Result<ProfileVa
     })
 }
 
+fn ensure_source_profile_unpinned(profile: &ProfileConfigFile, path: &Path) -> Result<()> {
+    let location = path.display();
+    if profile.obom.is_some() {
+        return Err(anyhow!(
+            "source profile {location} must not contain generated obom pins"
+        ));
+    }
+    for (arch, assets) in &profile.assets.arch {
+        for (kind, descriptor) in [
+            ("kernel", &assets.kernel),
+            ("initrd", &assets.initrd),
+            ("rootfs", &assets.rootfs),
+        ] {
+            if descriptor.hash.is_some() || descriptor.size.is_some() {
+                return Err(anyhow!(
+                    "source profile {location} must not contain hash/size pins for assets.arch.{arch}.{kind}"
+                ));
+            }
+        }
+    }
+    for (kind, descriptor) in profile.files.iter() {
+        if descriptor.hash.is_some() || descriptor.size.is_some() {
+            return Err(anyhow!(
+                "source profile {location} must not contain hash/size pins for files.{kind}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn ensure_materialized_profile_pinned(profile: &ProfileConfigFile, path: &Path) -> Result<()> {
+    let location = path.display();
+    for (arch, assets) in &profile.assets.arch {
+        for (kind, descriptor) in [
+            ("kernel", &assets.kernel),
+            ("initrd", &assets.initrd),
+            ("rootfs", &assets.rootfs),
+        ] {
+            descriptor
+                .resolved_hash(&format!("profile.assets.arch.{arch}.{kind}"))
+                .map_err(|error| anyhow!("materialized profile {location}: {error}"))?;
+            descriptor
+                .resolved_size(&format!("profile.assets.arch.{arch}.{kind}"))
+                .map_err(|error| anyhow!("materialized profile {location}: {error}"))?;
+        }
+    }
+    for (kind, descriptor) in profile.files.iter() {
+        descriptor
+            .resolved_hash(&format!("profile.files.{kind}"))
+            .map_err(|error| anyhow!("materialized profile {location}: {error}"))?;
+        descriptor
+            .resolved_size(&format!("profile.files.{kind}"))
+            .map_err(|error| anyhow!("materialized profile {location}: {error}"))?;
+    }
+    Ok(())
+}
+
 fn check_profile(args: &ProfileCheckArgs) -> Result<ProfileCheckReport> {
     let validation = validate_profile(&args.path, args.config_root.as_deref())?;
     let profile = load_profile(&args.path)?;
@@ -1168,7 +1250,7 @@ fn check_profile(args: &ProfileCheckArgs) -> Result<ProfileCheckReport> {
         Some(root) => root.clone(),
         None => infer_config_root(&args.path)?,
     };
-    let mut assets = Vec::new();
+    let assets: Vec<LocalAssetCheckReport> = Vec::new();
     let arches = selected_profile_arches(&profile, args.arch.as_deref())?;
     for arch in arches {
         let arch_assets = profile
@@ -1181,14 +1263,14 @@ fn check_profile(args: &ProfileCheckArgs) -> Result<ProfileCheckReport> {
             &arch_assets.initrd,
             &arch_assets.rootfs,
         ] {
-            if let Some(path) = descriptor.url.strip_prefix("file://") {
-                assets.push(check_exact_local_asset(
-                    Path::new(path),
-                    &arch,
-                    &descriptor.name,
-                    normalized_blake3(&descriptor.hash)?,
-                    descriptor.size,
-                )?);
+            if descriptor.url.starts_with("file://") {
+                if descriptor.hash.is_some() || descriptor.size.is_some() {
+                    return Err(anyhow!(
+                        "source profile {} must not contain file:// asset pins for {arch}/{}",
+                        args.path.display(),
+                        descriptor.name
+                    ));
+                }
             }
         }
     }
@@ -1211,13 +1293,20 @@ fn check_profile_payload_files(
     let mut reports = Vec::new();
     for (kind, descriptor) in profile.files.iter() {
         let path = config_root.join(&descriptor.path);
-        reports.push(check_exact_local_asset(
-            &path,
-            "profile",
-            kind,
-            normalized_blake3(&descriptor.hash)?,
-            descriptor.size,
-        )?);
+        let present = path.is_file();
+        reports.push(LocalAssetCheckReport {
+            arch: "profile".to_string(),
+            logical_name: kind.to_string(),
+            expected_hash: "unpinned-source".to_string(),
+            expected_size: 0,
+            path: Some(path.display().to_string()),
+            present,
+            size_ok: None,
+            blake3_ok: None,
+        });
+        if !present {
+            continue;
+        }
         validate_profile_payload_semantics(kind, &path)?;
         if kind == "root_manifest" {
             reports.extend(check_profile_root_manifest(&path)?);
@@ -1351,6 +1440,12 @@ fn materialize_profile_config(args: &ProfileMaterializeArgs) -> Result<ProfileMa
         .map_err(|error| anyhow!("validate profile {}: {error}", args.profile.display()))?;
 
     let selected_arches = selected_profile_arches(&profile, args.arch.as_deref())?;
+    if args.arch.is_some() {
+        profile
+            .assets
+            .arch
+            .retain(|arch, _| selected_arches.iter().any(|selected| selected == arch));
+    }
     let mut materialized_assets = Vec::new();
     let mut materialized_obom = Vec::new();
     for arch in selected_arches {
@@ -1388,8 +1483,13 @@ fn materialize_profile_config(args: &ProfileMaterializeArgs) -> Result<ProfileMa
                 manifest_assets,
                 &mut materialized_assets,
             )?;
-            profile_assets.rootfs.hash.clone()
+            profile_assets
+                .rootfs
+                .hash
+                .clone()
+                .ok_or_else(|| anyhow!("materialized {arch} rootfs hash is unresolved"))?
         };
+        materialize_profile_file_descriptors(&mut profile, &args.output_root)?;
         materialize_profile_obom_descriptor(
             &args.assets_dir,
             &arch,
@@ -1432,7 +1532,8 @@ fn materialize_profile_config(args: &ProfileMaterializeArgs) -> Result<ProfileMa
         )
     })?;
 
-    let copied_validation = validate_profile(&output_profile_path, Some(&args.output_root))?;
+    let copied_validation =
+        validate_materialized_profile(&output_profile_path, Some(&args.output_root))?;
     if copied_validation.profile_id != profile.id {
         return Err(anyhow!(
             "materialized profile id drifted: expected {}, got {}",
@@ -1476,15 +1577,60 @@ fn materialize_profile_asset_descriptor(
         .canonicalize()
         .with_context(|| format!("canonicalize {}", asset_path.display()))?;
     descriptor.url = format!("file://{}", asset_path.display());
-    descriptor.hash = format!("blake3:{}", entry.hash);
-    descriptor.size = entry.size;
+    descriptor.hash = Some(format!("blake3:{}", entry.hash));
+    descriptor.size = Some(entry.size);
     reports.push(ProfileMaterializedAssetReport {
         arch: arch.to_string(),
         logical_name: descriptor.name.clone(),
         url: descriptor.url.clone(),
-        hash: descriptor.hash.clone(),
-        size: descriptor.size,
+        hash: descriptor
+            .hash
+            .clone()
+            .expect("materialized asset hash was just set"),
+        size: descriptor
+            .size
+            .expect("materialized asset size was just set"),
     });
+    Ok(())
+}
+
+fn materialize_profile_file_descriptors(
+    profile: &mut ProfileConfigFile,
+    config_root: &Path,
+) -> Result<()> {
+    fn pin(
+        descriptor: Option<&mut capsem_core::net::policy_config::ProfileFileDescriptor>,
+        config_root: &Path,
+    ) -> Result<()> {
+        let Some(descriptor) = descriptor else {
+            return Ok(());
+        };
+        let path = config_root.join(&descriptor.path);
+        let hash =
+            hash_file(&path).with_context(|| format!("hash profile payload {}", path.display()))?;
+        let size = fs::metadata(&path)
+            .with_context(|| format!("stat profile payload {}", path.display()))?
+            .len();
+        if size == 0 {
+            return Err(anyhow!(
+                "profile payload {} must not be empty",
+                path.display()
+            ));
+        }
+        descriptor.hash = Some(format!("blake3:{hash}"));
+        descriptor.size = Some(size);
+        Ok(())
+    }
+
+    pin(profile.files.enforcement.as_mut(), config_root)?;
+    pin(profile.files.detection.as_mut(), config_root)?;
+    pin(profile.files.mcp.as_mut(), config_root)?;
+    pin(profile.files.apt_packages.as_mut(), config_root)?;
+    pin(profile.files.python_requirements.as_mut(), config_root)?;
+    pin(profile.files.npm_packages.as_mut(), config_root)?;
+    pin(profile.files.build.as_mut(), config_root)?;
+    pin(profile.files.tips.as_mut(), config_root)?;
+    pin(profile.files.root_manifest.as_mut(), config_root)?;
     Ok(())
 }
 
@@ -1872,19 +2018,6 @@ fn verify_image_outputs(args: &ImageVerifyArgs) -> Result<ImageVerifyReport> {
                     descriptor.name
                 )
             })?;
-            let profile_hash = normalized_blake3(&descriptor.hash)?;
-            if profile_hash != entry.hash || descriptor.size != entry.size {
-                return Err(anyhow!(
-                    "profile asset pin drift for {arch}/{}: profile has blake3:{} size {}, \
-                     manifest current {} has blake3:{} size {}",
-                    descriptor.name,
-                    profile_hash,
-                    descriptor.size,
-                    manifest.assets.current,
-                    entry.hash,
-                    entry.size
-                ));
-            }
             asset_reports.push(check_local_asset(
                 &args.output,
                 &arch,
@@ -2653,13 +2786,41 @@ mod tests {
     }
 
     #[test]
+    fn source_profile_validation_rejects_generated_pins() {
+        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let repo_root = manifest_dir
+            .parent()
+            .and_then(Path::parent)
+            .expect("repo root");
+        let config_root = repo_root.join("config");
+        let source = fs::read_to_string(config_root.join("profiles/code/profile.toml"))
+            .expect("read source profile");
+        let pinned = source.replace(
+            "url = \"https://github.com/google/capsem/releases/download/v1.0.1780954707/arm64-vmlinuz\"\n",
+            "url = \"https://github.com/google/capsem/releases/download/v1.0.1780954707/arm64-vmlinuz\"\nhash = \"blake3:aa933a569fe27ed014ae76b58eb278d72fbde8a3cbd4c06a23da2987e70d0bd1\"\nsize = 8786432\n",
+        );
+        let temp = tempfile::tempdir().expect("tempdir");
+        let profile_path = temp.path().join("profile.toml");
+        fs::write(&profile_path, pinned).expect("write pinned profile");
+
+        let error = validate_profile(&profile_path, Some(&config_root))
+            .expect_err("source profile pins rejected");
+
+        assert!(
+            error.to_string().contains("source profile")
+                && error.to_string().contains("hash/size pins"),
+            "{error:#}"
+        );
+    }
+
+    #[test]
     fn validates_checked_in_settings_file() {
         let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let repo_root = manifest_dir
             .parent()
             .and_then(Path::parent)
             .expect("repo root");
-        let path = repo_root.join("config/settings.toml");
+        let path = repo_root.join("config/admin/settings.toml");
 
         let report = validate_settings(&path).expect("settings validates");
 
@@ -2726,12 +2887,18 @@ code = true
         let temp = tempfile::tempdir().expect("tempdir");
         let config_root = temp.path().join("config");
         fs::create_dir_all(config_root.join("profiles/wrong")).expect("profile dir");
+        fs::create_dir_all(config_root.join("admin")).expect("admin dir");
+        fs::create_dir_all(config_root.join("corp")).expect("corp dir");
         fs::write(
-            config_root.join("settings.toml"),
-            include_str!("../../../config/settings.toml"),
+            config_root.join("admin/settings.toml"),
+            include_str!("../../../config/admin/settings.toml"),
         )
         .expect("settings");
-        fs::write(config_root.join("corp.toml"), "refresh_policy = \"24h\"\n").expect("corp");
+        fs::write(
+            config_root.join("corp/corp.toml"),
+            "refresh_policy = \"24h\"\n",
+        )
+        .expect("corp");
         fs::write(
             config_root.join("profiles/wrong/profile.toml"),
             include_str!("../../../config/profiles/code/profile.toml"),
@@ -2811,7 +2978,12 @@ code = true
             assert_eq!(assets.kernel.name, "vmlinuz");
             assert_eq!(assets.initrd.name, "initrd.img");
             assert_eq!(assets.rootfs.name, "rootfs.erofs");
-            assert!(assets.rootfs.hash.starts_with("blake3:"));
+            assert!(assets.kernel.hash.is_none());
+            assert!(assets.kernel.size.is_none());
+            assert!(assets.initrd.hash.is_none());
+            assert!(assets.initrd.size.is_none());
+            assert!(assets.rootfs.hash.is_none());
+            assert!(assets.rootfs.size.is_none());
         }
         let broker = profile
             .plugins
@@ -2933,20 +3105,14 @@ refresh_policy = "on_profile_refresh"
 [assets.arch.arm64.kernel]
 name = "vmlinuz"
 url = "https://example.test/vmlinuz"
-hash = "blake3:1111111111111111111111111111111111111111111111111111111111111111"
-size = 1
 
 [assets.arch.arm64.initrd]
 name = "initrd.img"
 url = "https://example.test/initrd.img"
-hash = "blake3:2222222222222222222222222222222222222222222222222222222222222222"
-size = 1
 
 [assets.arch.arm64.rootfs]
 name = "rootfs.erofs"
 url = "https://example.test/rootfs.erofs"
-hash = "blake3:3333333333333333333333333333333333333333333333333333333333333333"
-size = 1
 
 [rule_files]
 enforcement = "profiles/code/enforcement.toml"
@@ -3125,8 +3291,6 @@ decision = "block"
             let path = temp.path().join(&descriptor.name);
             fs::write(&path, payload.as_bytes()).expect("asset");
             descriptor.url = format!("file://{}", path.display());
-            descriptor.hash = format!("blake3:{}", blake3::hash(payload.as_bytes()).to_hex());
-            descriptor.size = payload.len() as u64;
         }
         let profile_path = temp.path().join("profile.toml");
         fs::write(
@@ -3143,21 +3307,12 @@ decision = "block"
         })
         .expect("profile check");
 
-        assert_eq!(report.assets.len(), 3);
-        assert!(report.assets.iter().all(|asset| asset.present));
-        assert!(report
-            .assets
-            .iter()
-            .all(|asset| asset.size_ok == Some(true)));
-        assert!(report
-            .assets
-            .iter()
-            .all(|asset| asset.blake3_ok == Some(true)));
+        assert!(report.assets.is_empty());
         assert!(report.profile_files.is_empty());
     }
 
     #[test]
-    fn profile_check_verifies_profile_payload_file_hashes_and_root_manifest() {
+    fn profile_check_validates_profile_payload_files_and_root_manifest() {
         let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let repo_root = manifest_dir
             .parent()
@@ -3171,7 +3326,7 @@ decision = "block"
             arch: Some("arm64".to_string()),
             json: true,
         })
-        .expect("checked-in profile payload hashes validate");
+        .expect("checked-in profile payload files validate");
 
         assert!(report
             .profile_files
@@ -3185,24 +3340,15 @@ decision = "block"
         assert!(report
             .profile_files
             .iter()
-            .all(|file| file.size_ok == Some(true)));
-        assert!(report
-            .profile_files
-            .iter()
-            .all(|file| file.blake3_ok == Some(true)));
+            .any(|file| file.size_ok == Some(true) && file.blake3_ok == Some(true)));
     }
 
     #[test]
-    fn profile_check_rejects_mutated_profile_payload_file() {
+    fn profile_check_rejects_missing_profile_payload_file() {
         let temp = tempfile::tempdir().expect("tempdir");
         let config_root = temp.path().join("config");
         let profile_dir = config_root.join("profiles/code");
         fs::create_dir_all(&profile_dir).expect("profile dir");
-        fs::write(
-            profile_dir.join("mcp.json"),
-            r#"{"mcpServers":{"capsem":{"command":"/run/capsem-mcp-server"}}}"#,
-        )
-        .expect("mcp");
         let mut profile = ProfileConfigFile::builtin_code();
         profile.rule_files.enforcement = None;
         profile.rule_files.sigma = None;
@@ -3210,8 +3356,8 @@ decision = "block"
         profile.files = Default::default();
         profile.files.mcp = Some(capsem_core::net::policy_config::ProfileFileDescriptor {
             path: "profiles/code/mcp.json".to_string(),
-            hash: format!("blake3:{}", blake3::hash(b"not the file\n").to_hex()),
-            size: b"not the file\n".len() as u64,
+            hash: None,
+            size: None,
         });
         let profile_path = profile_dir.join("profile.toml");
         fs::write(&profile_path, toml::to_string(&profile).unwrap()).expect("profile");
@@ -3222,7 +3368,7 @@ decision = "block"
             arch: Some("arm64".to_string()),
             json: true,
         })
-        .expect_err("mutated payload hash rejected");
+        .expect_err("missing payload file rejected");
         assert!(error.to_string().contains("profile payload file pin check"));
     }
 
@@ -3241,8 +3387,8 @@ decision = "block"
         profile.files = Default::default();
         profile.files.mcp = Some(capsem_core::net::policy_config::ProfileFileDescriptor {
             path: "profiles/code/mcp.json".to_string(),
-            hash: format!("blake3:{}", blake3::hash(mcp.as_bytes()).to_hex()),
-            size: mcp.len() as u64,
+            hash: None,
+            size: None,
         });
         let profile_path = profile_dir.join("profile.toml");
         fs::write(&profile_path, toml::to_string(&profile).unwrap()).expect("profile");
@@ -3277,8 +3423,8 @@ decision = "block"
         profile.files.python_requirements =
             Some(capsem_core::net::policy_config::ProfileFileDescriptor {
                 path: "profiles/code/python-requirements.txt".to_string(),
-                hash: format!("blake3:{}", blake3::hash(packages.as_bytes()).to_hex()),
-                size: packages.len() as u64,
+                hash: None,
+                size: None,
             });
         let profile_path = profile_dir.join("profile.toml");
         fs::write(&profile_path, toml::to_string(&profile).unwrap()).expect("profile");
@@ -3320,8 +3466,8 @@ decision = "block"
         profile.files.root_manifest =
             Some(capsem_core::net::policy_config::ProfileFileDescriptor {
                 path: "profiles/code/root.manifest.json".to_string(),
-                hash: format!("blake3:{}", blake3::hash(root_manifest.as_bytes()).to_hex()),
-                size: root_manifest.len() as u64,
+                hash: None,
+                size: None,
             });
         let profile_path = profile_dir.join("profile.toml");
         fs::write(&profile_path, toml::to_string(&profile).unwrap()).expect("profile");
@@ -3353,8 +3499,8 @@ decision = "block"
         fs::write(arch_dir.join("initrd.img"), initrd).expect("initrd");
         fs::write(arch_dir.join("rootfs.erofs"), rootfs).expect("rootfs");
         let kernel_hash = blake3::hash(kernel).to_hex().to_string();
-        let initrd_hash = blake3::hash(initrd).to_hex().to_string();
         let rootfs_hash = blake3::hash(rootfs).to_hex().to_string();
+        let wrong_initrd_hash = "1111111111111111111111111111111111111111111111111111111111111111";
         fs::write(
             output.join("manifest.json"),
             format!(
@@ -3371,7 +3517,7 @@ decision = "block"
         "arches": {{
           "arm64": {{
             "vmlinuz": {{"hash": "{kernel_hash}", "size": {kernel_size}}},
-            "initrd.img": {{"hash": "{initrd_hash}", "size": {initrd_size}}},
+            "initrd.img": {{"hash": "{wrong_initrd_hash}", "size": {initrd_size}}},
             "rootfs.erofs": {{"hash": "{rootfs_hash}", "size": {rootfs_size}}}
           }}
         }}
@@ -3394,14 +3540,6 @@ decision = "block"
         profile.rule_files.enforcement = None;
         profile.rule_files.sigma = None;
         profile.assets.arch.retain(|arch, _| arch == "arm64");
-        let assets = profile.assets.arch.get_mut("arm64").expect("arm64 assets");
-        assets.kernel.hash = format!("blake3:{kernel_hash}");
-        assets.kernel.size = kernel.len() as u64;
-        assets.initrd.hash =
-            "blake3:1111111111111111111111111111111111111111111111111111111111111111".into();
-        assets.initrd.size = initrd.len() as u64;
-        assets.rootfs.hash = format!("blake3:{rootfs_hash}");
-        assets.rootfs.size = rootfs.len() as u64;
         let profile_path = temp.path().join("profile.toml");
         fs::write(
             &profile_path,
@@ -3417,10 +3555,10 @@ decision = "block"
             arch: Some("arm64".to_string()),
             json: true,
         })
-        .expect_err("profile/manifest drift rejected");
+        .expect_err("manifest/output drift rejected");
 
         assert!(
-            format!("{error:#}").contains("profile asset pin drift for arm64/initrd.img"),
+            format!("{error:#}").contains("image output verify failed"),
             "{error:#}"
         );
     }
@@ -3539,9 +3677,8 @@ decision = "block"
         assert!(args.output.join("build-plan.json").is_file());
         assert!(args.output.join("workspace.json").is_file());
         assert!(args.output.join("guest/config/packages/apt.toml").is_file());
-        let apt_packages =
-            fs::read_to_string(args.output.join("guest/config/packages/apt.toml"))
-                .expect("materialized apt packages");
+        let apt_packages = fs::read_to_string(args.output.join("guest/config/packages/apt.toml"))
+            .expect("materialized apt packages");
         assert!(
             apt_packages.contains("\"zstd\""),
             "Ollama's official installer consumes .tar.zst payloads, so shipped profiles must include zstd"
@@ -3613,8 +3750,8 @@ decision = "block"
         assert_eq!(report.profile_id, "code");
         assert_eq!(report.materialized_assets.len(), 3);
         assert_eq!(report.materialized_obom.len(), 1);
-        assert!(output_root.join("settings.toml").is_file());
-        assert!(output_root.join("corp.toml").is_file());
+        assert!(output_root.join("admin/settings.toml").is_file());
+        assert!(output_root.join("corp/corp.toml").is_file());
         assert!(output_root.join("assets/manifest.json").is_file());
         assert!(output_root.join("profiles/code/enforcement.toml").is_file());
         assert!(output_root.join("profiles/code/detection.yaml").is_file());
@@ -3629,10 +3766,14 @@ decision = "block"
         assert!(arm64.rootfs.url.starts_with("file://"));
         assert_eq!(
             arm64.kernel.hash,
-            format!("blake3:{}", blake3::hash(b"kernel-arm64").to_hex())
+            Some(format!("blake3:{}", blake3::hash(b"kernel-arm64").to_hex()))
         );
-        assert_eq!(arm64.initrd.size, b"initrd-arm64".len() as u64);
+        assert_eq!(arm64.initrd.size, Some(b"initrd-arm64".len() as u64));
         assert_eq!(arm64.rootfs.name, "rootfs.erofs");
+        assert!(generated
+            .files
+            .iter()
+            .all(|(_, descriptor)| descriptor.hash.is_some() && descriptor.size.is_some()));
         let obom = generated
             .obom
             .as_ref()
@@ -3651,8 +3792,8 @@ decision = "block"
         assert_eq!(obom.generator, "cdxgen");
         assert_eq!(obom.generator_version, "11.0.0");
 
-        let validation =
-            validate_profile(&generated_profile_path, Some(&output_root)).expect("valid output");
+        let validation = validate_materialized_profile(&generated_profile_path, Some(&output_root))
+            .expect("valid materialized output");
         assert_eq!(validation.profile_id, "code");
         assert_eq!(
             fs::read_to_string(source_profile).expect("read source profile after"),
@@ -3710,17 +3851,17 @@ decision = "block"
             let arm64 = generated.assets.arch.get("arm64").expect("arm64 assets");
             assert_eq!(
                 arm64.kernel.hash,
-                format!("blake3:{}", blake3::hash(b"kernel-arm64").to_hex()),
+                Some(format!("blake3:{}", blake3::hash(b"kernel-arm64").to_hex())),
                 "{profile_id} kernel pin must remain generated"
             );
             assert_eq!(
                 arm64.initrd.hash,
-                format!("blake3:{}", blake3::hash(b"initrd-arm64").to_hex()),
+                Some(format!("blake3:{}", blake3::hash(b"initrd-arm64").to_hex())),
                 "{profile_id} initrd pin must remain generated"
             );
             assert_eq!(
                 arm64.rootfs.hash,
-                format!("blake3:{}", blake3::hash(b"rootfs-arm64").to_hex()),
+                Some(format!("blake3:{}", blake3::hash(b"rootfs-arm64").to_hex())),
                 "{profile_id} rootfs pin must remain generated"
             );
             assert!(arm64.kernel.url.starts_with("file://"));

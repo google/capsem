@@ -174,17 +174,17 @@ fn build_tree_from_object(
     children
 }
 
-/// Build the full settings tree from defaults.json + resolved values.
+/// Build the full settings tree from the settings registry + resolved values.
 ///
 /// Returns top-level groups (AI Providers, Package Registries, etc.).
 /// Dynamic `guest.env.*` settings are appended to the Guest Environment group.
 pub fn build_settings_tree(resolved: &[ResolvedSetting]) -> Vec<SettingsNode> {
     let root: serde_json::Value =
-        serde_json::from_str(DEFAULTS_JSON).expect("built-in defaults.json is invalid");
+        serde_json::from_str(DEFAULTS_JSON).expect("built-in settings registry is invalid");
     let settings = root
         .get("settings")
         .and_then(|v| v.as_object())
-        .expect("defaults.json missing settings");
+        .expect("settings registry missing settings");
 
     // Build a lookup from ID to resolved setting.
     let resolved_map: HashMap<String, ResolvedSetting> =

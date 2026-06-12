@@ -147,7 +147,7 @@ Common failure patterns:
 |---------|-------|-----|
 | "No Developer ID signing identity" | p12 uses PBES2/AES encryption | Re-export with `scripts/fix_p12_legacy.sh` |
 | KVM tests skipped | `/dev/kvm` not available on runner | Check udev rules in workflow |
-| Schema drift | `settings-schema.json` out of sync | Run `just schema` and commit |
+| Schema drift | `config/admin/settings-schema.generated.json` out of sync | Run `just _generate-settings` and commit |
 | Frontend build fails | Missing `@source` directive | Add pattern to `global.css` |
 | Coverage below floor | New code without tests | Add tests to meet 70%/80%/90% threshold |
 | Python import errors | New test file with bad import | Fix the import path |

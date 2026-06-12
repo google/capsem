@@ -5,12 +5,12 @@ sidebar:
   order: 20
 ---
 
-Capsem uses a shared `config/skills/` directory as the canonical checked-in skill library. Agent-specific discovery and guest injection copy or mount from this path explicitly. Root dot-dir symlinks are not part of the product contract.
+Capsem uses a shared `skills/` directory as the canonical checked-in skill library. Agent-specific discovery and guest injection copy or mount from this path explicitly. Root dot-dir symlinks are not part of the product contract.
 
 ## Directory structure
 
 ```
-config/skills/
+skills/
   <skill-name>/
     SKILL.md                     The skill (required)
     references/                  Large docs loaded on demand (optional)
@@ -98,8 +98,8 @@ Keep SKILL.md lean. Put wire formats, API docs, and community references in `ref
 ## Adding a skill
 
 ```bash
-mkdir config/skills/<prefix-name>
-# Write config/skills/<prefix-name>/SKILL.md with frontmatter
+mkdir skills/<prefix-name>
+# Write skills/<prefix-name>/SKILL.md with frontmatter
 # Available immediately (live reload, no restart)
 ```
 
@@ -109,7 +109,7 @@ Search with `npx skills find <query>`. Place community skills as references, not
 
 ```bash
 curl -sL https://raw.githubusercontent.com/<owner>/<repo>/main/<path>/SKILL.md \
-  -o config/skills/<name>/references/<topic>.md
+  -o skills/<name>/references/<topic>.md
 ```
 
 ## Global skills

@@ -41,7 +41,7 @@
 
 ## Config
 
-- `config/defaults.toml` -- settings registry (embedded at compile time)
+- `config/admin/settings-registry.toml` -- settings registry (embedded at compile time)
 - `config/capsem-ca.key` + `config/capsem-ca.crt` -- static MITM CA keypair (ECDSA P-256)
 
 ## Frontend

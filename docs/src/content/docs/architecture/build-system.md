@@ -370,10 +370,10 @@ preferences; profiles own assets, MCP, rules, plugins, and image payloads.
 
 ```mermaid
 flowchart LR
-  TOML["config/host/settings.toml"] --> Py["generate_defaults_json()"]
-  Py --> DJ["config/defaults.json"]
+  TOML["config/admin/settings.toml"] --> Py["generate_defaults_json()"]
+  Py --> DJ["config/admin/settings-registry.generated.json"]
   DJ --> Rust["include_str! in Rust"]
-  Py --> Schema["settings-schema.json"]
+  Py --> Schema["config/admin/settings-schema.generated.json"]
   Schema --> CV["Cross-language\nconformance tests"]
   DJ --> CV
 ```
@@ -382,9 +382,9 @@ flowchart LR
 hierarchical JSON tree consumed by the Rust settings registry. This JSON defines
 each setting's name, description, type, default value, and UI metadata.
 
-The schema is generated from `SettingsRoot.model_json_schema()` (Pydantic) and written to `config/settings-schema.json`. Cross-language conformance tests verify that:
+The schema is generated from `SettingsRoot.model_json_schema()` (Pydantic) and written to `config/admin/settings-schema.generated.json`. Cross-language conformance tests verify that:
 
-1. The generated `defaults.json` validates against the JSON schema.
+1. The generated settings registry validates against the JSON schema.
 2. Rust's compiled-in defaults match the Python-generated output.
 3. Every setting referenced in Rust code exists in the schema.
 

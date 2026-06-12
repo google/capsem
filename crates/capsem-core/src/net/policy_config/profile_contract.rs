@@ -101,8 +101,10 @@ pub struct ProfileArchAssets {
 pub struct ProfileAssetDescriptor {
     pub name: String,
     pub url: String,
-    pub hash: String,
-    pub size: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -150,8 +152,10 @@ pub struct ProfileFileReferences {
 #[serde(deny_unknown_fields)]
 pub struct ProfileFileDescriptor {
     pub path: String,
-    pub hash: String,
-    pub size: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size: Option<u64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -394,7 +398,7 @@ impl Profile {
                 ));
             };
             let source_path = PathBuf::from(source_path);
-            let destination = profile_asset_path(assets_dir, arch, descriptor);
+            let destination = profile_asset_path(assets_dir, arch, descriptor)?;
             fs::copy(&source_path, &destination).map_err(|error| {
                 format!(
                     "copy profile asset {} to {}: {error}",
@@ -402,14 +406,17 @@ impl Profile {
                     destination.display()
                 )
             })?;
-            verify_hash_and_size(&destination, descriptor.hash.as_str(), descriptor.size).map_err(
-                |error| {
-                    format!(
-                        "verify downloaded profile asset {}: {error}",
-                        destination.display()
-                    )
-                },
-            )?;
+            verify_hash_and_size(
+                &destination,
+                descriptor.resolved_hash(&format!("profile.assets.arch.{arch}.{kind}"))?,
+                descriptor.resolved_size(&format!("profile.assets.arch.{arch}.{kind}"))?,
+            )
+            .map_err(|error| {
+                format!(
+                    "verify downloaded profile asset {}: {error}",
+                    destination.display()
+                )
+            })?;
         }
         self.check(assets_dir, arch)
     }
@@ -453,8 +460,8 @@ impl Profile {
         let enforcement_path = self.config_root.join(&enforcement_descriptor.path);
         let (old_hash, old_size) = verify_hash_and_size(
             &enforcement_path,
-            enforcement_descriptor.hash.as_str(),
-            enforcement_descriptor.size,
+            enforcement_descriptor.resolved_hash("profile.files.enforcement")?,
+            enforcement_descriptor.resolved_size("profile.files.enforcement")?,
         )?;
         let content = fs::read_to_string(&enforcement_path).map_err(|error| {
             format!(
@@ -528,8 +535,8 @@ impl Profile {
         let (new_hash, new_size) = file_hash_and_size(&enforcement_path)?;
         self.config.files.enforcement = Some(ProfileFileDescriptor {
             path: enforcement_descriptor.path.clone(),
-            hash: format!("blake3:{new_hash}"),
-            size: new_size,
+            hash: Some(format!("blake3:{new_hash}")),
+            size: Some(new_size),
         });
         self.save()?;
 
@@ -842,7 +849,13 @@ impl Profile {
         let skill_id = skill_id_for_path(path)?;
         let profile_path = self.profile_dir.join("profile.toml");
         let (old_hash, old_size) = file_hash_and_size(&profile_path)?;
-        if self.config.skills.paths.iter().any(|existing| existing == path) {
+        if self
+            .config
+            .skills
+            .paths
+            .iter()
+            .any(|existing| existing == path)
+        {
             return Err(format!("profile skill already exists: {skill_id}"));
         }
         if self
@@ -882,9 +895,12 @@ impl Profile {
             .position(|existing| skill_id_for_path(existing).as_deref() == Ok(skill_id))
             .ok_or_else(|| format!("profile skill not found: {skill_id}"))?;
         if new_skill_id != skill_id
-            && self.config.skills.paths.iter().any(|existing| {
-                skill_id_for_path(existing).as_deref() == Ok(new_skill_id.as_str())
-            })
+            && self
+                .config
+                .skills
+                .paths
+                .iter()
+                .any(|existing| skill_id_for_path(existing).as_deref() == Ok(new_skill_id.as_str()))
         {
             return Err(format!("profile skill id already exists: {new_skill_id}"));
         }
@@ -1004,8 +1020,8 @@ impl Profile {
         let enforcement_path = self.config_root.join(&enforcement_descriptor.path);
         let (old_hash, old_size) = verify_hash_and_size(
             &enforcement_path,
-            enforcement_descriptor.hash.as_str(),
-            enforcement_descriptor.size,
+            enforcement_descriptor.resolved_hash("profile.files.enforcement")?,
+            enforcement_descriptor.resolved_size("profile.files.enforcement")?,
         )?;
         let content = fs::read_to_string(&enforcement_path).map_err(|error| {
             format!(
@@ -1036,8 +1052,8 @@ impl Profile {
         let (new_hash, new_size) = file_hash_and_size(enforcement_path)?;
         self.config.files.enforcement = Some(ProfileFileDescriptor {
             path: descriptor_path.to_string(),
-            hash: format!("blake3:{new_hash}"),
-            size: new_size,
+            hash: Some(format!("blake3:{new_hash}")),
+            size: Some(new_size),
         });
         Ok((new_hash, new_size))
     }
@@ -1048,23 +1064,31 @@ impl Profile {
             .iter()
             .map(|(kind, descriptor)| {
                 let path = self.config_root.join(&descriptor.path);
+                let expected_hash = descriptor
+                    .hash
+                    .clone()
+                    .unwrap_or_else(|| "unresolved".into());
+                let expected_size = descriptor.size.unwrap_or(0);
                 match file_hash_and_size(&path) {
                     Ok((hash, size)) => ProfileFileStatus {
                         kind: kind.to_string(),
                         path,
-                        expected_hash: descriptor.hash.clone(),
-                        expected_size: descriptor.size,
+                        expected_hash: expected_hash.clone(),
+                        expected_size,
                         actual_hash: Some(format!("blake3:{hash}")),
                         actual_size: Some(size),
                         present: true,
-                        valid: format!("blake3:{hash}") == descriptor.hash
-                            && size == descriptor.size,
+                        valid: descriptor
+                            .hash
+                            .as_deref()
+                            .is_some_and(|expected| expected == format!("blake3:{hash}"))
+                            && descriptor.size == Some(size),
                     },
                     Err(_) => ProfileFileStatus {
                         kind: kind.to_string(),
                         path,
-                        expected_hash: descriptor.hash.clone(),
-                        expected_size: descriptor.size,
+                        expected_hash,
+                        expected_size,
                         actual_hash: None,
                         actual_size: None,
                         present: false,
@@ -1082,26 +1106,35 @@ impl Profile {
         assets
             .iter()
             .map(|(kind, descriptor)| {
-                let path = profile_asset_path(assets_dir, arch, descriptor);
+                let path = profile_asset_path(assets_dir, arch, descriptor)
+                    .unwrap_or_else(|_| assets_dir.join(arch).join(&descriptor.name));
+                let expected_hash = descriptor
+                    .hash
+                    .clone()
+                    .unwrap_or_else(|| "unresolved".into());
+                let expected_size = descriptor.size.unwrap_or(0);
                 match file_hash_and_size(&path) {
                     Ok((hash, size)) => ProfileAssetStatus {
                         arch: arch.to_string(),
                         kind: kind.to_string(),
                         path,
-                        expected_hash: descriptor.hash.clone(),
-                        expected_size: descriptor.size,
+                        expected_hash: expected_hash.clone(),
+                        expected_size,
                         actual_hash: Some(format!("blake3:{hash}")),
                         actual_size: Some(size),
                         present: true,
-                        valid: format!("blake3:{hash}") == descriptor.hash
-                            && size == descriptor.size,
+                        valid: descriptor
+                            .hash
+                            .as_deref()
+                            .is_some_and(|expected| expected == format!("blake3:{hash}"))
+                            && descriptor.size == Some(size),
                     },
                     Err(_) => ProfileAssetStatus {
                         arch: arch.to_string(),
                         kind: kind.to_string(),
                         path,
-                        expected_hash: descriptor.hash.clone(),
-                        expected_size: descriptor.size,
+                        expected_hash,
+                        expected_size,
                         actual_hash: None,
                         actual_size: None,
                         present: false,
@@ -1137,7 +1170,11 @@ impl Profile {
                 "profile.files.mcp is required to mutate MCP permissions".to_string()
             })?;
         let path = self.config_root.join(&descriptor.path);
-        verify_hash_and_size(&path, descriptor.hash.as_str(), descriptor.size)?;
+        verify_hash_and_size(
+            &path,
+            descriptor.resolved_hash("profile.files.mcp")?,
+            descriptor.resolved_size("profile.files.mcp")?,
+        )?;
         let content = fs::read_to_string(&path)
             .map_err(|error| format!("read MCP config {}: {error}", path.display()))?;
         let config: McpJsonConfig = serde_json::from_str(&content)
@@ -1483,11 +1520,26 @@ impl ProfileFileDescriptor {
     fn validate(&self, field: &str) -> Result<(), String> {
         validate_non_empty(&format!("{field}.path"), &self.path)?;
         validate_relative_profile_path(&format!("{field}.path"), &self.path)?;
-        validate_blake3_hash(&format!("{field}.hash"), &self.hash)?;
-        if self.size == 0 {
-            return Err(format!("{field}.size must be greater than 0"));
+        if let Some(hash) = self.hash.as_ref() {
+            validate_blake3_hash(&format!("{field}.hash"), hash)?;
+        }
+        if let Some(size) = self.size {
+            if size == 0 {
+                return Err(format!("{field}.size must be greater than 0"));
+            }
         }
         Ok(())
+    }
+
+    pub fn resolved_hash(&self, field: &str) -> Result<&str, String> {
+        self.hash
+            .as_deref()
+            .ok_or_else(|| format!("{field}.hash is unresolved"))
+    }
+
+    pub fn resolved_size(&self, field: &str) -> Result<u64, String> {
+        self.size
+            .ok_or_else(|| format!("{field}.size is unresolved"))
     }
 }
 
@@ -1501,11 +1553,26 @@ impl ProfileAssetDescriptor {
         if self.url.contains("..") || self.url.contains('\\') {
             return Err(format!("{field}.url must not contain path traversal"));
         }
-        validate_blake3_hash(&format!("{field}.hash"), &self.hash)?;
-        if self.size == 0 {
-            return Err(format!("{field}.size must be greater than 0"));
+        if let Some(hash) = self.hash.as_ref() {
+            validate_blake3_hash(&format!("{field}.hash"), hash)?;
+        }
+        if let Some(size) = self.size {
+            if size == 0 {
+                return Err(format!("{field}.size must be greater than 0"));
+            }
         }
         Ok(())
+    }
+
+    pub fn resolved_hash(&self, field: &str) -> Result<&str, String> {
+        self.hash
+            .as_deref()
+            .ok_or_else(|| format!("{field}.hash is unresolved"))
+    }
+
+    pub fn resolved_size(&self, field: &str) -> Result<u64, String> {
+        self.size
+            .ok_or_else(|| format!("{field}.size is unresolved"))
     }
 }
 
@@ -1761,14 +1828,21 @@ fn profile_asset_path(
     assets_dir: &Path,
     arch: &str,
     descriptor: &ProfileAssetDescriptor,
-) -> PathBuf {
+) -> Result<PathBuf, String> {
     let hash = descriptor
         .hash
+        .as_deref()
+        .ok_or_else(|| format!("profile asset {} hash is unresolved", descriptor.name))?
         .strip_prefix("blake3:")
-        .unwrap_or(&descriptor.hash);
-    assets_dir
+        .ok_or_else(|| {
+            format!(
+                "profile asset {} hash must use blake3: prefix",
+                descriptor.name
+            )
+        })?;
+    Ok(assets_dir
         .join(arch)
-        .join(crate::asset_manager::hash_filename(&descriptor.name, hash))
+        .join(crate::asset_manager::hash_filename(&descriptor.name, hash)))
 }
 
 fn file_hash_and_size(path: &Path) -> Result<(String, u64), String> {

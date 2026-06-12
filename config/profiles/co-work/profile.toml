@@ -17,38 +17,26 @@ refresh_policy = "on_profile_refresh"
 [assets.arch.arm64.kernel]
 name = "vmlinuz"
 url = "https://github.com/google/capsem/releases/download/v1.0.1780954707/arm64-vmlinuz"
-hash = "blake3:aa933a569fe27ed014ae76b58eb278d72fbde8a3cbd4c06a23da2987e70d0bd1"
-size = 8786432
 
 [assets.arch.arm64.initrd]
 name = "initrd.img"
 url = "https://github.com/google/capsem/releases/download/v1.0.1780954707/arm64-initrd.img"
-hash = "blake3:7928dd872e09c33ca001f779d987cb7b71d3df8f3f9ed74ca68aeb5c38d1fb9f"
-size = 2849956
 
 [assets.arch.arm64.rootfs]
 name = "rootfs.erofs"
 url = "https://github.com/google/capsem/releases/download/v1.0.1780954707/arm64-rootfs.erofs"
-hash = "blake3:015b5d930eef2eacfb6b484adaf8abd83cd4fb2c0a4700c24fe696c9db595ba1"
-size = 862875648
 
 [assets.arch.x86_64.kernel]
 name = "vmlinuz"
 url = "https://github.com/google/capsem/releases/download/v1.0.1780763638/x86_64-vmlinuz"
-hash = "blake3:e8651b1408688748a0b986a7f429502fd3ed2e66fddc9b0f837de7d8dddc1400"
-size = 5764096
 
 [assets.arch.x86_64.initrd]
 name = "initrd.img"
 url = "https://github.com/google/capsem/releases/download/v1.0.1780763638/x86_64-initrd.img"
-hash = "blake3:1d130dd66eebeceb416aa47565c184bb3045c51d2fc1dc06087957016e8fc60a"
-size = 1038649
 
 [assets.arch.x86_64.rootfs]
 name = "rootfs.erofs"
 url = "https://github.com/google/capsem/releases/download/v1.0.1780763638/x86_64-rootfs.erofs"
-hash = "blake3:b2f447609a094d41d825cb4dd1dd7800e16b4fb771faeb1a2791f91eb805e56f"
-size = 933675008
 
 [vm]
 cpu_count = 4
@@ -72,47 +60,29 @@ local = true
 
 [files.enforcement]
 path = "profiles/co-work/enforcement.toml"
-hash = "blake3:91b19b0e9f27ffe8710826c66b43cdf859785095c292db73b40cf91864c5cd2f"
-size = 1416
 
 [files.detection]
 path = "profiles/co-work/detection.yaml"
-hash = "blake3:c2515b79cb5baa7b3c0288c2805a71ab2e95c98700e28d7fe73d4e45e2f03fa7"
-size = 271
 
 [files.mcp]
 path = "profiles/co-work/mcp.json"
-hash = "blake3:44dbee07dcb89910a47cd195f6b324d51260b2f4e34a13a8bd85e2e5039ea67b"
-size = 90
 
 [files.apt_packages]
 path = "profiles/co-work/apt-packages.txt"
-hash = "blake3:35cb8afcdfbd151958637cdf0038bce4e41ffd585a1cd02935c5bbe872bf9d93"
-size = 231
 
 [files.python_requirements]
 path = "profiles/co-work/python-requirements.txt"
-hash = "blake3:21e6020d4477051c92b4a0fc1f1f1c0a115cf95d9f6f8de10a35a909bcb6fcd6"
-size = 142
 
 [files.npm_packages]
 path = "profiles/co-work/npm-packages.txt"
-hash = "blake3:28a0ccfa0a3cc7187c226b4412b73a5fec2549b6ac19e0ef6da148b1884262bf"
-size = 33
 
 [files.build]
 path = "profiles/co-work/build.sh"
-hash = "blake3:ce89adfe840de90c0b90342fd97e836dd34cf67fdc38a8c938346590938c2a82"
-size = 1017
 
 [files.tips]
 path = "profiles/co-work/tips.txt"
-hash = "blake3:ab1b0d469403862ddee1fe82ee09f0263daa6277816acc5e708efeb46f67d924"
-size = 341
 
 [files.root_manifest]
 path = "profiles/co-work/root.manifest.json"
-hash = "blake3:7eef992e76349e3fc586cb120cc88439a145cdb97b7cdcd356d54f980bb4cd57"
-size = 1664
 
 [skills]

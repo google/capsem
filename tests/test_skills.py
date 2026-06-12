@@ -37,7 +37,7 @@ def _write_skill(root: Path, name: str, *, frontmatter_name: str | None = None) 
 
 
 def test_checked_in_config_skills_validate() -> None:
-    report = validate_skill_library(PROJECT_ROOT / "config/skills")
+    report = validate_skill_library(PROJECT_ROOT / "skills")
 
     assert report.skill_count >= 20
     assert "dev-sprint" in report.skill_names
@@ -85,7 +85,7 @@ def test_skill_library_rejects_nested_skill_files(tmp_path: Path) -> None:
 
 
 def test_validate_skills_cli_accepts_checked_in_skills() -> None:
-    result = CliRunner().invoke(cli, ["validate-skills", str(PROJECT_ROOT / "config/skills")])
+    result = CliRunner().invoke(cli, ["validate-skills", str(PROJECT_ROOT / "skills")])
 
     assert result.exit_code == 0, result.output
     assert "skills validated" in result.output

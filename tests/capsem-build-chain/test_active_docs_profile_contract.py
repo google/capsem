@@ -18,11 +18,11 @@ ACTIVE_DOCS_AND_SKILLS = [
     PROJECT_ROOT / "docs/src/content/docs/development/just-recipes.md",
     PROJECT_ROOT / "docs/src/content/docs/development/stack.md",
     PROJECT_ROOT / "docs/src/content/docs/security/plugins/credential-broker.md",
-    PROJECT_ROOT / "config/skills/build-images/SKILL.md",
-    PROJECT_ROOT / "config/skills/build-initrd/SKILL.md",
-    PROJECT_ROOT / "config/skills/dev-just/SKILL.md",
-    PROJECT_ROOT / "config/skills/dev-testing-frontend/SKILL.md",
-    PROJECT_ROOT / "config/skills/dev-testing-python/SKILL.md",
+    PROJECT_ROOT / "skills/build-images/SKILL.md",
+    PROJECT_ROOT / "skills/build-initrd/SKILL.md",
+    PROJECT_ROOT / "skills/dev-just/SKILL.md",
+    PROJECT_ROOT / "skills/dev-testing-frontend/SKILL.md",
+    PROJECT_ROOT / "skills/dev-testing-python/SKILL.md",
 ]
 
 STALE_GUIDANCE = [

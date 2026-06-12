@@ -99,7 +99,7 @@ def validate(guest_dir: str, artifacts: str | None) -> None:
 
 
 @cli.command("validate-skills")
-@click.argument("skills_dir", default="config/skills", type=click.Path(exists=False))
+@click.argument("skills_dir", default="skills", type=click.Path(exists=False))
 @click.option("--json", "json_output", is_flag=True, help="Output validation report as JSON.")
 def validate_skills(skills_dir: str, json_output: bool) -> None:
     """Validate the canonical Capsem skill library."""

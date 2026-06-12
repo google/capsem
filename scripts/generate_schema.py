@@ -1,4 +1,4 @@
-"""Generate settings-schema.json, defaults.json, and mock-data.generated.ts."""
+"""Generate admin settings artifacts and mock-data.generated.ts."""
 
 import json
 from pathlib import Path
@@ -11,9 +11,9 @@ from capsem.builder.config import (
 from capsem.builder.schema import export_json_schema
 
 PROJECT_ROOT = Path(__file__).parent.parent
-SCHEMA_PATH = PROJECT_ROOT / "config" / "settings-schema.json"
-DEFAULTS_PATH = PROJECT_ROOT / "config" / "defaults.json"
-MCP_TOOLS_PATH = PROJECT_ROOT / "config" / "mcp-tools.json"
+SCHEMA_PATH = PROJECT_ROOT / "config" / "admin" / "settings-schema.generated.json"
+DEFAULTS_PATH = PROJECT_ROOT / "config" / "admin" / "settings-registry.generated.json"
+MCP_TOOLS_PATH = PROJECT_ROOT / "config" / "admin" / "mcp-tools.generated.json"
 MOCK_PATH = PROJECT_ROOT / "frontend" / "src" / "lib" / "mock-settings.generated.ts"
 GUEST_DIR = PROJECT_ROOT / "guest"
 

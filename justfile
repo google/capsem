@@ -393,7 +393,7 @@ test: _bootstrap _install-tools _clean-stale _pnpm-install _generate-settings _c
     cargo clippy --workspace --all-targets -- -D warnings & PID_CLIPPY=$!
     uv run ruff check . & PID_RUFF=$!
     uv run ty check src/capsem & PID_TY=$!
-    uv run capsem-builder validate-skills config/skills & PID_SKILLS=$!
+    uv run capsem-builder validate-skills skills & PID_SKILLS=$!
     (
         cd frontend
         pnpm run check
@@ -640,14 +640,14 @@ cross-compile arch="": _clean-stale _check-assets _generate-settings
     ls -lh "$ROOT/dist/"
     just _docker-gc
 
-# Generate settings-schema.json, defaults.json, mcp-tools.json, and mock-data.generated.ts
+# Generate admin settings schema/registry, MCP tools, and mock-data.generated.ts
 _generate-settings:
     #!/bin/bash
     set -euo pipefail
     LOG="target/build.log"
     mkdir -p target
     echo "[generate] $(date +%H:%M:%S) exporting MCP tool defs" >> "$LOG"
-    cargo run --bin mcp_export 2>>"$LOG" > config/mcp-tools.json
+    cargo run --bin mcp_export 2>>"$LOG" > config/admin/mcp-tools.generated.json
     echo "[generate] $(date +%H:%M:%S) generating schema + defaults + mock" >> "$LOG"
     uv run python scripts/generate_schema.py >> "$LOG" 2>&1
 
@@ -688,7 +688,7 @@ smoke: _install-tools _pnpm-install _check-assets _pack-initrd _materialize-conf
     cargo clippy --workspace --all-targets -- -D warnings & CLIPPY_PID=$!
     uv run ruff check . & RUFF_PID=$!
     uv run ty check src/capsem & TY_PID=$!
-    uv run capsem-builder validate-skills config/skills & SKILLS_PID=$!
+    uv run capsem-builder validate-skills skills & SKILLS_PID=$!
     cargo audit & AUDIT_PID=$!
     (cd frontend && pnpm audit) & PNPM_AUDIT_PID=$!
     (cd frontend && pnpm run check) & FE_CHECK_PID=$!
@@ -1208,8 +1208,8 @@ update-fixture src:
 # Update model pricing data from pydantic/genai-prices
 update-prices:
     curl -sL https://raw.githubusercontent.com/pydantic/genai-prices/main/prices/data_slim.json \
-        -o config/genai-prices.json
-    @echo "Updated config/genai-prices.json"
+        -o config/data/genai-prices.json
+    @echo "Updated config/data/genai-prices.json"
 
 # Remove stale rootfs copies, orphan UDS sockets, and trim bloated incremental caches.
 # See scripts/clean_stale.py for implementation (tested: tests/capsem-cleanup-script/).

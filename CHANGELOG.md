@@ -77,6 +77,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   packages contain the app/binaries, profile config, and selected
   `manifest.json`/`manifest-origin.json` only; VM asset payloads are never
   embedded and are reconciled by the service from the installed manifest.
+- Reorganized checked-in config source into `config/admin`, `config/corp`,
+  `config/profiles`, `config/docker`, and `config/data`, documented the layout,
+  and made source profiles unpinned by contract. `capsem-admin` now rejects
+  checked-in profile `hash`/`size` pins and materializes runtime asset and
+  profile-file pins into `target/config`.
 - Added per-install timestamped logs under `~/.capsem/logs/install-*.log` plus
   `install-latest.log`, while preserving the aggregate `install.log`.
 - Expanded manifest status reporting with mutable-manifest semantics:
@@ -96,9 +101,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Updated the Profile overview to render route-backed surface availability
   (web, shell, mobile) and broker-visible credential inventory/grant status, so
   profile readiness is visible before users dig into Plugins or raw stats.
-- Moved the checked-in agent skill library to `config/skills/`, removed root
-  skill symlink shims, and added a Pydantic-backed `capsem-builder
-  validate-skills` gate that runs in local and CI test flows.
+- Removed the mistaken checked-in `config/skills/` mirror and restored
+  repository `skills/` as the developer skill source; profile/product skills
+  must be introduced through the profile ledger instead of a global config
+  escape hatch.
 - Moved the code profile ledger to `config/profiles/code/profile.toml` and
   materialize generated/installed profiles with the same directory shape, so
   source and runtime config use one profile path contract.

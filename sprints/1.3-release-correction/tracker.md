@@ -71,6 +71,21 @@ next one, and stage only the files for that slice.
     materializing runtime config or image workspaces. It rejects profile
     catalog id mismatch and caught/fixed the stale corp `refresh_interval_hours`
     TOML contract.
+  - 2026-06-12 progress: config source layout is explicit and documented in
+    `config/README.md` and `tests/README.md`: admin settings artifacts live in
+    `config/admin`, corp contracts in `config/corp`, profile source ledgers in
+    `config/profiles`, generated runtime config in `target/config`, and test
+    fixtures in `tests/fixtures`. Source profiles no longer carry generated
+    `hash`/`size` pins; `capsem-admin profile validate/check` rejects source
+    pins, while `capsem-admin profile materialize` writes resolved asset and
+    profile-file pins into the materialized runtime profile.
+  - Proof: `cargo test -p capsem-admin`; `cargo test -p capsem-core
+    profile_contract`; `uv run python -m pytest
+    tests/capsem-build-chain/test_source_profiles_unpinned.py
+    tests/test_config.py tests/test_skills.py`; `uv run ruff check
+    scripts/generate_schema.py src/capsem/builder/config.py
+    tests/test_config.py tests/test_skills.py
+    tests/capsem-build-chain/test_source_profiles_unpinned.py`.
 
 ## S2. Materialization, Assets, VM Resources
 
