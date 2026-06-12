@@ -98,9 +98,15 @@ next one, and stage only the files for that slice.
 ## S3. Route Contract and API Coverage
 
 - [ ] Inventory every UI/TUI/service route in one contract doc.
-- [ ] RED: route test fails for missing profile overview/enforcement/detection
+- [x] RED: route test fails for missing profile overview/enforcement/detection
   /plugins/MCP/assets route for `code` and `co-work`.
-- [ ] GREEN: implement routes with no 404/501 for declared UI/TUI surfaces.
+- [x] GREEN: implement routes with no 404/501 for declared UI/TUI surfaces.
+  - Proof: `cargo test -p capsem-service
+    profile_ui_route_matrix_is_registered_for_all_profiles -- --nocapture`;
+    `cargo check -p capsem-service`.
+  - The router-level test exercises checked-in profile ids `code` and
+    `co-work` across profile overview, assets, enforcement, detection,
+    plugins, credential broker detail, MCP, and skills info/list routes.
 - [ ] RED/GREEN: mutation routes either persist via profile object or do not
   exist; no fake success.
 - [ ] RED/GREEN: session state enum controls available actions for running,

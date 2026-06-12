@@ -1121,6 +1121,52 @@ async fn handle_profile_info_rejects_unknown_profiles() {
 }
 
 #[tokio::test]
+async fn profile_ui_route_matrix_is_registered_for_all_profiles() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .components()
+        .collect::<PathBuf>();
+    let _profiles_guard = EnvVarGuard::set("CAPSEM_PROFILES_DIR", repo_root.join("config/profiles"));
+    let state = make_test_state();
+    let routes = [
+        "/profiles/{profile}/info",
+        "/profiles/{profile}/assets/status",
+        "/profiles/{profile}/assets/info",
+        "/profiles/{profile}/enforcement/info",
+        "/profiles/{profile}/enforcement/rules/list",
+        "/profiles/{profile}/detection/info",
+        "/profiles/{profile}/detection/rules/list",
+        "/profiles/{profile}/plugins/info",
+        "/profiles/{profile}/plugins/list",
+        "/profiles/{profile}/plugins/credential_broker/info",
+        "/profiles/{profile}/plugins/credential_broker/credentials/info",
+        "/profiles/{profile}/mcp/info",
+        "/profiles/{profile}/mcp/default/info",
+        "/profiles/{profile}/mcp/servers/list",
+        "/profiles/{profile}/skills/info",
+        "/profiles/{profile}/skills/list",
+    ];
+
+    for profile in ["code", "co-work"] {
+        for route in routes {
+            let path = route.replace("{profile}", profile);
+            let (status, body) = route_request(
+                build_service_router(Arc::clone(&state)),
+                axum::http::Method::GET,
+                &path,
+                None,
+            )
+            .await;
+            assert!(
+                status.is_success(),
+                "{path} should be registered and backed by profile data; got {status} body={body}"
+            );
+        }
+    }
+}
+
+#[tokio::test]
 async fn handle_profile_validate_accepts_builtin_code_contract() {
     let response = handle_profile_validate(
         Path("code".to_string()),
