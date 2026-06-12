@@ -5,6 +5,11 @@
 No new AGY/Claude/Codex/OAuth manual run until the local due-diligence gates
 below pass. Manual credentials are not the debugger.
 
+Commit discipline is part of the gate: one fixed bug or functional slice gets
+its focused verification and its own commit before the next bug starts. Do not
+batch unrelated fixes, do not leave a solved bug uncommitted while opening the
+next one, and stage only the files for that slice.
+
 ## S0. Sprint Ledger and Release Hold
 
 - [x] Create `sprints/1.3-release-correction/`.
