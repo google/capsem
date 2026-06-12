@@ -25,12 +25,12 @@ below pass. Manual credentials are not the debugger.
 - [x] RED/GREEN: prove old behavior-owned settings were not merely renamed to
   `settings.toml`; profile behavior belongs under profile files and settings
   remains UI/application preferences only.
-- [ ] RED: malformed corp/settings/profile/rules/detection/MCP/plugin/assets
+- [x] RED: malformed corp/settings/profile/rules/detection/MCP/plugin/assets
   files fail through the always-on admin/materialization path.
-- [ ] GREEN: implement fast always-on profile/config linter in `capsem-admin`
+- [x] GREEN: implement fast always-on profile/config linter in `capsem-admin`
   path, not as optional theater.
-- [ ] RED/GREEN: profile/admin creation cannot emit invalid profile artifacts.
-- [ ] Proof: linter covers corp, settings, profile catalog, profile files,
+- [x] RED/GREEN: profile/admin creation cannot emit invalid profile artifacts.
+- [x] Proof: linter covers corp, settings, profile catalog, profile files,
   rules, detection YAML, MCP config, plugins, assets, manifest, OBOM pins, and
   bootstrap root files.
   - 2026-06-11 progress: `capsem-admin profile check` now verifies copied
