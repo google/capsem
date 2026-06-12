@@ -39,3 +39,11 @@ def test_guest_network_doctor_is_hermetic_by_default() -> None:
     assert "api.openai.com" not in source
     assert "api.anthropic.com" not in source
     assert "cdn.elie.net" not in source
+
+
+def test_doctor_session_validation_starts_hermetic_upstream() -> None:
+    source = (PROJECT_ROOT / "scripts" / "doctor_session_test.py").read_text()
+
+    assert "capsem-debug-upstream" in source
+    assert "CAPSEM_BENCH_MITM_LOCAL_BASE_URL" in source
+    assert "[binary, \"run\", \"capsem-doctor\"]" in source
