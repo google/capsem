@@ -221,6 +221,7 @@ class MockHandler(BaseHTTPRequestHandler):
         elif path == "/echo":
             body = self._body()
             lower_headers = {key.lower(): value for key, value in self.headers.items()}
+            authorization = lower_headers.get("authorization", "")
             self._send_json(
                 {
                     "method": "POST",
@@ -230,6 +231,7 @@ class MockHandler(BaseHTTPRequestHandler):
                     "user_agent": lower_headers.get("user-agent"),
                     "header_count": len(self.headers),
                     "has_authorization": "authorization" in lower_headers,
+                    "authorization_is_broker_ref": "credential:blake3:" in authorization,
                     "has_cookie": "cookie" in lower_headers,
                     "has_x_api_key": "x-api-key" in lower_headers,
                 }

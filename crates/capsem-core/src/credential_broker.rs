@@ -57,6 +57,17 @@ pub struct CredentialObservation {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct CredentialInjection {
+    pub provider: Option<CredentialProvider>,
+    pub credential_ref: String,
+    pub source: String,
+    pub event_type: Option<String>,
+    pub confidence: f64,
+    pub trace_id: Option<String>,
+    pub context_json: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct BrokeredCredential {
     pub provider: CredentialProvider,
     pub credential_ref: String,
@@ -79,6 +90,25 @@ impl CredentialObservation {
             substitution_ref: self.credential_ref(),
             outcome: outcome.to_string(),
             provider: Some(self.provider.as_str().to_string()),
+            confidence: Some(self.confidence),
+            trace_id: self.trace_id.clone(),
+            context_json: self.context_json.clone(),
+        }
+    }
+}
+
+impl CredentialInjection {
+    pub fn redacted_event(&self, outcome: &str) -> SubstitutionEvent {
+        SubstitutionEvent {
+            event_id: None,
+            timestamp: std::time::SystemTime::now(),
+            material_class: "credential".to_string(),
+            source: self.source.clone(),
+            event_type: self.event_type.clone(),
+            algorithm: "blake3".to_string(),
+            substitution_ref: self.credential_ref.clone(),
+            outcome: outcome.to_string(),
+            provider: self.provider.map(|provider| provider.as_str().to_string()),
             confidence: Some(self.confidence),
             trace_id: self.trace_id.clone(),
             context_json: self.context_json.clone(),
@@ -183,6 +213,9 @@ pub fn detect_http_credential_with_provider(
     if value.is_empty() {
         return None;
     }
+    if header_broker_reference(value).is_some() {
+        return None;
+    }
     let raw = bearer_value(value).unwrap_or(value).trim();
     let provider = provider_for_token(domain, header_name, raw)
         .or_else(|| provider_for_header_hint(domain, ai_provider, header_name, raw))?;
@@ -237,6 +270,43 @@ pub fn detect_http_body_credentials(
     }
 
     collect_form_credentials(domain, path, direction, text, &mut found);
+    found
+}
+
+pub fn detect_brokered_http_references(
+    domain: &str,
+    ai_provider: Option<ProviderKind>,
+    headers: &http::HeaderMap,
+    query: Option<&str>,
+    trace_id: Option<String>,
+) -> Vec<CredentialInjection> {
+    let mut found = Vec::new();
+    let provider_hint = credential_provider_for_request(domain, ai_provider);
+    for (name, value) in headers.iter() {
+        let Some(reference) = value
+            .to_str()
+            .ok()
+            .and_then(|value| header_broker_reference(value).map(str::to_string))
+        else {
+            continue;
+        };
+        found.push(CredentialInjection {
+            provider: provider_hint.or_else(|| provider_for_stored_reference(&reference)),
+            credential_ref: reference,
+            source: format!("http.header.{}", name.as_str().to_ascii_lowercase()),
+            event_type: Some("http.request".to_string()),
+            confidence: 1.0,
+            trace_id: trace_id.clone(),
+            context_json: Some(format!(
+                r#"{{"domain":"{}","header":"{}"}}"#,
+                json_escape(domain),
+                json_escape(name.as_str())
+            )),
+        });
+    }
+    if let Some(query) = query {
+        collect_query_brokered_references(domain, provider_hint, query, trace_id, &mut found);
+    }
     found
 }
 
@@ -319,6 +389,21 @@ pub async fn broker_and_log_observations(
     first_ref
 }
 
+pub async fn log_brokered_injections(
+    db: &DbWriter,
+    rules: &SecurityRuleSet,
+    injections: Vec<CredentialInjection>,
+) {
+    for injection in injections {
+        crate::security_engine::emit_substitution_security_write_and_rules(
+            db,
+            rules,
+            injection.redacted_event("injected"),
+        )
+        .await;
+    }
+}
+
 pub fn is_broker_reference(value: &str) -> bool {
     value.starts_with(CREDENTIAL_REF_PREFIX) && capsem_logger::is_credential_reference(value)
 }
@@ -338,20 +423,17 @@ pub fn substitute_brokered_upstream_credentials(
     let provider_hint = credential_provider_for_request(domain, ai_provider);
     let mut credential_ref = None;
 
-    for value in headers.iter_mut().filter_map(|(_, value)| {
-        let text = value.to_str().ok()?;
-        is_broker_reference(text).then_some(value)
-    }) {
-        let reference = value
+    for value in headers.values_mut() {
+        let text = value
             .to_str()
-            .map_err(|e| format!("broker reference header is not UTF-8: {e}"))?
-            .to_string();
-        let raw = resolve_broker_reference(provider_hint, &reference)?;
-        *value = http::header::HeaderValue::from_str(&raw)
+            .map_err(|e| format!("broker reference header is not UTF-8: {e}"))?;
+        let Some(substitution) =
+            substitute_brokered_header_value(text, provider_hint, &mut credential_ref)?
+        else {
+            continue;
+        };
+        *value = http::header::HeaderValue::from_str(&substitution)
             .map_err(|e| format!("stored credential is not valid header value: {e}"))?;
-        if credential_ref.is_none() {
-            credential_ref = Some(reference);
-        }
     }
 
     let query = match query {
@@ -367,6 +449,36 @@ pub fn substitute_brokered_upstream_credentials(
         credential_ref,
         query,
     })
+}
+
+fn substitute_brokered_header_value(
+    value: &str,
+    provider_hint: Option<CredentialProvider>,
+    credential_ref: &mut Option<String>,
+) -> Result<Option<String>, String> {
+    let trimmed = value.trim();
+    if is_broker_reference(trimmed) {
+        let raw = resolve_broker_reference(provider_hint, trimmed)?;
+        if credential_ref.is_none() {
+            *credential_ref = Some(trimmed.to_string());
+        }
+        return Ok(Some(raw));
+    }
+    if let Some(reference) =
+        bearer_value(trimmed).filter(|reference| is_broker_reference(reference))
+    {
+        let raw = resolve_broker_reference(provider_hint, reference)?;
+        if credential_ref.is_none() {
+            *credential_ref = Some(reference.to_string());
+        }
+        let prefix = if trimmed.starts_with("bearer ") {
+            "bearer "
+        } else {
+            "Bearer "
+        };
+        return Ok(Some(format!("{prefix}{raw}")));
+    }
+    Ok(None)
 }
 
 fn substitute_brokered_query(
@@ -422,6 +534,48 @@ fn resolve_broker_reference(
     }
 
     Err("credential broker reference could not be resolved".to_string())
+}
+
+fn provider_for_stored_reference(credential_ref: &str) -> Option<CredentialProvider> {
+    CredentialProvider::all().iter().copied().find(|provider| {
+        resolve_broker_reference_for_provider(*provider, credential_ref)
+            .ok()
+            .flatten()
+            .is_some()
+    })
+}
+
+fn collect_query_brokered_references(
+    domain: &str,
+    provider_hint: Option<CredentialProvider>,
+    query: &str,
+    trace_id: Option<String>,
+    out: &mut Vec<CredentialInjection>,
+) {
+    for part in query.split('&') {
+        let Some((name, value)) = part.split_once('=') else {
+            continue;
+        };
+        let Ok(decoded) = percent_decode(value) else {
+            continue;
+        };
+        if !is_broker_reference(&decoded) {
+            continue;
+        }
+        out.push(CredentialInjection {
+            provider: provider_hint.or_else(|| provider_for_stored_reference(&decoded)),
+            credential_ref: decoded,
+            source: format!("http.query.{name}"),
+            event_type: Some("http.request".to_string()),
+            confidence: 1.0,
+            trace_id: trace_id.clone(),
+            context_json: Some(format!(
+                r#"{{"domain":"{}","query_key":"{}"}}"#,
+                json_escape(domain),
+                json_escape(name)
+            )),
+        });
+    }
 }
 
 fn credential_provider_for_request(
@@ -670,6 +824,14 @@ fn bearer_value(value: &str) -> Option<&str> {
     value
         .strip_prefix("Bearer ")
         .or_else(|| value.strip_prefix("bearer "))
+}
+
+fn header_broker_reference(value: &str) -> Option<&str> {
+    let trimmed = value.trim();
+    if is_broker_reference(trimmed) {
+        return Some(trimmed);
+    }
+    bearer_value(trimmed).filter(|reference| is_broker_reference(reference))
 }
 
 fn unquote(value: &str) -> &str {

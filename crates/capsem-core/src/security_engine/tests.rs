@@ -2655,6 +2655,68 @@ fn http_materializer_without_substitute_action_keeps_reference() {
 }
 
 #[test]
+fn credential_broker_plugin_marks_broker_ref_for_injection_not_recapture() {
+    let (mut event, reference, raw, _tmp, _store_guard, _user_config_guard, _lock) =
+        brokered_anthropic_header_event();
+    let request = event.http_request.as_mut().expect("http request event");
+    request.headers.insert(
+        http::header::AUTHORIZATION,
+        http::HeaderValue::from_str(&format!("Bearer {reference}")).unwrap(),
+    );
+    let registry =
+        SecurityActionRegistry::with_builtin_actions().with_plugin_policy(BTreeMap::from([(
+            "credential_broker".to_string(),
+            plugin_config(SecurityPluginMode::Rewrite, DetectionLevel::Informational),
+        )]));
+
+    let event = registry
+        .apply_security_plugins(SecurityPluginStage::Preprocess, event)
+        .expect("broker plugin runs");
+
+    assert!(
+        event.credential_observations.is_empty(),
+        "broker refs are already ledger-safe references, not new raw credentials"
+    );
+    assert_eq!(event.credential_injections.len(), 1);
+    assert_eq!(
+        event.credential_injections[0].credential_ref.as_str(),
+        reference.as_str()
+    );
+    assert_eq!(
+        event.credential_injections[0].source,
+        "http.header.authorization"
+    );
+    assert_eq!(
+        event.action_trace,
+        vec![PolicyActionId::CredentialBrokerSubstitute]
+    );
+    let materialized = materialize_http_request_for_upstream(&event).unwrap();
+    assert_eq!(
+        event
+            .http_request
+            .as_ref()
+            .unwrap()
+            .headers
+            .get(http::header::AUTHORIZATION)
+            .unwrap(),
+        &http::HeaderValue::from_str(&format!("Bearer {reference}")).unwrap(),
+        "the security event stays reference-only"
+    );
+    assert_eq!(
+        materialized
+            .headers
+            .get(http::header::AUTHORIZATION)
+            .unwrap(),
+        &http::HeaderValue::from_str(&format!("Bearer {raw}")).unwrap(),
+        "only the upstream materialized copy receives the raw credential"
+    );
+    assert_eq!(
+        materialized.credential_ref.as_deref(),
+        Some(reference.as_str())
+    );
+}
+
+#[test]
 fn http_materializer_requires_allow_enforcement_decision() {
     let event = SecurityEvent::new(RuntimeSecurityEventType::HttpRequest).with_http_request(
         HttpRequestSecurityEvent::new(

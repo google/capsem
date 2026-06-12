@@ -1024,6 +1024,7 @@ async fn handle_request(
     let req_hdrs = formatted_req_headers.formatted;
     let credential_observations = formatted_req_headers.observations;
     let credential_ref = formatted_req_headers.credential_ref;
+    let mut credential_injections = Vec::new();
     let mut request_security_decision = SecurityBoundaryDecisionFields::default();
     let matched_rule = "security.http.default".to_string();
 
@@ -1098,6 +1099,7 @@ async fn handle_request(
                 policy_reason: request_security_decision.policy_reason.clone(),
                 credential_ref: credential_ref.clone(),
                 credential_observations: credential_observations.clone(),
+                credential_injections: Vec::new(),
             };
             let body = Full::new(Bytes::from(body_text))
                 .map_err(|never| match never {})
@@ -1263,6 +1265,7 @@ async fn handle_request(
             policy_reason: request_security_decision.policy_reason.clone(),
             credential_ref: credential_ref.clone(),
             credential_observations: credential_observations.clone(),
+            credential_injections: credential_injections.clone(),
         };
 
         let empty_body = Full::new(Bytes::new())
@@ -1315,6 +1318,7 @@ async fn handle_request(
             policy_reason: policy_fields.policy_reason.clone(),
             credential_ref: credential_ref.clone(),
             credential_observations: credential_observations.clone(),
+            credential_injections: Vec::new(),
         };
         let deny_body = Full::new(Bytes::from(body_text))
             .map_err(|never| match never {})
@@ -1473,6 +1477,7 @@ async fn handle_request(
         observations.extend(http_evaluation.event.credential_observations.clone());
         observations
     };
+    credential_injections = http_evaluation.event.credential_injections.clone();
     request_security_decision =
         SecurityBoundaryDecisionFields::from_enforcement(&http_evaluation.enforcement);
     if !http_evaluation.enforcement.is_allowed() {
@@ -1510,6 +1515,7 @@ async fn handle_request(
             policy_reason: request_security_decision.policy_reason.clone(),
             credential_ref: credential_ref.clone(),
             credential_observations: credential_observations.clone(),
+            credential_injections: credential_injections.clone(),
         };
         let deny_body = Full::new(Bytes::from(body_text))
             .map_err(|never| match never {})
@@ -1582,6 +1588,7 @@ async fn handle_request(
             policy_reason: request_security_decision.policy_reason.clone(),
             credential_ref: credential_ref.clone(),
             credential_observations: credential_observations.clone(),
+            credential_injections: credential_injections.clone(),
         };
         let deny_body = Full::new(Bytes::from(body_text))
             .map_err(|never| match never {})
@@ -1712,6 +1719,7 @@ async fn handle_request(
                 policy_reason: request_security_decision.policy_reason.clone(),
                 credential_ref: credential_ref.clone(),
                 credential_observations: credential_observations.clone(),
+                credential_injections: credential_injections.clone(),
             };
             let deny_body = Full::new(Bytes::from(body_text))
                 .map_err(|never| match never {})
@@ -1864,6 +1872,7 @@ async fn handle_request(
                     policy_reason: request_security_decision.policy_reason.clone(),
                     credential_ref: credential_ref.clone(),
                     credential_observations: credential_observations.clone(),
+                    credential_injections: credential_injections.clone(),
                 };
                 let deny_body = Full::new(Bytes::from(body_text))
                     .map_err(|never| match never {})
@@ -2380,6 +2389,7 @@ async fn handle_request(
                     policy_reason: effective_security_decision.policy_reason.clone(),
                     credential_ref: credential_ref.clone(),
                     credential_observations: credential_observations.clone(),
+                    credential_injections: credential_injections.clone(),
                 };
                 let deny_body = Full::new(Bytes::from(body_text))
                     .map_err(|never| match never {})
@@ -2486,6 +2496,7 @@ async fn handle_request(
         policy_reason: effective_security_decision.policy_reason.clone(),
         credential_ref: credential_ref.clone(),
         credential_observations: credential_observations.clone(),
+        credential_injections: credential_injections.clone(),
     };
 
     // Drive the sync ChunkHook chain on every response chunk:

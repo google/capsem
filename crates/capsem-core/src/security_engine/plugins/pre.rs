@@ -1,4 +1,7 @@
-use crate::credential_broker::{broker_observed_credential, detect_http_credential_with_provider};
+use crate::credential_broker::{
+    broker_observed_credential, detect_brokered_http_references,
+    detect_http_credential_with_provider,
+};
 use crate::net::policy_config::PolicyActionId;
 use crate::security_engine::{
     security_event_contains_text, SecurityActionError, SecurityDecisionKind, SecurityEvent,
@@ -19,6 +22,19 @@ impl SecurityPlugin for CredentialBrokerPlugin {
     fn apply(&self, mut event: SecurityEvent) -> Result<SecurityPluginResult, SecurityActionError> {
         let trace_id = event.trace_id();
         if let Some(request) = event.http_request.as_ref() {
+            let injections = detect_brokered_http_references(
+                &request.domain,
+                request.ai_provider,
+                &request.headers,
+                request.query.as_deref(),
+                trace_id.clone(),
+            );
+            for injection in injections {
+                if event.credential_ref.is_none() {
+                    event.credential_ref = Some(injection.credential_ref.clone());
+                }
+                event.credential_injections.push(injection);
+            }
             for (name, value) in request.headers.iter() {
                 if let Some(mut observation) = detect_http_credential_with_provider(
                     &request.domain,
@@ -34,7 +50,7 @@ impl SecurityPlugin for CredentialBrokerPlugin {
             }
         }
 
-        if event.credential_observations.is_empty() {
+        if event.credential_observations.is_empty() && event.credential_injections.is_empty() {
             return Ok(SecurityPluginResult::skipped(event));
         }
 
@@ -45,9 +61,16 @@ impl SecurityPlugin for CredentialBrokerPlugin {
                 event.credential_ref = Some(brokered.credential_ref);
             }
         }
-        event
-            .action_trace
-            .push(PolicyActionId::CredentialBrokerCapture);
+        if !event.credential_observations.is_empty() {
+            event
+                .action_trace
+                .push(PolicyActionId::CredentialBrokerCapture);
+        }
+        if !event.credential_injections.is_empty() {
+            event
+                .action_trace
+                .push(PolicyActionId::CredentialBrokerSubstitute);
+        }
         Ok(SecurityPluginResult::applied(event))
     }
 }

@@ -19,6 +19,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `preprocess`/`postprocess`/`logging` and extended the security action
   benchmark matrix to cover all three plugin kinds, including the logging
   sanitizer.
+- Extended credential broker replay so broker refs in HTTP headers or queries
+  are treated as preprocess injection events, materialized only for upstream
+  runtime bytes, and recorded in the substitution ledger as `injected` without
+  leaking raw secrets or broker refs through sanitized header payloads.
 - Hardened the local OpenAI-compatible model path: bounded request sniffing now
   promotes unknown localhost model traffic before CEL/plugin evaluation, the
   credential broker uses the parsed provider hint for SDK bearer headers, and

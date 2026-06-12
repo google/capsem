@@ -1,7 +1,7 @@
 use super::super::body::BodyStats;
 use super::super::hooks::{ChunkCtx, ChunkHook, ConnMeta, HookState};
 use super::*;
-use crate::credential_broker::{CredentialObservation, CredentialProvider};
+use crate::credential_broker::{CredentialInjection, CredentialObservation, CredentialProvider};
 use crate::net::policy_config::{SecurityRuleProfile, SecurityRuleSet, SecurityRuleSource};
 use capsem_logger::{credential_reference, Decision};
 use std::collections::BTreeMap;
@@ -123,6 +123,7 @@ fn anthropic_req_ctx() -> TelemetryRequestContext {
         policy_reason: None,
         credential_ref: None,
         credential_observations: Vec::new(),
+        credential_injections: Vec::new(),
     }
 }
 
@@ -775,6 +776,85 @@ match = 'model.provider == "anthropic" && model.name == "claude-test"'
     assert!(
         seen,
         "expected model telemetry to write a joined rule ledger row"
+    );
+}
+
+#[tokio::test]
+async fn hook_writes_injected_substitution_event_for_broker_ref_replay() {
+    let _lock = crate::credential_broker::TEST_ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("session.db");
+    let capsem_home = dir.path().join("capsem-home");
+    let test_store = dir.path().join("credential-store.json");
+    let _guard = EnvGuard::install(&capsem_home, dir.path(), &test_store);
+
+    let db = Arc::new(DbWriter::open(&db_path, 64).expect("test db"));
+    let deps = Arc::new(TelemetryDeps {
+        db: Arc::clone(&db),
+        pricing: Arc::new(PricingTable::load()),
+        trace_state: Arc::new(Mutex::new(TraceState::new())),
+        security_rules: empty_security_rules(),
+        plugin_policy: Arc::new(std::sync::RwLock::new(BTreeMap::new())),
+    });
+    let hook = TelemetryHook::new(deps);
+    let raw = "sk-ant-replayed-hook-test";
+    let credential_ref = credential_reference("anthropic", raw);
+    let mut req_ctx = anthropic_req_ctx();
+    req_ctx.credential_ref = Some(credential_ref.clone());
+    req_ctx.request_headers = Some(format!("authorization: Bearer {credential_ref}"));
+    req_ctx.credential_injections = vec![CredentialInjection {
+        provider: Some(CredentialProvider::Anthropic),
+        credential_ref: credential_ref.clone(),
+        source: "http.header.authorization".to_string(),
+        event_type: Some("http.request".to_string()),
+        confidence: 1.0,
+        trace_id: Some("trace-injected-hook".to_string()),
+        context_json: Some(r#"{"domain":"api.anthropic.com"}"#.to_string()),
+    }];
+
+    let mut state = HookState::default();
+    let conn = any_conn();
+    {
+        let mut c = ctx_for(&mut state, &conn);
+        *c.state::<Option<TelemetryRequestContext>>(|| None) = Some(req_ctx);
+    }
+    {
+        let mut c = ctx_for(&mut state, &conn);
+        hook.on_response_end(&mut c);
+    }
+
+    let mut seen = false;
+    for _ in 0..50 {
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        let injected_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM substitution_events WHERE substitution_ref = ?1 AND outcome = 'injected'",
+                [&credential_ref],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let net_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM net_events WHERE credential_ref = ?1",
+                [&credential_ref],
+                |row| row.get(0),
+            )
+            .unwrap();
+        if injected_count == 1 && net_count == 1 {
+            seen = true;
+            break;
+        }
+    }
+
+    assert!(
+        seen,
+        "expected injected substitution row with shared net credential_ref"
+    );
+    let db_bytes = std::fs::read(&db_path).unwrap();
+    assert!(
+        !String::from_utf8_lossy(&db_bytes).contains(raw),
+        "raw credential leaked into session db"
     );
 }
 

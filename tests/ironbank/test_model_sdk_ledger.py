@@ -155,6 +155,52 @@ def _sdk_probe_script(base_url: str) -> str:
     ).strip()
 
 
+def _broker_replay_script(base_url: str, credential_ref: str) -> str:
+    payload = {
+        "base_url": f"{base_url.rstrip('/')}/v1",
+        "echo_url": f"{base_url.rstrip('/')}/echo",
+        "credential_ref": credential_ref,
+        "model": "gemma4:latest",
+    }
+    return textwrap.dedent(
+        f"""
+        import json
+        import urllib.request
+
+        from openai import OpenAI
+
+        cfg = json.loads({json.dumps(json.dumps(payload))})
+
+        echo_req = urllib.request.Request(
+            cfg["echo_url"],
+            data=b"broker replay",
+            headers={{
+                "Authorization": "Bearer " + cfg["credential_ref"],
+                "Content-Type": "text/plain",
+            }},
+            method="POST",
+        )
+        with urllib.request.urlopen(echo_req, timeout=30) as response:
+            echo = json.loads(response.read().decode("utf-8"))
+
+        client = OpenAI(base_url=cfg["base_url"], api_key=cfg["credential_ref"])
+        completion = client.chat.completions.create(
+            model=cfg["model"],
+            messages=[{{"role": "user", "content": "Replay the Capsem ironbank poem."}}],
+        )
+        message = completion.choices[0].message
+        result = {{
+            "echo_has_authorization": echo["has_authorization"],
+            "echo_authorization_is_broker_ref": echo["authorization_is_broker_ref"],
+            "model": completion.model,
+            "content": message.content,
+            "usage_total": completion.usage.total_tokens if completion.usage else 0,
+        }}
+        print("IRONBANK_BROKER_REPLAY_RESULT=" + json.dumps(result, sort_keys=True))
+        """
+    ).strip()
+
+
 def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
     assert MOCK_SERVER_BINARY.exists(), f"{MOCK_SERVER_BINARY} missing; restore mock server runtime"
     assert ASSETS_DIR.exists(), f"{ASSETS_DIR} missing; build VM assets before Ironbank"
@@ -282,6 +328,56 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
             assert len(credential_refs) == 1
             credential_ref = next(iter(credential_refs))
             _assert_credential_ref(credential_ref)
+
+            replay_script_name = f"ironbank-broker-replay-{uuid.uuid4().hex[:8]}.py"
+            replay_script = _broker_replay_script(mock_base_url, credential_ref).encode()
+            replay_upload = client.post_bytes(
+                f"/vms/{session_id}/files/content?path={replay_script_name}",
+                replay_script,
+                timeout=30,
+            )
+            assert replay_upload is not None
+            assert replay_upload["success"] is True
+            assert replay_upload["size"] == len(replay_script)
+
+            replay_exec = client.post(
+                f"/vms/{session_id}/exec",
+                {"command": f"python3 /root/{replay_script_name}", "timeout_secs": 220},
+                timeout=240,
+            )
+            assert replay_exec is not None
+            assert replay_exec["exit_code"] == 0, replay_exec
+            replay_output = (replay_exec.get("stdout") or "") + (replay_exec.get("stderr") or "")
+            assert RAW_SDK_SECRET not in replay_output
+            replay_line = next(
+                (
+                    line
+                    for line in replay_output.splitlines()
+                    if line.startswith("IRONBANK_BROKER_REPLAY_RESULT=")
+                ),
+                None,
+            )
+            assert replay_line is not None, replay_output
+            replay_result = json.loads(replay_line.split("=", 1)[1])
+            assert replay_result == {
+                "content": EXPECTED_POEM,
+                "echo_authorization_is_broker_ref": False,
+                "echo_has_authorization": True,
+                "model": "gemma4:latest",
+                "usage_total": 12,
+            }
+
+            net_rows = _eventually(
+                lambda: conn.execute(
+                    """
+                    SELECT *
+                    FROM net_events
+                    WHERE path = '/v1/chat/completions'
+                    ORDER BY id
+                    """
+                ).fetchall(),
+                lambda rows: len(rows) >= 3,
+            )
             for row in net_rows:
                 _assert_event_id(row["event_id"])
                 assert row["method"] == "POST"
@@ -296,6 +392,29 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
                 assert RAW_SDK_SECRET not in (row["request_body_preview"] or "")
                 assert EXPECTED_POEM.splitlines()[0] in (row["response_body_preview"] or "")
 
+            echo_rows = _eventually(
+                lambda: conn.execute(
+                    """
+                    SELECT *
+                    FROM net_events
+                    WHERE path = '/echo'
+                    ORDER BY id
+                    """
+                ).fetchall(),
+                lambda rows: len(rows) >= 1,
+            )
+            replay_echo = echo_rows[-1]
+            _assert_event_id(replay_echo["event_id"])
+            assert replay_echo["credential_ref"] == credential_ref
+            assert replay_echo["decision"] == "allowed"
+            assert replay_echo["status_code"] == 200
+            assert RAW_SDK_SECRET not in (replay_echo["request_headers"] or "")
+            assert credential_ref not in (replay_echo["request_headers"] or "")
+            assert "authorization: hash:" in (replay_echo["request_headers"] or "")
+            assert '"authorization_is_broker_ref":false' in (
+                replay_echo["response_body_preview"] or ""
+            )
+
             model_rows = _eventually(
                 lambda: conn.execute(
                     """
@@ -305,9 +424,9 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
                     ORDER BY id
                     """
                 ).fetchall(),
-                lambda rows: len(rows) >= 2,
+                lambda rows: len(rows) >= 3,
             )
-            assert len(model_rows) >= 2
+            assert len(model_rows) >= 3
             model_trace_ids = {row["trace_id"] for row in model_rows}
             net_trace_ids = {row["trace_id"] for row in net_rows}
             assert model_trace_ids <= net_trace_ids
@@ -398,12 +517,14 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
                 (credential_ref,),
             ).fetchall()
             assert substitutions
-            assert {row["outcome"] for row in substitutions} == {"captured"}
+            assert {"captured", "injected"} <= {row["outcome"] for row in substitutions}
             assert all(row["material_class"] == "credential" for row in substitutions)
             assert all(row["algorithm"] == "blake3" for row in substitutions)
             assert all(row["substitution_ref"] == credential_ref for row in substitutions)
             assert all(row["event_type"] == "http.request" for row in substitutions)
             assert len(substitutions) >= len(net_rows)
+            injected_sources = {row["source"] for row in substitutions if row["outcome"] == "injected"}
+            assert "http.header.authorization" in injected_sources
 
             poem_rows = _eventually(
                 lambda: conn.execute(

@@ -31,8 +31,8 @@ use super::hooks::{ChunkCtx, ChunkHook};
 use super::interpreter_hook::LlmEventStream;
 use super::util::is_llm_api_path;
 use crate::credential_broker::{
-    broker_and_log_observations, detect_http_body_credentials,
-    redact_observed_credentials_in_bytes, CredentialObservation,
+    broker_and_log_observations, detect_http_body_credentials, log_brokered_injections,
+    redact_observed_credentials_in_bytes, CredentialInjection, CredentialObservation,
 };
 use crate::net::ai_traffic::events::{
     collect_summary, parse_non_streaming_response_summary, parse_non_streaming_tool_calls,
@@ -87,6 +87,7 @@ pub struct TelemetryRequestContext {
     pub policy_reason: Option<String>,
     pub credential_ref: Option<String>,
     pub credential_observations: Vec<CredentialObservation>,
+    pub credential_injections: Vec<CredentialInjection>,
 }
 
 /// Per-request response-side counters owned by the hook. Updated on
@@ -240,6 +241,7 @@ impl ChunkHook for TelemetryHook {
         let security_rules = Arc::clone(&self.deps.security_rules);
         tokio::spawn(async move {
             let rules = security_rules.read().unwrap().clone();
+            log_brokered_injections(&db, &rules, req_ctx.credential_injections).await;
             broker_and_log_observations(&db, &rules, credential_observations).await;
             let net_security_event = security_event_from_net_event(&net_event);
             if let Some(event_id) = emit_security_write(&db, WriteOp::NetEvent(net_event)).await {

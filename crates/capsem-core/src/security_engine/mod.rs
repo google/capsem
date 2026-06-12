@@ -16,7 +16,9 @@ use serde_json::json;
 use tracing::Instrument;
 use uuid::Uuid;
 
-use crate::credential_broker::{BrokeredUpstreamCredentials, CredentialObservation};
+use crate::credential_broker::{
+    BrokeredUpstreamCredentials, CredentialInjection, CredentialObservation,
+};
 use crate::net::ai_traffic::provider::ProviderKind;
 use crate::net::policy_config::{
     CompiledSecurityRule, DetectionLevel, PolicyActionId, PolicySubject, PolicySubjectValue,
@@ -1386,6 +1388,17 @@ fn security_event_forensic_json(event: &SecurityEvent) -> serde_json::Value {
                 "credential_ref": observation.credential_ref(),
             })
         }).collect::<Vec<_>>(),
+        "credential_injections": event.credential_injections.iter().map(|injection| {
+            json!({
+                "provider": injection.provider.map(|provider| provider.as_str()),
+                "source": injection.source,
+                "event_type": injection.event_type,
+                "confidence": injection.confidence,
+                "trace_id": injection.trace_id,
+                "context_json": injection.context_json,
+                "credential_ref": injection.credential_ref,
+            })
+        }).collect::<Vec<_>>(),
         "action_trace": event.action_trace.iter().map(|action| action.as_str()).collect::<Vec<_>>(),
         "decision": event.decision,
         "detections": event.detections,
@@ -1602,6 +1615,7 @@ pub struct SecurityEvent {
     pub trace_id: Option<String>,
     pub credential_ref: Option<String>,
     pub credential_observations: Vec<CredentialObservation>,
+    pub credential_injections: Vec<CredentialInjection>,
     pub action_trace: Vec<PolicyActionId>,
     pub decision: SecurityDecisionState,
     pub detections: Vec<SecurityDetectionEvent>,
@@ -1669,6 +1683,7 @@ impl SecurityEvent {
             trace_id: None,
             credential_ref: None,
             credential_observations: Vec::new(),
+            credential_injections: Vec::new(),
             action_trace: Vec::new(),
             decision: SecurityDecisionState::default(),
             detections: Vec::new(),
@@ -1705,6 +1720,11 @@ impl SecurityEvent {
         observations: Vec<CredentialObservation>,
     ) -> Self {
         self.credential_observations = observations;
+        self
+    }
+
+    pub fn with_credential_injections(mut self, injections: Vec<CredentialInjection>) -> Self {
+        self.credential_injections = injections;
         self
     }
 

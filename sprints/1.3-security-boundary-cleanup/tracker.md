@@ -40,9 +40,15 @@ failure first.
     against the hermetic mock server, writes the returned poem to disk, and
     asserts HTTP/model/tool/file/exec/security/substitution DB rows plus
     `/vms/{id}/info`, `/vms/{id}/status`, and `/vms/{id}/security/latest`.
-- [ ] Ironbank: generic HTTP credential header request reaches upstream while
-  DB/log/UI
-  route payloads contain no raw secret.
+- [x] Ironbank: generic HTTP credential header request reaches upstream while
+  DB/log/UI route payloads contain no raw secret.
+  - Proof: `uv run python -m pytest tests/ironbank/test_model_sdk_ledger.py -q`
+    now replays a captured `credential:blake3:*` ref through a generic
+    `/echo` HTTP request and a second OpenAI-compatible SDK call. The mock
+    server proves upstream received a real authorization value instead of the
+    broker ref, while `net_events.credential_ref` carries the typed ref,
+    logged headers carry only `authorization: hash:*`, and
+    `substitution_events` includes both `captured` and `injected`.
 - [ ] Ironbank: query, JSON body, form body, response token body, and model SDK
   replay get the same no-raw-ledger proof.
 - [ ] Add plugin latency/counter evidence for broker and sanitizer.
@@ -83,7 +89,9 @@ failure first.
   - `cargo test -p capsem-core builtin_dummy_plugins_block_eicar_and_cannot_be_downgraded_by_postprocess -- --nocapture`
   - `cargo test -p capsem-core credential_broker_plugin_uses_matched_security_rule_metadata -- --nocapture`
   - `cargo test -p capsem-core credential_broker_uses_ai_provider_hint_for_local_openai_compatible_headers -- --nocapture`
+  - `cargo test -p capsem-core credential_broker_plugin_marks_broker_ref_for_injection_not_recapture -- --nocapture`
   - `cargo test -p capsem-core http_materializer_resolves_broker_ref_only_for_upstream_copy -- --nocapture`
+  - `cargo test -p capsem-core hook_writes_injected_substitution_event_for_broker_ref_replay -- --nocapture`
   - `cargo test -p capsem-core openai_non_streaming_tool_call_carries_request_trace -- --nocapture`
   - `cargo test -p capsem-core non_streaming_openai_text_survives_tool_call_response -- --nocapture`
   - `cargo test -p capsem-core` passed: 1560 unit tests, 29 MITM integration tests, 2 platform gating tests, 12 settings tests, 11 VM integration tests, doc tests ok; only existing ignored tests remained ignored.
@@ -97,10 +105,15 @@ failure first.
 - E2E/VM:
   - `uv run python -m pytest tests/ironbank/test_model_sdk_ledger.py -v --tb=short`
     passed.
+  - `uv run python -m pytest tests/ironbank/test_model_sdk_ledger.py -q`
+    passed with broker-ref replay over generic HTTP and OpenAI-compatible SDK
+    traffic.
 - Telemetry:
   - The Ironbank model SDK test asserts `net_events`, `model_calls`,
     `tool_calls`, `fs_events`, `exec_events`, `security_rule_events`, and
     `substitution_events` exact fields for the local OpenAI-compatible path.
+  - The broker replay extension asserts injected substitution rows and that
+    sanitized request headers expose neither the raw secret nor the broker ref.
 - Performance: pending plugin counters/latency evidence.
   - `cargo bench -p capsem-core --bench security_actions --no-run` now
     compiles the preprocess, postprocess, and logging plugin benchmark matrix.
