@@ -429,6 +429,13 @@ next one, and stage only the files for that slice.
   tests/capsem-service/test_svc_settings.py
   tests/capsem-build-chain/test_no_legacy_user_config.py -q`; `cargo check
   -p capsem-core -p capsem-service`.
+- S1 2026-06-11 reload/e2e sweep proof: live code/test grep for
+  `load_settings_files`, `user.toml`, `CAPSEM_USER_CONFIG`,
+  `save_mcp_user_config`, `load_mcp_user_config`, and `user_config_path` is
+  quiet outside the guard test; `uv run python -m pytest
+  tests/capsem-build-chain/test_no_legacy_user_config.py -q`; `cargo check -p
+  capsem-process`; `uv run python -m py_compile
+  tests/capsem-e2e/test_framed_mcp_mitm.py`.
 - S1 correction from review: any VM/profile behavior that survived as local
   settings is still debt. `settings.toml` is not a new name for `user.toml`;
   behavior must move to profile-owned artifacts or be rejected.

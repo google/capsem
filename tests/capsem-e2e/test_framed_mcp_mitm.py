@@ -627,7 +627,7 @@ print(json.dumps({"responses": responses, "stderr": proc.stderr.read()}))
             lambda r: r["request_id"] == "2" and r["decision"] == "allowed",
         )
 
-        config_path = svc.tmp_dir / "user.toml"
+        config_path = svc.tmp_dir / "settings.toml"
         config_path.write_text(
             """
 [profiles.rules.block_local_echo]
@@ -672,7 +672,7 @@ def test_framed_guest_mcp_builtin_http_policy_writes_mcp_and_net_rows():
         svc = _start_service()
         vm = None
         try:
-            config_path = svc.tmp_dir / "user.toml"
+            config_path = svc.tmp_dir / "settings.toml"
             config_path.write_text(
                 """
 [profiles.rules.block_builtin_http]

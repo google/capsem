@@ -608,7 +608,7 @@ pub(crate) async fn handle_ipc_connection(
             }
             ServiceToProcess::ReloadConfig => {
                 info!("Reloading policies from disk");
-                let (user_sf, corp_sf) = capsem_core::net::policy_config::load_settings_files();
+                let (user_sf, corp_sf) = capsem_core::net::policy_config::load_settings_and_corp_files();
                 let merged =
                     capsem_core::net::policy_config::MergedPolicies::from_files(&user_sf, &corp_sf);
 
@@ -724,7 +724,7 @@ pub(crate) async fn handle_ipc_connection(
                 let ipc_tx_out = ipc_tx_out.clone();
                 tokio::spawn(async move {
                     // Reload config from disk and refresh aggregator.
-                    let (user_sf, corp_sf) = capsem_core::net::policy_config::load_settings_files();
+                    let (user_sf, corp_sf) = capsem_core::net::policy_config::load_settings_and_corp_files();
                     let servers = capsem_core::mcp::build_server_list(
                         &user_sf.mcp.clone().unwrap_or_default(),
                         &corp_sf.mcp.clone().unwrap_or_default(),
