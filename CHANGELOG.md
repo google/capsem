@@ -15,6 +15,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   emission. The profile/corp plugin policy and route-visible plugin catalog now
   expose all three stages instead of hiding logging plugins behind a
   compatibility bucket.
+- Hardened the local OpenAI-compatible model path: bounded request sniffing now
+  promotes unknown localhost model traffic before CEL/plugin evaluation, the
+  credential broker uses the parsed provider hint for SDK bearer headers, and
+  Ironbank proves the VM-visible OpenAI SDK response, tool call, file write,
+  broker reference, substitution ledger, security rows, route counters, and
+  raw-secret absence end to end.
 - Removed provider-aware credential brokering from MITM header formatting so
   network helpers no longer create credential refs or credential observations.
 - Replaced the Rust mock-server crate with the shared Python mock server

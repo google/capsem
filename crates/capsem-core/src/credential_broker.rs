@@ -170,12 +170,22 @@ pub fn detect_http_credential(
     header_name: &str,
     header_value: &[u8],
 ) -> Option<CredentialObservation> {
+    detect_http_credential_with_provider(domain, None, header_name, header_value)
+}
+
+pub fn detect_http_credential_with_provider(
+    domain: &str,
+    ai_provider: Option<ProviderKind>,
+    header_name: &str,
+    header_value: &[u8],
+) -> Option<CredentialObservation> {
     let value = std::str::from_utf8(header_value).ok()?.trim();
     if value.is_empty() {
         return None;
     }
     let raw = bearer_value(value).unwrap_or(value).trim();
-    let provider = provider_for_token(domain, header_name, raw)?;
+    let provider = provider_for_token(domain, header_name, raw)
+        .or_else(|| provider_for_header_hint(domain, ai_provider, header_name, raw))?;
     Some(CredentialObservation {
         provider,
         raw_value: raw.to_string(),
@@ -189,6 +199,25 @@ pub fn detect_http_credential(
             json_escape(header_name)
         )),
     })
+}
+
+fn provider_for_header_hint(
+    domain: &str,
+    ai_provider: Option<ProviderKind>,
+    header_name: &str,
+    raw: &str,
+) -> Option<CredentialProvider> {
+    if raw.is_empty() {
+        return None;
+    }
+    let header = header_name.to_ascii_lowercase();
+    let credential_header = header == "authorization"
+        || header == "x-api-key"
+        || header == "api-key"
+        || header == "apikey";
+    credential_header
+        .then(|| credential_provider_for_request(domain, ai_provider))
+        .flatten()
 }
 
 pub fn detect_http_body_credentials(

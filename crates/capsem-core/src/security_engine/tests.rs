@@ -665,6 +665,51 @@ fn security_event_log_sanitizer_logging_plugin_redacts_before_logger_emit() {
 }
 
 #[test]
+fn credential_broker_uses_ai_provider_hint_for_local_openai_compatible_headers() {
+    let _lock = crate::credential_broker::TEST_ENV_LOCK.blocking_lock();
+    let tmp = tempfile::tempdir().unwrap();
+    let store_path = tmp.path().join("broker-store.json");
+    let _store_guard = EnvVarGuard::set(crate::credential_broker::TEST_STORE_ENV, &store_path);
+    let _user_guard = EnvVarGuard::set("CAPSEM_HOME", tmp.path());
+    let emitter = Arc::new(RecordingEmitter::new());
+    let registry =
+        SecurityActionRegistry::with_builtin_actions().with_plugin_policy(BTreeMap::from([(
+            "credential_broker".to_string(),
+            plugin_config(SecurityPluginMode::Rewrite, DetectionLevel::Informational),
+        )]));
+    let engine = SecurityEventEngine::new(registry, Arc::clone(&emitter));
+    let raw = "capsem_test_sdk_api_key_repeat_0123456789abcdef";
+    let mut headers = http::HeaderMap::new();
+    headers.insert(
+        http::header::AUTHORIZATION,
+        http::HeaderValue::from_str(&format!("Bearer {raw}")).unwrap(),
+    );
+    let event = SecurityEvent::new(RuntimeSecurityEventType::HttpRequest).with_http_request(
+        HttpRequestSecurityEvent::new("127.0.0.1", Some(ProviderKind::OpenAi), headers, None),
+    );
+
+    let returned = engine
+        .apply_matching_rules_and_emit(&SecurityRuleSet::new(Vec::new()), event)
+        .expect("provider hint should let broker capture local OpenAI-compatible SDK keys");
+
+    let credential_ref = returned
+        .credential_ref
+        .as_deref()
+        .expect("provider-hinted credential should be brokered");
+    assert!(capsem_logger::is_credential_reference(credential_ref));
+    assert_eq!(
+        crate::credential_broker::resolve_broker_reference_for_provider(
+            CredentialProvider::OpenAi,
+            credential_ref,
+        )
+        .unwrap()
+        .as_deref(),
+        Some(raw)
+    );
+    assert_eq!(emitter.events.lock().unwrap().as_slice(), [returned]);
+}
+
+#[test]
 fn security_event_cel_evaluates_one_cross_root_rule_without_fanout() {
     let condition = r#"
 http.host.matches("(^|.*\.)openai\.com$")

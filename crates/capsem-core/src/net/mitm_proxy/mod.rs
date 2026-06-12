@@ -1325,6 +1325,101 @@ async fn handle_request(
             .unwrap()
     };
 
+    enum RequestBodySource {
+        Incoming(hyper::body::Incoming),
+        Collected(Bytes),
+    }
+
+    let mut effective_ai_provider = ai_provider;
+    let mut sniffed_model_request = false;
+    let mut observed_mcp_request: Option<ObservedMcpHttpRequest> = None;
+    let mut mcp_request_security_decision = SecurityBoundaryDecisionFields::default();
+    let mut request_body_source = RequestBodySource::Incoming(req_body);
+    let should_sniff_model =
+        should_sniff_unknown_model_body(effective_ai_provider, &original_method, &original_headers);
+    let should_sniff_mcp = should_sniff_mcp_http_body(&original_method, &original_headers);
+    if should_sniff_model || should_sniff_mcp {
+        let sniff_span = tracing::debug_span!(
+            target: "capsem.mitm",
+            "mitm_unknown_semantic_body_sniff",
+            protocol = protocol.label(),
+            host = domain,
+            path = path.as_str(),
+            provider = tracing::field::Empty,
+            mcp_method = tracing::field::Empty,
+            status = tracing::field::Empty,
+        );
+        if let RequestBodySource::Incoming(body) = request_body_source {
+            let preview_limit = if should_sniff_model {
+                AI_BODY_PREVIEW.max(MCP_BODY_PREVIEW)
+            } else {
+                MCP_BODY_PREVIEW
+            };
+            let collected = match http_body_util::Limited::new(body, preview_limit)
+                .collect()
+                .instrument(sniff_span.clone())
+                .await
+            {
+                Ok(collected) => collected,
+                Err(error) => {
+                    sniff_span.record("status", "error");
+                    return Ok(make_502(
+                        &error,
+                        &method,
+                        &path,
+                        &query,
+                        &req_hdrs,
+                        start_time,
+                        &request_security_decision,
+                    ));
+                }
+            };
+            let body_bytes = collected.to_bytes();
+            let mut sniff_matched = false;
+            if should_sniff_model {
+                if let Some(provider) = ai_provider_for_body_preview(&body_bytes) {
+                    effective_ai_provider = Some(provider);
+                    sniffed_model_request = true;
+                    sniff_matched = true;
+                    sniff_span.record("provider", provider.as_str());
+                    tracing::info!(
+                        target: "capsem.mitm",
+                        host = domain,
+                        path,
+                        provider = provider.as_str(),
+                        body_bytes = body_bytes.len(),
+                        "unknown model endpoint promoted from bounded body shape"
+                    );
+                }
+            }
+            if should_sniff_mcp {
+                if let Some(observed) =
+                    observed_mcp_http_request_for_body(&body_bytes, domain, upstream_port, &path)
+                {
+                    sniff_matched = true;
+                    sniff_span.record("mcp_method", observed.method.as_str());
+                    tracing::info!(
+                        target: "capsem.mitm",
+                        host = domain,
+                        path,
+                        mcp_method = observed.method.as_str(),
+                        mcp_server = observed.server_name.as_str(),
+                        mcp_tool = observed.tool_name.as_deref(),
+                        body_bytes = body_bytes.len(),
+                        "unknown MCP-over-HTTP endpoint promoted from bounded JSON-RPC shape"
+                    );
+                    observed_mcp_request = Some(observed);
+                }
+            }
+            if sniff_matched {
+                sniff_span.record("status", "ok");
+            } else {
+                sniff_span.record("status", "no_match");
+            }
+            request_body_source = RequestBodySource::Collected(body_bytes);
+        }
+    }
+
     let http_security_event =
         crate::security_engine::SecurityEvent::new(RuntimeSecurityEventType::HttpRequest)
             .with_http(crate::security_engine::HttpSecurityEvent {
@@ -1336,7 +1431,7 @@ async fn handle_request(
             })
             .with_http_request(crate::security_engine::HttpRequestSecurityEvent::new(
                 domain,
-                ai_provider,
+                effective_ai_provider,
                 original_headers.clone(),
                 query.clone(),
             ));
@@ -1372,6 +1467,11 @@ async fn handle_request(
                 &request_security_decision,
             ));
         }
+    };
+    let credential_observations = {
+        let mut observations = credential_observations.clone();
+        observations.extend(http_evaluation.event.credential_observations.clone());
+        observations
     };
     request_security_decision =
         SecurityBoundaryDecisionFields::from_enforcement(&http_evaluation.enforcement);
@@ -1490,101 +1590,6 @@ async fn handle_request(
             .status(403)
             .body(seal_with_telemetry(deny_body, req_ctx, ai_provider))
             .unwrap());
-    }
-
-    enum RequestBodySource {
-        Incoming(hyper::body::Incoming),
-        Collected(Bytes),
-    }
-
-    let mut effective_ai_provider = ai_provider;
-    let mut sniffed_model_request = false;
-    let mut observed_mcp_request: Option<ObservedMcpHttpRequest> = None;
-    let mut mcp_request_security_decision = SecurityBoundaryDecisionFields::default();
-    let mut request_body_source = RequestBodySource::Incoming(req_body);
-    let should_sniff_model =
-        should_sniff_unknown_model_body(effective_ai_provider, &original_method, &original_headers);
-    let should_sniff_mcp = should_sniff_mcp_http_body(&original_method, &original_headers);
-    if should_sniff_model || should_sniff_mcp {
-        let sniff_span = tracing::debug_span!(
-            target: "capsem.mitm",
-            "mitm_unknown_semantic_body_sniff",
-            protocol = protocol.label(),
-            host = domain,
-            path = path.as_str(),
-            provider = tracing::field::Empty,
-            mcp_method = tracing::field::Empty,
-            status = tracing::field::Empty,
-        );
-        if let RequestBodySource::Incoming(body) = request_body_source {
-            let preview_limit = if should_sniff_model {
-                AI_BODY_PREVIEW.max(MCP_BODY_PREVIEW)
-            } else {
-                MCP_BODY_PREVIEW
-            };
-            let collected = match http_body_util::Limited::new(body, preview_limit)
-                .collect()
-                .instrument(sniff_span.clone())
-                .await
-            {
-                Ok(collected) => collected,
-                Err(error) => {
-                    sniff_span.record("status", "error");
-                    return Ok(make_502(
-                        &error,
-                        &method,
-                        &path,
-                        &query,
-                        &req_hdrs,
-                        start_time,
-                        &request_security_decision,
-                    ));
-                }
-            };
-            let body_bytes = collected.to_bytes();
-            let mut sniff_matched = false;
-            if should_sniff_model {
-                if let Some(provider) = ai_provider_for_body_preview(&body_bytes) {
-                    effective_ai_provider = Some(provider);
-                    sniffed_model_request = true;
-                    sniff_matched = true;
-                    sniff_span.record("provider", provider.as_str());
-                    tracing::info!(
-                        target: "capsem.mitm",
-                        host = domain,
-                        path,
-                        provider = provider.as_str(),
-                        body_bytes = body_bytes.len(),
-                        "unknown model endpoint promoted from bounded body shape"
-                    );
-                }
-            }
-            if should_sniff_mcp {
-                if let Some(observed) =
-                    observed_mcp_http_request_for_body(&body_bytes, domain, upstream_port, &path)
-                {
-                    sniff_matched = true;
-                    sniff_span.record("mcp_method", observed.method.as_str());
-                    tracing::info!(
-                        target: "capsem.mitm",
-                        host = domain,
-                        path,
-                        mcp_method = observed.method.as_str(),
-                        mcp_server = observed.server_name.as_str(),
-                        mcp_tool = observed.tool_name.as_deref(),
-                        body_bytes = body_bytes.len(),
-                        "unknown MCP-over-HTTP endpoint promoted from bounded JSON-RPC shape"
-                    );
-                    observed_mcp_request = Some(observed);
-                }
-            }
-            if sniff_matched {
-                sniff_span.record("status", "ok");
-            } else {
-                sniff_span.record("status", "no_match");
-            }
-            request_body_source = RequestBodySource::Collected(body_bytes);
-        }
     }
 
     if let Some(observed) = observed_mcp_request.as_ref() {

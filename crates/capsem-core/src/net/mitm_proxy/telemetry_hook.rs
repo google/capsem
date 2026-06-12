@@ -35,7 +35,8 @@ use crate::credential_broker::{
     redact_observed_credentials_in_bytes, CredentialObservation,
 };
 use crate::net::ai_traffic::events::{
-    collect_summary, parse_non_streaming_tool_calls, parse_non_streaming_usage, StopReason,
+    collect_summary, parse_non_streaming_response_summary, parse_non_streaming_tool_calls,
+    parse_non_streaming_usage, StopReason,
 };
 use crate::net::ai_traffic::pricing::PricingTable;
 use crate::net::ai_traffic::provider::{extract_model_from_path, tool_origin, ProviderKind};
@@ -408,21 +409,36 @@ pub fn maybe_build_model_call(
     } else {
         Some(collect_summary(llm_events))
     };
+    let response_summary = if summary.is_none()
+        && !resp_stats.preview.is_empty()
+        && req_ctx.status_code == Some(200)
+    {
+        Some(parse_non_streaming_response_summary(
+            provider,
+            &resp_stats.preview,
+        ))
+    } else {
+        None
+    };
 
     // Streaming detection: explicit body field OR URL path keyword.
     let stream = req_meta.stream || req_ctx.path.contains("stream");
 
-    let stop_reason_str =
-        summary
-            .as_ref()
-            .and_then(|s| s.stop_reason.as_ref())
-            .map(|sr| match sr {
-                StopReason::EndTurn => "end_turn".to_string(),
-                StopReason::ToolUse => "tool_use".to_string(),
-                StopReason::MaxTokens => "max_tokens".to_string(),
-                StopReason::ContentFilter => "content_filter".to_string(),
-                StopReason::Other(s) => s.clone(),
-            });
+    let stop_reason_str = summary
+        .as_ref()
+        .and_then(|s| s.stop_reason.as_ref())
+        .or_else(|| {
+            response_summary
+                .as_ref()
+                .and_then(|s| s.stop_reason.as_ref())
+        })
+        .map(|sr| match sr {
+            StopReason::EndTurn => "end_turn".to_string(),
+            StopReason::ToolUse => "tool_use".to_string(),
+            StopReason::MaxTokens => "max_tokens".to_string(),
+            StopReason::ContentFilter => "content_filter".to_string(),
+            StopReason::Other(s) => s.clone(),
+        });
 
     let mut tool_calls: Vec<ToolCallEntry> = summary
         .as_ref()
@@ -569,10 +585,12 @@ pub fn maybe_build_model_call(
         text_content: summary
             .as_ref()
             .map(|s| s.text.clone())
+            .or_else(|| response_summary.as_ref().map(|s| s.text.clone()))
             .filter(|s| !s.is_empty()),
         thinking_content: summary
             .as_ref()
             .map(|s| s.thinking.clone())
+            .or_else(|| response_summary.as_ref().map(|s| s.thinking.clone()))
             .filter(|s| !s.is_empty()),
         stop_reason: stop_reason_str,
         input_tokens,

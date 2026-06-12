@@ -51,7 +51,7 @@ prove the same rails without user credentials.
 | S8 | UI/TUI contract repair | In progress | Sessions/profiles/settings/stats/plugin/MCP/security/file/process views reflect routes and enums only. |
 | S9 | Agent bootstrap repair | Planned | AGY, Claude, Codex, MCP, aliases, and profile root files are packaged from profile-owned bootstrap. |
 | S10 | Packaging/install/release gate | In progress | Package payload closed contract, `just install`, status/debug, changelog/docs, and benchmark report pass. |
-| S11 | Security boundary cleanup | In progress | `sprints/1.3-security-boundary-cleanup/` proves network engine parses/routes only, credential broker handles runtime capture/injection, log sanitizer is the final ledger projection, raw credentials cannot reach DB/log/route/UI output, and docs/skills teach the boundary. |
+| S11 | Security boundary cleanup | In progress | `sprints/1.3-security-boundary-cleanup/` proves network engine parses/routes only, every plugin contract is `SecurityEvent -> SecurityEvent`, credential broker handles capture/storage/injection without owning logs, log sanitizer is an independent logging plugin that produces ledger projection, raw credentials cannot reach DB/log/route/UI output, and docs/skills teach the boundary. |
 
 ## Release Holds
 
@@ -72,7 +72,10 @@ prove the same rails without user credentials.
 - Hold: `sprints/1.3-security-boundary-cleanup/` must close before credential
   broker, model/client traffic, or UI stats are called release-ready. Runtime
   bytes and ledger bytes must be separate materializations; the credential
-  broker owns capture/injection and the log sanitizer owns final redaction.
+  broker owns capture/storage/injection, logging plugins own final redaction or
+  enrichment inside the security engine before logger handoff, and every plugin
+  receives and emits only `SecurityEvent`. The logger must not grow a sanitizer
+  fallback path.
   Architecture docs and developer skills must be updated in the same slice so
   the old drift does not return.
 
@@ -88,5 +91,10 @@ prove the same rails without user credentials.
   `127.0.0.1:11434`; `/api/tags` reports `gemma4:latest` with completion,
   tools, and thinking capabilities. Use this as the local live backend for
   recorder/smoke tests, routed through Capsem, not as a guest install target.
+- Ironbank progress on 2026-06-12: `tests/ironbank/test_model_sdk_ledger.py`
+  now proves the local OpenAI-compatible SDK path through a real VM, hermetic
+  mock server, credential broker capture, model response parsing, native tool
+  call ledger rows, file write, security latest route, session DB rows, and
+  raw-secret absence. Broker replay/injection remains a separate open proof.
 
 Those files remain evidence. This sprint is the execution authority.

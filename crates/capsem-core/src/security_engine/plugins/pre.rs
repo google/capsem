@@ -1,4 +1,4 @@
-use crate::credential_broker::{broker_observed_credential, detect_http_credential};
+use crate::credential_broker::{broker_observed_credential, detect_http_credential_with_provider};
 use crate::net::policy_config::PolicyActionId;
 use crate::security_engine::{
     security_event_contains_text, SecurityActionError, SecurityDecisionKind, SecurityEvent,
@@ -20,9 +20,12 @@ impl SecurityPlugin for CredentialBrokerPlugin {
         let trace_id = event.trace_id();
         if let Some(request) = event.http_request.as_ref() {
             for (name, value) in request.headers.iter() {
-                if let Some(mut observation) =
-                    detect_http_credential(&request.domain, name.as_str(), value.as_bytes())
-                {
+                if let Some(mut observation) = detect_http_credential_with_provider(
+                    &request.domain,
+                    request.ai_provider,
+                    name.as_str(),
+                    value.as_bytes(),
+                ) {
                     if observation.trace_id.is_none() {
                         observation.trace_id = trace_id.clone();
                     }

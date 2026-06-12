@@ -1,0 +1,441 @@
+"""Ironbank black-box model SDK ledger tests."""
+
+from __future__ import annotations
+
+import json
+import re
+import sqlite3
+import textwrap
+import time
+import uuid
+from pathlib import Path
+
+import pytest
+
+from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
+from helpers.mock_server import MOCK_SERVER_BINARY, start_mock_server, stop_process
+from helpers.service import ServiceInstance, wait_exec_ready, vm_name
+
+pytestmark = pytest.mark.integration
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+ASSETS_DIR = PROJECT_ROOT / "assets"
+PROFILES_DIR = PROJECT_ROOT / "target" / "config" / "profiles"
+
+RAW_SDK_SECRET = "capsem_test_sdk_api_key_repeat_0123456789abcdef"
+EXPECTED_POEM = "Capsem ironbank poem\nledgers count the sparks\nno secret crosses raw"
+EXPECTED_SECURITY_LATEST_FIELDS = {
+    "timestamp_unix_ms",
+    "event_id",
+    "event_type",
+    "rule_id",
+    "rule_action",
+    "detection_level",
+    "rule_json",
+    "event_json",
+    "trace_id",
+}
+
+
+def _connect_session_db(service: ServiceInstance, session_id: str) -> sqlite3.Connection:
+    db_path = service.tmp_dir / "sessions" / session_id / "session.db"
+    assert db_path.exists(), f"session.db missing at {db_path}"
+    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def _eventually(fetch, predicate, *, timeout_s: float = 20.0, interval_s: float = 0.25):
+    deadline = time.monotonic() + timeout_s
+    last = None
+    while time.monotonic() < deadline:
+        last = fetch()
+        if predicate(last):
+            return last
+        time.sleep(interval_s)
+    assert predicate(last), f"condition not met before timeout; last={last!r}"
+    return last
+
+
+def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
+    return {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+
+
+def _assert_event_id(value: object) -> None:
+    assert isinstance(value, str)
+    assert re.fullmatch(r"[0-9a-f]{12}", value), value
+
+
+def _assert_credential_ref(value: object) -> None:
+    assert isinstance(value, str)
+    assert re.fullmatch(r"credential:blake3:[0-9a-f]{64}", value), value
+
+
+def _assert_raw_secret_not_in_db(conn: sqlite3.Connection) -> None:
+    table_names = [
+        row[0]
+        for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name"
+        ).fetchall()
+    ]
+    for table in table_names:
+        columns = conn.execute(f"PRAGMA table_info({table})").fetchall()
+        text_columns = [row[1] for row in columns if str(row[2]).upper() in {"TEXT", ""}]
+        if not text_columns:
+            continue
+        selected = ", ".join(f'"{column}"' for column in text_columns)
+        for row in conn.execute(f'SELECT {selected} FROM "{table}"').fetchall():
+            for column, value in zip(text_columns, row, strict=True):
+                assert RAW_SDK_SECRET not in str(value), f"raw SDK secret leaked in {table}.{column}"
+
+
+def _sdk_probe_script(base_url: str) -> str:
+    payload = {
+        "base_url": f"{base_url.rstrip('/')}/v1",
+        "api_key_parts": ["capsem_test_sdk_api_key_", "repeat_0123456789abcdef"],
+        "model": "gemma4:latest",
+        "poem_path": "/root/poem.md",
+    }
+    return textwrap.dedent(
+        f"""
+        import json
+        from pathlib import Path
+
+        from openai import OpenAI
+
+        cfg = json.loads({json.dumps(json.dumps(payload))})
+        client = OpenAI(base_url=cfg["base_url"], api_key="".join(cfg["api_key_parts"]))
+
+        first = client.chat.completions.create(
+            model=cfg["model"],
+            messages=[
+                {{"role": "system", "content": "You are a deterministic Capsem fixture."}},
+                {{"role": "user", "content": "Write the Capsem ironbank poem."}},
+            ],
+            tools=[
+                {{
+                    "type": "function",
+                    "function": {{
+                        "name": "fixture_lookup",
+                        "description": "Lookup deterministic fixture data.",
+                        "parameters": {{
+                            "type": "object",
+                            "properties": {{"query": {{"type": "string"}}}},
+                            "required": ["query"],
+                        }},
+                    }},
+                }}
+            ],
+        )
+        second = client.chat.completions.create(
+            model=cfg["model"],
+            messages=[{{"role": "user", "content": "Repeat the Capsem ironbank poem."}}],
+        )
+
+        first_message = first.choices[0].message
+        second_message = second.choices[0].message
+        tool_calls = first_message.tool_calls or []
+        poem = first_message.content or second_message.content or ""
+        Path(cfg["poem_path"]).write_text(poem + "\\n", encoding="utf-8")
+
+        result = {{
+            "first_model": first.model,
+            "second_model": second.model,
+            "first_content": poem,
+            "second_content": second_message.content,
+            "first_tool_count": len(tool_calls),
+            "first_tool_name": tool_calls[0].function.name if tool_calls else None,
+            "first_tool_arguments": tool_calls[0].function.arguments if tool_calls else None,
+            "usage_total": (first.usage.total_tokens if first.usage else 0)
+                + (second.usage.total_tokens if second.usage else 0),
+            "poem_path": cfg["poem_path"],
+        }}
+        print("IRONBANK_SDK_RESULT=" + json.dumps(result, sort_keys=True))
+        """
+    ).strip()
+
+
+def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
+    assert MOCK_SERVER_BINARY.exists(), f"{MOCK_SERVER_BINARY} missing; restore mock server runtime"
+    assert ASSETS_DIR.exists(), f"{ASSETS_DIR} missing; build VM assets before Ironbank"
+    assert PROFILES_DIR.exists(), f"{PROFILES_DIR} missing; materialize profile config before Ironbank"
+
+    service = ServiceInstance()
+    client = None
+    mock_proc = None
+    session_id = vm_name("ironbank-sdk")
+    script_name = f"ironbank-model-sdk-{uuid.uuid4().hex[:8]}.py"
+    try:
+        service.start()
+        client = service.client()
+        mock_proc, ready = start_mock_server()
+        mock_base_url = ready["base_url"]
+
+        create = client.post(
+            "/vms/create",
+            {
+                "name": session_id,
+                "profile_id": CODE_PROFILE_ID,
+                "ram_mb": DEFAULT_RAM_MB,
+                "cpus": DEFAULT_CPUS,
+                "env": {"CAPSEM_MOCK_SERVER_BASE_URL": mock_base_url},
+            },
+            timeout=90,
+        )
+        assert create is not None, "session creation returned no body"
+        assert create.get("id") == session_id or create.get("name") == session_id
+        assert wait_exec_ready(client, session_id, timeout=EXEC_READY_TIMEOUT)
+
+        script = _sdk_probe_script(mock_base_url).encode()
+        upload = client.post_bytes(
+            f"/vms/{session_id}/files/content?path={script_name}",
+            script,
+            timeout=30,
+        )
+        assert upload is not None
+        assert upload["success"] is True
+        assert upload["size"] == len(script)
+
+        exec_resp = client.post(
+            f"/vms/{session_id}/exec",
+            {"command": f"python3 /root/{script_name}", "timeout_secs": 220},
+            timeout=240,
+        )
+        assert exec_resp is not None, "SDK exec returned no body"
+        assert exec_resp["exit_code"] == 0, exec_resp
+        stdout = exec_resp.get("stdout", "")
+        stderr = exec_resp.get("stderr", "")
+        assert RAW_SDK_SECRET not in stdout + stderr
+        result_line = next(
+            (line for line in stdout.splitlines() if line.startswith("IRONBANK_SDK_RESULT=")),
+            None,
+        )
+        assert result_line is not None, stdout + stderr
+        sdk_result = json.loads(result_line.split("=", 1)[1])
+        assert sdk_result == {
+            "first_content": EXPECTED_POEM,
+            "first_model": "gemma4:latest",
+            "first_tool_arguments": '{"query":"capsem"}',
+            "first_tool_count": 1,
+            "first_tool_name": "fixture_lookup",
+            "poem_path": "/root/poem.md",
+            "second_content": EXPECTED_POEM,
+            "second_model": "gemma4:latest",
+            "usage_total": 24,
+        }
+
+        poem_status, poem_bytes = client.get_bytes(
+            f"/vms/{session_id}/files/content?path=poem.md",
+            timeout=30,
+        )
+        assert poem_status == 200
+        assert poem_bytes.decode() == EXPECTED_POEM + "\n"
+
+        history = client.get(f"/vms/{session_id}/history", timeout=30)
+        assert history is not None
+        assert history.get("total", 0) >= 2
+        history_text = " ".join(
+            (entry.get("command") or "") + " " + (entry.get("stdout_preview") or "")
+            for entry in history.get("commands", [])
+        )
+        assert script_name in history_text
+        assert "IRONBANK_SDK_RESULT" in history_text
+        assert RAW_SDK_SECRET not in history_text
+
+        security_latest = client.get(f"/vms/{session_id}/security/latest?limit=50", timeout=30)
+        assert isinstance(security_latest, list)
+        assert security_latest
+        assert all(set(row) == EXPECTED_SECURITY_LATEST_FIELDS for row in security_latest)
+        assert any(row["event_type"] == "model.call" for row in security_latest)
+        assert any(row["event_type"] == "http.request" for row in security_latest)
+        assert all(row["rule_action"] in {"allow", "ask", "block", "preprocess", "rewrite", "postprocess"} for row in security_latest)
+        assert all(row["detection_level"] in {"none", "informational", "low", "medium", "high", "critical"} for row in security_latest)
+        assert all(json.loads(row["rule_json"]) for row in security_latest)
+        assert all(json.loads(row["event_json"]) for row in security_latest)
+
+        conn = _connect_session_db(service, session_id)
+        try:
+            for table in (
+                "net_events",
+                "model_calls",
+                "tool_calls",
+                "fs_events",
+                "exec_events",
+                "security_rule_events",
+                "substitution_events",
+            ):
+                assert "event_id" in _table_columns(conn, table), f"{table} lacks event_id"
+
+            net_rows = _eventually(
+                lambda: conn.execute(
+                    """
+                    SELECT *
+                    FROM net_events
+                    WHERE path = '/v1/chat/completions'
+                    ORDER BY id
+                    """
+                ).fetchall(),
+                lambda rows: len(rows) >= 2,
+            )
+            assert len(net_rows) >= 2
+            credential_refs = {row["credential_ref"] for row in net_rows}
+            assert len(credential_refs) == 1
+            credential_ref = next(iter(credential_refs))
+            _assert_credential_ref(credential_ref)
+            for row in net_rows:
+                _assert_event_id(row["event_id"])
+                assert row["method"] == "POST"
+                assert row["status_code"] == 200
+                assert row["decision"] == "allowed"
+                assert row["domain"] == "127.0.0.1"
+                assert row["port"] == 3713
+                assert row["bytes_sent"] > 0
+                assert row["bytes_received"] > 0
+                assert row["trace_id"]
+                assert RAW_SDK_SECRET not in (row["request_headers"] or "")
+                assert RAW_SDK_SECRET not in (row["request_body_preview"] or "")
+                assert EXPECTED_POEM.splitlines()[0] in (row["response_body_preview"] or "")
+
+            model_rows = _eventually(
+                lambda: conn.execute(
+                    """
+                    SELECT *
+                    FROM model_calls
+                    WHERE path = '/v1/chat/completions'
+                    ORDER BY id
+                    """
+                ).fetchall(),
+                lambda rows: len(rows) >= 2,
+            )
+            assert len(model_rows) >= 2
+            model_trace_ids = {row["trace_id"] for row in model_rows}
+            net_trace_ids = {row["trace_id"] for row in net_rows}
+            assert model_trace_ids <= net_trace_ids
+            for row in model_rows:
+                _assert_event_id(row["event_id"])
+                assert row["provider"] == "openai"
+                assert row["model"] == "gemma4:latest"
+                assert row["method"] == "POST"
+                assert row["status_code"] == 200
+                assert row["messages_count"] >= 1
+                assert row["tools_count"] in {0, 1}
+                assert row["request_bytes"] > 0
+                assert row["input_tokens"] == 7
+                assert row["output_tokens"] == 5
+                assert row["response_bytes"] > 0
+                assert row["text_content"] == EXPECTED_POEM
+                assert row["stop_reason"] == "tool_use"
+                assert row["credential_ref"] == credential_ref
+                assert RAW_SDK_SECRET not in (row["request_body_preview"] or "")
+
+            tool_rows = _eventually(
+                lambda: conn.execute(
+                    """
+                    SELECT tool_calls.*, model_calls.trace_id AS model_trace_id
+                    FROM tool_calls
+                    JOIN model_calls ON model_calls.id = tool_calls.model_call_id
+                    WHERE tool_calls.tool_name = 'fixture_lookup'
+                    ORDER BY tool_calls.id
+                    """
+                ).fetchall(),
+                lambda rows: len(rows) >= 2,
+            )
+            assert len(tool_rows) >= 2
+            assert {row["call_id"] for row in tool_rows} == {"tool_0001"}
+            for row in tool_rows:
+                _assert_event_id(row["event_id"])
+                assert row["provider"] == "openai"
+                assert row["status"] == "observed"
+                assert row["call_index"] == 0
+                assert row["arguments"] == '{"query":"capsem"}'
+                assert row["origin"] == "native"
+                assert row["trace_id"] == row["model_trace_id"]
+                assert row["credential_ref"] == credential_ref
+
+            info = _eventually(
+                lambda: client.get(f"/vms/{session_id}/info", timeout=30),
+                lambda value: (
+                    value is not None
+                    and (value.get("id") == session_id or value.get("name") == session_id)
+                    and value.get("model_call_count", 0) >= len(model_rows)
+                    and value.get("total_tool_calls", 0) >= len(tool_rows)
+                ),
+                timeout_s=20,
+            )
+            assert info["profile_id"] == CODE_PROFILE_ID
+            assert info["model_call_count"] >= len(model_rows)
+            assert info["total_tool_calls"] >= len(tool_rows)
+            status = client.get(f"/vms/{session_id}/status", timeout=30)
+            assert status is not None
+            assert status["status"] == "Running"
+            assert status["available_actions"] == ["pause", "stop", "fork", "delete"]
+
+            security_rows = conn.execute(
+                """
+                SELECT *
+                FROM security_rule_events
+                WHERE event_id IN (
+                    SELECT event_id FROM model_calls WHERE path = '/v1/chat/completions'
+                    UNION
+                    SELECT event_id FROM net_events WHERE path = '/v1/chat/completions'
+                )
+                ORDER BY id
+                """
+            ).fetchall()
+            assert security_rows
+            assert {"http.request", "model.call"} <= {row["event_type"] for row in security_rows}
+            assert all(row["rule_action"] == "allow" for row in security_rows)
+            assert all(json.loads(row["rule_json"]) for row in security_rows)
+            assert all(json.loads(row["event_json"]) for row in security_rows)
+
+            substitutions = conn.execute(
+                """
+                SELECT *
+                FROM substitution_events
+                WHERE substitution_ref = ?
+                ORDER BY id
+                """,
+                (credential_ref,),
+            ).fetchall()
+            assert substitutions
+            assert {row["outcome"] for row in substitutions} == {"captured"}
+            assert all(row["material_class"] == "credential" for row in substitutions)
+            assert all(row["algorithm"] == "blake3" for row in substitutions)
+            assert all(row["substitution_ref"] == credential_ref for row in substitutions)
+            assert all(row["event_type"] == "http.request" for row in substitutions)
+            assert len(substitutions) >= len(net_rows)
+
+            poem_rows = _eventually(
+                lambda: conn.execute(
+                    "SELECT * FROM fs_events WHERE path = 'poem.md' ORDER BY id"
+                ).fetchall(),
+                lambda rows: any(row["action"] in {"created", "modified"} for row in rows),
+            )
+            assert poem_rows
+            assert any(row["action"] in {"created", "modified"} for row in poem_rows)
+            assert all(row["size"] is None or row["size"] >= len(EXPECTED_POEM) for row in poem_rows)
+            assert all(row["credential_ref"] is None for row in poem_rows)
+
+            exec_row = conn.execute(
+                "SELECT * FROM exec_events WHERE command = ? ORDER BY id DESC LIMIT 1",
+                (f"python3 /root/{script_name}",),
+            ).fetchone()
+            assert exec_row is not None
+            _assert_event_id(exec_row["event_id"])
+            assert exec_row["exit_code"] == 0
+            assert exec_row["source"] == "api"
+            assert "IRONBANK_SDK_RESULT" in (exec_row["stdout_preview"] or "")
+            assert RAW_SDK_SECRET not in (exec_row["stdout_preview"] or "")
+            assert exec_row["credential_ref"] is None
+
+            _assert_raw_secret_not_in_db(conn)
+        finally:
+            conn.close()
+    finally:
+        stop_process(mock_proc)
+        if client is not None:
+            try:
+                client.delete(f"/vms/{session_id}/delete", timeout=60)
+            except Exception:
+                pass
+        service.stop()

@@ -81,6 +81,14 @@ pub struct StreamSummary {
     pub stop_reason: Option<StopReason>,
 }
 
+/// Summary extracted from a non-streaming model response body.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct NonStreamingResponseSummary {
+    pub text: String,
+    pub thinking: String,
+    pub stop_reason: Option<StopReason>,
+}
+
 /// Trait for provider-specific SSE-to-LlmEvent parsers.
 ///
 /// Each provider implements this to convert their wire format
@@ -335,6 +343,24 @@ pub fn parse_non_streaming_tool_calls(
     }
 }
 
+/// Parse assistant text, thinking, and stop reason from a non-streaming JSON
+/// response body. This mirrors streaming `LlmEvent` collection so model
+/// ledgers do not lose content when a provider returns a complete JSON body.
+pub fn parse_non_streaming_response_summary(
+    kind: super::provider::ProviderKind,
+    body: &[u8],
+) -> NonStreamingResponseSummary {
+    let Some(json) = parse_response_json(body) else {
+        return NonStreamingResponseSummary::default();
+    };
+    match kind {
+        super::provider::ProviderKind::OpenAi => openai_non_streaming_response_summary(&json),
+        super::provider::ProviderKind::Anthropic => anthropic_non_streaming_response_summary(&json),
+        super::provider::ProviderKind::Google => google_non_streaming_response_summary(&json),
+        super::provider::ProviderKind::Ollama => ollama_non_streaming_response_summary(&json),
+    }
+}
+
 fn parse_response_json(body: &[u8]) -> Option<serde_json::Value> {
     if let Ok(v) = serde_json::from_slice(body) {
         return Some(v);
@@ -388,6 +414,136 @@ fn google_non_streaming_tool_calls(json: &serde_json::Value) -> Vec<ToolCall> {
         }
     }
     calls
+}
+
+fn openai_non_streaming_response_summary(json: &serde_json::Value) -> NonStreamingResponseSummary {
+    let mut summary = NonStreamingResponseSummary::default();
+    let Some(choices) = json.get("choices").and_then(|value| value.as_array()) else {
+        return summary;
+    };
+    for choice in choices {
+        if let Some(reason) = choice.get("finish_reason").and_then(|value| value.as_str()) {
+            summary.stop_reason = Some(stop_reason_from_provider_string(reason));
+        }
+        if let Some(message) = choice.get("message") {
+            append_openai_content(&mut summary.text, message.get("content"));
+            append_openai_content(&mut summary.thinking, message.get("reasoning_content"));
+            append_openai_content(&mut summary.thinking, message.get("thinking"));
+        }
+    }
+    summary
+}
+
+fn anthropic_non_streaming_response_summary(
+    json: &serde_json::Value,
+) -> NonStreamingResponseSummary {
+    let mut summary = NonStreamingResponseSummary::default();
+    summary.stop_reason = json
+        .get("stop_reason")
+        .and_then(|value| value.as_str())
+        .map(stop_reason_from_provider_string);
+    let Some(content) = json.get("content").and_then(|value| value.as_array()) else {
+        return summary;
+    };
+    for part in content {
+        match part.get("type").and_then(|value| value.as_str()) {
+            Some("text") => {
+                append_json_string(&mut summary.text, part.get("text"));
+            }
+            Some("thinking") | Some("reasoning") => {
+                append_json_string(&mut summary.thinking, part.get("thinking"));
+                append_json_string(&mut summary.thinking, part.get("text"));
+            }
+            _ => {}
+        }
+    }
+    summary
+}
+
+fn google_non_streaming_response_summary(json: &serde_json::Value) -> NonStreamingResponseSummary {
+    let mut summary = NonStreamingResponseSummary::default();
+    let Some(candidates) = json.get("candidates").and_then(|value| value.as_array()) else {
+        return summary;
+    };
+    for candidate in candidates {
+        if let Some(reason) = candidate
+            .get("finishReason")
+            .and_then(|value| value.as_str())
+        {
+            summary.stop_reason = Some(stop_reason_from_provider_string(reason));
+        }
+        let Some(parts) = candidate
+            .get("content")
+            .and_then(|content| content.get("parts"))
+            .and_then(|parts| parts.as_array())
+        else {
+            continue;
+        };
+        for part in parts {
+            append_json_string(&mut summary.text, part.get("text"));
+            append_json_string(&mut summary.thinking, part.get("thought"));
+            append_json_string(&mut summary.thinking, part.get("thinking"));
+        }
+    }
+    summary
+}
+
+fn ollama_non_streaming_response_summary(json: &serde_json::Value) -> NonStreamingResponseSummary {
+    let mut summary = NonStreamingResponseSummary::default();
+    append_json_string(&mut summary.text, json.get("response"));
+    if let Some(message) = json.get("message") {
+        append_json_string(&mut summary.text, message.get("content"));
+        append_json_string(&mut summary.thinking, message.get("thinking"));
+    }
+    if json
+        .get("done")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false)
+    {
+        summary.stop_reason = Some(StopReason::EndTurn);
+    }
+    summary
+}
+
+fn append_openai_content(target: &mut String, value: Option<&serde_json::Value>) {
+    let Some(value) = value else {
+        return;
+    };
+    if append_json_string(target, Some(value)) {
+        return;
+    }
+    let Some(parts) = value.as_array() else {
+        return;
+    };
+    for part in parts {
+        match part.get("type").and_then(|value| value.as_str()) {
+            Some("text") | Some("output_text") => {
+                append_json_string(target, part.get("text"));
+            }
+            _ => {}
+        }
+    }
+}
+
+fn append_json_string(target: &mut String, value: Option<&serde_json::Value>) -> bool {
+    let Some(text) = value.and_then(|value| value.as_str()) else {
+        return false;
+    };
+    if !target.is_empty() && !text.is_empty() {
+        target.push('\n');
+    }
+    target.push_str(text);
+    true
+}
+
+fn stop_reason_from_provider_string(reason: &str) -> StopReason {
+    match reason {
+        "end_turn" | "stop" | "STOP" => StopReason::EndTurn,
+        "tool_use" | "tool_calls" | "function_call" => StopReason::ToolUse,
+        "max_tokens" | "length" | "MAX_TOKENS" => StopReason::MaxTokens,
+        "content_filter" | "SAFETY" | "RECITATION" => StopReason::ContentFilter,
+        other => StopReason::Other(other.to_string()),
+    }
 }
 
 fn openai_non_streaming_tool_calls(json: &serde_json::Value) -> Vec<ToolCall> {

@@ -485,6 +485,44 @@ fn non_streaming_openai_tool_calls() {
 }
 
 #[test]
+fn non_streaming_openai_text_survives_tool_call_response() {
+    let body = br#"{
+        "id": "chatcmpl-mock-local",
+        "object": "chat.completion",
+        "model": "mock-local",
+        "choices": [
+            {
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": "Capsem ironbank poem\nledgers count the sparks\nno secret crosses raw",
+                    "tool_calls": [
+                        {
+                            "id": "tool_0001",
+                            "type": "function",
+                            "function": {
+                                "name": "fixture_lookup",
+                                "arguments": "{\"query\":\"capsem\"}"
+                            }
+                        }
+                    ]
+                },
+                "finish_reason": "tool_calls"
+            }
+        ]
+    }"#;
+
+    let summary = parse_non_streaming_response_summary(ProviderKind::OpenAi, body);
+
+    assert_eq!(
+        summary.text,
+        "Capsem ironbank poem\nledgers count the sparks\nno secret crosses raw"
+    );
+    assert!(summary.thinking.is_empty());
+    assert_eq!(summary.stop_reason, Some(StopReason::ToolUse));
+}
+
+#[test]
 fn non_streaming_invalid_json() {
     let (model, input, output, details) =
         parse_non_streaming_usage(ProviderKind::Google, b"not json");

@@ -31,7 +31,15 @@ failure first.
   materialization contract.
 - [ ] Update developer skills with the no-drift rule: no credential handling in
   network formatters, DB readers, frontend transforms, or one-off harnesses.
-- [ ] Ironbank: HTTP credential header request reaches upstream while DB/log/UI
+- [x] Ironbank: local OpenAI-compatible SDK credential header request reaches
+  upstream while DB/log/route payloads contain no raw secret.
+  - Proof: `uv run python -m pytest tests/ironbank/test_model_sdk_ledger.py -v --tb=short`
+    boots a VM through service routes, drives the real OpenAI Python SDK
+    against the hermetic mock server, writes the returned poem to disk, and
+    asserts HTTP/model/tool/file/exec/security/substitution DB rows plus
+    `/vms/{id}/info`, `/vms/{id}/status`, and `/vms/{id}/security/latest`.
+- [ ] Ironbank: generic HTTP credential header request reaches upstream while
+  DB/log/UI
   route payloads contain no raw secret.
 - [ ] Ironbank: query, JSON body, form body, response token body, and model SDK
   replay get the same no-raw-ledger proof.
@@ -72,12 +80,25 @@ failure first.
   - `cargo test -p capsem-service profile_plugin_endpoint_matrix_dynamically_controls_enforcement_evaluation -- --nocapture`
   - `cargo test -p capsem-core builtin_dummy_plugins_block_eicar_and_cannot_be_downgraded_by_postprocess -- --nocapture`
   - `cargo test -p capsem-core credential_broker_plugin_uses_matched_security_rule_metadata -- --nocapture`
+  - `cargo test -p capsem-core credential_broker_uses_ai_provider_hint_for_local_openai_compatible_headers -- --nocapture`
   - `cargo test -p capsem-core http_materializer_resolves_broker_ref_only_for_upstream_copy -- --nocapture`
+  - `cargo test -p capsem-core openai_non_streaming_tool_call_carries_request_trace -- --nocapture`
+  - `cargo test -p capsem-core non_streaming_openai_text_survives_tool_call_response -- --nocapture`
   - `cargo test -p capsem-core` passed: 1560 unit tests, 29 MITM integration tests, 2 platform gating tests, 12 settings tests, 11 VM integration tests, doc tests ok; only existing ignored tests remained ignored.
-- Functional: pending.
-- Adversarial: pending.
-- E2E/VM: pending in `tests/ironbank/`.
-- Telemetry: pending.
+- Functional:
+  - `cargo build -p capsem-service -p capsem-process -p capsem-gateway`
+    rebuilds the binaries used by the black-box harness.
+- Adversarial:
+  - The Ironbank fixture constructs the synthetic SDK secret at runtime so file
+    import logging cannot pass because the test itself baked a raw credential
+    into uploaded source.
+- E2E/VM:
+  - `uv run python -m pytest tests/ironbank/test_model_sdk_ledger.py -v --tb=short`
+    passed.
+- Telemetry:
+  - The Ironbank model SDK test asserts `net_events`, `model_calls`,
+    `tool_calls`, `fs_events`, `exec_events`, `security_rule_events`, and
+    `substitution_events` exact fields for the local OpenAI-compatible path.
 - Performance: pending plugin counters/latency evidence.
 - Docs/skills: boundary note added to `/dev-mitm-proxy`; architecture docs still pending.
 - Missing/deferred: none accepted for release blocker scope.

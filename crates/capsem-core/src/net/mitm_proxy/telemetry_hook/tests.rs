@@ -374,6 +374,11 @@ fn openai_non_streaming_tool_call_carries_request_trace() {
     assert_eq!(model_call.trace_id.as_deref(), Some("feedfacecafebeef"));
     assert_eq!(model_call.provider, "openai");
     assert_eq!(model_call.model.as_deref(), Some("mock-local"));
+    assert_eq!(
+        model_call.text_content.as_deref(),
+        Some("hello from capsem-mock-server")
+    );
+    assert_eq!(model_call.stop_reason.as_deref(), Some("tool_use"));
     assert_eq!(model_call.input_tokens, Some(7));
     assert_eq!(model_call.output_tokens, Some(5));
     assert_eq!(model_call.tool_calls.len(), 1);
