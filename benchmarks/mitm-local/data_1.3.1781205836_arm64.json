@@ -1,7 +1,7 @@
 {
   "version": "0.3.0",
-  "timestamp": 1781340175.1859388,
-  "hostname": "mitm-local-aa6f43dd",
+  "timestamp": 1781364242.2236643,
+  "hostname": "mitm-local-ff029701",
   "mitm_local": {
     "version": "1.0",
     "base_url": "http://127.0.0.1:3713",
@@ -21,17 +21,17 @@
         "concurrency": 64,
         "successful": 50000,
         "failed": 0,
-        "total_duration_ms": 16661.8,
-        "requests_per_sec": 3000.9,
+        "total_duration_ms": 20589.0,
+        "requests_per_sec": 2428.5,
         "transfer_bytes": 22700000,
-        "bytes_per_sec": 1362399.4,
+        "bytes_per_sec": 1102530.6,
         "latency_ms": {
           "min": 0.7,
-          "max": 114.3,
-          "mean": 21.0,
-          "p50": 18.8,
-          "p95": 43.6,
-          "p99": 58.0
+          "max": 147.7,
+          "mean": 25.9,
+          "p50": 23.2,
+          "p95": 53.3,
+          "p99": 70.6
         },
         "errors": {}
       },
@@ -43,17 +43,17 @@
         "concurrency": 64,
         "successful": 50000,
         "failed": 0,
-        "total_duration_ms": 16506.9,
-        "requests_per_sec": 3029.0,
+        "total_duration_ms": 37351.2,
+        "requests_per_sec": 1338.6,
         "transfer_bytes": 11950000,
-        "bytes_per_sec": 723938.3,
+        "bytes_per_sec": 319936.1,
         "latency_ms": {
-          "min": 0.7,
-          "max": 110.0,
-          "mean": 20.8,
-          "p50": 18.8,
-          "p95": 42.5,
-          "p99": 55.9
+          "min": 0.9,
+          "max": 271.1,
+          "mean": 47.3,
+          "p50": 40.1,
+          "p95": 102.3,
+          "p99": 137.3
         },
         "errors": {},
         "secret_shaped_fixture_seen": true,
@@ -67,15 +67,15 @@
         "skipped": false,
         "frames": 10,
         "failed": false,
-        "duration_ms": 4.0,
-        "frames_per_sec": 2508.2,
+        "duration_ms": 20.0,
+        "frames_per_sec": 499.0,
         "latency_ms": {
           "min": 0.2,
-          "max": 0.2,
+          "max": 0.8,
           "mean": 0.2,
           "p50": 0.2,
-          "p95": 0.2,
-          "p99": 0.2
+          "p95": 0.5,
+          "p99": 0.7
         }
       },
       {
@@ -84,20 +84,20 @@
         "skipped": false,
         "frames": 1,
         "failed": false,
-        "duration_ms": 5.2,
-        "frames_per_sec": 190.8,
+        "duration_ms": 2.1,
+        "frames_per_sec": 475.6,
         "latency_ms": {
-          "min": 5.2,
-          "max": 5.2,
-          "mean": 5.2,
-          "p50": 5.2,
-          "p95": 5.2,
-          "p99": 5.2
+          "min": 2.1,
+          "max": 2.1,
+          "mean": 2.1,
+          "p50": 2.1,
+          "p95": 2.1,
+          "p99": 2.1
         }
       }
     ]
   },
-  "host_recorded_at": 1781340211.031509,
+  "host_recorded_at": 1781364310.028512,
   "arch": "arm64",
   "mock_server_base_url": "http://127.0.0.1:3713"
 }
