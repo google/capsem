@@ -1658,6 +1658,27 @@ next one, and stage only the files for that slice.
     exec_done_with_empty_stdout_resolves_without_500ms_stall -- --nocapture`;
     `cargo test -p capsem-process
     read_file_content_emits_file_export_before_job_result -- --nocapture`.
+  - 2026-06-13 progress: the next `just test` run reached
+    `cargo test --workspace` and exposed stale credential-broker ledger
+    assertions. The product path was already writing through the single
+    `DbWriter` and correctly emitted both closed broker verbs (`captured` and
+    `brokered`); the tests were still counting only one substitution row per
+    source and one telemetry test shut the writer down before the async hook
+    could enqueue. The fix updates the tests to assert the full two-row broker
+    ledger, wait for async telemetry emission before shutdown, and keep raw
+    secrets out of the database.
+  - Proof: RED `just test` failed in `capsem-core --lib` on
+    `fs_monitor::tests::emit_brokers_env_credentials_and_persists_reference`
+    and
+    `net::mitm_proxy::telemetry_hook::tests::hook_detects_response_body_token_exchange_and_redacts_preview`;
+    GREEN focused gates `cargo fmt --check`; `cargo test -p capsem-core
+    fs_monitor::tests::emit_brokers_env_credentials_and_persists_reference --
+    --nocapture`; `cargo test -p capsem-core
+    net::mitm_proxy::telemetry_hook::tests::hook_detects_response_body_token_exchange_and_redacts_preview
+    -- --nocapture`; `cargo test -p capsem-core
+    net::mitm_proxy::telemetry_hook::tests::hook_writes_substitution_event_and_shared_credential_ref
+    -- --nocapture`; `cargo test -p capsem-core --lib` (`1579 passed, 1
+    ignored`).
 - [ ] Proof: changelog, docs, skills, and benchmark docs updated.
 - [ ] Proof: full final gates pass and branch is pushed.
 

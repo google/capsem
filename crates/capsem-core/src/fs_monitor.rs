@@ -613,35 +613,26 @@ mod tests {
             FileAction::Modified,
         )
         .await;
+        db.shutdown_blocking();
 
-        let mut seen = false;
-        for _ in 0..50 {
-            tokio::time::sleep(Duration::from_millis(20)).await;
-            let conn = rusqlite::Connection::open(&db_path).unwrap();
-            let file_ref: Option<String> = conn
-                .query_row(
-                    "SELECT credential_ref FROM fs_events WHERE path = '.env'",
-                    [],
-                    |row| row.get(0),
-                )
-                .ok();
-            let Some(file_ref) = file_ref else {
-                continue;
-            };
-            let sub_count: i64 = conn
-                .query_row(
-                    "SELECT COUNT(*) FROM substitution_events WHERE substitution_ref = ?1 AND source = '.env:OPENAI_API_KEY'",
-                    [&file_ref],
-                    |row| row.get(0),
-                )
-                .unwrap();
-            if sub_count == 1 {
-                seen = true;
-                break;
-            }
-        }
-
-        assert!(seen, "expected .env file event and substitution rows");
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        let file_ref: String = conn
+            .query_row(
+                "SELECT credential_ref FROM fs_events WHERE path = '.env'",
+                [],
+                |row| row.get(0),
+            )
+            .expect(".env fs event should carry brokered credential ref");
+        let outcomes: Vec<String> = conn
+            .prepare(
+                "SELECT outcome FROM substitution_events WHERE substitution_ref = ?1 AND source = '.env:OPENAI_API_KEY' ORDER BY outcome",
+            )
+            .unwrap()
+            .query_map([&file_ref], |row| row.get(0))
+            .unwrap()
+            .map(Result::unwrap)
+            .collect();
+        assert_eq!(outcomes, vec!["brokered", "captured"]);
         let db_bytes = std::fs::read(&db_path).unwrap();
         assert!(!String::from_utf8_lossy(&db_bytes).contains("sk-env-secret"));
     }

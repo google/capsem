@@ -637,6 +637,7 @@ async fn hook_writes_substitution_event_and_shared_credential_ref() {
         seen,
         "expected net and substitution rows with shared credential_ref"
     );
+    db.shutdown_blocking();
     let db_bytes = std::fs::read(&db_path).unwrap();
     assert!(
         !String::from_utf8_lossy(&db_bytes).contains(raw),
@@ -926,17 +927,19 @@ async fn hook_detects_response_body_token_exchange_and_redacts_preview() {
         let Some((credential_ref, preview)) = row else {
             continue;
         };
-        let sub_count: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM substitution_events WHERE substitution_ref = ?1 AND source = 'http.body.response.$.access_token'",
-                [&credential_ref],
-                |row| row.get(0),
+        let outcomes: Vec<String> = conn
+            .prepare(
+                "SELECT outcome FROM substitution_events WHERE substitution_ref = ?1 AND source = 'http.body.response.$.access_token' ORDER BY outcome",
             )
-            .unwrap();
+            .unwrap()
+            .query_map([&credential_ref], |row| row.get(0))
+            .unwrap()
+            .map(Result::unwrap)
+            .collect();
         assert!(credential_ref.starts_with("credential:blake3:"));
         assert!(preview.contains("credential:blake3:"));
         assert!(!preview.contains(raw));
-        if sub_count == 1 {
+        if outcomes == ["brokered", "captured"] {
             seen = true;
             break;
         }
