@@ -175,6 +175,10 @@ next one, and stage only the files for that slice.
     `/vms/{id}/files/content`, runs it through `/vms/{id}/exec`, proves local
     apt/npm/uv/pip/node packages function, and verifies `/status`, `/history`,
     `/history/counts`, plus `exec_events` and `fs_events` ledger fields.
+  - Fresh proof after S4/S5 mock-server/DNS/doctor hardening:
+    `CAPSEM_TEST_PRESERVE_ALWAYS=1 uv run python -m pytest
+    tests/ironbank/test_package_managers.py::test_package_managers_pay_their_ledger_debt_blackbox
+    -q -s` (`1 passed in 2.73s`).
 - [x] RED/GREEN: integration model fixture must not touch the developer's
   native credential store or hang on a broker/model regression.
   - Root cause: `scripts/integration_test.py` did not set
