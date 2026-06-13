@@ -922,8 +922,8 @@ next one, and stage only the files for that slice.
   - 2026-06-12 progress: `tests/ironbank/test_doctor_ledger.py` now proves the
     baseline doctor DB ledger for allow/default detection flow across HTTP,
     DNS, MCP, model/tool calls, file, exec, security-rule rows, and credential
-    capture rows. Remaining debt: explicit ask/block/disable/rewrite/pre/post
-    plugin and detection-level matrix.
+    capture rows. Later 2026-06-13 entries below close the explicit
+    ask/block/disable/rewrite/pre/post plugin and detection-level matrix.
   - Proof: `CAPSEM_TEST_PRESERVE_ALWAYS=1 uv run python -m pytest
     tests/ironbank/test_doctor_ledger.py -q -s` (`1 passed in 34.55s`).
   - 2026-06-12 progress: Ironbank now asserts the exact
@@ -939,9 +939,9 @@ next one, and stage only the files for that slice.
     -q -s` (`1 passed in 31.35s`).
   - Combined Ironbank suite proof after the model, doctor, and package-manager
     refreshes: `CAPSEM_TEST_PRESERVE_ALWAYS=1 uv run python -m pytest
-    tests/ironbank/ -q -s` (`3 passed in 37.39s`). Remaining S5/S7 debt is
-    still explicit below: MCP-native iron tests, streaming provider replay,
-    ask/block/disable/rewrite/pre/post matrix, and full `just test`.
+    tests/ironbank/ -q -s` (`3 passed in 37.39s`). Later entries in S4/S7
+    carry the still-open streaming/provider replay work; this S5 matrix is
+    closed below.
   - 2026-06-13 progress: doctor ledger proof now asserts the real
     local-network `ask` rows are `http.request` rows from
     `profiles.rules.default_000_local_network`, that each ask row is paired
@@ -952,8 +952,8 @@ next one, and stage only the files for that slice.
   - Proof: `uv run ruff check tests/ironbank/test_doctor_ledger.py`;
     `CAPSEM_TEST_PRESERVE_ALWAYS=1 uv run python -m pytest
     tests/ironbank/test_doctor_ledger.py::test_capsem_doctor_pays_protocol_and_security_ledger_debt
-    -q -s --tb=short` (`1 passed in 31.66s`). Remaining debt: explicit
-    block/disable/rewrite/pre/post matrix and full `just test`.
+    -q -s --tb=short` (`1 passed in 31.66s`). Later entries below close the
+    explicit block/disable/rewrite/pre/post matrix.
   - 2026-06-13 progress: added an executable single-writer guard for the event
     ledger. Production protocol/security/service/process code may read session
     DBs or use documented offline copy/maintenance helpers, but only
@@ -995,8 +995,8 @@ next one, and stage only the files for that slice.
     tests/ironbank/test_doctor_ledger.py`;
     `CAPSEM_TEST_PRESERVE_ALWAYS=1 uv run python -m pytest
     tests/ironbank/test_doctor_ledger.py::test_runtime_plugin_action_matrix_pays_file_import_ledger_debt
-    -q -s --tb=short` (`1 passed in 1.97s`). Remaining debt: full rewrite
-    matrix and full `just test`.
+    -q -s --tb=short` (`1 passed in 1.97s`). The later closure entry records
+    the final postprocess detection-vector proof for this matrix.
   - Preview/rewrite regression proof: `cargo fmt --check`; `cargo test -p
     capsem-process file_boundary_ -- --nocapture`; `cargo build -p
     capsem-process`; `cargo build -p capsem-service -p capsem-mcp`; `uv run
