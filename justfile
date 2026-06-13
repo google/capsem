@@ -1001,7 +1001,7 @@ test-install:
         "cd /src && cargo tauri build --debug --bundles deb --config '{\"bundle\":{\"createUpdaterArtifacts\":false}}'"
     echo "Materializing runtime config..."
     docker exec -u capsem "$CONTAINER" bash -c \
-        "cd /src && just _materialize-config"
+        "cd /src && bash scripts/materialize-config.sh"
     echo "Repacking .deb with companion binaries..."
     docker exec -u capsem "$CONTAINER" bash -c \
         'cd /src && DEB=$(ls -t /cargo-target/debug/bundle/deb/*.deb | head -1) && bash scripts/repack-deb.sh --manifest assets/manifest.json "$DEB" /cargo-target/debug target/config assets'
@@ -1462,23 +1462,4 @@ _materialize-config:
     #!/bin/bash
     set -euo pipefail
     ROOT="{{justfile_directory()}}"
-    arch=$(uname -m)
-    [[ "$arch" == "arm64" ]] || arch="x86_64"
-    echo "=== Materialize runtime config ==="
-    rm -rf "$ROOT/target/config"
-    profile_paths=("$ROOT"/config/profiles/*/profile.toml)
-    if [ "${#profile_paths[@]}" -eq 0 ] || [ ! -f "${profile_paths[0]}" ]; then
-        echo "ERROR: no checked-in profiles found under $ROOT/config/profiles" >&2
-        exit 1
-    fi
-    for profile_path in "${profile_paths[@]}"; do
-        profile_id="$(basename "$(dirname "$profile_path")")"
-        echo "  materializing profile: $profile_id"
-        cargo run -p capsem-admin -- profile materialize \
-            --profile "$profile_path" \
-            --config-root "$ROOT/config" \
-            --manifest "$ROOT/{{assets_dir}}/manifest.json" \
-            --assets-dir "$ROOT/{{assets_dir}}" \
-            --output-root "$ROOT/target/config" \
-            --arch "$arch"
-    done
+    bash "$ROOT/scripts/materialize-config.sh"

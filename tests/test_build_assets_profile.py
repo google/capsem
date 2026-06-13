@@ -55,21 +55,28 @@ def test_runtime_recipes_materialize_generated_config_before_service() -> None:
 def test_materialize_config_uses_admin_profile_command() -> None:
     block = _recipe_block("_materialize-config:")
 
-    assert "cargo run -p capsem-admin -- profile materialize" in block
-    assert "--config-root" in block
-    assert "--manifest" in block
-    assert "--output-root" in block
-    assert "target/config" in block
+    assert 'bash "$ROOT/scripts/materialize-config.sh"' in block
+
+    script = (PROJECT_ROOT / "scripts" / "materialize-config.sh").read_text()
+    assert "cargo run -p capsem-admin -- profile materialize" in script
+    assert "case \"$arch\" in" in script
+    assert 'arm64|aarch64)' in script
+    assert "--config-root" in script
+    assert "--manifest" in script
+    assert "--output-root" in script
+    assert "target/config" in script
 
 
 def test_materialize_config_materializes_entire_checked_in_profile_catalog() -> None:
     block = _recipe_block("_materialize-config:")
+    script = (PROJECT_ROOT / "scripts" / "materialize-config.sh").read_text()
 
-    assert 'rm -rf "$ROOT/target/config"' in block
-    assert 'profile_paths=("$ROOT"/config/profiles/*/profile.toml)' in block
-    assert 'for profile_path in "${profile_paths[@]}"; do' in block
-    assert '--profile "$profile_path"' in block
-    assert '--profile "$ROOT/config/profiles/code/profile.toml"' not in block
+    assert 'rm -rf "$ROOT/target/config"' in script
+    assert 'profile_paths=("$ROOT"/config/profiles/*/profile.toml)' in script
+    assert 'for profile_path in "${profile_paths[@]}"; do' in script
+    assert '--profile "$profile_path"' in script
+    assert '--profile "$ROOT/config/profiles/code/profile.toml"' not in script
+    assert "scripts/materialize-config.sh" in block
 
 
 def test_ensure_service_uses_generated_profiles() -> None:

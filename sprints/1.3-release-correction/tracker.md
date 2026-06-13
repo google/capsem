@@ -1776,13 +1776,14 @@ next one, and stage only the files for that slice.
   - 2026-06-13 install CI correction: remote `test-install` built the Linux
     `.deb` inside Docker, then called `scripts/repack-deb.sh` before
     materializing `target/config/profiles`, so the closed package payload
-    contract failed exactly where it should. `test-install` now runs
-    `just _materialize-config` in the same container before repacking. Guard
-    proof: `uv run python -m pytest
-    tests/test_release_doctor_contract.py::test_install_e2e_materializes_config_before_repacking_package
-    tests/test_release_doctor_contract.py::test_ci_builds_frontend_before_compiling_tauri_app_tests
-    -q` (`2 passed`); `uv run ruff check
-    tests/test_release_doctor_contract.py`; `git diff --check`.
+    contract failed exactly where it should. The first repair exposed that the
+    Docker package-test container does not have `just`, and that the local
+    recipe would map Linux `aarch64` to `x86_64`. Config materialization now
+    lives in `scripts/materialize-config.sh`; both `_materialize-config` and
+    Docker `test-install` call that script, and the script normalizes
+    `arm64|aarch64` to `arm64`. Guard proof: `uv run python -m pytest
+    tests/test_build_assets_profile.py tests/test_release_doctor_contract.py
+    -q` (`31 passed`); `bash -n scripts/materialize-config.sh`.
 
 ## Coverage Ledger
 

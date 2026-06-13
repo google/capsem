@@ -211,12 +211,15 @@ prove the same rails without user credentials.
   `cargo check -p capsem-app --tests`; release-doctor workflow guards.
 - Install CI drift found on 2026-06-13: Docker `test-install` built the Linux
   package and called `scripts/repack-deb.sh` before materializing
-  `target/config/profiles`, so the package payload contract failed. The recipe
-  now materializes config in the same container before repacking. Local proof:
-  `uv run python -m pytest
-  tests/test_release_doctor_contract.py::test_install_e2e_materializes_config_before_repacking_package
-  tests/test_release_doctor_contract.py::test_ci_builds_frontend_before_compiling_tauri_app_tests
-  -q`; `uv run ruff check tests/test_release_doctor_contract.py`; `git diff
-  --check`.
+  `target/config/profiles`, so the package payload contract failed. The first
+  repair exposed a second CI-only bug: the package-test container does not
+  install `just`, and the old local recipe mapped Linux `aarch64` to
+  `x86_64`. Config materialization now lives in `scripts/materialize-config.sh`
+  and both local just recipes and Docker package tests call that same script.
+  Local proof: `uv run python -m pytest tests/test_build_assets_profile.py
+  tests/test_release_doctor_contract.py -q`; `bash -n
+  scripts/materialize-config.sh`; `uv run ruff check
+  tests/test_build_assets_profile.py tests/test_release_doctor_contract.py`;
+  `git diff --check`.
 
 Those files remain evidence. This sprint is the execution authority.

@@ -10,7 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed (route surfaces and diagnostics)
 - Fixed the Docker install e2e package path so Linux `.deb` repacking
   materializes profile-owned runtime config before copying profiles into the
-  package.
+  package, using the same shared materializer as local dev recipes instead of
+  assuming `just` exists inside the package-test container.
 - Fixed CI regressions where macOS Rust coverage compiled the Tauri app before
   `frontend/dist` existed, and Linux ARM agent exec tests selected `/root` as
   cwd for a non-root runner user simply because the directory existed.
