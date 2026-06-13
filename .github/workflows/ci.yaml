@@ -198,6 +198,11 @@ jobs:
       # Python integration tests that need no VM
       - name: Python integration tests (non-VM suites)
         run: |
+          bash scripts/prepare-install-test-assets.sh
+          cargo build -p capsem-process -p capsem-service -p capsem -p capsem-mcp
+          for bin in target/debug/capsem-process target/debug/capsem-service target/debug/capsem target/debug/capsem-mcp; do
+            codesign --sign - --entitlements entitlements.plist --force "$bin"
+          done
           uv run python -m pytest tests/capsem-bootstrap/ tests/capsem-codesign/ tests/capsem-rootfs-artifacts/ -v --tb=short
 
       # Verify all integration test suites import cleanly (catches broken imports/syntax)

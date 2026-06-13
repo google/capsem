@@ -193,6 +193,8 @@ that reflect those contracts exactly.
 ### S10. Packaging, Install, Docs, Release Gate
 
 - `.pkg` and `.deb` payload tests enforce closed contract.
+- CI non-VM integration tests prepare their own ignored assets and signed
+  debug host binaries before asserting bootstrap/codesign/rootfs contracts.
 - Package accepts local or remote manifest override and records origin/hash.
 - `just install` builds CI-like package and installs through the package path.
 - Status/debug report manifest origin/hash, service version, profile status,

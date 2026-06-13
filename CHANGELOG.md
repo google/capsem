@@ -14,6 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   monolithic `pytest tests/ --cov` command; the gate now also covers malformed
   dev skill frontmatter, symlink, empty-root, and bad-entry cases so remote
   runner coverage drift no longer drops the Python gate below threshold.
+- Fixed PR CI non-VM Python integration setup so bootstrap, codesign, and
+  rootfs artifact tests generate their ignored local test assets through
+  `capsem-admin`, build the exact debug host binaries under inspection, and
+  ad-hoc sign them with the canonical entitlement before asserting the package
+  and signing contracts.
 - Fixed PR CI frontend coverage by moving generated settings/mock fixture
   creation onto a shared `scripts/generate-settings.sh` rail, running that rail
   before frontend build/check in CI, declaring the Vitest coverage provider,

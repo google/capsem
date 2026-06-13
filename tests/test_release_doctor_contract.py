@@ -261,6 +261,28 @@ def test_pr_ci_python_coverage_is_not_a_monolithic_vm_tree_rerun() -> None:
     assert "--cov=src/capsem" in coverage_step
 
 
+def test_pr_ci_non_vm_python_tests_prepare_assets_and_signed_binaries() -> None:
+    workflow = (PROJECT_ROOT / ".github" / "workflows" / "ci.yaml").read_text()
+    block = workflow.split("- name: Python integration tests (non-VM suites)", maxsplit=1)[
+        1
+    ].split("# Verify all integration test suites", maxsplit=1)[0]
+
+    asset_pos = block.find("bash scripts/prepare-install-test-assets.sh")
+    build_pos = block.find(
+        "cargo build -p capsem-process -p capsem-service -p capsem -p capsem-mcp"
+    )
+    sign_pos = block.find("codesign --sign - --entitlements entitlements.plist --force")
+    pytest_pos = block.find("uv run python -m pytest tests/capsem-bootstrap/")
+
+    assert asset_pos != -1
+    assert build_pos != -1
+    assert sign_pos != -1
+    assert pytest_pos != -1
+    assert asset_pos < pytest_pos
+    assert build_pos < pytest_pos
+    assert sign_pos < pytest_pos
+
+
 def test_kvm_checkpoint_x86_state_tests_are_arch_gated() -> None:
     source = (PROJECT_ROOT / "crates" / "capsem-core" / "src" / "hypervisor" / "kvm" / "checkpoint.rs").read_text()
     tests = source.split("#[cfg(test)]\nmod tests", maxsplit=1)[1]

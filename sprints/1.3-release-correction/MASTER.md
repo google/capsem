@@ -289,5 +289,17 @@ prove the same rails without user credentials.
   `uv run python -m pytest tests/test_skills.py -q` (`23 passed`); exact
   workflow coverage command now reports `789 passed, 9 skipped`, `90.75%`
   total coverage.
+- Follow-up PR CI non-VM integration drift found on 2026-06-13: PR CI run
+  `27477070415` passed install e2e, frontend, Rust, Python lint, and Python
+  coverage, then failed `Python integration tests (non-VM suites)` because CI
+  had neither ignored local `assets/manifest.json`/boot files nor signed
+  `target/debug` host binaries. The workflow now creates install-test assets
+  through `scripts/prepare-install-test-assets.sh`, builds
+  `capsem-process`/`capsem-service`/`capsem`/`capsem-mcp`, signs those binaries
+  with the canonical `entitlements.plist`, and then runs the suite. Local
+  proof: RED
+  `test_pr_ci_non_vm_python_tests_prepare_assets_and_signed_binaries`; GREEN
+  same guard plus the exact fixture command and non-VM integration suite (`42
+  passed`).
 
 Those files remain evidence. This sprint is the execution authority.

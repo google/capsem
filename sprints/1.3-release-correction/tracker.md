@@ -1866,6 +1866,18 @@ next one, and stage only the files for that slice.
     Proof: `uv run python -m pytest tests/test_skills.py -q` (`23 passed`);
     exact CI coverage command now passes locally with `789 passed, 9 skipped`,
     coverage `90.75%`.
+  - Remote follow-up: PR CI run `27477070415` passed install e2e, frontend,
+    Rust, Python lint, and Python coverage, then failed
+    `Python integration tests (non-VM suites)` because the macOS checkout did
+    not have ignored local test assets or signed `target/debug` binaries. The
+    workflow now runs `scripts/prepare-install-test-assets.sh`, builds
+    `capsem-process`, `capsem-service`, `capsem`, and `capsem-mcp`, signs those
+    exact binaries with `entitlements.plist`, and only then runs the bootstrap,
+    codesign, and rootfs artifact suite. Proof: RED
+    `uv run python -m pytest tests/test_release_doctor_contract.py::test_pr_ci_non_vm_python_tests_prepare_assets_and_signed_binaries -q`;
+    GREEN same guard; exact local fixture command plus
+    `uv run python -m pytest tests/capsem-bootstrap/ tests/capsem-codesign/ tests/capsem-rootfs-artifacts/ -v --tb=short`
+    (`42 passed`).
 
 ## Coverage Ledger
 
