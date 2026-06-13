@@ -135,6 +135,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added Ironbank coverage for unknown-host OpenAI-compatible body-shape
   detection: neutral-path model traffic now proves model rows, broker refs, and
   detection-rule ledger output.
+- Added Ironbank coverage for unknown remote MCP-over-HTTP JSON-RPC activity:
+  observed initialize/list/tool-call traffic now proves MCP DB rows, timeline
+  route evidence, and `mcp.tool_list`/`mcp.tool_call` security ledger entries.
 - Hardened profile root bootstrap packaging: `capsem-admin profile check` now
   rejects unpinned files under a profile root seed, profile payload tests prove
   AGY/Claude/Codex/MCP non-secret bootstrap files are pinned exactly, and

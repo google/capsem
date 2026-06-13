@@ -1063,8 +1063,19 @@ next one, and stage only the files for that slice.
     -q -s --tb=short`; `cargo test -p capsem-core --lib
     provider_detection -- --nocapture`; `uv run ruff check
     tests/ironbank/test_model_sdk_ledger.py scripts/mock_server_runtime.py`.
-- [ ] RED/GREEN: unknown remote MCP activity becomes route-visible profile
+- [x] RED/GREEN: unknown remote MCP activity becomes route-visible profile
   evidence.
+  - 2026-06-13 closure: the Ironbank SDK ledger proof now sends
+    JSON-RPC `initialize`, `tools/list`, and `tools/call` requests from inside
+    the VM to the shared hermetic mock server on `/mcp`. It verifies first-party
+    `mcp_calls` rows for `observed:127.0.0.1:3713/mcp`, timeline route
+    summaries for the observed server/tool, and security ledger rows for
+    `mcp.tool_list` and `mcp.tool_call` through `profiles.rules.default_mcp`.
+  - Proof: `CAPSEM_TEST_PRESERVE_ALWAYS=1 uv run python -m pytest
+    tests/ironbank/test_model_sdk_ledger.py::test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox
+    -q -s --tb=short`; `cargo test -p capsem-core --lib mcp_http --
+    --nocapture`; `uv run ruff check
+    tests/ironbank/test_model_sdk_ledger.py scripts/mock_server_runtime.py`.
 - [x] RED/GREEN: credential broker logs `captured`, `brokered`, `injected`, and
   errors without raw secret leakage or generic status fields.
   - 2026-06-11 progress: new `substitution_events` tables now CHECK broker
