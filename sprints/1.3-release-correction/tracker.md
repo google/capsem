@@ -719,9 +719,10 @@ next one, and stage only the files for that slice.
 - [x] GREEN: remove release `--fast` escape and fold benchmark-only local
   server modes into standard `capsem-bench`.
   - 2026-06-11 progress: `mitm-local` is no longer a top-level
-    `capsem-bench` mode. Local MITM scenarios run only through
+    `capsem-bench` mode. Local protocol scenarios run through
+    `capsem-bench protocol` for release-scale numbers and through
     `capsem-bench all` when `CAPSEM_MOCK_SERVER_BASE_URL` points at the
-    shared hermetic mock server.
+    shared hermetic mock server for broad benchmark runs.
   - Proof: `uv run python -m pytest tests/test_capsem_bench_mitm_local.py
     -q`; `uv run python -m pytest
     tests/capsem-serial/test_mitm_local_benchmark.py -q`; `pnpm --dir docs
@@ -903,7 +904,7 @@ next one, and stage only the files for that slice.
     substitution_events_require_brokered_reference -- --nocapture` and `cargo
     test -p capsem-logger
     brokered_substitution_persists_reference_and_not_secret -- --nocapture`.
-- [ ] RED/GREEN: benchmarks use concurrency and request counts large enough to
+- [x] RED/GREEN: benchmarks use concurrency and request counts large enough to
   produce meaningful p50/p95/p99/rps for HTTP/SSE/WS/DNS/MCP/broker/model
   replay/storage/startup/lifecycle/fork.
   - 2026-06-13 progress: `just test` now keeps the Python non-serial
@@ -931,6 +932,28 @@ next one, and stage only the files for that slice.
     `uv run ruff check tests/test_release_doctor_contract.py
     tests/capsem-serial/test_mitm_local_benchmark.py`; `uv run python -m
     pytest tests/test_capsem_bench_mitm_local.py -q` (`23 passed`).
+  - 2026-06-13 progress: `capsem-bench protocol` is now a first-class
+    benchmark mode for the local mock-server protocol suite, while the retired
+    `capsem-bench mitm-local` escape hatch remains rejected. The serial VM
+    release artifact defaults to high-sample model/credential scenarios instead
+    of mixing 100+ GiB fixture transfer into the same 300s exec window.
+  - Proof: RED
+    `CAPSEM_REQUIRE_ARTIFACTS=1 CAPSEM_BENCH_TOTAL_REQUESTS=100
+    CAPSEM_BENCH_CONCURRENCY=16 uv run python -m pytest
+    tests/capsem-serial/test_mitm_local_benchmark.py::test_mitm_local_benchmark_artifact
+    -q -s --tb=short` initially failed with `Unknown command: protocol` before
+    `_pack-initrd` carried the new guest benchmark package into the boot asset.
+    GREEN after `just _pack-initrd`: same low-count probe passed in `62.32s`.
+    Release-scale GREEN after fixing a WebSocket close-timeout measurement bug:
+    `CAPSEM_REQUIRE_ARTIFACTS=1 uv run python -m pytest
+    tests/capsem-serial/test_mitm_local_benchmark.py::test_mitm_local_benchmark_artifact
+    -q -s --tb=short` passed in `37.54s`, archived
+    `benchmarks/mitm-local/data_1.3.1781205836_arm64.json`, and proved
+    `model_json_response 50000/50000` at `3000.9 rps`, `18.8ms` p50,
+    `58.0ms` p99 plus `credential_response 50000/50000` at `3029.0 rps`,
+    `18.8ms` p50, `55.9ms` p99, both with zero errors and DB/no-secret checks.
+    WebSocket echo now records `2508.2 fps`, `0.2ms` p50/p99 instead of
+    spending the close timeout in the benchmark row.
 - [x] RED/GREEN: failed suspend cannot leave a VM resumable from a partial
   Apple VZ checkpoint.
   - 2026-06-13 progress: `capsem-process` writes

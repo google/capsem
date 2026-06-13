@@ -68,27 +68,27 @@ database-style writes.
 
 Release network proof uses `capsem-mock-server`, not public internet. The
 current VM MITM-local artifact is
-`benchmarks/mitm-local/data_1.0.1780954707_arm64.json` and was recorded through
-the profile-selected VM path against local HTTP, gzip, SSE model, JSON model,
-denied-target, credential-shaped, and WebSocket fixtures.
+`benchmarks/mitm-local/data_1.3.1781205836_arm64.json` and was recorded
+through the profile-selected VM path at release scale against local JSON model,
+credential-shaped, and WebSocket control fixtures.
 
 | Scenario | Success | Requests/sec | p50 | p99 |
 |---|---:|---:|---:|---:|
-| tiny HTTP | 10/10 | 831.7 | 0.9ms | 3.4ms |
-| 1 MiB HTTP | 10/10 | 83.7 | 11.7ms | 13.2ms |
-| gzip 1 MiB | 10/10 | 38.2 | 26.1ms | 27.1ms |
-| SSE model stream | 10/10 | 986.2 | 0.9ms | 1.8ms |
-| JSON model response | 10/10 | 1,102.8 | 0.8ms | 1.6ms |
-| denied target fixture | 10/10 | 1,165.8 | 0.8ms | 1.5ms |
-| credential-shaped response | 10/10 | 1,129.8 | 0.8ms | 1.5ms |
+| JSON model response | 50,000/50,000 | 3,000.9 | 18.8ms | 58.0ms |
+| credential-shaped response | 50,000/50,000 | 3,029.0 | 18.8ms | 55.9ms |
 
-WebSocket control fixture: echo `10` frames at `2,499.5` frames/sec with
-`0.2ms` p50 latency; close control frame completed in `1.3ms` p50.
+WebSocket control fixture: echo `10` frames at `2,508.2` frames/sec with
+`0.2ms` p50/p99 latency; close control frame completed in `5.2ms` p50/p99.
+
+The full protocol fixture corpus is still exercised by doctor and unit
+contract tests; the release-scale benchmark intentionally selects
+`model_json_response,credential_response` so it measures hot model/credential
+traffic without turning the 1 MiB body fixtures into a 100+ GiB transfer.
 
 Host-direct control smoke after adding the JSON model fixture proved only that
 `/model/response` is routable and returns model-shaped JSON. Do not use its
 localhost latency or requests/sec as release performance evidence; the release
-gate must rerun `capsem-bench all` with `CAPSEM_MOCK_SERVER_BASE_URL`
+gate must rerun `capsem-bench protocol` with `CAPSEM_MOCK_SERVER_BASE_URL`
 from inside a profile-selected VM so the request crosses guest redirect, vsock,
 MITM parsing, CEL/security evaluation, logging, and the local mock server.
 

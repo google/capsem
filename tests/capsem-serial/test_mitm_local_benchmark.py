@@ -24,6 +24,16 @@ from helpers.service import ServiceInstance, wait_exec_ready
 pytestmark = [pytest.mark.serial, pytest.mark.benchmark]
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
+RELEASE_SCENARIOS = ("model_json_response", "credential_response")
+SCENARIO_PATHS = {
+    "tiny_http": "/tiny",
+    "http_1mb": "/bytes/1mb",
+    "gzip_1mb": "/gzip/1mb",
+    "sse_model": "/sse/model",
+    "model_json_response": "/model/response",
+    "denied_target": "/deny-target",
+    "credential_response": "/credential/response",
+}
 
 
 def _project_version():
@@ -66,20 +76,13 @@ def _assert_mitm_local_succeeded(data):
         assert row["frames"] > 0, f"{row['name']} should relay frames: {row}"
 
 
-def _assert_session_db_contains_mitm_events(capsem_home, vm_name, total_requests):
+def _assert_session_db_contains_mitm_events(
+    capsem_home, vm_name, total_requests, selected_scenarios
+):
     db_path = capsem_home / "sessions" / vm_name / "session.db"
-    expected_paths = {
-        "/tiny",
-        "/bytes/1mb",
-        "/gzip/1mb",
-        "/sse/model",
-        "/model/response",
-        "/deny-target",
-        "/credential/response",
-        "/ws/echo",
-        "/ws/close",
-    }
-    expected_count = total_requests * 7 + 2
+    expected_paths = {SCENARIO_PATHS[name] for name in selected_scenarios}
+    expected_paths.update({"/ws/echo", "/ws/close"})
+    expected_count = total_requests * len(selected_scenarios) + 2
 
     deadline = time.monotonic() + 5
     rows = []
@@ -145,6 +148,15 @@ def test_mitm_local_benchmark_artifact():
 
     total_requests = int(os.environ.get("CAPSEM_BENCH_TOTAL_REQUESTS", "50000"))
     concurrency = int(os.environ.get("CAPSEM_BENCH_CONCURRENCY", "64"))
+    selected_scenarios = tuple(
+        name.strip()
+        for name in os.environ.get(
+            "CAPSEM_BENCH_SCENARIOS",
+            ",".join(RELEASE_SCENARIOS),
+        ).split(",")
+        if name.strip()
+    )
+    assert selected_scenarios, "release benchmark must select at least one scenario"
 
     svc = ServiceInstance()
     svc.start()
@@ -168,8 +180,9 @@ def test_mitm_local_benchmark_artifact():
                 f"CAPSEM_MOCK_SERVER_BASE_URL={base_url}",
                 f"CAPSEM_BENCH_TOTAL_REQUESTS={total_requests}",
                 f"CAPSEM_BENCH_CONCURRENCY={concurrency}",
+                f"CAPSEM_BENCH_SCENARIOS={','.join(selected_scenarios)}",
                 "capsem-bench",
-                "all",
+                "protocol",
             ]
         )
         resp = client.post(
@@ -178,7 +191,7 @@ def test_mitm_local_benchmark_artifact():
             timeout=310,
         )
         assert resp and resp.get("exit_code") == 0, (
-            f"capsem-bench all failed to run local MITM scenarios: "
+            f"capsem-bench protocol failed to run local protocol scenarios: "
             f"exit={resp.get('exit_code') if resp else None}\n"
             f"stdout: {(resp or {}).get('stdout', '')[:1000]}\n"
             f"stderr: {(resp or {}).get('stderr', '')[:1000]}"
@@ -190,12 +203,15 @@ def test_mitm_local_benchmark_artifact():
             timeout=20,
         )
         assert resp and resp.get("exit_code") == 0, (
-            "capsem-bench all did not write /tmp/capsem-benchmark.json"
+            "capsem-bench protocol did not write /tmp/capsem-benchmark.json"
         )
         data = json.loads(resp.get("stdout", "").strip())
         _assert_mitm_local_succeeded(data)
+        assert tuple(data["mitm_local"]["selected_scenarios"]) == selected_scenarios
         assert "capsem_test_api_key" not in json.dumps(data)
-        _assert_session_db_contains_mitm_events(svc.tmp_dir, name, total_requests)
+        _assert_session_db_contains_mitm_events(
+            svc.tmp_dir, name, total_requests, selected_scenarios
+        )
 
         data["host_recorded_at"] = time.time()
         data["arch"] = os.uname().machine

@@ -274,12 +274,13 @@ def _run_websocket_scenario(base_url, scenario, timeout_s):
     latencies = []
     frames = scenario["frames"]
     start = time.monotonic()
+    duration_s = 0.0
     try:
         with connect(
             url,
             proxy=None,
             open_timeout=timeout_s,
-            close_timeout=timeout_s,
+            close_timeout=min(timeout_s, 1.0),
         ) as ws:
             if scenario["name"] == "websocket_echo":
                 for idx in range(frames):
@@ -293,10 +294,13 @@ def _run_websocket_scenario(base_url, scenario, timeout_s):
                             f"unexpected echo reply: {reply!r} != {payload!r}"
                         )
                     latencies.append(elapsed_ms)
+                duration_s = time.monotonic() - start
+                ws.close()
             else:
                 # The endpoint closes immediately; connecting successfully is
                 # the deterministic control frame exercise.
                 latencies.append((time.monotonic() - start) * 1000)
+                duration_s = time.monotonic() - start
     except Exception as exc:
         return {
             "name": scenario["name"],
@@ -309,7 +313,8 @@ def _run_websocket_scenario(base_url, scenario, timeout_s):
             "latency_ms": _latency_summary(latencies),
         }
 
-    duration_s = time.monotonic() - start
+    if duration_s <= 0:
+        duration_s = time.monotonic() - start
     return {
         "name": scenario["name"],
         "path": scenario["path"],

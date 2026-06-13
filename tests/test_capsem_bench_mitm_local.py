@@ -50,6 +50,7 @@ from helpers.mock_server import start_mock_server, stop_process  # noqa: E402
 
 def test_mitm_local_is_not_a_top_level_escape_hatch():
     assert "mitm-local" not in bench_main.VALID_MODES
+    assert "protocol" in bench_main.VALID_MODES
     assert "storage" in bench_main.VALID_MODES
     assert "all" in bench_main.VALID_MODES
 
@@ -58,6 +59,7 @@ def test_all_mode_includes_local_mitm_when_mock_server_is_configured(monkeypatch
     monkeypatch.setenv(mitm_local.BASE_URL_ENV, "http://127.0.0.1:3713")
 
     assert bench_main._should_run_local_mitm("all") is True
+    assert bench_main._should_run_local_mitm("protocol") is True
     assert bench_main._should_run_local_mitm("disk") is False
 
 
@@ -140,6 +142,9 @@ def test_websocket_uses_plain_url_without_socket_override(monkeypatch):
         def recv(self, timeout=None):
             return self.last_payload
 
+        def close(self):
+            captured["closed"] = True
+
     def fake_connect(url, **kwargs):
         captured["url"] = url
         captured["connect_kwargs"] = kwargs
@@ -159,6 +164,8 @@ def test_websocket_uses_plain_url_without_socket_override(monkeypatch):
     assert captured["url"] == "ws://127.0.0.1:50233/ws/echo"
     assert "sock" not in captured["connect_kwargs"]
     assert captured["connect_kwargs"]["proxy"] is None
+    assert captured["connect_kwargs"]["close_timeout"] <= 1.0
+    assert captured["closed"] is True
 
 
 def test_http_summary_has_latency_and_no_raw_secret_storage():

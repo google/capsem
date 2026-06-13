@@ -408,7 +408,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added (benchmarks)
 - Added a deterministic `/model/response` fixture to `capsem-mock-server`
-  and wired `capsem-bench mitm-local` to exercise both SSE model streams and
+  and wired `capsem-bench protocol` to exercise both SSE model streams and
   JSON model responses without public-network dependencies.
 - Added a shared `capsem-bench` load harness for MITM, MCP, DNS, and local
   mock-server tests: `CAPSEM_BENCH_CONCURRENCY`,

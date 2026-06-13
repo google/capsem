@@ -1566,7 +1566,9 @@ S4 progress note:
   `/sse/model`; `uv run pytest tests/test_capsem_bench_mitm_local.py -q`
   passed 25 tests after the shared harness/reporting refactor; host-direct local smoke
   `PYTHONPATH=guest/artifacts uv run --with rich --with requests --with
-  websockets python -m capsem_bench mitm-local http://127.0.0.1:61085 10 1`
+  websockets env CAPSEM_MOCK_SERVER_BASE_URL=http://127.0.0.1:61085
+  CAPSEM_BENCH_TOTAL_REQUESTS=10 CAPSEM_BENCH_CONCURRENCY=1
+  python -m capsem_bench protocol`
   passed all scenarios. That smoke run is functional fixture proof only; its
   localhost latency/rps are not release performance evidence because it bypasses
   the VM, guest redirect, vsock, MITM, CEL/security evaluation, and DB logging.
@@ -1593,8 +1595,10 @@ S4 progress note:
 - [x] Run corrected host-direct model/credential calibration with real sample
   size.
   Proof: `PYTHONPATH=guest/artifacts uv run --with rich --with requests --with
-  websockets python -m capsem_bench mitm-local http://127.0.0.1:61416 50000 64
-  model_json_response,credential_response` passed `50,000/50,000` for both
+  websockets env CAPSEM_MOCK_SERVER_BASE_URL=http://127.0.0.1:61416
+  CAPSEM_BENCH_TOTAL_REQUESTS=50000 CAPSEM_BENCH_CONCURRENCY=64
+  CAPSEM_BENCH_SCENARIOS=model_json_response,credential_response
+  python -m capsem_bench protocol` passed `50,000/50,000` for both
   selected scenarios with zero errors. `model_json_response`: `4321.8 rps`,
   `13.9ms` p50, `30.7ms` p99. `credential_response`: `4361.8 rps`, `13.8ms`
   p50, `30.2ms` p99, and `raw_secret_stored_in_result=false`. Artifact:
@@ -1627,11 +1631,15 @@ S4 progress note:
   DB writer artifact `benchmarks/db-writer/data_1.0.1780763638_arm64.json`;
   lifecycle/fork artifacts under `benchmarks/lifecycle/` and
   `benchmarks/fork/`; security-action Criterion numbers above; refreshed VM
-  MITM-local artifact `benchmarks/mitm-local/data_1.0.1780954707_arm64.json`
-  includes `/model/response` and passed session DB/no-secret checks. Command:
-  `CAPSEM_RUN_MITM_LOCAL_BENCH=1 CAPSEM_BENCH_TOTAL_REQUESTS=10
-  CAPSEM_BENCH_CONCURRENCY=1 uv run pytest
-  tests/capsem-serial/test_mitm_local_benchmark.py -xvs`.
+  protocol artifact `benchmarks/mitm-local/data_1.3.1781205836_arm64.json`
+  includes `/model/response`, credential-shaped response, WebSocket controls,
+  and passed session DB/no-secret checks. Command:
+  `CAPSEM_REQUIRE_ARTIFACTS=1 uv run python -m pytest
+  tests/capsem-serial/test_mitm_local_benchmark.py::test_mitm_local_benchmark_artifact
+  -q -s --tb=short` passed in `37.54s` with `50,000` requests per selected
+  scenario at concurrency `64`: `model_json_response 3000.9 rps`, `18.8ms`
+  p50, `58.0ms` p99; `credential_response 3029.0 rps`, `18.8ms` p50,
+  `55.9ms` p99; WebSocket echo `2508.2 fps`, `0.2ms` p50/p99; zero errors.
 - [x] Add regression tests proving old policy-v2/domain/MCP decision rails stay
   absent and do not show up as live code paths.
   Proof: `uv run pytest tests/test_security_rails_retired.py

@@ -9,13 +9,15 @@ from .helpers import console
 
 VALID_MODES = (
     "disk", "rootfs", "storage", "startup", "http", "throughput", "snapshot",
-    "mitm-load", "mcp-load", "dns-load", "all",
+    "protocol", "mitm-load", "mcp-load", "dns-load", "all",
 )
 
 MITM_LOCAL_BASE_URL_ENV = "CAPSEM_MOCK_SERVER_BASE_URL"
 
 
 def _should_run_local_mitm(mode):
+    if mode == "protocol":
+        return True
     return mode == "all" and bool(os.environ.get(MITM_LOCAL_BASE_URL_ENV))
 
 
@@ -26,7 +28,7 @@ def main():
     if mode in ("-h", "--help"):
         console.print(
             "Usage: capsem-bench "
-            "[disk|rootfs|storage|startup|http|throughput|snapshot|all] "
+            "[disk|rootfs|storage|startup|http|throughput|snapshot|protocol|all] "
             "[OPTIONS]"
         )
         console.print()
@@ -38,6 +40,7 @@ def main():
         console.print("  http [URL] [N] [C]  HTTP benchmarks (ab-style)")
         console.print("  throughput          100 MB download through MITM proxy")
         console.print("  snapshot            Snapshot ops (create/list/revert/delete via MCP)")
+        console.print("  protocol            Local mock-server protocol benchmark")
         console.print("  mitm-load [C[,C]] [SECONDS]  MITM proxy load test")
         console.print("  mcp-load [C[,C]] [SECONDS]   MCP path load test")
         console.print("  dns-load [C[,C]] [SECONDS]   DNS proxy load test")
@@ -46,7 +49,7 @@ def main():
         console.print("Environment:")
         console.print("  CAPSEM_BENCH_DIR      Test directory (default: /root)")
         console.print("  CAPSEM_BENCH_SIZE_MB  Write test size in MB (default: 256)")
-        console.print("  CAPSEM_MOCK_SERVER_BASE_URL  Base URL for local MITM scenarios in all")
+        console.print("  CAPSEM_MOCK_SERVER_BASE_URL  Base URL for protocol scenarios")
         console.print("  CAPSEM_BENCH_CONCURRENCY          Load concurrency, e.g. 64 or 1,64")
         console.print("  CAPSEM_BENCH_DURATION_S           Seconds per load level")
         console.print("  CAPSEM_BENCH_TOTAL_REQUESTS       Total requests per count scenario")
@@ -99,9 +102,9 @@ def main():
         from .snapshot import snapshot_bench
         output["snapshot"] = snapshot_bench()
 
-    # Local MITM scenarios are part of the standard `all` benchmark when the
-    # shared doctor/mock server is configured. There is no separate local
-    # MITM release escape hatch.
+    # Local protocol scenarios are part of the standard `all` benchmark when
+    # the shared doctor/mock server is configured, and are also available as a
+    # first-class `protocol` benchmark for release-scale network numbers.
     if _should_run_local_mitm(mode):
         from .mitm_local import mitm_local_bench
         output["mitm_local"] = mitm_local_bench()
