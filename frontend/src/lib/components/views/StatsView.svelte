@@ -345,8 +345,8 @@
 
   function brokerVerb(row: Row): string {
     const outcome = text(row.outcome).toLowerCase();
-    if (outcome === 'brokered' || outcome === 'captured' || outcome === 'injected') return outcome;
-    return 'captured';
+    if (outcome === 'brokered' || outcome === 'captured' || outcome === 'injected' || outcome === 'error') return outcome;
+    return 'error';
   }
 
   function securityActionSummary(rows: api.SecurityRuleActionCount[] | undefined): Row[] {
@@ -365,9 +365,10 @@
     return SECURITY_DETECTION_LEVELS.map(level => ({ detection_level: level, count: counts.get(level) ?? 0 }));
   }
 
-  const brokerCapturedCount = $derived(substitutionRows.length);
+  const brokerCapturedCount = $derived(substitutionRows.filter(row => brokerVerb(row) === 'captured').length);
   const brokerBrokeredCount = $derived(substitutionRows.filter(row => brokerVerb(row) === 'brokered').length);
   const brokerInjectedCount = $derived(substitutionRows.filter(row => brokerVerb(row) === 'injected').length);
+  const brokerErrorCount = $derived(substitutionRows.filter(row => brokerVerb(row) === 'error').length);
   const detections = $derived(securityLatest.filter(row => row.detection_level !== 'none').length);
   const securityActionRows = $derived(securityActionSummary(securityStatus?.by_action));
   const securityDetectionRows = $derived(securityDetectionSummary(securityStatus?.by_rule));
@@ -557,11 +558,12 @@
           {/snippet}
         </StatsEventList>
       {:else if activeTab === 'credentials'}
-        <div class="grid grid-cols-4 gap-3 mb-6">
+        <div class="grid grid-cols-5 gap-3 mb-6">
           <MetricCard label="Broker Events" value={substitutionRows.length.toLocaleString()} />
           <MetricCard label="Captured" value={brokerCapturedCount.toLocaleString()} />
           <MetricCard label="Brokered" value={brokerBrokeredCount.toLocaleString()} />
           <MetricCard label="Injected" value={brokerInjectedCount.toLocaleString()} />
+          <MetricCard label="Errors" value={brokerErrorCount.toLocaleString()} tone="danger" />
         </div>
         <StatsEventList title="Credential Broker Events" rows={substitutionRows} columns={['Time', 'Verb', 'Source', 'Provider', 'Origin']} onrow={(row) => detail = { type: 'credential broker event', data: row }}>
           {#snippet children(row: any)}

@@ -48,7 +48,7 @@ prove the same rails without user credentials.
 | S5 | Doctor/just/benchmark unification | In progress | `just test` and `just smoke` run doctor/E2E/bench through the hermetic lab, no `--fast` release escape; full doctor now passes in 26.20s wall time versus the prior 104.41s failing public-network run. |
 | S6 | CEL/security event correction | Complete | IP/TCP/UDP facts and `valid` booleans are first-party CEL objects; no `security.*` predicates. |
 | S7 | Runtime protocol fixes | In progress | AGY/Claude/Codex model, MCP, broker, SSE, and tool-call paths pass full-chain acceptance specs with response text/thinking/tool output, token counts, detection/security rows, route output, and no phantom calls. |
-| S8 | UI/TUI contract repair | In progress | Sessions/profiles/settings/stats/plugin/MCP/security/file/process views reflect routes and enums only. |
+| S8 | UI/TUI contract repair | Complete | Sessions/profiles/settings/stats/plugin/MCP/security/file/process views reflect routes and enums only. |
 | S9 | Agent bootstrap repair | Planned | AGY, Claude, Codex, MCP, aliases, and profile root files are packaged from profile-owned bootstrap. |
 | S10 | Packaging/install/release gate | In progress | Package payload closed contract, `just install`, status/debug, changelog/docs, and benchmark report pass. |
 | S11 | Security boundary cleanup | Complete | `sprints/1.3-security-boundary-cleanup/` proves network engine parses/routes only, every plugin contract is `SecurityEvent -> SecurityEvent`, credential broker handles capture/storage/injection without owning logs, log sanitizer is an independent logging plugin that produces ledger projection, raw credentials cannot reach DB/log/route/UI output, and docs/skills teach the boundary. |

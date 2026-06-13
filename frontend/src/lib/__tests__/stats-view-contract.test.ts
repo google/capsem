@@ -83,6 +83,16 @@ describe('StatsView credential broker contract', () => {
     expect(source).toContain("'substitution_ref'");
     expect(source).toContain("'credential_ref'");
   });
+
+  it('counts captured, brokered, and injected credential verbs independently', () => {
+    expect(source).toContain("brokerVerb(row) === 'captured'");
+    expect(source).toContain("brokerVerb(row) === 'brokered'");
+    expect(source).toContain("brokerVerb(row) === 'injected'");
+    expect(source).toContain("brokerVerb(row) === 'error'");
+    expect(source).toContain('brokerErrorCount');
+    expect(source).toContain('Errors');
+    expect(source).not.toContain('const brokerCapturedCount = $derived(substitutionRows.length)');
+  });
 });
 
 describe('StatsView detail drawer contract', () => {

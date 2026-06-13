@@ -106,6 +106,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   includes start, resume, or fork actions.
 - Tightened the MCP profile UI so default and per-tool permission controls use
   the same typed allow/ask/block option list as the route contract.
+- Fixed credential broker stats so captured, brokered, injected, and error
+  events are counted independently instead of treating every broker row as a
+  captured credential.
 - Tightened the VM Stats Process panel so it reports command executions and
   observed processes as separate ledgers, replaces the unrelated credential-ref
   counter with unique binary counts, and removes tutorial prose from the app UI.

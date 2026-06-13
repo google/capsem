@@ -1005,7 +1005,7 @@ next one, and stage only the files for that slice.
   - Proof: `pnpm --dir frontend test
     src/lib/__tests__/stats-view-contract.test.ts`; `pnpm --dir frontend
     check`.
-- [ ] RED/GREEN: HTTP/DNS/file/process/security/credentials panels use correct
+- [x] RED/GREEN: HTTP/DNS/file/process/security/credentials panels use correct
   labels, counts, syntax highlighting, and no duplicate payload fields.
   - 2026-06-11 progress: file stats cards now summarize the visible
     created/modified/deleted ledger actions instead of unrelated
@@ -1026,6 +1026,10 @@ next one, and stage only the files for that slice.
     highlighting by field/value shape: HTTP headers use the HTTP grammar,
     JSON previews parse/format as JSON, and non-JSON payloads stay escaped
     text instead of a fake JSON panel.
+  - 2026-06-13 progress: credential broker metric cards now count captured,
+    brokered, injected, and error rows independently; total broker events stays
+    a separate total and unknown outcomes render as error instead of silently
+    becoming captured.
   - Proof: `pnpm --dir frontend test
     src/lib/__tests__/stats-view-contract.test.ts`; `pnpm --dir frontend
     check`.
