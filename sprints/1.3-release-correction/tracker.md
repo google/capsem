@@ -1394,6 +1394,21 @@ next one, and stage only the files for that slice.
     scripts/pkg-scripts/postinstall`.
 - [ ] GREEN: package accepts local/remote manifest override, copies it to the
   service-owned location, and records origin/hash in status/debug/install log.
+  - 2026-06-13 progress: artifact-level package tests now exercise local path
+    and `http://127.0.0.1` manifest overrides through the actual `.pkg` build
+    path, then expand the package and assert the packaged `manifest.json` plus
+    `manifest-origin.json` source/origin/provenance fields. The `.deb` tests
+    carry the same local/remote provenance assertions for Linux CI.
+  - Proof: `uv run python -m pytest
+    tests/test_build_pkg.py::test_macos_pkg_remote_manifest_override_records_source_and_payload
+    tests/test_build_pkg.py::test_macos_pkg_payload_is_closed_and_manifest_only_for_assets
+    -q --tb=short` (`2 passed`); `uv run python -m pytest
+    tests/test_build_pkg.py tests/capsem-build-chain/test_install_asset_payload.py
+    -q --tb=short` (`8 passed`); `uv run ruff check tests/test_build_pkg.py
+    tests/test_repack_deb.py tests/capsem-build-chain/test_install_asset_payload.py`.
+    On this macOS host the focused `.deb` provenance tests are present but
+    skipped because `dpkg-deb` is unavailable; Linux CI/test-install owns that
+    artifact execution.
 - [x] GREEN: package postinstall hydrates local manifest assets without
   embedding VM blobs in the package.
   - Root cause from full `just test`: the `.deb` installed

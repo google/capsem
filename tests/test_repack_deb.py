@@ -13,9 +13,13 @@ Skipped cleanly on any machine without `dpkg-deb` on PATH (macOS default);
 executed in Linux CI and inside the capsem-install-test container.
 """
 
+import contextlib
+import functools
+import http.server
+import json
 import shutil
 import subprocess
-import json
+import threading
 from pathlib import Path
 
 import pytest
@@ -149,6 +153,25 @@ def _deb_contents(deb: Path, dest: Path) -> Path:
         check=True, capture_output=True,
     )
     return dest
+
+
+class _QuietHandler(http.server.SimpleHTTPRequestHandler):
+    def log_message(self, format: str, *args: object) -> None:
+        return
+
+
+@contextlib.contextmanager
+def _serve_directory(root: Path):
+    handler = functools.partial(_QuietHandler, directory=str(root))
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_address[1]}"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
 
 
 def test_happy_path_adds_every_companion_binary(tmp_path):
@@ -322,10 +345,74 @@ def test_explicit_manifest_is_packaged_without_current_arch_assets(tmp_path):
     packaged_manifest = assets_dir / "manifest.json"
     assert packaged_manifest.read_text() == manifest.read_text()
     assert (assets_dir / "manifest-origin.json").is_file()
+    origin = json.loads((assets_dir / "manifest-origin.json").read_text())
+    assert origin["schema"] == "capsem.manifest_origin.v1"
+    assert origin["origin"] == "package"
+    assert origin["source"] == str(manifest.resolve())
+    assert "packaged_at" in origin
     assert sorted(path.name for path in assets_dir.iterdir()) == [
         "manifest-origin.json",
         "manifest.json",
     ]
+
+
+def test_explicit_remote_manifest_is_packaged_with_origin_provenance(tmp_path):
+    """Remote corp/release manifest URLs are fetched and recorded in provenance."""
+    fixture = _build_fixture_deb(tmp_path)
+    bin_dir = tmp_path / "bin"
+    config_dir = tmp_path / "target-config"
+    manifest_root = tmp_path / "remote"
+    manifest = manifest_root / "corp-manifest.json"
+    _seed_binaries(bin_dir)
+    _seed_config(config_dir)
+    manifest_root.mkdir()
+    manifest.write_text(
+        json.dumps(
+            {
+                "format": 2,
+                "version": "remote-test",
+                "assets": {"current": "corp", "releases": {"corp": {"arches": {}}}},
+                "binaries": {"current": "remote"},
+            },
+            sort_keys=True,
+        )
+        + "\n"
+    )
+    output = tmp_path / "out.deb"
+
+    with _serve_directory(manifest_root) as base_url:
+        manifest_url = f"{base_url}/corp-manifest.json"
+        res = subprocess.run(
+            [
+                str(SCRIPT),
+                "--manifest",
+                manifest_url,
+                str(fixture),
+                str(bin_dir),
+                str(config_dir),
+                "",
+                str(output),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    assert res.returncode == 0, (
+        f"repack-deb.sh failed: stdout={res.stdout!r} stderr={res.stderr!r}"
+    )
+
+    extracted = _deb_contents(output, tmp_path / "extracted-remote")
+    assets_dir = extracted / "usr" / "share" / "capsem" / "assets"
+    assert sorted(path.name for path in assets_dir.iterdir()) == [
+        "manifest-origin.json",
+        "manifest.json",
+    ]
+    assert (assets_dir / "manifest.json").read_text() == manifest.read_text()
+    origin = json.loads((assets_dir / "manifest-origin.json").read_text())
+    assert origin["schema"] == "capsem.manifest_origin.v1"
+    assert origin["origin"] == "package"
+    assert origin["source"] == manifest_url
+    assert "packaged_at" in origin
 
 
 def test_repacked_deb_payload_is_closed_and_manifest_only_for_assets(tmp_path):

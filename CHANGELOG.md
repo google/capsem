@@ -85,6 +85,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Included installed asset manifest provenance in support bundles so debug
   reports preserve the manifest origin/source/hash trail alongside the active
   asset manifest.
+- Hardened package artifact tests so local and remote manifest overrides prove
+  the packaged manifest payload and `manifest-origin.json` provenance instead
+  of only checking installer script text.
 - Tightened the Ironbank doctor ledger gate so local-network `ask` decisions,
   informational detections, serialized detection payloads, and security plugin
   execution timings are proven from session DB rows instead of only counted.
