@@ -943,7 +943,7 @@ next one, and stage only the files for that slice.
     src/lib/__tests__/vm-actions.test.ts
     src/lib/__tests__/session-language-contract.test.ts`; `pnpm --dir
     frontend check`.
-- [ ] RED/GREEN: profile selection is route-backed and works with both `code`
+- [x] RED/GREEN: profile selection is route-backed and works with both `code`
   and `co-work`.
   - 2026-06-13 progress: Profile overview still uses the route-backed profile
     selector and broker inventory route, but no longer renders raw broker
@@ -953,7 +953,16 @@ next one, and stage only the files for that slice.
     src/lib/__tests__/profile-page-contract.test.ts
     src/lib/__tests__/stats-view-contract.test.ts`; `pnpm --dir frontend
     check`.
-- [ ] RED/GREEN: enforcement/detection/plugins/MCP/assets pages load for both
+  - 2026-06-13 proof: route-backed selection and hyphenated profile IDs are
+    covered by the service profile UI route matrix for both `code` and
+    `co-work`, while the frontend profile page uses the selected profile id for
+    info, credential broker, assets, enforcement, detection, plugin, and MCP
+    sections.
+  - Proof: `cargo test -p capsem-service
+    profile_ui_route_matrix_is_registered_for_all_profiles -- --nocapture`;
+    `pnpm --dir frontend test src/lib/__tests__/profile-page-contract.test.ts
+    src/lib/__tests__/api.test.ts`.
+- [x] RED/GREEN: enforcement/detection/plugins/MCP/assets pages load for both
   profiles with no 404/501.
   - 2026-06-13 progress: the frontend MCP page already called
     `/profiles/{profile_id}/mcp/default/info` and
@@ -964,6 +973,16 @@ next one, and stage only the files for that slice.
   - Proof: RED/GREEN `cargo test -p capsem-gateway
     gateway_security_routes_are_explicitly_forwarded -- --nocapture`; `pnpm
     --dir frontend test src/lib/__tests__/api.test.ts`.
+  - 2026-06-13 proof: the service route matrix now verifies profile info,
+    assets, enforcement, detection, plugins, MCP, and skills routes for both
+    `code` and `co-work`; the gateway explicit-forwarding matrix covers the
+    profile route shapes forwarded to the service.
+  - Proof: `cargo test -p capsem-service
+    profile_ui_route_matrix_is_registered_for_all_profiles -- --nocapture`;
+    `cargo test -p capsem-gateway
+    gateway_security_routes_are_explicitly_forwarded -- --nocapture`; `pnpm
+    --dir frontend test src/lib/__tests__/profile-page-contract.test.ts
+    src/lib/__tests__/api.test.ts`.
 - [ ] RED/GREEN: plugin/MCP/rule modes use enum-backed selects/icons and
   disabled rows are visibly disabled.
 - [x] RED/GREEN: stats detail panels show one canonical presentation and move
