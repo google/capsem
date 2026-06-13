@@ -652,12 +652,7 @@ cross-compile arch="": _clean-stale _check-assets _generate-settings
 _generate-settings:
     #!/bin/bash
     set -euo pipefail
-    LOG="target/build.log"
-    mkdir -p target
-    echo "[generate] $(date +%H:%M:%S) exporting MCP tool defs" >> "$LOG"
-    cargo run --bin mcp_export 2>>"$LOG" > config/admin/mcp-tools.generated.json
-    echo "[generate] $(date +%H:%M:%S) generating schema + defaults + mock" >> "$LOG"
-    uv run python scripts/generate_schema.py >> "$LOG" 2>&1
+    bash scripts/generate-settings.sh
 
 # Fast path: audit, doctor, injection, integration tests (no Docker, no cross-compile)
 smoke: _install-tools _pnpm-install _check-assets _pack-initrd _materialize-config

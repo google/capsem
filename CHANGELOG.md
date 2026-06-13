@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed (route surfaces and diagnostics)
+- Fixed PR CI frontend coverage by moving generated settings/mock fixture
+  creation onto a shared `scripts/generate-settings.sh` rail, running that rail
+  before frontend build/check in CI, declaring the Vitest coverage provider,
+  uploading the actual `frontend/coverage/coverage-final.json`, and excluding
+  generated coverage output from later frontend type checks.
 - Fixed PR CI Rust coverage so `cargo llvm-cov` reports and uploads coverage
   without aborting the rest of the release gate on a local percentage
   threshold; Codecov remains the coverage ledger while Python, frontend,

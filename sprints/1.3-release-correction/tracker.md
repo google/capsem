@@ -1815,6 +1815,32 @@ next one, and stage only the files for that slice.
     tests/test_release_doctor_contract.py
     tests/capsem-build-chain/test_coverage_infra_contract.py`; `git diff
     --check`.
+  - 2026-06-13 PR CI frontend correction: the next remote macOS run proved the
+    Rust coverage abort was gone (`3281 passed, 2 skipped`, then 54
+    integration tests passed), but frontend check failed because
+    `mock-settings.generated.ts` is intentionally ignored and CI did not run
+    the settings generation rail before `astro check`. Local reproduction also
+    showed Vitest coverage lacked its provider dependency, CI uploaded the
+    wrong frontend coverage path, and generated `frontend/coverage/` files
+    polluted later type checks. Fixed by moving settings generation into
+    `scripts/generate-settings.sh`, using that script from both `just` and CI,
+    declaring `@vitest/coverage-v8`, uploading
+    `frontend/coverage/coverage-final.json`, and excluding `coverage` from
+    frontend type checks. Guard proof: RED
+    `test_frontend_generated_settings_use_one_shared_rail`,
+    `test_frontend_coverage_runner_declares_its_provider`, and
+    `test_frontend_coverage_artifacts_are_not_typechecked_or_misuploaded`
+    failed on the old state; GREEN proof: `uv run python -m pytest
+    tests/test_release_doctor_contract.py
+    tests/capsem-build-chain/test_coverage_infra_contract.py -q` (`30
+    passed`); `cd frontend && pnpm run check`; `cd frontend && npx vitest run
+    --coverage --reporter=default --reporter=junit
+    --outputFile=../frontend-junit.xml` (`22 files, 390 tests passed`);
+    `bash -n scripts/generate-settings.sh scripts/materialize-config.sh
+    scripts/prepare-install-test-assets.sh`; `uv run ruff check
+    tests/test_release_doctor_contract.py
+    tests/capsem-build-chain/test_coverage_infra_contract.py`; `git diff
+    --check`.
 
 ## Coverage Ledger
 

@@ -246,5 +246,27 @@ prove the same rails without user credentials.
   tests/test_release_doctor_contract.py
   tests/capsem-build-chain/test_coverage_infra_contract.py`; `git diff
   --check`.
+- PR CI frontend drift found on 2026-06-13 after the coverage repair: macOS
+  Rust unit coverage and integration tests advanced, then frontend check failed
+  because the ignored generated settings fixture was not generated in CI.
+  Local reproduction also found the missing Vitest coverage provider, stale
+  Codecov frontend coverage upload path, and generated coverage files leaking
+  into later type checks. The settings/mock fixture generation now lives in
+  `scripts/generate-settings.sh` and both `just` and CI call that same script
+  before frontend build/check; frontend coverage uses
+  `@vitest/coverage-v8`, uploads `frontend/coverage/coverage-final.json`, and
+  excludes generated `coverage/` output from type checks. Local proof: RED
+  release-doctor guards for the missing shared generation rail, missing
+  coverage provider, stale upload path, and invalid coverage-report flag;
+  GREEN `uv run python -m pytest tests/test_release_doctor_contract.py
+  tests/capsem-build-chain/test_coverage_infra_contract.py -q` (`30
+  passed`); `cd frontend && pnpm run check`; `cd frontend && npx vitest run
+  --coverage --reporter=default --reporter=junit
+  --outputFile=../frontend-junit.xml` (`22 files, 390 tests passed`);
+  `bash -n scripts/generate-settings.sh scripts/materialize-config.sh
+  scripts/prepare-install-test-assets.sh`; `uv run ruff check
+  tests/test_release_doctor_contract.py
+  tests/capsem-build-chain/test_coverage_infra_contract.py`; `git diff
+  --check`.
 
 Those files remain evidence. This sprint is the execution authority.

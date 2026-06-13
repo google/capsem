@@ -198,10 +198,43 @@ def test_ci_builds_frontend_before_compiling_tauri_app_tests() -> None:
     assert build_pos < coverage_pos < capsem_app_pos
 
 
+def test_frontend_generated_settings_use_one_shared_rail() -> None:
+    workflow = (PROJECT_ROOT / ".github" / "workflows" / "ci.yaml").read_text()
+    just = (PROJECT_ROOT / "justfile").read_text()
+
+    generate_pos = workflow.find("bash scripts/generate-settings.sh")
+    first_frontend_build_pos = workflow.find("cd frontend && pnpm run build")
+    frontend_check_pos = workflow.find("pnpm run check")
+
+    assert generate_pos != -1
+    assert first_frontend_build_pos != -1
+    assert frontend_check_pos != -1
+    assert generate_pos < first_frontend_build_pos
+    assert generate_pos < frontend_check_pos
+    assert "bash scripts/generate-settings.sh" in just
+    assert "uv run python scripts/generate_schema.py" not in just
+
+
+def test_frontend_coverage_runner_declares_its_provider() -> None:
+    package_json = json.loads((PROJECT_ROOT / "frontend" / "package.json").read_text())
+
+    assert "@vitest/coverage-v8" in package_json["devDependencies"]
+
+
+def test_frontend_coverage_artifacts_are_not_typechecked_or_misuploaded() -> None:
+    workflow = (PROJECT_ROOT / ".github" / "workflows" / "ci.yaml").read_text()
+    tsconfig = json.loads((PROJECT_ROOT / "frontend" / "tsconfig.json").read_text())
+
+    assert "frontend/coverage/coverage-final.json" in workflow
+    assert "coverage/frontend/coverage-final.json" not in workflow
+    assert "coverage" in tsconfig["exclude"]
+
+
 def test_pr_ci_coverage_reports_without_local_threshold_abort() -> None:
     workflow = (PROJECT_ROOT / ".github" / "workflows" / "ci.yaml").read_text()
 
     assert "--fail-under-lines" not in workflow
+    assert "cargo llvm-cov report --no-cfg-coverage" not in workflow
     assert "codecov-unit.json" in workflow
     assert "coverage-summary.txt" in workflow
     assert "codecov-linux.json" in workflow
