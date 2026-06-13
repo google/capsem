@@ -103,6 +103,7 @@ class MockServiceHandler(BaseHTTPRequestHandler):
                     "persistent": vm["persistent"],
                     "ram_mb": vm["ram_mb"],
                     "cpus": vm["cpus"],
+                    "available_actions": ["pause", "stop", "fork", "delete"],
                 })
             self._send_json({"sandboxes": sandboxes})
         elif path_only.startswith("/vms/") and path_only.endswith("/info"):
@@ -121,6 +122,7 @@ class MockServiceHandler(BaseHTTPRequestHandler):
                     "status": vm["status"],
                     "pid": vm["pid"],
                     "persistent": vm["persistent"],
+                    "available_actions": ["pause", "stop", "fork", "delete"],
                 })
             else:
                 self._send_error(404, f"sandbox {vm_id} not found")

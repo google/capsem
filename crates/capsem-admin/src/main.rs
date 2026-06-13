@@ -3049,8 +3049,12 @@ code = true
                 .map(|descriptor| descriptor.path.as_str()),
             Some("profiles/co-work/mcp.json")
         );
-        assert!(config_root.join("profiles/co-work/enforcement.toml").is_file());
-        assert!(config_root.join("profiles/co-work/detection.yaml").is_file());
+        assert!(config_root
+            .join("profiles/co-work/enforcement.toml")
+            .is_file());
+        assert!(config_root
+            .join("profiles/co-work/detection.yaml")
+            .is_file());
         assert!(config_root.join("profiles/co-work/mcp.json").is_file());
         assert!(config_root
             .join("profiles/co-work/root/root/.mcp.json")

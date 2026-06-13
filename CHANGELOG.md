@@ -75,6 +75,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Made `doctor --fix` rebuild VM assets for every checked-in profile through a
   named profile loop instead of a default-only asset build, with a release
   contract test guarding the recipe.
+- Aligned support-bundle and gateway test fixtures with the current
+  profile/settings layout and VM `available_actions` contract, and cleaned up
+  Rust formatting debt from the release cleanup branch.
 - Hardened profile routing assumptions by passing the full release gate under
   temporary arbitrary profile ids before restoring the shipping `code` and
   `co-work` profile identities. This keeps profile-aware routes, UI/TUI

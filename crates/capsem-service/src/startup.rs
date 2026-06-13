@@ -292,8 +292,7 @@ mod tests {
         let a = VzHostLock::acquire(VzHostLockMode::Shared, Duration::from_millis(50))
             .unwrap()
             .expect("shared acquisition");
-        let b =
-            VzHostLock::acquire(VzHostLockMode::Exclusive, Duration::from_millis(50)).unwrap();
+        let b = VzHostLock::acquire(VzHostLockMode::Exclusive, Duration::from_millis(50)).unwrap();
         assert!(
             b.is_none(),
             "exclusive VZ host lock acquisition must wait while shared is held"

@@ -32,7 +32,9 @@ def mock_server():
 def service_env(mock_server):
     """Start a real capsem-service on an isolated temp socket."""
     old_corp_config = os.environ.get("CAPSEM_CORP_CONFIG")
-    os.environ["CAPSEM_CORP_CONFIG"] = str(PROJECT_ROOT / "config" / "integration-test-corp.toml")
+    os.environ["CAPSEM_CORP_CONFIG"] = str(
+        PROJECT_ROOT / "tests" / "fixtures" / "config" / "integration" / "corp.toml"
+    )
     svc = ServiceInstance()
     svc.start()
     try:

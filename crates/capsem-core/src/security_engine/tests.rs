@@ -658,7 +658,7 @@ fn security_event_log_sanitizer_logging_plugin_redacts_before_logger_emit() {
         .expect("credential broker plus logging sanitizer should emit a safe event");
 
     let events = emitter.events.lock().unwrap();
-    assert_eq!(events.as_slice(), [returned.clone()]);
+    assert_eq!(events.as_slice(), std::slice::from_ref(&returned));
     let emitted = events.first().expect("sanitized event emitted");
     assert_eq!(
         emitted.credential_observations,

@@ -1326,7 +1326,10 @@ fn checked_in_profile_catalog_status_reports_code_and_co_work() {
 
     assert_eq!(status["profile_count"], 2);
     assert!(profile_ids.contains(&"code".to_string()), "{profile_ids:?}");
-    assert!(profile_ids.contains(&"co-work".to_string()), "{profile_ids:?}");
+    assert!(
+        profile_ids.contains(&"co-work".to_string()),
+        "{profile_ids:?}"
+    );
     for profile in status["profiles"].as_array().expect("profiles array") {
         assert!(
             profile["profile_payload_hash"]

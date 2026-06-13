@@ -1052,6 +1052,17 @@ next one, and stage only the files for that slice.
     tests/test_release_doctor_contract.py -q --tb=short` (`15 passed`).
 - [ ] Proof: status/debug show service version, manifest origin/hash, profile
   status, plugin status, route status, doctor evidence, OBOM/SBOM references.
+  - 2026-06-13 progress: support-bundle tests now expect the current
+    `config/settings.toml` path, gateway mock fixtures include route-provided
+    VM `available_actions`, MITM gateway tests use the test fixture corp config
+    path, and the release cleanup Rust formatting debt is cleared.
+  - Proof: `cargo fmt --check`; `cargo test -p capsem-core
+    security_event_log_sanitizer_logging_plugin_redacts_before_logger_emit --
+    --nocapture`; `cargo test -p capsem support_bundle -- --nocapture`;
+    `cargo test -p capsem redact -- --nocapture`; `uv run python -m pytest
+    tests/capsem-gateway/test_mitm_policy.py -q --tb=short`; and `uv run ruff
+    check tests/capsem-gateway/conftest.py
+    tests/capsem-gateway/test_mitm_policy.py`.
 - [ ] Proof: changelog, docs, skills, and benchmark docs updated.
 - [ ] Proof: full final gates pass and branch is pushed.
 

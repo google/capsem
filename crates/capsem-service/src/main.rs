@@ -1234,13 +1234,10 @@ impl ServiceState {
         let registry = self.persistent_registry.lock().unwrap();
         registry.get(name).is_some_and(|entry| {
             entry.suspended
-                && entry
-                    .checkpoint_path
-                    .as_ref()
-                    .is_some_and(|cp| {
-                        let checkpoint = entry.session_dir.join(cp);
-                        checkpoint.exists() && checkpoint_complete_path(&checkpoint).exists()
-                    })
+                && entry.checkpoint_path.as_ref().is_some_and(|cp| {
+                    let checkpoint = entry.session_dir.join(cp);
+                    checkpoint.exists() && checkpoint_complete_path(&checkpoint).exists()
+                })
         })
     }
 
@@ -2720,8 +2717,7 @@ async fn provision_attempt(
     // starts take the shared rail so independent boots can overlap, but they
     // still wait behind any in-flight save/restore checkpoint edge.
     let _vz_guard = state.save_restore_lock.read().await;
-    let _vz_host_guard =
-        match acquire_vz_host_lock(startup::VzHostLockMode::Shared).await {
+    let _vz_host_guard = match acquire_vz_host_lock(startup::VzHostLockMode::Shared).await {
         Ok(guard) => guard,
         Err(e) => {
             return ProvisionAttemptOutcome::ProvisionError(anyhow::anyhow!(
@@ -8067,9 +8063,7 @@ async fn handle_stop(
     // socket inline -- when it returns, resume can immediately reuse the
     // path without a SO_REUSEADDR-style race. Graceful so persistent VMs
     // get bash history + filesystem sync before teardown.
-    if let Some((session_dir, persistent, _pid)) =
-        shutdown_vm_process(&state, &id, true).await?
-    {
+    if let Some((session_dir, persistent, _pid)) = shutdown_vm_process(&state, &id, true).await? {
         if !persistent {
             let dir = session_dir;
             tokio::task::spawn_blocking(move || {

@@ -148,12 +148,7 @@ pub async fn handle_status(State(state): State<Arc<AppState>>) -> Response {
         let cache = state.status_cache.inner.read().await;
         cache
             .as_ref()
-            .map(|(_, r)| {
-                r.vms
-                    .iter()
-                    .map(|v| (v.id.clone(), v.status))
-                    .collect()
-            })
+            .map(|(_, r)| r.vms.iter().map(|v| (v.id.clone(), v.status)).collect())
             .unwrap_or_default()
     };
 
