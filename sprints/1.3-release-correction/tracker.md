@@ -1326,8 +1326,29 @@ next one, and stage only the files for that slice.
     -p capsem-admin -- profile check config/profiles/code/profile.toml
     --config-root config --json`; `cargo run -p capsem-admin -- profile check
     config/profiles/co-work/profile.toml --config-root config --json`.
-- [ ] Proof: fresh VM can start AGY/Claude/Codex bootstrap paths without
+- [x] Proof: fresh VM can start AGY/Claude/Codex/Gemini bootstrap paths without
   mutating unpinned profile state before first model request.
+  - 2026-06-13 closure: `tests/ironbank/test_agent_bootstrap.py` boots a fresh
+    `code` profile VM through service routes, uploads a black-box probe, checks
+    AGY/Claude/Codex/Gemini config files for secret-free profile ownership,
+    verifies AGY runs through `/usr/local/bin/agy` with
+    `--dangerously-skip-permissions`, verifies Gemini is wrapped without
+    copying its npm JS entrypoint, runs `claude --help`, `codex --help`,
+    `gemini --help`, and `agy --version`, then checks `/status`, `/info`,
+    `/history`, `/history/counts`, and `exec_events` exact ledger fields.
+  - Finding fixed: Gemini's npm entrypoint imports sibling JS chunks by
+    relative path; copying it to `gemini-real` breaks the CLI. The profile
+    build hook now resolves the real entrypoint, exposes `gemini-real` as a
+    symlink for auditability, and installs the cleanup wrapper at the PATH
+    entrypoint.
+  - Proof: `just build-assets code arm64`; `just _materialize-config`;
+    `CAPSEM_TEST_PRESERVE_ALWAYS=1 uv run python -m pytest
+    tests/ironbank/test_agent_bootstrap.py::test_profile_agent_bootstrap_pays_ledger_debt_blackbox
+    -q -s --tb=short`; `uv run python -m pytest
+    tests/capsem-build-chain/test_profile_payload_contract.py -q`; `uv run
+    ruff check tests/ironbank/test_agent_bootstrap.py
+    tests/capsem-build-chain/test_profile_payload_contract.py`; `sh -n
+    config/profiles/code/build.sh && sh -n config/profiles/co-work/build.sh`.
 
 ## S10. Packaging, Install, Docs, Release Gate
 

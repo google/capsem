@@ -193,10 +193,37 @@ def test_profiles_package_agent_bootstrap_without_baking_credentials() -> None:
             failures.append(f"{profile_id}: AGY settings bake auth material")
 
         build_script = build_path.read_text()
+        required_cleanup_paths = [
+            "/root/.antigravity/*oauth*",
+            "/root/.antigravity/*token*",
+            "/root/.claude/cache",
+            "/root/.claude/history",
+            "/root/.codex/cache",
+            "/root/.codex/history",
+            "/root/.gemini/cache",
+            "/root/.gemini/history",
+            "/root/.gemini/logs",
+            "/root/.gemini/tmp",
+        ]
+        if "cleanup_agent_runtime_state" not in build_script:
+            failures.append(f"{profile_id}: build script does not define agent runtime cleanup")
+        for cleanup_path in required_cleanup_paths:
+            if cleanup_path not in build_script:
+                failures.append(f"{profile_id}: build script does not clean {cleanup_path}")
         if "agy-real" not in build_script:
             failures.append(f"{profile_id}: AGY wrapper does not preserve vendor binary as agy-real")
         if "--dangerously-skip-permissions" not in build_script:
             failures.append(f"{profile_id}: AGY wrapper does not enable Capsem sandbox mode")
+        if "gemini-real" not in build_script:
+            failures.append(f"{profile_id}: Gemini wrapper does not expose vendor entrypoint as gemini-real")
+        if "gemini_target=\"$(readlink -f \"$gemini_path\")\"" not in build_script:
+            failures.append(f"{profile_id}: Gemini wrapper does not resolve the real npm entrypoint")
+        if 'ln -sfn "$gemini_target" "$gemini_dir/gemini-real"' not in build_script:
+            failures.append(f"{profile_id}: Gemini wrapper does not preserve vendor entrypoint by symlink")
+        if 'install -m 555 "$gemini_path" "$gemini_dir/gemini-real"' in build_script:
+            failures.append(f"{profile_id}: Gemini wrapper copies the JS entrypoint and breaks relative imports")
+        if "cleanup_gemini_runtime_state" not in build_script:
+            failures.append(f"{profile_id}: Gemini wrapper does not clean CLI runtime residue")
 
         codex = tomllib.loads((root_dir / "root/.codex/config.toml").read_text())
         command = codex.get("mcp_servers", {}).get("capsem", {}).get("command")

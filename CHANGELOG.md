@@ -69,6 +69,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Clarified the shared skills contract for profile `build.sh`: it is a
   rootfs-only build hook, not an installer/runtime/config path, and changes
   require profile descriptor updates, asset rebuilds, and black-box VM proof.
+- Hardened agent bootstrap packaging: profile build hooks now remove
+  installer-created OAuth/token/history/cache/log residue before rootfs
+  packaging, AGY runs through the Capsem sandbox wrapper by default, and Gemini
+  is wrapped without copying its npm entrypoint so relative JS chunk imports
+  still work. Ironbank now boots a fresh VM and proves AGY, Claude, Codex, and
+  Gemini bootstrap commands plus route/session ledgers from the outside.
 - Renamed the deterministic local fixture upstream to `capsem-mock-server` and
   made `CAPSEM_MOCK_SERVER_BASE_URL` the shared contract for doctor,
   integration, recorder, benchmark, and Ironbank-style black-box tests.
