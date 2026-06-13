@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed (route surfaces and diagnostics)
+- Fixed ARM Linux CI compilation for KVM checkpoint tests by keeping portable
+  checkpoint header decode coverage on every target while gating x86 KVM vCPU,
+  IRQ, PIT, and MMIO serialization tests to x86_64 where those structs exist.
 - Fixed CI release gates so Rust coverage no longer references the deleted
   `capsem-debug-upstream` crate and Python lint validates the top-level
   `skills/` library instead of the retired `config/skills` path.

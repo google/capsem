@@ -160,6 +160,33 @@ def test_ci_workflow_references_only_live_workspace_packages_and_skills() -> Non
     assert "validate-skills config/skills" not in workflow
 
 
+def test_kvm_checkpoint_x86_state_tests_are_arch_gated() -> None:
+    source = (PROJECT_ROOT / "crates" / "capsem-core" / "src" / "hypervisor" / "kvm" / "checkpoint.rs").read_text()
+    tests = source.split("#[cfg(test)]\nmod tests", maxsplit=1)[1]
+
+    assert "fn test_header() -> CheckpointHeader" in tests
+    assert "let header = test_header();" in tests
+    assert "CheckpointHeader::current" not in tests
+
+    x86_symbols = [
+        "fn snapshot(",
+        "fn vm_snapshot()",
+        "fn mmio(",
+        "fn writes_header_and_memory()",
+        "fn restores_memory_and_vcpu_state()",
+        "fn overwrites_atomically()",
+        "fn rejects_missing_parent()",
+        "fn removes_temp_file_after_create_failure()",
+        "fn restore_rejects_wrong_ram_size()",
+        "fn restore_rejects_wrong_vcpu_count()",
+        "fn restore_rejects_trailing_bytes()",
+    ]
+    for symbol in x86_symbols:
+        prefix = tests.split(symbol, maxsplit=1)[0].rsplit("\n", maxsplit=4)[0]
+        window = tests[len(prefix) : tests.find(symbol)]
+        assert '#[cfg(target_arch = "x86_64")]' in window
+
+
 def test_mock_server_has_no_rust_fixture_crate() -> None:
     root_cargo = (PROJECT_ROOT / "Cargo.toml").read_text()
     cli_cargo = (PROJECT_ROOT / "crates" / "capsem" / "Cargo.toml").read_text()

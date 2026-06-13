@@ -1743,6 +1743,21 @@ next one, and stage only the files for that slice.
     tests/capsem-build-chain/test_install_asset_payload.py::test_security_event_rows_go_through_security_engine_emitter
     -q` (`25 passed`); `uv run capsem-builder validate-skills skills`;
     `git diff --check`.
+  - 2026-06-13 Linux ARM CI correction: `test-linux` then exposed an
+    architecture-gate miss in `capsem-core` KVM checkpoint tests. Production
+    checkpoint serialization is already x86_64-only because it writes x86 KVM
+    vCPU, IRQ, PIT, and MMIO state, but the unit tests called
+    `CheckpointHeader::current()` and x86 snapshot helpers on every Linux
+    target. Header encode/decode coverage now remains portable on all targets,
+    while the full x86 checkpoint serialization tests are gated to x86_64.
+    Guard proof: `uv run python -m pytest
+    tests/test_release_doctor_contract.py::test_kvm_checkpoint_x86_state_tests_are_arch_gated
+    -q` (`1 passed`); `cargo check -p capsem-core --tests`; `uv run ruff
+    check tests/test_release_doctor_contract.py`; `git diff --check`. Local
+    `cargo check -p capsem-core --target aarch64-unknown-linux-gnu --tests`
+    was attempted after installing the Rust target but stopped in C dependency
+    build scripts because this Mac lacks `aarch64-linux-gnu-gcc`; remote Linux
+    ARM CI remains the authoritative compile proof for that target.
 
 ## Coverage Ledger
 

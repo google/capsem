@@ -192,5 +192,14 @@ prove the same rails without user credentials.
   tests/test_release_doctor_contract.py::test_mock_server_is_the_only_hermetic_fixture_server_contract
   -q`; focused release guard `25 passed`; `uv run capsem-builder
   validate-skills skills`.
+- Linux ARM CI drift found on 2026-06-13 after the workflow fix:
+  `capsem-core` KVM checkpoint tests still compiled x86 vCPU/IRQ/PIT/MMIO
+  helpers on ARM Linux even though production checkpoint serialization is
+  x86_64-only. Header encode/decode tests now stay portable, and the full
+  checkpoint serialization tests are gated to x86_64. Keep S10 open until the
+  pushed PR CI proves the ARM runner. Local proof: `uv run python -m pytest
+  tests/test_release_doctor_contract.py::test_kvm_checkpoint_x86_state_tests_are_arch_gated
+  -q`; `cargo check -p capsem-core --tests`; `uv run ruff check
+  tests/test_release_doctor_contract.py`; `git diff --check`.
 
 Those files remain evidence. This sprint is the execution authority.
