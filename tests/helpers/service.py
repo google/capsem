@@ -36,6 +36,25 @@ ARTIFACT_SKIP_NAMES = frozenset({
 ARTIFACT_MAX_KEPT_DIRS = 20  # rotate: keep only the N most-recent failure dirs
 
 
+def materialize_test_profiles(tmp_dir: Path) -> Path:
+    """Copy generated runtime profiles into a test run directory.
+
+    Checked-in profiles are source contracts and intentionally do not contain
+    asset hashes. VM-booting tests must use the materialized profiles generated
+    under target/config/profiles, matching the service/runtime rail.
+    """
+    profiles_dir = tmp_dir / "config" / "profiles"
+    if profiles_dir.exists():
+        return profiles_dir
+    if not PROFILES_DIR.exists():
+        raise RuntimeError(
+            f"generated profile directory missing: {PROFILES_DIR}. "
+            "Run `just _materialize-config` or a just recipe that depends on it."
+        )
+    shutil.copytree(PROFILES_DIR, profiles_dir)
+    return profiles_dir
+
+
 def preserve_tmp_dir_on_failure(tmp_dir):
     """Copy tmp_dir to test-artifacts/ when this worker saw any failure.
 
@@ -176,6 +195,7 @@ class ServiceInstance:
     def __init__(self):
         self.tmp_dir = Path(tempfile.mkdtemp(prefix="capsem-test-"))
         self.uds_path = self.tmp_dir / f"service-{uuid.uuid4().hex[:8]}.sock"
+        self.profiles_dir = None
         self.proc = None
         self._log_file = None
 
@@ -188,9 +208,11 @@ class ServiceInstance:
 
         arch = "arm64" if os.uname().machine == "arm64" else "x86_64"
         assets_dir = ASSETS_DIR / arch
-        if not PROFILES_DIR.exists():
+        if self.profiles_dir is None:
+            self.profiles_dir = materialize_test_profiles(self.tmp_dir)
+        if not self.profiles_dir.exists():
             raise RuntimeError(
-                f"generated profile directory missing: {PROFILES_DIR}. "
+                f"generated profile directory missing: {self.profiles_dir}. "
                 "Run `just _materialize-config` or a just recipe that depends on it."
             )
 
@@ -198,7 +220,7 @@ class ServiceInstance:
         env["RUST_LOG"] = "debug"
         env["CAPSEM_RUN_DIR"] = str(self.tmp_dir)
         env["CAPSEM_HOME"] = str(self.tmp_dir)
-        env["CAPSEM_PROFILES_DIR"] = str(PROFILES_DIR)
+        env["CAPSEM_PROFILES_DIR"] = str(self.profiles_dir)
         env["CAPSEM_CREDENTIAL_BROKER_TEST_STORE"] = str(
             self.tmp_dir / "credential-broker-store.json"
         )

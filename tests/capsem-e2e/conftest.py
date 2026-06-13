@@ -31,6 +31,7 @@ PROCESS_BINARY = PROJECT_ROOT / "target/debug/capsem-process"
 CLI_BINARY = PROJECT_ROOT / "target/debug/capsem"
 MCP_BINARY = PROJECT_ROOT / "target/debug/capsem-mcp"
 ASSETS_DIR = PROJECT_ROOT / "assets"
+PROFILES_DIR = PROJECT_ROOT / "target" / "config" / "profiles"
 
 pytestmark = pytest.mark.e2e
 
@@ -64,6 +65,12 @@ class RealService:
         env = os.environ.copy()
         env["RUST_LOG"] = "capsem=debug"
         env["CAPSEM_RUN_DIR"] = str(self.tmp_dir)
+        env["CAPSEM_HOME"] = str(self.tmp_dir)
+        env["CAPSEM_PROFILES_DIR"] = str(PROFILES_DIR)
+        env["CAPSEM_CREDENTIAL_BROKER_TEST_STORE"] = str(
+            self.tmp_dir / "credential-broker-test-store.json"
+        )
+        env["HOME"] = str(self.tmp_dir)
 
         log_path = self.tmp_dir / "service.log"
         stderr_path = self.tmp_dir / "service.stderr.log"

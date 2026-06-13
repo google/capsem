@@ -432,6 +432,22 @@ fn body_preview_cap(
     0
 }
 
+fn response_body_preview_cap(
+    ai_provider: Option<ProviderKind>,
+    domain: &str,
+    path: &str,
+    log_bodies: bool,
+    max_body: usize,
+    credential_ref: Option<&str>,
+) -> usize {
+    let cap = body_preview_cap(ai_provider, domain, path, log_bodies, max_body);
+    if credential_ref.is_some() {
+        cap.max(CREDENTIAL_BODY_PREVIEW)
+    } else {
+        cap
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 struct SecurityBoundaryDecisionFields {
     policy_mode: Option<String>,
@@ -2248,8 +2264,14 @@ async fn handle_request(
     // works even when log_bodies is off. Credential broker exchange
     // candidates get a smaller bounded preview for capture/redaction.
     // Other non-AI bodies follow the log_bodies / max_body_capture policy.
-    let mut resp_max_preview =
-        body_preview_cap(effective_ai_provider, domain, &path, log_bodies, max_body);
+    let mut resp_max_preview = response_body_preview_cap(
+        effective_ai_provider,
+        domain,
+        &path,
+        log_bodies,
+        max_body,
+        credential_ref.as_deref(),
+    );
     if observed_mcp_request.is_some() {
         resp_max_preview = resp_max_preview.max(MCP_BODY_PREVIEW);
     }
@@ -2718,6 +2740,25 @@ mod tests {
                 false,
                 0
             ),
+            0
+        );
+    }
+
+    #[test]
+    fn response_body_preview_cap_captures_broker_replay_proof_without_body_logging() {
+        assert_eq!(
+            response_body_preview_cap(
+                None,
+                "127.0.0.1",
+                "/echo",
+                false,
+                0,
+                Some("credential:blake3:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+            ),
+            CREDENTIAL_BODY_PREVIEW
+        );
+        assert_eq!(
+            response_body_preview_cap(None, "127.0.0.1", "/echo", false, 0, None),
             0
         );
     }

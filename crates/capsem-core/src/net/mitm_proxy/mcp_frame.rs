@@ -475,17 +475,7 @@ async fn log_mcp_call_with_policy(
     duration_ms: u64,
     policy_fields: McpCallPolicyFields,
 ) {
-    let tool_name = req
-        .params
-        .as_ref()
-        .and_then(|params| params.get("name"))
-        .and_then(|name| name.as_str());
-    let server_name = match tool_name {
-        Some(tool) => parse_namespaced(tool)
-            .map(|(server, _)| server)
-            .unwrap_or("gateway"),
-        None => "gateway",
-    };
+    let (server_name, tool_name) = mcp_log_attribution(req);
     let decision = if policy_fields
         .policy_action
         .as_deref()
@@ -529,9 +519,9 @@ async fn log_mcp_call_with_policy(
     let call = McpCall {
         event_id: None,
         timestamp: SystemTime::now(),
-        server_name: server_name.to_string(),
+        server_name,
         method: req.method.clone(),
-        tool_name: tool_name.map(String::from),
+        tool_name,
         request_id: req.id.as_ref().and_then(json_rpc_id_to_log_string),
         request_preview,
         response_preview,
@@ -879,6 +869,36 @@ fn param_str<'a>(req: &'a JsonRpcRequest, key: &str) -> Option<&'a str> {
         .and_then(|value| value.as_str())
 }
 
+fn mcp_log_attribution(req: &JsonRpcRequest) -> (String, Option<String>) {
+    match req.method.as_str() {
+        "tools/call" => {
+            let tool_name = param_str(req, "name").map(String::from);
+            let server_name = tool_name
+                .as_deref()
+                .and_then(parse_namespaced)
+                .map(|(server, _)| server.to_string())
+                .unwrap_or_else(|| "gateway".to_string());
+            (server_name, tool_name)
+        }
+        "resources/read" => {
+            let server_name = param_str(req, "uri")
+                .and_then(parse_resource_uri)
+                .map(|(server, _)| server.to_string())
+                .unwrap_or_else(|| "gateway".to_string());
+            (server_name, None)
+        }
+        "prompts/get" => {
+            let server_name = param_str(req, "name")
+                .and_then(parse_namespaced)
+                .map(|(server, _)| server.to_string())
+                .unwrap_or_else(|| "gateway".to_string());
+            (server_name, None)
+        }
+        "tools/list" | "resources/list" | "prompts/list" => ("*".to_string(), None),
+        _ => ("gateway".to_string(), None),
+    }
+}
+
 fn truncate_preview(input: &str, max_bytes: usize) -> String {
     if input.len() <= max_bytes {
         return input.to_string();
@@ -904,3 +924,6 @@ async fn write_frame<W: AsyncWrite + Unpin>(writer: &mut W, out: &OutboundFrame)
     writer.write_all(&bytes).await.context("write MCP frame")?;
     writer.flush().await.context("flush MCP frame")
 }
+
+#[cfg(test)]
+mod tests;

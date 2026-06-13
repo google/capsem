@@ -97,6 +97,7 @@ def _model_payload(model: str = "mock-local") -> dict:
 
 
 class MockHandler(BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
     server_version = "capsem-mock-server/1.0"
 
     def log_message(self, _format: str, *_args: object) -> None:
@@ -174,11 +175,13 @@ class MockHandler(BaseHTTPRequestHandler):
         elif path == "/slow-chunks":
             self.send_response(HTTPStatus.OK)
             self.send_header("content-type", "text/plain; charset=utf-8")
+            self.send_header("connection", "close")
             self.end_headers()
             for idx in range(4):
                 time.sleep(0.01)
                 self.wfile.write(f"chunk-{idx}\n".encode())
                 self.wfile.flush()
+            self.close_connection = True
         elif path == "/credential/response":
             self._send_json(
                 {
@@ -293,11 +296,21 @@ class MockHandler(BaseHTTPRequestHandler):
                                 "properties": {"url": {"type": "string"}},
                             },
                         },
+                        {
+                            "name": "slow_sleep",
+                            "description": "Sleep before returning deterministic text.",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {},
+                            },
+                        },
                     ]
                 },
             }
         elif method == "tools/call":
             name = payload.get("params", {}).get("name", "unknown")
+            if name == "slow_sleep":
+                time.sleep(3)
             response = {
                 "jsonrpc": "2.0",
                 "id": request_id,
@@ -306,6 +319,37 @@ class MockHandler(BaseHTTPRequestHandler):
                         {"type": "text", "text": f"capsem-mock-server:mcp:{name}"}
                     ],
                     "isError": False,
+                },
+            }
+        elif method == "resources/list":
+            response = {
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "result": {
+                    "resources": [
+                        {
+                            "uri": "doc://slow",
+                            "name": "slow-doc",
+                            "description": "Slow deterministic resource.",
+                            "mimeType": "text/plain",
+                        }
+                    ]
+                },
+            }
+        elif method == "resources/read":
+            if payload.get("params", {}).get("uri") == "doc://slow":
+                time.sleep(3)
+            response = {
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "result": {
+                    "contents": [
+                        {
+                            "uri": payload.get("params", {}).get("uri", "doc://unknown"),
+                            "mimeType": "text/plain",
+                            "text": "capsem-mock-server:mcp:resource",
+                        }
+                    ]
                 },
             }
         else:

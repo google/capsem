@@ -437,11 +437,13 @@ fn openai_non_streaming_response_summary(json: &serde_json::Value) -> NonStreami
 fn anthropic_non_streaming_response_summary(
     json: &serde_json::Value,
 ) -> NonStreamingResponseSummary {
-    let mut summary = NonStreamingResponseSummary::default();
-    summary.stop_reason = json
-        .get("stop_reason")
-        .and_then(|value| value.as_str())
-        .map(stop_reason_from_provider_string);
+    let mut summary = NonStreamingResponseSummary {
+        stop_reason: json
+            .get("stop_reason")
+            .and_then(|value| value.as_str())
+            .map(stop_reason_from_provider_string),
+        ..Default::default()
+    };
     let Some(content) = json.get("content").and_then(|value| value.as_array()) else {
         return summary;
     };
