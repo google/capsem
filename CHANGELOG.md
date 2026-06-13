@@ -52,6 +52,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   TCP, reported in its ready JSON, so doctor, recorder, benchmark, and
   Ironbank work can exercise DNS without public resolvers or a second fixture
   server.
+- Extended `capsem-mock-server` with a real local HTTPS listener that serves
+  the same deterministic fixtures as HTTP, giving doctor, recorder, benchmark,
+  and Ironbank work one protocol lab for HTTP, HTTPS/MITM, DNS, SSE,
+  WebSocket, MCP, OAuth, and model replay.
 - Extended the protocol fixture recorder to capture and replay DNS fixtures
   from `capsem-mock-server`, keeping DNS in the same sanitized fixture corpus
   as model, MCP, OAuth, credential, and HTTP-like flows.

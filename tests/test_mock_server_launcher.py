@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import socket
+import ssl
 import struct
 import threading
 import time
+from urllib.request import urlopen
 
 from helpers.mock_server import start_mock_server, stop_process
 
@@ -26,6 +28,21 @@ def test_mock_server_launcher_waits_for_busy_address_then_starts() -> None:
         proc, ready = start_mock_server(addr=addr, timeout_s=5, retry_interval_s=0.05)
         assert ready["service"] == "capsem-mock-server"
         assert ready["base_url"] == f"http://{addr}"
+    finally:
+        stop_process(proc)
+
+
+def test_mock_server_serves_https_fixture() -> None:
+    proc = None
+    try:
+        proc, ready = start_mock_server()
+        assert ready["service"] == "capsem-mock-server"
+        assert ready["https_base_url"].startswith("https://127.0.0.1:")
+        context = ssl._create_unverified_context()
+        with urlopen(f"{ready['https_base_url']}/tiny", context=context, timeout=2) as response:
+            assert response.status == 200
+            assert response.headers["content-type"] == "text/plain; charset=utf-8"
+            assert response.read() == b"capsem-mock-server:tiny\n"
     finally:
         stop_process(proc)
 

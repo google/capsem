@@ -9,12 +9,16 @@ import gzip
 import hashlib
 import json
 import socketserver
+import ssl
 import struct
+import subprocess
 import sys
+import tempfile
 import threading
 import time
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from urllib.parse import urlparse
 
 
@@ -519,21 +523,57 @@ class ThreadingTcpServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
 
 def _ready_payload(
     http_addr: tuple[str, int],
+    https_addr: tuple[str, int],
     dns_udp_addr: tuple[str, int],
     dns_tcp_addr: tuple[str, int],
 ) -> dict:
     host, port = http_addr
+    https_host, https_port = https_addr
     dns_udp_host, dns_udp_port = dns_udp_addr
     dns_tcp_host, dns_tcp_port = dns_tcp_addr
     return {
         "service": "capsem-mock-server",
         "http_addr": f"{host}:{port}",
         "base_url": f"http://{host}:{port}",
+        "https_addr": f"{https_host}:{https_port}",
+        "https_base_url": f"https://{https_host}:{https_port}",
         "dns_udp_addr": f"{dns_udp_host}:{dns_udp_port}",
         "dns_tcp_addr": f"{dns_tcp_host}:{dns_tcp_port}",
         "dns_fixtures": sorted(DNS_FIXTURES),
         "endpoints": ENDPOINTS,
     }
+
+
+def _tls_context(tmpdir: Path) -> ssl.SSLContext:
+    key_path = tmpdir / "mock-server.key"
+    cert_path = tmpdir / "mock-server.crt"
+    subprocess.run(
+        [
+            "openssl",
+            "req",
+            "-x509",
+            "-newkey",
+            "rsa:2048",
+            "-nodes",
+            "-keyout",
+            str(key_path),
+            "-out",
+            str(cert_path),
+            "-sha256",
+            "-days",
+            "1",
+            "-subj",
+            "/CN=127.0.0.1",
+            "-addext",
+            "subjectAltName=IP:127.0.0.1,DNS:localhost",
+        ],
+        check=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.load_cert_chain(certfile=cert_path, keyfile=key_path)
+    return context
 
 
 def main() -> int:
@@ -542,12 +582,17 @@ def main() -> int:
     args = parser.parse_args()
     host, port_text = args.addr.rsplit(":", 1)
     server = ThreadingHTTPServer((host, int(port_text)), MockHandler)
+    tls_tmpdir = tempfile.TemporaryDirectory(prefix="capsem-mock-server-tls-")
+    tls_context = _tls_context(Path(tls_tmpdir.name))
+    https_server = ThreadingHTTPServer((host, 0), MockHandler)
+    https_server.socket = tls_context.wrap_socket(https_server.socket, server_side=True)
     dns_udp = ThreadingUdpServer((host, 0), DnsUdpHandler)
     dns_tcp = ThreadingTcpServer((host, 0), DnsTcpHandler)
     print(
         json.dumps(
             _ready_payload(
                 server.server_address,
+                https_server.server_address,
                 dns_udp.server_address,
                 dns_tcp.server_address,
             )
@@ -556,6 +601,7 @@ def main() -> int:
     )
     threads = [
         threading.Thread(target=server.serve_forever, daemon=True),
+        threading.Thread(target=https_server.serve_forever, daemon=True),
         threading.Thread(target=dns_udp.serve_forever, daemon=True),
         threading.Thread(target=dns_tcp.serve_forever, daemon=True),
     ]
@@ -567,9 +613,10 @@ def main() -> int:
     except KeyboardInterrupt:
         pass
     finally:
-        for fixture_server in (server, dns_udp, dns_tcp):
+        for fixture_server in (server, https_server, dns_udp, dns_tcp):
             fixture_server.shutdown()
             fixture_server.server_close()
+        tls_tmpdir.cleanup()
     return 0
 
 

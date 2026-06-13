@@ -371,7 +371,7 @@ next one, and stage only the files for that slice.
     scripts/integration_test.py`; `rg -n
     "GEMINI_API_KEY|GOOGLE_API_KEY|googleapis\\.com|include_gemini_probe|expect_model_calls"
     scripts/integration_test.py` is quiet.
-- [ ] GREEN: one local protocol lab serves HTTP, HTTPS/MITM, DNS, SSE,
+- [x] GREEN: one local protocol lab serves HTTP, HTTPS/MITM, DNS, SSE,
   WebSocket, MCP JSON-RPC, OAuth/OIDC, and model fixture replay.
   - 2026-06-12 progress: the shared mock server now serves protocol-shaped
     OAuth authorize/token fixtures and MCP JSON-RPC fixtures alongside the
@@ -413,6 +413,20 @@ next one, and stage only the files for that slice.
     tests/test_protocol_fixture_recorder.py tests/test_mock_server_launcher.py`;
     `python3 -m py_compile scripts/protocol_fixture_recorder.py
     scripts/mock_server_runtime.py scripts/mock_server.py`.
+  - 2026-06-13 progress: the same Python runtime now exposes
+    `https_addr`/`https_base_url` and serves `/tiny` over a local TLS listener
+    with the same request handler as HTTP. HTTPS fixture traffic is therefore
+    in the shared protocol lab; Capsem MITM interception remains covered by the
+    doctor/network routes that consume this lab.
+  - Proof: RED `uv run python -m pytest
+    tests/test_mock_server_launcher.py::test_mock_server_serves_https_fixture
+    -q` failed on missing `https_base_url`; GREEN `uv run python -m pytest
+    tests/test_mock_server_launcher.py::test_mock_server_serves_https_fixture
+    tests/test_mock_server_launcher.py tests/test_protocol_fixture_recorder.py
+    -q`; `uv run ruff check scripts/mock_server_runtime.py
+    tests/test_mock_server_launcher.py tests/test_protocol_fixture_recorder.py`;
+    `python3 -m py_compile scripts/mock_server_runtime.py
+    tests/test_mock_server_launcher.py tests/test_protocol_fixture_recorder.py`.
 - [ ] RED/GREEN: every protocol lab case is a full-chain acceptance spec, not
   a status-code replay.
   - Suite home: `tests/ironbank/`.
