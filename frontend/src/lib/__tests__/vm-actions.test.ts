@@ -34,4 +34,19 @@ describe('vm-actions', () => {
     expect(hasVmAction(stopped, 'start')).toBe(true);
     expect(canOpenSession(stopped)).toBe(true);
   });
+
+  it('caps terminal sessions to delete-only even if stale actions leak through', () => {
+    const incompatible = vm('Incompatible', ['start', 'fork', 'delete']);
+    const defunct = vm('Defunct', ['resume', 'fork', 'delete']);
+
+    expect(hasVmAction(incompatible, 'start')).toBe(false);
+    expect(hasVmAction(incompatible, 'fork')).toBe(false);
+    expect(hasVmAction(incompatible, 'delete')).toBe(true);
+    expect(canOpenSession(incompatible)).toBe(false);
+
+    expect(hasVmAction(defunct, 'resume')).toBe(false);
+    expect(hasVmAction(defunct, 'fork')).toBe(false);
+    expect(hasVmAction(defunct, 'delete')).toBe(true);
+    expect(canOpenSession(defunct)).toBe(false);
+  });
 });

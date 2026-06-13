@@ -932,8 +932,17 @@ next one, and stage only the files for that slice.
     src/lib/__tests__/session-language-contract.test.ts
     src/lib/__tests__/profile-page-contract.test.ts`; `pnpm --dir frontend
     check`.
-- [ ] RED/GREEN: incompatible/defunct sessions are greyed and expose only valid
+- [x] RED/GREEN: incompatible/defunct sessions are greyed and expose only valid
   actions.
+  - 2026-06-13 progress: the shared VM action helper now treats
+    `Incompatible` and `Defunct` as terminal states and caps them to
+    delete-only even if a stale `/status` payload includes `start`, `resume`,
+    or `fork`. Dashboard rows already use this helper for clickability and
+    action rendering.
+  - Proof: RED/GREEN `pnpm --dir frontend test
+    src/lib/__tests__/vm-actions.test.ts
+    src/lib/__tests__/session-language-contract.test.ts`; `pnpm --dir
+    frontend check`.
 - [ ] RED/GREEN: profile selection is route-backed and works with both `code`
   and `co-work`.
   - 2026-06-13 progress: Profile overview still uses the route-backed profile

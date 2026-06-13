@@ -1,11 +1,16 @@
 import type { VmAction, VmSummary } from './types/gateway';
 
-export function hasVmAction(vm: Pick<VmSummary, 'available_actions'>, action: VmAction): boolean {
+function isTerminalSession(vm: Pick<VmSummary, 'status'>): boolean {
+  return vm.status === 'Defunct' || vm.status === 'Incompatible';
+}
+
+export function hasVmAction(vm: Pick<VmSummary, 'status' | 'available_actions'>, action: VmAction): boolean {
+  if (isTerminalSession(vm) && action !== 'delete') return false;
   return vm.available_actions.includes(action);
 }
 
 export function canOpenSession(vm: Pick<VmSummary, 'status' | 'available_actions'>): boolean {
-  return vm.status !== 'Defunct' && vm.status !== 'Incompatible';
+  return !isTerminalSession(vm);
 }
 
 export function startLabel(vm: Pick<VmSummary, 'status'>): string {
