@@ -280,5 +280,14 @@ prove the same rails without user credentials.
   `test_pr_ci_python_coverage_is_not_a_monolithic_vm_tree_rerun` failed on the
   monolithic command; GREEN same guard plus the exact workflow coverage command
   (`773 passed, 9 skipped`, `90.09%` total coverage, `26.44s`).
+- Follow-up PR CI Python coverage drift found on 2026-06-13: the explicit
+  Python suite passed on macOS CI but reported `89.47%` coverage under Python
+  3.14.5, below the `90%` contract. The repair adds real adversarial dev-skill
+  contract coverage for malformed frontmatter, symlinked files/roots, empty
+  libraries, hidden directories, file entries, missing `SKILL.md`, empty
+  bodies, invalid ids, duplicate keys, and quoted values. Local proof:
+  `uv run python -m pytest tests/test_skills.py -q` (`23 passed`); exact
+  workflow coverage command now reports `789 passed, 9 skipped`, `90.75%`
+  total coverage.
 
 Those files remain evidence. This sprint is the execution authority.

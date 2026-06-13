@@ -1857,6 +1857,15 @@ next one, and stage only the files for that slice.
     -q` failed on the monolithic command; GREEN same guard and exact workflow
     coverage command passed locally with `773 passed, 9 skipped`, coverage
     `90.09%`, wall time `26.44s`.
+  - Remote follow-up: PR CI run `27476132439` passed the explicit Python
+    contract suite (`773 passed, 9 skipped`) but failed the coverage gate at
+    `89.47%` on macOS/Python 3.14.5. The correction adds adversarial
+    dev-skill validation coverage for malformed frontmatter, symlinked
+    documents/roots, hidden directories, file entries, missing `SKILL.md`,
+    empty roots, empty bodies, invalid ids, duplicate keys, and quoted values.
+    Proof: `uv run python -m pytest tests/test_skills.py -q` (`23 passed`);
+    exact CI coverage command now passes locally with `789 passed, 9 skipped`,
+    coverage `90.75%`.
 
 ## Coverage Ledger
 

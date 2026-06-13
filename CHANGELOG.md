@@ -11,7 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed PR CI Python coverage so the schema/builder coverage step runs the
   explicit Python contract suite that exercises `src/capsem`, instead of
   replaying VM, serial, install, MCP, service, and Ironbank suites under one
-  monolithic `pytest tests/ --cov` command.
+  monolithic `pytest tests/ --cov` command; the gate now also covers malformed
+  dev skill frontmatter, symlink, empty-root, and bad-entry cases so remote
+  runner coverage drift no longer drops the Python gate below threshold.
 - Fixed PR CI frontend coverage by moving generated settings/mock fixture
   creation onto a shared `scripts/generate-settings.sh` rail, running that rail
   before frontend build/check in CI, declaring the Vitest coverage provider,
