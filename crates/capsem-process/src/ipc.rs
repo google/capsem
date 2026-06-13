@@ -743,7 +743,8 @@ pub(crate) async fn handle_ipc_connection(
                             return;
                         }
                     };
-                    let servers = runtime_config.mcp_servers(None, std::collections::HashMap::new());
+                    let servers =
+                        runtime_config.mcp_servers(None, std::collections::HashMap::new());
                     match mcp.aggregator.refresh(servers).await {
                         Ok(()) => {
                             capsem_core::try_send!(

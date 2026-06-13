@@ -87,6 +87,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Moved frontend MCP controls off settings-backed `mcp.servers.*` mutation and
   onto profile-scoped MCP routes. Settings now stays focused on UI/app
   preferences, while the Profile surface owns rules, plugins, MCP, and assets.
+- Moved `capsem-process` and the built-in MCP server onto the materialized
+  runtime profile directory. Runtime rules, plugins, MCP, model endpoints, and
+  service-supplied corp overlays now load from the profile contract instead of
+  global settings/user config files.
 - Updated the Sessions launcher to render profile-owned icon/name/description
   from `/profiles/list`, check assets per profile, show a download action while
   assets are missing/downloading, and pass the selected `profile_id` on VM

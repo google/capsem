@@ -5,6 +5,7 @@
 //! file/snapshot tools (when CAPSEM_SESSION_DIR is set).
 //!
 //! Config via environment variables:
+//! - CAPSEM_PROFILE_DIR: Profile directory whose security rules/plugins govern tools.
 //! - CAPSEM_SESSION_DIR: Session directory (parent of workspace). Enables snapshot tools.
 //! - CAPSEM_SESSION_DB: Path to session DB for telemetry (optional)
 
@@ -24,7 +25,9 @@ use tracing::info;
 use capsem_core::auto_snapshot::AutoSnapshotScheduler;
 use capsem_core::mcp::types::JsonRpcResponse;
 use capsem_core::mcp::{builtin_tools, file_tools};
-use capsem_core::net::policy_config::{SecurityPluginConfig, SecurityRuleSet};
+use capsem_core::net::policy_config::{
+    Profile, ProviderRuleProfile, SecurityPluginConfig, SecurityRuleSet, SecurityRuleSource,
+};
 use capsem_logger::DbWriter;
 
 // -- Tool parameter types --
@@ -466,10 +469,20 @@ async fn main() -> Result<()> {
         }
     }
 
-    let (user_sf, corp_sf) = capsem_core::net::policy_config::load_settings_and_corp_files();
-    let merged = capsem_core::net::policy_config::MergedPolicies::from_files(&user_sf, &corp_sf);
-    let security_rules = Arc::new(merged.security_rules);
-    let plugin_policy = Arc::new(merged.plugins);
+    let profile_dir = std::env::var("CAPSEM_PROFILE_DIR")
+        .map_err(|_| anyhow::anyhow!("CAPSEM_PROFILE_DIR is required"))?;
+    let profile = Profile::load_from_dir(&profile_dir).map_err(anyhow::Error::msg)?;
+    let config = profile.config();
+    let security_rules = Arc::new(
+        config
+            .compile_security_rule_set_from_files(profile.config_root(), SecurityRuleSource::User)
+            .map_err(anyhow::Error::msg)?,
+    );
+    let mut plugins = ProviderRuleProfile::builtin_security_defaults().plugins;
+    for (plugin_id, config) in &config.plugins {
+        plugins.insert(plugin_id.clone(), *config);
+    }
+    let plugin_policy = Arc::new(plugins);
 
     // Session DB writer (optional).
     let db = match std::env::var("CAPSEM_SESSION_DB") {

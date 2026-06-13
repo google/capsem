@@ -55,6 +55,17 @@ next one, and stage only the files for that slice.
   `user_config_path`, or `load_settings_files` fails the contract.
 - [x] GREEN: remove the legacy user config rail from service/runtime/broker/MCP
   tests/benchmarks/helpers.
+  - 2026-06-13 follow-up: `capsem-process` now loads runtime rules, plugins,
+    network policy, MCP, and model endpoints from the materialized
+    `--profile-dir` plus service-written `runtime-overlay.toml`; the built-in
+    MCP server requires `CAPSEM_PROFILE_DIR` and compiles its security
+    rules/plugins from that same profile directory instead of calling
+    settings/corp loaders.
+  - Proof: `cargo test -p capsem-process runtime_config -- --nocapture`;
+    `cargo test -p capsem-service runtime_profile -- --nocapture`;
+    `cargo test -p capsem-mcp-builtin --no-run`; `cargo check -p
+    capsem-process -p capsem-mcp-builtin`; and `cargo test -p capsem-process
+    --no-run`.
 - [x] RED/GREEN: prove old behavior-owned settings were not merely renamed to
   `settings.toml`; profile behavior belongs under profile files and settings
   remains UI/application preferences only.

@@ -367,10 +367,11 @@ async fn run_async_main_loop(
         "CAPSEM_SESSION_DB".into(),
         db_path.to_string_lossy().to_string(),
     );
-    let mcp_servers = runtime_config.mcp_servers(
-        builtin_bin.as_deref(),
-        builtin_env,
+    builtin_env.insert(
+        "CAPSEM_PROFILE_DIR".into(),
+        runtime_config.profile_dir.to_string_lossy().to_string(),
     );
+    let mcp_servers = runtime_config.mcp_servers(builtin_bin.as_deref(), builtin_env);
     let snap_auto_max = 10usize;
     let snap_manual_max = 12usize;
     let snap_interval = 300u64;
