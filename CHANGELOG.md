@@ -82,6 +82,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Extended gateway `/status` to preserve the service profile catalog and
   installed asset manifest provenance, including profile readiness, manifest
   origin/source/hash, validation status, and current asset/binary versions.
+- Included installed asset manifest provenance in support bundles so debug
+  reports preserve the manifest origin/source/hash trail alongside the active
+  asset manifest.
 - Tightened the Ironbank doctor ledger gate so local-network `ask` decisions,
   informational detections, serialized detection payloads, and security plugin
   execution timings are proven from session DB rows instead of only counted.

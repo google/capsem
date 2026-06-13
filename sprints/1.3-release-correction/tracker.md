@@ -1492,6 +1492,17 @@ next one, and stage only the files for that slice.
     tests/capsem-gateway/test_gw_status.py -q` (`5 passed`); `uv run ruff
     check tests/capsem-gateway/conftest.py
     tests/capsem-gateway/test_gw_status.py`.
+  - 2026-06-13 progress: support bundles now include
+    `assets/manifest-origin.json` and list it in the support manifest, so bug
+    reports carry the installed manifest provenance trail instead of only the
+    resolved asset manifest.
+  - Proof: RED `cargo test -p capsem
+    bundle_includes_asset_manifest_origin_provenance -- --nocapture` failed
+    because the support bundle omitted `assets/manifest-origin.json`; GREEN
+    `cargo test -p capsem
+    bundle_includes_asset_manifest_origin_provenance -- --nocapture`;
+    `cargo test -p capsem support_bundle -- --nocapture` (`8 passed`);
+    `cargo fmt --check`.
 - [ ] Proof: changelog, docs, skills, and benchmark docs updated.
 - [ ] Proof: full final gates pass and branch is pushed.
 

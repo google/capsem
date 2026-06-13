@@ -349,6 +349,31 @@ pub fn run_with_opts(opts: Opts) -> Result<PathBuf> {
             });
         }
     }
+    {
+        let path = home.join("assets").join("manifest-origin.json");
+        let entry_path = format!("{bundle_root}/assets/manifest-origin.json");
+        if let Ok(bytes) = fs::read(&path) {
+            let len = bytes.len() as u64;
+            add_bytes(&mut tar, &entry_path, &bytes)?;
+            sections.push(Section {
+                path: entry_path,
+                kind: "json",
+                bytes: Some(len),
+                missing: false,
+                reason: None,
+                truncated_to_last_bytes: None,
+            });
+        } else {
+            sections.push(Section {
+                path: entry_path,
+                kind: "json",
+                bytes: None,
+                missing: true,
+                reason: Some("file-not-found".into()),
+                truncated_to_last_bytes: None,
+            });
+        }
+    }
 
     // -- configs (redacted) --
     for name in ["settings.toml", "corp.toml", "corp-source.json"] {

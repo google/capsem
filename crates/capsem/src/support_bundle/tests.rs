@@ -170,6 +170,54 @@ fn bundle_marks_missing_files_in_manifest() {
 }
 
 #[test]
+fn bundle_includes_asset_manifest_origin_provenance() {
+    let _g = ENV_LOCK.lock().unwrap();
+    let dir = fake_capsem_home();
+    let home = dir.path();
+    write(
+        &home.join("assets/manifest.json"),
+        br#"{"format":2,"refresh_policy":"24h","assets":{"current":"2026.0613.1","releases":{}},"binaries":{"current":"1.3.0","releases":{}}}"#,
+    );
+    write(
+        &home.join("assets/manifest-origin.json"),
+        br#"{"schema":"capsem.manifest_origin.v1","origin":"package","source":"file:///tmp/corp/manifest.json","packaged_at":"2026-06-13T00:00:00Z"}"#,
+    );
+
+    let out = crate::support_bundle::run(None, 0, false, false).unwrap();
+    let entries = read_tar_entries(&out);
+
+    let origin_entry = entries
+        .iter()
+        .find(|(p, _)| p.ends_with("assets/manifest-origin.json"))
+        .expect("asset manifest origin provenance should be in support bundle");
+    let origin: serde_json::Value = serde_json::from_slice(&origin_entry.1).unwrap();
+    assert_eq!(origin["schema"], "capsem.manifest_origin.v1");
+    assert_eq!(origin["origin"], "package");
+    assert_eq!(origin["source"], "file:///tmp/corp/manifest.json");
+
+    let manifest_text = std::str::from_utf8(
+        &entries
+            .iter()
+            .find(|(p, _)| p.ends_with("/manifest.json") && !p.contains("/assets/"))
+            .unwrap()
+            .1,
+    )
+    .unwrap();
+    let manifest: serde_json::Value = serde_json::from_str(manifest_text).unwrap();
+    let sections = manifest["sections"].as_array().unwrap();
+    assert!(
+        sections.iter().any(|section| {
+            section["path"]
+                .as_str()
+                .is_some_and(|path| path.ends_with("assets/manifest-origin.json"))
+                && section["missing"].as_bool() != Some(true)
+                && section["kind"].as_str() == Some("json")
+        }),
+        "manifest-origin section missing from support manifest: {sections:#?}"
+    );
+}
+
+#[test]
 fn bundle_includes_runtime_boundary_debug_contract() {
     let _g = ENV_LOCK.lock().unwrap();
     let _dir = fake_capsem_home();
