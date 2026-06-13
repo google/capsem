@@ -796,6 +796,10 @@ next one, and stage only the files for that slice.
     check guest/artifacts/diagnostics/test_network.py
     tests/test_release_doctor_contract.py`; `python3 -m py_compile
     guest/artifacts/diagnostics/test_network.py tests/test_release_doctor_contract.py`.
+  - Fresh VM proof after the denied POST change:
+    `CAPSEM_TEST_PRESERVE_ALWAYS=1 uv run python -m pytest
+    tests/ironbank/test_doctor_ledger.py::test_capsem_doctor_pays_protocol_and_security_ledger_debt
+    -q -s --tb=short` (`1 passed in 31.61s`).
 - [ ] RED/GREEN: doctor verifies DB ledger rows and rule/plugin evidence for
   allow/ask/block/disable/rewrite/pre/post/detection levels.
   - 2026-06-12 progress: `tests/ironbank/test_doctor_ledger.py` now proves the
