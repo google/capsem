@@ -11,11 +11,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Tightened the profile-derived image/config contract in docs and developer
   skills: `config/` is now documented as settings/corp/profiles/docker/data,
   `capsem-admin` is explicitly a validator/materializer/build tool rather
-  than a config authority, stale `guest/config` authoring guidance is removed
-  from active docs, and `capsem-admin image build --dry-run` is no longer a
-  public product rail. The internal settings UI metadata parser no longer
-  calls itself a registry, preserving the rule that profiles and corp own
-  runtime truth while settings only describe UI/application preferences.
+  than a config authority, stale `guest/config` authoring and source-profile
+  pin language is removed from active docs/skills, and `capsem-admin image
+  build --dry-run` is no longer a public product rail. The internal settings UI
+  metadata parser no longer calls itself a registry, preserving the rule that
+  profiles and corp own runtime truth while settings only describe
+  UI/application preferences; private capsem-admin scaffold helpers are now
+  burned by a guard test too.
 - Burned the public `capsem-builder build`, `validate`, `inspect`, and
   `--dry-run` rails so product image/config work can only enter through
   profile-owned config plus `capsem-admin`; docs, skills, and CLI tests now
@@ -442,9 +444,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   build`, build ledgers, and OBOM evidence instead of retired builder
   scaffolding or image-owned provider configuration.
 - Added the first profile mutation rail: enforcement and detection rule files
-  are now hash-pinned profile files, `Profile` owns core status/check/download
-  and MCP tool permission mutation, backend-managed rules carry typed
-  ownership annotations, and profile mutations have a DB-writer ledger event.
+  are now profile-owned files, `Profile` owns core status/check/download and
+  MCP tool permission mutation, backend-managed rules carry typed ownership
+  annotations, and profile mutations have a DB-writer ledger event.
 - Wired service profile routes onto that rail: profile status now verifies
   pinned profile files plus asset hashes, profile asset ensure repairs corrupt
   hash-prefixed assets, MCP tool permission edits write managed profile

@@ -38,7 +38,7 @@ config/
     build.sh              Profile image build hook
     tips.txt              Profile guest tips
     root/                 Guest / seed, projected by capsem-init
-target/config/            Generated runtime config with resolved pins
+target/config/            Generated runtime config with asset/file evidence
 guest/artifacts/          Core guest payloads: init, doctor, diagnostics, bench
 assets/                   Generated VM assets
 packages/                 Generated native packages
@@ -106,16 +106,14 @@ rendered rootfs package lists, profile root/build-script inputs, EROFS config,
 git revision, and project version. Installed-package/component truth belongs in
 the CycloneDX OBOM, not the build ledger.
 
-## Profile Payload Pins
+## Profile Source And Generated Evidence
 
-Profile sibling files are ledgered, but agents must not hand-edit their
-`hash` or `size` fields in `profile.toml`. Payload pins are produced by the
-profile-derived build rail. If editing `apt-packages.txt`, `python-requirements.txt`,
-`npm-packages.txt`, `build.sh`, rules, MCP declarations, tips, or root seed
-files makes `capsem-admin profile check` fail, run the supported admin pin
-refresh command. If that command is missing or incomplete, implement it in
-`capsem-admin` with tests before changing the payload. Do not "just fix the
-hash" in TOML.
+Profile sibling files are ledgered source inputs, but agents must not add or
+hand-edit `hash` or `size` fields in `profile.toml`. If editing
+`apt-packages.txt`, `python-requirements.txt`, `npm-packages.txt`, `build.sh`,
+rules, MCP declarations, tips, or root seed files makes
+`capsem-admin profile check` fail, fix the source contract or the
+validation/materialization rail with tests. Do not "just fix the hash" in TOML.
 
 Generated runtime asset URLs/hashes belong in `target/config` after
 `capsem-admin profile materialize`, not in checked-in source TOML.
@@ -125,11 +123,9 @@ Generated runtime asset URLs/hashes belong in `target/config` after
 1. Edit the profile-owned package file, for example
    `config/profiles/code/apt-packages.txt`,
    `python-requirements.txt`, or `npm-packages.txt`.
-2. Refresh payload pins through `capsem-admin`; if that path is missing, add it
-   before proceeding.
-3. Run the admin/profile validation path.
-4. Run `just build-assets code` to rebuild the rootfs.
-5. Verify with `capsem-doctor` inside a booted VM.
+2. Run the admin/profile validation path.
+3. Run `just build-assets code` to rebuild the rootfs.
+4. Verify with `capsem-doctor` inside a booted VM.
 
 Do not edit generated Dockerfiles. Docker templates live under `config/docker/`.
 

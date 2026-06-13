@@ -39,7 +39,7 @@ flowchart TD
     end
 
     subgraph stage0["0. VM images (first-time only)"]
-        PROFILE["config/profiles/<id>/profile.toml\n+ pinned sibling files"]
+        PROFILE["config/profiles/<id>/profile.toml\n+ referenced sibling files"]
         ADMIN["capsem-admin image build"]
         BUILDER["capsem-builder\nbackend"]
         DOCKER["Docker (via Colima)"]

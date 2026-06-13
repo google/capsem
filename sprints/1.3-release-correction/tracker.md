@@ -79,7 +79,7 @@ next one, and stage only the files for that slice.
   bootstrap root files.
   - 2026-06-11 progress: `capsem-admin profile check` now verifies copied
     workspace profiles with the same strict payload/hash/root-manifest rail as
-    source profiles, rejects malformed pinned `mcp.json` even when its
+    source profiles, rejects malformed `mcp.json` even when its
     BLAKE3/size match, and rejects empty pinned package files through the same
     parser used by image workspace generation. Remaining S1 work: make
     any still-missing generated config surfaces equally explicit before closing
@@ -97,7 +97,7 @@ next one, and stage only the files for that slice.
     test fixtures in `tests/fixtures`. Source profiles no longer carry
     generated `hash`/`size` pins; `capsem-admin profile validate/check` rejects
     source pins, while `capsem-admin profile materialize` writes resolved asset
-    and profile-file pins into the materialized runtime profile.
+    and profile-file evidence into the materialized runtime profile.
   - Proof: `cargo test -p capsem-admin`; `cargo test -p capsem-core
     profile_contract`; `uv run python -m pytest
     tests/capsem-build-chain/test_source_profiles_unpinned.py
@@ -126,11 +126,20 @@ next one, and stage only the files for that slice.
     image workspaces are implementation details; `capsem-admin` is a tool,
     not a config owner; and `capsem-admin image build --dry-run` is rejected
     as an escape hatch.
+  - 2026-06-13 final config/admin wording burn: active docs and skills now
+    reject source-profile pin language (`hash-pinned sibling`, `file pins`,
+    `payload pins`, `BLAKE3/size pins`, `source pins`, and `resolved pins`).
+    `capsem-admin` also no longer carries private test-only scaffold helpers
+    named like old init commands; a Python guard keeps those fossils burned.
   - Proof: `cargo test -p capsem-admin -- --nocapture`; `uv run python -m
     pytest tests/test_config.py tests/test_cli.py
     tests/test_release_doctor_contract.py::test_config_contract_has_no_admin_or_registry_authority
     tests/test_release_doctor_contract.py::test_builder_has_no_guest_scaffold_authoring_rail
     tests/capsem-build-chain/test_active_docs_profile_contract.py -q`.
+  - Proof: `uv run python -m pytest
+    tests/capsem-build-chain/test_capsem_admin_surface_contract.py
+    tests/capsem-build-chain/test_active_docs_profile_contract.py -q`;
+    `cargo test -p capsem-admin -- --nocapture`.
   - Proof: `cargo run -p capsem-admin -- image build --help`; `cargo test -p
     capsem-admin image_build_rejects_dry_run_escape_hatch -- --nocapture`;
     `cargo test -p capsem-admin -- --nocapture`; `uv run python -m pytest

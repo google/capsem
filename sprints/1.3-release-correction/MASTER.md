@@ -179,8 +179,10 @@ prove the same rails without user credentials.
   `capsem-builder init/new/add` and `scaffold.py` are deleted, and
   `capsem-admin` rejects burned authoring verbs (`profile init`,
   `settings init`, rule compile, manifest verify, image plan/workspace/verify).
+  Source profile hash/pin wording is also guarded out of active docs/skills,
+  and private capsem-admin scaffold helper names are guarded out of the crate.
   Proof: full `cargo test -p capsem-admin -- --nocapture` plus focused Python
-  config/CLI/active-doc guard suite.
+  config/CLI/active-doc/admin-surface guard suite.
 - Backend CLI burn proof on 2026-06-13: public `capsem-builder build`,
   `validate`, `inspect`, and `--dry-run` are gone. `capsem-builder` is now a
   backend helper surface only (`doctor`, `validate-skills`, `agent`, `audit`,

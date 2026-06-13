@@ -18,9 +18,13 @@ ACTIVE_DOCS_AND_SKILLS = [
     PROJECT_ROOT / "docs/src/content/docs/development/just-recipes.md",
     PROJECT_ROOT / "docs/src/content/docs/development/stack.md",
     PROJECT_ROOT / "docs/src/content/docs/security/plugins/credential-broker.md",
+    PROJECT_ROOT / "skills/asset-pipeline/SKILL.md",
     PROJECT_ROOT / "skills/build-images/SKILL.md",
     PROJECT_ROOT / "skills/build-initrd/SKILL.md",
+    PROJECT_ROOT / "skills/dev-capsem/SKILL.md",
     PROJECT_ROOT / "skills/dev-just/SKILL.md",
+    PROJECT_ROOT / "skills/dev-skills/SKILL.md",
+    PROJECT_ROOT / "skills/dev-sprint/SKILL.md",
     PROJECT_ROOT / "skills/dev-testing-frontend/SKILL.md",
     PROJECT_ROOT / "skills/dev-testing-python/SKILL.md",
 ]
@@ -54,6 +58,16 @@ STALE_GUIDANCE = [
     "AI providers declare how their CLI gets installed",
     "providers are allowed out of the box",
     "rootfs.squashfs",
+    "hash-pinned sibling",
+    "pinned sibling files",
+    "BLAKE3/size pins",
+    "file pins",
+    "payload pins",
+    "admin pin",
+    "profile payload pins",
+    "Refresh payload pins",
+    "resolved pins",
+    "source pins",
 ]
 
 

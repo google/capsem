@@ -65,10 +65,10 @@ Use `build.sh` only for rootfs construction work that cannot live in the boring
 profile package files: vendor shell installers, binary tarball installs,
 system-path wrappers, and build-time cleanup. Do not put credentials, corp
 policy, provider state, MCP decisions, runtime settings, or user repair logic
-there. After changing it, refresh profile payload pins through `capsem-admin`,
-rebuild assets, boot a fresh VM, and pay the Ironbank proof for the
-user-visible behavior. Never hand-edit profile payload hashes or sizes; if the
-admin command is missing, build that rail with tests first.
+there. After changing it, run `capsem-admin profile check`, rebuild assets,
+boot a fresh VM, and pay the Ironbank proof for the user-visible behavior.
+Never hand-edit profile payload hashes or sizes; if validation fails, fix the
+source contract or the materialization rail with tests.
 
 `config/skills` is not a development skill location. Read `config/README.md`
 before adding any profile-owned skill payload, and keep repository development

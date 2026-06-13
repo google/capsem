@@ -86,10 +86,11 @@ Keep profile/config ownership crisp:
   profile payloads, generated settings artifacts, or config test fixtures.
 - Checked-in `config/profiles/<id>/profile.toml` is source contract, not a
   scratchpad for local asset or payload hashes.
-- Profile sibling payload pins are admin-owned. Do not hand-edit `hash` or
-  `size` fields after changing `build.sh`, package files, rules, MCP files,
-  tips, or root seed manifests. Refresh them through `capsem-admin`; if that
-  command does not exist, implementing it with tests is the next task.
+- Profile sibling files are source inputs. Do not add `hash` or `size` fields
+  to source `profile.toml` after changing `build.sh`, package files, rules,
+  MCP files, tips, or root seed manifests. Generated hashes belong in
+  `target/config`, asset manifests, OBOMs, or root manifests, never in the
+  checked-in profile source.
 - Current asset URLs/hashes from `assets/manifest.json` are materialized into
   `target/config` through the same `capsem-admin`/just rail used by CI and
   release. Do not commit ad hoc `target/config` output.

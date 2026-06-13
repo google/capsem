@@ -123,7 +123,7 @@ seed files, rules, MCP declarations, and plugins are part of the image.
 
 | Command | What it does |
 |---------|-------------|
-| `capsem-admin profile check` | Validate profile ledger, file pins, rules, MCP, and root seed |
+| `capsem-admin profile check` | Validate profile ledger, referenced files, rules, MCP, and root seed |
 | `capsem-admin image build` | Build profile-derived kernel/rootfs assets |
 | `capsem-admin manifest generate` | Generate manifest and B3SUMS for assets |
 | `capsem-admin profile materialize` | Generate runtime `target/config` from profile and manifest |
@@ -169,7 +169,7 @@ Every build produces `assets/manifest.json` (format 2) -- a single top-level fil
 The runtime boots only when the asset hashes match. `min_binary`/`min_assets`
 gate which binary and asset versions are compatible with each other.
 
-Source profiles do not hand-author these asset hashes. `capsem-admin profile
+Source profiles do not hand-author asset hashes. `capsem-admin profile
 materialize` combines source profile/corp/settings config with the generated
 asset manifest into `target/config` for local builds, CI, packages, and
 installed runtime config.
@@ -188,7 +188,7 @@ The release and runtime evidence chain is:
 |-------|------|
 | Release artifacts | SBOM and provenance attestations |
 | Corp config | Corp locks, endpoints, enforcement files, detection files, and `refresh_policy` |
-| Profile config | VM defaults, rule files, MCP/profile metadata, asset URLs/hashes, and `refresh_policy` |
+| Profile config | VM defaults, rule files, MCP/profile metadata, asset selection, and `refresh_policy` |
 | Profile assets | Kernel, initrd, and rootfs bytes verified by BLAKE3 |
 
 At runtime Capsem verifies BLAKE3 hashes and refresh policy before marking a

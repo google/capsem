@@ -6,22 +6,23 @@ sidebar:
 ---
 
 Capsem builds VM assets from the profile ledger. Checked-in
-`config/profiles/<profile_id>/profile.toml` and its hash-pinned sibling files
-are product truth. `capsem-admin image build` resolves that profile into a
-generated backend workspace, then `capsem-builder` validates the backend image
-spec, renders Jinja2 Dockerfiles, and produces per-architecture VM assets.
+`config/profiles/<profile_id>/profile.toml` and its referenced sibling files
+are product source truth. `capsem-admin image build` resolves that profile into
+a generated backend workspace, then `capsem-builder` validates the backend
+image spec, renders Jinja2 Dockerfiles, and produces per-architecture VM
+assets.
 
 ## Architecture
 
 ```mermaid
 flowchart TD
   subgraph Input["Source of Truth"]
-    PROFILE["config/profiles/<id>/profile.toml\n+ pinned package, MCP, rule,\nroot, install, tips files"]
+    PROFILE["config/profiles/<id>/profile.toml\n+ package, MCP, rule,\nroot, build, tips files"]
     MATERIALIZED["internal materialized image workspace\nbackend image spec"]
   end
 
   subgraph Validation["Validation Layer"]
-    Profile["capsem-admin profile check\nBLAKE3/size pins"]
+    Profile["capsem-admin profile check\nsource contract"]
     Config["config.py\nTOML loader"]
     Models["models.py\nPydantic models\n(PackageManager, InstallConfig,\ntool/package/network configs, ...)"]
     Validate["validate.py\nLinter (E001-E402, W001-W012)"]
@@ -62,7 +63,7 @@ The data flows through four layers:
    product truth: assets, package files, MCP config, security rules, plugins,
    root seed, install script, tips, and OBOM descriptors.
 2. **Image materialization** (`capsem-admin image build`) -- validates profile
-   BLAKE3/size pins and writes an internal generated backend image workspace.
+   references and writes an internal generated backend image workspace.
 3. **Pydantic models** (`models.py`) -- validate the generated backend image
    spec with enums (`PackageManager`: apt, uv, pip, npm, curl), frozen models,
    and cross-field validators.
