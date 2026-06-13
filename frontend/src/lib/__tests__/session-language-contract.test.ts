@@ -31,6 +31,10 @@ describe('user-facing session language contract', () => {
     expect(dashboard).toContain('New');
     expect(dashboard).toContain('Customize');
     expect(dashboard).toContain('openCustomizeProfile');
+    expect(dashboard).toContain('profileAssetChecklist');
+    expect(dashboard).toContain('VM assets');
+    expect(dashboard).toContain("asset.status === 'present'");
+    expect(dashboard).toContain('<CheckCircle');
     expect(dashboard).not.toContain('Customize Session...');
     expect(dashboard).not.toContain('vmStore.showCreateModal = true');
   });

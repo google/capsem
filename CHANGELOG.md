@@ -98,6 +98,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   profiles expose a primary `New` action, profiles with missing assets expose
   `Download`, and `Customize` opens the session dialog preselected to that
   profile.
+- Added a compact route-backed VM asset checklist to each profile launcher
+  card so users can see which kernel/initrd/rootfs assets are present or
+  missing before starting or downloading a profile.
 - Tightened the VM Stats Process panel so it reports command executions and
   observed processes as separate ledgers, replaces the unrelated credential-ref
   counter with unique binary counts, and removes tutorial prose from the app UI.

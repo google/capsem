@@ -914,7 +914,7 @@ next one, and stage only the files for that slice.
   - Proof: `pnpm --dir frontend test
     src/lib/__tests__/session-language-contract.test.ts`; `pnpm --dir
     frontend check`; targeted grep for retired visible VM labels is quiet.
-- [ ] RED/GREEN: profile cards render name, description, icon, readiness, asset
+- [x] RED/GREEN: profile cards render name, description, icon, readiness, asset
   checklist, `New`, and `Customize` from route data.
   - 2026-06-13 progress: dashboard profile cards no longer rely on a global
     customize-session button. Each profile card renders the route-provided
@@ -925,6 +925,13 @@ next one, and stage only the files for that slice.
     src/lib/__tests__/session-language-contract.test.ts`; `pnpm --dir
     frontend test src/lib/__tests__/profile-page-contract.test.ts`; `pnpm
     --dir frontend check`.
+  - 2026-06-13 progress: profile cards also render a compact `VM assets`
+    checklist from `/profiles/{profile_id}/assets/status` with check,
+    downloading, and missing indicators for the route-provided asset entries.
+  - Proof: RED/GREEN `pnpm --dir frontend test
+    src/lib/__tests__/session-language-contract.test.ts
+    src/lib/__tests__/profile-page-contract.test.ts`; `pnpm --dir frontend
+    check`.
 - [ ] RED/GREEN: incompatible/defunct sessions are greyed and expose only valid
   actions.
 - [ ] RED/GREEN: profile selection is route-backed and works with both `code`

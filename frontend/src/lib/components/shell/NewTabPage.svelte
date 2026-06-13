@@ -15,6 +15,7 @@
   import Play from 'phosphor-svelte/lib/Play';
   import Plus from 'phosphor-svelte/lib/Plus';
   import BracketsAngle from 'phosphor-svelte/lib/BracketsAngle';
+  import CheckCircle from 'phosphor-svelte/lib/CheckCircle';
   import CircleNotch from 'phosphor-svelte/lib/CircleNotch';
   import DownloadSimple from 'phosphor-svelte/lib/DownloadSimple';
   import Warning from 'phosphor-svelte/lib/Warning';
@@ -177,6 +178,10 @@
       .map(asset => asset.name);
     if (missingAssets.length > 0) return `Missing: ${missingAssets.join(', ')}.`;
     return assetHealth.ready ? 'Ready.' : 'Assets are not ready.';
+  }
+
+  function profileAssetChecklist(launcher: ProfileLauncher) {
+    return launcher.assets?.assets.slice(0, 4) ?? [];
   }
 
   function updateProfileLauncher(profileId: string, patch: Partial<ProfileLauncher>) {
@@ -449,6 +454,25 @@
               </span>
               <span class="block text-xs text-muted-foreground-1 mt-1 line-clamp-2">{launcher.profile.description}</span>
               <span class="block text-[11px] text-muted-foreground-2 mt-2">{launcher.error ?? profileAssetText(launcher.assets)}</span>
+              {#if profileAssetChecklist(launcher).length > 0}
+                <span class="mt-3 block">
+                  <span class="block text-[11px] font-semibold uppercase tracking-wider text-muted-foreground-2">VM assets</span>
+                  <span class="mt-1 grid gap-1">
+                    {#each profileAssetChecklist(launcher) as asset (`${asset.arch ?? ''}:${asset.kind ?? asset.name}`)}
+                      <span class="flex items-center gap-x-1.5 text-[11px] text-muted-foreground-1">
+                        {#if asset.status === 'present'}
+                          <CheckCircle size={12} weight="fill" class="text-primary shrink-0" />
+                        {:else if asset.status === 'downloading'}
+                          <CircleNotch size={12} class="text-muted-foreground-1 animate-spin shrink-0" />
+                        {:else}
+                          <Warning size={12} class="text-destructive shrink-0" />
+                        {/if}
+                        <span class="truncate">{asset.kind ?? asset.name}</span>
+                      </span>
+                    {/each}
+                  </span>
+                </span>
+              {/if}
               <span class="mt-3 flex flex-wrap items-center gap-2">
                 <button
                   type="button"
