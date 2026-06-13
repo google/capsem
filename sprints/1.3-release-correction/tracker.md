@@ -1787,7 +1787,7 @@ next one, and stage only the files for that slice.
     host binaries with `-D warnings`; GREEN focused gates `cargo check -p
     capsem-core`; `git diff --check`; `just test-install` (`39 passed, 22
     skipped` in installed-layout e2e).
-- [ ] Proof: changelog, docs, skills, and benchmark docs updated.
+- [x] Proof: changelog, docs, skills, and benchmark docs updated.
   - 2026-06-13 progress: tightened the config-authority documentation and
     developer skills after the backend builder burn. `config/README.md`,
     `/dev-capsem`, `/dev-setup`, and `/build-images` now state the contract:
@@ -1801,6 +1801,18 @@ next one, and stage only the files for that slice.
     tests/capsem-build-chain/test_active_docs_profile_contract.py
     tests/test_release_doctor_contract.py::test_config_contract_has_no_admin_or_registry_authority
     -q`; `cargo check -p capsem-core`.
+  - 2026-06-13 closure: benchmark docs are already restored at
+    `docs/src/content/docs/benchmarks/results.md` with the 1.3 EROFS
+    `lz4hc` level 12 decision, zstd rejection note, DAX probe, MITM/model,
+    DNS, MCP, security-action, lifecycle, and reproduction commands. The
+    release-process and dev-benchmark skills point contributors to the same
+    benchmark artifact flow.
+  - Proof: `uv run python -m pytest
+    tests/capsem-build-chain/test_active_docs_profile_contract.py
+    tests/test_release_doctor_contract.py::test_config_contract_has_no_admin_or_registry_authority
+    tests/test_benchmark_report.py -q` (`6 passed`); `uv run capsem-builder
+    validate-skills skills` (`32 skills validated`); `pnpm --dir docs build`
+    (`48 page(s) built`).
 - [x] Proof: full final gates pass and branch is pushed.
   - 2026-06-13 direct gate proof: `just test` exited 0 after the macOS Keychain
     index scoping fix. Highlights: bootstrap/doctor `37 passed, 1 skipped`;
