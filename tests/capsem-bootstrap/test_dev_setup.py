@@ -44,3 +44,8 @@ class TestDevSetup:
 
     def test_cargo_toml_exists(self):
         assert (PROJECT_ROOT / "Cargo.toml").exists()
+
+    def test_bootstrap_pnpm_install_is_noninteractive(self):
+        bootstrap = (PROJECT_ROOT / "bootstrap.sh").read_text()
+        assert "CI=true pnpm install --frozen-lockfile" in bootstrap
+        assert "(cd frontend && pnpm install --frozen-lockfile)" not in bootstrap

@@ -136,5 +136,11 @@ prove the same rails without user credentials.
   tests/capsem-install/test_installed_layout.py::TestInstalledLayoutContract::test_hash_named_assets_exist
   -q`; `just test-install` passes 39/39 install checks with 22 skips and logs
   `event=assets_hydrated`.
+- Bootstrap gate hardening on 2026-06-13 makes `bootstrap.sh` run
+  `CI=true pnpm install --frozen-lockfile` in every frontend install branch so
+  unattended `just test` cannot stop on pnpm's non-TTY module-purge prompt.
+  Proof: `uv run python -m pytest
+  tests/capsem-bootstrap/test_dev_setup.py::TestDevSetup::test_bootstrap_pnpm_install_is_noninteractive
+  -q`; `sh bootstrap.sh -y` passes with doctor 37 passed / 1 skipped.
 
 Those files remain evidence. This sprint is the execution authority.

@@ -97,6 +97,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   now use `manifest-origin.json` to hydrate from the source asset tree with the
   same hash-named layout and blake3 verification as remote downloads, while the
   package payload remains free of rootfs/initrd/kernel blobs.
+- Made `bootstrap.sh` frontend dependency installation non-interactive by
+  running `pnpm install` with `CI=true`, matching the full test gate contract
+  and avoiding TTY-only confirmation prompts during unattended bootstrap.
 - Added VM-scoped snapshot status/list routes backed by the running
   `capsem-process` in-memory snapshot scheduler. Stopped VMs reconstruct
   snapshot status from that VM's snapshot metadata only when requested, and

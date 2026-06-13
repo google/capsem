@@ -952,6 +952,15 @@ next one, and stage only the files for that slice.
   copy, asset hydration success/failure, service registration, and completion.
 - [x] Proof: `just test-install` builds a CI-like package and installs through
   the package path.
+- [x] RED/GREEN: bootstrap frontend dependency installation is non-interactive
+  in the full gate.
+  - Root cause: `bootstrap.sh -y` still ran bare `pnpm install
+    --frozen-lockfile`, and pnpm aborted in non-TTY mode when it needed to
+    recreate `frontend/node_modules`.
+  - Fix: both bootstrap pnpm install branches run with `CI=true`.
+  - Proof: `uv run python -m pytest
+    tests/capsem-bootstrap/test_dev_setup.py::TestDevSetup::test_bootstrap_pnpm_install_is_noninteractive
+    -q`; `sh bootstrap.sh -y` passes with doctor 37 passed / 1 skipped.
 - [ ] Proof: status/debug show service version, manifest origin/hash, profile
   status, plugin status, route status, doctor evidence, OBOM/SBOM references.
 - [ ] Proof: changelog, docs, skills, and benchmark docs updated.

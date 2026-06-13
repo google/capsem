@@ -152,7 +152,7 @@ fi
 
 if command -v pnpm >/dev/null 2>&1; then
     printf "  Frontend deps (pnpm install)...\n"
-    (cd frontend && pnpm install --frozen-lockfile)
+    (cd frontend && CI=true pnpm install --frozen-lockfile)
 else
     case "$(uname -s)" in
         Darwin)
@@ -170,7 +170,7 @@ else
     esac
     if command -v pnpm >/dev/null 2>&1; then
         printf "  Frontend deps (pnpm install)...\n"
-        (cd frontend && pnpm install --frozen-lockfile)
+        (cd frontend && CI=true pnpm install --frozen-lockfile)
     else
         printf "  [SKIP] Frontend deps (pnpm not installed -- doctor will catch this)\n"
     fi
