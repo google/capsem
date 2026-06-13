@@ -45,6 +45,7 @@ ENDPOINTS = [
     "/sse/model",
     "/model/response",
     "/model/shape",
+    "/model/no-tool-call",
     "/v1/chat/completions",
     "/oauth/authorize",
     "/oauth/token",
@@ -73,7 +74,22 @@ def _deterministic_bytes(size: str) -> bytes:
     return bytes(ord("a") + (idx % 26) for idx in range(length))
 
 
-def _model_payload(model: str = "mock-local") -> dict:
+def _model_payload(model: str = "mock-local", *, include_tool_call: bool = True) -> dict:
+    message = {
+        "role": "assistant",
+        "content": EXPECTED_POEM,
+    }
+    if include_tool_call:
+        message["tool_calls"] = [
+            {
+                "id": "tool_0001",
+                "type": "function",
+                "function": {
+                    "name": "fixture_lookup",
+                    "arguments": '{"query":"capsem"}',
+                },
+            }
+        ]
     return {
         "id": "chatcmpl-mock-local",
         "object": "chat.completion",
@@ -82,21 +98,8 @@ def _model_payload(model: str = "mock-local") -> dict:
         "choices": [
             {
                 "index": 0,
-                "message": {
-                    "role": "assistant",
-                    "content": EXPECTED_POEM,
-                    "tool_calls": [
-                        {
-                            "id": "tool_0001",
-                            "type": "function",
-                            "function": {
-                                "name": "fixture_lookup",
-                                "arguments": '{"query":"capsem"}',
-                            },
-                        }
-                    ],
-                },
-                "finish_reason": "tool_calls",
+                "message": message,
+                "finish_reason": "tool_calls" if include_tool_call else "stop",
             }
         ],
         "usage": {
@@ -221,6 +224,10 @@ class MockHandler(BaseHTTPRequestHandler):
             payload = self._json_body()
             model = payload.get("model") if isinstance(payload.get("model"), str) else "mock-local"
             self._send_json(_model_payload(model))
+        elif path == "/model/no-tool-call":
+            payload = self._json_body()
+            model = payload.get("model") if isinstance(payload.get("model"), str) else "mock-local"
+            self._send_json(_model_payload(model, include_tool_call=False))
         elif path == "/oauth/token":
             self._body()
             self._send_json(

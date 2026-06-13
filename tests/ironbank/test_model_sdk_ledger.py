@@ -287,6 +287,56 @@ def _unknown_shape_probe_script(base_url: str) -> str:
     ).strip()
 
 
+def _tool_declaration_without_call_script(base_url: str) -> str:
+    payload = {
+        "url": f"{base_url.rstrip('/')}/model/no-tool-call",
+        "api_key_parts": ["capsem_test_declared_tool_", "key_0123456789abcdef"],
+        "model": "gpt-4.1",
+    }
+    return textwrap.dedent(
+        f"""
+        import json
+        import urllib.request
+
+        cfg = json.loads({json.dumps(json.dumps(payload))})
+        body = json.dumps({{
+            "model": cfg["model"],
+            "messages": [{{"role": "user", "content": "Do not call a tool."}}],
+            "tools": [{{
+                "type": "function",
+                "function": {{
+                    "name": "fixture_lookup",
+                    "parameters": {{
+                        "type": "object",
+                        "properties": {{"query": {{"type": "string"}}}},
+                    }},
+                }},
+            }}],
+        }}).encode("utf-8")
+        request = urllib.request.Request(
+            cfg["url"],
+            data=body,
+            headers={{
+                "Authorization": "Bearer " + "".join(cfg["api_key_parts"]),
+                "Content-Type": "application/json",
+            }},
+            method="POST",
+        )
+        with urllib.request.urlopen(request, timeout=30) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        message = payload["choices"][0]["message"]
+        result = {{
+            "model": payload["model"],
+            "content": message["content"],
+            "has_tool_calls": "tool_calls" in message,
+            "finish_reason": payload["choices"][0]["finish_reason"],
+            "usage_total": payload["usage"]["total_tokens"],
+        }}
+        print("IRONBANK_DECLARED_TOOL_ONLY_RESULT=" + json.dumps(result, sort_keys=True))
+        """
+    ).strip()
+
+
 def _unknown_mcp_probe_script(base_url: str) -> str:
     payload = {"url": f"{base_url.rstrip('/')}/mcp"}
     return textwrap.dedent(
@@ -433,6 +483,45 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
             "content": EXPECTED_POEM,
             "model": "gpt-4.1",
             "tool_name": "fixture_lookup",
+            "usage_total": 12,
+        }
+
+        declared_tool_script_name = f"ironbank-declared-tool-{uuid.uuid4().hex[:8]}.py"
+        declared_tool_script = _tool_declaration_without_call_script(mock_base_url).encode()
+        declared_tool_upload = client.post_bytes(
+            f"/vms/{session_id}/files/content?path={declared_tool_script_name}",
+            declared_tool_script,
+            timeout=30,
+        )
+        assert declared_tool_upload is not None
+        assert declared_tool_upload["success"] is True
+        assert declared_tool_upload["size"] == len(declared_tool_script)
+        declared_tool_exec = client.post(
+            f"/vms/{session_id}/exec",
+            {"command": f"python3 /root/{declared_tool_script_name}", "timeout_secs": 120},
+            timeout=150,
+        )
+        assert declared_tool_exec is not None, "declared-tool exec returned no body"
+        assert declared_tool_exec["exit_code"] == 0, declared_tool_exec
+        declared_tool_output = (declared_tool_exec.get("stdout") or "") + (
+            declared_tool_exec.get("stderr") or ""
+        )
+        assert "capsem_test_declared_tool_key" not in declared_tool_output
+        declared_tool_line = next(
+            (
+                line
+                for line in declared_tool_output.splitlines()
+                if line.startswith("IRONBANK_DECLARED_TOOL_ONLY_RESULT=")
+            ),
+            None,
+        )
+        assert declared_tool_line is not None, declared_tool_output
+        declared_tool_result = json.loads(declared_tool_line.split("=", 1)[1])
+        assert declared_tool_result == {
+            "content": EXPECTED_POEM,
+            "finish_reason": "stop",
+            "has_tool_calls": False,
+            "model": "gpt-4.1",
             "usage_total": 12,
         }
 
@@ -726,6 +815,42 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
                 unknown_shape["request_body_preview"] or ""
             )
 
+            declared_tool_only_rows = _eventually(
+                lambda: conn.execute(
+                    """
+                    SELECT *
+                    FROM model_calls
+                    WHERE path = '/model/no-tool-call'
+                    ORDER BY id
+                    """
+                ).fetchall(),
+                lambda rows: len(rows) >= 1,
+            )
+            declared_tool_only = declared_tool_only_rows[-1]
+            _assert_event_id(declared_tool_only["event_id"])
+            assert declared_tool_only["provider"] == "openai"
+            assert declared_tool_only["model"] == "gpt-4.1"
+            assert declared_tool_only["method"] == "POST"
+            assert declared_tool_only["status_code"] == 200
+            assert declared_tool_only["messages_count"] == 1
+            assert declared_tool_only["tools_count"] == 1
+            assert declared_tool_only["text_content"] == EXPECTED_POEM
+            assert declared_tool_only["stop_reason"] == "end_turn"
+            assert declared_tool_only["credential_ref"] is not None
+            _assert_credential_ref(declared_tool_only["credential_ref"])
+            assert "capsem_test_declared_tool_key" not in (
+                declared_tool_only["request_body_preview"] or ""
+            )
+            declared_tool_call_rows = conn.execute(
+                """
+                SELECT *
+                FROM tool_calls
+                WHERE model_call_id = ?
+                """,
+                (declared_tool_only["id"],),
+            ).fetchall()
+            assert declared_tool_call_rows == []
+
             tool_rows = _eventually(
                 lambda: conn.execute(
                     """
@@ -827,6 +952,8 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
                     UNION
                     SELECT event_id FROM model_calls WHERE path = '/model/shape'
                     UNION
+                    SELECT event_id FROM model_calls WHERE path = '/model/no-tool-call'
+                    UNION
                     SELECT event_id FROM mcp_calls WHERE server_name = 'observed:127.0.0.1:3713/mcp'
                     UNION
                     SELECT event_id FROM net_events WHERE path = '/v1/chat/completions'
@@ -874,6 +1001,12 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
                 and item["detection_level"] == "informational"
                 for item in shape_security_rows
             )
+            declared_tool_security_rows = security_by_event[declared_tool_only["event_id"]]
+            assert {item["rule_action"] for item in declared_tool_security_rows} == {"allow"}
+            assert {
+                "profiles.rules.ai_openai_model_api",
+                "profiles.rules.default_model",
+            } <= {item["rule_id"] for item in declared_tool_security_rows}
             mcp_tool_security_rows = security_by_event[observed_tool_call["event_id"]]
             assert any(
                 item["event_type"] == "mcp.tool_call"
