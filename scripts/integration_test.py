@@ -376,7 +376,10 @@ def run_vm(binary: str, assets_dir: str) -> tuple[str, int]:
         # VM through the service. Do not inject proxy variables: guest traffic
         # must prove the iptables-nft redirect rail.
         cmd = [binary, "run", "--timeout", "300"]
-        for key, value in local_fixture_env(mock_base_url).items():
+        for key, value in local_fixture_env(
+            mock_base_url,
+            ready.get("https_base_url"),
+        ).items():
             cmd.extend(["--env", f"{key}={value}"])
         cmd.append(_vm_command(local_base_url=mock_base_url))
 

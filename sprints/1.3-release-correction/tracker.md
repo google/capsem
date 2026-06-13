@@ -427,6 +427,19 @@ next one, and stage only the files for that slice.
     tests/test_mock_server_launcher.py tests/test_protocol_fixture_recorder.py`;
     `python3 -m py_compile scripts/mock_server_runtime.py
     tests/test_mock_server_launcher.py tests/test_protocol_fixture_recorder.py`.
+  - 2026-06-13 correction: HTTPS mock traffic is a host-side fixture contract,
+    while guest HTTPS remains the MITM rail. `local_fixture_env()` now carries
+    `CAPSEM_MOCK_SERVER_HTTPS_BASE_URL` when ready JSON provides it, and
+    `scripts/integration_test.py` propagates that value without inventing a
+    second guest route.
+  - Proof: RED `uv run python -m pytest
+    tests/test_release_doctor_contract.py::test_mock_server_helper_exports_https_fixture_for_host_callers
+    -q` failed before the helper exported the HTTPS fixture; GREEN same command
+    (`1 passed`); `uv run python -m pytest tests/test_release_doctor_contract.py
+    -q` (`18 passed`); `uv run ruff check scripts/mock_server.py
+    scripts/integration_test.py tests/test_release_doctor_contract.py`;
+    `python3 -m py_compile scripts/mock_server.py scripts/integration_test.py
+    tests/test_release_doctor_contract.py`.
 - [ ] RED/GREEN: every protocol lab case is a full-chain acceptance spec, not
   a status-code replay.
   - Suite home: `tests/ironbank/`.

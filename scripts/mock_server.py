@@ -125,5 +125,8 @@ def start_mock_server(
     raise TimeoutError(f"timed out starting capsem-mock-server on {addr}") from last_error
 
 
-def local_fixture_env(base_url: str) -> dict[str, str]:
-    return {"CAPSEM_MOCK_SERVER_BASE_URL": base_url}
+def local_fixture_env(base_url: str, https_base_url: str | None = None) -> dict[str, str]:
+    env = {"CAPSEM_MOCK_SERVER_BASE_URL": base_url}
+    if https_base_url:
+        env["CAPSEM_MOCK_SERVER_HTTPS_BASE_URL"] = https_base_url
+    return env

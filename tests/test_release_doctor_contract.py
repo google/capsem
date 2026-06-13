@@ -57,6 +57,14 @@ def test_guest_network_doctor_exercises_oauth_fixture() -> None:
     assert "grant_type=authorization_code" in source
 
 
+def test_mock_server_helper_exports_https_fixture_for_host_callers() -> None:
+    helper = (PROJECT_ROOT / "scripts" / "mock_server.py").read_text()
+
+    assert "CAPSEM_MOCK_SERVER_HTTPS_BASE_URL" in helper
+    assert "https_base_url" in helper
+    assert "CAPSEM_MOCK_SERVER_BASE_URL" in helper
+
+
 def test_guest_network_doctor_requires_local_mock_server_instead_of_skipping() -> None:
     diagnostics = PROJECT_ROOT / "guest" / "artifacts" / "diagnostics" / "test_network.py"
     source = diagnostics.read_text()
