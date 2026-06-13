@@ -55,6 +55,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Extended the protocol fixture recorder to capture and replay DNS fixtures
   from `capsem-mock-server`, keeping DNS in the same sanitized fixture corpus
   as model, MCP, OAuth, credential, and HTTP-like flows.
+- Removed the env-gated local MITM benchmark skip from the serial release
+  tests and restored its default load to 50,000 requests at concurrency 64, so
+  `just test` always produces meaningful local HTTP/SSE/WebSocket MITM
+  baseline numbers through the shared mock server.
 - Clarified the shared skills contract for profile `build.sh`: it is a
   rootfs-only build hook, not an installer/runtime/config path, and changes
   require profile descriptor updates, asset rebuilds, and black-box VM proof.

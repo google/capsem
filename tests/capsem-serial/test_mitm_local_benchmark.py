@@ -1,9 +1,8 @@
 """Archive an in-VM local MITM benchmark artifact.
 
-This is intentionally gated by CAPSEM_RUN_MITM_LOCAL_BENCH=1 because it boots a
-VM and needs the mock server URL to be routable through the Capsem network
-path. When no explicit CAPSEM_MOCK_SERVER_BASE_URL is supplied, the test
-starts the shared mock server on host localhost and passes that URL to the guest.
+The release gate runs this every time. When no explicit
+CAPSEM_MOCK_SERVER_BASE_URL is supplied, the test starts the shared mock server
+on host localhost and passes that URL to the guest.
 """
 
 import json
@@ -135,24 +134,17 @@ def _assert_session_db_contains_mitm_events(capsem_home, vm_name, total_requests
 
 
 def test_mitm_local_benchmark_artifact():
-    if os.environ.get("CAPSEM_RUN_MITM_LOCAL_BENCH") != "1":
-        pytest.skip("set CAPSEM_RUN_MITM_LOCAL_BENCH=1 to run the VM benchmark")
-
     upstream_proc = None
     base_url = os.environ.get("CAPSEM_MOCK_SERVER_BASE_URL")
     if not base_url:
         upstream_proc, ready = start_mock_server()
         base_url = ready["base_url"]
     parsed_base = urlsplit(base_url)
-    if parsed_base.hostname != "127.0.0.1" or (parsed_base.port or 80) != 3713:
-        pytest.skip(
-            "mitm-local benchmark release proof requires "
-            "CAPSEM_MOCK_SERVER_BASE_URL=http://127.0.0.1:3713 "
-            "so guest traffic traverses iptables-nft redirection"
-        )
+    assert parsed_base.hostname == "127.0.0.1"
+    assert (parsed_base.port or 80) == 3713
 
-    total_requests = int(os.environ.get("CAPSEM_BENCH_TOTAL_REQUESTS", "10"))
-    concurrency = int(os.environ.get("CAPSEM_BENCH_CONCURRENCY", "1"))
+    total_requests = int(os.environ.get("CAPSEM_BENCH_TOTAL_REQUESTS", "50000"))
+    concurrency = int(os.environ.get("CAPSEM_BENCH_CONCURRENCY", "64"))
 
     svc = ServiceInstance()
     svc.start()

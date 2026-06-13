@@ -118,6 +118,17 @@ def test_mock_server_has_no_rust_fixture_crate() -> None:
     assert "capsem_mock_server" not in (PROJECT_ROOT / "crates" / "capsem" / "src" / "main.rs").read_text()
 
 
+def test_serial_benchmark_release_proofs_are_not_env_gated() -> None:
+    benchmark = PROJECT_ROOT / "tests" / "capsem-serial" / "test_mitm_local_benchmark.py"
+    source = benchmark.read_text()
+
+    assert "CAPSEM_RUN_MITM_LOCAL_BENCH" not in source
+    assert "pytest.skip(" not in source
+    assert "total_requests = 10" not in source
+    assert 'CAPSEM_BENCH_TOTAL_REQUESTS", "10"' not in source
+    assert 'CAPSEM_BENCH_CONCURRENCY", "1"' not in source
+
+
 def test_integration_script_has_no_live_ai_provider_escape_hatch() -> None:
     source = (PROJECT_ROOT / "scripts" / "integration_test.py").read_text()
 

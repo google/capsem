@@ -812,6 +812,17 @@ next one, and stage only the files for that slice.
     tests/capsem-serial/ -v --tb=short -m serial` passed `11 passed, 1
     skipped` in `87.67s`, covering boot, exec latency, three-concurrent-VM
     latency, lifecycle/fork benchmarks, serial logs, and the baseline bench.
+  - 2026-06-13 progress: the serial local MITM benchmark is no longer hidden
+    behind `CAPSEM_RUN_MITM_LOCAL_BENCH=1` and no longer downshifts to
+    `10` requests at concurrency `1`. The release contract now rejects that
+    escape hatch, and the benchmark defaults run `50,000` requests at
+    concurrency `64` through `capsem-mock-server`.
+  - Proof: RED
+    `uv run python -m pytest tests/test_release_doctor_contract.py::test_serial_benchmark_release_proofs_are_not_env_gated -q`
+    failed on the env-gated skip; GREEN same command passed. Additional proof:
+    `uv run ruff check tests/test_release_doctor_contract.py
+    tests/capsem-serial/test_mitm_local_benchmark.py`; `uv run python -m
+    pytest tests/test_capsem_bench_mitm_local.py -q` (`23 passed`).
 - [x] RED/GREEN: failed suspend cannot leave a VM resumable from a partial
   Apple VZ checkpoint.
   - 2026-06-13 progress: `capsem-process` writes
