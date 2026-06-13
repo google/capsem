@@ -748,6 +748,10 @@ next one, and stage only the files for that slice.
     synthetic secret markers across every text column in the session DB. The
     new checks found the argv leak above; after the doctor fixture source fix,
     the next rebuilt image must rerun this test before the gate closes.
+  - Fresh proof after S4/S5 mock-server/DNS/doctor hardening:
+    `CAPSEM_TEST_PRESERVE_ALWAYS=1 uv run python -m pytest
+    tests/ironbank/test_doctor_ledger.py::test_capsem_doctor_pays_protocol_and_security_ledger_debt
+    -q -s` (`1 passed in 31.35s`).
 - [ ] RED/GREEN: doctor/toolchain probes cover apt/dpkg triggers, Python, pip,
   uv, Node, npm, npx, packaged CLIs, aliases, MCP bootstrap, DNS, TLS, FS
   writes.
