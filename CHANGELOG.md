@@ -56,6 +56,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added an Ironbank package-manager ledger proof that boots a VM through public
   service routes, verifies apt, npm, uv, pip, and node packages perform real
   work, and audits session history plus `exec_events`/`fs_events` fields.
+- Hardened VM fork cloning so `session.db` is snapshotted through SQLite
+  instead of copied as a raw file. Forks of forks now preserve WAL-backed
+  committed ledger rows as a standalone quick-check-clean database, preventing
+  boot failures from malformed copied session DBs.
 - Added a real checked-in `co-work` profile created through
   `capsem-admin profile init --from`, and tightened Profile UI/TUI/service
   tests so profile-aware surfaces consume route-provided profile ids instead of

@@ -142,5 +142,12 @@ prove the same rails without user credentials.
   Proof: `uv run python -m pytest
   tests/capsem-bootstrap/test_dev_setup.py::TestDevSetup::test_bootstrap_pnpm_install_is_noninteractive
   -q`; `sh bootstrap.sh -y` passes with doctor 37 passed / 1 skipped.
+- Fork ledger hardening on 2026-06-13 fixes the full-gate
+  `test_fork_of_fork` failure where copying only `session.db` produced a
+  malformed database when committed rows lived in WAL. `clone_sandbox_state`
+  now uses SQLite `VACUUM INTO` and verifies the clone with `quick_check`, so
+  forked sessions carry a standalone ledger DB. Proof: `cargo test -p
+  capsem-core clone_sandbox_state -- --nocapture`; `uv run python -m pytest
+  tests/capsem-mcp/test_fork_images.py::test_fork_of_fork -q`.
 
 Those files remain evidence. This sprint is the execution authority.

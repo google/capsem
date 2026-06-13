@@ -932,7 +932,14 @@ fn clone_sandbox_state_with_session_db() {
     let src_tmp = tempfile::tempdir().unwrap();
     let src = src_tmp.path();
     std::fs::create_dir_all(src.join("system")).unwrap();
-    std::fs::write(src.join("session.db"), b"db-contents").unwrap();
+    let src_db = src.join("session.db");
+    let conn = rusqlite::Connection::open(&src_db).unwrap();
+    conn.execute_batch(
+        "CREATE TABLE ledger (id INTEGER PRIMARY KEY, payload TEXT NOT NULL);
+         INSERT INTO ledger (payload) VALUES ('db-contents');",
+    )
+    .unwrap();
+    drop(conn);
 
     let dst_tmp = tempfile::tempdir().unwrap();
     let dst = dst_tmp.path().join("clone");
@@ -942,8 +949,59 @@ fn clone_sandbox_state_with_session_db() {
 
     // session.db should be at session root, not in guest/
     assert!(dst.join("session.db").exists());
-    assert_eq!(
-        std::fs::read(dst.join("session.db")).unwrap(),
-        b"db-contents"
+    assert!(!dst.join("guest/session.db").exists());
+    let cloned = rusqlite::Connection::open(dst.join("session.db")).unwrap();
+    let payload: String = cloned
+        .query_row("SELECT payload FROM ledger WHERE id = 1", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    assert_eq!(payload, "db-contents");
+    let quick_check: String = cloned
+        .pragma_query_value(None, "quick_check", |row| row.get(0))
+        .unwrap();
+    assert_eq!(quick_check, "ok");
+}
+
+#[test]
+fn clone_sandbox_state_snapshots_wal_backed_session_db() {
+    let src_tmp = tempfile::tempdir().unwrap();
+    let src = src_tmp.path();
+    std::fs::create_dir_all(src.join("system")).unwrap();
+    let src_db = src.join("session.db");
+    let conn = rusqlite::Connection::open(&src_db).unwrap();
+    let journal_mode: String = conn
+        .pragma_update_and_check(None, "journal_mode", "WAL", |row| row.get(0))
+        .unwrap();
+    assert_eq!(journal_mode.to_lowercase(), "wal");
+    conn.execute_batch(
+        "CREATE TABLE ledger (id INTEGER PRIMARY KEY, payload TEXT NOT NULL);
+         INSERT INTO ledger (payload) VALUES ('committed-in-wal');",
+    )
+    .unwrap();
+    assert!(
+        src.join("session.db-wal").exists(),
+        "test must prove WAL sidecar exists before clone"
     );
+
+    let dst_tmp = tempfile::tempdir().unwrap();
+    let dst = dst_tmp.path().join("clone");
+    std::fs::create_dir_all(&dst).unwrap();
+
+    clone_sandbox_state(src, &dst).unwrap();
+
+    assert!(dst.join("session.db").exists());
+    assert!(!dst.join("session.db-wal").exists());
+    assert!(!dst.join("session.db-shm").exists());
+    let cloned = rusqlite::Connection::open(dst.join("session.db")).unwrap();
+    let payload: String = cloned
+        .query_row("SELECT payload FROM ledger WHERE id = 1", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    assert_eq!(payload, "committed-in-wal");
+    let quick_check: String = cloned
+        .pragma_query_value(None, "quick_check", |row| row.get(0))
+        .unwrap();
+    assert_eq!(quick_check, "ok");
 }

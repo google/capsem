@@ -961,6 +961,18 @@ next one, and stage only the files for that slice.
   - Proof: `uv run python -m pytest
     tests/capsem-bootstrap/test_dev_setup.py::TestDevSetup::test_bootstrap_pnpm_install_is_noninteractive
     -q`; `sh bootstrap.sh -y` passes with doctor 37 passed / 1 skipped.
+- [x] RED/GREEN: fork-of-fork must not boot from a malformed copied
+  `session.db`.
+  - Root cause from full `just test`: `capsem_fork` cloned only the main
+    `session.db` file. A live VM may have committed rows in `session.db-wal`,
+    so a fork created from a fork could boot with a malformed or incomplete DB
+    image.
+  - Fix: `clone_sandbox_state` now snapshots `session.db` through SQLite
+    `VACUUM INTO`, then opens the clone and runs `quick_check`. The clone is a
+    standalone DB and does not copy WAL/SHM sidecars.
+  - Proof: `cargo test -p capsem-core clone_sandbox_state -- --nocapture`;
+    `uv run python -m pytest
+    tests/capsem-mcp/test_fork_images.py::test_fork_of_fork -q`.
 - [ ] Proof: status/debug show service version, manifest origin/hash, profile
   status, plugin status, route status, doctor evidence, OBOM/SBOM references.
 - [ ] Proof: changelog, docs, skills, and benchmark docs updated.

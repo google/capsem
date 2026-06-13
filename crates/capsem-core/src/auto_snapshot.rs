@@ -882,14 +882,63 @@ pub fn clone_sandbox_state(src_session_dir: &Path, dst_session_dir: &Path) -> an
         }
     }
 
-    // Clone session.db at session root (host-only, not in guest/)
+    // Snapshot session.db at session root (host-only, not in guest/).
+    //
+    // session.db may be in WAL mode while the VM is running. Copying only the
+    // main database file can produce a malformed or stale fork because the
+    // committed pages may still live in session.db-wal. Ask SQLite to write a
+    // coherent standalone image instead.
     let db_src = src_session_dir.join("session.db");
     if db_src.exists() {
         let db_dst = dst_session_dir.join("session.db");
-        clone_file(&db_src, &db_dst).context("failed to clone session.db")?;
+        clone_session_db_snapshot(&db_src, &db_dst).context("failed to snapshot session.db")?;
     }
 
     Ok(crate::session::disk_usage_bytes(dst_session_dir))
+}
+
+fn clone_session_db_snapshot(src: &Path, dst: &Path) -> anyhow::Result<()> {
+    if dst.exists() {
+        std::fs::remove_file(dst)
+            .with_context(|| format!("failed to remove existing {}", dst.display()))?;
+    }
+    if let Some(parent) = dst.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create {}", parent.display()))?;
+    }
+
+    let src_conn = rusqlite::Connection::open_with_flags(
+        src,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY
+            | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX
+            | rusqlite::OpenFlags::SQLITE_OPEN_URI,
+    )
+    .with_context(|| format!("failed to open source session db {}", src.display()))?;
+
+    let escaped = dst
+        .to_string_lossy()
+        .replace('\\', "\\\\")
+        .replace('\'', "''");
+    src_conn
+        .execute_batch(&format!("VACUUM INTO '{}';", escaped))
+        .with_context(|| format!("failed to vacuum session db into {}", dst.display()))?;
+
+    let dst_conn = rusqlite::Connection::open_with_flags(
+        dst,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .with_context(|| format!("failed to open cloned session db {}", dst.display()))?;
+    dst_conn
+        .pragma_query_value(None, "quick_check", |row| row.get::<_, String>(0))
+        .and_then(|result| {
+            if result == "ok" {
+                Ok(())
+            } else {
+                Err(rusqlite::Error::InvalidQuery)
+            }
+        })
+        .context("cloned session db failed quick_check")?;
+    Ok(())
 }
 
 /// Simple ISO 8601 timestamp from epoch seconds (no chrono dependency).
