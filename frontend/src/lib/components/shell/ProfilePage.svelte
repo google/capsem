@@ -392,11 +392,11 @@
               </div>
               {#if credentialBrokerInfo && credentialBrokerInfo.inventory.length > 0}
                 <div class="divide-y divide-card-divider rounded-lg border border-line-2">
-                  {#each credentialBrokerInfo.inventory.slice(0, 5) as credential (credential.credential_ref)}
+                  {#each credentialBrokerInfo.inventory.slice(0, 5) as credential, index (`${credential.provider ?? 'unknown'}:${credential.last_seen ?? 'never'}:${index}`)}
                     <div class="grid grid-cols-[minmax(0,1fr)_5rem_5rem] gap-x-3 p-3 text-xs">
                       <div class="min-w-0">
-                        <p class="font-mono text-foreground truncate">{credential.credential_ref}</p>
-                        <p class="text-muted-foreground-2 truncate">{credential.provider ?? 'unknown'} · {credential.last_seen ?? 'never'}</p>
+                        <p class="font-medium text-foreground truncate">{credential.provider ?? 'Unknown provider'}</p>
+                        <p class="text-muted-foreground-2 truncate">Last seen {credential.last_seen ?? 'never'}</p>
                       </div>
                       <p class="text-muted-foreground-1">{credential.observed_count} seen</p>
                       <p class="text-muted-foreground-1">{credential.injected_count} used</p>

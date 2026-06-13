@@ -929,6 +929,14 @@ next one, and stage only the files for that slice.
   actions.
 - [ ] RED/GREEN: profile selection is route-backed and works with both `code`
   and `co-work`.
+  - 2026-06-13 progress: Profile overview still uses the route-backed profile
+    selector and broker inventory route, but no longer renders raw broker
+    credential references. It shows provider, last-seen, observed, and
+    injected counts in the primary UI.
+  - Proof: `pnpm --dir frontend test
+    src/lib/__tests__/profile-page-contract.test.ts
+    src/lib/__tests__/stats-view-contract.test.ts`; `pnpm --dir frontend
+    check`.
 - [ ] RED/GREEN: enforcement/detection/plugins/MCP/assets pages load for both
   profiles with no 404/501.
   - 2026-06-13 progress: the frontend MCP page already called

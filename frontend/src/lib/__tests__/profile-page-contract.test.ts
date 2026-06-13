@@ -59,5 +59,7 @@ describe('ProfilePage route contract', () => {
     expect(source).toContain('Available surfaces');
     expect(source).toContain('Broker-visible credentials');
     expect(source).toContain('credentialBrokerInfo?.inventory');
+    expect(source).toContain("credential.provider ?? 'Unknown provider'");
+    expect(source).not.toContain('{credential.credential_ref}');
   });
 });

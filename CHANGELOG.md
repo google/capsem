@@ -104,6 +104,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Made Stats detail payload rendering content-aware: HTTP header fields use an
   HTTP grammar, JSON previews are parsed and formatted as JSON, and non-JSON
   payloads stay as escaped text instead of being forced through a JSON view.
+- Cleaned up Profile overview credential inventory so it shows provider,
+  last-seen, observed, and injected counts without rendering raw broker
+  credential references in the primary UI.
 - Moved frontend MCP controls off settings-backed `mcp.servers.*` mutation and
   onto profile-scoped MCP routes. Settings now stays focused on UI/app
   preferences, while the Profile surface owns rules, plugins, MCP, and assets.
