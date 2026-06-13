@@ -16,7 +16,7 @@ use capsem_core::net::policy_config::{
 use clap::{Parser, Subcommand};
 use serde::{Deserialize, Serialize};
 
-const CODE_PROFILE_TEMPLATE: &str = include_str!("../../../config/profiles/code/profile.toml");
+const PRIMARY_PROFILE_TEMPLATE: &str = include_str!("../../../config/profiles/code/profile.toml");
 const SETTINGS_TEMPLATE: &str = include_str!("../../../config/admin/settings.toml");
 
 #[derive(Debug, Parser)]
@@ -670,7 +670,7 @@ fn init_profile_command(args: ProfileInitArgs) -> Result<()> {
     let mut profile = if args.from_profile.is_some() {
         load_profile(&source_profile_path)?
     } else {
-        toml::from_str::<ProfileConfigFile>(CODE_PROFILE_TEMPLATE)
+        toml::from_str::<ProfileConfigFile>(PRIMARY_PROFILE_TEMPLATE)
             .context("parse built-in code profile template")?
     };
 
@@ -1263,14 +1263,14 @@ fn check_profile(args: &ProfileCheckArgs) -> Result<ProfileCheckReport> {
             &arch_assets.initrd,
             &arch_assets.rootfs,
         ] {
-            if descriptor.url.starts_with("file://") {
-                if descriptor.hash.is_some() || descriptor.size.is_some() {
-                    return Err(anyhow!(
-                        "source profile {} must not contain file:// asset pins for {arch}/{}",
-                        args.path.display(),
-                        descriptor.name
-                    ));
-                }
+            if descriptor.url.starts_with("file://")
+                && (descriptor.hash.is_some() || descriptor.size.is_some())
+            {
+                return Err(anyhow!(
+                    "source profile {} must not contain file:// asset pins for {arch}/{}",
+                    args.path.display(),
+                    descriptor.name
+                ));
             }
         }
     }
@@ -2920,7 +2920,7 @@ code = true
                 output: profile_path.clone(),
                 force: false,
             },
-            CODE_PROFILE_TEMPLATE,
+            PRIMARY_PROFILE_TEMPLATE,
         )
         .expect("profile init");
         let profile: ProfileConfigFile =
@@ -2933,7 +2933,7 @@ code = true
                 output: profile_path,
                 force: false,
             },
-            CODE_PROFILE_TEMPLATE,
+            PRIMARY_PROFILE_TEMPLATE,
         )
         .expect_err("overwrite rejected");
         assert!(
@@ -3049,12 +3049,8 @@ code = true
                 .map(|descriptor| descriptor.path.as_str()),
             Some("profiles/co-work/mcp.json")
         );
-        assert!(config_root
-            .join("profiles/co-work/enforcement.toml")
-            .is_file());
-        assert!(config_root
-            .join("profiles/co-work/detection.yaml")
-            .is_file());
+        assert!(config_root.join("profiles/co-work/enforcement.toml").is_file());
+        assert!(config_root.join("profiles/co-work/detection.yaml").is_file());
         assert!(config_root.join("profiles/co-work/mcp.json").is_file());
         assert!(config_root
             .join("profiles/co-work/root/root/.mcp.json")
@@ -3276,7 +3272,7 @@ decision = "block"
     #[test]
     fn profile_check_verifies_only_declared_file_urls() {
         let temp = tempfile::tempdir().expect("tempdir");
-        let mut profile = ProfileConfigFile::builtin_code();
+        let mut profile = ProfileConfigFile::builtin_primary();
         profile.rule_files.enforcement = None;
         profile.rule_files.sigma = None;
         profile.files = Default::default();
@@ -3349,7 +3345,7 @@ decision = "block"
         let config_root = temp.path().join("config");
         let profile_dir = config_root.join("profiles/code");
         fs::create_dir_all(&profile_dir).expect("profile dir");
-        let mut profile = ProfileConfigFile::builtin_code();
+        let mut profile = ProfileConfigFile::builtin_primary();
         profile.rule_files.enforcement = None;
         profile.rule_files.sigma = None;
         profile.assets.arch.retain(|arch, _| arch == "arm64");
@@ -3380,7 +3376,7 @@ decision = "block"
         fs::create_dir_all(&profile_dir).expect("profile dir");
         let mcp = "{ definitely not json";
         fs::write(profile_dir.join("mcp.json"), mcp).expect("mcp");
-        let mut profile = ProfileConfigFile::builtin_code();
+        let mut profile = ProfileConfigFile::builtin_primary();
         profile.rule_files.enforcement = None;
         profile.rule_files.sigma = None;
         profile.assets.arch.retain(|arch, _| arch == "arm64");
@@ -3415,7 +3411,7 @@ decision = "block"
         fs::create_dir_all(&profile_dir).expect("profile dir");
         let packages = "# intentionally empty\n";
         fs::write(profile_dir.join("python-requirements.txt"), packages).expect("packages");
-        let mut profile = ProfileConfigFile::builtin_code();
+        let mut profile = ProfileConfigFile::builtin_primary();
         profile.rule_files.enforcement = None;
         profile.rule_files.sigma = None;
         profile.assets.arch.retain(|arch, _| arch == "arm64");
@@ -3458,7 +3454,7 @@ decision = "block"
 }
 "#;
         fs::write(profile_dir.join("root.manifest.json"), root_manifest).expect("root manifest");
-        let mut profile = ProfileConfigFile::builtin_code();
+        let mut profile = ProfileConfigFile::builtin_primary();
         profile.rule_files.enforcement = None;
         profile.rule_files.sigma = None;
         profile.assets.arch.retain(|arch, _| arch == "arm64");
@@ -3536,7 +3532,7 @@ decision = "block"
         )
         .expect("manifest");
 
-        let mut profile = ProfileConfigFile::builtin_code();
+        let mut profile = ProfileConfigFile::builtin_primary();
         profile.rule_files.enforcement = None;
         profile.rule_files.sigma = None;
         profile.assets.arch.retain(|arch, _| arch == "arm64");

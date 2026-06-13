@@ -264,10 +264,12 @@ format = "toml"
 }
 
 #[test]
-fn builtin_code_profile_manifest_is_valid_and_erofs_backed() {
-    let profile = ProfileConfigFile::builtin_code();
+fn builtin_primary_profile_manifest_is_valid_and_erofs_backed() {
+    let profile = ProfileConfigFile::builtin_primary();
 
-    profile.validate().expect("builtin code profile validates");
+    profile
+        .validate()
+        .expect("builtin primary profile validates");
     assert_eq!(profile.id, "code");
     assert_eq!(profile.name, "Code");
     assert_eq!(
@@ -331,7 +333,7 @@ modified = "2026-06-07T00:00:00Z"
 
 #[test]
 fn profile_config_validation_rejects_bad_identity_assets_and_vm_defaults() {
-    let mut profile = ProfileConfigFile::builtin_code();
+    let mut profile = ProfileConfigFile::builtin_primary();
     profile.id = "Bad Profile".to_string();
     assert!(profile.validate().unwrap_err().contains("lowercase ascii"));
 
@@ -802,7 +804,7 @@ operation = "permission"
 
 #[test]
 fn checked_in_code_profile_rule_files_compile_into_security_rule_set() {
-    let profile = ProfileConfigFile::builtin_code();
+    let profile = ProfileConfigFile::builtin_primary();
     let config_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../config");
     let rules = profile
         .compile_security_rule_set_from_files(&config_root, SecurityRuleSource::User)
@@ -844,7 +846,7 @@ domains = ["example.com"]
 "#,
     )
     .unwrap();
-    let mut profile = ProfileConfigFile::builtin_code();
+    let mut profile = ProfileConfigFile::builtin_primary();
     profile.rule_files.enforcement = Some("old.toml".to_string());
     profile.rule_files.sigma = None;
     let error = profile

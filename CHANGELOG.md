@@ -65,6 +65,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   suspended, save/restore remain exclusive across service workers, cold starts
   stay concurrent, and timing probes run isolated after the `-n 4` integration
   canary so published boot/lifecycle numbers remain meaningful.
+- Hardened profile routing assumptions by passing the full release gate under
+  temporary arbitrary profile ids before restoring the shipping `code` and
+  `co-work` profile identities. This keeps profile-aware routes, UI/TUI
+  helpers, admin materialization, and install packaging from silently depending
+  on a single hardcoded profile.
 - Added a real checked-in `co-work` profile created through
   `capsem-admin profile init --from`, and tightened Profile UI/TUI/service
   tests so profile-aware surfaces consume route-provided profile ids instead of

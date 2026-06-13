@@ -149,6 +149,14 @@ prove the same rails without user credentials.
   forked sessions carry a standalone ledger DB. Proof: `cargo test -p
   capsem-core clone_sandbox_state -- --nocapture`; `uv run python -m pytest
   tests/capsem-mcp/test_fork_images.py::test_fork_of_fork -q`.
+- Profile-id trap proof on 2026-06-13: the checked-in profiles were
+  temporarily renamed to `mary` and `jane` to flush out hardcoded
+  `code`/`co-work` assumptions. Full `just test` passed under those temporary
+  ids, including Ironbank, integration, benchmark, Linux package build, and
+  install E2E. The profiles were then restored to the shipping `code` and
+  `co-work` identities and passed `just _materialize-config`, core profile
+  contract tests, the full `capsem-admin` suite, and the focused Python
+  profile/build-chain tests before the final shipping-name full gate.
 - Apple VZ lifecycle hardening on 2026-06-13: checkpoint files now require an
   fsynced `.complete` marker before service registry state can mark a VM
   suspended or resume from warm checkpoint. Save/restore use exclusive

@@ -999,6 +999,20 @@ next one, and stage only the files for that slice.
   - Proof: `cargo test -p capsem-core clone_sandbox_state -- --nocapture`;
     `uv run python -m pytest
     tests/capsem-mcp/test_fork_images.py::test_fork_of_fork -q`.
+- [x] RED/GREEN: profile-dependent code must survive arbitrary profile ids
+  before returning to the shipping `code`/`co-work` names.
+  - Trap: checked-in `config/profiles/code` and `config/profiles/co-work`
+    were temporarily renamed to `mary` and `jane` and every live expectation
+    was updated to those ids.
+  - Proof: full `just test` passed under the temporary profile ids, including
+    Ironbank, integration, benchmark, Linux package build, and install E2E.
+  - Restoration proof: profiles were renamed back to `code` and `co-work`;
+    `just _materialize-config`; `cargo test -p capsem-core profile_contract
+    -- --nocapture`; `cargo test -p capsem-admin -- --nocapture`; and
+    `uv run python -m pytest tests/test_build_assets_profile.py
+    tests/capsem-build-chain/test_source_profiles_unpinned.py
+    tests/test_injection_script.py tests/test_integration_script_profiles.py
+    -q` all passed with the shipping ids.
 - [ ] Proof: status/debug show service version, manifest origin/hash, profile
   status, plugin status, route status, doctor evidence, OBOM/SBOM references.
 - [ ] Proof: changelog, docs, skills, and benchmark docs updated.

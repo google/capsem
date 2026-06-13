@@ -84,7 +84,7 @@ pub struct ProfileAssetConfig {
 
 impl Default for ProfileAssetConfig {
     fn default() -> Self {
-        ProfileConfigFile::builtin_code().assets
+        ProfileConfigFile::builtin_primary().assets
     }
 }
 
@@ -1210,11 +1210,11 @@ struct McpJsonConfig {
 }
 
 impl ProfileConfigFile {
-    pub fn builtin_code() -> Self {
-        toml::from_str(include_str!(
-            "../../../../../config/profiles/code/profile.toml"
-        ))
-        .expect("built-in code profile TOML must parse")
+    pub fn builtin_primary() -> Self {
+        builtin_profile_configs()
+            .into_iter()
+            .next()
+            .expect("at least one built-in profile must exist")
     }
 
     pub fn validate(&self) -> Result<(), String> {
@@ -1298,6 +1298,16 @@ impl ProfileConfigFile {
     ) -> Result<SecurityRuleSet, String> {
         SecurityRuleSet::compile_profile(&self.security_rule_profile_from_files(base_dir)?, source)
     }
+}
+
+fn builtin_profile_configs() -> Vec<ProfileConfigFile> {
+    [
+        include_str!("../../../../../config/profiles/code/profile.toml"),
+        include_str!("../../../../../config/profiles/co-work/profile.toml"),
+    ]
+    .into_iter()
+    .map(|content| toml::from_str(content).expect("built-in profile TOML must parse"))
+    .collect()
 }
 
 pub fn resolve_profile_rule_file_path(base_dir: &Path, rule_file: &str) -> PathBuf {
@@ -1603,8 +1613,10 @@ pub enum ProfileCatalogSource {
 
 impl ProfileCatalog {
     pub fn builtin() -> Self {
-        let profile = ProfileConfigFile::builtin_code();
-        let profiles = BTreeMap::from([(profile.id.clone(), profile)]);
+        let profiles = builtin_profile_configs()
+            .into_iter()
+            .map(|profile| (profile.id.clone(), profile))
+            .collect();
         Self {
             profiles,
             source: ProfileCatalogSource::BuiltIn,

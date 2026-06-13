@@ -54,7 +54,15 @@ thread_local! {
 
 #[cfg(test)]
 fn test_profile_dir_override() -> Option<PathBuf> {
-    TEST_PROFILE_DIR_OVERRIDE.with(|path| path.borrow().clone())
+    TEST_PROFILE_DIR_OVERRIDE.with(|cell| {
+        let path = cell.borrow().clone();
+        if path.as_ref().is_some_and(|path| !path.exists()) {
+            cell.replace(None);
+            None
+        } else {
+            path
+        }
+    })
 }
 
 #[cfg(test)]
@@ -117,6 +125,9 @@ const PROCESS_ENV_ALLOWLIST: &[&str] = &[
     // capsem.rootfs=erofs-dax when booting a .erofs rootfs.
     "CAPSEM_EXPERIMENTAL_EROFS_DAX",
 ];
+
+const RUNTIME_PROFILE_CONFIG_DIR: &str = "runtime-config";
+const RUNTIME_OVERLAY_FILE: &str = "runtime-overlay.toml";
 
 // ---------------------------------------------------------------------------
 // Service state
@@ -763,6 +774,8 @@ impl ServiceState {
         }
 
         let runtime_profile = self.profile_for_runtime(&profile_id)?;
+        let runtime_profile_dir =
+            self.materialize_runtime_profile_dir(&runtime_profile, &session_dir)?;
         let profile = runtime_profile.config();
         let profile_revision = profile.revision.clone();
         let profile_payload_hash = profile_payload_hash(profile)?;
@@ -846,7 +859,7 @@ impl ServiceState {
                 .arg("--session-dir")
                 .arg(&session_dir)
                 .arg("--profile-dir")
-                .arg(runtime_profile.profile_dir())
+                .arg(&runtime_profile_dir)
                 .arg("--cpus")
                 .arg(cpus.to_string())
                 .arg("--ram-mb")
@@ -1062,6 +1075,8 @@ impl ServiceState {
         let _ = std::fs::remove_file(uds_path.with_extension("ready"));
 
         let runtime_profile = self.profile_for_runtime(&entry.profile_id)?;
+        let runtime_profile_dir =
+            self.materialize_runtime_profile_dir(&runtime_profile, &entry.session_dir)?;
         let profile = runtime_profile.config();
         self.validate_profile_pins(
             profile,
@@ -1153,7 +1168,7 @@ impl ServiceState {
                 .arg("--session-dir")
                 .arg(&entry.session_dir)
                 .arg("--profile-dir")
-                .arg(runtime_profile.profile_dir())
+                .arg(&runtime_profile_dir)
                 .arg("--cpus")
                 .arg(cpus.to_string())
                 .arg("--ram-mb")
@@ -1379,6 +1394,94 @@ impl ServiceState {
         }
     }
 
+    fn materialize_runtime_profile_dir(
+        &self,
+        profile: &Profile,
+        session_dir: &StdPath,
+    ) -> Result<PathBuf> {
+        let config = profile.config();
+        let runtime_config_root = session_dir.join(RUNTIME_PROFILE_CONFIG_DIR);
+        let runtime_profile_dir = runtime_config_root.join("profiles").join(&config.id);
+        if runtime_config_root.exists() {
+            std::fs::remove_dir_all(&runtime_config_root).with_context(|| {
+                format!(
+                    "remove stale runtime profile config {}",
+                    runtime_config_root.display()
+                )
+            })?;
+        }
+        copy_dir_recursive(profile.profile_dir(), &runtime_profile_dir).with_context(|| {
+            format!(
+                "copy profile runtime {} to {}",
+                profile.profile_dir().display(),
+                runtime_profile_dir.display()
+            )
+        })?;
+
+        let (_, corp) = capsem_core::net::policy_config::load_settings_and_corp_files();
+        let runtime_overlay = SettingsFile {
+            rule_files: corp.rule_files.clone(),
+            default: corp.default.clone(),
+            profiles: corp.profiles.clone(),
+            corp: corp.corp.clone(),
+            corp_rule_files: corp.corp_rule_files.clone(),
+            ai: corp.ai.clone(),
+            plugins: corp.plugins.clone(),
+            mcp: corp.mcp.clone(),
+            ..SettingsFile::default()
+        };
+        if !runtime_overlay_is_empty(&runtime_overlay) {
+            std::fs::write(
+                runtime_profile_dir.join(RUNTIME_OVERLAY_FILE),
+                toml::to_string_pretty(&runtime_overlay)
+                    .context("serialize runtime profile overlay")?,
+            )
+            .with_context(|| {
+                format!(
+                    "write runtime profile overlay {}",
+                    runtime_profile_dir.join(RUNTIME_OVERLAY_FILE).display()
+                )
+            })?;
+        }
+        Ok(runtime_profile_dir)
+    }
+
+    fn refresh_runtime_profile_dirs(&self, profile_filter: Option<&str>) -> Result<usize> {
+        let targets = {
+            let instances = self.instances.lock().unwrap();
+            instances
+                .iter()
+                .filter(|(_, info)| {
+                    profile_filter
+                        .map(|profile_id| info.profile_id == profile_id)
+                        .unwrap_or(true)
+                })
+                .map(|(id, info)| {
+                    (
+                        id.clone(),
+                        info.profile_id.clone(),
+                        info.session_dir.clone(),
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+
+        for (id, profile_id, session_dir) in &targets {
+            let runtime_profile = self
+                .profile_for_runtime(profile_id)
+                .with_context(|| format!("load runtime profile {profile_id} for {id}"))?;
+            self.materialize_runtime_profile_dir(&runtime_profile, session_dir)
+                .with_context(|| {
+                    format!(
+                        "refresh runtime profile config for {id} ({profile_id}) in {}",
+                        session_dir.display()
+                    )
+                })?;
+        }
+
+        Ok(targets.len())
+    }
+
     fn resolve_profile_asset_paths(
         &self,
         profile: &ProfileConfigFile,
@@ -1392,9 +1495,9 @@ impl ServiceState {
         })?;
 
         Ok(capsem_core::asset_manager::ResolvedAssets {
-            kernel: profile_asset_descriptor_path(&self.assets_dir, arch, &arch_assets.kernel),
-            initrd: profile_asset_descriptor_path(&self.assets_dir, arch, &arch_assets.initrd),
-            rootfs: profile_asset_descriptor_path(&self.assets_dir, arch, &arch_assets.rootfs),
+            kernel: profile_asset_descriptor_path(&self.assets_dir, arch, &arch_assets.kernel)?,
+            initrd: profile_asset_descriptor_path(&self.assets_dir, arch, &arch_assets.initrd)?,
+            rootfs: profile_asset_descriptor_path(&self.assets_dir, arch, &arch_assets.rootfs)?,
             asset_version: format!("profile:{}@{}", profile.id, profile.revision),
         })
     }
@@ -1510,8 +1613,54 @@ impl ServiceState {
     }
 }
 
+fn runtime_overlay_is_empty(overlay: &SettingsFile) -> bool {
+    overlay.rule_files.is_empty()
+        && overlay.default.is_empty()
+        && overlay.profiles.is_empty()
+        && overlay.corp.is_empty()
+        && overlay.corp_rule_files.is_empty()
+        && overlay.ai.is_empty()
+        && overlay.plugins.is_empty()
+        && overlay.mcp.is_none()
+}
+
 fn gib(bytes: u64) -> u64 {
     bytes / 1024 / 1024 / 1024
+}
+
+fn copy_dir_recursive(src: &StdPath, dst: &StdPath) -> Result<()> {
+    std::fs::create_dir_all(dst).with_context(|| format!("create directory {}", dst.display()))?;
+    for entry in
+        std::fs::read_dir(src).with_context(|| format!("read directory {}", src.display()))?
+    {
+        let entry = entry.with_context(|| format!("read entry in {}", src.display()))?;
+        let source_path = entry.path();
+        let target_path = dst.join(entry.file_name());
+        let file_type = entry
+            .file_type()
+            .with_context(|| format!("stat {}", source_path.display()))?;
+        if file_type.is_dir() {
+            copy_dir_recursive(&source_path, &target_path)?;
+        } else if file_type.is_file() {
+            if let Some(parent) = target_path.parent() {
+                std::fs::create_dir_all(parent)
+                    .with_context(|| format!("create directory {}", parent.display()))?;
+            }
+            std::fs::copy(&source_path, &target_path).with_context(|| {
+                format!(
+                    "copy runtime profile file {} to {}",
+                    source_path.display(),
+                    target_path.display()
+                )
+            })?;
+        } else {
+            return Err(anyhow!(
+                "runtime profile source {} must contain only directories and regular files",
+                source_path.display()
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn validate_session_rootfs_size(
@@ -1548,9 +1697,9 @@ fn profile_asset_pins(profile: &ProfileConfigFile) -> Result<BootAssetPins> {
         )
     })?;
     Ok(BootAssetPins {
-        kernel: descriptor_pin(&arch_assets.kernel),
-        initrd: descriptor_pin(&arch_assets.initrd),
-        rootfs: descriptor_pin(&arch_assets.rootfs),
+        kernel: descriptor_pin(&arch_assets.kernel)?,
+        initrd: descriptor_pin(&arch_assets.initrd)?,
+        rootfs: descriptor_pin(&arch_assets.rootfs)?,
     })
 }
 
@@ -1559,11 +1708,11 @@ fn profile_payload_hash(profile: &ProfileConfigFile) -> Result<String> {
     Ok(format!("blake3:{}", blake3::hash(&bytes).to_hex()))
 }
 
-fn descriptor_pin(asset: &ProfileAssetDescriptor) -> BootAssetPin {
-    BootAssetPin {
+fn descriptor_pin(asset: &ProfileAssetDescriptor) -> Result<BootAssetPin> {
+    Ok(BootAssetPin {
         name: asset.name.clone(),
-        hash: asset.hash.clone(),
-    }
+        hash: required_profile_asset_hash(asset)?.to_string(),
+    })
 }
 
 fn validate_asset_file_pin(kind: &str, path: &StdPath, pin: &BootAssetPin) -> Result<()> {
@@ -1581,32 +1730,54 @@ fn profile_asset_descriptor_path(
     assets_dir: &StdPath,
     arch: &str,
     asset: &ProfileAssetDescriptor,
-) -> PathBuf {
-    let hash_name = profile_asset_hash_name(asset);
+) -> Result<PathBuf> {
+    let hash_name = profile_asset_hash_name(asset)?;
     let bases = [assets_dir.join(arch), assets_dir.to_path_buf()];
 
     for base in &bases {
         let path = base.join(&hash_name);
         if path.exists() {
-            return path;
+            return Ok(path);
         }
     }
     for base in &bases {
         let path = base.join(&asset.name);
         if path.exists() {
-            return path;
+            return Ok(path);
         }
     }
 
-    bases[0].join(&asset.name)
+    Ok(bases[0].join(&asset.name))
 }
 
-fn profile_asset_hash_hex(asset: &ProfileAssetDescriptor) -> &str {
-    asset.hash.strip_prefix("blake3:").unwrap_or(&asset.hash)
+fn required_profile_asset_hash(asset: &ProfileAssetDescriptor) -> Result<&str> {
+    asset.hash.as_deref().ok_or_else(|| {
+        anyhow!(
+            "profile asset '{}' is missing a materialized hash",
+            asset.name
+        )
+    })
 }
 
-fn profile_asset_hash_name(asset: &ProfileAssetDescriptor) -> String {
-    capsem_core::asset_manager::hash_filename(&asset.name, profile_asset_hash_hex(asset))
+fn required_profile_asset_size(asset: &ProfileAssetDescriptor) -> Result<u64> {
+    asset.size.ok_or_else(|| {
+        anyhow!(
+            "profile asset '{}' is missing a materialized size",
+            asset.name
+        )
+    })
+}
+
+fn profile_asset_hash_hex(asset: &ProfileAssetDescriptor) -> Result<&str> {
+    let hash = required_profile_asset_hash(asset)?;
+    Ok(hash.strip_prefix("blake3:").unwrap_or(hash))
+}
+
+fn profile_asset_hash_name(asset: &ProfileAssetDescriptor) -> Result<String> {
+    Ok(capsem_core::asset_manager::hash_filename(
+        &asset.name,
+        profile_asset_hash_hex(asset)?,
+    ))
 }
 
 fn boot_asset_pin_hash_name(pin: &BootAssetPin) -> String {
@@ -1618,9 +1789,15 @@ fn profile_catalog_asset_filenames(catalog: &ProfileCatalog) -> HashSet<String> 
     let mut filenames = HashSet::new();
     for profile in catalog.profiles() {
         for assets in profile.assets.arch.values() {
-            filenames.insert(profile_asset_hash_name(&assets.kernel));
-            filenames.insert(profile_asset_hash_name(&assets.initrd));
-            filenames.insert(profile_asset_hash_name(&assets.rootfs));
+            if let Ok(name) = profile_asset_hash_name(&assets.kernel) {
+                filenames.insert(name);
+            }
+            if let Ok(name) = profile_asset_hash_name(&assets.initrd) {
+                filenames.insert(name);
+            }
+            if let Ok(name) = profile_asset_hash_name(&assets.rootfs) {
+                filenames.insert(name);
+            }
         }
     }
     filenames
@@ -1640,8 +1817,8 @@ fn profile_asset_download_target(
     assets_dir: &StdPath,
     arch: &str,
     asset: &ProfileAssetDescriptor,
-) -> PathBuf {
-    assets_dir.join(arch).join(profile_asset_hash_name(asset))
+) -> Result<PathBuf> {
+    Ok(assets_dir.join(arch).join(profile_asset_hash_name(asset)?))
 }
 
 /// Identify the launchd-cleanup-saturation transient that masquerades
@@ -2667,11 +2844,7 @@ fn storage_diagnostics(session_dir: &StdPath) -> Option<api::StorageDiagnostics>
     let metadata = std::fs::metadata(&rootfs_image_path).ok()?;
     let stat = nix::sys::statvfs::statvfs(session_dir).ok()?;
     let block_size = stat.block_size();
-    let fs_bytes = |blocks| {
-        TryInto::<u64>::try_into(blocks)
-            .unwrap_or(u64::MAX)
-            .saturating_mul(block_size)
-    };
+    let fs_bytes = |blocks| u64::from(blocks).saturating_mul(block_size);
 
     Some(api::StorageDiagnostics {
         rootfs_image_path: rootfs_image_path.to_string_lossy().to_string(),
@@ -3754,11 +3927,27 @@ async fn handle_read_file(
 async fn handle_reload_config(
     State(state): State<Arc<ServiceState>>,
 ) -> Result<Json<serde_json::Value>, AppError> {
+    handle_reload_config_for_profile(state, None).await
+}
+
+async fn handle_reload_config_for_profile(
+    state: Arc<ServiceState>,
+    profile_filter: Option<&str>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    state
+        .refresh_runtime_profile_dirs(profile_filter)
+        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
     // Collect paths to broadcast to.
     let uds_paths = {
         let instances = state.instances.lock().unwrap();
         instances
             .iter()
+            .filter(|(_, info)| {
+                profile_filter
+                    .map(|profile_id| info.profile_id == profile_id)
+                    .unwrap_or(true)
+            })
             .map(|(id, info)| (id.clone(), info.uds_path.clone()))
             .collect::<Vec<_>>()
     };
@@ -3795,8 +3984,8 @@ async fn handle_profile_reload(
     State(state): State<Arc<ServiceState>>,
     Path(profile_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let _profile_id = validate_profile_route_id(profile_id)?;
-    handle_reload_config(State(state)).await
+    let profile_id = validate_profile_route_id(profile_id)?;
+    handle_reload_config_for_profile(state, Some(&profile_id)).await
 }
 
 // ---------------------------------------------------------------------------
@@ -3853,21 +4042,37 @@ fn profile_asset_status_value(
     ]
     .into_iter()
     .map(|(kind, asset)| {
-        let path = profile_asset_descriptor_path(&state.assets_dir, current_arch, asset);
+        let (path, materialization_error) =
+            match profile_asset_descriptor_path(&state.assets_dir, current_arch, asset) {
+                Ok(path) => (path, None),
+                Err(error) => (
+                    state.assets_dir.join(current_arch).join(&asset.name),
+                    Some(error),
+                ),
+            };
         let resolved_name = path
             .file_name()
             .and_then(|name| name.to_str())
             .unwrap_or(&asset.name);
+        let error = materialization_error.map(|error| error.to_string());
+        let status = if error.is_some() {
+            "error"
+        } else if path.exists() {
+            "present"
+        } else {
+            "missing"
+        };
         json!({
             "kind": kind,
             "name": asset.name,
             "logical_name": asset.name,
             "resolved_name": resolved_name,
             "path": path.display().to_string(),
-            "status": if path.exists() { "present" } else { "missing" },
+            "status": status,
             "hash": asset.hash,
             "size": asset.size,
             "url": asset.url,
+            "error": error,
         })
     })
     .collect::<Vec<_>>();
@@ -4324,28 +4529,35 @@ async fn ensure_profile_assets_for_state(
 
         let mut downloaded = 0usize;
         for asset in assets {
-            let resolved = profile_asset_descriptor_path(&state.assets_dir, arch, asset);
+            let resolved = profile_asset_descriptor_path(&state.assets_dir, arch, asset)
+                .map_err(|e| e.to_string())?;
+            let expected_hash = profile_asset_hash_hex(asset)
+                .map_err(|e| e.to_string())?
+                .to_string();
+            let expected_size = required_profile_asset_size(asset).map_err(|e| e.to_string())?;
             if resolved.exists() {
                 match capsem_core::asset_manager::hash_file(&resolved) {
-                    Ok(hash) if hash == profile_asset_hash_hex(asset) => {
+                    Ok(hash) if hash == expected_hash => {
                         update_asset_reconcile_state(&state, |status| {
                             status.in_progress = true;
                             status.current_asset = Some(asset.name.clone());
-                            status.bytes_done = asset.size;
-                            status.bytes_total = Some(asset.size);
+                            status.bytes_done = expected_size;
+                            status.bytes_total = Some(expected_size);
                         })?;
                         continue;
                     }
                     Ok(_) | Err(_) => {
-                        if resolved == profile_asset_download_target(&state.assets_dir, arch, asset)
-                        {
+                        let target = profile_asset_download_target(&state.assets_dir, arch, asset)
+                            .map_err(|e| e.to_string())?;
+                        if resolved == target {
                             let _ = std::fs::remove_file(&resolved);
                         }
                     }
                 }
             }
 
-            let target = profile_asset_download_target(&state.assets_dir, arch, asset);
+            let target = profile_asset_download_target(&state.assets_dir, arch, asset)
+                .map_err(|e| e.to_string())?;
             download_profile_asset(asset, &target, {
                 let state = Arc::clone(&state);
                 move |bytes_done, bytes_total, done| {
@@ -4429,7 +4641,8 @@ where
         .await
         .with_context(|| format!("create {}", tmp.display()))?;
     let mut bytes_done = 0u64;
-    let total = Some(asset.size);
+    let expected_hash = profile_asset_hash_hex(asset)?.to_string();
+    let total = Some(required_profile_asset_size(asset)?);
 
     if let Some(path) = asset.url.strip_prefix("file://") {
         let mut input = tokio::fs::File::open(path)
@@ -4485,12 +4698,12 @@ where
     drop(output);
 
     let actual = capsem_core::asset_manager::hash_file(&tmp)?;
-    if actual != profile_asset_hash_hex(asset) {
+    if actual != expected_hash {
         let _ = std::fs::remove_file(&tmp);
         anyhow::bail!(
             "{}: hash mismatch (expected {}, got {})",
             asset.name,
-            profile_asset_hash_hex(asset),
+            expected_hash,
             actual
         );
     }
@@ -4937,7 +5150,7 @@ fn profile_obom_info(profile: &ProfileConfigFile) -> Option<api::ProfileObomInfo
     let rootfs_hash = profile
         .assets
         .current_arch_assets()
-        .map(|assets| assets.rootfs.hash.clone())?;
+        .and_then(|assets| assets.rootfs.hash.clone())?;
     Some(api::ProfileObomInfo {
         profile_id: profile.id.clone(),
         current_arch,

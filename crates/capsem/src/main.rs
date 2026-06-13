@@ -222,7 +222,7 @@ enum AssetsCommands {
     /// Show VM asset readiness
     Status {
         /// Profile whose VM assets should be inspected
-        #[arg(long, default_value = "code")]
+        #[arg(long, default_value = DEFAULT_PROFILE_ID)]
         profile: String,
         /// Output JSON
         #[arg(long)]
@@ -231,7 +231,7 @@ enum AssetsCommands {
     /// Download missing or corrupt VM assets, then show readiness
     Ensure {
         /// Profile whose VM assets should be repaired
-        #[arg(long, default_value = "code")]
+        #[arg(long, default_value = DEFAULT_PROFILE_ID)]
         profile: String,
         /// Output JSON
         #[arg(long)]
@@ -2699,7 +2699,7 @@ mod tests {
     }
 
     #[test]
-    fn cli_default_profile_is_real_code_profile() {
+    fn cli_default_profile_is_primary_profile() {
         assert_eq!(DEFAULT_PROFILE_ID, "code");
     }
 

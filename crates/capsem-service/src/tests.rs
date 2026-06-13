@@ -261,26 +261,68 @@ fn insert_fake_instance_with_session_dir_and_pins(
 }
 
 fn test_profile_revision() -> String {
-    ProfileConfigFile::builtin_code().revision
+    ProfileConfigFile::builtin_primary().revision
+}
+
+fn materialized_test_profile() -> ProfileConfigFile {
+    materialized_test_profile_for("code")
+}
+
+fn materialized_test_profile_for(profile_id: &str) -> ProfileConfigFile {
+    let profile_path = checked_in_profile_dir(profile_id).join("profile.toml");
+    let mut profile: ProfileConfigFile =
+        toml::from_str(&std::fs::read_to_string(profile_path).unwrap()).unwrap();
+    let hash = format!("blake3:{}", blake3::hash(b"test-asset").to_hex());
+    let size = b"test-asset".len() as u64;
+    for arch_assets in profile.assets.arch.values_mut() {
+        for asset in [
+            &mut arch_assets.kernel,
+            &mut arch_assets.initrd,
+            &mut arch_assets.rootfs,
+        ] {
+            asset.hash = Some(hash.clone());
+            asset.size = Some(size);
+        }
+    }
+    pin_checked_in_profile_files(&mut profile);
+    profile
 }
 
 fn test_profile_payload_hash() -> String {
-    profile_payload_hash(&ProfileConfigFile::builtin_code()).unwrap()
+    profile_payload_hash(&materialized_test_profile()).unwrap()
 }
 
 fn test_asset_pins() -> BootAssetPins {
-    profile_asset_pins(&ProfileConfigFile::builtin_code()).unwrap()
+    profile_asset_pins(&materialized_test_profile()).unwrap()
 }
 
 fn install_test_profile_assets(state: &ServiceState) {
-    let profile = ProfileConfigFile::builtin_code();
+    let profile = materialized_test_profile();
+    install_test_profile_catalog(state, &profile);
+
     let arch = capsem_core::net::policy_config::current_profile_arch();
     let arch_dir = state.assets_dir.join(arch);
     std::fs::create_dir_all(&arch_dir).unwrap();
     let assets = profile.assets.current_arch_assets().unwrap();
     for asset in [&assets.kernel, &assets.initrd, &assets.rootfs] {
-        std::fs::write(arch_dir.join(&asset.name), b"test-asset").unwrap();
+        std::fs::write(
+            arch_dir.join(profile_asset_hash_name(asset).expect("profile asset hash name")),
+            b"test-asset",
+        )
+        .unwrap();
     }
+}
+
+fn install_test_profile_catalog(state: &ServiceState, profile: &ProfileConfigFile) {
+    let config_root = state.run_dir.join("config");
+    let profile_dir = config_root.join("profiles").join(&profile.id);
+    copy_dir_all(checked_in_profile_dir(&profile.id).as_path(), &profile_dir);
+    std::fs::write(
+        profile_dir.join("profile.toml"),
+        toml::to_string_pretty(&profile).unwrap(),
+    )
+    .unwrap();
+    super::set_test_profile_dir_override(Some(config_root.join("profiles")));
 }
 
 fn test_persistent_entry(name: &str, session_dir: PathBuf) -> PersistentVmEntry {
@@ -319,51 +361,100 @@ fn copy_dir_all(src: &std::path::Path, dst: &std::path::Path) {
     }
 }
 
+fn checked_in_profile_dir(profile_id: &str) -> PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../config/profiles")
+        .join(profile_id)
+}
+
 fn install_code_profile_fixture(dir: &tempfile::TempDir) -> PathBuf {
     let config_root = dir.path().join("config");
     let profile_dir = config_root.join("profiles/code");
-    copy_dir_all(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../config/profiles/code")
-            .as_path(),
-        &profile_dir,
-    );
+    copy_dir_all(checked_in_profile_dir("code").as_path(), &profile_dir);
     config_root
 }
 
-fn write_file_descriptor_profile(profile: &mut ProfileConfigFile, path: &std::path::Path) {
+fn profile_file_descriptor(
+    config_root: &std::path::Path,
+    path: &std::path::Path,
+) -> capsem_core::net::policy_config::ProfileFileDescriptor {
     let bytes = std::fs::metadata(path).unwrap().len();
     let hash = capsem_core::asset_manager::hash_file(path).unwrap();
     let relative = path
-        .strip_prefix(path.ancestors().nth(3).unwrap())
+        .strip_prefix(config_root)
         .unwrap_or(path)
         .to_string_lossy()
         .to_string();
-    match path.file_name().and_then(|name| name.to_str()).unwrap() {
+    capsem_core::net::policy_config::ProfileFileDescriptor {
+        path: relative,
+        hash: Some(format!("blake3:{hash}")),
+        size: Some(bytes),
+    }
+}
+
+fn assign_file_descriptor_profile(
+    profile: &mut ProfileConfigFile,
+    descriptor: capsem_core::net::policy_config::ProfileFileDescriptor,
+) {
+    match std::path::Path::new(&descriptor.path)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap()
+    {
         "enforcement.toml" => {
-            profile.files.enforcement =
-                Some(capsem_core::net::policy_config::ProfileFileDescriptor {
-                    path: relative,
-                    hash: Some(format!("blake3:{hash}")),
-                    size: Some(bytes),
-                });
+            profile.files.enforcement = Some(descriptor);
         }
         "detection.yaml" => {
-            profile.files.detection =
-                Some(capsem_core::net::policy_config::ProfileFileDescriptor {
-                    path: relative,
-                    hash: Some(format!("blake3:{hash}")),
-                    size: Some(bytes),
-                });
+            profile.files.detection = Some(descriptor);
         }
         "mcp.json" => {
-            profile.files.mcp = Some(capsem_core::net::policy_config::ProfileFileDescriptor {
-                path: relative,
-                hash: Some(format!("blake3:{hash}")),
-                size: Some(bytes),
-            });
+            profile.files.mcp = Some(descriptor);
+        }
+        "apt-packages.txt" => {
+            profile.files.apt_packages = Some(descriptor);
+        }
+        "python-requirements.txt" => {
+            profile.files.python_requirements = Some(descriptor);
+        }
+        "npm-packages.txt" => {
+            profile.files.npm_packages = Some(descriptor);
+        }
+        "build.sh" => {
+            profile.files.build = Some(descriptor);
+        }
+        "tips.txt" => {
+            profile.files.tips = Some(descriptor);
+        }
+        "root.manifest.json" => {
+            profile.files.root_manifest = Some(descriptor);
         }
         other => panic!("unsupported profile fixture descriptor {other}"),
+    }
+}
+
+fn write_file_descriptor_profile(
+    profile: &mut ProfileConfigFile,
+    config_root: &std::path::Path,
+    path: &std::path::Path,
+) {
+    assign_file_descriptor_profile(profile, profile_file_descriptor(config_root, path));
+}
+
+fn pin_checked_in_profile_files(profile: &mut ProfileConfigFile) {
+    let repo_config_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../config");
+    let profile_dir = repo_config_root.join("profiles").join(&profile.id);
+    for filename in [
+        "enforcement.toml",
+        "detection.yaml",
+        "mcp.json",
+        "apt-packages.txt",
+        "python-requirements.txt",
+        "npm-packages.txt",
+        "build.sh",
+        "tips.txt",
+        "root.manifest.json",
+    ] {
+        write_file_descriptor_profile(profile, &repo_config_root, &profile_dir.join(filename));
     }
 }
 
@@ -374,7 +465,7 @@ fn install_file_asset_profile_fixture(dir: &tempfile::TempDir) -> (PathBuf, Prof
     let source_dir = dir.path().join("asset-source").join(arch);
     std::fs::create_dir_all(&source_dir).unwrap();
 
-    let mut profile = ProfileConfigFile::builtin_code();
+    let mut profile = ProfileConfigFile::builtin_primary();
     for (name, body) in [
         ("vmlinuz", b"fixture-kernel".as_slice()),
         ("initrd.img", b"fixture-initrd".as_slice()),
@@ -394,8 +485,18 @@ fn install_file_asset_profile_fixture(dir: &tempfile::TempDir) -> (PathBuf, Prof
         asset.hash = Some(format!("blake3:{hash}"));
         asset.size = Some(std::fs::metadata(&source).unwrap().len());
     }
-    for filename in ["enforcement.toml", "detection.yaml", "mcp.json"] {
-        write_file_descriptor_profile(&mut profile, &profile_dir.join(filename));
+    for filename in [
+        "enforcement.toml",
+        "detection.yaml",
+        "mcp.json",
+        "apt-packages.txt",
+        "python-requirements.txt",
+        "npm-packages.txt",
+        "build.sh",
+        "tips.txt",
+        "root.manifest.json",
+    ] {
+        write_file_descriptor_profile(&mut profile, &config_root, &profile_dir.join(filename));
     }
     std::fs::write(
         profile_dir.join("profile.toml"),
@@ -426,7 +527,7 @@ fn add_profile_enforcement_rule(
     let mut profile: ProfileConfigFile =
         toml::from_str(&std::fs::read_to_string(profile_dir.join("profile.toml")).unwrap())
             .unwrap();
-    write_file_descriptor_profile(&mut profile, &enforcement_path);
+    write_file_descriptor_profile(&mut profile, config_root, &enforcement_path);
     std::fs::write(
         profile_dir.join("profile.toml"),
         toml::to_string_pretty(&profile).unwrap(),
@@ -1080,7 +1181,7 @@ async fn security_latest_returns_full_session_db_rule_ledger_rows() {
 
 #[test]
 fn code_profile_summary_reflects_effective_contract() {
-    let profile = ProfileConfigFile::builtin_code();
+    let profile = ProfileConfigFile::builtin_primary();
     let summary = build_profile_summary(
         &profile,
         &ProfileCatalogSource::BuiltIn,
@@ -1109,14 +1210,27 @@ async fn handle_profiles_list_returns_code_profile_inventory() {
 
     let Json(response) = handle_profiles_list(State(state)).await.unwrap();
 
-    assert_eq!(response.profiles.len(), 1);
-    assert_eq!(response.profiles[0].id, "code");
+    assert_eq!(response.profiles.len(), 2);
+    let code = response
+        .profiles
+        .iter()
+        .find(|profile| profile.id == "code")
+        .expect("code profile is listed");
+    let co_work = response
+        .profiles
+        .iter()
+        .find(|profile| profile.id == "co-work")
+        .expect("co-work profile is listed");
     assert!(
-        response.profiles[0].icon_svg.is_some(),
+        code.icon_svg.is_some(),
         "profile list must expose profile-owned icon_svg for launch surfaces"
     );
     assert!(
-        response.profiles[0].plugin_count > 0,
+        co_work.icon_svg.is_some(),
+        "every launchable profile must expose its own icon_svg"
+    );
+    assert!(
+        code.plugin_count > 0,
         "profile inventory should reflect editable plugin policy"
     );
 }
@@ -1124,28 +1238,29 @@ async fn handle_profiles_list_returns_code_profile_inventory() {
 #[tokio::test]
 async fn handle_profiles_status_reports_builtin_catalog_and_rejects_fake_assets() {
     let (state, dir) = make_test_state_with_tempdir();
-    install_test_profile_assets(&state);
 
     let Json(status) = handle_profiles_status(State(state))
         .await
         .expect("profile status should load built-in catalog");
 
     assert_eq!(status["source"], "built_in");
-    assert_eq!(status["profile_count"], 1);
+    assert_eq!(status["profile_count"], 2);
     assert_eq!(
         status["ready_count"], 0,
         "S1-b status must verify asset hashes; placeholder files are not ready"
     );
-    assert_eq!(status["profiles"][0]["id"], "code");
-    assert_eq!(
-        status["profiles"][0]["profile_payload_hash"],
-        test_profile_payload_hash()
-    );
-    assert_eq!(status["profiles"][0]["ready"], false);
-    assert!(!status["profiles"][0]["invalid_assets"]
+    let code = status["profiles"]
         .as_array()
         .unwrap()
-        .is_empty());
+        .iter()
+        .find(|profile| profile["id"] == "code")
+        .expect("code profile status is present");
+    assert_eq!(
+        code["profile_payload_hash"],
+        profile_payload_hash(&ProfileConfigFile::builtin_primary()).unwrap()
+    );
+    assert_eq!(code["ready"], false);
+    assert!(!code["invalid_assets"].as_array().unwrap().is_empty());
     drop(dir);
 }
 
@@ -1211,10 +1326,7 @@ fn checked_in_profile_catalog_status_reports_code_and_co_work() {
 
     assert_eq!(status["profile_count"], 2);
     assert!(profile_ids.contains(&"code".to_string()), "{profile_ids:?}");
-    assert!(
-        profile_ids.contains(&"co-work".to_string()),
-        "{profile_ids:?}"
-    );
+    assert!(profile_ids.contains(&"co-work".to_string()), "{profile_ids:?}");
     for profile in status["profiles"].as_array().expect("profiles array") {
         assert!(
             profile["profile_payload_hash"]
@@ -1228,7 +1340,6 @@ fn checked_in_profile_catalog_status_reports_code_and_co_work() {
 #[tokio::test]
 async fn handle_profiles_reload_reports_active_catalog_status() {
     let (state, _dir) = make_test_state_with_tempdir();
-    install_test_profile_assets(&state);
 
     let Json(response) = handle_profiles_reload(State(state))
         .await
@@ -1236,8 +1347,63 @@ async fn handle_profiles_reload_reports_active_catalog_status() {
 
     assert_eq!(response["reloaded"], true);
     assert_eq!(response["catalog"]["source"], "built_in");
-    assert_eq!(response["catalog"]["profile_count"], 1);
+    assert_eq!(response["catalog"]["profile_count"], 2);
     assert_eq!(response["catalog"]["ready_count"], 0);
+}
+
+#[tokio::test]
+async fn reload_refreshes_session_runtime_profile_from_source_profile() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+    let (state, _dir) = make_test_state_with_tempdir();
+    let profile = materialized_test_profile_for("code");
+    install_test_profile_catalog(&state, &profile);
+    let session_dir = state.run_dir.join("sessions/runtime-refresh");
+    std::fs::create_dir_all(&session_dir).unwrap();
+    insert_fake_instance_with_session_dir(
+        &state,
+        "runtime-refresh",
+        std::process::id(),
+        session_dir.clone(),
+    );
+
+    state
+        .refresh_runtime_profile_dirs(Some("code"))
+        .expect("initial runtime profile materialization");
+    let runtime_enforcement = session_dir.join("runtime-config/profiles/code/enforcement.toml");
+    assert!(
+        runtime_enforcement.exists(),
+        "runtime profile must carry profile enforcement file"
+    );
+    assert!(
+        !std::fs::read_to_string(&runtime_enforcement)
+            .unwrap()
+            .contains("block_local_echo"),
+        "fresh runtime profile should start from the original source profile"
+    );
+
+    let source_enforcement = state.run_dir.join("config/profiles/code/enforcement.toml");
+    let mut updated = std::fs::read_to_string(&source_enforcement).unwrap();
+    updated.push_str(
+        r#"
+
+[rules.block_local_echo]
+name = "block_local_echo"
+action = "block"
+priority = 10
+reason = "test blocks local echo through security rules"
+match = 'mcp.tool_call.name == "local__echo"'
+"#,
+    );
+    std::fs::write(&source_enforcement, updated).unwrap();
+
+    state
+        .refresh_runtime_profile_dirs(Some("code"))
+        .expect("reload must refresh session-local runtime profile config");
+    let refreshed = std::fs::read_to_string(&runtime_enforcement).unwrap();
+    assert!(
+        refreshed.contains("block_local_echo"),
+        "reload must copy source profile edits into the session runtime profile"
+    );
 }
 
 #[test]
@@ -1246,7 +1412,7 @@ fn profile_catalog_reload_rejects_invalid_directory_catalog() {
     let dir = tempfile::tempdir().unwrap();
     let profiles_dir = dir.path().join("profiles");
     std::fs::create_dir_all(profiles_dir.join("code")).unwrap();
-    let mut profile = ProfileConfigFile::builtin_code();
+    let mut profile = ProfileConfigFile::builtin_primary();
     profile.id = "strict".to_string();
     std::fs::write(
         profiles_dir.join("code/profile.toml"),
@@ -1277,13 +1443,11 @@ async fn handle_profile_info_rejects_unknown_profiles() {
 #[tokio::test]
 async fn profile_ui_route_matrix_is_registered_for_all_profiles() {
     let _env_lock = SETTINGS_ENV_LOCK.lock().await;
-    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .components()
-        .collect::<PathBuf>();
-    let _profiles_guard =
-        EnvVarGuard::set("CAPSEM_PROFILES_DIR", repo_root.join("config/profiles"));
-    let state = make_test_state();
+    let (state, _dir) = make_test_state_with_tempdir();
+    let code = materialized_test_profile_for("code");
+    let co_work = materialized_test_profile_for("co-work");
+    install_test_profile_catalog(&state, &code);
+    install_test_profile_catalog(&state, &co_work);
     let routes = [
         "/profiles/{profile}/info",
         "/profiles/{profile}/assets/status",
@@ -1322,7 +1486,7 @@ async fn profile_ui_route_matrix_is_registered_for_all_profiles() {
 }
 
 #[tokio::test]
-async fn handle_profile_validate_accepts_builtin_code_contract() {
+async fn handle_profile_validate_accepts_builtin_primary_contract() {
     let response = handle_profile_validate(
         Path("code".to_string()),
         Json(api::ProfileValidateRequest {
@@ -1340,7 +1504,7 @@ async fn handle_profile_validate_accepts_builtin_code_contract() {
 
 #[tokio::test]
 async fn handle_profile_validate_rejects_payload_route_mismatch() {
-    let mut profile = ProfileConfigFile::builtin_code();
+    let mut profile = ProfileConfigFile::builtin_primary();
     profile.id = "strict".to_string();
 
     let err = handle_profile_validate(
@@ -1837,7 +2001,7 @@ async fn profile_info_and_obom_route_expose_base_image_obom_hash() {
     let dir = tempfile::tempdir().unwrap();
     let profiles_dir = dir.path().join("profiles");
     let profile_dir = profiles_dir.join("code");
-    std::fs::create_dir_all(&profile_dir).unwrap();
+    copy_dir_all(checked_in_profile_dir("code").as_path(), &profile_dir);
     let obom_doc = json!({
         "bomFormat": "CycloneDX",
         "specVersion": "1.6",
@@ -1857,9 +2021,7 @@ async fn profile_info_and_obom_route_expose_base_image_obom_hash() {
     std::fs::write(&obom_path, &obom_bytes).unwrap();
 
     let arch = capsem_core::net::policy_config::current_profile_arch().to_string();
-    let mut profile = ProfileConfigFile::builtin_code();
-    profile.rule_files.enforcement = None;
-    profile.rule_files.sigma = None;
+    let mut profile = materialized_test_profile();
     profile.obom = Some(ProfileObomConfig {
         format: "cyclonedx-obom.v1".to_string(),
         arch: [(
@@ -1921,15 +2083,11 @@ async fn mounted_corp_routes_validate_install_report_and_reload_inline_toml() {
     let _home_guard = EnvVarGuard::set("CAPSEM_HOME", dir.path());
     let app = build_service_router(make_test_state());
     let corp_toml = r#"
-refresh_interval_hours = 24
+refresh_policy = "24h"
 
-[corp.rules.block_evil_example]
-name = "block_evil_example"
-action = "block"
-priority = -100
-detection_level = "high"
-reason = "Mounted corp route proof."
-match = 'http.host.contains("evil.example")'
+[corp_rule_files]
+enforcement = "corp/enforcement.toml"
+sigma = "corp/detection.yaml"
 "#;
 
     let (status, invalid) = route_request(
@@ -1965,7 +2123,8 @@ match = 'http.host.contains("evil.example")'
     assert_eq!(status, StatusCode::OK, "{installed}");
     assert_eq!(installed["success"], true);
     let written = std::fs::read_to_string(dir.path().join("corp.toml")).unwrap();
-    assert!(written.contains("block_evil_example"));
+    assert!(written.contains("[corp_rule_files]"));
+    assert!(written.contains("enforcement = \"corp/enforcement.toml\""));
 
     let (status, info) =
         route_request(app.clone(), axum::http::Method::GET, "/corp/info", None).await;
@@ -3441,7 +3600,7 @@ fn asset_status_reports_reconcile_progress_fields() {
     let arch_dir = dir.path().join(arch);
     std::fs::create_dir_all(&arch_dir).unwrap();
     let state = make_asset_state(dir.path().to_path_buf());
-    let profile = ProfileConfigFile::builtin_code();
+    let profile = materialized_test_profile();
     let arch_assets = profile.assets.current_arch_assets().unwrap();
     for asset in [
         &arch_assets.kernel,
@@ -3483,7 +3642,7 @@ fn profile_asset_status_uses_profile_current_arch_contract() {
     let arch_dir = dir.path().join(arch);
     std::fs::create_dir_all(&arch_dir).unwrap();
     let state = make_asset_state(dir.path().to_path_buf());
-    let profile = ProfileConfigFile::builtin_code();
+    let profile = materialized_test_profile();
     let arch_assets = profile.assets.current_arch_assets().unwrap();
     for asset in [&arch_assets.kernel, &arch_assets.rootfs] {
         let hash = asset
@@ -3541,6 +3700,37 @@ fn profile_asset_status_uses_profile_current_arch_contract() {
 }
 
 #[test]
+fn profile_asset_status_rejects_unmaterialized_asset_descriptors() {
+    let dir = tempfile::tempdir().unwrap();
+    let arch = capsem_core::net::policy_config::current_profile_arch();
+    let arch_dir = dir.path().join(arch);
+    std::fs::create_dir_all(&arch_dir).unwrap();
+    let state = make_asset_state(dir.path().to_path_buf());
+    let mut profile = ProfileConfigFile::builtin_primary();
+    let arch_assets = profile.assets.arch.get_mut(arch).unwrap();
+
+    for asset in [
+        &mut arch_assets.kernel,
+        &mut arch_assets.initrd,
+        &mut arch_assets.rootfs,
+    ] {
+        std::fs::write(arch_dir.join(&asset.name), b"stale logical asset").unwrap();
+        asset.hash = None;
+        asset.size = None;
+    }
+
+    let status = profile_asset_status_value(&state, &profile);
+
+    assert_eq!(status["ready"], false);
+    let assets = status["assets"].as_array().unwrap();
+    assert_eq!(assets.len(), 3);
+    assert!(assets.iter().all(|asset| asset["status"] == "error"));
+    assert!(assets.iter().all(|asset| asset["error"]
+        .as_str()
+        .is_some_and(|error| error.contains("missing a materialized hash"))));
+}
+
+#[test]
 fn profile_asset_status_reports_installed_manifest_origin_and_hash() {
     let dir = tempfile::tempdir().unwrap();
     let arch = capsem_core::net::policy_config::current_profile_arch();
@@ -3588,7 +3778,7 @@ fn profile_asset_status_reports_installed_manifest_origin_and_hash() {
     let expected_hash = capsem_core::asset_manager::hash_file(&manifest_path).unwrap();
 
     let state = make_asset_state(dir.path().to_path_buf());
-    let profile = ProfileConfigFile::builtin_code();
+    let profile = ProfileConfigFile::builtin_primary();
     let status = profile_asset_status_value(&state, &profile);
 
     assert_eq!(status["manifest"]["origin"], "package");
@@ -3657,7 +3847,7 @@ fn profile_asset_status_reports_invalid_manifest_without_stale_truth() {
     let state = make_asset_state(dir.path().to_path_buf());
     std::fs::write(&manifest_path, r#"{"format":2}"#).unwrap();
 
-    let profile = ProfileConfigFile::builtin_code();
+    let profile = ProfileConfigFile::builtin_primary();
     let status = profile_asset_status_value(&state, &profile);
 
     assert_eq!(status["manifest"]["origin"], "installed");
@@ -3678,8 +3868,9 @@ fn profile_asset_status_reports_invalid_manifest_without_stale_truth() {
 fn asset_cleanup_preserves_profile_catalog_and_persistent_vm_pins() {
     let dir = tempfile::tempdir().unwrap();
     let base = dir.path();
-    let profile = ProfileConfigFile::builtin_code();
-    let catalog = ProfileCatalog::builtin();
+    let profile_dir = tempfile::tempdir().unwrap();
+    let (config_root, profile) = install_file_asset_profile_fixture(&profile_dir);
+    let catalog = ProfileCatalog::load_from_dir(&config_root.join("profiles")).unwrap();
     let catalog_rootfs = profile_asset_hash_name(
         &profile
             .assets
@@ -3750,7 +3941,7 @@ fn asset_cleanup_preserves_profile_catalog_and_persistent_vm_pins() {
 #[test]
 fn resolve_profile_asset_paths_uses_profile_hash_prefixed_assets() {
     let dir = tempfile::tempdir().unwrap();
-    let profile = ProfileConfigFile::builtin_code();
+    let profile = materialized_test_profile();
     let arch = capsem_core::net::policy_config::current_profile_arch();
     let arch_dir = dir.path().join(arch);
     std::fs::create_dir_all(&arch_dir).unwrap();
@@ -3780,6 +3971,21 @@ fn resolve_profile_asset_paths_uses_profile_hash_prefixed_assets() {
     assert_ne!(resolved.rootfs.file_name().unwrap(), "rootfs.erofs");
 }
 
+#[test]
+fn vm_asset_block_reason_reports_unmaterialized_profile_asset_pins() {
+    let dir = tempfile::tempdir().unwrap();
+    let state = make_asset_state(dir.path().to_path_buf());
+    let mut profile = ProfileConfigFile::builtin_primary();
+    let arch = capsem_core::net::policy_config::current_profile_arch();
+    profile.assets.arch.get_mut(arch).unwrap().rootfs.hash = None;
+
+    let reason = state
+        .validate_profile_asset_files(&profile, &test_asset_pins())
+        .expect_err("unmaterialized profile asset pins must block VM start");
+
+    assert!(reason.to_string().contains("missing a materialized hash"));
+}
+
 #[tokio::test]
 async fn ensure_profile_assets_downloads_profile_descriptors() {
     let dir = tempfile::tempdir().unwrap();
@@ -3787,7 +3993,7 @@ async fn ensure_profile_assets_downloads_profile_descriptors() {
     let assets_dir = dir.path().join("assets");
     std::fs::create_dir_all(&source_dir).unwrap();
 
-    let mut profile = ProfileConfigFile::builtin_code();
+    let mut profile = ProfileConfigFile::builtin_primary();
     let arch = capsem_core::net::policy_config::current_profile_arch();
     let replacements = [
         ("kernel", "kernel-bytes".as_bytes()),
@@ -3858,10 +4064,41 @@ async fn ensure_profile_assets_downloads_profile_descriptors() {
     assert_eq!(downloaded, 0);
 }
 
+#[tokio::test]
+async fn ensure_profile_assets_rejects_unmaterialized_profile_descriptors() {
+    let dir = tempfile::tempdir().unwrap();
+    let source_dir = dir.path().join("sources");
+    let assets_dir = dir.path().join("assets");
+    std::fs::create_dir_all(&source_dir).unwrap();
+    let mut profile = ProfileConfigFile::builtin_primary();
+    let arch = capsem_core::net::policy_config::current_profile_arch();
+    let kernel = &mut profile.assets.arch.get_mut(arch).unwrap().kernel;
+    let source = source_dir.join(&kernel.name);
+    std::fs::write(&source, b"rootfs").unwrap();
+    kernel.url = format!("file://{}", source.display());
+    kernel.hash = None;
+    kernel.size = None;
+    let state = make_asset_state(assets_dir);
+
+    let error = ensure_profile_assets_for_state(Arc::clone(&state), &profile)
+        .await
+        .expect_err("unmaterialized profile descriptors must not be downloaded");
+
+    assert!(error.contains("missing a materialized hash"));
+    let reconcile = state.asset_reconcile.lock().unwrap().clone();
+    assert_eq!(reconcile.last_downloaded, Some(0));
+    assert!(reconcile
+        .last_error
+        .as_deref()
+        .is_some_and(|error| error.contains("missing a materialized hash")));
+}
+
 #[test]
 fn vm_asset_block_reason_reports_missing_assets() {
     let dir = tempfile::tempdir().unwrap();
     let state = make_asset_state(dir.path().to_path_buf());
+    let profile = materialized_test_profile();
+    install_test_profile_catalog(&state, &profile);
 
     let reason = vm_asset_block_reason(&state, "code").expect("missing assets must block VM start");
 
@@ -3874,6 +4111,8 @@ fn vm_asset_block_reason_reports_missing_assets() {
 fn vm_asset_block_reason_reports_downloading_assets() {
     let dir = tempfile::tempdir().unwrap();
     let state = make_asset_state(dir.path().to_path_buf());
+    let profile = materialized_test_profile();
+    install_test_profile_catalog(&state, &profile);
     state.asset_reconcile.lock().unwrap().in_progress = true;
 
     let reason = vm_asset_block_reason(&state, "code").expect("missing assets must block VM start");
@@ -3884,10 +4123,8 @@ fn vm_asset_block_reason_reports_downloading_assets() {
 #[test]
 fn vm_asset_block_reason_allows_ready_assets() {
     let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("vmlinuz"), b"kernel").unwrap();
-    std::fs::write(dir.path().join("initrd.img"), b"initrd").unwrap();
-    std::fs::write(dir.path().join("rootfs.erofs"), b"erofs").unwrap();
     let state = make_asset_state(dir.path().to_path_buf());
+    install_test_profile_assets(&state);
 
     assert!(vm_asset_block_reason(&state, "code").is_none());
 }
@@ -5143,6 +5380,11 @@ fn provision_rejects_source_with_different_profile() {
 #[tokio::test]
 async fn handle_list_shows_suspended_status() {
     let (state, _dir) = make_test_state_with_tempdir();
+    install_test_profile_assets(&state);
+    let suspended_dir = state.run_dir.join("persistent/susp-vm");
+    let stopped_dir = state.run_dir.join("persistent/stop-vm");
+    capsem_core::create_virtiofs_session(&suspended_dir, 64).unwrap();
+    capsem_core::create_virtiofs_session(&stopped_dir, 64).unwrap();
 
     // Register a suspended persistent VM
     {
@@ -5159,7 +5401,7 @@ async fn handle_list_shows_suspended_status() {
                 cpus: 2,
                 base_version: "0.0.0".into(),
                 created_at: "0".into(),
-                session_dir: state.run_dir.join("persistent/susp-vm"),
+                session_dir: suspended_dir,
                 forked_from: None,
                 description: None,
                 suspended: true,
@@ -5186,7 +5428,7 @@ async fn handle_list_shows_suspended_status() {
                 cpus: 1,
                 base_version: "0.0.0".into(),
                 created_at: "0".into(),
-                session_dir: state.run_dir.join("persistent/stop-vm"),
+                session_dir: stopped_dir,
                 forked_from: None,
                 description: None,
                 suspended: false,
@@ -5218,6 +5460,9 @@ async fn handle_list_shows_suspended_status() {
 #[tokio::test]
 async fn handle_info_shows_suspended_status() {
     let (state, _dir) = make_test_state_with_tempdir();
+    install_test_profile_assets(&state);
+    let session_dir = state.run_dir.join("persistent/info-susp");
+    capsem_core::create_virtiofs_session(&session_dir, 64).unwrap();
 
     {
         let mut reg = state.persistent_registry.lock().unwrap();
@@ -5233,7 +5478,7 @@ async fn handle_info_shows_suspended_status() {
                 cpus: 2,
                 base_version: "0.0.0".into(),
                 created_at: "0".into(),
-                session_dir: state.run_dir.join("persistent/info-susp"),
+                session_dir,
                 forked_from: None,
                 description: None,
                 suspended: true,
@@ -5835,7 +6080,7 @@ fn sandbox_info_rejects_missing_profile_id() {
 
 #[test]
 fn profile_vm_resources_drive_new_session_defaults() {
-    let profile = ProfileConfigFile::builtin_code();
+    let profile = ProfileConfigFile::builtin_primary();
 
     let default_resources = resolve_profile_vm_resources(&profile, None, None);
     assert_eq!(default_resources.cpus, profile.vm.cpu_count);

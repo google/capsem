@@ -36,10 +36,12 @@ def test_build_assets_requires_profile_and_uses_capsem_admin() -> None:
     assert "uv run capsem-builder build guest/" not in block
 
 
-def test_check_assets_recovers_with_code_profile() -> None:
+def test_check_assets_recovers_by_iterating_checked_in_profiles() -> None:
     block = _recipe_block("_check-assets:")
 
-    assert "just build-assets code" in block
+    assert 'for profile in config/profiles/*/profile.toml; do' in block
+    assert 'just build-assets "$(basename "$(dirname "$profile")")" "$arch"' in block
+    assert "just build-assets code" not in block
 
 
 def test_runtime_recipes_materialize_generated_config_before_service() -> None:

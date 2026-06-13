@@ -3,7 +3,7 @@
 # Internal helpers:
 #   _ensure-dev-ready checks for .dev-setup sentinel, runs doctor if missing (auto first-run)
 #   _install-tools  auto-installs rust targets, components, cargo tools
-#   _check-assets   verifies VM assets exist, runs build-assets code if not
+#   _check-assets   verifies VM assets exist, builds checked-in profiles if not
 #   _pack-initrd    cross-compiles guest binaries + repacks initrd
 #   _sign           builds host binaries + codesigns (macOS only, required for VZ)
 #   _ensure-service kills any running service, launches a fresh one, waits for socket
@@ -32,7 +32,7 @@
 #
 # First-time dev readiness:
 #   just doctor       (shows what's missing; `just doctor fix` auto-installs)
-#   just build-assets code (builds profile-owned kernel + rootfs via capsem-admin -- needs docker via Colima on macOS)
+#   just build-assets <profile-id> (builds profile-owned kernel + rootfs via capsem-admin -- needs docker via Colima on macOS)
 #
 # Daily dev:          just shell         (service daemon + temp VM + shell, ~10s)
 #                     just ui            (service + Tauri GUI with hot-reload)
@@ -248,7 +248,7 @@ build-kernel arch profile="":
     set -euo pipefail
     PROFILE_ARG="{{profile}}"
     if [[ -z "$PROFILE_ARG" ]]; then
-        echo "ERROR: profile id required. Use: just build-kernel {{arch}} code"
+        echo "ERROR: profile id required. Use: just build-kernel {{arch}} <profile-id>"
         exit 2
     fi
     just _install-tools
@@ -268,7 +268,7 @@ build-rootfs arch profile="":
     set -euo pipefail
     PROFILE_ARG="{{profile}}"
     if [[ -z "$PROFILE_ARG" ]]; then
-        echo "ERROR: profile id required. Use: just build-rootfs {{arch}} code"
+        echo "ERROR: profile id required. Use: just build-rootfs {{arch}} <profile-id>"
         exit 2
     fi
     just _install-tools
@@ -290,7 +290,7 @@ build-assets profile="" arch="":
     PROFILE_ARG="{{profile}}"
     ARCH_ARG="{{arch}}"
     if [[ -z "$PROFILE_ARG" ]]; then
-        echo "ERROR: profile id required. Use: just build-assets code [arm64|x86_64]"
+        echo "ERROR: profile id required. Use: just build-assets <profile-id> [arm64|x86_64]"
         exit 2
     fi
     just _install-tools
@@ -1322,8 +1322,10 @@ _check-assets:
     fi
     if [ ${#missing[@]} -gt 0 ]; then
         echo "Missing VM assets in $dir/: ${missing[*]}"
-        echo "Building code profile assets (requires docker)..."
-        just build-assets code
+        echo "Building checked-in profile assets for $arch (requires docker)..."
+        for profile in config/profiles/*/profile.toml; do
+            just build-assets "$(basename "$(dirname "$profile")")" "$arch"
+        done
     fi
 
 _pnpm-install:

@@ -44,7 +44,7 @@ fn create_params_serializes_camel() {
 }
 
 #[test]
-fn default_profile_id_is_real_code_profile() {
+fn default_profile_id_is_primary_profile() {
     assert_eq!(DEFAULT_PROFILE_ID, "code");
 }
 

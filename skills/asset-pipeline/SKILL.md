@@ -34,13 +34,13 @@ rerun the failing recipe.
 
 | What | Where |
 |------|-------|
-| Guest config (TOML) | `guest/config/` |
+| Profile source config | `config/profiles/<id>/` |
 | Guest artifacts | `guest/artifacts/` |
 | Built assets (dev) | `assets/{arch}/vmlinuz, initrd.img, rootfs.erofs` |
 | Installed assets | `~/.capsem/assets/{name}-{hash16}.{ext}` (flat, hash-based) |
 | Manifest | `assets/manifest.json` |
 | Checksums | `assets/B3SUMS` |
-| Manifest regenerator | `scripts/gen_manifest.py` |
+| Manifest generator | `capsem-admin manifest generate <assets_dir>` |
 | Asset types + cleanup | `crates/capsem-core/src/asset_manager.rs` |
 | Hash extraction for build.rs | `crates/capsem-core/src/manifest_compat.rs` |
 
@@ -79,7 +79,9 @@ rerun the failing recipe.
 }
 ```
 
-Two producers: `docker.py:generate_checksums()` (full build) and `scripts/gen_manifest.py` (initrd repack). Both produce v2 format.
+The public producer is `capsem-admin manifest generate <assets_dir>`. Full
+asset builds and initrd repacks feed that same admin rail so local, CI, and
+corporate manifests use one contract.
 
 ## Disk Layouts
 

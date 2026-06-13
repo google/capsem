@@ -53,7 +53,7 @@ All workflows use `just` (not make). The justfile is the single entry point.
 | Guest binary (agent, net-proxy, mcp-server) | `just smoke` (auto-repacks initrd) |
 | `capsem-init` | `just smoke` (auto-repacks) |
 | In-VM diagnostics (`guest/artifacts/diagnostics/`) | `just smoke` |
-| Guest config (`guest/config/`) or rootfs packages | `just build-assets` then `just shell` |
+| Profile payloads (`config/profiles/<id>/`) or rootfs packages | `just build-assets` then `just shell` |
 | Frontend components | `just ui` (iterate) then `just test` (validate) |
 | Frontend standalone (no VM) | `just dev-frontend` |
 | Tauri binary (not dev) | `just build-ui` then `just run-ui` |
@@ -147,8 +147,9 @@ The capsem-builder Python package provides config-driven image building:
 ```bash
 uv run capsem-builder doctor guest/       # Check build prerequisites
 uv run capsem-builder validate guest/     # Lint guest config
-uv run capsem-builder build guest/ --dry-run   # Preview rendered Dockerfiles
-uv run capsem-builder build guest/ --arch arm64 # Build for arm64
+capsem-admin profile check --profile config/profiles/<profile-id>/profile.toml --config-root config
+just build-assets              # Build profile-owned VM assets through the admin rail
+just _materialize-config       # Materialize generated runtime profile config
 uv run capsem-builder inspect guest/      # Show config summary
 ```
 
