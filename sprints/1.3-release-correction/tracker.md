@@ -1719,7 +1719,17 @@ next one, and stage only the files for that slice.
     capsem-core`; `git diff --check`; `just test-install` (`39 passed, 22
     skipped` in installed-layout e2e).
 - [ ] Proof: changelog, docs, skills, and benchmark docs updated.
-- [ ] Proof: full final gates pass and branch is pushed.
+- [x] Proof: full final gates pass and branch is pushed.
+  - 2026-06-13 direct gate proof: `just test` exited 0 after the macOS Keychain
+    index scoping fix. Highlights: bootstrap/doctor `37 passed, 1 skipped`;
+    frontend `390 passed`; Python main suite `1433 passed, 72 skipped`,
+    coverage `90.09%`; serial timing/benchmark suite `12 passed`; build-chain
+    suite `45 passed`; injection `4 passed`; integration `47 passed, 0 failed`
+    with in-VM diagnostics `94 passed, 2 skipped`; benchmark baseline `1
+    passed`; Linux installed-layout e2e `39 passed, 22 skipped`.
+  - DbWriter invariant proof in the same gate: `tests/test_security_rails_retired.py::test_session_event_writes_stay_behind_dbwriter`
+    and `tests/capsem-build-chain/test_install_asset_payload.py::test_security_event_rows_go_through_security_engine_emitter`
+    both passed. No new DB writing path was added.
 
 ## Coverage Ledger
 
