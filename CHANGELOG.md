@@ -18,6 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bytes to the service for import/export/read/write boundaries; the service
   now writes or returns only the bytes approved by the plugin-aware security
   rail, while block still fails closed.
+- Tightened plugin route regression coverage so `rewrite` mode proves an
+  actual event mutation and `block` mode remains the only plugin mode that
+  denies the evaluated security event.
 - Removed fake confidence from broker-created credential observations and
   injections; substitution rows keep the historical nullable column, but
   broker emissions now record `NULL` confidence.

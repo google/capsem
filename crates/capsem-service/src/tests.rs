@@ -2264,7 +2264,17 @@ match = 'file.import.content.contains("EICAR")'
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(enabled_eval["event"]["decision"]["effective"], "block");
+    assert_eq!(enabled_eval["event"]["decision"]["effective"], "allow");
+    assert_eq!(
+        enabled_eval["event"]["file"]["import_content"],
+        "[capsem-rewritten-eicar]"
+    );
+    assert!(enabled_eval["event"]["detections"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|detection| detection["plugin_id"] == "dummy_pre_eicar"
+            && detection["plugin_mode"] == "rewrite"));
 
     let (status, disabled) = route_request(
         app.clone(),
@@ -2890,10 +2900,16 @@ async fn profile_plugin_endpoint_matrix_dynamically_controls_enforcement_evaluat
     .await
     .expect("explicitly enabled plugin evaluates");
     let enabled_event = serde_json::to_value(&enabled.event).unwrap();
-    assert_eq!(enabled_event["decision"]["effective"], "block");
+    assert_eq!(enabled_event["decision"]["effective"], "allow");
+    assert_eq!(
+        enabled_event["file"]["import_content"],
+        "[capsem-rewritten-eicar]"
+    );
     let enabled_detections = enabled_event["detections"].as_array().unwrap();
     assert!(enabled_detections.iter().any(|detection| {
-        detection["source"] == "plugin" && detection["plugin_id"] == "dummy_pre_eicar"
+        detection["source"] == "plugin"
+            && detection["plugin_id"] == "dummy_pre_eicar"
+            && detection["plugin_mode"] == "rewrite"
     }));
     assert!(enabled_detections.iter().any(|detection| {
         detection["source"] == "plugin" && detection["plugin_id"] == "dummy_post_allow"

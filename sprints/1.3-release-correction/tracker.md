@@ -1679,6 +1679,22 @@ next one, and stage only the files for that slice.
     net::mitm_proxy::telemetry_hook::tests::hook_writes_substitution_event_and_shared_credential_ref
     -- --nocapture`; `cargo test -p capsem-core --lib` (`1579 passed, 1
     ignored`).
+  - 2026-06-13 progress: the next `just test` run reached
+    `capsem-service --bin capsem-service` and exposed stale plugin-route
+    assertions that still expected plugin `rewrite` mode to block. The
+    product contract now has a first-class `block` mode; `rewrite` must mutate
+    and continue. The fix tightens the tests to assert the rewritten
+    `file.import_content`, plugin detection metadata, and separate `block`
+    denial without adding any DB-writing path.
+  - Proof: RED `just test` failed in
+    `mounted_plugin_routes_control_profile_evaluation` and
+    `profile_plugin_endpoint_matrix_dynamically_controls_enforcement_evaluation`;
+    GREEN focused gates `cargo test -p capsem-service
+    mounted_plugin_routes_control_profile_evaluation -- --nocapture`; `cargo
+    test -p capsem-service
+    profile_plugin_endpoint_matrix_dynamically_controls_enforcement_evaluation
+    -- --nocapture`; `cargo test -p capsem-service --bin capsem-service`
+    (`189 passed`).
 - [ ] Proof: changelog, docs, skills, and benchmark docs updated.
 - [ ] Proof: full final gates pass and branch is pushed.
 
