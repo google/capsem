@@ -21,6 +21,7 @@ pub(crate) static TEST_ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::co
 static TEST_STORE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 static CREDENTIAL_STORE: OnceLock<CredentialStore> = OnceLock::new();
 
+#[cfg(target_os = "macos")]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct DurableCredentialIndexEntry {
     provider: CredentialProvider,

@@ -22,6 +22,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   large-content security previews cannot truncate or replace guest file bytes;
   data-plane rewrites now require a complete payload and an applied
   non-logging `rewrite` plugin.
+- Fixed the Linux installed-package build by scoping the Keychain credential
+  index type to macOS, keeping the non-macOS credential store warning-clean
+  under the package e2e `-D warnings` gate.
 - Tightened plugin route regression coverage so `rewrite` mode proves an
   actual event mutation and `block` mode remains the only plugin mode that
   denies the evaluated security event.

@@ -1708,6 +1708,16 @@ next one, and stage only the files for that slice.
     profile_plugin_endpoint_matrix_dynamically_controls_enforcement_evaluation
     -- --nocapture`; `cargo test -p capsem-service --bin capsem-service`
     (`189 passed`).
+  - 2026-06-13 progress: the next full `just test` gate reached Linux
+    `test-install` and exposed a macOS Keychain helper type that was compiled
+    on non-macOS but never constructed. The fix scopes
+    `DurableCredentialIndexEntry` to `target_os = "macos"` with the Keychain
+    index functions that use it, preserving the disk-backed Linux credential
+    store and keeping the single `DbWriter` ledger invariant untouched.
+  - Proof: RED `just test` failed in `just test-install` while Docker built
+    host binaries with `-D warnings`; GREEN focused gates `cargo check -p
+    capsem-core`; `git diff --check`; `just test-install` (`39 passed, 22
+    skipped` in installed-layout e2e).
 - [ ] Proof: changelog, docs, skills, and benchmark docs updated.
 - [ ] Proof: full final gates pass and branch is pushed.
 
