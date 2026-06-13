@@ -499,7 +499,21 @@ next one, and stage only the files for that slice.
   - Proof: RED/GREEN `uv run pytest tests/capsem-mcp/test_mcp_call.py -q -s
     --tb=short` (`3 passed`); `cargo check -p capsem-core -p capsem-process`;
     `uv run pytest tests/test_security_rails_retired.py -q` (`4 passed`).
-    shape when the route backs the UI.
+  - 2026-06-13 progress: the native profile MCP proof now lives in Ironbank
+    proper as `tests/ironbank/test_mcp_profile_ledger.py`. It drives
+    `capsem-mcp` over stdio, UDS profile MCP routes, a fresh VM, the shared
+    mock server, and read-only session DB checks. The proof asserts server and
+    tool route field sets, MCP tool output, exact `mcp_calls` accounting,
+    built-in MCP HTTP `net_events`, and the matching `mcp.tool_call` security
+    ledger. The first run caught and fixed leaked SQLite handles in the test
+    itself, so pytest teardown stays clean.
+  - Proof: `uv run ruff check tests/ironbank/test_mcp_profile_ledger.py`;
+    `CAPSEM_TEST_PRESERVE_ALWAYS=1 uv run pytest
+    tests/ironbank/test_mcp_profile_ledger.py -q -s --tb=short` (`1 passed
+    in 2.07s`); full Ironbank suite
+    `CAPSEM_TEST_PRESERVE_ALWAYS=1 uv run pytest tests/ironbank/ -q -s
+    --tb=short` (`6 passed in 49.98s`); single-writer guard
+    `uv run pytest tests/test_security_rails_retired.py -q` (`4 passed`).
   - Field-coverage invariant: each protocol spec must inspect every field it
     emits in all three public ledgers: structured log event, SQLite row(s), and
     UDS/HTTP route response. For each field, the test must either assert the

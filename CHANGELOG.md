@@ -93,6 +93,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `capsem_mcp_call` now writes `mcp_calls`, built-in MCP HTTP `net_events`,
   and matching `mcp.tool_call` security-rule rows through the process
   `DbWriter`.
+- Added an Ironbank-native profile MCP ledger proof for `capsem_mcp_call` that
+  drives `capsem-mcp`, profile MCP routes, a fresh VM, the shared mock server,
+  and read-only session DB checks in one black-box release gate.
 - Hardened agent bootstrap packaging: profile build hooks now remove
   installer-created OAuth/token/history/cache/log residue before rootfs
   packaging, AGY runs through the Capsem sandbox wrapper by default, and Gemini

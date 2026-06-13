@@ -99,15 +99,17 @@ prove the same rails without user credentials.
   write, security latest route, session DB rows, plugin execution counters,
   profile plugin route telemetry, and raw-secret absence.
 - Ironbank progress on 2026-06-13: the current black-box release ledgers run
-  together with no skips: `CAPSEM_TEST_PRESERVE_ALWAYS=1 uv run python -m
-  pytest tests/ironbank/ -q -s` (`3 passed in 37.39s`). This proves the model
-  SDK, doctor/security, and package-manager ledgers as a suite; it does not
-  close the still-open S4/S5/S7 MCP, streaming, UI, and full `just test` gates.
+  together with no skips: `CAPSEM_TEST_PRESERVE_ALWAYS=1 uv run pytest
+  tests/ironbank/ -q -s --tb=short` (`6 passed in 49.98s`). This proves the
+  model SDK, doctor/security, package-manager, agent bootstrap, and native
+  profile MCP ledgers as a suite; it does not close the still-open S4/S5/S7
+  streaming/provider matrix, UI, and full `just test` gates.
 - Ironbank/MCP progress on 2026-06-13: native profile MCP calls now use the
   same logged MCP JSON-RPC rail as framed guest MCP instead of calling the
   aggregator directly. Focused RED/GREEN coverage proves `capsem_mcp_call`
   writes `mcp_calls`, built-in MCP HTTP `net_events`, and matching
-  `mcp.tool_call` security-rule rows through the process `DbWriter`.
+  `mcp.tool_call` security-rule rows through the process `DbWriter`; the same
+  proof now lives under `tests/ironbank/test_mcp_profile_ledger.py`.
 - Integration gate hardening on 2026-06-12: `scripts/integration_test.py` now
   runs service and VM paths with an isolated credential broker test store and
   bounded model fixture calls. Proof:
