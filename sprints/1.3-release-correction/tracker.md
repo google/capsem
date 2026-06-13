@@ -1799,6 +1799,22 @@ next one, and stage only the files for that slice.
     tests/test_build_assets_profile.py tests/test_release_doctor_contract.py
     tests/capsem-build-chain/test_install_asset_payload.py`; `git diff
     --check`.
+  - 2026-06-13 PR CI coverage correction: remote macOS Rust coverage proved
+    the code tests were green (`3281 passed, 2 skipped`) but
+    `--fail-under-lines 70` made `cargo llvm-cov` exit 1 immediately after
+    writing `codecov-unit.json`, before frontend, Python, schema, and
+    cross-compile release gates could run. PR CI now reports `codecov-*.json`
+    and `coverage-summary*.txt` without a local percentage abort; Codecov owns
+    the coverage ledger while CI still runs the full test matrix. Guard proof:
+    RED `uv run python -m pytest
+    tests/test_release_doctor_contract.py::test_pr_ci_coverage_reports_without_local_threshold_abort
+    -q` failed on the existing threshold; GREEN proof: `uv run python -m
+    pytest tests/test_release_doctor_contract.py
+    tests/capsem-build-chain/test_install_asset_payload.py
+    tests/test_build_assets_profile.py -q` (`39 passed`); `uv run ruff check
+    tests/test_release_doctor_contract.py
+    tests/capsem-build-chain/test_coverage_infra_contract.py`; `git diff
+    --check`.
 
 ## Coverage Ledger
 

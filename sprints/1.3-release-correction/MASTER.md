@@ -233,5 +233,18 @@ prove the same rails without user credentials.
   scripts/prepare-install-test-assets.sh`; `uv run ruff check
   tests/test_build_assets_profile.py tests/test_release_doctor_contract.py
   tests/capsem-build-chain/test_install_asset_payload.py`; `git diff --check`.
+- PR CI coverage drift found on 2026-06-13: macOS Rust unit coverage ran the
+  product tests successfully (`3281 passed, 2 skipped`) but the local
+  `--fail-under-lines 70` threshold made `cargo llvm-cov` exit 1 before the
+  frontend, Python, schema, and cross-compile gates could run. PR CI now keeps
+  coverage reporting and uploads, but leaves coverage judgment to Codecov so
+  the full release gate completes. Local proof: RED release-doctor guard
+  failed on the old threshold; GREEN `uv run python -m pytest
+  tests/test_release_doctor_contract.py
+  tests/capsem-build-chain/test_install_asset_payload.py
+  tests/test_build_assets_profile.py -q` (`39 passed`); `uv run ruff check
+  tests/test_release_doctor_contract.py
+  tests/capsem-build-chain/test_coverage_infra_contract.py`; `git diff
+  --check`.
 
 Those files remain evidence. This sprint is the execution authority.

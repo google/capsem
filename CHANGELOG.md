@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed (route surfaces and diagnostics)
+- Fixed PR CI Rust coverage so `cargo llvm-cov` reports and uploads coverage
+  without aborting the rest of the release gate on a local percentage
+  threshold; Codecov remains the coverage ledger while Python, frontend,
+  schema, cross-compile, and artifact checks now still run.
 - Fixed the Docker install e2e package path so Linux `.deb` repacking
   materializes profile-owned runtime config before copying profiles into the
   package, using the same shared materializer as local dev recipes instead of

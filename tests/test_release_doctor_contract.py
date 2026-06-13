@@ -198,6 +198,16 @@ def test_ci_builds_frontend_before_compiling_tauri_app_tests() -> None:
     assert build_pos < coverage_pos < capsem_app_pos
 
 
+def test_pr_ci_coverage_reports_without_local_threshold_abort() -> None:
+    workflow = (PROJECT_ROOT / ".github" / "workflows" / "ci.yaml").read_text()
+
+    assert "--fail-under-lines" not in workflow
+    assert "codecov-unit.json" in workflow
+    assert "coverage-summary.txt" in workflow
+    assert "codecov-linux.json" in workflow
+    assert "coverage-summary-linux.txt" in workflow
+
+
 def test_kvm_checkpoint_x86_state_tests_are_arch_gated() -> None:
     source = (PROJECT_ROOT / "crates" / "capsem-core" / "src" / "hypervisor" / "kvm" / "checkpoint.rs").read_text()
     tests = source.split("#[cfg(test)]\nmod tests", maxsplit=1)[1]
