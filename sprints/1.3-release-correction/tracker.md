@@ -1022,10 +1022,33 @@ next one, and stage only the files for that slice.
 
 ## S7. Runtime Protocol Fixes
 
-- [ ] RED/GREEN: AGY/Gemini SSE produces client-visible bytes, parsed model
+- [x] RED/GREEN: AGY/Gemini SSE produces client-visible bytes, parsed model
   rows, and no `hyper serve error`.
-- [ ] RED/GREEN: Claude/Anthropic streaming produces client-visible bytes,
+  - 2026-06-13 closure: the shared mock server now serves a Gemini-compatible
+    `:streamGenerateContent?alt=sse` fixture. Ironbank posts to that route
+    from inside a VM, verifies client-visible `text/event-stream` bytes,
+    proves a parsed `model_calls` row with `provider = google`,
+    `model = gemini-2.5-flash`, text/tokens/`end_turn`, and proves the Google
+    `x-goog-api-key` header is brokered into a durable credential ref.
+  - Proof: `cargo test -p capsem-core --lib credential_broker -- --nocapture`;
+    `cargo build -p capsem-service -p capsem-process -p capsem-gateway`;
+    `CAPSEM_TEST_PRESERVE_ALWAYS=1 uv run python -m pytest
+    tests/ironbank/test_model_sdk_ledger.py::test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox
+    -q -s --tb=short`.
+- [x] RED/GREEN: Claude/Anthropic streaming produces client-visible bytes,
   parsed model rows, and no header/EOF corruption.
+  - 2026-06-13 closure: the shared mock server now serves an
+    Anthropic-compatible `/v1/messages` SSE fixture. Ironbank posts to that
+    route from inside a VM, verifies client-visible `text/event-stream` bytes,
+    proves a parsed `model_calls` row with `provider = anthropic`,
+    `model = claude-sonnet-4-20250514`, text/tokens/`end_turn`, and proves the
+    existing `x-api-key` broker path still writes a credential ref.
+  - Proof: `CAPSEM_TEST_PRESERVE_ALWAYS=1 uv run python -m pytest
+    tests/ironbank/test_model_sdk_ledger.py::test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox
+    -q -s --tb=short`; `uv run ruff check
+    tests/ironbank/test_model_sdk_ledger.py scripts/mock_server_runtime.py`;
+    `python3 -m py_compile tests/ironbank/test_model_sdk_ledger.py
+    scripts/mock_server_runtime.py`.
 - [x] RED/GREEN: tool declarations are not counted as executed tool calls.
   - 2026-06-13 closure: the shared mock server exposes `/model/no-tool-call`,
     which accepts an OpenAI-compatible request with a `tools` declaration but

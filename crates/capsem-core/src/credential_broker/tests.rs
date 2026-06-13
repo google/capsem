@@ -87,6 +87,26 @@ fn http_detector_detects_github_authorization_without_raw_leak() {
 }
 
 #[test]
+fn http_detector_detects_google_api_key_header_with_provider_hint() {
+    let obs = detect_http_credential(
+        "127.0.0.1",
+        "x-goog-api-key",
+        b"capsem_test_google_stream_key_0123456789abcdef",
+    )
+    .expect("google API key header should be detected without provider hint");
+
+    assert_eq!(obs.provider, CredentialProvider::Google);
+    assert_eq!(obs.raw_value, "capsem_test_google_stream_key_0123456789abcdef");
+    assert_eq!(obs.source, "http.header.x-goog-api-key");
+    let event = obs.redacted_event("captured");
+    assert!(is_broker_reference(&event.substitution_ref));
+    assert!(!event
+        .context_json
+        .unwrap()
+        .contains("capsem_test_google_stream_key"));
+}
+
+#[test]
 fn http_body_detector_finds_github_token_exchange_and_redacts_body() {
     let body = br#"{"access_token":"github_pat_body_secret","token_type":"bearer"}"#;
     let found = detect_http_body_credentials(

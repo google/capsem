@@ -374,6 +374,67 @@ def _unknown_mcp_probe_script(base_url: str) -> str:
     ).strip()
 
 
+def _streaming_provider_probe_script(base_url: str) -> str:
+    payload = {
+        "google_url": f"{base_url.rstrip('/')}/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse",
+        "anthropic_url": f"{base_url.rstrip('/')}/v1/messages",
+        "google_key_parts": ["capsem_test_google_stream_", "key_0123456789abcdef"],
+        "anthropic_key_parts": ["capsem_test_anthropic_stream_", "key_0123456789abcdef"],
+    }
+    return textwrap.dedent(
+        f"""
+        import json
+        import urllib.request
+
+        cfg = json.loads({json.dumps(json.dumps(payload))})
+
+        def post(url, body, headers):
+            request = urllib.request.Request(
+                url,
+                data=json.dumps(body).encode("utf-8"),
+                headers={{"Content-Type": "application/json", **headers}},
+                method="POST",
+            )
+            with urllib.request.urlopen(request, timeout=30) as response:
+                return {{
+                    "status": response.status,
+                    "content_type": response.headers.get("content-type"),
+                    "body": response.read().decode("utf-8"),
+                }}
+
+        google = post(
+            cfg["google_url"],
+            {{"contents": [{{"parts": [{{"text": "stream a greeting"}}]}}]}},
+            {{"x-goog-api-key": "".join(cfg["google_key_parts"])}},
+        )
+        anthropic = post(
+            cfg["anthropic_url"],
+            {{
+                "model": "claude-sonnet-4-20250514",
+                "max_tokens": 32,
+                "stream": True,
+                "messages": [{{"role": "user", "content": "stream a greeting"}}],
+            }},
+            {{
+                "x-api-key": "".join(cfg["anthropic_key_parts"]),
+                "anthropic-version": "2023-06-01",
+            }},
+        )
+        result = {{
+            "google_status": google["status"],
+            "google_content_type": google["content_type"],
+            "google_bytes": len(google["body"].encode("utf-8")),
+            "google_has_text": "Hello" in google["body"] and "world!" in google["body"],
+            "anthropic_status": anthropic["status"],
+            "anthropic_content_type": anthropic["content_type"],
+            "anthropic_bytes": len(anthropic["body"].encode("utf-8")),
+            "anthropic_has_text": "Hello" in anthropic["body"] and "world!" in anthropic["body"],
+        }}
+        print("IRONBANK_STREAMING_PROVIDER_RESULT=" + json.dumps(result, sort_keys=True))
+        """
+    ).strip()
+
+
 def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
     assert MOCK_SERVER_BINARY.exists(), f"{MOCK_SERVER_BINARY} missing; restore mock server runtime"
     assert ASSETS_DIR.exists(), f"{ASSETS_DIR} missing; build VM assets before Ironbank"
@@ -557,6 +618,47 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
             "tool_count": 3,
             "tool_text": "capsem-mock-server:mcp:fixture_lookup",
         }
+
+        streaming_script_name = f"ironbank-streaming-{uuid.uuid4().hex[:8]}.py"
+        streaming_script = _streaming_provider_probe_script(mock_base_url).encode()
+        streaming_upload = client.post_bytes(
+            f"/vms/{session_id}/files/content?path={streaming_script_name}",
+            streaming_script,
+            timeout=30,
+        )
+        assert streaming_upload is not None
+        assert streaming_upload["success"] is True
+        assert streaming_upload["size"] == len(streaming_script)
+        streaming_exec = client.post(
+            f"/vms/{session_id}/exec",
+            {"command": f"python3 /root/{streaming_script_name}", "timeout_secs": 120},
+            timeout=150,
+        )
+        assert streaming_exec is not None, "streaming provider exec returned no body"
+        assert streaming_exec["exit_code"] == 0, streaming_exec
+        streaming_output = (streaming_exec.get("stdout") or "") + (
+            streaming_exec.get("stderr") or ""
+        )
+        assert "capsem_test_google_stream_key" not in streaming_output
+        assert "capsem_test_anthropic_stream_key" not in streaming_output
+        streaming_line = next(
+            (
+                line
+                for line in streaming_output.splitlines()
+                if line.startswith("IRONBANK_STREAMING_PROVIDER_RESULT=")
+            ),
+            None,
+        )
+        assert streaming_line is not None, streaming_output
+        streaming_result = json.loads(streaming_line.split("=", 1)[1])
+        assert streaming_result["google_status"] == 200
+        assert streaming_result["anthropic_status"] == 200
+        assert "text/event-stream" in streaming_result["google_content_type"]
+        assert "text/event-stream" in streaming_result["anthropic_content_type"]
+        assert streaming_result["google_bytes"] > 100
+        assert streaming_result["anthropic_bytes"] > 100
+        assert streaming_result["google_has_text"] is True
+        assert streaming_result["anthropic_has_text"] is True
 
         history = client.get(f"/vms/{session_id}/history", timeout=30)
         assert history is not None
@@ -851,6 +953,68 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
             ).fetchall()
             assert declared_tool_call_rows == []
 
+            google_stream_rows = _eventually(
+                lambda: conn.execute(
+                    """
+                    SELECT *
+                    FROM model_calls
+                    WHERE path = '/v1beta/models/gemini-2.5-flash:streamGenerateContent'
+                    ORDER BY id
+                    """
+                ).fetchall(),
+                lambda rows: len(rows) >= 1,
+            )
+            google_stream = google_stream_rows[-1]
+            _assert_event_id(google_stream["event_id"])
+            assert google_stream["provider"] == "google"
+            assert google_stream["model"] == "gemini-2.5-flash"
+            assert google_stream["method"] == "POST"
+            assert google_stream["status_code"] == 200
+            assert google_stream["messages_count"] == 1
+            assert google_stream["tools_count"] == 0
+            assert google_stream["input_tokens"] == 5
+            assert google_stream["output_tokens"] == 3
+            assert google_stream["text_content"] == "Hello world!"
+            assert google_stream["stop_reason"] == "end_turn"
+            assert google_stream["request_bytes"] > 0
+            assert google_stream["response_bytes"] > 100
+            assert google_stream["credential_ref"] is not None
+            _assert_credential_ref(google_stream["credential_ref"])
+            assert "capsem_test_google_stream_key" not in (
+                google_stream["request_body_preview"] or ""
+            )
+
+            anthropic_stream_rows = _eventually(
+                lambda: conn.execute(
+                    """
+                    SELECT *
+                    FROM model_calls
+                    WHERE path = '/v1/messages'
+                    ORDER BY id
+                    """
+                ).fetchall(),
+                lambda rows: len(rows) >= 1,
+            )
+            anthropic_stream = anthropic_stream_rows[-1]
+            _assert_event_id(anthropic_stream["event_id"])
+            assert anthropic_stream["provider"] == "anthropic"
+            assert anthropic_stream["model"] == "claude-sonnet-4-20250514"
+            assert anthropic_stream["method"] == "POST"
+            assert anthropic_stream["status_code"] == 200
+            assert anthropic_stream["messages_count"] == 1
+            assert anthropic_stream["tools_count"] == 0
+            assert anthropic_stream["input_tokens"] == 25
+            assert anthropic_stream["output_tokens"] == 5
+            assert anthropic_stream["text_content"] == "Hello world!"
+            assert anthropic_stream["stop_reason"] == "end_turn"
+            assert anthropic_stream["request_bytes"] > 0
+            assert anthropic_stream["response_bytes"] > 100
+            assert anthropic_stream["credential_ref"] is not None
+            _assert_credential_ref(anthropic_stream["credential_ref"])
+            assert "capsem_test_anthropic_stream_key" not in (
+                anthropic_stream["request_body_preview"] or ""
+            )
+
             tool_rows = _eventually(
                 lambda: conn.execute(
                     """
@@ -963,6 +1127,10 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
                     UNION
                     SELECT event_id FROM model_calls WHERE path = '/model/no-tool-call'
                     UNION
+                    SELECT event_id FROM model_calls WHERE path = '/v1beta/models/gemini-2.5-flash:streamGenerateContent'
+                    UNION
+                    SELECT event_id FROM model_calls WHERE path = '/v1/messages'
+                    UNION
                     SELECT event_id FROM mcp_calls WHERE server_name = 'observed:127.0.0.1:3713/mcp'
                     UNION
                     SELECT event_id FROM net_events WHERE path = '/v1/chat/completions'
@@ -1016,6 +1184,12 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
                 "profiles.rules.ai_openai_model_api",
                 "profiles.rules.default_model",
             } <= {item["rule_id"] for item in declared_tool_security_rows}
+            for stream_model in (google_stream, anthropic_stream):
+                stream_security_rows = security_by_event[stream_model["event_id"]]
+                assert {item["rule_action"] for item in stream_security_rows} == {"allow"}
+                assert "profiles.rules.default_model" in {
+                    item["rule_id"] for item in stream_security_rows
+                }
             mcp_tool_security_rows = security_by_event[observed_tool_call["event_id"]]
             assert any(
                 item["event_type"] == "mcp.tool_call"

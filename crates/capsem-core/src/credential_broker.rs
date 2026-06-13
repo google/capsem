@@ -246,8 +246,12 @@ fn provider_for_header_hint(
         return None;
     }
     let header = header_name.to_ascii_lowercase();
+    if header == "x-goog-api-key" {
+        return Some(CredentialProvider::Google);
+    }
     let credential_header = header == "authorization"
         || header == "x-api-key"
+        || header == "x-goog-api-key"
         || header == "api-key"
         || header == "apikey";
     credential_header

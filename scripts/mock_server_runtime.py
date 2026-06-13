@@ -46,7 +46,9 @@ ENDPOINTS = [
     "/model/response",
     "/model/shape",
     "/model/no-tool-call",
+    "/v1beta/models/gemini-2.5-flash:streamGenerateContent",
     "/v1/chat/completions",
+    "/v1/messages",
     "/oauth/authorize",
     "/oauth/token",
     "/mcp",
@@ -108,6 +110,44 @@ def _model_payload(model: str = "mock-local", *, include_tool_call: bool = True)
             "total_tokens": 12,
         },
     }
+
+
+def _google_stream_body() -> bytes:
+    return (
+        'data: {"candidates":[{"content":{"parts":[{"text":"Hello"}],"role":"model"}}],'
+        '"usageMetadata":{"promptTokenCount":5,"candidatesTokenCount":1},'
+        '"modelVersion":"gemini-2.5-flash"}\n\n'
+        'data: {"candidates":[{"content":{"parts":[{"text":" world!"}],"role":"model"}}],'
+        '"usageMetadata":{"promptTokenCount":5,"candidatesTokenCount":3}}\n\n'
+        'data: {"candidates":[{"content":{"parts":[{"text":""}],"role":"model"},'
+        '"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":5,'
+        '"candidatesTokenCount":3,"totalTokenCount":8}}\n\n'
+    ).encode()
+
+
+def _anthropic_stream_body() -> bytes:
+    return (
+        'event: message_start\n'
+        'data: {"type":"message_start","message":{"id":"msg_ironbank_01",'
+        '"model":"claude-sonnet-4-20250514",'
+        '"usage":{"input_tokens":25,"output_tokens":1}}}\n\n'
+        'event: content_block_start\n'
+        'data: {"type":"content_block_start","index":0,'
+        '"content_block":{"type":"text","text":""}}\n\n'
+        'event: content_block_delta\n'
+        'data: {"type":"content_block_delta","index":0,'
+        '"delta":{"type":"text_delta","text":"Hello"}}\n\n'
+        'event: content_block_delta\n'
+        'data: {"type":"content_block_delta","index":0,'
+        '"delta":{"type":"text_delta","text":" world!"}}\n\n'
+        'event: content_block_stop\n'
+        'data: {"type":"content_block_stop","index":0}\n\n'
+        'event: message_delta\n'
+        'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},'
+        '"usage":{"output_tokens":5}}\n\n'
+        'event: message_stop\n'
+        'data: {"type":"message_stop"}\n\n'
+    ).encode()
 
 
 class MockHandler(BaseHTTPRequestHandler):
@@ -228,6 +268,12 @@ class MockHandler(BaseHTTPRequestHandler):
             payload = self._json_body()
             model = payload.get("model") if isinstance(payload.get("model"), str) else "mock-local"
             self._send_json(_model_payload(model, include_tool_call=False))
+        elif path.endswith(":streamGenerateContent"):
+            self._body()
+            self._send(HTTPStatus.OK, _google_stream_body(), "text/event-stream")
+        elif path == "/v1/messages":
+            self._body()
+            self._send(HTTPStatus.OK, _anthropic_stream_body(), "text/event-stream")
         elif path == "/oauth/token":
             self._body()
             self._send_json(

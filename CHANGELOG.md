@@ -145,6 +145,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   must have exact row counts, declaration-only tools stay absent, and observed
   MCP `tools/call` rows correlate by trace and tool name without protocol
   chatter becoming phantom executions.
+- Added Ironbank coverage for Gemini/Google and Claude/Anthropic streaming
+  model traffic through hermetic SSE fixtures, proving client-visible bytes,
+  parsed model rows, security-ledger entries, and brokered API-key references.
+- Fixed the credential broker so Google `x-goog-api-key` headers are captured
+  as Google credentials even before a provider hint exists.
 - Hardened profile root bootstrap packaging: `capsem-admin profile check` now
   rejects unpinned files under a profile root seed, profile payload tests prove
   AGY/Claude/Codex/MCP non-secret bootstrap files are pinned exactly, and
