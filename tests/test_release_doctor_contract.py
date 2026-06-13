@@ -79,6 +79,13 @@ def test_guest_network_doctor_requires_local_mock_server_instead_of_skipping() -
     assert 'LOCAL_MOCK_SERVER_ENV = "CAPSEM_MOCK_SERVER_BASE_URL"' in source
 
 
+def test_guest_network_doctor_has_no_skipped_protocol_proofs() -> None:
+    diagnostics = PROJECT_ROOT / "guest" / "artifacts" / "diagnostics" / "test_network.py"
+    source = diagnostics.read_text()
+
+    assert "pytest.skip" not in source
+
+
 def test_doctor_session_validation_starts_mock_server() -> None:
     source = (PROJECT_ROOT / "scripts" / "doctor_session_test.py").read_text()
 

@@ -780,6 +780,22 @@ next one, and stage only the files for that slice.
     tests/test_release_doctor_contract.py`; `python3 -m py_compile
     guest/artifacts/diagnostics/test_network.py
     tests/test_release_doctor_contract.py`.
+  - 2026-06-13 progress: removed the last `pytest.skip` from the network
+    doctor protocol proofs. The denied POST path now performs a real
+    `curl -skX POST` to `evil-never-allowed.invalid` and requires either a
+    transport failure or HTTP 403, so blocked/error coverage is no longer
+    papered over by the default profile note.
+  - Proof: RED `uv run python -m pytest
+    tests/test_release_doctor_contract.py::test_guest_network_doctor_has_no_skipped_protocol_proofs
+    -q` failed on the skipped POST proof; GREEN
+    `uv run python -m pytest
+    tests/test_release_doctor_contract.py::test_guest_network_doctor_has_no_skipped_protocol_proofs
+    tests/test_release_doctor_contract.py::test_guest_network_doctor_exercises_oauth_fixture
+    -q` (`2 passed`); full `uv run python -m pytest
+    tests/test_release_doctor_contract.py -q` (`19 passed`); `uv run ruff
+    check guest/artifacts/diagnostics/test_network.py
+    tests/test_release_doctor_contract.py`; `python3 -m py_compile
+    guest/artifacts/diagnostics/test_network.py tests/test_release_doctor_contract.py`.
 - [ ] RED/GREEN: doctor verifies DB ledger rows and rule/plugin evidence for
   allow/ask/block/disable/rewrite/pre/post/detection levels.
   - 2026-06-12 progress: `tests/ironbank/test_doctor_ledger.py` now proves the

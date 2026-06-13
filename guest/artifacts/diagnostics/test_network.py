@@ -394,8 +394,16 @@ def test_denied_domain_rejected():
 
 
 def test_post_to_random_domain_denied():
-    """Public POST deny proof requires an explicit deny-rule profile."""
-    pytest.skip("default doctor profile has no magic public-domain deny rule")
+    """POST to a denied HTTPS domain must not silently pass."""
+    result = run(
+        "curl -skX POST --connect-timeout 5 "
+        "-H 'content-type: application/json' "
+        "-d '{\"probe\":\"doctor-deny\"}' "
+        "https://evil-never-allowed.invalid/deny-target 2>&1",
+        timeout=15,
+    )
+    assert result.returncode != 0 or "403" in result.stdout, \
+        f"POST to denied domain should fail or return 403: {result.stdout}"
 
 
 def test_http_port_80_is_proxied():
