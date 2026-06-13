@@ -539,6 +539,16 @@ next one, and stage only the files for that slice.
     `/v1/chat/completions`, status `200`, and one parsed message. This proves
     the local backend path is routed and parsed through Capsem, not a guest
     install shortcut.
+  - 2026-06-13 follow-up: Ironbank now asserts the exact security-rule ledger
+    for the local OpenAI-compatible path: HTTP rows must include
+    `profiles.rules.default_http`, `profiles.rules.ai_ollama_http_local_host`,
+    and the `ask` guard from `profiles.rules.default_000_local_network`; model
+    rows must include `profiles.rules.ai_openai_model_api` and
+    `profiles.rules.default_model` with only allow actions.
+  - Proof: `CAPSEM_REQUIRE_ARTIFACTS=1 uv run python -m pytest
+    tests/ironbank/test_model_sdk_ledger.py::test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox
+    -q --tb=short`; `uv run ruff check
+    tests/ironbank/test_model_sdk_ledger.py`.
 - [x] RED/GREEN: profile images ship Ollama through the builder/profile rail,
   not through manual VM repair.
   - 2026-06-12 progress: `config/profiles/{code,co-work}/build.sh` runs the

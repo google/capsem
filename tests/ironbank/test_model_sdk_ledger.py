@@ -600,9 +600,31 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
             ).fetchall()
             assert security_rows
             assert {"http.request", "model.call"} <= {row["event_type"] for row in security_rows}
-            assert all(row["rule_action"] == "allow" for row in security_rows)
             assert all(json.loads(row["rule_json"]) for row in security_rows)
             assert all(json.loads(row["event_json"]) for row in security_rows)
+            security_by_event: dict[str, list[sqlite3.Row]] = {}
+            for row in security_rows:
+                security_by_event.setdefault(row["event_id"], []).append(row)
+            for row in net_rows:
+                rows = security_by_event[row["event_id"]]
+                rule_ids = {item["rule_id"] for item in rows}
+                actions = {item["rule_action"] for item in rows}
+                assert "allow" in actions
+                assert "profiles.rules.default_http" in rule_ids
+                assert "profiles.rules.ai_ollama_http_local_host" in rule_ids
+                assert "profiles.rules.default_000_local_network" in rule_ids
+                assert any(
+                    item["rule_id"] == "profiles.rules.default_000_local_network"
+                    and item["rule_action"] == "ask"
+                    for item in rows
+                )
+            for row in model_rows:
+                rows = security_by_event[row["event_id"]]
+                assert {item["rule_action"] for item in rows} == {"allow"}
+                assert {
+                    "profiles.rules.ai_openai_model_api",
+                    "profiles.rules.default_model",
+                } <= {item["rule_id"] for item in rows}
             security_payloads = [json.loads(row["event_json"]) for row in security_rows]
             plugin_executions = [
                 execution
