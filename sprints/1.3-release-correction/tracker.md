@@ -577,6 +577,10 @@ next one, and stage only the files for that slice.
     tests/ironbank/test_model_sdk_ledger.py::test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox
     -q --tb=short`; `uv run ruff check
     tests/ironbank/test_model_sdk_ledger.py`.
+  - Fresh proof after S4/S5 mock-server/DNS/doctor hardening:
+    `CAPSEM_TEST_PRESERVE_ALWAYS=1 uv run python -m pytest
+    tests/ironbank/test_model_sdk_ledger.py::test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox
+    -q -s` (`1 passed in 2.97s`).
 - [x] RED/GREEN: profile images ship Ollama through the builder/profile rail,
   not through manual VM repair.
   - 2026-06-12 progress: `config/profiles/{code,co-work}/build.sh` runs the
