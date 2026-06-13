@@ -487,6 +487,18 @@ next one, and stage only the files for that slice.
     tests/ironbank/test_doctor_ledger.py`; full suite
     `CAPSEM_TEST_PRESERVE_ALWAYS=1 uv run python -m pytest tests/ironbank/
     -q -s` (`3 passed in 37.53s`).
+  - 2026-06-13 progress: `tests/capsem-mcp/test_mcp_call.py` now proves the
+    native host `capsem_mcp_call` route, not just doctor-triggered MCP. RED
+    caught that service-initiated profile MCP calls invoked the aggregator
+    directly and returned tool output without writing `mcp_calls` or matching
+    security-rule ledger rows. GREEN routes the call through the process-owned
+    logged MCP JSON-RPC dispatcher, using the existing `DbWriter`, and asserts
+    server/tool route metadata, no phantom calls from tools/list, the
+    `tools/call` response, `mcp_calls`, built-in MCP HTTP `net_events`, and
+    the `mcp.tool_call` security ledger row.
+  - Proof: RED/GREEN `uv run pytest tests/capsem-mcp/test_mcp_call.py -q -s
+    --tb=short` (`3 passed`); `cargo check -p capsem-core -p capsem-process`;
+    `uv run pytest tests/test_security_rails_retired.py -q` (`4 passed`).
     shape when the route backs the UI.
   - Field-coverage invariant: each protocol spec must inspect every field it
     emits in all three public ledgers: structured log event, SQLite row(s), and

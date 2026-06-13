@@ -103,6 +103,11 @@ prove the same rails without user credentials.
   pytest tests/ironbank/ -q -s` (`3 passed in 37.39s`). This proves the model
   SDK, doctor/security, and package-manager ledgers as a suite; it does not
   close the still-open S4/S5/S7 MCP, streaming, UI, and full `just test` gates.
+- Ironbank/MCP progress on 2026-06-13: native profile MCP calls now use the
+  same logged MCP JSON-RPC rail as framed guest MCP instead of calling the
+  aggregator directly. Focused RED/GREEN coverage proves `capsem_mcp_call`
+  writes `mcp_calls`, built-in MCP HTTP `net_events`, and matching
+  `mcp.tool_call` security-rule rows through the process `DbWriter`.
 - Integration gate hardening on 2026-06-12: `scripts/integration_test.py` now
   runs service and VM paths with an isolated credential broker test store and
   bounded model fixture calls. Proof:

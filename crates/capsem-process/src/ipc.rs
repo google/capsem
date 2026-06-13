@@ -812,12 +812,35 @@ pub(crate) async fn handle_ipc_connection(
                     // deserialize_any. See crates/capsem-proto/src/ipc.rs.
                     let arguments: serde_json::Value =
                         serde_json::from_str(&arguments_json).unwrap_or(serde_json::Value::Null);
-                    let outcome = mcp.aggregator.call_tool(&namespaced_name, arguments).await;
-                    let result_json = match &outcome {
-                        Ok(result) => serde_json::to_string(result).ok(),
-                        Err(_) => None,
+                    let request = capsem_core::mcp::types::JsonRpcRequest {
+                        jsonrpc: "2.0".to_string(),
+                        id: Some(serde_json::json!(id)),
+                        method: "tools/call".to_string(),
+                        params: Some(serde_json::json!({
+                            "name": namespaced_name,
+                            "arguments": arguments,
+                        })),
+                        meta: None,
                     };
-                    let error = outcome.as_ref().err().map(|e| e.to_string());
+                    let response = capsem_core::net::mitm_proxy::dispatch_logged_mcp_request(
+                        Arc::clone(&mcp.endpoint),
+                        Arc::clone(&mcp.db),
+                        request,
+                        "capsem-service".to_string(),
+                    )
+                    .await;
+                    let result_json = response
+                        .as_ref()
+                        .and_then(|result| serde_json::to_string(result).ok());
+                    let error = response
+                        .as_ref()
+                        .and_then(|result| result.error.as_ref())
+                        .map(|error| error.message.clone())
+                        .or_else(|| {
+                            response
+                                .is_none()
+                                .then(|| "MCP request produced no response".to_string())
+                        });
                     capsem_core::try_send!(
                         "ipc_mcp_call_tool",
                         ipc_tx_out

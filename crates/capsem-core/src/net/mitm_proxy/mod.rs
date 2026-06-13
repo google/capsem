@@ -65,6 +65,7 @@ use util::{
 };
 
 pub use mcp_endpoint::{McpEndpointState, McpTimeouts};
+pub use mcp_frame::dispatch_logged_mcp_request;
 
 /// Re-exported so capsem-app can reference the type without depending on rustls.
 pub type UpstreamTlsConfig = rustls::ClientConfig;

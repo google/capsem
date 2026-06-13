@@ -459,6 +459,8 @@ async fn run_async_main_loop(
     ));
     let mcp_runtime = Arc::new(McpRuntime {
         aggregator: aggregator_client,
+        endpoint: Arc::clone(&mcp_endpoint),
+        db: Arc::clone(&db),
         security_rules: Arc::clone(&security_rules),
         plugin_policy: Arc::clone(&plugin_policy),
         model_endpoints: Arc::clone(&model_endpoints),

@@ -88,6 +88,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Clarified the shared skills contract for profile `build.sh`: it is a
   rootfs-only build hook, not an installer/runtime/config path, and changes
   require profile descriptor updates, asset rebuilds, and black-box VM proof.
+- Routed service-initiated profile MCP tool calls through the logged MCP
+  JSON-RPC security rail instead of calling the aggregator directly, so
+  `capsem_mcp_call` now writes `mcp_calls`, built-in MCP HTTP `net_events`,
+  and matching `mcp.tool_call` security-rule rows through the process
+  `DbWriter`.
 - Hardened agent bootstrap packaging: profile build hooks now remove
   installer-created OAuth/token/history/cache/log residue before rootfs
   packaging, AGY runs through the Capsem sandbox wrapper by default, and Gemini

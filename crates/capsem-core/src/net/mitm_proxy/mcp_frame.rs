@@ -39,6 +39,79 @@ pub(super) async fn serve(
     serve_io(initial_buf, vsock_stream, endpoint, db).await
 }
 
+/// Dispatch an MCP JSON-RPC request through the same security-event and
+/// ledger rail used by framed guest MCP traffic.
+///
+/// Host-facing routes use this when they invoke a profile MCP tool on behalf
+/// of the user. They must not call the aggregator directly, because the
+/// `mcp_calls` row and matching security-rule rows are the audit contract.
+pub async fn dispatch_logged_mcp_request(
+    endpoint: Arc<McpEndpointState>,
+    db: Arc<DbWriter>,
+    request: JsonRpcRequest,
+    process_name: String,
+) -> Option<JsonRpcResponse> {
+    let summary = interpret_mcp_method(&request);
+    let runtime_event_type = runtime_mcp_event_type(&summary.method);
+    let request_decision = evaluate_mcp_security_event(
+        &endpoint,
+        mcp_security_event_from_summary(runtime_event_type, &summary, &process_name, None),
+    );
+
+    if !request_decision.is_allowed() {
+        let response = policy_blocked_response(request.id.clone(), "request", &request_decision);
+        log_mcp_call_with_policy(
+            &db,
+            &endpoint.security_rules,
+            &request,
+            &response,
+            &process_name,
+            0,
+            McpCallPolicyFields::from(&request_decision),
+        )
+        .await;
+        return Some(response);
+    }
+
+    let start = Instant::now();
+    let response = endpoint.handle_request(&request).await;
+    let duration_ms = start.elapsed().as_millis() as u64;
+    let Some(response) = response else {
+        return None;
+    };
+
+    let response_decision = evaluate_mcp_security_event(
+        &endpoint,
+        mcp_security_event_from_summary(
+            runtime_mcp_event_type(&summary.method),
+            &summary,
+            &process_name,
+            Some(&response),
+        ),
+    );
+    let final_decision = if response_decision.is_allowed() {
+        request_decision
+    } else {
+        response_decision
+    };
+    let response = if final_decision.is_allowed() {
+        response
+    } else {
+        policy_blocked_response(request.id.clone(), "response", &final_decision)
+    };
+    log_mcp_call_with_policy(
+        &db,
+        &endpoint.security_rules,
+        &request,
+        &response,
+        &process_name,
+        duration_ms,
+        McpCallPolicyFields::from(&final_decision),
+    )
+    .await;
+    Some(response)
+}
+
 async fn serve_io<I>(
     initial_buf: Vec<u8>,
     stream: I,
