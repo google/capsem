@@ -10,6 +10,8 @@ Rust internals.
 import argparse
 import json
 import re
+import socket
+import struct
 from pathlib import Path
 from typing import Any, Literal
 from urllib.error import HTTPError
@@ -21,7 +23,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 SECRET_RE = re.compile(r"capsem_test_[A-Za-z0-9_]+")
 
-ProtocolFamily = Literal["http", "model", "mcp", "oauth", "credential"]
+ProtocolFamily = Literal["http", "model", "mcp", "dns", "oauth", "credential"]
 AuthMode = Literal["none", "bearer", "api_key", "oauth_code"]
 
 
@@ -290,10 +292,77 @@ def _scenario_definitions() -> list[dict[str, Any]]:
     ]
 
 
+def _dns_scenario_definitions() -> list[dict[str, Any]]:
+    return [
+        {
+            "name": "dns_a_fixture",
+            "client": {"name": "dns-client", "version": "fixture"},
+            "protocol_family": "dns",
+            "auth_mode": "none",
+            "qname": "fixture.capsem.test",
+            "qtype": 1,
+            "expected_ledger_rows": ["dns_events:fixture.capsem.test"],
+        }
+    ]
+
+
+def _dns_query(name: str, qtype: int = 1, query_id: int = 0xCACE) -> bytes:
+    labels = b"".join(bytes([len(part)]) + part.encode("ascii") for part in name.split("."))
+    question = labels + b"\0" + struct.pack("!HH", qtype, 1)
+    return struct.pack("!HHHHHH", query_id, 0x0100, 1, 0, 0, 0) + question
+
+
+def _parse_dns_a_response(response: bytes) -> dict[str, Any]:
+    if len(response) < 12:
+        raise ValueError("truncated DNS response")
+    query_id, flags, qdcount, ancount, _, _ = struct.unpack("!HHHHHH", response[:12])
+    rcode = flags & 0x000F
+    answers: list[str] = []
+    offset = 12
+    for _ in range(qdcount):
+        while response[offset] != 0:
+            offset += 1 + response[offset]
+        offset += 1 + 4
+    for _ in range(ancount):
+        if offset + 12 > len(response):
+            raise ValueError("truncated DNS answer")
+        _name, rr_type, rr_class, ttl, rdlength = struct.unpack("!HHHIH", response[offset:offset + 12])
+        offset += 12
+        rdata = response[offset:offset + rdlength]
+        offset += rdlength
+        if rr_type == 1 and rr_class == 1 and ttl == 60 and rdlength == 4:
+            answers.append(".".join(str(part) for part in rdata))
+    return {
+        "query_id": query_id,
+        "rcode": rcode,
+        "answers": answers,
+    }
+
+
+def _dns_exchange(dns_udp_addr: str, qname: str, qtype: int) -> tuple[HttpExchange, int]:
+    host, port_text = dns_udp_addr.rsplit(":", 1)
+    query = _dns_query(qname, qtype=qtype)
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        sock.settimeout(5)
+        sock.sendto(query, (host, int(port_text)))
+        response, _ = sock.recvfrom(512)
+    parsed = _parse_dns_a_response(response)
+    exchange = HttpExchange(
+        method="DNS",
+        path=qname,
+        status_code=0 if parsed["rcode"] == 0 else parsed["rcode"],
+        request_body={"qname": qname, "qtype": qtype, "qclass": 1},
+        response_body=parsed,
+    )
+    visible_bytes = len(json.dumps(exchange.response_body, sort_keys=True).encode("utf-8"))
+    return exchange, visible_bytes
+
+
 def record_mock_server(
     base_url: str,
     output_dir: str | Path,
     *,
+    dns_udp_addr: str | None = None,
     scenarios: set[str] | None = None,
 ) -> list[Path]:
     output_path = Path(output_dir)
@@ -322,6 +391,30 @@ def record_mock_server(
         destination = output_path / f"{fixture.name}.json"
         destination.write_text(fixture.model_dump_json(indent=2, by_alias=True) + "\n")
         written.append(destination)
+    for scenario in _dns_scenario_definitions():
+        if scenarios and scenario["name"] not in scenarios:
+            continue
+        if not dns_udp_addr:
+            if scenarios and scenario["name"] in scenarios:
+                raise ValueError(f"DNS fixture scenario {scenario['name']} requires dns_udp_addr")
+            continue
+        exchange, visible_bytes = _dns_exchange(
+            dns_udp_addr,
+            scenario["qname"],
+            scenario["qtype"],
+        )
+        fixture = ProtocolFixture(
+            name=scenario["name"],
+            client=ClientInfo.model_validate(scenario["client"]),
+            protocol_family=scenario["protocol_family"],
+            auth_mode=scenario["auth_mode"],
+            exchange=exchange,
+            expected_ledger_rows=scenario["expected_ledger_rows"],
+            expected_visible_bytes=visible_bytes,
+        )
+        destination = output_path / f"{fixture.name}.json"
+        destination.write_text(fixture.model_dump_json(indent=2, by_alias=True) + "\n")
+        written.append(destination)
     if scenarios:
         missing = scenarios - {path.stem for path in written}
         if missing:
@@ -329,17 +422,28 @@ def record_mock_server(
     return written
 
 
-def replay_fixtures(base_url: str, fixture_paths: list[str | Path]) -> list[ReplayResult]:
+def replay_fixtures(
+    base_url: str,
+    fixture_paths: list[str | Path],
+    *,
+    dns_udp_addr: str | None = None,
+) -> list[ReplayResult]:
     results: list[ReplayResult] = []
     for path in fixture_paths:
         fixture = ProtocolFixture.model_validate_json(Path(path).read_text())
-        exchange, visible_bytes, _substitutions = _http_exchange(
-            base_url,
-            fixture.exchange.method,
-            fixture.exchange.path,
-            headers=dict(fixture.exchange.request_headers),
-            body=fixture.exchange.request_body,
-        )
+        if fixture.protocol_family == "dns":
+            if not dns_udp_addr:
+                raise ValueError(f"replaying DNS fixture {fixture.name} requires dns_udp_addr")
+            qtype = int((fixture.exchange.request_body or {}).get("qtype", 1))
+            exchange, visible_bytes = _dns_exchange(dns_udp_addr, fixture.exchange.path, qtype)
+        else:
+            exchange, visible_bytes, _substitutions = _http_exchange(
+                base_url,
+                fixture.exchange.method,
+                fixture.exchange.path,
+                headers=dict(fixture.exchange.request_headers),
+                body=fixture.exchange.request_body,
+            )
         results.append(
             ReplayResult(
                 name=fixture.name,
@@ -358,6 +462,7 @@ def replay_fixtures(base_url: str, fixture_paths: list[str | Path]) -> list[Repl
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base-url", required=True, help="capsem-mock-server base URL")
+    parser.add_argument("--dns-udp-addr", help="capsem-mock-server DNS UDP address")
     parser.add_argument("--out-dir", required=True, type=Path, help="fixture output directory")
     parser.add_argument(
         "--replay",
@@ -374,12 +479,18 @@ def main() -> int:
     written = record_mock_server(
         args.base_url,
         args.out_dir,
+        dns_udp_addr=args.dns_udp_addr,
         scenarios=set(args.scenarios) if args.scenarios else None,
     )
     output: dict[str, Any] = {"written": [str(path) for path in written]}
     if args.replay:
         output["replay"] = [
-            result.model_dump() for result in replay_fixtures(args.base_url, written)
+            result.model_dump()
+            for result in replay_fixtures(
+                args.base_url,
+                written,
+                dns_udp_addr=args.dns_udp_addr,
+            )
         ]
     print(json.dumps(output, indent=2))
     return 0

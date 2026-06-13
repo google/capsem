@@ -395,6 +395,20 @@ next one, and stage only the files for that slice.
     tests/test_protocol_fixture_recorder.py`; `python3 -m py_compile
     scripts/mock_server_runtime.py scripts/mock_server.py
     scripts/protocol_fixture_recorder.py`.
+  - 2026-06-13 progress: the protocol fixture recorder now accepts the mock
+    server DNS address, records a sanitized DNS fixture as
+    `protocol_family = "dns"`, and replays it through the same ready JSON
+    address. DNS is now in the recorder corpus instead of being only a launcher
+    smoke.
+  - Proof: RED `uv run python -m pytest
+    tests/test_protocol_fixture_recorder.py -q` failed on missing
+    `dns_udp_addr`; GREEN `uv run python -m pytest
+    tests/test_protocol_fixture_recorder.py tests/test_mock_server_launcher.py
+    tests/test_release_doctor_contract.py -q`; `uv run ruff check
+    scripts/protocol_fixture_recorder.py scripts/mock_server_runtime.py
+    tests/test_protocol_fixture_recorder.py tests/test_mock_server_launcher.py`;
+    `python3 -m py_compile scripts/protocol_fixture_recorder.py
+    scripts/mock_server_runtime.py scripts/mock_server.py`.
 - [ ] RED/GREEN: every protocol lab case is a full-chain acceptance spec, not
   a status-code replay.
   - Suite home: `tests/ironbank/`.

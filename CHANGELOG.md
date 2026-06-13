@@ -52,6 +52,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   TCP, reported in its ready JSON, so doctor, recorder, benchmark, and
   Ironbank work can exercise DNS without public resolvers or a second fixture
   server.
+- Extended the protocol fixture recorder to capture and replay DNS fixtures
+  from `capsem-mock-server`, keeping DNS in the same sanitized fixture corpus
+  as model, MCP, OAuth, credential, and HTTP-like flows.
 - Clarified the shared skills contract for profile `build.sh`: it is a
   rootfs-only build hook, not an installer/runtime/config path, and changes
   require profile descriptor updates, asset rebuilds, and black-box VM proof.

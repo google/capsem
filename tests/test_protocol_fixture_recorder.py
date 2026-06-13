@@ -23,7 +23,11 @@ def test_protocol_fixture_recorder_uses_mock_server_and_sanitizes(tmp_path):
     proc = None
     try:
         proc, ready = start_mock_server()
-        written = recorder.record_mock_server(ready["base_url"], tmp_path)
+        written = recorder.record_mock_server(
+            ready["base_url"],
+            tmp_path,
+            dns_udp_addr=ready["dns_udp_addr"],
+        )
     finally:
         stop_process(proc)
 
@@ -36,6 +40,7 @@ def test_protocol_fixture_recorder_uses_mock_server_and_sanitizes(tmp_path):
         "oauth_token_exchange",
         "mcp_tools_list",
         "mcp_tool_call",
+        "dns_a_fixture",
         "credential_response_capture",
     }.issubset(names)
 
@@ -53,6 +58,7 @@ def test_protocol_fixture_recorder_uses_mock_server_and_sanitizes(tmp_path):
             "http",
             "model",
             "mcp",
+            "dns",
             "oauth",
             "credential",
         }
@@ -66,8 +72,16 @@ def test_protocol_fixture_replay_covers_recorded_flows(tmp_path):
     proc = None
     try:
         proc, ready = start_mock_server()
-        written = recorder.record_mock_server(ready["base_url"], tmp_path)
-        results = recorder.replay_fixtures(ready["base_url"], written)
+        written = recorder.record_mock_server(
+            ready["base_url"],
+            tmp_path,
+            dns_udp_addr=ready["dns_udp_addr"],
+        )
+        results = recorder.replay_fixtures(
+            ready["base_url"],
+            written,
+            dns_udp_addr=ready["dns_udp_addr"],
+        )
     finally:
         stop_process(proc)
 
@@ -76,4 +90,4 @@ def test_protocol_fixture_replay_covers_recorded_flows(tmp_path):
     assert all(result.visible_bytes_match for result in results)
     assert {
         result.protocol_family for result in results
-    } == {"model", "oauth", "mcp", "credential"}
+    } == {"model", "oauth", "mcp", "dns", "credential"}
