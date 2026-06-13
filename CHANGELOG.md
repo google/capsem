@@ -79,6 +79,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and native Ollama Python SDK clients through the shared mock server, and
   fixed native Ollama `/api/chat` classification so session DB rows, security
   ledgers, route output, token counts, byte counts, and file writes agree.
+- Tightened the Ironbank doctor ledger gate so local-network `ask` decisions,
+  informational detections, serialized detection payloads, and security plugin
+  execution timings are proven from session DB rows instead of only counted.
 - Renamed the deterministic local fixture upstream to `capsem-mock-server` and
   made `CAPSEM_MOCK_SERVER_BASE_URL` the shared contract for doctor,
   integration, recorder, benchmark, and Ironbank-style black-box tests.

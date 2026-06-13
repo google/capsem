@@ -331,6 +331,72 @@ def test_capsem_doctor_pays_protocol_and_security_ledger_debt():
         assert model_security["event_json"]
         assert model_security["rule_json"]
 
+        security_rows = conn.execute("SELECT * FROM security_rule_events").fetchall()
+        security_actions = {row["rule_action"] for row in security_rows}
+        security_levels = {row["detection_level"] for row in security_rows}
+        assert {"allow", "ask"} <= security_actions
+        assert {"none", "informational"} <= security_levels
+        assert security_actions <= {"allow", "ask", "block", "preprocess", "rewrite", "postprocess"}
+        assert security_levels <= {"none", "informational", "low", "medium", "high", "critical"}
+
+        ask_rows = [row for row in security_rows if row["rule_action"] == "ask"]
+        assert ask_rows, "doctor must trigger the default local-network ask guard"
+        for row in ask_rows:
+            payload = json.loads(row["event_json"])
+            assert row["event_type"] == "http.request"
+            assert row["rule_id"] == "profiles.rules.default_000_local_network"
+            assert row["detection_level"] == "none"
+            assert payload["decision"]["effective"] == "allow"
+            sibling_actions = {
+                sibling["rule_action"]
+                for sibling in security_rows
+                if sibling["event_id"] == row["event_id"]
+            }
+            sibling_rules = {
+                sibling["rule_id"]
+                for sibling in security_rows
+                if sibling["event_id"] == row["event_id"]
+            }
+            assert "allow" in sibling_actions
+            assert "profiles.rules.ai_ollama_http_local_host" in sibling_rules
+
+        informational_rows = [
+            row for row in security_rows if row["detection_level"] == "informational"
+        ]
+        assert informational_rows, "doctor must emit informational detection rows"
+        for row in informational_rows:
+            payload = json.loads(row["event_json"])
+            detections = payload.get("detections", [])
+            assert any(
+                detection.get("detection_level") == "informational"
+                and detection.get("rule_id") == row["rule_id"]
+                for detection in detections
+            )
+
+        plugin_executions = [
+            execution
+            for row in security_rows
+            for execution in json.loads(row["event_json"]).get("plugin_executions", [])
+        ]
+        assert plugin_executions, "doctor security payloads must carry plugin timings"
+        assert {
+            "plugin_id",
+            "stage",
+            "applied",
+            "duration_us",
+        } <= set(plugin_executions[0])
+        assert all(
+            execution["stage"] in {"preprocess", "postprocess", "logging"}
+            for execution in plugin_executions
+        )
+        assert all(isinstance(execution["applied"], bool) for execution in plugin_executions)
+        assert all(isinstance(execution["duration_us"], int) for execution in plugin_executions)
+        assert any(execution["plugin_id"] == "credential_broker" for execution in plugin_executions)
+        assert any(
+            execution["plugin_id"] == "log_sanitizer" and execution["applied"] is True
+            for execution in plugin_executions
+        )
+
         tool_call = _single(
             conn,
             "SELECT * FROM tool_calls WHERE tool_name = 'fixture_lookup' ORDER BY id DESC LIMIT 1",

@@ -843,6 +843,18 @@ next one, and stage only the files for that slice.
     tests/ironbank/ -q -s` (`3 passed in 37.39s`). Remaining S5/S7 debt is
     still explicit below: MCP-native iron tests, streaming provider replay,
     ask/block/disable/rewrite/pre/post matrix, and full `just test`.
+  - 2026-06-13 progress: doctor ledger proof now asserts the real
+    local-network `ask` rows are `http.request` rows from
+    `profiles.rules.default_000_local_network`, that each ask row is paired
+    with the explicit Ollama/local allow rule on the same event, that
+    informational detection rows serialize matching detection payloads, and
+    that security payloads carry plugin execution timings for
+    `credential_broker` and `log_sanitizer`.
+  - Proof: `uv run ruff check tests/ironbank/test_doctor_ledger.py`;
+    `CAPSEM_TEST_PRESERVE_ALWAYS=1 uv run python -m pytest
+    tests/ironbank/test_doctor_ledger.py::test_capsem_doctor_pays_protocol_and_security_ledger_debt
+    -q -s --tb=short` (`1 passed in 31.66s`). Remaining debt: explicit
+    block/disable/rewrite/pre/post matrix and full `just test`.
 - [x] RED/GREEN: doctor/toolchain probes cover apt/dpkg triggers, Python, pip,
   uv, Node, npm, npx, packaged CLIs, aliases, MCP bootstrap, DNS, TLS, FS
   writes.
