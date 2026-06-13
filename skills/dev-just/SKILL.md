@@ -21,7 +21,7 @@ All workflows use `just` (not make). The justfile is the single entry point.
 | `just build-ui [release]` | **Frontend build + `cargo build -p capsem-app` in lockstep.** Use after any frontend change when running the Tauri binary directly. |
 | `just run-ui -- [args]` | `build-ui` then launch `./target/debug/capsem-app` with args (e.g. `--connect <id>`) |
 | `just build-assets [arch]` | Full VM asset rebuild via capsem-builder (kernel + rootfs). Default: both arches. |
-| `just smoke` | Fast path: audit + doctor --fast + injection + integration + parallel pytest groups (~30s) |
+| `just smoke` | Hermetic smoke gate: audit + doctor + injection + integration + parallel pytest groups |
 | `just test` | ALL tests: unit (warnings-as-errors) + cov + cross-compile + frontend + python + injection + integration + bench + install e2e |
 | `just test-gateway` | Gateway unit + Python mock-UDS tests (no VM needed) |
 | `just test-gateway-e2e` | Gateway E2E tests (real service + VMs) |
@@ -142,16 +142,20 @@ sh bootstrap.sh   # Installs deps + runs doctor fix
 
 ## Builder CLI
 
-The capsem-builder Python package provides config-driven image building:
+The capsem-builder Python package is the backend implementation. Product image
+truth enters through `capsem-admin` and profile-owned config, not direct
+builder authoring commands:
 
 ```bash
-uv run capsem-builder doctor guest/       # Check build prerequisites
-uv run capsem-builder validate guest/     # Lint guest config
 capsem-admin profile check --profile config/profiles/<profile-id>/profile.toml --config-root config
 just build-assets              # Build profile-owned VM assets through the profile-derived build rail
 just _materialize-config       # Materialize generated runtime profile config
-uv run capsem-builder inspect guest/      # Show config summary
 ```
+
+Direct `capsem-builder` calls are backend debugging only. They must not create
+profiles, packages, MCP servers, provider config, runtime settings, or rule
+files. If the public product contract needs a new image input, add it to the
+profile/corp/settings config model and the `capsem-admin` validation path.
 
 ## Cross-compilation
 

@@ -120,11 +120,23 @@ next one, and stage only the files for that slice.
     `image plan/workspace/verify` are rejected by CLI parsing. Surviving admin
     surface is profile validate/check/materialize, settings validate,
     enforcement/detection validate, manifest check/generate, and image build.
+  - 2026-06-13 docs/skills correction: active docs and developer skills now
+    teach `config/settings`, `config/corp`, and `config/profiles` as source
+    authority; generated runtime config lives in `target/config`; backend
+    image workspaces are implementation details; `capsem-admin` is a tool,
+    not a config owner; and `capsem-admin image build --dry-run` is rejected
+    as an escape hatch.
   - Proof: `cargo test -p capsem-admin -- --nocapture`; `uv run python -m
     pytest tests/test_config.py tests/test_cli.py::TestRemovedAuthoringCommands
     tests/test_release_doctor_contract.py::test_config_contract_has_no_admin_or_registry_authority
     tests/test_release_doctor_contract.py::test_builder_has_no_guest_scaffold_authoring_rail
     tests/capsem-build-chain/test_active_docs_profile_contract.py -q`.
+  - Proof: `cargo run -p capsem-admin -- image build --help`; `cargo test -p
+    capsem-admin image_build_rejects_dry_run_escape_hatch -- --nocapture`;
+    `cargo test -p capsem-admin -- --nocapture`; `uv run python -m pytest
+    tests/test_release_doctor_contract.py
+    tests/capsem-build-chain/test_active_docs_profile_contract.py -q`;
+    `cargo fmt --check`; `git diff --check`.
 
 ## S2. Materialization, Assets, VM Resources
 

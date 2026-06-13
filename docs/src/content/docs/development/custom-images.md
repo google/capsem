@@ -1,6 +1,6 @@
 ---
 title: Customizing VM Images
-description: How to edit guest configuration, rebuild images, and test your changes.
+description: How to edit profile-owned image inputs, rebuild images, and test your changes.
 sidebar:
   order: 15
 ---
@@ -18,7 +18,7 @@ workspace truth.
 config/
     profiles/
         code/
-            profile.toml              Profile ledger and hash pins
+            profile.toml              Profile ledger
             apt-packages.txt          System packages
             python-requirements.txt   Python packages
             npm-packages.txt          Node CLI packages
@@ -113,13 +113,10 @@ After editing profile files:
 # 1. Validate your changes (fast, catches typos)
 cargo run -p capsem-admin -- profile check config/profiles/code/profile.toml --config-root config
 
-# 2. Preview the generated Dockerfile without building
-cargo run -p capsem-admin -- image build --profile config/profiles/code/profile.toml --config-root config --dry-run --json
-
-# 3. Rebuild the rootfs (kernel rebuild only needed if you changed defconfig)
+# 2. Rebuild the rootfs (kernel rebuild only needed if you changed backend kernel inputs)
 just build-rootfs arm64 code
 
-# 4. Boot and verify
+# 3. Boot and verify
 just run "capsem-doctor"
 ```
 
@@ -155,8 +152,6 @@ do not rebuild the rootfs.
 ```bash
 cargo run -p capsem-admin -- profile check config/profiles/code/profile.toml --config-root config
 cargo run -p capsem-admin -- image build --profile config/profiles/code/profile.toml --config-root config --arch arm64
-cargo run -p capsem-admin -- image build --profile config/profiles/code/profile.toml --config-root config --dry-run --json
-uv run capsem-builder doctor --profile code --config-root config # check prerequisites and profile
 ```
 
 ## Further reading

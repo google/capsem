@@ -36,7 +36,7 @@ Update three places:
 | `capsem-init` script | `just run` | Init script is repacked into initrd |
 | `guest/artifacts/diagnostics/*.py` | `just run "capsem-doctor"` | Test files repacked into initrd |
 | `guest/artifacts/capsem-bashrc` | `just build-assets` | Baked into rootfs, not initrd |
-| Guest config (`guest/config/`) | `just build-assets` | Affects Dockerfile rendering |
+| Profile package/root/build inputs (`config/profiles/<id>/`) | `just build-assets` | Affects profile-derived rootfs rendering |
 | Installed packages (apt, pip) | `just build-assets` | Baked into the profile rootfs asset |
 
 ## Guest binary security

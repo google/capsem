@@ -80,7 +80,7 @@ capsem_inspect { id: "vm-1", sql: "SELECT server_name, tool_name, decision, dura
 capsem_inspect { id: "vm-1", sql: "SELECT COUNT(*) as n, operation FROM fs_events GROUP BY operation" }
 ```
 
-**Read guest config/state:**
+**Read guest runtime state:**
 ```
 capsem_read_file { id: "vm-1", path: "/etc/resolv.conf" }
 capsem_read_file { id: "vm-1", path: "/tmp/capsem-init.log" }

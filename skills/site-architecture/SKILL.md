@@ -232,7 +232,11 @@ The guest is air-gapped. No real NIC, no real DNS, no direct internet access.
 
 **Block mode**: `mke2fs` runs unconditionally at boot. Overlay upper is always tmpfs.
 
-**Everything is ephemeral unless asked otherwise.** VMs are temporary by default. Named VMs (`capsem create -n <name>`) are persistent -- their workspace and rootfs overlay survive stops and can be resumed. Persistent VM data lives in `~/.capsem/run/persistent/`. Never make the overlay upper layer persistent for ephemeral VMs. To add packages: edit guest config and `just build-assets`.
+**Sessions run profiles.** Session workspace and overlay state are session
+state; image contents come from the profile asset contract. Never make the
+overlay upper layer a hidden image-authoring rail. To add packages, edit the
+profile-owned package files under `config/profiles/<id>/` and rebuild through
+the profile-derived asset rail.
 
 **Fork images** extend the session model with reusable templates. `capsem fork
 <session> <image-name>` snapshots a session via APFS clonefile. Forks stay tied

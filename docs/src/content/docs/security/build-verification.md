@@ -222,7 +222,7 @@ and status reports the installed manifest hash plus package provenance.
 | Rust toolchain | Stable, pinned via `dtolnay/rust-toolchain@stable` |
 | Dependency audit | `cargo audit` in CI test stage |
 | npm audit | `pnpm audit` in CI test stage |
-| Docker base images | Pinned in guest config Dockerfiles |
+| Docker base images | Resolved by the profile-derived Docker template rail |
 | Compiler warnings | Treated as errors (`#[deny(warnings)]` in all crates) |
 | Auditable builds | `cargo-auditable` embeds dependency info in binaries |
 | Build context validation | `capsem.builder.doctor.check_source_files()` verifies completeness before release |

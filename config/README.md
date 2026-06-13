@@ -41,6 +41,26 @@ Do not introduce `admin` or `registry` as config authorities. `capsem-admin` is
 a tool; it does not own product configuration. Profiles and corp own runtime
 behavior.
 
+## Admin Tool Surface
+
+`capsem-admin` may validate, check, materialize, build, and generate artifacts
+from this config. It must not scaffold product config or create a second source
+of truth.
+
+Supported public rails:
+
+- `profile validate|check|materialize`
+- `settings validate`
+- `enforcement validate`
+- `detection validate`
+- `manifest check|generate`
+- `image build`
+
+If a new product input is needed, add it to the profile/corp/settings contract
+and make the existing validation/materialization rail understand it. Do not add
+`init`, `new`, `add`, provider-specific, or backend-workspace authoring
+commands.
+
 ## Non-Config
 
 Developer skills live in the repository-level `skills/` directory. Product or

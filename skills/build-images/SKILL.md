@@ -1,6 +1,6 @@
 ---
 name: build-images
-description: Building Capsem VM images with capsem-builder. Use when working with guest image configuration, Dockerfiles, kernel builds, rootfs builds, the builder CLI, or guest config TOML files. Covers the config-driven build system, guest config layout, Dockerfile templates, multi-arch support, the builder CLI commands, AND the internal architecture for modifying the builder itself (models, context flow, template variables, adding install managers).
+description: Building Capsem VM images from profile-owned inputs. Use when working with profile package files, Docker templates, kernel builds, rootfs builds, capsem-admin image builds, or the capsem-builder backend. Covers the profile-derived build rail, multi-arch assets, build ledgers, OBOMs, Dockerfile templates, and backend internals.
 ---
 
 # Building VM Images
@@ -24,7 +24,7 @@ Read `config/README.md` before changing this layout.
 
 ```
 config/
-  admin/                  Admin settings source + generated registries
+  settings/               UI/application preferences and generated UI schema
   corp/                   Corporate source contracts and rule files
   docker/                 Dockerfile/build templates
   profiles/<profile_id>/
@@ -44,9 +44,14 @@ assets/                   Generated VM assets
 packages/                 Generated native packages
 ```
 
-The materialized backend workspace may contain generated files such as
-`guest/config/packages/*.toml` and `guest/profile-build.sh`. Treat those as
-implementation details, not authoring surfaces.
+The materialized backend workspace may contain generated package-set files and
+profile build scripts. Treat those as implementation details, not authoring
+surfaces.
+
+`capsem-admin` is a tool, not a config authority. It validates, materializes,
+builds, and checks the profile/corp/settings contracts; it must not grow
+scaffolding commands that invent profile, MCP, AI provider, package, or rule
+truth outside `config/profiles`, `config/corp`, and `config/settings`.
 
 ## CLI commands
 
@@ -187,7 +192,9 @@ Templates live in `config/docker/`:
 - `Dockerfile.rootfs.j2` -- rootfs image (apt packages, Python packages, optional npm/curl package sets, profile root/build hook, diagnostics)
 - `Dockerfile.kernel.j2` -- kernel build (defconfig, modules, vmlinuz extraction)
 
-Templates use Jinja2 with variables from the merged guest config. Preview with `--dry-run`.
+Templates use Jinja2 with variables from the admin-materialized profile image
+workspace. Do not add a second preview rail for product truth; if a build input
+needs validation, add it to the normal profile/admin validation path.
 
 ---
 
@@ -224,15 +231,13 @@ The data flows through four layers:
 {
     "arch": ArchConfig,           # Per-arch settings (docker_platform, rust_target, etc.)
     "arch_name": str,             # "arm64" or "x86_64"
-    "apt_packages": list[str],    # From packages/apt.toml
-    "python_packages": list[str], # From packages/python.toml
+    "apt_packages": list[str],    # Materialized from profile apt-packages.txt
+    "python_packages": list[str], # Materialized from profile python-requirements.txt
     "python_install_cmd": str,    # e.g. "uv pip install --system --break-system-packages"
-    "npm_packages": list[str],    # From packages/npm.toml when materialized
-    "curl_installs": list[str],   # From packages/curl.toml when materialized
+    "npm_packages": list[str],    # Materialized from profile npm-packages.txt
     "profile_root_seed": bool,    # Whether profile-root/ is copied into the image
     "profile_build_script": bool, # Whether profile-build.sh is executed
     "npm_prefix": str,            # e.g. "/opt/ai-clis"
-    "curl_installs": list[str],   # From ai/*.toml where install.manager == "curl"
     "guest_binaries": list[str],  # ["capsem-pty-agent", "capsem-net-proxy", "capsem-mcp-server"]
 }
 ```
@@ -305,7 +310,7 @@ Profiles own CLI/tool selection. If an installer cannot be represented as a
 package set, put it in `config/profiles/<profile_id>/build.sh`, reference it
 from `[files.build]` in `profile.toml`, refresh pins with `capsem-admin`, and
 rebuild through the admin/just rail. Do not add a provider registry under
-`guest/config`.
+backend-generated image workspaces.
 
 ## Build pipeline (what `build_image()` does)
 

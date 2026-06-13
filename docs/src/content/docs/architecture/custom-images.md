@@ -7,8 +7,8 @@ sidebar:
 
 Capsem images are defined by profiles. Organizations create custom images by
 shipping profile-owned package files, root seed files, MCP config, enforcement
-rules, detection rules, plugin policy, and asset pins. Provider access and
-credentials remain runtime rule/plugin truth, not image-builder truth.
+rules, detection rules, and plugin policy. Provider access and credentials
+remain runtime rule/plugin truth, not image-builder truth.
 
 ## Quick Start
 
@@ -22,6 +22,14 @@ cargo run -p capsem-admin -- manifest generate assets --version 1.3.corp.1 --jso
 
 ```
 config/
+    settings/
+        settings.toml             UI/application preferences only
+        schema.generated.json     Settings shape for UI and validation
+        ui-metadata.toml          UI rendering metadata
+    corp/
+        corp.toml                 Corp locks and reporting endpoints
+        enforcement.toml          Corp enforcement rules
+        detection.yaml            Corp Sigma detection rules
     profiles/
         corp-code/
             profile.toml              Profile ledger
@@ -35,10 +43,10 @@ config/
             tips.txt                  Login tips
             root/                     Guest root seed
             root.manifest.json        Root seed hashes
-    corp.toml                         Corp locks and reporting endpoints
-config/docker/
-    Dockerfile.rootfs.j2
-    Dockerfile.kernel.j2
+    docker/
+        Dockerfile.rootfs.j2
+        Dockerfile.kernel.j2
+target/config/                        Generated runtime config
 ```
 
 ## Configuration Reference
@@ -105,37 +113,11 @@ match = 'http.host.matches("(^|.*\\.)(google\\.com|bing\\.com|duckduckgo\\.com)$
 
 ### Build Configuration
 
-Backend build parameters are resolved by the profile-derived build rail and Docker templates.
-Each architecture is self-contained.
-
-```toml
-[build]
-compression = "zstd"
-compression_level = 15
-
-[build.erofs]
-enabled = true
-compression = "lz4hc"
-compression_level = 12
-
-[build.architectures.arm64]
-base_image = "debian:bookworm-slim"
-docker_platform = "linux/arm64"
-rust_target = "aarch64-unknown-linux-musl"
-kernel_branch = "7.0"
-kernel_image = "arch/arm64/boot/Image"
-defconfig = "kernel/defconfig.arm64"
-node_major = 24
-
-[build.architectures.x86_64]
-base_image = "debian:bookworm-slim"
-docker_platform = "linux/amd64"
-rust_target = "x86_64-unknown-linux-musl"
-kernel_branch = "7.0"
-kernel_image = "arch/x86_64/boot/bzImage"
-defconfig = "kernel/defconfig.x86_64"
-node_major = 24
-```
+Backend build parameters are implementation inputs to the profile-derived build
+rail and Docker templates. Do not put rootfs compression levels, Docker
+platforms, kernel image paths, or defconfig paths in source profiles. The
+release rail owns those image mechanics; profiles own which packages, root
+seed files, rules, MCP declarations, and plugins are part of the image.
 
 ## CLI Reference
 
@@ -145,7 +127,6 @@ node_major = 24
 | `capsem-admin image build` | Build profile-derived kernel/rootfs assets |
 | `capsem-admin manifest generate` | Generate manifest and B3SUMS for assets |
 | `capsem-admin profile materialize` | Generate runtime `target/config` from profile and manifest |
-| `capsem-builder doctor --profile code --config-root config` | Check build prerequisites and active profile |
 
 ## Manifest
 
@@ -185,7 +166,13 @@ Every build produces `assets/manifest.json` (format 2) -- a single top-level fil
 }
 ```
 
-The runtime boots only when the asset hashes match. `min_binary`/`min_assets` gate which binary and asset versions are compatible with each other.
+The runtime boots only when the asset hashes match. `min_binary`/`min_assets`
+gate which binary and asset versions are compatible with each other.
+
+Source profiles do not hand-author these asset hashes. `capsem-admin profile
+materialize` combines source profile/corp/settings config with the generated
+asset manifest into `target/config` for local builds, CI, packages, and
+installed runtime config.
 
 ## Corporate Deployment
 
@@ -208,7 +195,7 @@ At runtime Capsem verifies BLAKE3 hashes and refresh policy before marking a
 profile launchable. A missing, stale, or mismatched profile/asset contract must
 fail closed.
 
-Example profile payload:
+Example materialized profile payload:
 
 ```toml
 id = "code"
@@ -243,8 +230,7 @@ remote_enforcement = "https://security.example.invalid/capsem/enforcement"
 ### Workflow
 
 1. Copy `config/profiles/code/` to a new profile id.
-2. Edit the new `profile.toml` name, description, icon, asset descriptors, and
-   file pins.
+2. Edit the new `profile.toml` name, description, icon, and file references.
 3. Edit profile/corp security rules to allow, ask, or block network/model/MCP
    boundaries.
 4. Add internal guest tools only if they must be baked into the image, using
@@ -253,7 +239,8 @@ remote_enforcement = "https://security.example.invalid/capsem/enforcement"
 6. Validate with `capsem-admin profile check`.
 7. Build with `capsem-admin image build`.
 8. Generate the manifest with `capsem-admin manifest generate`.
-9. Distribute the package plus selected manifest and profile assets.
+9. Materialize runtime config with `capsem-admin profile materialize`.
+10. Distribute the package plus selected manifest and profile assets.
 
 ### Lockdown Example
 

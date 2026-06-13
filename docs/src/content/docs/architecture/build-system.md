@@ -337,12 +337,10 @@ The `audit` subcommand parses vulnerability scanner output and fails on CRITICAL
 
 | Command | Description | Key Options |
 |---------|-------------|-------------|
-| `build` | Render Dockerfiles or build images | `--arch`, `--dry-run`, `--json`, `--template`, `--output`, `--kernel-version` |
-| `validate` | Lint and validate backend image spec | `--artifacts` (check built artifacts too) |
-| `inspect` | Show config summary | `--json` |
+| `capsem-admin image build` | Build profile-derived kernel/rootfs assets | `--profile`, `--config-root`, `--arch`, `--template`, `--output`, `--clean`, `--json` |
+| `capsem-admin profile check` | Validate source profile, file references, rules, MCP, and root seed | `--config-root`, `--arch`, `--json` |
 | `audit` | Parse vulnerability scan results | `--scanner` (trivy/grype), `--input`, `--json` |
 | `mcp` | Start MCP stdio server for builder tools | (none) |
-| `doctor` | Check build prerequisites and active profile | `--profile`, `--config-root` |
 
 Usage:
 
@@ -350,17 +348,11 @@ Usage:
 # Validate the active profile and profile-owned files
 cargo run -p capsem-admin -- profile check config/profiles/code/profile.toml --config-root config
 
-# Dry-run: render the profile-derived build plan without building
-cargo run -p capsem-admin -- image build --profile config/profiles/code/profile.toml --config-root config --dry-run --json
-
 # Build rootfs for arm64 through the profile-derived build rail
 cargo run -p capsem-admin -- image build --profile config/profiles/code/profile.toml --config-root config --arch arm64 --template rootfs
 
 # Build kernel for all architectures
-uv run capsem-builder build --template kernel
-
-# Check prerequisites and active profile
-uv run capsem-builder doctor --profile code --config-root config
+cargo run -p capsem-admin -- image build --profile config/profiles/code/profile.toml --config-root config --template kernel
 ```
 
 ## Settings JSON Generation

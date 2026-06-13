@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed (route surfaces and diagnostics)
+- Tightened the profile-derived image/config contract in docs and developer
+  skills: `config/` is now documented as settings/corp/profiles/docker/data,
+  `capsem-admin` is explicitly a validator/materializer/build tool rather
+  than a config authority, stale `guest/config` authoring guidance is removed
+  from active docs, and `capsem-admin image build --dry-run` is no longer a
+  public product rail.
 - Fixed PR CI Python coverage so the schema/builder coverage step runs the
   explicit Python contract suite that exercises `src/capsem`, instead of
   replaying VM, serial, install, MCP, service, and Ironbank suites under one

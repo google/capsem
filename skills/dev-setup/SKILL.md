@@ -134,7 +134,11 @@ Three phases. Default at every prompt is **Yes** (Enter accepts; type `n` to dec
 
 ### Kernel version
 
-`guest/config/build.toml` ships `kernel_branch = "auto"`, which makes `resolve_kernel_version` pick the newest non-EOL longterm release from `kernel.org/releases.json` and fetch its latest patch (e.g. `6.18.26`). Set `kernel_branch = "X.Y"` (e.g. `"6.6"`) to pin for reproducibility.
+Kernel selection is part of the profile-derived image build, not a standalone
+developer setting. The build backend resolves the configured kernel branch
+while materializing and building profile assets through `capsem-admin`/`just`.
+Do not add a parallel kernel setting under runtime settings or backend-only
+config.
 
 Or step by step:
 
@@ -237,7 +241,7 @@ The container VM's clock has drifted. The builder uses `Acquire::Check-Valid-Unt
 
 ### `just build-assets` fails (other)
 - Check Docker is running: `docker info`
-- Check guest config is valid: `uv run capsem-builder validate guest/`
+- Check the profile contract is valid: `capsem-admin profile check config/profiles/code/profile.toml --config-root config`
 - On first run, Docker image pulls can be slow
 
 ### `just run` fails with "assets not found"

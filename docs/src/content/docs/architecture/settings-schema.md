@@ -63,7 +63,7 @@ routes, not generated as settings leaves.
 | `name` | string | yes | Display name |
 | `description` | string | yes | Help text |
 | `setting_type` | SettingType | yes | Data type (see enum table below) |
-| `default_value` | any | no | Default from guest config |
+| `default_value` | any | no | Default from settings source |
 | `effective_value` | any | no | Resolved value (corp > user > default) |
 | `source` | PolicySource | no | Where effective value came from |
 | `modified` | string | no | ISO timestamp of last user change |

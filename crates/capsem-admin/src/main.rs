@@ -252,9 +252,6 @@ struct ImageBuildArgs {
     /// Remove selected output assets before building.
     #[arg(long)]
     clean: bool,
-    /// Print the plan without executing Docker/capsem-builder.
-    #[arg(long)]
-    dry_run: bool,
     /// Emit a machine-readable build plan/report.
     #[arg(long)]
     json: bool,
@@ -488,6 +485,7 @@ struct ImageBuildPlan {
     commands: Vec<CommandReport>,
 }
 
+#[cfg(test)]
 #[derive(Debug, Serialize)]
 struct ImageVerifyReport {
     schema: &'static str,
@@ -523,6 +521,7 @@ struct ImageWorkspaceRuleFileReport {
     size: u64,
 }
 
+#[cfg(test)]
 #[derive(Debug, Serialize)]
 struct ImageVerifyArchReport {
     arch: String,
@@ -676,6 +675,7 @@ fn init_profile_command(args: ProfileInitArgs) -> Result<()> {
     Ok(())
 }
 
+#[cfg(test)]
 fn rewrite_profile_owned_paths(profile: &mut ProfileConfigFile, profile_id: &str) {
     if profile.rule_files.enforcement.is_some() {
         profile.rule_files.enforcement = Some(format!("profiles/{profile_id}/enforcement.toml"));
@@ -714,6 +714,7 @@ fn rewrite_profile_owned_paths(profile: &mut ProfileConfigFile, profile_id: &str
     );
 }
 
+#[cfg(test)]
 fn rewrite_descriptor_path(
     descriptor: &mut Option<capsem_core::net::policy_config::ProfileFileDescriptor>,
     profile_id: &str,
@@ -724,6 +725,7 @@ fn rewrite_descriptor_path(
     }
 }
 
+#[cfg(test)]
 fn copy_profile_payloads(
     source_profile_path: &Path,
     source_profile_dir: &Path,
@@ -986,13 +988,8 @@ fn image_build_command(args: ImageBuildArgs) -> Result<()> {
         arch: args.arch.clone(),
         template: args.template,
         clean: args.clean,
-        dry_run: args.dry_run,
         json: args.json,
     })?;
-    if args.dry_run {
-        print_image_build_plan(&plan, args.json)?;
-        return Ok(());
-    }
     if plan.clean {
         clean_image_outputs(&plan)?;
     }
@@ -1905,6 +1902,7 @@ fn image_build_plan(args: &ImageBuildArgs) -> Result<ImageBuildPlan> {
     })
 }
 
+#[cfg(test)]
 fn verify_image_outputs(args: &ImageVerifyArgs) -> Result<ImageVerifyReport> {
     let profile = load_profile(&args.profile)?;
     profile
@@ -2081,7 +2079,6 @@ fn materialize_image_workspace(args: &ImageWorkspaceArgs) -> Result<ImageWorkspa
         arch: args.arch.clone(),
         template: ImageBuildTemplate::All,
         clean: false,
-        dry_run: true,
         json: true,
     })?;
     let build_plan_path = workspace.join("build-plan.json");
@@ -3578,10 +3575,30 @@ decision = "block"
 
     #[test]
     fn image_build_requires_profile_argument() {
-        let error = Cli::try_parse_from(["capsem-admin", "image", "build", "--dry-run"])
+        let error = Cli::try_parse_from(["capsem-admin", "image", "build"])
             .expect_err("profile is required");
 
         assert!(error.to_string().contains("--profile"), "{error}");
+    }
+
+    #[test]
+    fn image_build_rejects_dry_run_escape_hatch() {
+        let error = Cli::try_parse_from([
+            "capsem-admin",
+            "image",
+            "build",
+            "--profile",
+            "config/profiles/code/profile.toml",
+            "--dry-run",
+        ])
+        .expect_err("dry-run is not a public product rail");
+
+        assert!(
+            error
+                .to_string()
+                .contains("unexpected argument '--dry-run'"),
+            "{error}"
+        );
     }
 
     #[test]
@@ -3619,7 +3636,6 @@ decision = "block"
             arch: Some("arm64".to_string()),
             template: ImageBuildTemplate::All,
             clean: true,
-            dry_run: true,
             json: true,
         };
 
@@ -3660,7 +3676,6 @@ decision = "block"
             arch: Some("riscv64".to_string()),
             template: ImageBuildTemplate::All,
             clean: false,
-            dry_run: true,
             json: false,
         };
 

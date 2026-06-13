@@ -272,7 +272,6 @@ test suite, and reports results.
 
 ```sh
 capsem doctor
-capsem doctor --fast      # skip slow network tests
 ```
 
 ### completions

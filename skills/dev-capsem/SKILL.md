@@ -41,7 +41,7 @@ Rule: if logic could be reused or tested without a specific crate, it belongs in
 | `assets/` | Built VM assets (gitignored, per-arch) | `/build-images` |
 | `graphics/` | Brand icons and app icons (source of truth) | `/dev-capsem` |
 | `skills/` | AI agent skills | `/dev-skills`, `/meta-organize-skills` |
-| `config/` | Profile/corp/admin source config and payloads | `/site-architecture`, `/build-images` |
+| `config/` | Profile, corp, settings source config and profile payloads | `/site-architecture`, `/build-images` |
 | `scripts/` | preflight, integration test, doctor session | `/release-process` |
 
 ## Skill map
@@ -72,7 +72,7 @@ When working on a specific area, consult the relevant skill:
 ### Build & release
 | Skill | When |
 |-------|------|
-| `/build-images` | capsem-builder, guest config, rootfs |
+| `/build-images` | profile-derived image builds, rootfs, OBOM |
 | `/build-initrd` | Guest binary repack, fast iteration |
 | `/release-process` | Release, CI, signing, docs, changelog |
 

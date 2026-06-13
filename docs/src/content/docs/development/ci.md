@@ -135,8 +135,8 @@ just test-unit          # Rust unit tests
 just test-frontend      # Frontend type check + vitest + build
 just test-python        # Python schema tests
 
-# Quick smoke test
-just smoke              # Fast path: doctor + integration tests
+# Hermetic smoke test
+just smoke              # doctor + integration tests
 ```
 
 ### Debugging CI failures
