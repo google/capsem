@@ -1628,6 +1628,18 @@ next one, and stage only the files for that slice.
     support_bundle -- --nocapture` (`10 passed`); `cargo test -p
     capsem-service profile_info_and_obom_route_expose_base_image_obom_hash --
     --nocapture`; `cargo fmt --check`.
+  - 2026-06-13 progress: a full `just test` gate was started and reached
+    clippy before failing on the new logged profile MCP dispatcher's
+    `let Some(...) else { return None; }` shape. The underlying issue was
+    fixed by using `?` on the optional MCP response, preserving the same
+    fail-closed `None` behavior without a clippy escape hatch.
+  - Proof: RED `just test` failed at `clippy::question_mark`; GREEN focused
+    gates `cargo fmt --check`; `cargo clippy -p capsem-core -- -D warnings`;
+    `cargo build -p capsem-service -p capsem-process -p capsem-mcp-builtin
+    -p capsem-mcp`; `uv run pytest tests/capsem-mcp/test_mcp_call.py -q -s
+    --tb=short` (`3 passed`); `CAPSEM_TEST_PRESERVE_ALWAYS=1 uv run pytest
+    tests/ironbank/test_mcp_profile_ledger.py -q -s --tb=short` (`1 passed`);
+    `uv run pytest tests/test_security_rails_retired.py -q` (`4 passed`).
 - [ ] Proof: changelog, docs, skills, and benchmark docs updated.
 - [ ] Proof: full final gates pass and branch is pushed.
 

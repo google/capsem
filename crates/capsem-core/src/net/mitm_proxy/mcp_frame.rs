@@ -74,11 +74,8 @@ pub async fn dispatch_logged_mcp_request(
     }
 
     let start = Instant::now();
-    let response = endpoint.handle_request(&request).await;
+    let response = endpoint.handle_request(&request).await?;
     let duration_ms = start.elapsed().as_millis() as u64;
-    let Some(response) = response else {
-        return None;
-    };
 
     let response_decision = evaluate_mcp_security_event(
         &endpoint,
