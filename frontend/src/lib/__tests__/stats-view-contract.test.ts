@@ -9,11 +9,24 @@ const source = readFileSync(
 describe('StatsView process contract', () => {
   it('distinguishes command executions from process observations', () => {
     expect(source).toContain('Process Exec Events');
-    expect(source).toContain('Process Observations');
-    expect(source).toContain('audit-port process records');
-    expect(source).toContain("type: 'process observation'");
+    expect(source).toContain('Observed Processes');
+    expect(source).toContain('Unique Binaries');
+    expect(source).toContain('auditCommand(row)');
+    expect(source).toContain("type: 'observed process'");
     expect(source).not.toContain('Process Audit Events');
     expect(source).not.toContain("type: 'process audit'");
+  });
+
+  it('does not show process credential-ref counters or tutorial prose', () => {
+    const processStart = source.indexOf("{:else if activeTab === 'process'}");
+    const credentialsStart = source.indexOf("{:else if activeTab === 'credentials'}");
+    expect(processStart).toBeGreaterThan(-1);
+    expect(credentialsStart).toBeGreaterThan(processStart);
+
+    const processBlock = source.slice(processStart, credentialsStart);
+    expect(processBlock).not.toContain('Credential Refs');
+    expect(processBlock).not.toContain('audit-port process records');
+    expect(processBlock).not.toContain('command executions are listed separately');
   });
 });
 

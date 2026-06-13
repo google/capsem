@@ -964,6 +964,10 @@ next one, and stage only the files for that slice.
   - 2026-06-11 progress: security stats now show complete action and detection
     summaries, including zero-count enum values, instead of elevating a partial
     blocks/rules-hit headline.
+  - 2026-06-13 progress: process stats now separate command execution rows
+    from observed process inventory, replace the unrelated process credential
+    reference card with a unique-binary count, show observed argv/command
+    context, and remove visible tutorial prose from the app.
   - Proof: `pnpm --dir frontend test
     src/lib/__tests__/stats-view-contract.test.ts`; `pnpm --dir frontend
     check`.

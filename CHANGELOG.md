@@ -98,6 +98,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   profiles expose a primary `New` action, profiles with missing assets expose
   `Download`, and `Customize` opens the session dialog preselected to that
   profile.
+- Tightened the VM Stats Process panel so it reports command executions and
+  observed processes as separate ledgers, replaces the unrelated credential-ref
+  counter with unique binary counts, and removes tutorial prose from the app UI.
 - Moved frontend MCP controls off settings-backed `mcp.servers.*` mutation and
   onto profile-scoped MCP routes. Settings now stays focused on UI/app
   preferences, while the Profile surface owns rules, plugins, MCP, and assets.

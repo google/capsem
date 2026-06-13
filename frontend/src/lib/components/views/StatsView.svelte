@@ -320,6 +320,12 @@
   const fileModified = $derived(fileRows.filter(row => ['modify', 'modified', 'write', 'written'].includes(text(row.action))).length);
   const fileDeleted = $derived(fileRows.filter(row => ['delete', 'deleted'].includes(text(row.action))).length);
   const processFailures = $derived(processRows.filter(row => row.exit_code != null && number(row.exit_code) !== 0).length);
+  const processUniqueBinaries = $derived(new Set(auditRows.map(row => text(row.exe)).filter(Boolean)).size);
+
+  function auditCommand(row: Row): string {
+    return text(row.argv) || text(row.comm) || text(row.exe) || '--';
+  }
+
   function brokerVerb(row: Row): string {
     const outcome = text(row.outcome).toLowerCase();
     if (outcome === 'brokered' || outcome === 'captured' || outcome === 'injected') return outcome;
@@ -512,8 +518,8 @@
         <div class="grid grid-cols-4 gap-3 mb-6">
           <MetricCard label="Exec Events" value={processRows.length.toLocaleString()} />
           <MetricCard label="Failures" value={processFailures.toLocaleString()} tone="danger" />
-          <MetricCard label="Process Observations" value={auditRows.length.toLocaleString()} />
-          <MetricCard label="Credential Refs" value={processRows.filter(row => row.credential_ref).length.toLocaleString()} />
+          <MetricCard label="Observed Processes" value={auditRows.length.toLocaleString()} />
+          <MetricCard label="Unique Binaries" value={processUniqueBinaries.toLocaleString()} />
         </div>
         <StatsEventList title="Process Exec Events" rows={processRows} columns={['Time', 'Source', 'Command', 'Exit', 'Duration']} onrow={(row) => detail = { type: 'process', data: row }}>
           {#snippet children(row: any)}
@@ -524,16 +530,13 @@
             <td class="px-4 py-2 text-right text-muted-foreground">{row.duration_ms != null ? formatDuration(number(row.duration_ms)) : '--'}</td>
           {/snippet}
         </StatsEventList>
-        <div class="mb-2 text-xs text-muted-foreground-1">
-          Process observations are audit-port process records; command executions are listed separately above.
-        </div>
-        <StatsEventList title="Process Observations" rows={auditRows} columns={['Observed', 'Exe', 'PID', 'Parent', 'Exit']} onrow={(row) => detail = { type: 'process observation', data: row }}>
+        <StatsEventList title="Observed Processes" rows={auditRows} columns={['Observed', 'Executable', 'Command', 'PID', 'Parent']} onrow={(row) => detail = { type: 'observed process', data: row }}>
           {#snippet children(row: any)}
             <td class="px-4 py-2 text-muted-foreground">{formatTime(row.timestamp)}</td>
             <td class="px-4 py-2 font-mono text-xs text-foreground max-w-xl truncate">{row.exe}</td>
+            <td class="px-4 py-2 font-mono text-xs text-muted-foreground-1 max-w-xl truncate">{auditCommand(row)}</td>
             <td class="px-4 py-2 text-muted-foreground-1">{row.pid}</td>
             <td class="px-4 py-2 font-mono text-xs text-muted-foreground-1">{row.parent_exe ?? '--'}</td>
-            <td class="px-4 py-2 text-center text-foreground">{row.exit_code ?? '--'}</td>
           {/snippet}
         </StatsEventList>
       {:else if activeTab === 'credentials'}
