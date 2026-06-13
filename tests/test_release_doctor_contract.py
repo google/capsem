@@ -30,6 +30,14 @@ def test_smoke_runs_full_doctor_without_fast_escape_hatch() -> None:
     assert "{{cli_binary}} doctor --fast" not in block
 
 
+def test_doctor_fix_builds_assets_for_each_checked_in_profile() -> None:
+    source = (PROJECT_ROOT / "scripts" / "doctor-common.sh").read_text()
+
+    assert "for profile in config/profiles/*/profile.toml" in source
+    assert 'just build-assets "$(basename "$(dirname "$profile")")" "$arch"' in source
+    assert '"touch .dev-setup && CAPSEM_SKIP_ASSET_CHECK=1 just build-assets"' not in source
+
+
 def test_guest_network_doctor_is_hermetic_by_default() -> None:
     diagnostics = PROJECT_ROOT / "guest" / "artifacts" / "diagnostics" / "test_network.py"
     source = diagnostics.read_text()

@@ -1033,6 +1033,12 @@ next one, and stage only the files for that slice.
   - Proof: `uv run ruff check scripts/injection_test.py
     tests/test_injection_script.py`; `uv run python -m pytest
     tests/test_injection_script.py -q --tb=short`.
+  - 2026-06-13 follow-up: `doctor --fix` build-assets repair now loops over
+    `config/profiles/*/profile.toml` and invokes `just build-assets
+    <profile_id> <arch>` for every checked-in profile instead of rebuilding a
+    default-only asset set.
+  - Proof: `bash -n scripts/doctor-common.sh`; `uv run python -m pytest
+    tests/test_release_doctor_contract.py -q --tb=short` (`15 passed`).
 - [ ] Proof: status/debug show service version, manifest origin/hash, profile
   status, plugin status, route status, doctor evidence, OBOM/SBOM references.
 - [ ] Proof: changelog, docs, skills, and benchmark docs updated.
