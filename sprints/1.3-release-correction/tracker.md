@@ -672,10 +672,27 @@ next one, and stage only the files for that slice.
     during materialization. Remaining debt: rebuild EROFS assets from the
     profile rail, then add the real-client Ironbank test that exercises those
     SDKs through Capsem to host Ollama and validates DB/routes/logs.
+  - 2026-06-13 progress: the Ironbank model ledger now drives real
+    `anthropic`, `litellm`, and `ollama` Python SDK clients from inside a fresh
+    Code VM against the shared mock server. The test caught and fixed native
+    Ollama `/api/chat` being classified as OpenAI; the provider router now
+    treats native Ollama paths as `ollama` while leaving OpenAI-compatible
+    `/v1/*` paths profile/registry-owned. The test writes deterministic poem
+    files for each client and proves model rows, token counts, byte counts,
+    sanitized credential refs, security rule rows, file rows, and route output
+    agree. Remaining debt: scripted Codex/AGY generation without manual OAuth.
   - Proof: `cargo run -p capsem-admin -- profile check
     config/profiles/code/profile.toml --config-root config --json`; `cargo run
     -p capsem-admin -- profile check config/profiles/co-work/profile.toml
     --config-root config --json`.
+  - Proof: RED `CAPSEM_TEST_PRESERVE_ALWAYS=1 uv run python -m pytest
+    tests/ironbank/test_model_sdk_ledger.py::test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox
+    -q -s --tb=short` failed with native `/api/chat` logged as
+    `provider=openai`; GREEN after the classifier fix passed in `5.99s`.
+    Supporting proof: `uv run ruff check
+    tests/ironbank/test_model_sdk_ledger.py scripts/mock_server_runtime.py`;
+    `cargo test -p capsem-core provider -- --nocapture`; `cargo build -p
+    capsem-service`; `cargo build -p capsem-process`.
 - [x] Proof: lab is shared by doctor, integration tests, recorder, and
   benchmark.
   - 2026-06-12 progress: renamed the canonical deterministic fixture service

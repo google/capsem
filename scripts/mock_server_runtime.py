@@ -49,6 +49,7 @@ ENDPOINTS = [
     "/v1beta/models/gemini-2.5-flash:streamGenerateContent",
     "/v1/chat/completions",
     "/v1/messages",
+    "/api/chat",
     "/oauth/authorize",
     "/oauth/token",
     "/mcp",
@@ -148,6 +149,30 @@ def _anthropic_stream_body() -> bytes:
         'event: message_stop\n'
         'data: {"type":"message_stop"}\n\n'
     ).encode()
+
+
+def _anthropic_message_payload(model: str = "claude-sonnet-4-20250514") -> dict:
+    return {
+        "id": "msg_ironbank_01",
+        "type": "message",
+        "role": "assistant",
+        "model": model,
+        "content": [{"type": "text", "text": EXPECTED_POEM}],
+        "stop_reason": "end_turn",
+        "stop_sequence": None,
+        "usage": {"input_tokens": 25, "output_tokens": 5},
+    }
+
+
+def _ollama_chat_payload(model: str = "gemma4:latest") -> dict:
+    return {
+        "model": model,
+        "created_at": "2026-06-13T00:00:00Z",
+        "message": {"role": "assistant", "content": EXPECTED_POEM},
+        "done": True,
+        "prompt_eval_count": 7,
+        "eval_count": 5,
+    }
 
 
 class MockHandler(BaseHTTPRequestHandler):
@@ -272,8 +297,20 @@ class MockHandler(BaseHTTPRequestHandler):
             self._body()
             self._send(HTTPStatus.OK, _google_stream_body(), "text/event-stream")
         elif path == "/v1/messages":
-            self._body()
-            self._send(HTTPStatus.OK, _anthropic_stream_body(), "text/event-stream")
+            payload = self._json_body()
+            if payload.get("stream") is True:
+                self._send(HTTPStatus.OK, _anthropic_stream_body(), "text/event-stream")
+            else:
+                model = (
+                    payload.get("model")
+                    if isinstance(payload.get("model"), str)
+                    else "claude-sonnet-4-20250514"
+                )
+                self._send_json(_anthropic_message_payload(model))
+        elif path == "/api/chat":
+            payload = self._json_body()
+            model = payload.get("model") if isinstance(payload.get("model"), str) else "gemma4:latest"
+            self._send_json(_ollama_chat_payload(model))
         elif path == "/oauth/token":
             self._body()
             self._send_json(

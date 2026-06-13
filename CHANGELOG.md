@@ -75,6 +75,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is wrapped without copying its npm entrypoint so relative JS chunk imports
   still work. Ironbank now boots a fresh VM and proves AGY, Claude, Codex, and
   Gemini bootstrap commands plus route/session ledgers from the outside.
+- Extended the Ironbank model ledger proof to drive real Anthropic, LiteLLM,
+  and native Ollama Python SDK clients through the shared mock server, and
+  fixed native Ollama `/api/chat` classification so session DB rows, security
+  ledgers, route output, token counts, byte counts, and file writes agree.
 - Renamed the deterministic local fixture upstream to `capsem-mock-server` and
   made `CAPSEM_MOCK_SERVER_BASE_URL` the shared contract for doctor,
   integration, recorder, benchmark, and Ironbank-style black-box tests.

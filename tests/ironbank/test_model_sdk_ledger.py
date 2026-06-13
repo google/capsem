@@ -435,6 +435,83 @@ def _streaming_provider_probe_script(base_url: str) -> str:
     ).strip()
 
 
+def _real_client_diversity_probe_script(base_url: str) -> str:
+    payload = {
+        "base_url": base_url.rstrip("/"),
+        "openai_base_url": f"{base_url.rstrip('/')}/v1",
+        "poem_paths": {
+            "anthropic": "/root/anthropic-sdk-poem.md",
+            "litellm": "/root/litellm-poem.md",
+            "ollama": "/root/ollama-sdk-poem.md",
+        },
+        "secrets": {
+            "anthropic": ["capsem_test_anthropic_sdk_", "key_0123456789abcdef"],
+            "litellm": ["capsem_test_litellm_sdk_", "key_0123456789abcdef"],
+            "ollama": ["capsem_test_ollama_sdk_", "key_0123456789abcdef"],
+        },
+    }
+    return textwrap.dedent(
+        f"""
+        import json
+        from pathlib import Path
+
+        import anthropic
+        import litellm
+        import ollama
+
+        cfg = json.loads({json.dumps(json.dumps(payload))})
+
+        anthropic_client = anthropic.Anthropic(
+            base_url=cfg["base_url"],
+            api_key="".join(cfg["secrets"]["anthropic"]),
+        )
+        anthropic_message = anthropic_client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=64,
+            messages=[{{"role": "user", "content": "Write the Capsem ironbank poem."}}],
+        )
+        anthropic_text = "".join(
+            block.text for block in anthropic_message.content if getattr(block, "type", None) == "text"
+        )
+        Path(cfg["poem_paths"]["anthropic"]).write_text(anthropic_text + "\\n", encoding="utf-8")
+
+        litellm_response = litellm.completion(
+            model="openai/gemma4:latest",
+            api_base=cfg["openai_base_url"],
+            api_key="".join(cfg["secrets"]["litellm"]),
+            messages=[{{"role": "user", "content": "Write the Capsem ironbank poem."}}],
+        )
+        litellm_text = litellm_response.choices[0].message.content
+        Path(cfg["poem_paths"]["litellm"]).write_text(litellm_text + "\\n", encoding="utf-8")
+
+        ollama_client = ollama.Client(host=cfg["base_url"])
+        ollama_response = ollama_client.chat(
+            model="gemma4:latest",
+            messages=[{{"role": "user", "content": "Write the Capsem ironbank poem."}}],
+            stream=False,
+        )
+        ollama_text = ollama_response["message"]["content"]
+        Path(cfg["poem_paths"]["ollama"]).write_text(ollama_text + "\\n", encoding="utf-8")
+
+        result = {{
+            "anthropic_model": anthropic_message.model,
+            "anthropic_text": anthropic_text,
+            "anthropic_usage_total": anthropic_message.usage.input_tokens
+                + anthropic_message.usage.output_tokens,
+            "litellm_model": litellm_response.model,
+            "litellm_text": litellm_text,
+            "litellm_usage_total": litellm_response.usage.total_tokens,
+            "ollama_model": ollama_response["model"],
+            "ollama_text": ollama_text,
+            "ollama_prompt_eval_count": ollama_response["prompt_eval_count"],
+            "ollama_eval_count": ollama_response["eval_count"],
+            "poem_paths": cfg["poem_paths"],
+        }}
+        print("IRONBANK_REAL_CLIENT_RESULT=" + json.dumps(result, sort_keys=True))
+        """
+    ).strip()
+
+
 def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
     assert MOCK_SERVER_BINARY.exists(), f"{MOCK_SERVER_BINARY} missing; restore mock server runtime"
     assert ASSETS_DIR.exists(), f"{ASSETS_DIR} missing; build VM assets before Ironbank"
@@ -1319,6 +1396,173 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
             assert "IRONBANK_SDK_RESULT" in (exec_row["stdout_preview"] or "")
             assert RAW_SDK_SECRET not in (exec_row["stdout_preview"] or "")
             assert exec_row["credential_ref"] is None
+
+            model_id_before_real_clients = conn.execute(
+                "SELECT COALESCE(MAX(id), 0) FROM model_calls"
+            ).fetchone()[0]
+            fs_id_before_real_clients = conn.execute(
+                "SELECT COALESCE(MAX(id), 0) FROM fs_events"
+            ).fetchone()[0]
+            security_id_before_real_clients = conn.execute(
+                "SELECT COALESCE(MAX(id), 0) FROM security_rule_events"
+            ).fetchone()[0]
+            real_client_script_name = f"ironbank-real-clients-{uuid.uuid4().hex[:8]}.py"
+            real_client_script = _real_client_diversity_probe_script(mock_base_url).encode()
+            real_client_upload = client.post_bytes(
+                f"/vms/{session_id}/files/content?path={real_client_script_name}",
+                real_client_script,
+                timeout=30,
+            )
+            assert real_client_upload is not None
+            assert real_client_upload["success"] is True
+            assert real_client_upload["size"] == len(real_client_script)
+            real_client_exec = client.post(
+                f"/vms/{session_id}/exec",
+                {"command": f"python3 /root/{real_client_script_name}", "timeout_secs": 180},
+                timeout=210,
+            )
+            assert real_client_exec is not None, "real-client exec returned no body"
+            assert real_client_exec["exit_code"] == 0, real_client_exec
+            real_client_output = (real_client_exec.get("stdout") or "") + (
+                real_client_exec.get("stderr") or ""
+            )
+            assert "capsem_test_anthropic_sdk_key" not in real_client_output
+            assert "capsem_test_litellm_sdk_key" not in real_client_output
+            assert "capsem_test_ollama_sdk_key" not in real_client_output
+            real_client_line = next(
+                (
+                    line
+                    for line in real_client_output.splitlines()
+                    if line.startswith("IRONBANK_REAL_CLIENT_RESULT=")
+                ),
+                None,
+            )
+            assert real_client_line is not None, real_client_output
+            real_client_result = json.loads(real_client_line.split("=", 1)[1])
+            assert real_client_result == {
+                "anthropic_model": "claude-sonnet-4-20250514",
+                "anthropic_text": EXPECTED_POEM,
+                "anthropic_usage_total": 30,
+                "litellm_model": "gemma4:latest",
+                "litellm_text": EXPECTED_POEM,
+                "litellm_usage_total": 12,
+                "ollama_eval_count": 5,
+                "ollama_model": "gemma4:latest",
+                "ollama_prompt_eval_count": 7,
+                "ollama_text": EXPECTED_POEM,
+                "poem_paths": {
+                    "anthropic": "/root/anthropic-sdk-poem.md",
+                    "litellm": "/root/litellm-poem.md",
+                    "ollama": "/root/ollama-sdk-poem.md",
+                },
+            }
+            for poem_path in real_client_result["poem_paths"].values():
+                poem_status, poem_bytes = client.get_bytes(
+                    f"/vms/{session_id}/files/content?path={Path(poem_path).name}",
+                    timeout=30,
+                )
+                assert poem_status == 200
+                assert poem_bytes.decode() == EXPECTED_POEM + "\n"
+
+            real_client_models = _eventually(
+                lambda: conn.execute(
+                    """
+                    SELECT *
+                    FROM model_calls
+                    WHERE id > ?
+                    ORDER BY id
+                    """,
+                    (model_id_before_real_clients,),
+                ).fetchall(),
+                lambda rows: len(rows) >= 3,
+            )
+            by_path = {row["path"]: row for row in real_client_models}
+            assert {"/v1/messages", "/v1/chat/completions", "/api/chat"} <= set(by_path)
+            anthropic_sdk_row = by_path["/v1/messages"]
+            assert anthropic_sdk_row["provider"] == "anthropic"
+            assert anthropic_sdk_row["model"] == "claude-sonnet-4-20250514"
+            assert anthropic_sdk_row["messages_count"] == 1
+            assert anthropic_sdk_row["tools_count"] == 0
+            assert anthropic_sdk_row["input_tokens"] == 25
+            assert anthropic_sdk_row["output_tokens"] == 5
+            assert anthropic_sdk_row["text_content"] == EXPECTED_POEM
+            assert anthropic_sdk_row["stop_reason"] == "end_turn"
+            assert anthropic_sdk_row["credential_ref"] is not None
+            _assert_credential_ref(anthropic_sdk_row["credential_ref"])
+            assert "capsem_test_anthropic_sdk_key" not in (
+                anthropic_sdk_row["request_body_preview"] or ""
+            )
+            litellm_row = by_path["/v1/chat/completions"]
+            assert litellm_row["provider"] == "openai"
+            assert litellm_row["model"] == "gemma4:latest"
+            assert litellm_row["messages_count"] == 1
+            assert litellm_row["tools_count"] == 0
+            assert litellm_row["input_tokens"] == 7
+            assert litellm_row["output_tokens"] == 5
+            assert litellm_row["text_content"] == EXPECTED_POEM
+            assert litellm_row["credential_ref"] is not None
+            _assert_credential_ref(litellm_row["credential_ref"])
+            assert "capsem_test_litellm_sdk_key" not in (
+                litellm_row["request_body_preview"] or ""
+            )
+            ollama_row = by_path["/api/chat"]
+            assert ollama_row["provider"] == "ollama"
+            assert ollama_row["model"] == "gemma4:latest"
+            assert ollama_row["messages_count"] == 1
+            assert ollama_row["tools_count"] == 0
+            assert ollama_row["input_tokens"] == 7
+            assert ollama_row["output_tokens"] == 5
+            assert ollama_row["text_content"] == EXPECTED_POEM
+            assert ollama_row["stop_reason"] == "end_turn"
+            assert ollama_row["credential_ref"] is None
+
+            real_client_file_rows = _eventually(
+                lambda: conn.execute(
+                    """
+                    SELECT *
+                    FROM fs_events
+                    WHERE id > ?
+                    ORDER BY id
+                    """,
+                    (fs_id_before_real_clients,),
+                ).fetchall(),
+                lambda rows: {
+                    "anthropic-sdk-poem.md",
+                    "litellm-poem.md",
+                    "ollama-sdk-poem.md",
+                }
+                <= {Path(row["path"]).name for row in rows},
+            )
+            real_client_file_names = {Path(row["path"]).name for row in real_client_file_rows}
+            assert {
+                "anthropic-sdk-poem.md",
+                "litellm-poem.md",
+                "ollama-sdk-poem.md",
+            } <= real_client_file_names
+
+            real_client_security_rows = _eventually(
+                lambda: conn.execute(
+                    """
+                    SELECT *
+                    FROM security_rule_events
+                    WHERE id > ?
+                    ORDER BY id
+                    """,
+                    (security_id_before_real_clients,),
+                ).fetchall(),
+                lambda rows: {row["event_id"] for row in rows}
+                >= {row["event_id"] for row in real_client_models},
+            )
+            security_by_real_client_event: dict[str, list[sqlite3.Row]] = {}
+            for row in real_client_security_rows:
+                security_by_real_client_event.setdefault(row["event_id"], []).append(row)
+            for row in real_client_models:
+                rows = security_by_real_client_event[row["event_id"]]
+                assert rows
+                assert all(json.loads(item["rule_json"]) for item in rows)
+                assert all(json.loads(item["event_json"]) for item in rows)
+                assert "allow" in {item["rule_action"] for item in rows}
+                assert "profiles.rules.default_model" in {item["rule_id"] for item in rows}
 
             _assert_raw_secret_not_in_db(conn)
         finally:

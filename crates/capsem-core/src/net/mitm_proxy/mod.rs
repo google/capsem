@@ -194,9 +194,13 @@ fn ai_provider_for_target_or_path(
     upstream_port: u16,
     path: &str,
 ) -> Option<ProviderKind> {
+    let path_provider = route_provider(path).map(|(provider, _)| provider);
+    if path_provider == Some(ProviderKind::Ollama) {
+        return path_provider;
+    }
     registry
         .protocol_for_target(domain, upstream_port)
-        .or_else(|| route_provider(path).map(|(provider, _)| provider))
+        .or(path_provider)
 }
 
 fn ai_provider_for_body_preview(body: &[u8]) -> Option<ProviderKind> {
@@ -2581,6 +2585,10 @@ mod tests {
                 "/v1beta/models/gemini-2.5-pro:generateContent"
             ),
             Some(ProviderKind::Google)
+        );
+        assert_eq!(
+            ai_provider_for_target_or_path(&registry, "unknown.example", 443, "/api/chat"),
+            Some(ProviderKind::Ollama)
         );
     }
 

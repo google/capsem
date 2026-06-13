@@ -92,6 +92,26 @@ pub trait Provider: Send + Sync {
     ) -> reqwest::RequestBuilder;
 }
 
+struct OllamaProvider;
+
+impl Provider for OllamaProvider {
+    fn kind(&self) -> ModelProtocol {
+        ModelProtocol::Ollama
+    }
+
+    fn upstream_base_url(&self) -> &str {
+        "http://127.0.0.1:11434"
+    }
+
+    fn inject_key(
+        &self,
+        builder: reqwest::RequestBuilder,
+        _api_key: &str,
+    ) -> reqwest::RequestBuilder {
+        builder
+    }
+}
+
 /// Determine the provider from the inbound request path.
 /// Returns None for paths that don't match any known provider API.
 pub fn route_provider(path: &str) -> Option<(ProviderKind, Box<dyn Provider>)> {
@@ -110,6 +130,8 @@ pub fn route_provider(path: &str) -> Option<(ProviderKind, Box<dyn Provider>)> {
             ModelProtocol::OpenAi,
             Box::new(crate::net::interpreters::openai_interpreter::OpenAiProvider),
         ))
+    } else if path.starts_with("/api/chat") || path.starts_with("/api/generate") {
+        Some((ModelProtocol::Ollama, Box::new(OllamaProvider)))
     } else {
         None
     }

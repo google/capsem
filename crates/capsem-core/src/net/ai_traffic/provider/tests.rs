@@ -25,6 +25,14 @@ fn route_openai_chat_completions() {
 }
 
 #[test]
+fn route_ollama_native_chat() {
+    let (kind, provider) = route_provider("/api/chat").unwrap();
+    assert_eq!(kind, ProviderKind::Ollama);
+    assert_eq!(provider.kind(), ProviderKind::Ollama);
+    assert_eq!(provider.upstream_base_url(), "http://127.0.0.1:11434");
+}
+
+#[test]
 fn route_google_gemini() {
     let (kind, _) = route_provider("/v1beta/models/gemini-2.5-pro:streamGenerateContent").unwrap();
     assert_eq!(kind, ProviderKind::Google);
