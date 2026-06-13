@@ -44,13 +44,27 @@ def test_doctor_fix_builds_assets_for_each_checked_in_profile() -> None:
 def test_install_e2e_materializes_config_before_repacking_package() -> None:
     block = _recipe_block("test-install:")
 
+    prepare_pos = block.find("bash scripts/prepare-install-test-assets.sh")
     materialize_pos = block.find("bash scripts/materialize-config.sh")
     repack_pos = block.find("scripts/repack-deb.sh")
 
+    assert prepare_pos != -1
     assert materialize_pos != -1
     assert repack_pos != -1
+    assert prepare_pos < materialize_pos
     assert materialize_pos < repack_pos
     assert "just _materialize-config" not in block
+
+
+def test_install_e2e_generates_manifest_through_admin_rail() -> None:
+    script = (PROJECT_ROOT / "scripts" / "prepare-install-test-assets.sh").read_text()
+
+    assert "cargo run -p capsem-admin -- manifest generate" in script
+    assert 'arm64|aarch64)' in script
+    assert 'write_if_missing "$ASSETS_DIR/$arch/vmlinuz"' in script
+    assert 'write_if_missing "$ASSETS_DIR/$arch/initrd.img"' in script
+    assert 'write_if_missing "$ASSETS_DIR/$arch/rootfs.erofs"' in script
+    assert "scripts/gen_manifest.py" not in script
 
 
 def test_guest_network_doctor_is_hermetic_by_default() -> None:

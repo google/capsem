@@ -1784,6 +1784,21 @@ next one, and stage only the files for that slice.
     `arm64|aarch64` to `arm64`. Guard proof: `uv run python -m pytest
     tests/test_build_assets_profile.py tests/test_release_doctor_contract.py
     -q` (`31 passed`); `bash -n scripts/materialize-config.sh`.
+  - 2026-06-13 install CI correction follow-up: the latest Docker
+    `test-install` proved the CI checkout has no tracked
+    `assets/manifest.json`, because `assets/` is correctly ignored. The
+    package-test rail now runs `scripts/prepare-install-test-assets.sh` before
+    materialization; the script creates tiny local boot files only for the test
+    workspace and generates `manifest.json` through `capsem-admin`. This keeps
+    the closed package payload contract: the `.deb` receives the manifest and
+    materialized profile config, not VM asset payloads. Guard proof: `uv run
+    python -m pytest tests/capsem-build-chain/test_install_asset_payload.py
+    tests/test_build_assets_profile.py tests/test_release_doctor_contract.py
+    -q` (`38 passed`); `bash -n scripts/materialize-config.sh && bash -n
+    scripts/prepare-install-test-assets.sh`; `uv run ruff check
+    tests/test_build_assets_profile.py tests/test_release_doctor_contract.py
+    tests/capsem-build-chain/test_install_asset_payload.py`; `git diff
+    --check`.
 
 ## Coverage Ledger
 

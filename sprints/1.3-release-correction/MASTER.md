@@ -221,5 +221,17 @@ prove the same rails without user credentials.
   scripts/materialize-config.sh`; `uv run ruff check
   tests/test_build_assets_profile.py tests/test_release_doctor_contract.py`;
   `git diff --check`.
+- Follow-up install CI drift found on the same run: CI checkout has no tracked
+  `assets/manifest.json` because `assets/` is intentionally ignored. Docker
+  `test-install` now prepares tiny local test boot files and generates the
+  manifest through `capsem-admin` before profile materialization. The package
+  still stages the manifest/profile config only, not VM asset payloads. Local
+  proof: `uv run python -m pytest
+  tests/capsem-build-chain/test_install_asset_payload.py
+  tests/test_build_assets_profile.py tests/test_release_doctor_contract.py
+  -q`; `bash -n scripts/materialize-config.sh && bash -n
+  scripts/prepare-install-test-assets.sh`; `uv run ruff check
+  tests/test_build_assets_profile.py tests/test_release_doctor_contract.py
+  tests/capsem-build-chain/test_install_asset_payload.py`; `git diff --check`.
 
 Those files remain evidence. This sprint is the execution authority.

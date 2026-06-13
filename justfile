@@ -999,6 +999,9 @@ test-install:
         "rm -f /cargo-target/debug/bundle/deb/*.deb"
     docker exec -u capsem "$CONTAINER" bash -c \
         "cd /src && cargo tauri build --debug --bundles deb --config '{\"bundle\":{\"createUpdaterArtifacts\":false}}'"
+    echo "Preparing install-test asset manifest..."
+    docker exec -u capsem "$CONTAINER" bash -c \
+        "cd /src && bash scripts/prepare-install-test-assets.sh"
     echo "Materializing runtime config..."
     docker exec -u capsem "$CONTAINER" bash -c \
         "cd /src && bash scripts/materialize-config.sh"

@@ -12,6 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   materializes profile-owned runtime config before copying profiles into the
   package, using the same shared materializer as local dev recipes instead of
   assuming `just` exists inside the package-test container.
+- Fixed Docker install e2e asset bootstrap so the ignored local `assets/`
+  working tree is prepared with tiny test boot files and a `capsem-admin`
+  generated manifest before profile materialization.
 - Fixed CI regressions where macOS Rust coverage compiled the Tauri app before
   `frontend/dist` existed, and Linux ARM agent exec tests selected `/root` as
   cwd for a non-root runner user simply because the directory existed.
