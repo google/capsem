@@ -442,6 +442,23 @@ next one, and stage only the files for that slice.
     (7) detection level/rule row when expected, (8) structured service/gateway
     log evidence, (9) in-memory status/stats counters, (10) UDS route output,
     (11) HTTP gateway route output, and (12) UI-facing JSON serialization
+  - 2026-06-13 progress: `tests/ironbank/test_doctor_ledger.py` now extends
+    the doctor ledger proof with MCP profile route contracts
+    (`/profiles/{id}/mcp/default/info`, `/servers/list`, and
+    `/servers/local/tools/list`), exact route field sets, built-in local tool
+    names/descriptions/permission actions, MCP `tools/call` ledger byte and
+    preview assertions, MCP builtin `net_events`, and the matching
+    `mcp.tool_call` security-rule row. This closes the previous "MCP rows
+    exist" weakness for the doctor stimulus, while the broader S4/S7 native
+    MCP and streaming provider iron tests remain open.
+  - Proof: RED
+    `CAPSEM_TEST_PRESERVE_ALWAYS=1 uv run python -m pytest
+    tests/ironbank/test_doctor_ledger.py::test_capsem_doctor_pays_protocol_and_security_ledger_debt
+    -q -s --tb=short` first failed on incorrect MCP route assumptions, then
+    GREEN passed (`1 passed in 31.67s`); `uv run ruff check
+    tests/ironbank/test_doctor_ledger.py`; full suite
+    `CAPSEM_TEST_PRESERVE_ALWAYS=1 uv run python -m pytest tests/ironbank/
+    -q -s` (`3 passed in 37.53s`).
     shape when the route backs the UI.
   - Field-coverage invariant: each protocol spec must inspect every field it
     emits in all three public ledgers: structured log event, SQLite row(s), and

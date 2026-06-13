@@ -49,6 +49,31 @@ EXPECTED_SECURITY_LATEST_FIELDS = {
     "trace_id",
 }
 
+EXPECTED_MCP_SERVER_FIELDS = {
+    "name",
+    "url",
+    "has_auth_credential",
+    "custom_header_count",
+    "source",
+    "enabled",
+    "running",
+    "tool_count",
+    "is_stdio",
+}
+
+EXPECTED_MCP_TOOL_FIELDS = {
+    "namespaced_name",
+    "original_name",
+    "description",
+    "server_name",
+    "annotations",
+    "pin_hash",
+    "approved",
+    "pin_changed",
+    "permission_action",
+    "permission_source",
+}
+
 BROKER_OUTCOMES = {"captured", "brokered", "injected", "error"}
 HAPPY_PATH_BROKER_OUTCOMES = {"captured", "brokered", "injected"}
 RAW_SECRET_MARKERS = {
@@ -181,6 +206,39 @@ def test_capsem_doctor_pays_protocol_and_security_ledger_debt():
         assert all(json.loads(row["rule_json"]) for row in security_latest)
         assert all(json.loads(row["event_json"]) for row in security_latest)
 
+        mcp_default = client.get(f"/profiles/{CODE_PROFILE_ID}/mcp/default/info", timeout=30)
+        assert set(mcp_default) == {"action", "source", "rule_id"}
+        assert mcp_default["action"] in {"allow", "ask", "block", "disable"}
+        assert mcp_default["source"]
+
+        mcp_servers = client.get(f"/profiles/{CODE_PROFILE_ID}/mcp/servers/list", timeout=30)
+        assert isinstance(mcp_servers, list)
+        assert mcp_servers
+        assert all(set(server) == EXPECTED_MCP_SERVER_FIELDS for server in mcp_servers)
+        local_server = next(server for server in mcp_servers if server["name"] == "local")
+        assert local_server["enabled"] is True
+        assert local_server["is_stdio"] is True
+        assert local_server["tool_count"] >= 3
+        assert local_server["url"] == ""
+
+        mcp_tools = client.get(
+            f"/profiles/{CODE_PROFILE_ID}/mcp/servers/local/tools/list",
+            timeout=30,
+        )
+        assert isinstance(mcp_tools, list)
+        assert mcp_tools
+        assert all(set(tool) == EXPECTED_MCP_TOOL_FIELDS for tool in mcp_tools)
+        tools_by_name = {tool["original_name"]: tool for tool in mcp_tools}
+        for tool_name in ("fetch_http", "grep_http", "http_headers"):
+            tool = tools_by_name[tool_name]
+            assert tool["server_name"] == "local"
+            assert tool["namespaced_name"] == f"local__{tool_name}"
+            assert tool["description"]
+            assert isinstance(tool["approved"], bool)
+            assert tool["pin_changed"] is False
+            assert tool["permission_action"] in {"allow", "ask", "block", "disable"}
+            assert tool["permission_source"]
+
         conn = _connect_session_db(service.tmp_dir / "sessions", session_id)
         for table in (
             "net_events",
@@ -297,6 +355,61 @@ def test_capsem_doctor_pays_protocol_and_security_ledger_debt():
         assert mcp_call["decision"] in {"allowed", "denied", "ask", "error"}
         assert mcp_call["server_name"]
         assert mcp_call["tool_name"]
+        assert mcp_call["process_name"] != "MainThread"
+        assert mcp_call["bytes_sent"] > 0
+        assert mcp_call["request_preview"]
+
+        mcp_fetch = _single(
+            conn,
+            """
+            SELECT *
+            FROM mcp_calls
+            WHERE method = 'tools/call'
+              AND tool_name LIKE '%fetch_http%'
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+        )
+        _assert_ledger_id(mcp_fetch["event_id"])
+        assert mcp_fetch["server_name"] == "local"
+        assert mcp_fetch["tool_name"] in {"fetch_http", "local__fetch_http"}
+        assert mcp_fetch["decision"] == "allowed"
+        assert mcp_fetch["bytes_sent"] > 0
+        assert mcp_fetch["bytes_received"] > 0
+        assert "fetch_http" in mcp_fetch["request_preview"]
+        assert "Capsem local pagination fixture" in (mcp_fetch["response_preview"] or "")
+
+        mcp_net = _single(
+            conn,
+            """
+            SELECT *
+            FROM net_events
+            WHERE conn_type = 'mcp_builtin'
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+        )
+        _assert_ledger_id(mcp_net["event_id"])
+        assert mcp_net["decision"] == "allowed"
+        assert mcp_net["bytes_sent"] >= 0
+        assert mcp_net["bytes_received"] > 0
+
+        mcp_security = _single(
+            conn,
+            """
+            SELECT *
+            FROM security_rule_events
+            WHERE event_id = ?
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (mcp_fetch["event_id"],),
+        )
+        assert mcp_security["event_type"] == "mcp.tool_call"
+        assert mcp_security["rule_action"] in {"allow", "ask"}
+        assert mcp_security["rule_id"]
+        assert json.loads(mcp_security["event_json"])
+        assert json.loads(mcp_security["rule_json"])
 
         broker_outcomes = {
             row["outcome"]
