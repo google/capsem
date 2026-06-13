@@ -732,6 +732,14 @@ def test_runtime_plugin_action_matrix_pays_file_import_ledger_debt():
             for payload in blocked_payloads
             for detection in payload.get("detections", [])
         )
+        assert any(
+            detection.get("source") == "plugin"
+            and detection.get("plugin_id") == "dummy_post_allow"
+            and detection.get("plugin_mode") == "allow"
+            and detection.get("detection_level") == "low"
+            for payload in blocked_payloads
+            for detection in payload.get("detections", [])
+        )
 
         plugin_executions = [
             execution

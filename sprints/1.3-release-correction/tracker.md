@@ -917,7 +917,7 @@ next one, and stage only the files for that slice.
     `CAPSEM_TEST_PRESERVE_ALWAYS=1 uv run python -m pytest
     tests/ironbank/test_doctor_ledger.py::test_capsem_doctor_pays_protocol_and_security_ledger_debt
     -q -s --tb=short` (`1 passed in 31.61s`).
-- [ ] RED/GREEN: doctor verifies DB ledger rows and rule/plugin evidence for
+- [x] RED/GREEN: doctor verifies DB ledger rows and rule/plugin evidence for
   allow/ask/block/disable/rewrite/pre/post/detection levels.
   - 2026-06-12 progress: `tests/ironbank/test_doctor_ledger.py` now proves the
     baseline doctor DB ledger for allow/default detection flow across HTTP,
@@ -1003,6 +1003,17 @@ next one, and stage only the files for that slice.
     python -m pytest tests/capsem-mcp/test_file_io.py::test_large_payload -q
     -s`; `uv run python -m pytest tests/capsem-mcp/test_file_io.py -q -s`
     (`8 passed`).
+  - 2026-06-13 closure: the runtime plugin matrix now also asserts the
+    postprocess plugin's `low` detection appears in the security event
+    detection vector. Across the doctor proof plus the runtime plugin matrix,
+    this item covers allow, ask, block, disable, rewrite, preprocess,
+    postprocess, and detection levels `none`, `informational`, `low`,
+    `medium`, and `critical`. Full `just test` remains tracked as the final
+    release gate below, not as hidden debt in this item.
+  - Proof: `CAPSEM_TEST_PRESERVE_ALWAYS=1 uv run pytest
+    tests/ironbank/test_doctor_ledger.py::test_runtime_plugin_action_matrix_pays_file_import_ledger_debt
+    -q -s --tb=short` (`1 passed`); `uv run ruff check
+    tests/ironbank/test_doctor_ledger.py`.
 - [x] RED/GREEN: doctor/toolchain probes cover apt/dpkg triggers, Python, pip,
   uv, Node, npm, npx, packaged CLIs, aliases, MCP bootstrap, DNS, TLS, FS
   writes.

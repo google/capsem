@@ -83,6 +83,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Tightened plugin route regression coverage so `rewrite` mode proves an
   actual event mutation and `block` mode remains the only plugin mode that
   denies the evaluated security event.
+- Tightened Ironbank plugin matrix coverage so postprocess plugin detections
+  must appear in the security event detection vector, closing the explicit
+  allow/ask/block/disable/rewrite/pre/post/detection-level proof item.
 - Removed fake confidence from broker-created credential observations and
   injections; substitution rows keep the historical nullable column, but
   broker emissions now record `NULL` confidence.
