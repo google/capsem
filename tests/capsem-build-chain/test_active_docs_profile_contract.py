@@ -38,6 +38,8 @@ STALE_GUIDANCE = [
     "capsem-builder add",
     "capsem-builder add ai-provider",
     "config/admin",
+    "config/guest",
+    "settings registry",
     "settings-registry",
     "settings-schema.generated",
     "mcp-tools.generated",

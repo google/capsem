@@ -52,6 +52,10 @@ surfaces.
 builds, and checks the profile/corp/settings contracts; it must not grow
 scaffolding commands that invent profile, MCP, AI provider, package, or rule
 truth outside `config/profiles`, `config/corp`, and `config/settings`.
+Do not add admin config roots, guest config roots, settings metadata, provider
+registries, or backend-owned profile catalogs as product truth. `schema`
+validates one contract, `catalog` lists materialized profile instances, and UI
+metadata only helps render settings.
 
 ## CLI commands
 

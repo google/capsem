@@ -1,4 +1,4 @@
-use super::registry::setting_definitions;
+use super::settings_metadata::setting_definitions;
 use super::types::*;
 use std::collections::HashMap;
 

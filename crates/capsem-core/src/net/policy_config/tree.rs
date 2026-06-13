@@ -1,6 +1,6 @@
 use super::loader::load_settings_and_corp_files;
-use super::registry::{setting_definitions, DEFAULTS_JSON};
 use super::resolver::resolve_settings;
+use super::settings_metadata::{setting_definitions, DEFAULTS_JSON};
 use super::types::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -174,17 +174,17 @@ fn build_tree_from_object(
     children
 }
 
-/// Build the full settings tree from the settings registry + resolved values.
+/// Build the full settings tree from generated settings UI metadata + resolved values.
 ///
 /// Returns top-level groups (AI Providers, Package Registries, etc.).
 /// Dynamic `guest.env.*` settings are appended to the Guest Environment group.
 pub fn build_settings_tree(resolved: &[ResolvedSetting]) -> Vec<SettingsNode> {
     let root: serde_json::Value =
-        serde_json::from_str(DEFAULTS_JSON).expect("built-in settings registry is invalid");
+        serde_json::from_str(DEFAULTS_JSON).expect("built-in settings UI metadata is invalid");
     let settings = root
         .get("settings")
         .and_then(|v| v.as_object())
-        .expect("settings registry missing settings");
+        .expect("settings UI metadata missing settings");
 
     // Build a lookup from ID to resolved setting.
     let resolved_map: HashMap<String, ResolvedSetting> =

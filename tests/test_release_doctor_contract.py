@@ -387,6 +387,8 @@ def test_config_contract_has_no_admin_or_registry_authority() -> None:
 
     forbidden = (
         "config/admin",
+        "config/guest",
+        "settings registry",
         "settings-registry",
         "settings-schema.generated",
         "mcp-tools.generated",

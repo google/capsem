@@ -496,7 +496,7 @@ fn parse_mcp_section_json(json_str: &str, source: PolicySource) -> Vec<McpServer
 ///
 /// Resolution: corp > defaults (per key). Corp entries are corp_locked.
 pub fn load_mcp_servers() -> Vec<McpServerDef> {
-    use super::registry::DEFAULTS_JSON;
+    use super::settings_metadata::DEFAULTS_JSON;
 
     let mut by_key: HashMap<String, McpServerDef> = HashMap::new();
 
@@ -565,7 +565,7 @@ pub fn batch_update_settings_json(
 fn batch_update_settings_json_inner(
     changes: &HashMap<String, serde_json::Value>,
 ) -> Result<Vec<String>, String> {
-    use super::registry::setting_definitions;
+    use super::settings_metadata::setting_definitions;
 
     if changes.is_empty() {
         return Ok(vec![]);

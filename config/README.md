@@ -37,9 +37,11 @@ tests.
 - `catalog` lists discovered or materialized instances.
 - `metadata` describes UI rendering hints.
 
-Do not introduce `admin` or `registry` as config authorities. `capsem-admin` is
-a tool; it does not own product configuration. Profiles and corp own runtime
-behavior.
+Do not introduce `admin`, `guest`, or `registry` as config authorities.
+`capsem-admin` is a tool; it does not own product configuration. Profiles and
+corp own runtime behavior. Settings may have generated UI metadata and JSON
+Schema, but those artifacts describe settings only; they do not define profile,
+corp, MCP, AI, package, or security truth.
 
 ## Admin Tool Surface
 

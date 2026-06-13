@@ -3186,7 +3186,7 @@ fn dark_mode_has_side_effect() {
 
 #[test]
 fn mcp_section_parsed_from_defaults() {
-    // guest/config/mcp/local.toml declares [local]
+    // Generated settings UI metadata declares the default local MCP server.
     let servers = super::loader::load_mcp_servers();
     let local = servers.iter().find(|s| s.key == "local");
     assert!(local.is_some(), "local MCP server should be in defaults");

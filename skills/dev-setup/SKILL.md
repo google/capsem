@@ -170,6 +170,11 @@ the credential broker plugin through profile/corp policy. Hermetic tests use
 the local mock server and Ironbank fixtures; real OAuth/API-key manual runs are
 debug evidence, not release proof.
 
+Do not add setup-time admin or guest config roots. Runtime behavior is
+profile/corp-owned; settings are UI/application preferences only. Generated
+settings UI metadata may render controls, but it is not a product config
+authority.
+
 ## Claude Code permissions
 
 To avoid repeated permission prompts when using `just` and `capsem` commands, add these to your Claude Code settings. Run `/update-config` or edit `.claude/settings.local.json`:

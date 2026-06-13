@@ -376,7 +376,7 @@ pub fn send_boot_config(
         }
     }
 
-    // 2. Send metadata-driven env vars from settings registry.
+    // 2. Send metadata-driven env vars from settings UI metadata.
     let guest_config =
         preloaded_guest_config.unwrap_or_else(policy_config::load_merged_guest_config);
     let mut env_count: usize = 0;

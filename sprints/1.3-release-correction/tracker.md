@@ -1756,6 +1756,19 @@ next one, and stage only the files for that slice.
     capsem-core`; `git diff --check`; `just test-install` (`39 passed, 22
     skipped` in installed-layout e2e).
 - [ ] Proof: changelog, docs, skills, and benchmark docs updated.
+  - 2026-06-13 progress: tightened the config-authority documentation and
+    developer skills after the backend builder burn. `config/README.md`,
+    `/dev-capsem`, `/dev-setup`, and `/build-images` now state the contract:
+    profile/corp/settings are the only source roots; settings may have schema
+    and UI metadata only; `catalog` means discovered/materialized profile
+    instances; and `capsem-admin` is a tool, not a config owner. The internal
+    settings UI metadata parser was renamed away from `registry` so code and
+    docs no longer imply a second settings authority. Benchmark docs remain
+    open under this line.
+  - Proof: `uv run python -m pytest
+    tests/capsem-build-chain/test_active_docs_profile_contract.py
+    tests/test_release_doctor_contract.py::test_config_contract_has_no_admin_or_registry_authority
+    -q`; `cargo check -p capsem-core`.
 - [x] Proof: full final gates pass and branch is pushed.
   - 2026-06-13 direct gate proof: `just test` exited 0 after the macOS Keychain
     index scoping fix. Highlights: bootstrap/doctor `37 passed, 1 skipped`;

@@ -55,7 +55,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 @pytest.fixture
 def real_config():
-    """Load real guest config from guest/config/."""
+    """Load the generated backend image spec used by Docker rendering tests."""
     return load_guest_config(PROJECT_ROOT / "guest")
 
 

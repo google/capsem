@@ -14,9 +14,9 @@ mod loader;
 mod ownership;
 mod profile_contract;
 mod provider_profile;
-mod registry;
 mod resolver;
 mod security_rule_profile;
+mod settings_metadata;
 mod tree;
 mod types;
 
@@ -26,9 +26,9 @@ pub use loader::*;
 pub use ownership::*;
 pub use profile_contract::*;
 pub use provider_profile::*;
-pub use registry::{default_settings_file, setting_definitions};
 pub use resolver::*;
 pub use security_rule_profile::*;
+pub use settings_metadata::{default_settings_file, setting_definitions};
 pub use tree::*;
 pub use types::*;
 

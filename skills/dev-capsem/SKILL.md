@@ -105,6 +105,13 @@ Vsock ports: 5000 (control), 5001 (terminal), 5002 (MITM + framed guest MCP), 50
 There is no `user.toml` policy rail. A VM boots a profile; profile/corp own
 security behavior. Settings are not policy.
 
+Config naming is strict:
+- `schema` validates one contract shape.
+- `catalog` lists profile instances discovered or materialized from profile
+  source.
+- UI metadata renders settings only.
+- `admin`, `guest`, and `registry` are not config authority roots.
+
 ## Key invariants
 
 - Guest VM is air-gapped. No real NIC, no real DNS, no direct internet.

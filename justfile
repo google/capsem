@@ -648,7 +648,7 @@ cross-compile arch="": _clean-stale _check-assets _generate-settings
     ls -lh "$ROOT/dist/"
     just _docker-gc
 
-# Generate admin settings schema/registry, MCP tools, and mock-data.generated.ts
+# Generate settings schema/UI metadata and frontend mock data.
 _generate-settings:
     #!/bin/bash
     set -euo pipefail

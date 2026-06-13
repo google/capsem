@@ -5,7 +5,7 @@ use serde::Deserialize;
 use super::types::*;
 
 // ---------------------------------------------------------------------------
-// JSON registry parser
+// Generated settings UI metadata parser
 // ---------------------------------------------------------------------------
 
 /// A setting leaf as it appears in the defaults JSON. Core fields at top level,
@@ -78,7 +78,7 @@ fn collect_settings(
     parent: &GroupMeta,
     out: &mut Vec<SettingDef>,
 ) {
-    // Action nodes have `action` key -- skip them in the setting registry
+    // Action nodes have `action` key -- skip them in flattened setting definitions.
     if table.contains_key("action") {
         return;
     }
@@ -165,14 +165,14 @@ fn collect_settings(
 pub(super) const DEFAULTS_JSON: &str =
     include_str!("../../../../../config/settings/ui-metadata.generated.json");
 
-/// Returns the setting definitions parsed from the embedded settings registry.
+/// Returns setting definitions parsed from generated UI metadata.
 pub fn setting_definitions() -> Vec<SettingDef> {
     let root: serde_json::Value =
-        serde_json::from_str(DEFAULTS_JSON).expect("built-in settings registry is invalid");
+        serde_json::from_str(DEFAULTS_JSON).expect("built-in settings UI metadata is invalid");
     let settings = root
         .get("settings")
         .and_then(|v| v.as_object())
-        .expect("settings registry missing settings");
+        .expect("settings UI metadata missing settings");
     let mut defs = Vec::new();
     let root_group = GroupMeta::default();
     collect_settings("", settings, &root_group, &mut defs);

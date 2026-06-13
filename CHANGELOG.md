@@ -13,7 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `capsem-admin` is explicitly a validator/materializer/build tool rather
   than a config authority, stale `guest/config` authoring guidance is removed
   from active docs, and `capsem-admin image build --dry-run` is no longer a
-  public product rail.
+  public product rail. The internal settings UI metadata parser no longer
+  calls itself a registry, preserving the rule that profiles and corp own
+  runtime truth while settings only describe UI/application preferences.
 - Burned the public `capsem-builder build`, `validate`, `inspect`, and
   `--dry-run` rails so product image/config work can only enter through
   profile-owned config plus `capsem-admin`; docs, skills, and CLI tests now
