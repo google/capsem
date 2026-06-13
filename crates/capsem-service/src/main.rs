@@ -1416,6 +1416,16 @@ impl ServiceState {
         })?;
 
         let (_, corp) = capsem_core::net::policy_config::load_settings_and_corp_files();
+        let mut plugins = self
+            .plugin_policy_by_profile
+            .lock()
+            .unwrap()
+            .get(&config.id)
+            .cloned()
+            .unwrap_or_default();
+        for (plugin_id, plugin) in &corp.plugins {
+            plugins.insert(plugin_id.clone(), *plugin);
+        }
         let runtime_overlay = SettingsFile {
             rule_files: corp.rule_files.clone(),
             default: corp.default.clone(),
@@ -1423,7 +1433,7 @@ impl ServiceState {
             corp: corp.corp.clone(),
             corp_rule_files: corp.corp_rule_files.clone(),
             ai: corp.ai.clone(),
-            plugins: corp.plugins.clone(),
+            plugins,
             mcp: corp.mcp.clone(),
             ..SettingsFile::default()
         };
@@ -6968,7 +6978,11 @@ async fn handle_profile_plugin_update(
     Path((profile_id, plugin_id)): Path<(String, String)>,
     Json(update): Json<PluginUpdate>,
 ) -> Result<Json<PluginInfo>, AppError> {
-    update_plugin_for_scope(&state, plugin_id, profile_plugin_scope(profile_id)?, update)
+    let scope = profile_plugin_scope(profile_id)?;
+    let info = update_plugin_for_scope(&state, plugin_id, scope.clone(), update)?;
+    let _reload =
+        handle_reload_config_for_profile(Arc::clone(&state), Some(&scope.profile_id)).await?;
+    Ok(info)
 }
 
 fn update_plugin_for_scope(

@@ -424,6 +424,54 @@ pub async fn emit_explicit_file_security_write_and_rules(
     Some(event_id)
 }
 
+pub async fn emit_explicit_file_security_write_and_rules_with_plugins(
+    db: &DbWriter,
+    rules: &SecurityRuleSet,
+    plugin_policy: BTreeMap<String, SecurityPluginConfig>,
+    event: ExplicitFileSecurityEvent,
+) -> Result<Option<SecurityRuleEmission>, String> {
+    let primary = FileEvent {
+        event_id: None,
+        timestamp: std::time::SystemTime::now(),
+        action: event.action,
+        path: event.path.clone(),
+        size: event.size,
+        trace_id: event.trace_id.clone(),
+        credential_ref: event.credential_ref.clone(),
+    };
+    let security_event = security_event_from_explicit_file_event(&event);
+    let event_type = runtime_file_event_type(event.action);
+    let Some(event_id) = emit_security_write(db, WriteOp::FileEvent(primary)).await else {
+        return Ok(None);
+    };
+    let security_event = prepare_event_for_security_rule_ledger(plugin_policy, security_event)?;
+    let plugin_decision = security_event.decision.effective;
+    let mut emission = emit_matching_security_rules_with_decision(
+        db,
+        event_id,
+        event_type,
+        rules,
+        &security_event,
+        current_unix_ms(),
+    )
+    .await?;
+    match plugin_decision {
+        SecurityDecisionKind::Allow => {}
+        SecurityDecisionKind::Ask => {
+            if emission.enforcement.is_allowed() {
+                emission.enforcement.action = SecurityEnforcementAction::Ask;
+                emission.enforcement.reason =
+                    Some("file boundary requires plugin approval".to_string());
+            }
+        }
+        SecurityDecisionKind::Block => {
+            emission.enforcement.action = SecurityEnforcementAction::Block;
+            emission.enforcement.reason = Some("file boundary blocked by plugin".to_string());
+        }
+    }
+    Ok(Some(emission))
+}
+
 pub fn emit_file_security_write_and_rules_blocking(
     db: &DbWriter,
     rules: &SecurityRuleSet,

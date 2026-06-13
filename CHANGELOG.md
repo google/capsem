@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed (route surfaces and diagnostics)
+- Hardened file import/export security boundaries so explicit file writes run
+  through the plugin-aware security rail, plugin `block` decisions deny the
+  VM-facing file operation before bytes are written or returned, and profile
+  plugin edits reload matching active VMs before returning. Ironbank now proves
+  the denied EICAR import, live plugin disable, allowed import, and exact
+  session DB plugin decision/execution ledger.
 - Split security plugins into explicit preprocess, postprocess, and logging
   stages while preserving the single `SecurityEvent -> SecurityEvent` plugin
   contract; the credential broker now owns credential observation/storage as a

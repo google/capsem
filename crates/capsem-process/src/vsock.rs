@@ -51,6 +51,14 @@ pub(crate) struct VsockOptions {
     pub(crate) dns_handler: Arc<capsem_core::net::dns::DnsHandler>,
     pub(crate) security_rules:
         Arc<std::sync::RwLock<Arc<capsem_core::net::policy_config::SecurityRuleSet>>>,
+    pub(crate) plugin_policy: Arc<
+        std::sync::RwLock<
+            std::collections::BTreeMap<
+                String,
+                capsem_core::net::policy_config::SecurityPluginConfig,
+            >,
+        >,
+    >,
     pub(crate) _net_state: Arc<capsem_core::SandboxNetworkState>,
     pub(crate) is_restore: bool,
     pub(crate) vm_ready: Arc<AtomicBool>,
@@ -76,6 +84,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
         mitm_config,
         dns_handler,
         security_rules,
+        plugin_policy,
         is_restore,
         vm_ready,
         uds_path,
@@ -257,6 +266,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
     let js = Arc::clone(&job_store);
     let db_ctrl = Arc::clone(&db);
     let security_rules_ctrl = Arc::clone(&security_rules);
+    let plugin_policy_ctrl = Arc::clone(&plugin_policy);
     let mut control_rekey_rx_inner = control_rekey_rx;
 
     let js_for_teardown = Arc::clone(&job_store);
@@ -368,7 +378,14 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                                         break;
                                     }
                                 }
-                                handle_guest_msg(msg, &js, &db_ctrl, &security_rules_ctrl).await
+                                handle_guest_msg(
+                                    msg,
+                                    &js,
+                                    &db_ctrl,
+                                    &security_rules_ctrl,
+                                    &plugin_policy_ctrl,
+                                )
+                                .await
                             }
                             _ => break, // Error or closed, wait for rekey
                         }
@@ -511,6 +528,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                     let event_id = emit_explicit_file_security_event(
                         &db_for_cmd,
                         &security_rules_for_cmd,
+                        &plugin_policy,
                         file_action,
                         path,
                         Some(size),
@@ -518,18 +536,24 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                         mime_type,
                     )
                     .await;
-                    let success = event_id.is_some();
+                    let (success, error) = match event_id {
+                        Ok(Some(emission)) if emission.enforcement.is_allowed() => (true, None),
+                        Ok(Some(emission)) => (
+                            false,
+                            Some(emission.enforcement.reason.unwrap_or_else(|| {
+                                "file boundary blocked by security policy".into()
+                            })),
+                        ),
+                        Ok(None) => (
+                            false,
+                            Some("failed to write file boundary security event".into()),
+                        ),
+                        Err(error) => (false, Some(error)),
+                    };
                     if let Some(tx) = js_for_cmd.jobs.lock().unwrap().remove(&id) {
                         capsem_core::try_send!(
                             "job_result_log_file_boundary",
-                            tx.send(JobResult::LogFileBoundary {
-                                success,
-                                error: if success {
-                                    None
-                                } else {
-                                    Some("failed to write file boundary security event".into())
-                                }
-                            })
+                            tx.send(JobResult::LogFileBoundary { success, error })
                         );
                     }
                 }
@@ -1204,16 +1228,26 @@ fn file_content_preview(data: &[u8]) -> String {
 async fn emit_explicit_file_security_event(
     db: &Arc<capsem_logger::DbWriter>,
     security_rules: &Arc<std::sync::RwLock<Arc<capsem_core::net::policy_config::SecurityRuleSet>>>,
+    plugin_policy: &Arc<
+        std::sync::RwLock<
+            std::collections::BTreeMap<
+                String,
+                capsem_core::net::policy_config::SecurityPluginConfig,
+            >,
+        >,
+    >,
     action: capsem_logger::FileAction,
     path: String,
     size: Option<u64>,
     content: Option<String>,
     mime_type: Option<String>,
-) -> Option<capsem_core::security_engine::SecurityEventId> {
+) -> Result<Option<capsem_core::security_engine::SecurityRuleEmission>, String> {
     let rules = security_rules.read().unwrap().clone();
-    capsem_core::security_engine::emit_explicit_file_security_write_and_rules(
+    let plugins = plugin_policy.read().unwrap().clone();
+    capsem_core::security_engine::emit_explicit_file_security_write_and_rules_with_plugins(
         db,
         &rules,
+        plugins,
         capsem_core::security_engine::ExplicitFileSecurityEvent {
             action,
             path,
@@ -1232,6 +1266,14 @@ async fn handle_guest_msg(
     js: &Arc<JobStore>,
     db: &Arc<capsem_logger::DbWriter>,
     security_rules: &Arc<std::sync::RwLock<Arc<capsem_core::net::policy_config::SecurityRuleSet>>>,
+    plugin_policy: &Arc<
+        std::sync::RwLock<
+            std::collections::BTreeMap<
+                String,
+                capsem_core::net::policy_config::SecurityPluginConfig,
+            >,
+        >,
+    >,
 ) {
     match msg {
         GuestToHost::ExecDone { id, exit_code } => {
@@ -1309,9 +1351,10 @@ async fn handle_guest_msg(
                 Some(ActiveFileOp::Write { path, .. }) => (path, capsem_logger::FileAction::Read),
                 None => (path, capsem_logger::FileAction::Read),
             };
-            emit_explicit_file_security_event(
+            let boundary = emit_explicit_file_security_event(
                 db,
                 security_rules,
+                plugin_policy,
                 action,
                 path,
                 Some(data.len() as u64),
@@ -1319,6 +1362,39 @@ async fn handle_guest_msg(
                 None,
             )
             .await;
+            match boundary {
+                Ok(Some(emission)) if emission.enforcement.is_allowed() => {}
+                Ok(Some(emission)) if action == capsem_logger::FileAction::Exported => {
+                    let error = emission
+                        .enforcement
+                        .reason
+                        .unwrap_or_else(|| "file export blocked by security policy".into());
+                    if let Some(tx) = js.jobs.lock().unwrap().remove(&id) {
+                        capsem_core::try_send!(
+                            "job_result_read_file_blocked",
+                            tx.send(JobResult::ReadFile {
+                                data: None,
+                                error: Some(error)
+                            })
+                        );
+                    }
+                    return;
+                }
+                Ok(Some(emission)) => {
+                    warn!(
+                        id,
+                        action = ?action,
+                        decision = ?emission.enforcement.action,
+                        "file boundary emitted non-allow decision after data was already local"
+                    );
+                }
+                Ok(None) => {
+                    warn!(id, action = ?action, "failed to write file boundary security event");
+                }
+                Err(error) => {
+                    warn!(id, action = ?action, error, "failed to evaluate file boundary");
+                }
+            }
             if let Some(tx) = js.jobs.lock().unwrap().remove(&id) {
                 capsem_core::try_send!(
                     "job_result_read_file",
@@ -1337,16 +1413,23 @@ async fn handle_guest_msg(
             if let Some(context) = context {
                 match context {
                     ActiveFileOp::Write { path, data } => {
-                        emit_explicit_file_security_event(
+                        if let Err(error) = emit_explicit_file_security_event(
                             db,
                             security_rules,
+                            plugin_policy,
                             capsem_logger::FileAction::Modified,
                             path,
                             Some(data.len() as u64),
                             Some(file_content_preview(&data)),
                             None,
                         )
-                        .await;
+                        .await
+                        {
+                            warn!(
+                                id,
+                                error, "failed to evaluate file write completion boundary"
+                            );
+                        }
                     }
                     ActiveFileOp::Read { path } => {
                         warn!(

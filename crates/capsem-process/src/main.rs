@@ -586,6 +586,7 @@ async fn run_async_main_loop(
             mitm_config: mitm_config_clone,
             dns_handler: dns_handler_clone,
             security_rules: Arc::clone(&security_rules),
+            plugin_policy: Arc::clone(&plugin_policy),
             _net_state: net_state_clone,
             is_restore,
             vm_ready: vm_ready_vsock,

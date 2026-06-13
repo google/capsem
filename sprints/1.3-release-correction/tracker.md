@@ -855,6 +855,32 @@ next one, and stage only the files for that slice.
     tests/ironbank/test_doctor_ledger.py::test_capsem_doctor_pays_protocol_and_security_ledger_debt
     -q -s --tb=short` (`1 passed in 31.66s`). Remaining debt: explicit
     block/disable/rewrite/pre/post matrix and full `just test`.
+  - 2026-06-13 progress: added the first explicit runtime plugin action matrix
+    proof for file imports. The test starts the service through public routes,
+    enables `dummy_pre_eicar=block/critical` and
+    `dummy_post_allow=allow/low`, boots a VM, proves an EICAR import is denied
+    before the file is readable, disables the pre-plugin through the profile
+    plugin route, proves the active VM reloads and a second EICAR import is
+    written/read, then checks `fs_events`, `security_rule_events`,
+    `event_json.decision`, plugin detections, plugin execution stages, and
+    route-visible runtime counters.
+  - Product fix: explicit file boundary writes now use the plugin-aware
+    security emitter and `LogFileBoundary`/file-content IPC returns denial to
+    the caller instead of treating "event id exists" as success. Profile plugin
+    edits now materialize into runtime overlays and reload matching active VMs
+    before the edit route returns.
+  - Proof: `cargo test -p capsem-service
+    reload_refreshes_session_runtime_profile_from_source_profile -- --nocapture`;
+    `cargo test -p capsem-service
+    profile_plugin_endpoint_matrix_dynamically_controls_enforcement_evaluation
+    -- --nocapture`; `cargo check -p capsem-service -p capsem-process`;
+    `cargo fmt --check`; `uv run ruff check
+    tests/ironbank/test_doctor_ledger.py`; `python3 -m py_compile
+    tests/ironbank/test_doctor_ledger.py`;
+    `CAPSEM_TEST_PRESERVE_ALWAYS=1 uv run python -m pytest
+    tests/ironbank/test_doctor_ledger.py::test_runtime_plugin_action_matrix_pays_file_import_ledger_debt
+    -q -s --tb=short` (`1 passed in 1.97s`). Remaining debt: full rewrite
+    matrix and full `just test`.
 - [x] RED/GREEN: doctor/toolchain probes cover apt/dpkg triggers, Python, pip,
   uv, Node, npm, npx, packaged CLIs, aliases, MCP bootstrap, DNS, TLS, FS
   writes.

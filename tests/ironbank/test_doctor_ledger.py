@@ -6,6 +6,7 @@ import json
 import re
 import shlex
 import sqlite3
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -85,6 +86,7 @@ RAW_SECRET_MARKERS = {
     "capsem_test_oauth_code",
     "capsem_test_oauth_client_secret",
 }
+EICAR_TEXT = "X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*"
 
 
 def _connect_session_db(session_root: Path, session_id: str) -> sqlite3.Connection:
@@ -133,6 +135,42 @@ def _assert_no_raw_secret_markers_in_session_db(conn: sqlite3.Connection) -> Non
                     continue
                 leaked = [marker for marker in RAW_SECRET_MARKERS if marker in value]
                 assert not leaked, f"raw secret marker leaked in {table}.{column}: {leaked}"
+
+
+def _post_bytes_with_status(
+    socket_path: Path, path: str, data: bytes, timeout: int = 60
+) -> tuple[int, bytes]:
+    result = subprocess.run(
+        [
+            "curl",
+            "-s",
+            "-S",
+            "-o",
+            "-",
+            "-w",
+            "\n__STATUS__%{http_code}",
+            "--unix-socket",
+            str(socket_path),
+            "-X",
+            "POST",
+            "-H",
+            "Content-Type: application/octet-stream",
+            "--max-time",
+            str(timeout),
+            "--data-binary",
+            "@-",
+            f"http://localhost{path}",
+        ],
+        input=data,
+        capture_output=True,
+        timeout=timeout + 5,
+    )
+    if result.returncode != 0:
+        raise ConnectionError(f"curl failed: {result.stderr.decode(errors='replace')}")
+    sep = b"\n__STATUS__"
+    idx = result.stdout.rfind(sep)
+    assert idx != -1, result.stdout
+    return int(result.stdout[idx + len(sep) :].decode(errors="replace")), result.stdout[:idx]
 
 
 def test_capsem_doctor_pays_protocol_and_security_ledger_debt():
@@ -541,6 +579,182 @@ def test_capsem_doctor_pays_protocol_and_security_ledger_debt():
         conn.close()
     finally:
         stop_process(mock_proc)
+        if client is not None:
+            try:
+                client.delete(f"/vms/{session_id}/delete", timeout=60)
+            except Exception:
+                pass
+        service.stop()
+
+
+def test_runtime_plugin_action_matrix_pays_file_import_ledger_debt():
+    assert ASSETS_DIR.exists(), f"{ASSETS_DIR} missing; build VM assets before Ironbank"
+    assert PROFILES_DIR.exists(), f"{PROFILES_DIR} missing; materialize profile config before Ironbank"
+
+    service = ServiceInstance()
+    client = None
+    session_id = vm_name("ironbank-plugin")
+    try:
+        service.start()
+        client = service.client()
+
+        enabled_pre = client.patch(
+            f"/profiles/{CODE_PROFILE_ID}/plugins/dummy_pre_eicar/edit",
+            {"mode": "block", "detection_level": "critical"},
+            timeout=30,
+        )
+        assert enabled_pre["id"] == "dummy_pre_eicar"
+        assert enabled_pre["config"]["mode"] == "block"
+        assert enabled_pre["config"]["detection_level"] == "critical"
+        assert enabled_pre["runtime"]["enabled"] is True
+
+        enabled_post = client.patch(
+            f"/profiles/{CODE_PROFILE_ID}/plugins/dummy_post_allow/edit",
+            {"mode": "allow", "detection_level": "low"},
+            timeout=30,
+        )
+        assert enabled_post["id"] == "dummy_post_allow"
+        assert enabled_post["config"]["mode"] == "allow"
+        assert enabled_post["config"]["detection_level"] == "low"
+        assert enabled_post["runtime"]["enabled"] is True
+
+        create = client.post(
+            "/vms/create",
+            {
+                "name": session_id,
+                "profile_id": CODE_PROFILE_ID,
+                "ram_mb": DEFAULT_RAM_MB,
+                "cpus": DEFAULT_CPUS,
+            },
+            timeout=90,
+        )
+        assert create is not None
+        assert create.get("id") == session_id or create.get("name") == session_id
+        assert wait_exec_ready(client, session_id, timeout=EXEC_READY_TIMEOUT)
+
+        blocked_status, blocked_body = _post_bytes_with_status(
+            service.uds_path,
+            f"/vms/{session_id}/files/content?path=eicar-blocked.txt",
+            EICAR_TEXT.encode(),
+            timeout=30,
+        )
+        assert blocked_status in {400, 403, 409, 500}, blocked_body
+        assert b"EICAR" not in blocked_body
+
+        get_status, _ = client.get_bytes(
+            f"/vms/{session_id}/files/content?path=eicar-blocked.txt",
+            timeout=30,
+        )
+        assert get_status in {404, 500}
+
+        disabled_pre = client.patch(
+            f"/profiles/{CODE_PROFILE_ID}/plugins/dummy_pre_eicar/edit",
+            {"mode": "disable", "detection_level": "informational"},
+            timeout=30,
+        )
+        assert disabled_pre["id"] == "dummy_pre_eicar"
+        assert disabled_pre["config"]["mode"] == "disable"
+        assert disabled_pre["runtime"]["enabled"] is False
+
+        allowed_status, allowed_body = _post_bytes_with_status(
+            service.uds_path,
+            f"/vms/{session_id}/files/content?path=eicar-allowed.txt",
+            EICAR_TEXT.encode(),
+            timeout=30,
+        )
+        assert allowed_status == 200, allowed_body
+        allowed_json = json.loads(allowed_body)
+        assert allowed_json["success"] is True
+
+        read_status, read_body = client.get_bytes(
+            f"/vms/{session_id}/files/content?path=eicar-allowed.txt",
+            timeout=30,
+        )
+        assert read_status == 200
+        assert read_body.decode() == EICAR_TEXT
+
+        conn = _connect_session_db(service.tmp_dir / "sessions", session_id)
+        security_rows = conn.execute(
+            """
+            SELECT *
+            FROM security_rule_events
+            WHERE event_type = 'file.import'
+            ORDER BY id
+            """
+        ).fetchall()
+        assert security_rows, "file imports must emit security ledger rows"
+        assert {row["rule_action"] for row in security_rows} == {"allow"}
+        payloads = [json.loads(row["event_json"]) for row in security_rows]
+        assert {"block", "allow"} <= {
+            payload["decision"]["effective"] for payload in payloads
+        }
+
+        blocked_rows = [
+            row
+            for row in security_rows
+            if json.loads(row["event_json"])["decision"]["effective"] == "block"
+        ]
+        assert blocked_rows, "enabled dummy_pre_eicar must produce block evidence"
+        blocked_payloads = [json.loads(row["event_json"]) for row in blocked_rows]
+        assert any(payload["decision"]["effective"] == "block" for payload in blocked_payloads)
+        assert any(
+            detection.get("source") == "plugin"
+            and detection.get("plugin_id") == "dummy_pre_eicar"
+            and detection.get("plugin_mode") == "block"
+            and detection.get("detection_level") == "critical"
+            for payload in blocked_payloads
+            for detection in payload.get("detections", [])
+        )
+
+        plugin_executions = [
+            execution
+            for payload in blocked_payloads
+            for execution in payload.get("plugin_executions", [])
+        ]
+        assert any(
+            execution["plugin_id"] == "dummy_pre_eicar"
+            and execution["stage"] == "preprocess"
+            and execution["applied"] is True
+            for execution in plugin_executions
+        )
+        assert any(
+            execution["plugin_id"] == "dummy_post_allow"
+            and execution["stage"] == "postprocess"
+            and execution["applied"] is True
+            for execution in plugin_executions
+        )
+        assert all(payload["decision"]["effective"] == "block" for payload in blocked_payloads)
+
+        allowed_file_row = _single(
+            conn,
+            """
+            SELECT *
+            FROM fs_events
+            WHERE path = 'eicar-allowed.txt'
+              AND action = 'import'
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+        )
+        _assert_ledger_id(allowed_file_row["event_id"])
+        assert allowed_file_row["size"] == len(EICAR_TEXT.encode())
+        allowed_security = [
+            row for row in security_rows if row["event_id"] == allowed_file_row["event_id"]
+        ]
+        assert allowed_security, "successful import must carry security rows"
+        assert {row["rule_action"] for row in allowed_security} == {"allow"}
+        assert all(
+            json.loads(row["event_json"])["decision"]["effective"] == "allow"
+            for row in allowed_security
+        )
+
+        plugins = client.get(f"/profiles/{CODE_PROFILE_ID}/plugins/list", timeout=30)
+        by_id = {plugin["id"]: plugin for plugin in plugins["plugins"]}
+        assert by_id["dummy_pre_eicar"]["runtime"]["enabled"] is False
+        assert by_id["dummy_post_allow"]["runtime"]["enabled"] is True
+        assert by_id["dummy_post_allow"]["runtime"]["execution_count"] >= 1
+        conn.close()
+    finally:
         if client is not None:
             try:
                 client.delete(f"/vms/{session_id}/delete", timeout=60)

@@ -1407,6 +1407,42 @@ match = 'mcp.tool_call.name == "local__echo"'
         refreshed.contains("block_local_echo"),
         "reload must copy source profile edits into the session runtime profile"
     );
+
+    let Json(plugin_info) = update_plugin_for_scope(
+        &state,
+        "dummy_pre_eicar".to_string(),
+        profile_plugin_scope("code".to_string()).unwrap(),
+        PluginUpdate {
+            mode: Some(capsem_core::net::policy_config::SecurityPluginMode::Block),
+            detection_level: Some(capsem_core::net::policy_config::DetectionLevel::Critical),
+        },
+    )
+    .expect("plugin edit should update profile override");
+    assert_eq!(
+        plugin_info.config.mode,
+        capsem_core::net::policy_config::SecurityPluginMode::Block
+    );
+    assert_eq!(
+        plugin_info.config.detection_level,
+        capsem_core::net::policy_config::DetectionLevel::Critical
+    );
+    state
+        .refresh_runtime_profile_dirs(Some("code"))
+        .expect("plugin override must refresh runtime profile config");
+    let runtime_overlay = session_dir.join("runtime-config/profiles/code/runtime-overlay.toml");
+    let overlay_text = std::fs::read_to_string(&runtime_overlay).unwrap();
+    assert!(
+        overlay_text.contains("[plugins.dummy_pre_eicar]"),
+        "runtime overlay must carry profile plugin overrides into launched VMs"
+    );
+    assert!(
+        overlay_text.contains("mode = \"block\""),
+        "runtime overlay must carry edited plugin mode"
+    );
+    assert!(
+        overlay_text.contains("detection_level = \"critical\""),
+        "runtime overlay must carry edited plugin detection level"
+    );
 }
 
 #[test]
