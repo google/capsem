@@ -756,6 +756,11 @@ next one, and stage only the files for that slice.
     `CAPSEM_TEST_PRESERVE_ALWAYS=1 uv run python -m pytest
     tests/ironbank/test_doctor_ledger.py::test_capsem_doctor_pays_protocol_and_security_ledger_debt
     -q -s` (`1 passed in 31.35s`).
+  - Combined Ironbank suite proof after the model, doctor, and package-manager
+    refreshes: `CAPSEM_TEST_PRESERVE_ALWAYS=1 uv run python -m pytest
+    tests/ironbank/ -q -s` (`3 passed in 37.39s`). Remaining S5/S7 debt is
+    still explicit below: MCP-native iron tests, streaming provider replay,
+    ask/block/disable/rewrite/pre/post matrix, and full `just test`.
 - [ ] RED/GREEN: doctor/toolchain probes cover apt/dpkg triggers, Python, pip,
   uv, Node, npm, npx, packaged CLIs, aliases, MCP bootstrap, DNS, TLS, FS
   writes.

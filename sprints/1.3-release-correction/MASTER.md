@@ -95,6 +95,11 @@ prove the same rails without user credentials.
   response capture, model response parsing, native tool call ledger rows, file
   write, security latest route, session DB rows, plugin execution counters,
   profile plugin route telemetry, and raw-secret absence.
+- Ironbank progress on 2026-06-13: the current black-box release ledgers run
+  together with no skips: `CAPSEM_TEST_PRESERVE_ALWAYS=1 uv run python -m
+  pytest tests/ironbank/ -q -s` (`3 passed in 37.39s`). This proves the model
+  SDK, doctor/security, and package-manager ledgers as a suite; it does not
+  close the still-open S4/S5/S7 MCP, streaming, UI, and full `just test` gates.
 - Integration gate hardening on 2026-06-12: `scripts/integration_test.py` now
   runs service and VM paths with an isolated credential broker test store and
   bounded model fixture calls. Proof:
