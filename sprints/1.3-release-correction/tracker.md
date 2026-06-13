@@ -532,6 +532,19 @@ next one, and stage only the files for that slice.
   - Proof: `cargo test -p capsem-gateway
     gateway_security_routes_are_explicitly_forwarded -- --nocapture`;
     `cargo fmt --check`.
+  - 2026-06-13 progress: `tests/capsem-gateway/test_profile_gateway_contract.py`
+    now starts the real service plus real HTTP gateway and exercises the exact
+    profile overview route bundle used by the UI: profile info, credential
+    broker info, credential broker reload, asset status, enforcement rules,
+    and detection rules. The RED run caught the missing gateway route for
+    credential broker reload; the GREEN run proves the UI-facing JSON shapes.
+  - Proof: RED `uv run pytest
+    tests/capsem-gateway/test_profile_gateway_contract.py -q -s --tb=short`
+    failed on `POST /profiles/{id}/plugins/credential_broker/credentials/reload`
+    returning 404 before the rebuilt gateway was exercised; GREEN same command
+    (`1 passed`); `uv run ruff check
+    tests/capsem-gateway/test_profile_gateway_contract.py`; `cargo build -p
+    capsem-gateway`.
   - 2026-06-13 progress: `tests/capsem-mcp/test_mcp_call.py` now proves the
     native host `capsem_mcp_call` route, not just doctor-triggered MCP. RED
     caught that service-initiated profile MCP calls invoked the aggregator

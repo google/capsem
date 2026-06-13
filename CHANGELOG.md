@@ -65,6 +65,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Routed the profile-scoped credential broker retry endpoint through the HTTP
   gateway and pinned it in the explicit route allowlist so the UI cannot see a
   404 for a service-supported profile/plugin operation.
+- Added a real-service gateway contract test for the profile overview route
+  bundle so profile info, credential broker status/retry, asset status,
+  enforcement rules, and detection rules must all survive the HTTP gateway with
+  the UI-facing JSON field shape intact.
 - Extended file-boundary IPC so plugin `rewrite` decisions can return mutated
   bytes to the service for import/export/read/write boundaries; the service
   now writes or returns only the bytes approved by the plugin-aware security
