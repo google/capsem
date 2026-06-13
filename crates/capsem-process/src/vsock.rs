@@ -2,15 +2,20 @@ use anyhow::{Context, Result};
 use capsem_core::{read_control_msg, write_control_msg, VsockConnection};
 use capsem_proto::ipc::{FileBoundaryAction, ProcessToService, ServiceToProcess};
 use capsem_proto::{GuestToHost, HostToGuest, HostVsockService};
+use std::collections::BTreeMap;
 use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use tokio::sync::{broadcast, mpsc};
 use tracing::{error, info, warn};
 
 use crate::helpers::clone_fd;
 use crate::job_store::{with_quiescence, ActiveFileOp, JobResult, JobStore};
+
+type SecurityRulesHandle = Arc<RwLock<Arc<capsem_core::net::policy_config::SecurityRuleSet>>>;
+type PluginPolicyHandle =
+    Arc<RwLock<BTreeMap<String, capsem_core::net::policy_config::SecurityPluginConfig>>>;
 
 /// Maximum attempts for the initial handshake before giving up.
 ///
@@ -49,16 +54,8 @@ pub(crate) struct VsockOptions {
     /// NXDOMAIN decisions come from the shared security rules; the network
     /// policy handle remains for resolver mechanics such as redirects/cache.
     pub(crate) dns_handler: Arc<capsem_core::net::dns::DnsHandler>,
-    pub(crate) security_rules:
-        Arc<std::sync::RwLock<Arc<capsem_core::net::policy_config::SecurityRuleSet>>>,
-    pub(crate) plugin_policy: Arc<
-        std::sync::RwLock<
-            std::collections::BTreeMap<
-                String,
-                capsem_core::net::policy_config::SecurityPluginConfig,
-            >,
-        >,
-    >,
+    pub(crate) security_rules: SecurityRulesHandle,
+    pub(crate) plugin_policy: PluginPolicyHandle,
     pub(crate) _net_state: Arc<capsem_core::SandboxNetworkState>,
     pub(crate) is_restore: bool,
     pub(crate) vm_ready: Arc<AtomicBool>,
@@ -529,11 +526,13 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                         &db_for_cmd,
                         &security_rules_for_cmd,
                         &plugin_policy,
-                        file_action,
-                        path,
-                        Some(size),
-                        Some(file_content_preview(&data)),
-                        mime_type,
+                        FileSecurityBoundary {
+                            action: file_action,
+                            path,
+                            size: Some(size),
+                            content: Some(file_content_preview(&data)),
+                            mime_type,
+                        },
                     )
                     .await;
                     let (success, data, error) = match event_id {
@@ -1229,26 +1228,23 @@ fn ackable_response_id(msg: &GuestToHost) -> Option<u64> {
 
 const FILE_SECURITY_CONTENT_PREVIEW_MAX: usize = 64 * 1024;
 
+struct FileSecurityBoundary {
+    action: capsem_logger::FileAction,
+    path: String,
+    size: Option<u64>,
+    content: Option<String>,
+    mime_type: Option<String>,
+}
+
 fn file_content_preview(data: &[u8]) -> String {
     String::from_utf8_lossy(&data[..data.len().min(FILE_SECURITY_CONTENT_PREVIEW_MAX)]).into_owned()
 }
 
 async fn emit_explicit_file_security_event(
     db: &Arc<capsem_logger::DbWriter>,
-    security_rules: &Arc<std::sync::RwLock<Arc<capsem_core::net::policy_config::SecurityRuleSet>>>,
-    plugin_policy: &Arc<
-        std::sync::RwLock<
-            std::collections::BTreeMap<
-                String,
-                capsem_core::net::policy_config::SecurityPluginConfig,
-            >,
-        >,
-    >,
-    action: capsem_logger::FileAction,
-    path: String,
-    size: Option<u64>,
-    content: Option<String>,
-    mime_type: Option<String>,
+    security_rules: &SecurityRulesHandle,
+    plugin_policy: &PluginPolicyHandle,
+    boundary: FileSecurityBoundary,
 ) -> Result<Option<capsem_core::security_engine::SecurityRuleEmission>, String> {
     let rules = security_rules.read().unwrap().clone();
     let plugins = plugin_policy.read().unwrap().clone();
@@ -1257,11 +1253,11 @@ async fn emit_explicit_file_security_event(
         &rules,
         plugins,
         capsem_core::security_engine::ExplicitFileSecurityEvent {
-            action,
-            path,
-            size,
-            content,
-            mime_type,
+            action: boundary.action,
+            path: boundary.path,
+            size: boundary.size,
+            content: boundary.content,
+            mime_type: boundary.mime_type,
             trace_id: None,
             credential_ref: None,
         },
@@ -1287,15 +1283,8 @@ async fn handle_guest_msg(
     msg: GuestToHost,
     js: &Arc<JobStore>,
     db: &Arc<capsem_logger::DbWriter>,
-    security_rules: &Arc<std::sync::RwLock<Arc<capsem_core::net::policy_config::SecurityRuleSet>>>,
-    plugin_policy: &Arc<
-        std::sync::RwLock<
-            std::collections::BTreeMap<
-                String,
-                capsem_core::net::policy_config::SecurityPluginConfig,
-            >,
-        >,
-    >,
+    security_rules: &SecurityRulesHandle,
+    plugin_policy: &PluginPolicyHandle,
 ) {
     match msg {
         GuestToHost::ExecDone { id, exit_code } => {
@@ -1377,11 +1366,13 @@ async fn handle_guest_msg(
                 db,
                 security_rules,
                 plugin_policy,
-                action,
-                path,
-                Some(data.len() as u64),
-                Some(file_content_preview(&data)),
-                None,
+                FileSecurityBoundary {
+                    action,
+                    path,
+                    size: Some(data.len() as u64),
+                    content: Some(file_content_preview(&data)),
+                    mime_type: None,
+                },
             )
             .await;
             match boundary {
@@ -1439,11 +1430,13 @@ async fn handle_guest_msg(
                             db,
                             security_rules,
                             plugin_policy,
-                            capsem_logger::FileAction::Modified,
-                            path,
-                            Some(data.len() as u64),
-                            Some(file_content_preview(&data)),
-                            None,
+                            FileSecurityBoundary {
+                                action: capsem_logger::FileAction::Modified,
+                                path,
+                                size: Some(data.len() as u64),
+                                content: Some(file_content_preview(&data)),
+                                mime_type: None,
+                            },
                         )
                         .await
                         {

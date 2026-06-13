@@ -84,7 +84,6 @@ fn brokered_header_event() -> (SecurityEvent, tempfile::TempDir, Vec<EnvVarGuard
         raw_value: "sk-ant-security-action-bench".to_string(),
         source: "http.request.headers.authorization".to_string(),
         event_type: Some("http.request".to_string()),
-        confidence: 1.0,
         trace_id: None,
         context_json: None,
     })
@@ -125,7 +124,6 @@ fn brokered_mcp_auth_ref() -> (String, tempfile::TempDir, Vec<EnvVarGuard>) {
         raw_value: "local-mcp-oauth-token-security-action-bench".to_string(),
         source: "mcp.auth.bench".to_string(),
         event_type: Some("mcp.server.auth".to_string()),
-        confidence: 1.0,
         trace_id: None,
         context_json: None,
     })

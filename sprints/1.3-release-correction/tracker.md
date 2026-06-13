@@ -1640,6 +1640,24 @@ next one, and stage only the files for that slice.
     --tb=short` (`3 passed`); `CAPSEM_TEST_PRESERVE_ALWAYS=1 uv run pytest
     tests/ironbank/test_mcp_profile_ledger.py -q -s --tb=short` (`1 passed`);
     `uv run pytest tests/test_security_rails_retired.py -q` (`4 passed`).
+  - 2026-06-13 progress: the next full `just test` gate reached a later Rust
+    full-target pass and failed on stale benchmark/test drift: security-action
+    benches still populated the removed credential `confidence` field,
+    profile-root manifest validation used one-iteration `for` loops that
+    tripped clippy, and process vsock tests had not been updated for the
+    plugin-policy rail. The fix removes the stale credential field, keeps file
+    boundary security emission on the existing `capsem_logger::DbWriter`
+    rail, and narrows the process helper arguments into a typed boundary
+    object instead of adding a new writer or escape hatch.
+  - Proof: RED `just test` failed at stale credential bench fields,
+    `clippy::never_loop`, missing process test plugin-policy args, and
+    `clippy::too_many_arguments`; GREEN focused gates `cargo fmt`; `cargo
+    clippy -p capsem-admin -- -D warnings`; `cargo clippy -p capsem-process
+    -- -D warnings`; `cargo clippy -p capsem-core --benches -- -D warnings`;
+    `cargo test -p capsem-process
+    exec_done_with_empty_stdout_resolves_without_500ms_stall -- --nocapture`;
+    `cargo test -p capsem-process
+    read_file_content_emits_file_export_before_job_result -- --nocapture`.
 - [ ] Proof: changelog, docs, skills, and benchmark docs updated.
 - [ ] Proof: full final gates pass and branch is pushed.
 

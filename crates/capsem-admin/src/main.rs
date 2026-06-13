@@ -1403,14 +1403,14 @@ fn check_profile_root_manifest(path: &Path) -> Result<Vec<LocalAssetCheckReport>
         }
     }
     let actual_files = collect_profile_root_files(&root_dir)?;
-    for unlisted in actual_files.difference(&listed_files) {
+    if let Some(unlisted) = actual_files.difference(&listed_files).next() {
         return Err(anyhow!(
             "unlisted profile root payload file {} under {}",
             unlisted,
             root_dir.display()
         ));
     }
-    for missing in listed_files.difference(&actual_files) {
+    if let Some(missing) = listed_files.difference(&actual_files).next() {
         return Err(anyhow!(
             "profile root manifest {} lists missing payload file {}",
             path.display(),

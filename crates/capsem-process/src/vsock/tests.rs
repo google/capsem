@@ -80,6 +80,10 @@ fn make_conn(port: u32) -> VsockConnection {
     VsockConnection::new(-1, port, Box::new(()))
 }
 
+fn empty_plugin_policy() -> PluginPolicyHandle {
+    Arc::new(std::sync::RwLock::new(std::collections::BTreeMap::new()))
+}
+
 #[test]
 fn broken_pipe_is_retryable() {
     let io_err = std::io::Error::from(std::io::ErrorKind::BrokenPipe);
@@ -199,6 +203,7 @@ async fn exec_done_with_empty_stdout_resolves_without_500ms_stall() {
     let security_rules = Arc::new(std::sync::RwLock::new(Arc::new(
         capsem_core::net::policy_config::SecurityRuleSet::new(Vec::new()),
     )));
+    let plugin_policy = empty_plugin_policy();
 
     let id: u64 = 42;
     let (tx, rx) = oneshot::channel::<JobResult>();
@@ -218,6 +223,7 @@ async fn exec_done_with_empty_stdout_resolves_without_500ms_stall() {
         &js,
         &db,
         &security_rules,
+        &plugin_policy,
     )
     .await;
     let elapsed_ms = start.elapsed().as_millis();
@@ -267,6 +273,7 @@ match = 'file.export.path == "/workspace/out.txt" && file.export.content.contain
     )
     .expect("rules compile");
     let security_rules = Arc::new(std::sync::RwLock::new(Arc::new(rules)));
+    let plugin_policy = empty_plugin_policy();
     let js = Arc::new(JobStore::new());
     let id: u64 = 77;
     js.active_file_ops.lock().unwrap().insert(
@@ -287,6 +294,7 @@ match = 'file.export.path == "/workspace/out.txt" && file.export.content.contain
         &js,
         &db,
         &security_rules,
+        &plugin_policy,
     )
     .await;
 
