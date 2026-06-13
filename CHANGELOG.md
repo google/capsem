@@ -88,6 +88,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Extended support-bundle debug diagnostics with the current profile route
   inventory and profile OBOM descriptors, including `/profiles/{id}/obom`,
   BLAKE3 hash, generator metadata, size, and base-image scope.
+- Added support-bundle supply-chain references for the host SPDX SBOM release
+  artifact, GitHub attestation source, profile CycloneDX OBOM routes, and
+  manifest provenance paths.
 - Hardened package artifact tests so local and remote manifest overrides prove
   the packaged manifest payload and `manifest-origin.json` provenance instead
   of only checking installer script text.

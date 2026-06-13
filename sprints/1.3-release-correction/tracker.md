@@ -1541,6 +1541,16 @@ next one, and stage only the files for that slice.
     the missing `/profiles/{profile_id}/obom` route and missing OBOM
     diagnostics; GREEN `cargo test -p capsem support_bundle -- --nocapture`
     (`9 passed`).
+  - 2026-06-13 progress: support bundles now include
+    `system/supply-chain.json` so bug reports carry release supply-chain
+    references for the host SPDX SBOM artifact, GitHub SBOM/provenance
+    attestations, profile CycloneDX OBOM routes, and manifest provenance paths.
+  - Proof: RED `cargo test -p capsem
+    bundle_includes_supply_chain_debug_references -- --nocapture` failed on
+    the missing support-bundle section; GREEN `cargo test -p capsem
+    support_bundle -- --nocapture` (`10 passed`); `cargo test -p
+    capsem-service profile_info_and_obom_route_expose_base_image_obom_hash --
+    --nocapture`; `cargo fmt --check`.
 - [ ] Proof: changelog, docs, skills, and benchmark docs updated.
 - [ ] Proof: full final gates pass and branch is pushed.
 

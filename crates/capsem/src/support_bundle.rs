@@ -442,6 +442,23 @@ pub fn run_with_opts(opts: Opts) -> Result<PathBuf> {
         });
     }
 
+    // -- release supply-chain references --
+    {
+        let entry_path = format!("{bundle_root}/system/supply-chain.json");
+        let supply_chain = supply_chain_debug_references();
+        let bytes = serde_json::to_vec_pretty(&supply_chain)?;
+        let len = bytes.len() as u64;
+        add_bytes(&mut tar, &entry_path, &bytes)?;
+        sections.push(Section {
+            path: entry_path,
+            kind: "json",
+            bytes: Some(len),
+            missing: false,
+            reason: None,
+            truncated_to_last_bytes: None,
+        });
+    }
+
     // -- system info --
     {
         let version_json = serde_json::json!({
@@ -908,6 +925,37 @@ fn runtime_boundary_debug_contract() -> serde_json::Value {
             "/profiles/{profile_id}/mcp/default/info",
             "/profiles/{profile_id}/mcp/servers/list"
         ],
+    })
+}
+
+fn supply_chain_debug_references() -> serde_json::Value {
+    serde_json::json!({
+        "host_sbom": {
+            "format": "spdx_json_2_3",
+            "scope": "host_binaries",
+            "generator": "cargo-sbom",
+            "release_artifact": "capsem-sbom.spdx.json",
+            "attestation": "github_attestations",
+            "workflow": ".github/workflows/release.yaml",
+        },
+        "profile_obom": {
+            "format": "cyclonedx-obom.v1",
+            "scope": "base_image",
+            "generator": "cdxgen",
+            "descriptor_source": "profile.toml",
+            "runtime_routes": [
+                "/profiles/{profile_id}/info",
+                "/profiles/{profile_id}/obom",
+            ],
+        },
+        "manifest": {
+            "hash": "blake3",
+            "runtime_status": "/status",
+            "support_bundle_paths": [
+                "assets/manifest.json",
+                "assets/manifest-origin.json",
+            ],
+        },
     })
 }
 

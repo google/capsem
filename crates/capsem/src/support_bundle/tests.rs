@@ -318,6 +318,39 @@ fn bundle_includes_runtime_boundary_debug_contract() {
 }
 
 #[test]
+fn bundle_includes_supply_chain_debug_references() {
+    let _g = ENV_LOCK.lock().unwrap();
+    let _dir = fake_capsem_home();
+    let out = crate::support_bundle::run(None, 0, false, false).unwrap();
+    let entries = read_tar_entries(&out);
+
+    let supply_chain_entry = entries
+        .iter()
+        .find(|(p, _)| p.ends_with("system/supply-chain.json"))
+        .expect("support bundle should include supply-chain debug references");
+    let supply_chain: serde_json::Value = serde_json::from_slice(&supply_chain_entry.1).unwrap();
+    assert_eq!(supply_chain["host_sbom"]["format"], "spdx_json_2_3");
+    assert_eq!(
+        supply_chain["host_sbom"]["release_artifact"],
+        "capsem-sbom.spdx.json"
+    );
+    assert_eq!(supply_chain["host_sbom"]["scope"], "host_binaries");
+    assert_eq!(
+        supply_chain["host_sbom"]["attestation"],
+        "github_attestations"
+    );
+    assert_eq!(
+        supply_chain["profile_obom"]["runtime_routes"][0],
+        "/profiles/{profile_id}/info"
+    );
+    assert_eq!(
+        supply_chain["profile_obom"]["runtime_routes"][1],
+        "/profiles/{profile_id}/obom"
+    );
+    assert_eq!(supply_chain["profile_obom"]["scope"], "base_image");
+}
+
+#[test]
 fn bundle_config_diagnostics_include_profile_obom_evidence() {
     use capsem_core::net::policy_config::current_profile_arch;
 
