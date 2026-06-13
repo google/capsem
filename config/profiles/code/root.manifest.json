@@ -2,6 +2,11 @@
   "format": "capsem.profile-root.v1",
   "files": [
     {
+      "path": "root/.antigravity/config.json",
+      "hash": "blake3:98e5a1ada9e176cc6e4576abb70891ed3057416e7129670d42e0ed90c98835de",
+      "size": 141
+    },
+    {
       "path": "root/.antigravity/settings.json",
       "hash": "blake3:908708b4f57d80de8f4005dd9ff577f73421b04ab44149120285b6c798cce212",
       "size": 148
@@ -23,8 +28,8 @@
     },
     {
       "path": "root/.codex/config.toml",
-      "hash": "blake3:ff995858bdcca58a03fa9e3b559e6343443d4df96defca98078543c6674bb305",
-      "size": 56
+      "hash": "blake3:3188ac3aab345b563e2a549bcb55fff90b04dbcc4fb5c21431f160710e089aac",
+      "size": 200
     },
     {
       "path": "root/.gemini/installation_id",

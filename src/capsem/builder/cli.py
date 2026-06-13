@@ -5,8 +5,6 @@ Commands:
   validate  Lint and validate guest config
   build     Render Dockerfiles (--dry-run) or build images
   inspect   Show config summary
-  init      Scaffold a new guest config directory
-  add       Add AI provider, package set, or MCP server templates
 """
 
 from __future__ import annotations
@@ -18,12 +16,6 @@ import click
 
 from capsem.builder.config import load_guest_config
 from capsem.builder.docker import render_dockerfile
-from capsem.builder.scaffold import (
-    add_ai_provider,
-    add_mcp_server,
-    add_package_set,
-    init_guest_dir,
-)
 from capsem.builder.validate import Severity, validate_guest
 
 
@@ -48,7 +40,7 @@ def cli(ctx: click.Context) -> None:
               type=click.Path(exists=False),
               help="Config root containing profiles and rule files.")
 def doctor(profile_id: str, config_root: str) -> None:
-    """Check build prerequisites and the profile/admin contract."""
+    """Check build prerequisites and the profile-derived build contract."""
     from capsem.builder.doctor import format_results, run_all_checks
 
     repo_root = Path.cwd()
@@ -331,13 +323,6 @@ def inspect(guest_dir: str, json_output: bool) -> None:
     for name, arch in config.build.architectures.items():
         click.echo(f"    {name}: {arch.docker_platform} ({arch.rust_target})")
 
-    if config.ai_providers:
-        click.echo("\nAI Providers")
-        for key, prov in config.ai_providers.items():
-            status = "enabled" if prov.enabled else "disabled"
-            click.echo(f"  {key}: {prov.name} [{status}]")
-            click.echo(f"    domains: {', '.join(prov.network.domains)}")
-
     if config.package_sets:
         click.echo("\nPackage Sets")
         for key, ps in config.package_sets.items():
@@ -413,216 +398,6 @@ def mcp_cmd() -> None:
     """Start MCP stdio server for builder tools."""
     from capsem.builder.mcp_server import run_mcp_server
     run_mcp_server()
-
-
-# ---------------------------------------------------------------------------
-# new
-# ---------------------------------------------------------------------------
-
-
-def _select_items(
-    label: str,
-    items: dict[str, str],
-    interactive: bool,
-) -> list[str]:
-    """Present a numbered list and ask user to select items."""
-    if not items:
-        return []
-    if not interactive:
-        return list(items.keys())
-
-    keys = list(items.keys())
-    click.echo(f"\n{label} -- include from base:")
-    for i, (key, desc) in enumerate(items.items(), 1):
-        click.echo(f"  [{i}] {key} -- {desc}")
-    raw = click.prompt("Include (comma-separated, * for all)", default="*")
-    if raw.strip() == "*":
-        return keys
-    selected = []
-    for part in raw.split(","):
-        part = part.strip()
-        if part.isdigit():
-            idx = int(part) - 1
-            if 0 <= idx < len(keys):
-                selected.append(keys[idx])
-        elif part in keys:
-            selected.append(part)
-    return selected
-
-
-def _prompt_add_new(
-    label: str,
-    guest_dir: Path,
-    add_func,
-    interactive: bool,
-    **kwargs,
-) -> None:
-    """Ask user if they want to add new items from templates."""
-    if not interactive:
-        return
-    while click.confirm(f"Add a new {label}?", default=False):
-        name = click.prompt(f"  {label} name")
-        try:
-            path = add_func(guest_dir, name, force=True, **kwargs)
-            click.echo(f"  -> Created {path.relative_to(guest_dir)} from template")
-        except Exception as e:
-            click.echo(f"  error: {e}", err=True)
-
-
-@cli.command("new")
-@click.argument("target", type=click.Path())
-@click.option("--from", "base_dir", default="guest", type=click.Path(exists=True),
-              help="Base config to copy from (default: guest/).")
-@click.option("--non-interactive", is_flag=True, help="Copy all from base, no prompts.")
-@click.option("--force", is_flag=True, help="Overwrite existing config directory.")
-def new_cmd(target: str, base_dir: str, non_interactive: bool, force: bool) -> None:
-    """Create a new image config from a base config."""
-    from capsem.builder.scaffold import (
-        add_ai_provider,
-        add_mcp_server,
-        add_package_set,
-        new_image,
-        scan_base_config,
-    )
-
-    base = Path(base_dir)
-    target_path = Path(target)
-    interactive = not non_interactive
-
-    # Image metadata
-    if interactive:
-        name = click.prompt("Image name", default=target_path.name)
-        version = click.prompt("Version", default="0.1.0")
-        description = click.prompt("Description", default="")
-    else:
-        name = target_path.name
-        version = "0.1.0"
-        description = ""
-
-    # Scan base config for available components
-    scan = scan_base_config(base)
-    click.echo(f"\nScanning base config ({base_dir})...")
-
-    # Select components
-    providers = _select_items("AI Providers", scan["providers"], interactive)
-    packages = _select_items("Package Sets", scan["packages"], interactive)
-    mcp = _select_items("MCP Servers", scan["mcp"], interactive)
-
-    if interactive and scan["has_security"]:
-        include_security = click.confirm("Include security config?", default=True)
-    else:
-        include_security = scan["has_security"]
-
-    if interactive and scan["has_vm"]:
-        include_vm = click.confirm("Include VM resources/environment?", default=True)
-    else:
-        include_vm = scan["has_vm"]
-
-    try:
-        config_dir = new_image(
-            target_path, base,
-            name=name,
-            version=version,
-            description=description,
-            include_providers=providers,
-            include_packages=packages,
-            include_mcp=mcp,
-            include_security=include_security,
-            include_vm=include_vm,
-            force=force,
-        )
-    except FileExistsError as e:
-        click.echo(f"error: {e}", err=True)
-        raise SystemExit(1)
-
-    # Phase 2: add new items from templates
-    if interactive:
-        _prompt_add_new("AI provider", target_path, add_ai_provider, interactive)
-        _prompt_add_new("package set", target_path, add_package_set, interactive,
-                        manager="apt")
-        _prompt_add_new("MCP server", target_path, add_mcp_server, interactive)
-
-    file_count = sum(1 for _ in config_dir.rglob("*.toml"))
-    click.echo(f"\nCreated {config_dir}/ ({file_count} files)")
-
-
-# ---------------------------------------------------------------------------
-# init
-# ---------------------------------------------------------------------------
-
-
-@cli.command()
-@click.argument("target", default="guest", type=click.Path())
-@click.option("--force", is_flag=True, help="Overwrite existing config directory.")
-def init(target: str, force: bool) -> None:
-    """Scaffold a new guest config directory (minimal, from template)."""
-    try:
-        init_guest_dir(Path(target), force=force)
-    except FileExistsError as e:
-        click.echo(f"error: {e}", err=True)
-        raise SystemExit(1)
-    click.echo(f"created {target}/config/")
-
-
-# ---------------------------------------------------------------------------
-# add (sub-group)
-# ---------------------------------------------------------------------------
-
-
-@cli.group()
-def add() -> None:
-    """Add config templates (AI provider, packages, MCP server)."""
-
-
-@add.command("ai-provider")
-@click.argument("name")
-@click.option("--dir", "guest_dir", default="guest", type=click.Path(),
-              help="Guest directory.")
-@click.option("--force", is_flag=True, help="Overwrite existing file.")
-def add_ai(name: str, guest_dir: str, force: bool) -> None:
-    """Add an AI provider template."""
-    try:
-        path = add_ai_provider(Path(guest_dir), name, force=force)
-    except (FileExistsError, FileNotFoundError) as e:
-        click.echo(f"error: {e}", err=True)
-        raise SystemExit(1)
-    click.echo(f"created {path}")
-
-
-@add.command("packages")
-@click.argument("name")
-@click.option("--dir", "guest_dir", default="guest", type=click.Path(),
-              help="Guest directory.")
-@click.option("--manager", default="apt",
-              type=click.Choice(["apt", "uv", "pip", "npm"]),
-              help="Package manager.")
-@click.option("--force", is_flag=True, help="Overwrite existing file.")
-def add_pkg(name: str, guest_dir: str, manager: str, force: bool) -> None:
-    """Add a package set template."""
-    try:
-        path = add_package_set(Path(guest_dir), name, manager=manager, force=force)
-    except (FileExistsError, FileNotFoundError) as e:
-        click.echo(f"error: {e}", err=True)
-        raise SystemExit(1)
-    click.echo(f"created {path}")
-
-
-@add.command("mcp")
-@click.argument("name")
-@click.option("--dir", "guest_dir", default="guest", type=click.Path(),
-              help="Guest directory.")
-@click.option("--transport", default="stdio",
-              type=click.Choice(["stdio", "sse"]),
-              help="MCP transport type.")
-@click.option("--force", is_flag=True, help="Overwrite existing file.")
-def add_mcp(name: str, guest_dir: str, transport: str, force: bool) -> None:
-    """Add an MCP server template."""
-    try:
-        path = add_mcp_server(Path(guest_dir), name, transport=transport, force=force)
-    except (FileExistsError, FileNotFoundError) as e:
-        click.echo(f"error: {e}", err=True)
-        raise SystemExit(1)
-    click.echo(f"created {path}")
 
 
 def main() -> None:

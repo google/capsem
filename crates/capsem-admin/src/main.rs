@@ -16,9 +16,8 @@ use capsem_core::net::policy_config::{
 use clap::{Parser, Subcommand};
 use serde::{Deserialize, Serialize};
 
+#[cfg(test)]
 const PRIMARY_PROFILE_TEMPLATE: &str = include_str!("../../../config/profiles/code/profile.toml");
-const SETTINGS_TEMPLATE: &str = include_str!("../../../config/admin/settings.toml");
-
 #[derive(Debug, Parser)]
 #[command(name = "capsem-admin")]
 #[command(about = "Capsem profile and asset administration")]
@@ -45,7 +44,6 @@ struct ProfileCommand {
 
 #[derive(Debug, Subcommand)]
 enum ProfileSubcommand {
-    Init(ProfileInitArgs),
     Validate(ProfileValidateArgs),
     Check(ProfileCheckArgs),
     Materialize(ProfileMaterializeArgs),
@@ -59,7 +57,6 @@ struct SettingsCommand {
 
 #[derive(Debug, Subcommand)]
 enum SettingsSubcommand {
-    Init(InitArgs),
     Validate(SettingsValidateArgs),
 }
 
@@ -72,7 +69,6 @@ struct RuleFileCommand {
 #[derive(Debug, Subcommand)]
 enum RuleFileSubcommand {
     Validate(RuleFileArgs),
-    Compile(RuleFileArgs),
 }
 
 #[derive(Debug, Parser)]
@@ -85,7 +81,6 @@ struct ManifestCommand {
 enum ManifestSubcommand {
     Check(ManifestCheckArgs),
     Generate(ManifestGenerateArgs),
-    Verify(ManifestVerifyArgs),
 }
 
 #[derive(Debug, Parser)]
@@ -96,10 +91,7 @@ struct ImageCommand {
 
 #[derive(Debug, Subcommand)]
 enum ImageSubcommand {
-    Plan(ImageBuildArgs),
     Build(ImageBuildArgs),
-    Workspace(ImageWorkspaceArgs),
-    Verify(ImageVerifyArgs),
 }
 
 #[derive(Debug, Parser)]
@@ -157,6 +149,7 @@ struct ProfileMaterializeArgs {
     json: bool,
 }
 
+#[cfg(test)]
 #[derive(Debug, Parser)]
 struct ProfileInitArgs {
     /// Destination profile TOML to create.
@@ -191,6 +184,7 @@ struct SettingsValidateArgs {
     json: bool,
 }
 
+#[cfg(test)]
 #[derive(Debug, Parser)]
 struct InitArgs {
     /// Destination file to create.
@@ -208,7 +202,7 @@ struct RuleFileArgs {
     /// Treat the rules as this source when resolving priority.
     #[arg(long, value_enum, default_value_t = RuleFileSourceArg::User)]
     source: RuleFileSourceArg,
-    /// Emit a machine-readable validation or compile report.
+    /// Emit a machine-readable validation report.
     #[arg(long)]
     json: bool,
 }
@@ -231,18 +225,6 @@ struct ManifestGenerateArgs {
     #[arg(long)]
     version: Option<String>,
     /// Emit the generated manifest after writing it.
-    #[arg(long)]
-    json: bool,
-}
-
-#[derive(Debug, Parser)]
-struct ManifestVerifyArgs {
-    /// Manifest JSON file to validate against sibling built assets.
-    path: PathBuf,
-    /// Restrict verification to one manifest arch.
-    #[arg(long)]
-    arch: Option<String>,
-    /// Emit a machine-readable manifest report.
     #[arg(long)]
     json: bool,
 }
@@ -274,28 +256,6 @@ struct ImageBuildArgs {
     #[arg(long)]
     dry_run: bool,
     /// Emit a machine-readable build plan/report.
-    #[arg(long)]
-    json: bool,
-}
-
-#[derive(Debug, Parser)]
-struct ImageVerifyArgs {
-    /// Profile TOML that owns the image build.
-    #[arg(long)]
-    profile: PathBuf,
-    /// Config root used to validate profile rule files.
-    #[arg(long, default_value = "config")]
-    config_root: PathBuf,
-    /// Output directory containing built assets.
-    #[arg(long, default_value = "assets")]
-    output: PathBuf,
-    /// Manifest JSON generated for the built assets.
-    #[arg(long)]
-    manifest: Option<PathBuf>,
-    /// Restrict verification to one profile architecture.
-    #[arg(long)]
-    arch: Option<String>,
-    /// Emit a machine-readable verification report.
     #[arg(long)]
     json: bool,
 }
@@ -601,37 +561,30 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Commands::Profile(command) => match command.command {
-            ProfileSubcommand::Init(args) => init_profile_command(args),
             ProfileSubcommand::Validate(args) => validate_profile_command(args),
             ProfileSubcommand::Check(args) => profile_check_command(args),
             ProfileSubcommand::Materialize(args) => profile_materialize_command(args),
         },
         Commands::Settings(command) => match command.command {
-            SettingsSubcommand::Init(args) => init_file_command(args, SETTINGS_TEMPLATE),
             SettingsSubcommand::Validate(args) => validate_settings_command(args),
         },
         Commands::Enforcement(command) => match command.command {
             RuleFileSubcommand::Validate(args) => validate_rule_file_command("enforcement", args),
-            RuleFileSubcommand::Compile(args) => compile_rule_file_command("enforcement", args),
         },
         Commands::Detection(command) => match command.command {
             RuleFileSubcommand::Validate(args) => validate_rule_file_command("detection", args),
-            RuleFileSubcommand::Compile(args) => compile_rule_file_command("detection", args),
         },
         Commands::Manifest(command) => match command.command {
             ManifestSubcommand::Check(args) => manifest_check_command(args),
             ManifestSubcommand::Generate(args) => manifest_generate_command(args),
-            ManifestSubcommand::Verify(args) => manifest_verify_command(args),
         },
         Commands::Image(command) => match command.command {
-            ImageSubcommand::Plan(args) => image_plan_command(args),
             ImageSubcommand::Build(args) => image_build_command(args),
-            ImageSubcommand::Workspace(args) => image_workspace_command(args),
-            ImageSubcommand::Verify(args) => image_verify_command(args),
         },
     }
 }
 
+#[cfg(test)]
 fn init_file_command(args: InitArgs, template: &str) -> Result<()> {
     if args.output.exists() && !args.force {
         return Err(anyhow!(
@@ -649,6 +602,7 @@ fn init_file_command(args: InitArgs, template: &str) -> Result<()> {
     Ok(())
 }
 
+#[cfg(test)]
 fn init_profile_command(args: ProfileInitArgs) -> Result<()> {
     if args.output.exists() && !args.force {
         return Err(anyhow!(
@@ -884,7 +838,7 @@ fn profile_materialize_command(args: ProfileMaterializeArgs) -> Result<()> {
 }
 
 fn check_config_root(config_root: &Path, arch: Option<&str>) -> Result<ConfigRootCheckReport> {
-    let settings = validate_settings(&config_root.join("admin/settings.toml"))?;
+    let settings = validate_settings(&config_root.join("settings/settings.toml"))?;
     let corp_rules = validate_corp_config(&config_root.join("corp/corp.toml"), config_root)?;
     let catalog =
         ProfileCatalog::load_from_dir(&config_root.join("profiles")).map_err(|error| {
@@ -979,12 +933,6 @@ fn validate_rule_file_command(kind: &'static str, args: RuleFileArgs) -> Result<
     Ok(())
 }
 
-fn compile_rule_file_command(kind: &'static str, args: RuleFileArgs) -> Result<()> {
-    let report = compile_rule_file(kind, &args.path, args.source)?;
-    println!("{}", serde_json::to_string_pretty(&report)?);
-    Ok(())
-}
-
 fn manifest_check_command(args: ManifestCheckArgs) -> Result<()> {
     let manifest = load_manifest(&args.path)?;
     let report = manifest_report(&args.path, &manifest, None, None)?;
@@ -996,43 +944,6 @@ fn manifest_check_command(args: ManifestCheckArgs) -> Result<()> {
             args.path.display(),
             report.releases
         );
-    }
-    Ok(())
-}
-
-fn manifest_verify_command(args: ManifestVerifyArgs) -> Result<()> {
-    let manifest = load_manifest(&args.path)?;
-    let assets_dir = args.path.parent().ok_or_else(|| {
-        anyhow!(
-            "manifest {} has no parent asset directory",
-            args.path.display()
-        )
-    })?;
-    let report = manifest_report(
-        &args.path,
-        &manifest,
-        Some(assets_dir),
-        args.arch.as_deref(),
-    )?;
-    let failed = report
-        .arches
-        .iter()
-        .flat_map(|arch| arch.assets.iter())
-        .any(|asset| {
-            !asset.present
-                || asset.size_ok.is_some_and(|ok| !ok)
-                || asset.blake3_ok.is_some_and(|ok| !ok)
-        });
-    if args.json {
-        println!("{}", serde_json::to_string_pretty(&report)?);
-    } else if !failed {
-        println!("valid: manifest assets {}", args.path.display());
-    }
-    if failed {
-        return Err(anyhow!(
-            "manifest asset verify failed for {}",
-            args.path.display()
-        ));
     }
     Ok(())
 }
@@ -1051,12 +962,6 @@ fn manifest_generate_command(args: ManifestGenerateArgs) -> Result<()> {
             args.assets_dir.join("manifest.json").display()
         );
     }
-    Ok(())
-}
-
-fn image_plan_command(args: ImageBuildArgs) -> Result<()> {
-    let plan = image_build_plan(&args)?;
-    print_image_build_plan(&plan, args.json)?;
     Ok(())
 }
 
@@ -1095,37 +1000,6 @@ fn image_build_command(args: ImageBuildArgs) -> Result<()> {
         run_command(command)?;
     }
     print_image_build_plan(&plan, args.json)?;
-    Ok(())
-}
-
-fn image_workspace_command(args: ImageWorkspaceArgs) -> Result<()> {
-    let report = materialize_image_workspace(&args)?;
-    if args.json {
-        println!("{}", serde_json::to_string_pretty(&report)?);
-    } else {
-        println!(
-            "materialized: image workspace for profile {} at {}",
-            report.profile_id, report.workspace
-        );
-    }
-    Ok(())
-}
-
-fn image_verify_command(args: ImageVerifyArgs) -> Result<()> {
-    let report = verify_image_outputs(&args)?;
-    if args.json {
-        println!("{}", serde_json::to_string_pretty(&report)?);
-    } else {
-        let count = report
-            .arches
-            .iter()
-            .map(|arch| arch.assets.len())
-            .sum::<usize>();
-        println!(
-            "valid: image outputs for profile {} ({} assets)",
-            report.profile_id, count
-        );
-    }
     Ok(())
 }
 
@@ -2894,7 +2768,7 @@ mod tests {
             .parent()
             .and_then(Path::parent)
             .expect("repo root");
-        let path = repo_root.join("config/admin/settings.toml");
+        let path = repo_root.join("config/settings/settings.toml");
 
         let report = validate_settings(&path).expect("settings validates");
 
@@ -2961,11 +2835,11 @@ code = true
         let temp = tempfile::tempdir().expect("tempdir");
         let config_root = temp.path().join("config");
         fs::create_dir_all(config_root.join("profiles/wrong")).expect("profile dir");
-        fs::create_dir_all(config_root.join("admin")).expect("admin dir");
+        fs::create_dir_all(config_root.join("settings")).expect("settings dir");
         fs::create_dir_all(config_root.join("corp")).expect("corp dir");
         fs::write(
-            config_root.join("admin/settings.toml"),
-            include_str!("../../../config/admin/settings.toml"),
+            config_root.join("settings/settings.toml"),
+            include_str!("../../../config/settings/settings.toml"),
         )
         .expect("settings");
         fs::write(
@@ -3693,7 +3567,6 @@ decision = "block"
             output,
             manifest: None,
             arch: Some("arm64".to_string()),
-            json: true,
         })
         .expect_err("manifest/output drift rejected");
 
@@ -3709,6 +3582,26 @@ decision = "block"
             .expect_err("profile is required");
 
         assert!(error.to_string().contains("--profile"), "{error}");
+    }
+
+    #[test]
+    fn removed_admin_authoring_commands_are_not_parseable() {
+        for argv in [
+            ["capsem-admin", "profile", "init"],
+            ["capsem-admin", "settings", "init"],
+            ["capsem-admin", "enforcement", "compile"],
+            ["capsem-admin", "detection", "compile"],
+            ["capsem-admin", "manifest", "verify"],
+            ["capsem-admin", "image", "plan"],
+            ["capsem-admin", "image", "workspace"],
+            ["capsem-admin", "image", "verify"],
+        ] {
+            let error = Cli::try_parse_from(argv).expect_err("removed command rejected");
+            assert!(
+                error.to_string().contains("unrecognized subcommand"),
+                "{error}"
+            );
+        }
     }
 
     #[test]
@@ -3890,7 +3783,7 @@ decision = "block"
         assert_eq!(report.profile_id, "code");
         assert_eq!(report.materialized_assets.len(), 3);
         assert_eq!(report.materialized_obom.len(), 1);
-        assert!(output_root.join("admin/settings.toml").is_file());
+        assert!(output_root.join("settings/settings.toml").is_file());
         assert!(output_root.join("corp/corp.toml").is_file());
         assert!(output_root.join("assets/manifest.json").is_file());
         assert!(output_root.join("profiles/code/enforcement.toml").is_file());
@@ -4155,4 +4048,13 @@ decision = "block"
         })
         .to_string()
     }
+}
+#[cfg(test)]
+#[derive(Debug)]
+struct ImageVerifyArgs {
+    profile: PathBuf,
+    config_root: PathBuf,
+    output: PathBuf,
+    manifest: Option<PathBuf>,
+    arch: Option<String>,
 }

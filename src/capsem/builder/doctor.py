@@ -263,7 +263,7 @@ def check_profile_contract(profile_path: Path, config_root: Path) -> CheckResult
             name="profile-contract",
             passed=False,
             detail=f"profile not found: {profile_path}",
-            fix="run capsem-admin profile init or check your profile id",
+            fix="check the profile id and ensure config/profiles/<id>/profile.toml exists",
         )
     try:
         result = subprocess.run(

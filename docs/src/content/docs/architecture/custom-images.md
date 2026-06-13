@@ -105,7 +105,7 @@ match = 'http.host.matches("(^|.*\\.)(google\\.com|bing\\.com|duckduckgo\\.com)$
 
 ### Build Configuration
 
-Backend build parameters are resolved by the admin rail and Docker templates.
+Backend build parameters are resolved by the profile-derived build rail and Docker templates.
 Each architecture is self-contained.
 
 ```toml

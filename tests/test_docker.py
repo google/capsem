@@ -97,6 +97,11 @@ def generated_profile_guest(tmp_path):
     return load_guest_config(guest)
 
 
+@pytest.fixture
+def rendered_profile_arm64(generated_profile_guest):
+    return render_dockerfile("Dockerfile.rootfs.j2", generated_profile_guest, "arm64")
+
+
 # ---------------------------------------------------------------------------
 # Rootfs: basic rendering
 # ---------------------------------------------------------------------------
@@ -123,14 +128,12 @@ class TestRenderRootfs:
         cmd = real_config.package_sets["python"].install_cmd
         assert cmd in rendered_arm64
 
-    def test_npm_packages_from_providers(self, real_config, rendered_arm64):
-        for provider in real_config.ai_providers.values():
-            if provider.enabled and provider.install:
-                for pkg in provider.install.packages:
-                    assert pkg in rendered_arm64, f"npm package '{pkg}' missing"
+    def test_npm_packages_from_package_sets(self, generated_profile_guest, rendered_profile_arm64):
+        for pkg in generated_profile_guest.package_sets["npm"].packages:
+            assert pkg in rendered_profile_arm64, f"npm package '{pkg}' missing"
 
-    def test_npm_prefix(self, rendered_arm64):
-        assert "/opt/ai-clis" in rendered_arm64
+    def test_npm_prefix(self, rendered_profile_arm64):
+        assert "/opt/ai-clis" in rendered_profile_arm64
 
     def test_guest_binaries(self, rendered_arm64):
         for binary in GUEST_BINARIES:
@@ -209,17 +212,17 @@ class TestRootfsLayerOrdering:
         assert pos != -1, f"Expected to find {label or repr(needle)} in Dockerfile"
         return pos
 
-    def test_env_path_includes_npm_prefix(self, rendered_arm64):
+    def test_env_path_includes_npm_prefix(self, rendered_profile_arm64):
         """Regression: v0.14.18 -- /opt/ai-clis/bin not on PATH, gemini/codex
         returned N/A, build-time validator rejected the rootfs."""
-        assert 'ENV PATH="/opt/ai-clis/bin:$PATH"' in rendered_arm64, (
+        assert 'ENV PATH="/opt/ai-clis/bin:$PATH"' in rendered_profile_arm64, (
             "Dockerfile.rootfs.j2 must set ENV PATH to include /opt/ai-clis/bin "
-            "so version extraction can find npm-installed AI CLIs"
+            "so version extraction can find npm-installed CLIs"
         )
 
-    def test_env_path_after_npm_install(self, rendered_arm64):
-        npm_pos = self._pos(rendered_arm64, "npm install -g --prefix", "npm install")
-        path_pos = self._pos(rendered_arm64, 'ENV PATH="/opt/ai-clis/bin', "ENV PATH")
+    def test_env_path_after_npm_install(self, rendered_profile_arm64):
+        npm_pos = self._pos(rendered_profile_arm64, "npm install -g --prefix", "npm install")
+        path_pos = self._pos(rendered_profile_arm64, 'ENV PATH="/opt/ai-clis/bin', "ENV PATH")
         assert npm_pos < path_pos, "ENV PATH must come after npm install"
 
     def test_ca_cert_before_certifi_patch(self, rendered_arm64):
@@ -231,10 +234,10 @@ class TestRootfsLayerOrdering:
             "Order must be: COPY cert -> update-ca-certificates -> certifi patch"
         )
 
-    def test_node_before_npm_install(self, rendered_arm64):
+    def test_node_before_npm_install(self, rendered_profile_arm64):
         """npm install requires node to be installed first."""
-        node_pos = self._pos(rendered_arm64, "nvm install", "node install")
-        npm_pos = self._pos(rendered_arm64, "npm install -g --prefix", "npm install")
+        node_pos = self._pos(rendered_profile_arm64, "nvm install", "node install")
+        npm_pos = self._pos(rendered_profile_arm64, "npm install -g --prefix", "npm install")
         assert node_pos < npm_pos, "Node.js must be installed before npm install"
 
     def test_guest_binaries_before_root_cleanup(self, rendered_arm64):
@@ -266,16 +269,16 @@ class TestRootfsLayerOrdering:
             "no package installs should follow it"
         )
 
-    def test_setuid_strip_after_all_installs(self, rendered_arm64):
+    def test_setuid_strip_after_all_installs(self, rendered_profile_arm64):
         """Setuid strip must come after all package installs so no new
         setuid binaries sneak in after the strip."""
-        strip_pos = self._pos(rendered_arm64, "-4000", "setuid strip")
+        strip_pos = self._pos(rendered_profile_arm64, "-4000", "setuid strip")
         # Must be after npm, python, and guest binary installs
-        npm_pos = self._pos(rendered_arm64, "npm install -g --prefix", "npm install")
+        npm_pos = self._pos(rendered_profile_arm64, "npm install -g --prefix", "npm install")
         assert strip_pos > npm_pos, "setuid strip must come after npm install"
-        if "uv pip install --system" in rendered_arm64:
+        if "uv pip install --system" in rendered_profile_arm64:
             # Find the LAST uv pip install (python packages, not certifi)
-            last_pip = rendered_arm64.rfind("uv pip install --system --break-system-packages")
+            last_pip = rendered_profile_arm64.rfind("uv pip install --system --break-system-packages")
             assert strip_pos > last_pip, "setuid strip must come after python packages"
 
     def test_x86_64_has_same_ordering(self, rendered_arm64, rendered_x86):
@@ -345,26 +348,13 @@ class TestRootfsVersionExtractability:
     built image. This class validates that the Dockerfile installs them
     in locations that will be on PATH when extract_tool_versions runs."""
 
-    def test_all_ai_cli_install_prefixes_on_path(self, real_config, rendered_arm64):
-        """Every AI provider with an npm install prefix must have that
-        prefix's bin/ on ENV PATH in the Dockerfile."""
-        for provider in real_config.ai_providers.values():
-            if not (provider.enabled and provider.install):
-                continue
-            if provider.install.manager.value == "npm" and provider.install.prefix:
-                prefix_bin = f"{provider.install.prefix}/bin"
-                assert prefix_bin in rendered_arm64, (
-                    f"AI provider {provider.name} installs to {provider.install.prefix} "
-                    f"but {prefix_bin} is not on PATH in the Dockerfile"
-                )
+    def test_npm_install_prefix_on_path(self, rendered_profile_arm64):
+        assert "/opt/ai-clis/bin" in rendered_profile_arm64
 
     def test_curl_installed_clis_copied_to_usr_local(self, real_config, rendered_arm64):
         """Curl-installed CLIs write to ~/.local/bin which is tmpfs at runtime.
         The Dockerfile must copy them to /usr/local/bin."""
-        has_curl = any(
-            p.enabled and p.install and p.install.manager.value == "curl"
-            for p in real_config.ai_providers.values()
-        )
+        has_curl = "curl" in real_config.package_sets
         if has_curl:
             assert 'install -m 555 "$bin" /usr/local/bin/' in rendered_arm64, (
                 "Curl-installed CLIs must be copied to /usr/local/bin so they "
@@ -473,14 +463,12 @@ class TestGenerateBuildContext:
         assert "arch_name" in ctx
         assert "kernel_version" in ctx
 
-    def test_rootfs_npm_providers(self, real_config):
+    def test_rootfs_without_npm_package_set(self, real_config):
         ctx = generate_build_context("Dockerfile.rootfs.j2", real_config, "arm64")
-        assert "@google/gemini-cli" in ctx["npm_packages"]
-        assert "@openai/codex" in ctx["npm_packages"]
+        assert ctx["npm_packages"] == []
 
     def test_rootfs_npm_packages_can_come_from_profile_package_set(self, generated_profile_guest):
         ctx = generate_build_context("Dockerfile.rootfs.j2", generated_profile_guest, "arm64")
-        assert generated_profile_guest.ai_providers == {}
         assert ctx["npm_packages"] == ["@openai/codex"]
         rendered = render_dockerfile("Dockerfile.rootfs.j2", generated_profile_guest, "arm64")
         assert "@openai/codex" in rendered
@@ -489,7 +477,7 @@ class TestGenerateBuildContext:
 
     def test_rootfs_curl_installs(self, real_config):
         ctx = generate_build_context("Dockerfile.rootfs.j2", real_config, "arm64")
-        assert "https://claude.ai/install.sh" in ctx["curl_installs"]
+        assert ctx["curl_installs"] == []
 
     def test_rootfs_arch_config(self, real_config):
         ctx = generate_build_context("Dockerfile.rootfs.j2", real_config, "arm64")
@@ -531,13 +519,13 @@ class TestEdgeCases:
         # Should not have python install section
         assert "uv pip install --system" not in result or "certifi" in result
 
-    def test_no_ai_providers(self, real_config):
-        """No AI providers means no npm install section."""
+    def test_no_npm_package_set(self, real_config):
+        """No npm package set means no npm install section."""
         from capsem.builder.models import GuestImageConfig
 
         minimal = GuestImageConfig(
             build=real_config.build,
-            package_sets=real_config.package_sets,
+            package_sets={"apt": real_config.package_sets["apt"]},
         )
         result = render_dockerfile("Dockerfile.rootfs.j2", minimal, "arm64")
         assert "FROM --platform=linux/arm64" in result
@@ -807,7 +795,6 @@ class TestBuildVersionScript:
         script = build_version_script(real_config)
         assert '# System' in script
         assert '# Python' in script
-        assert '# AI CLIs' in script
 
     def test_real_config_has_build_tools(self, real_config):
         script = build_version_script(real_config)
@@ -827,12 +814,6 @@ class TestBuildVersionScript:
         assert 'pytest=' in script
         assert 'numpy=' in script
 
-    def test_real_config_has_ai_clis(self, real_config):
-        script = build_version_script(real_config)
-        assert 'claude=' in script
-        assert 'gemini=' in script
-        assert 'codex=' in script
-
     def test_empty_config_produces_empty_script(self):
         from capsem.builder.models import BuildConfig, GuestImageConfig
         config = GuestImageConfig(
@@ -840,17 +821,6 @@ class TestBuildVersionScript:
         )
         script = build_version_script(config)
         assert script == ""
-
-    def test_disabled_provider_excluded(self, real_config):
-        """Disabled AI providers are not included in the version script."""
-        # Create config with all providers disabled
-        disabled_providers = {}
-        for key, prov in real_config.ai_providers.items():
-            disabled_providers[key] = prov.model_copy(update={"enabled": False})
-        config = real_config.model_copy(update={"ai_providers": disabled_providers})
-        script = build_version_script(config)
-        assert "# AI CLIs" not in script
-
 
 def real_arch():
     """Minimal ArchConfig for test configs."""
@@ -864,7 +834,7 @@ def real_arch():
 
 
 class TestExtractToolVersionsValidation:
-    """extract_tool_versions() validates AI CLI results."""
+    """extract_tool_versions() writes version output from configured commands."""
 
     @patch("capsem.builder.docker.run_cmd")
     def test_valid_output_passes(self, mock_run, real_config):
@@ -874,8 +844,6 @@ class TestExtractToolVersionsValidation:
             "python3=3.11.2\ngit=2.39.5\ngh=2.67.0\ntmux=3.4\ncurl=7.88.1\n"
             "# Python\n"
             "pytest=8.3.4\nnumpy=2.2.3\nrequests=2.32.3\npandas=2.2.3\n"
-            "# AI CLIs\n"
-            "claude=1.0.18\ngemini=0.3.0\ncodex=0.1.0\n"
         ))
         # Should not raise
         extract_tool_versions(
@@ -884,24 +852,23 @@ class TestExtractToolVersionsValidation:
         )
 
     @patch("capsem.builder.docker.run_cmd")
-    def test_na_ai_cli_raises(self, mock_run, real_config):
+    def test_na_values_do_not_raise(self, mock_run, real_config):
         mock_run.return_value = MagicMock(stdout=(
             "# System\n"
             "node=24.1.0\n"
-            "# AI CLIs\n"
-            "claude=1.0.18\ngemini=N/A\ncodex=N/A\n"
+            "# Python\n"
+            "pytest=N/A\n"
         ))
-        with pytest.raises(RuntimeError, match="gemini"):
-            extract_tool_versions(
-                "docker", "test-image", "linux/arm64",
-                Path("/tmp"), real_config,
-            )
+        extract_tool_versions(
+            "docker", "test-image", "linux/arm64",
+            Path("/tmp"), real_config,
+        )
 
     @patch("capsem.builder.docker.run_cmd")
     def test_validate_false_skips_check(self, mock_run, real_config):
         mock_run.return_value = MagicMock(stdout=(
-            "# AI CLIs\n"
-            "claude=N/A\ngemini=N/A\ncodex=N/A\n"
+            "# Python\n"
+            "pytest=N/A\n"
         ))
         # Should not raise when validate=False
         extract_tool_versions(

@@ -148,7 +148,7 @@ The capsem-builder Python package provides config-driven image building:
 uv run capsem-builder doctor guest/       # Check build prerequisites
 uv run capsem-builder validate guest/     # Lint guest config
 capsem-admin profile check --profile config/profiles/<profile-id>/profile.toml --config-root config
-just build-assets              # Build profile-owned VM assets through the admin rail
+just build-assets              # Build profile-owned VM assets through the profile-derived build rail
 just _materialize-config       # Materialize generated runtime profile config
 uv run capsem-builder inspect guest/      # Show config summary
 ```

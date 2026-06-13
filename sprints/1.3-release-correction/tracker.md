@@ -91,13 +91,13 @@ next one, and stage only the files for that slice.
     catalog id mismatch and caught/fixed the stale corp `refresh_interval_hours`
     TOML contract.
   - 2026-06-12 progress: config source layout is explicit and documented in
-    `config/README.md` and `tests/README.md`: admin settings artifacts live in
-    `config/admin`, corp contracts in `config/corp`, profile source ledgers in
-    `config/profiles`, generated runtime config in `target/config`, and test
-    fixtures in `tests/fixtures`. Source profiles no longer carry generated
-    `hash`/`size` pins; `capsem-admin profile validate/check` rejects source
-    pins, while `capsem-admin profile materialize` writes resolved asset and
-    profile-file pins into the materialized runtime profile.
+    `config/README.md` and `tests/README.md`: settings artifacts live in
+    `config/settings`, corp contracts in `config/corp`, profile source ledgers
+    in `config/profiles`, generated runtime config in `target/config`, and
+    test fixtures in `tests/fixtures`. Source profiles no longer carry
+    generated `hash`/`size` pins; `capsem-admin profile validate/check` rejects
+    source pins, while `capsem-admin profile materialize` writes resolved asset
+    and profile-file pins into the materialized runtime profile.
   - Proof: `cargo test -p capsem-admin`; `cargo test -p capsem-core
     profile_contract`; `uv run python -m pytest
     tests/capsem-build-chain/test_source_profiles_unpinned.py
@@ -110,6 +110,21 @@ next one, and stage only the files for that slice.
     `just smoke` materialize every checked-in profile through
     `capsem-admin profile materialize`, so source profile `hash`/`size` pins
     fail the normal release gates instead of only a one-off linter.
+  - 2026-06-13 burn proof: `config/admin` is gone; settings now live under
+    `config/settings` with `schema.generated.json` and
+    `ui-metadata.generated.json`; `settings-registry`,
+    `settings-schema.generated`, and `mcp-tools.generated` naming is guarded
+    out of active docs/code. Python `capsem-builder init/new/add` and
+    `scaffold.py` are deleted. Public `capsem-admin profile init`,
+    `settings init`, `enforcement/detection compile`, `manifest verify`, and
+    `image plan/workspace/verify` are rejected by CLI parsing. Surviving admin
+    surface is profile validate/check/materialize, settings validate,
+    enforcement/detection validate, manifest check/generate, and image build.
+  - Proof: `cargo test -p capsem-admin -- --nocapture`; `uv run python -m
+    pytest tests/test_config.py tests/test_cli.py::TestRemovedAuthoringCommands
+    tests/test_release_doctor_contract.py::test_config_contract_has_no_admin_or_registry_authority
+    tests/test_release_doctor_contract.py::test_builder_has_no_guest_scaffold_authoring_rail
+    tests/capsem-build-chain/test_active_docs_profile_contract.py -q`.
 
 ## S2. Materialization, Assets, VM Resources
 

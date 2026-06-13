@@ -163,7 +163,7 @@ fn collect_settings(
 }
 
 pub(super) const DEFAULTS_JSON: &str =
-    include_str!("../../../../../config/admin/settings-registry.generated.json");
+    include_str!("../../../../../config/settings/ui-metadata.generated.json");
 
 /// Returns the setting definitions parsed from the embedded settings registry.
 pub fn setting_definitions() -> Vec<SettingDef> {

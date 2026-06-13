@@ -34,7 +34,10 @@
   `manifest-origin.json`.
 - [x] S0: Freeze current dirty install-log/version-stamp work.
 - [x] S0: Add guardrail in active finalizing sprint.
-- [ ] S1: Move host config source to `config/host/`.
+- [x] S1: Burn the vague `config/host` proposal. Checked-in host-side product
+  contracts are explicit: UI/application preferences under `config/settings`,
+  corp constraints under `config/corp`, and profile runtime truth under
+  `config/profiles`.
 - [x] S1: Move Docker templates to `config/docker/`.
 - [x] S1: Move `config/profiles/code.toml` to
   `config/profiles/code/profile.toml`.
@@ -69,16 +72,23 @@
 - [x] Tooling: Add `ty` as a Python source type-check gate for `src/capsem`.
 - [ ] Tooling: Burn full-tree `ty` debt for guest payloads/scripts/tests after
   guest dependency paths and dynamic test helper types are normalized.
-- [ ] S1: Delete/rewrite Python builder scaffolding and product config models.
+- [x] S1: Delete Python builder product scaffolding commands and module.
+  `capsem-builder init/new/add` and `src/capsem/builder/scaffold.py` are gone;
+  focused tests prove the commands are rejected.
+- [ ] S1: Delete/rewrite remaining Python builder product config models.
 - [ ] S1: Replace `GuestImageConfig` with backend-only image spec.
-- [ ] S1: Remove settings/default generation from guest image config.
-- [ ] S1: Resolve generated config files (`defaults.json`,
-  `settings-schema.json`, `mcp-tools.json`) so they derive from host/profile
-  truth or move under `target/config`.
+- [x] S1: Move settings/default generation out of guest image config naming.
+  Settings source is `config/settings/settings.toml`; generated artifacts are
+  `config/settings/schema.generated.json` and
+  `config/settings/ui-metadata.generated.json`.
+- [x] S1: Resolve generated config files. Retired
+  `config/defaults.json`/`settings-schema.json`/`mcp-tools.json` naming and the
+  later `settings-registry`/`mcp-tools.generated` artifacts are gone from active
+  docs/code; MCP runtime truth is route-backed profile data.
 - [x] S1: Classify/remove root developer shims (`.gemini`, `.claude`,
-  `.codex`): `config/skills/` is the only skill source; root skill symlinks
-  are removed; profile/agent injection must copy or mount from
-  `config/skills/` explicitly.
+  `.codex`): project/dev agent skills live in top-level `skills/` with
+  `.codex/skills -> ../skills`; profile/product skill payload is a separate
+  future profile concern and must not be confused with developer skills.
 - [x] S1: Add Pydantic-backed skill library validation. `capsem-builder
   validate-skills config/skills` validates every skill directory and
   `SKILL.md` frontmatter, rejects symlinks/nested skills/name drift, and runs

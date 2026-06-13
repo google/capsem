@@ -172,6 +172,15 @@ prove the same rails without user credentials.
   `co-work` identities and passed `just _materialize-config`, core profile
   contract tests, the full `capsem-admin` suite, and the focused Python
   profile/build-chain tests before the final shipping-name full gate.
+- Config/admin burn proof on 2026-06-13: `config/admin` and generated
+  settings-registry/mcp-tools artifacts are gone. Settings live under
+  `config/settings` as UI/application preference contract only; active docs and
+  skills now use the schema/catalog/metadata naming contract. Python
+  `capsem-builder init/new/add` and `scaffold.py` are deleted, and
+  `capsem-admin` rejects burned authoring verbs (`profile init`,
+  `settings init`, rule compile, manifest verify, image plan/workspace/verify).
+  Proof: full `cargo test -p capsem-admin -- --nocapture` plus focused Python
+  config/CLI/active-doc guard suite.
 - Apple VZ lifecycle hardening on 2026-06-13: checkpoint files now require an
   fsynced `.complete` marker before service registry state can mark a VM
   suspended or resume from warm checkpoint. Save/restore use exclusive

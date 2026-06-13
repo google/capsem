@@ -10,7 +10,7 @@ The asset pipeline moves kernel, initrd, and rootfs images from build through to
 ## Build
 
 Profile configuration lives under `config/profiles/<profile_id>/`. The
-admin rail validates the profile ledger and materializes a backend image
+profile-derived build rail validates the profile ledger and materializes a backend image
 workspace before Docker runs:
 
 ```
@@ -59,7 +59,7 @@ assets/
 `config/` is checked-in source material: profile, corp, settings, rule files,
 and support templates. The current build's runtime config is generated under
 `target/config/`. Local dev, smoke tests, CI, and release packaging all use the
-same admin rail; there is no dev-only profile patcher.
+same profile-derived build rail; there is no dev-only profile patcher.
 
 ## Manifest Format
 
@@ -115,7 +115,7 @@ sizes for every built architecture, writes `B3SUMS`, writes
 when `--json` is passed.
 
 `just build-assets`, `just _pack-initrd`, CI, release packaging, and corp
-custom builds must all use this admin rail. The lower-level builder code is an
+custom builds must all use this profile-derived build rail. The lower-level builder code is an
 implementation detail behind `capsem-admin`; docs and automation should not call
 manifest generator internals directly.
 
@@ -145,7 +145,7 @@ Corporate/custom asset builds use the same sequence as release:
 
 ```bash
 capsem-admin manifest generate /path/to/assets --version 1.3.corp.1 --json
-capsem-admin manifest verify /path/to/assets/manifest.json --json
+capsem-admin manifest check /path/to/assets/manifest.json --json
 bash scripts/build-pkg.sh \
   --manifest /path/to/assets/manifest.json \
   target/release/bundle/macos/Capsem.app \
@@ -177,8 +177,8 @@ profile's asset descriptors are the runtime contract:
 Failure modes:
 
 - **Generated config missing**: the justfile service path fails before launch.
-- **Generated profile/manifest mismatch**: `capsem-admin image verify` rejects
-  the profile before boot.
+- **Generated profile/manifest mismatch**: `capsem-admin profile check` rejects
+  the materialized profile before boot.
 - **Asset bytes mismatch**: asset ensure or `VmConfig::build()` rejects the
   file and the VM does not boot.
 

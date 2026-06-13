@@ -59,24 +59,6 @@ defconfig = "kernel/defconfig.x86_64"
 node_major = 24
 """
 
-GOOGLE_AI_TOML = """\
-[google]
-name = "Google AI"
-description = "Google Gemini AI provider"
-enabled = true
-
-[google.api_key]
-name = "Google AI API Key"
-env_vars = ["GEMINI_API_KEY"]
-prefix = "AIza"
-docs_url = "https://aistudio.google.com/apikey"
-
-[google.network]
-domains = ["*.googleapis.com"]
-allow_get = true
-allow_post = true
-"""
-
 CAPSEM_MCP_TOML = """\
 [capsem]
 name = "Capsem"
@@ -153,10 +135,6 @@ def _write_full_guest(tmp_path: Path) -> Path:
     config = guest / "config"
     config.mkdir(parents=True)
     (config / "build.toml").write_text(DUAL_ARCH_BUILD_TOML)
-
-    ai_dir = config / "ai"
-    ai_dir.mkdir()
-    (ai_dir / "google.toml").write_text(GOOGLE_AI_TOML)
 
     mcp_dir = config / "mcp"
     mcp_dir.mkdir()
@@ -397,13 +375,6 @@ class TestInspectCommand:
         assert "arm64" in result.output
         assert "x86_64" in result.output
 
-    def test_inspect_shows_providers(self, tmp_path):
-        guest = _write_full_guest(tmp_path)
-        runner = CliRunner()
-        result = runner.invoke(cli, ["inspect", str(guest)])
-        assert result.exit_code == 0
-        assert "google" in result.output.lower()
-
     def test_inspect_shows_packages(self, tmp_path):
         guest = _write_full_guest(tmp_path)
         runner = CliRunner()
@@ -430,7 +401,8 @@ class TestInspectCommand:
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert "build" in data
-        assert "ai_providers" in data
+        assert "package_sets" in data
+        assert "ai_providers" not in data
 
     def test_inspect_minimal(self, tmp_path):
         guest = _write_minimal_guest(tmp_path)
@@ -440,186 +412,15 @@ class TestInspectCommand:
         assert "arm64" in result.output
 
 
-# ---------------------------------------------------------------------------
-# init command
-# ---------------------------------------------------------------------------
+class TestRemovedAuthoringCommands:
+    """Profile/admin materialization owns authoring; builder scaffolds are gone."""
 
-
-class TestInitCommand:
-    """Tests for the init scaffolding command."""
-
-    def test_init_creates_structure(self, tmp_path):
-        target = tmp_path / "myguest"
+    @pytest.mark.parametrize("command", ["init", "new", "add"])
+    def test_scaffold_commands_are_removed(self, command):
         runner = CliRunner()
-        result = runner.invoke(cli, ["init", str(target)])
-        assert result.exit_code == 0
-        # Should create directory structure
-        assert (target / "config" / "build.toml").exists()
-        assert (target / "config" / "kernel").is_dir()
-
-    def test_init_build_toml_is_valid(self, tmp_path):
-        target = tmp_path / "myguest"
-        runner = CliRunner()
-        result = runner.invoke(cli, ["init", str(target)])
-        assert result.exit_code == 0
-        # The generated build.toml should validate
-        result2 = runner.invoke(cli, ["validate", str(target)])
-        assert result2.exit_code == 0
-
-    def test_init_existing_dir_fails(self, tmp_path):
-        target = tmp_path / "existing"
-        (target / "config").mkdir(parents=True)
-        runner = CliRunner()
-        result = runner.invoke(cli, ["init", str(target)])
+        result = runner.invoke(cli, [command])
         assert result.exit_code != 0
-        assert "exists" in result.output.lower()
-
-    def test_init_force_overwrites(self, tmp_path):
-        target = tmp_path / "existing"
-        (target / "config").mkdir(parents=True)
-        runner = CliRunner()
-        result = runner.invoke(cli, ["init", str(target), "--force"])
-        assert result.exit_code == 0
-        assert (target / "config" / "build.toml").exists()
-
-    def test_init_default_dir(self, tmp_path):
-        """Without argument, uses ./guest."""
-        runner = CliRunner()
-        # Run in tmp_path to avoid polluting project root
-        result = runner.invoke(cli, ["init"], catch_exceptions=False)
-        # Will either succeed or fail because ./guest already exists
-        assert result.exit_code in (0, 1)
-
-
-# ---------------------------------------------------------------------------
-# add command group
-# ---------------------------------------------------------------------------
-
-
-class TestAddAiProviderCommand:
-    """Tests for the add ai-provider scaffolding command."""
-
-    def test_add_ai_provider(self, tmp_path):
-        guest = _write_minimal_guest(tmp_path)
-        runner = CliRunner()
-        result = runner.invoke(cli, ["add", "ai-provider", "openai", "--dir", str(guest)])
-        assert result.exit_code == 0
-        ai_file = guest / "config" / "ai" / "openai.toml"
-        assert ai_file.exists()
-        content = ai_file.read_text()
-        assert "[openai]" in content
-        assert "api_key" in content
-
-    def test_add_ai_provider_already_exists(self, tmp_path):
-        guest = _write_full_guest(tmp_path)
-        runner = CliRunner()
-        result = runner.invoke(cli, ["add", "ai-provider", "google", "--dir", str(guest)])
-        assert result.exit_code != 0
-        assert "exists" in result.output.lower()
-
-    def test_add_ai_provider_force(self, tmp_path):
-        guest = _write_full_guest(tmp_path)
-        runner = CliRunner()
-        result = runner.invoke(cli, ["add", "ai-provider", "google", "--dir", str(guest), "--force"])
-        assert result.exit_code == 0
-
-    def test_add_ai_provider_creates_ai_dir(self, tmp_path):
-        guest = _write_minimal_guest(tmp_path)
-        runner = CliRunner()
-        result = runner.invoke(cli, ["add", "ai-provider", "mistral", "--dir", str(guest)])
-        assert result.exit_code == 0
-        assert (guest / "config" / "ai" / "mistral.toml").exists()
-
-    def test_added_provider_validates(self, tmp_path):
-        """Added provider should produce valid config."""
-        guest = _write_minimal_guest(tmp_path)
-        runner = CliRunner()
-        runner.invoke(cli, ["add", "ai-provider", "openai", "--dir", str(guest)])
-        result = runner.invoke(cli, ["validate", str(guest)])
-        assert result.exit_code == 0
-
-
-class TestAddPackagesCommand:
-    """Tests for the add packages scaffolding command."""
-
-    def test_add_packages_apt(self, tmp_path):
-        guest = _write_minimal_guest(tmp_path)
-        runner = CliRunner()
-        result = runner.invoke(cli, ["add", "packages", "system", "--dir", str(guest), "--manager", "apt"])
-        assert result.exit_code == 0
-        pkg_file = guest / "config" / "packages" / "system.toml"
-        assert pkg_file.exists()
-        content = pkg_file.read_text()
-        assert "[system]" in content
-        assert 'manager = "apt"' in content
-
-    def test_add_packages_default_manager(self, tmp_path):
-        guest = _write_minimal_guest(tmp_path)
-        runner = CliRunner()
-        result = runner.invoke(cli, ["add", "packages", "python", "--dir", str(guest)])
-        assert result.exit_code == 0
-        pkg_file = guest / "config" / "packages" / "python.toml"
-        assert pkg_file.exists()
-
-    def test_add_packages_already_exists(self, tmp_path):
-        guest = _write_full_guest(tmp_path)
-        runner = CliRunner()
-        result = runner.invoke(cli, ["add", "packages", "apt", "--dir", str(guest)])
-        assert result.exit_code != 0
-        assert "exists" in result.output.lower()
-
-    def test_add_packages_npm(self, tmp_path):
-        guest = _write_minimal_guest(tmp_path)
-        runner = CliRunner()
-        result = runner.invoke(cli, ["add", "packages", "node", "--dir", str(guest), "--manager", "npm"])
-        assert result.exit_code == 0
-        content = (guest / "config" / "packages" / "node.toml").read_text()
-        assert 'manager = "npm"' in content
-
-    def test_added_packages_validates(self, tmp_path):
-        guest = _write_minimal_guest(tmp_path)
-        runner = CliRunner()
-        runner.invoke(cli, ["add", "packages", "system", "--dir", str(guest), "--manager", "apt"])
-        result = runner.invoke(cli, ["validate", str(guest)])
-        assert result.exit_code == 0
-
-
-class TestAddMcpCommand:
-    """Tests for the add mcp scaffolding command."""
-
-    def test_add_mcp_stdio(self, tmp_path):
-        guest = _write_minimal_guest(tmp_path)
-        runner = CliRunner()
-        result = runner.invoke(cli, ["add", "mcp", "myserver", "--dir", str(guest)])
-        assert result.exit_code == 0
-        mcp_file = guest / "config" / "mcp" / "myserver.toml"
-        assert mcp_file.exists()
-        content = mcp_file.read_text()
-        assert "[myserver]" in content
-        assert 'transport = "stdio"' in content
-
-    def test_add_mcp_sse(self, tmp_path):
-        guest = _write_minimal_guest(tmp_path)
-        runner = CliRunner()
-        result = runner.invoke(cli, ["add", "mcp", "remote", "--dir", str(guest), "--transport", "sse"])
-        assert result.exit_code == 0
-        content = (guest / "config" / "mcp" / "remote.toml").read_text()
-        assert 'transport = "sse"' in content
-        assert "url" in content
-
-    def test_add_mcp_already_exists(self, tmp_path):
-        guest = _write_full_guest(tmp_path)
-        runner = CliRunner()
-        result = runner.invoke(cli, ["add", "mcp", "capsem", "--dir", str(guest)])
-        assert result.exit_code != 0
-        assert "exists" in result.output.lower()
-
-    def test_added_mcp_validates(self, tmp_path):
-        guest = _write_minimal_guest(tmp_path)
-        runner = CliRunner()
-        runner.invoke(cli, ["add", "mcp", "myserver", "--dir", str(guest)])
-        result = runner.invoke(cli, ["validate", str(guest)])
-        assert result.exit_code == 0
+        assert "No such command" in result.output
 
 
 # ---------------------------------------------------------------------------
@@ -788,10 +589,11 @@ class TestEdgeCases:
         result = runner.invoke(cli, ["validate", "/root/nonexistent"])
         assert result.exit_code != 0
 
-    def test_add_to_nonexistent_guest(self, tmp_path):
+    def test_add_to_nonexistent_guest_is_not_a_command(self, tmp_path):
         runner = CliRunner()
-        result = runner.invoke(cli, ["add", "ai-provider", "test", "--dir", str(tmp_path / "nope")])
+        result = runner.invoke(cli, ["add", "packages", "test", "--dir", str(tmp_path / "nope")])
         assert result.exit_code != 0
+        assert "No such command" in result.output
 
 
 # ---------------------------------------------------------------------------
@@ -882,35 +684,10 @@ class TestCorporateImage:
     """Prove that a customized guest config produces a different image."""
 
     def _write_corp_config(self, guest_dir: Path) -> None:
-        """Create a corporate image config with internal LLM + custom packages."""
+        """Create a corporate image config with custom packages."""
         config = guest_dir / "config"
         config.mkdir(parents=True)
         (config / "build.toml").write_text(MINIMAL_BUILD_TOML)
-
-        ai_dir = config / "ai"
-        ai_dir.mkdir()
-        (ai_dir / "internal-llm.toml").write_text("""\
-[internal-llm]
-name = "Internal LLM"
-description = "Corporate LLM endpoint"
-enabled = true
-
-[internal-llm.api_key]
-name = "Internal API Key"
-env_vars = ["INTERNAL_LLM_KEY"]
-prefix = "ik_"
-docs_url = "https://internal.corp.com/docs"
-
-[internal-llm.network]
-domains = ["llm.internal.corp.com"]
-allow_get = true
-allow_post = true
-
-[internal-llm.install]
-manager = "npm"
-prefix = "/opt/ai-clis"
-packages = ["@corp/internal-llm-cli"]
-""")
 
         pkg_dir = config / "packages"
         pkg_dir.mkdir()
@@ -928,6 +705,13 @@ manager = "uv"
 install_cmd = "uv pip install --system --break-system-packages"
 packages = ["numpy", "pandas", "internal-lib==1.2.3"]
 """)
+        (pkg_dir / "npm.toml").write_text("""\
+[npm]
+name = "Node CLIs"
+manager = "npm"
+install_cmd = "npm install -g"
+packages = ["@corp/internal-agent-cli"]
+""")
         # Kernel defconfig (required by validator E300)
         kernel_dir = config / "kernel"
         kernel_dir.mkdir()
@@ -941,15 +725,15 @@ packages = ["numpy", "pandas", "internal-lib==1.2.3"]
         result = runner.invoke(cli, ["validate", str(guest)])
         assert result.exit_code == 0
 
-    def test_inspect_shows_custom_provider(self, tmp_path):
-        """Inspect shows the corporate provider, not defaults."""
+    def test_inspect_shows_custom_packages(self, tmp_path):
+        """Inspect shows corporate package sets."""
         guest = tmp_path / "corp"
         self._write_corp_config(guest)
         runner = CliRunner()
         result = runner.invoke(cli, ["inspect", str(guest)])
         assert result.exit_code == 0
-        assert "Internal LLM" in result.output
-        assert "llm.internal.corp.com" in result.output
+        assert "apt" in result.output
+        assert "npm" in result.output
 
     def test_dry_run_has_custom_npm_package(self, tmp_path):
         """Rendered Dockerfile contains the corporate npm package."""
@@ -958,7 +742,7 @@ packages = ["numpy", "pandas", "internal-lib==1.2.3"]
         runner = CliRunner()
         result = runner.invoke(cli, ["build", str(guest), "--dry-run"])
         assert result.exit_code == 0
-        assert "@corp/internal-llm-cli" in result.output
+        assert "@corp/internal-agent-cli" in result.output
 
     def test_dry_run_has_custom_python_packages(self, tmp_path):
         """Rendered Dockerfile contains corporate Python packages."""
@@ -971,8 +755,8 @@ packages = ["numpy", "pandas", "internal-lib==1.2.3"]
         assert "pandas" in result.output
         assert "internal-lib==1.2.3" in result.output
 
-    def test_no_default_providers(self, tmp_path):
-        """Corporate config without default providers doesn't install them."""
+    def test_no_default_provider_installs(self, tmp_path):
+        """Corporate config does not install dead default provider packages."""
         guest = tmp_path / "corp"
         self._write_corp_config(guest)
 
@@ -987,12 +771,12 @@ packages = ["numpy", "pandas", "internal-lib==1.2.3"]
             if "npm install -g" in ln or ln.strip().startswith("@")
         ]
         npm_block = "\n".join(npm_lines)
-        # Default providers should NOT be in the npm install block
+        # Dead default provider packages should not be in the npm install block.
         assert "@openai/codex" not in npm_block
         # Claude curl installer should not be present either
         assert "claude.ai/install.sh" not in dockerfile
-        # But custom provider should be
-        assert "@corp/internal-llm-cli" in npm_block
+        # But custom package-set CLIs should be.
+        assert "@corp/internal-agent-cli" in npm_block
 
     def test_differs_from_default(self, tmp_path):
         """Corporate Dockerfile differs from the default guest/ config."""
@@ -1008,113 +792,5 @@ packages = ["numpy", "pandas", "internal-lib==1.2.3"]
         default_df = render_dockerfile("Dockerfile.rootfs.j2", default_config, "arm64")
 
         assert corp_df != default_df
-        assert "@corp/internal-llm-cli" in corp_df
-        assert "@corp/internal-llm-cli" not in default_df
-
-
-# ---------------------------------------------------------------------------
-# new command
-# ---------------------------------------------------------------------------
-
-
-class TestNewCommand:
-    """Tests for the new command (non-interactive mode via CliRunner)."""
-
-    def test_non_interactive_creates_config(self, tmp_path):
-        target = tmp_path / "my-image"
-        runner = CliRunner()
-        result = runner.invoke(cli, [
-            "new", str(target),
-            "--from", str(PROJECT_ROOT / "guest"),
-            "--non-interactive",
-        ])
-        assert result.exit_code == 0
-        assert (target / "config" / "manifest.toml").is_file()
-        assert (target / "config" / "build.toml").is_file()
-
-    def test_non_interactive_copies_all_providers(self, tmp_path):
-        target = tmp_path / "my-image"
-        runner = CliRunner()
-        runner.invoke(cli, [
-            "new", str(target),
-            "--from", str(PROJECT_ROOT / "guest"),
-            "--non-interactive",
-        ])
-        ai = target / "config" / "ai"
-        assert (ai / "anthropic.toml").is_file()
-        assert (ai / "google.toml").is_file()
-        assert (ai / "openai.toml").is_file()
-
-    def test_non_interactive_loadable(self, tmp_path):
-        """Created image can be loaded and inspected."""
-        from capsem.builder.config import load_guest_config
-
-        target = tmp_path / "test-img"
-        runner = CliRunner()
-        runner.invoke(cli, [
-            "new", str(target),
-            "--from", str(PROJECT_ROOT / "guest"),
-            "--non-interactive",
-        ])
-        config = load_guest_config(target)
-        assert config.manifest is not None
-        assert config.manifest.name == "test-img"
-        assert "anthropic" in config.ai_providers
-
-    def test_non_interactive_validates(self, tmp_path):
-        """Created image passes validation."""
-        target = tmp_path / "val-img"
-        runner = CliRunner()
-        runner.invoke(cli, [
-            "new", str(target),
-            "--from", str(PROJECT_ROOT / "guest"),
-            "--non-interactive",
-        ])
-        result = runner.invoke(cli, ["validate", str(target)])
-        assert result.exit_code == 0
-
-    def test_non_interactive_dry_run_works(self, tmp_path):
-        """Created image can produce a Dockerfile via --dry-run."""
-        target = tmp_path / "dr-img"
-        runner = CliRunner()
-        runner.invoke(cli, [
-            "new", str(target),
-            "--from", str(PROJECT_ROOT / "guest"),
-            "--non-interactive",
-        ])
-        result = runner.invoke(cli, ["build", str(target), "--dry-run"])
-        assert result.exit_code == 0
-        assert "FROM" in result.output
-
-    def test_force_overwrites(self, tmp_path):
-        target = tmp_path / "ow-img"
-        runner = CliRunner()
-        runner.invoke(cli, [
-            "new", str(target), "--from", str(PROJECT_ROOT / "guest"),
-            "--non-interactive",
-        ])
-        # Without force -> fails
-        result = runner.invoke(cli, [
-            "new", str(target), "--from", str(PROJECT_ROOT / "guest"),
-            "--non-interactive",
-        ])
-        assert result.exit_code != 0
-        # With force -> succeeds
-        result = runner.invoke(cli, [
-            "new", str(target), "--from", str(PROJECT_ROOT / "guest"),
-            "--non-interactive", "--force",
-        ])
-        assert result.exit_code == 0
-
-    def test_inspect_shows_manifest(self, tmp_path):
-        """inspect command shows image name and version."""
-        target = tmp_path / "ins-img"
-        runner = CliRunner()
-        runner.invoke(cli, [
-            "new", str(target), "--from", str(PROJECT_ROOT / "guest"),
-            "--non-interactive",
-        ])
-        result = runner.invoke(cli, ["inspect", str(target)])
-        assert result.exit_code == 0
-        assert "ins-img" in result.output
-        assert "v0.1.0" in result.output
+        assert "@corp/internal-agent-cli" in corp_df
+        assert "@corp/internal-agent-cli" not in default_df

@@ -1,2 +1,9 @@
+model = "gemma4:latest"
+model_provider = "local_ollama"
+
+[model_providers.local_ollama]
+name = "Ollama"
+base_url = "http://127.0.0.1:11434/v1"
+
 [mcp_servers.capsem]
 command = "/run/capsem-mcp-server"

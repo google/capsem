@@ -205,10 +205,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `co-work` profile identities. This keeps profile-aware routes, UI/TUI
   helpers, admin materialization, and install packaging from silently depending
   on a single hardcoded profile.
-- Added a real checked-in `co-work` profile created through
-  `capsem-admin profile init --from`, and tightened Profile UI/TUI/service
-  tests so profile-aware surfaces consume route-provided profile ids instead of
-  silently falling back to `code`.
+- Added a real checked-in `co-work` profile as source profile data, and
+  tightened Profile UI/TUI/service tests so profile-aware surfaces consume
+  route-provided profile ids instead of silently falling back to `code`.
 - Advanced the 1.3 release metadata to `1.3.1781205836`, pinned the frontend
   `esbuild` override through the lockfile, and archived fresh lifecycle, fork,
   in-VM storage, and parallel benchmark ledgers for the current build.
@@ -349,11 +348,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   packages contain the app/binaries, profile config, and selected
   `manifest.json`/`manifest-origin.json` only; VM asset payloads are never
   embedded and are reconciled by the service from the installed manifest.
-- Reorganized checked-in config source into `config/admin`, `config/corp`,
+- Reorganized checked-in config source into `config/settings`, `config/corp`,
   `config/profiles`, `config/docker`, and `config/data`, documented the layout,
-  and made source profiles unpinned by contract. `capsem-admin` now rejects
-  checked-in profile `hash`/`size` pins and materializes runtime asset and
-  profile-file pins into `target/config`.
+  and made source profiles unpinned by contract. `config/settings` owns only
+  UI/application preferences; profile/corp own runtime behavior.
 - Added per-install timestamped logs under `~/.capsem/logs/install-*.log` plus
   `install-latest.log`, while preserving the aggregate `install.log`.
 - Expanded manifest status reporting with mutable-manifest semantics:
@@ -707,31 +705,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and Sigma detection YAML now materialize as `SecurityRuleProfile` and compile
   only through the unified `SecurityRuleSet`/CEL rail, rejecting old policy
   syntax and profile-file attempts to smuggle `corp.rules`.
-- Restored the `capsem-admin` executable as a Rust admin front door. Its first
-  command, `capsem-admin profile validate`, parses the current profile TOML and
-  compiles referenced enforcement/Sigma rule files through the same
-  `SecurityRuleSet`/CEL contract used at runtime.
-- Added current-contract `capsem-admin profile init|validate` and
-  `settings init|validate`. Profile init emits the checked-in `code` profile
-  template, while settings validation is limited to UI/application preferences
-  and rejects runtime/profile ownership drift.
-- Added `capsem-admin enforcement validate|compile` and
-  `capsem-admin detection validate|compile` so administrators can validate the
-  current enforcement TOML and Sigma YAML files directly through the runtime
-  rule compiler without restoring old policy-pack schemas.
-- Added `capsem-admin manifest check|generate|verify` for the current
-  format-2 asset manifest. The commands validate top-level `refresh_policy`,
-  report asset releases/arches, regenerate the canonical `assets/manifest.json`
-  from built assets, and verify literal sibling build outputs by size and
-  BLAKE3 without restoring manifest signing or a second `--assets-dir` path.
-- Added profile-derived `capsem-admin image plan|build` and moved
+- Restored the `capsem-admin` executable as a Rust admin front door. Its
+  product surface is intentionally narrow: profile validate/check/materialize,
+  settings validate, enforcement/detection validate, manifest check/generate,
+  and profile-derived image build.
+- Added `capsem-admin manifest check|generate` for the current format-2 asset
+  manifest. The commands validate top-level `refresh_policy`, report asset
+  releases/arches, and regenerate the canonical `assets/manifest.json` from
+  built assets without restoring manifest signing or a second asset path.
+- Added profile-derived `capsem-admin image build` and moved
   `just build-assets` onto that rail. Asset builds now require an explicit
   profile, validate the profile and rule files first, preserve the Code profile
   defaults, build EROFS `lz4hc` level 12 rootfs assets, and reject raw
   no-profile build attempts.
-- Added `capsem-admin image workspace`, which materializes a self-contained
-  profile image workspace with copied profile/rule files, BLAKE3 evidence, and
-  a profile-derived build plan that validates through the copied config root.
 - Updated the release workflow to call the profile-derived asset build rail
   explicitly (`code` profile) and to package/sign the full restored host binary
   set, including `capsem-admin`.
@@ -3080,13 +3066,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `JoinHandle::abort` does).
 
 ### Changed (kernel)
-- `guest/config/build.toml` ships `kernel_branch = "auto"` instead of a
+- The backend image spec ships `kernel_branch = "auto"` instead of a
   hardcoded `"6.6"`. `resolve_kernel_version("auto")` queries
   kernel.org/releases.json and picks the newest non-EOL longterm branch's
   latest patch (today: `6.18.26`). Pin to a specific branch by setting
   `kernel_branch = "X.Y"` (e.g. `"6.6"`) for reproducibility / security
   freeze. Killed the duplicated `"6.6"` literal in `models.py` /
-  `scaffold.py` -- single source of truth is now `build.toml`.
+  the removed scaffold rail -- single source of truth is now the profile-derived
+  backend image spec.
 
 ### Changed (bootstrap)
 - `bootstrap.sh` moved to the repo root (was `scripts/bootstrap.sh`).

@@ -5,10 +5,9 @@ Two node types:
   - SettingNode: everything else (kind="setting")
     - Regular settings: setting_type in (text, number, bool, kv_map, ...)
     - Actions: setting_type="action", metadata.action=ActionKind
-    - MCP tools: setting_type="mcp_tool", metadata.origin=McpToolOrigin
 
-MCP servers are GroupNodes containing server config settings and mcp_tool
-SettingNodes. Tool categories (snapshots, network) are nested sub-groups.
+MCP runtime configuration is profile-owned and exposed by profile routes, not
+authored through settings metadata.
 
 JSON Schema is generated from SettingsRoot.model_json_schema().
 """
@@ -148,8 +147,8 @@ class SettingMetadata(BaseModel):
     Contains fields for all setting types:
     - Common: domains, choices, min, max, rules, env_vars, mask, validator, etc.
     - Action-specific: action (ActionKind)
-    - MCP tool-specific: origin (McpToolOrigin)
-    - MCP server-specific (legacy): transport, command, url, args, env, headers
+
+    MCP runtime configuration is profile-owned and should not be authored here.
     """
 
     # -- Common fields (from Rust SettingMetadata) --
@@ -174,10 +173,9 @@ class SettingMetadata(BaseModel):
     # -- Action-specific --
     action: ActionKind | None = None
 
-    # -- MCP tool-specific --
+    # -- Retired MCP metadata; profile routes own runtime MCP configuration. --
     origin: McpToolOrigin | None = None
 
-    # -- MCP server-specific (legacy, kept for backward compat) --
     transport: McpTransport | None = None
     command: str | None = None
     url: str | None = None

@@ -208,7 +208,7 @@ directory before packaging:
 
 ```bash
 capsem-admin manifest generate /path/to/assets --version 1.3.corp.1 --json
-capsem-admin manifest verify /path/to/assets/manifest.json --json
+capsem-admin manifest check /path/to/assets/manifest.json --json
 bash scripts/build-pkg.sh --manifest /path/to/assets/manifest.json ...
 ```
 

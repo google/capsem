@@ -237,7 +237,7 @@ class TestCheckContainerClock:
 
 
 # ---------------------------------------------------------------------------
-# Profile/admin rail check
+# Profile/profile-derived build rail check
 # ---------------------------------------------------------------------------
 
 

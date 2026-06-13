@@ -5,9 +5,11 @@ belongs under `target/config/` and must be produced by `capsem-admin`.
 
 ## Directories
 
-- `admin/` contains admin/tooling source and generated settings registries.
-  `settings.toml` is UI/application preference source. Generated files use the
-  `.generated.*` suffix and are refreshed by the schema/admin rail.
+- `settings/` contains UI/application preference source and generated support
+  artifacts. `settings.toml` is the only settings source file.
+  `schema.generated.json` validates the settings shape. `ui-metadata.toml` and
+  `ui-metadata.generated.json` exist only for UI rendering metadata; they must
+  not control profile runtime behavior.
 - `corp/` contains corporate source contracts such as `corp.toml`,
   `enforcement.toml`, and `detection.yaml`.
 - `profiles/<profile_id>/` contains profile source ledgers and profile-owned
@@ -28,6 +30,16 @@ runtime config.
 Do not hand-edit generated `target/config` output. Do not hand-edit profile
 hashes. If a source payload changes, fix the admin materialization rail and its
 tests.
+
+## Naming Contract
+
+- `schema` validates the shape of one contract.
+- `catalog` lists discovered or materialized instances.
+- `metadata` describes UI rendering hints.
+
+Do not introduce `admin` or `registry` as config authorities. `capsem-admin` is
+a tool; it does not own product configuration. Profiles and corp own runtime
+behavior.
 
 ## Non-Config
 

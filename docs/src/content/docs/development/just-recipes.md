@@ -88,8 +88,8 @@ LIMIT 20;"
 | Recipe | What it does | Time |
 |--------|-------------|------|
 | `just build-assets code [arch]` | Full profile-derived rebuild: kernel + rootfs via `capsem-admin` (needs Docker) | ~10 min |
-| `just build-kernel <arch> code` | Kernel only through the profile-derived admin rail | ~5 min |
-| `just build-rootfs <arch> code` | Rootfs only through the profile-derived admin rail | ~8 min |
+| `just build-kernel <arch> code` | Kernel only through the profile-derived profile-derived build rail | ~5 min |
+| `just build-rootfs <arch> code` | Rootfs only through the profile-derived profile-derived build rail | ~8 min |
 | `just cross-compile [arch]` | Full Linux build in container: agent binaries + deb + AppImage | ~15 min |
 
 You only need `just build-assets code` on first setup or when profile-owned
@@ -167,5 +167,5 @@ cut-release      -> test + _stamp-version
 | `_pack-initrd` | Cross-compiles guest agent + repacks initrd with latest binaries |
 | `_sign` | Codesigns the binary with virtualization entitlement |
 | `_check-assets` | Verifies VM assets exist, tells you to run `build-assets` if not |
-| `_generate-settings` | Exports MCP tool defs + generates schema/defaults/mock data |
+| `_generate-settings` | Generates settings schema, UI metadata, and frontend mock data |
 | `_ensure-service` | Builds/signs host binaries and starts or reuses the service |

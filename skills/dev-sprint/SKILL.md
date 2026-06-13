@@ -96,7 +96,7 @@ Keep profile/config ownership crisp:
 - `config/skills` does not exist. Developer skills live in repository-level
   `skills/`. User/profile skills, when implemented, are profile-owned payloads
   with their own contract, not Codex development instructions.
-- Any sprint that changes profile payloads must prove the admin rail, not a
+- Any sprint that changes profile payloads must prove the profile-derived build rail, not a
   manual TOML patch.
 
 Names are part of the architecture contract. Prefer boring,

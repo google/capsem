@@ -116,6 +116,48 @@ def test_profiles_package_claude_bypass_permissions_bootstrap() -> None:
     assert not failures, "invalid Claude permissions bootstrap contract:\n" + "\n".join(failures)
 
 
+def test_profiles_package_scriptable_local_model_agent_bootstrap() -> None:
+    failures: list[str] = []
+    for profile_dir in sorted(PROFILES_DIR.iterdir()):
+        if not profile_dir.is_dir():
+            continue
+        profile_id = profile_dir.name
+        root_dir = profile_dir / "root"
+
+        codex_path = root_dir / "root/.codex/config.toml"
+        codex = tomllib.loads(codex_path.read_text())
+        if codex.get("model") != "gemma4:latest":
+            failures.append(f"{profile_id}: Codex model is not gemma4:latest")
+        if codex.get("model_provider") != "local_ollama":
+            failures.append(f"{profile_id}: Codex model_provider is not local_ollama")
+        local_ollama = codex.get("model_providers", {}).get("local_ollama", {})
+        if local_ollama.get("name") != "Ollama":
+            failures.append(f"{profile_id}: Codex local_ollama provider name is wrong")
+        if local_ollama.get("base_url") != "http://127.0.0.1:11434/v1":
+            failures.append(f"{profile_id}: Codex local_ollama base_url is wrong")
+        if "env_key" in local_ollama:
+            failures.append(f"{profile_id}: Codex local_ollama must not require a baked API key")
+
+        agy_config_path = root_dir / "root/.antigravity/config.json"
+        if not agy_config_path.is_file():
+            failures.append(f"{profile_id}: missing root/.antigravity/config.json")
+        else:
+            agy_config = json.loads(agy_config_path.read_text())
+            ai = agy_config.get("ai", {})
+            if ai.get("provider") != "ollama":
+                failures.append(f"{profile_id}: AGY provider is not ollama")
+            if ai.get("baseUrl") != "http://127.0.0.1:11434":
+                failures.append(f"{profile_id}: AGY baseUrl is not local Ollama")
+            if ai.get("model") != "gemma4:latest":
+                failures.append(f"{profile_id}: AGY model is not gemma4:latest")
+            if ai.get("contextLength") != 8192:
+                failures.append(f"{profile_id}: AGY contextLength is not 8192")
+            if "auth" in ai or "token" in json.dumps(ai).lower():
+                failures.append(f"{profile_id}: AGY local model config bakes auth material")
+
+    assert not failures, "invalid local model agent bootstrap contract:\n" + "\n".join(failures)
+
+
 def test_profile_root_manifests_pin_exactly_the_shipped_root_payload() -> None:
     failures: list[str] = []
     forbidden_path_fragments = (

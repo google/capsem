@@ -80,7 +80,7 @@ rerun the failing recipe.
 ```
 
 The public producer is `capsem-admin manifest generate <assets_dir>`. Full
-asset builds and initrd repacks feed that same admin rail so local, CI, and
+asset builds and initrd repacks feed that same profile-derived build rail so local, CI, and
 corporate manifests use one contract.
 
 ## Disk Layouts

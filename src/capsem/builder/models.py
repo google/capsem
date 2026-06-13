@@ -116,89 +116,6 @@ class BuildConfig(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# AI provider configuration
-# ---------------------------------------------------------------------------
-
-
-class ApiKeyConfig(BaseModel):
-    """API key definition for an AI provider."""
-
-    model_config = ConfigDict(frozen=True)
-
-    name: str
-    env_vars: list[str]
-    prefix: str = ""
-    docs_url: str | None = None
-
-    @model_validator(mode="after")
-    def _env_vars_non_empty(self):
-        if not self.env_vars:
-            raise ValueError("env_vars must have at least one entry")
-        return self
-
-
-class NetworkConfig(BaseModel):
-    """Network access config for an AI provider or package set."""
-
-    model_config = ConfigDict(frozen=True)
-
-    domains: list[str]
-    allow_get: bool = False
-    allow_post: bool = False
-
-    @model_validator(mode="after")
-    def _domains_non_empty(self):
-        if not self.domains:
-            raise ValueError("domains must have at least one entry")
-        return self
-
-
-class InstallConfig(BaseModel):
-    """Installation config for an AI provider's CLI tools."""
-
-    model_config = ConfigDict(frozen=True)
-
-    manager: PackageManager
-    prefix: str = ""
-    packages: list[str]
-
-
-class FileConfig(BaseModel):
-    """A file to write to the guest filesystem."""
-
-    model_config = ConfigDict(frozen=True)
-
-    path: str
-    content: str
-
-
-class CliToolConfig(BaseModel):
-    """CLI tool sub-group for an AI provider (e.g., Claude Code, Gemini CLI)."""
-
-    model_config = ConfigDict(frozen=True)
-
-    key: str
-    name: str
-    description: str = ""
-    version_command: str | None = None
-
-
-class AiProviderConfig(BaseModel):
-    """AI provider definition from ai/{provider}.toml."""
-
-    model_config = ConfigDict(frozen=True)
-
-    name: str
-    description: str = ""
-    enabled: bool = True
-    api_key: ApiKeyConfig
-    network: NetworkConfig
-    install: InstallConfig | None = None
-    cli: CliToolConfig | None = None
-    files: dict[str, FileConfig] = Field(default_factory=dict)
-
-
-# ---------------------------------------------------------------------------
 # Package set configuration
 # ---------------------------------------------------------------------------
 
@@ -402,7 +319,6 @@ class GuestImageConfig(BaseModel):
     build: BuildConfig
     manifest: ImageManifestConfig | None = None
     guest_dir_path: str | None = None
-    ai_providers: dict[str, AiProviderConfig] = Field(default_factory=dict)
     package_sets: dict[str, PackageSetConfig] = Field(default_factory=dict)
     mcp_servers: dict[str, McpServerConfig] = Field(default_factory=dict)
     web_security: WebSecurityConfig = Field(default_factory=WebSecurityConfig)

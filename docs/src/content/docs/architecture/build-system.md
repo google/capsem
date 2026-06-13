@@ -5,7 +5,7 @@ sidebar:
   order: 30
 ---
 
-Capsem builds VM assets from the profile/admin rail. Checked-in
+Capsem builds VM assets from the profile ledger. Checked-in
 `config/profiles/<profile_id>/profile.toml` and its hash-pinned sibling files
 are product truth. `capsem-admin image build` resolves that profile into a
 generated backend workspace, then `capsem-builder` validates the backend image
@@ -17,7 +17,7 @@ spec, renders Jinja2 Dockerfiles, and produces per-architecture VM assets.
 flowchart TD
   subgraph Input["Source of Truth"]
     PROFILE["config/profiles/<id>/profile.toml\n+ pinned package, MCP, rule,\nroot, install, tips files"]
-    ADMIN["capsem-admin image workspace\nmaterialized backend image spec"]
+    MATERIALIZED["internal materialized image workspace\nbackend image spec"]
   end
 
   subgraph Validation["Validation Layer"]
@@ -41,8 +41,8 @@ flowchart TD
   end
 
   PROFILE --> Profile
-  Profile --> ADMIN
-  ADMIN --> Config
+  Profile --> MATERIALIZED
+  MATERIALIZED --> Config
   Config --> Models
   Models --> Validate
   Models --> Context
@@ -61,8 +61,8 @@ The data flows through four layers:
 1. **Profile ledger** (`config/profiles/<id>/profile.toml`) -- runtime and build
    product truth: assets, package files, MCP config, security rules, plugins,
    root seed, install script, tips, and OBOM descriptors.
-2. **Admin materialization** (`capsem-admin image workspace`) -- validates
-   profile BLAKE3/size pins and writes a generated backend image workspace.
+2. **Image materialization** (`capsem-admin image build`) -- validates profile
+   BLAKE3/size pins and writes an internal generated backend image workspace.
 3. **Pydantic models** (`models.py`) -- validate the generated backend image
    spec with enums (`PackageManager`: apt, uv, pip, npm, curl), frozen models,
    and cross-field validators.
@@ -92,7 +92,7 @@ Four outputs are produced:
 | `kernel/defconfig.*` | (raw) | Kernel configs per arch | Linux kernel defconfig files |
 
 These files are backend image spec, usually generated under `target/` by the
-admin rail. Do not add provider authorization, credentials, security policy, UI
+profile-derived build rail. Do not add provider authorization, credentials, security policy, UI
 settings, or MCP runtime truth to the backend image spec. Those belong to the
 profile, corp config, rule files, and plugins.
 
@@ -353,7 +353,7 @@ cargo run -p capsem-admin -- profile check config/profiles/code/profile.toml --c
 # Dry-run: render the profile-derived build plan without building
 cargo run -p capsem-admin -- image build --profile config/profiles/code/profile.toml --config-root config --dry-run --json
 
-# Build rootfs for arm64 through the admin rail
+# Build rootfs for arm64 through the profile-derived build rail
 cargo run -p capsem-admin -- image build --profile config/profiles/code/profile.toml --config-root config --arch arm64 --template rootfs
 
 # Build kernel for all architectures
@@ -370,21 +370,21 @@ preferences; profiles own assets, MCP, rules, plugins, and image payloads.
 
 ```mermaid
 flowchart LR
-  TOML["config/admin/settings.toml"] --> Py["generate_defaults_json()"]
-  Py --> DJ["config/admin/settings-registry.generated.json"]
+  TOML["config/settings/settings.toml"] --> Py["generate_defaults_json()"]
+  Py --> DJ["config/settings/ui-metadata.generated.json"]
   DJ --> Rust["include_str! in Rust"]
-  Py --> Schema["config/admin/settings-schema.generated.json"]
+  Py --> Schema["config/settings/schema.generated.json"]
   Schema --> CV["Cross-language\nconformance tests"]
   DJ --> CV
 ```
 
 `generate_defaults_json()` transforms host settings source into the
-hierarchical JSON tree consumed by the Rust settings registry. This JSON defines
+hierarchical JSON tree consumed by the Rust settings UI metadata. This JSON defines
 each setting's name, description, type, default value, and UI metadata.
 
-The schema is generated from `SettingsRoot.model_json_schema()` (Pydantic) and written to `config/admin/settings-schema.generated.json`. Cross-language conformance tests verify that:
+The schema is generated from `SettingsRoot.model_json_schema()` (Pydantic) and written to `config/settings/schema.generated.json`. Cross-language conformance tests verify that:
 
-1. The generated settings registry validates against the JSON schema.
+1. The generated settings UI metadata validates against the JSON schema.
 2. Rust's compiled-in defaults match the Python-generated output.
 3. Every setting referenced in Rust code exists in the schema.
 

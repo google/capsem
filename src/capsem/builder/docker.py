@@ -21,7 +21,7 @@ from typing import Any
 from jinja2 import Environment, FileSystemLoader
 
 from capsem.builder.doctor import check_container_runtime
-from capsem.builder.models import ErofsConfig, GuestImageConfig, PackageManager
+from capsem.builder.models import ErofsConfig, GuestImageConfig
 
 TEMPLATES_DIR = Path(__file__).resolve().parents[3] / "config" / "docker"
 FALLBACK_KERNEL_VERSION = "7.0.11"
@@ -90,14 +90,6 @@ def _rootfs_context(config: GuestImageConfig, arch_name: str) -> dict[str, Any]:
     curl_installs: list[str] = []
     if "curl" in config.package_sets:
         curl_installs.extend(config.package_sets["curl"].packages)
-    for provider in config.ai_providers.values():
-        if provider.enabled and provider.install:
-            if provider.install.manager == PackageManager.NPM:
-                npm_packages.extend(provider.install.packages)
-                if provider.install.prefix:
-                    npm_prefix = provider.install.prefix
-            elif provider.install.manager == PackageManager.CURL:
-                curl_installs.extend(provider.install.packages)
 
     return {
         "arch": arch,
@@ -653,8 +645,9 @@ def build_version_script(config: GuestImageConfig) -> str:
     """Build a shell script that extracts tool versions from config.
 
     Returns a bash script that prints grouped key=value lines to stdout.
-    The script is assembled from version_commands in build config, package
-    sets, and AI provider CLI configs.
+    The script is assembled from version_commands in build config and package
+    sets. Profile-owned build scripts install agent CLIs; they are not authored
+    through builder config.
     """
     lines: list[str] = []
 
@@ -678,43 +671,19 @@ def build_version_script(config: GuestImageConfig) -> str:
             for key, cmd in py_cmds.items():
                 lines.append(f'echo "{key}=$({cmd} || echo \'N/A\')";')
 
-    # -- AI CLIs (listed separately) --
-    ai_cmds: list[tuple[str, str]] = []
-    for provider in config.ai_providers.values():
-        if provider.enabled and provider.cli and provider.cli.version_command:
-            ai_cmds.append((provider.cli.key, provider.cli.version_command))
-    if ai_cmds:
-        lines.append('echo "# AI CLIs";')
-        for key, cmd in ai_cmds:
-            lines.append(f'echo "{key}=$({cmd} || echo \'N/A\')";')
-
     return "\n".join(lines)
 
 
 def _validate_tool_versions(
     content: str, config: GuestImageConfig,
 ) -> None:
-    """Check that enabled AI provider CLIs did not return N/A."""
+    """Reserved hook for version-output validation."""
     versions: dict[str, str] = {}
     for line in content.splitlines():
         if line.startswith("#") or "=" not in line:
             continue
         key, _, val = line.partition("=")
         versions[key.strip()] = val.strip()
-
-    failures: list[str] = []
-    for provider in config.ai_providers.values():
-        if provider.enabled and provider.cli and provider.cli.version_command:
-            key = provider.cli.key
-            val = versions.get(key, "")
-            if not val or val == "N/A":
-                failures.append(key)
-
-    if failures:
-        raise RuntimeError(
-            f"Enabled AI CLIs returned N/A or empty version: {', '.join(failures)}. "
-            "Check that the CLI installed correctly in the rootfs."
-        )
 
 
 def extract_tool_versions(

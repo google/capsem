@@ -341,6 +341,126 @@ def test_integration_script_has_no_live_ai_provider_escape_hatch() -> None:
     assert "include_gemini_probe" not in source
 
 
+def test_builder_has_no_legacy_ai_provider_authoring_rail() -> None:
+    forbidden = (
+        "AiProviderConfig",
+        "ApiKeyConfig",
+        "add_ai_provider",
+        "include_providers",
+        "ai_providers",
+        "config/ai",
+        'config" / "ai"',
+        "AI provider",
+    )
+    checked_roots = [
+        PROJECT_ROOT / "src" / "capsem" / "builder",
+        PROJECT_ROOT / "guest" / "config",
+    ]
+    offenders: list[str] = []
+    for root in checked_roots:
+        for path in sorted(root.rglob("*")):
+            if not path.is_file() or "__pycache__" in path.parts:
+                continue
+            if path == Path(__file__) or path.name == "test_active_docs_profile_contract.py":
+                continue
+            rel = path.relative_to(PROJECT_ROOT)
+            try:
+                text = path.read_text(encoding="utf-8")
+            except UnicodeDecodeError:
+                continue
+            for marker in forbidden:
+                if marker in text:
+                    offenders.append(f"{rel}: contains {marker!r}")
+                    break
+
+    assert offenders == [], "legacy AI-provider builder rail still exists:\n" + "\n".join(
+        offenders
+    )
+
+
+def test_config_contract_has_no_admin_or_registry_authority() -> None:
+    assert not (PROJECT_ROOT / "config" / "admin").exists()
+    assert (PROJECT_ROOT / "config" / "settings" / "settings.toml").is_file()
+    assert (PROJECT_ROOT / "config" / "settings" / "schema.generated.json").is_file()
+    assert (PROJECT_ROOT / "config" / "settings" / "ui-metadata.toml").is_file()
+    assert (PROJECT_ROOT / "config" / "settings" / "ui-metadata.generated.json").is_file()
+
+    forbidden = (
+        "config/admin",
+        "settings-registry",
+        "settings-schema.generated",
+        "mcp-tools.generated",
+    )
+    checked_roots = [
+        PROJECT_ROOT / "scripts",
+        PROJECT_ROOT / "src" / "capsem" / "builder",
+        PROJECT_ROOT / "crates" / "capsem-admin" / "src",
+        PROJECT_ROOT / "crates" / "capsem-core" / "src" / "net" / "policy_config",
+        PROJECT_ROOT / "tests",
+        PROJECT_ROOT / "docs" / "src" / "content" / "docs",
+        PROJECT_ROOT / "skills",
+        PROJECT_ROOT / ".github" / "workflows",
+    ]
+    offenders: list[str] = []
+    for root in checked_roots:
+        for path in sorted(root.rglob("*")):
+            if not path.is_file() or "__pycache__" in path.parts:
+                continue
+            if path == Path(__file__) or path.name == "test_active_docs_profile_contract.py":
+                continue
+            rel = path.relative_to(PROJECT_ROOT)
+            try:
+                text = path.read_text(encoding="utf-8")
+            except UnicodeDecodeError:
+                continue
+            for marker in forbidden:
+                if marker in text:
+                    offenders.append(f"{rel}: contains {marker!r}")
+                    break
+    assert offenders == [], "admin/registry config authority still exists:\n" + "\n".join(
+        offenders
+    )
+
+
+def test_builder_has_no_guest_scaffold_authoring_rail() -> None:
+    assert not (PROJECT_ROOT / "src" / "capsem" / "builder" / "scaffold.py").exists()
+    assert not (PROJECT_ROOT / "tests" / "test_scaffold.py").exists()
+
+    forbidden = (
+        "capsem-builder init",
+        "capsem-builder new",
+        "capsem-builder add",
+        "builder.scaffold",
+        "scaffold.py",
+        "init_guest_dir",
+        "new_image",
+        "scan_base_config",
+        "add_package_set",
+        "add_mcp_server",
+    )
+    checked_roots = [
+        PROJECT_ROOT / "src" / "capsem" / "builder",
+        PROJECT_ROOT / "docs" / "src" / "content" / "docs",
+        PROJECT_ROOT / "skills",
+        PROJECT_ROOT / ".github" / "workflows",
+    ]
+    offenders: list[str] = []
+    for root in checked_roots:
+        for path in sorted(root.rglob("*")):
+            if not path.is_file() or "__pycache__" in path.parts:
+                continue
+            rel = path.relative_to(PROJECT_ROOT)
+            try:
+                text = path.read_text(encoding="utf-8")
+            except UnicodeDecodeError:
+                continue
+            for marker in forbidden:
+                if marker in text:
+                    offenders.append(f"{rel}: contains {marker!r}")
+                    break
+    assert offenders == [], "builder scaffold rail still exists:\n" + "\n".join(offenders)
+
+
 def test_guest_init_exports_ca_bundle_for_runtime_and_login_shells() -> None:
     init = (PROJECT_ROOT / "guest" / "artifacts" / "capsem-init").read_text()
     expected = {

@@ -53,50 +53,6 @@ defconfig = "kernel/defconfig.arm64"
 node_major = 24
 """
 
-GOOGLE_AI_TOML = """\
-[google]
-name = "Google AI"
-description = "Google Gemini AI provider"
-enabled = true
-
-[google.api_key]
-name = "Google AI API Key"
-env_vars = ["GEMINI_API_KEY"]
-prefix = "AIza"
-docs_url = "https://aistudio.google.com/apikey"
-
-[google.network]
-domains = ["*.googleapis.com"]
-allow_get = true
-allow_post = true
-
-[google.install]
-manager = "npm"
-prefix = "/opt/ai-clis"
-packages = ["@google/gemini-cli"]
-
-[google.files.settings_json]
-path = "/root/.gemini/settings.json"
-content = '{"key": "value"}'
-"""
-
-ANTHROPIC_AI_TOML = """\
-[anthropic]
-name = "Anthropic"
-description = "Claude Code AI agent"
-enabled = true
-
-[anthropic.api_key]
-name = "Anthropic API Key"
-env_vars = ["ANTHROPIC_API_KEY"]
-prefix = "sk-ant-"
-
-[anthropic.network]
-domains = ["*.anthropic.com", "*.claude.com"]
-allow_get = true
-allow_post = true
-"""
-
 PYTHON_PACKAGES_TOML = """\
 [python]
 name = "Python Packages"
@@ -197,11 +153,6 @@ def guest_full(tmp_path):
     config.mkdir(parents=True)
     (config / "build.toml").write_text(MINIMAL_BUILD_TOML)
 
-    ai = config / "ai"
-    ai.mkdir()
-    (ai / "google.toml").write_text(GOOGLE_AI_TOML)
-    (ai / "anthropic.toml").write_text(ANTHROPIC_AI_TOML)
-
     pkg = config / "packages"
     pkg.mkdir()
     (pkg / "python.toml").write_text(PYTHON_PACKAGES_TOML)
@@ -271,7 +222,6 @@ class TestLoadGuestConfigMinimal:
 
     def test_defaults_for_optional_sections(self, guest_minimal):
         cfg = load_guest_config(guest_minimal)
-        assert cfg.ai_providers == {}
         assert cfg.package_sets == {}
         assert cfg.mcp_servers == {}
         assert cfg.web_security.http_upstream_ports == [80, 3128, 3713, 8080, 11434]
@@ -287,28 +237,11 @@ class TestLoadGuestConfigMinimal:
 class TestLoadGuestConfigFull:
     def test_loads_all(self, guest_full):
         cfg = load_guest_config(guest_full)
-        assert len(cfg.ai_providers) == 2
         assert len(cfg.package_sets) == 1
         assert len(cfg.mcp_servers) == 1
         assert len(cfg.web_security.search) == 1
         assert len(cfg.web_security.registry) == 1
         assert len(cfg.web_security.repository) == 1
-
-    def test_ai_providers_loaded(self, guest_full):
-        cfg = load_guest_config(guest_full)
-        assert "google" in cfg.ai_providers
-        google = cfg.ai_providers["google"]
-        assert google.name == "Google AI"
-        assert google.api_key.env_vars == ["GEMINI_API_KEY"]
-        assert google.install is not None
-        assert google.install.manager is PackageManager.NPM
-        assert "settings_json" in google.files
-
-    def test_multiple_ai_providers(self, guest_full):
-        cfg = load_guest_config(guest_full)
-        assert "google" in cfg.ai_providers
-        assert "anthropic" in cfg.ai_providers
-        assert cfg.ai_providers["anthropic"].name == "Anthropic"
 
     def test_package_sets_loaded(self, guest_full):
         cfg = load_guest_config(guest_full)
@@ -409,30 +342,6 @@ defconfig = "kernel/defconfig.arm64"
 
 
 class TestLoadGuestConfigEdgeCases:
-    def test_empty_ai_directory(self, guest_minimal):
-        (guest_minimal / "config" / "ai").mkdir()
-        cfg = load_guest_config(guest_minimal)
-        assert cfg.ai_providers == {}
-
-    def test_non_toml_files_ignored(self, guest_minimal):
-        ai = guest_minimal / "config" / "ai"
-        ai.mkdir()
-        (ai / "README.md").write_text("# Not a TOML file")
-        (ai / "google.toml").write_text(GOOGLE_AI_TOML)
-        cfg = load_guest_config(guest_minimal)
-        assert len(cfg.ai_providers) == 1
-        assert "google" in cfg.ai_providers
-
-    def test_deterministic_order(self, guest_minimal):
-        """Files loaded in sorted order for determinism."""
-        ai = guest_minimal / "config" / "ai"
-        ai.mkdir()
-        (ai / "z_provider.toml").write_text(GOOGLE_AI_TOML.replace("google", "z_prov"))
-        (ai / "a_provider.toml").write_text(ANTHROPIC_AI_TOML.replace("anthropic", "a_prov"))
-        cfg = load_guest_config(guest_minimal)
-        keys = list(cfg.ai_providers.keys())
-        assert keys == sorted(keys)
-
     def test_multi_arch_build(self, guest_minimal):
         """build.toml with multiple architectures."""
         (guest_minimal / "config" / "build.toml").write_text("""\
@@ -463,7 +372,7 @@ defconfig = "kernel/defconfig.x86_64"
 
 
 def _collect_setting_ids(obj: dict, path: str = "") -> dict[str, dict]:
-    """Walk the settings registry structure and collect setting leaf IDs with their data."""
+    """Walk the settings UI metadata structure and collect setting leaf IDs with their data."""
     result: dict[str, dict] = {}
     if isinstance(obj, dict):
         if "type" in obj:
@@ -548,12 +457,12 @@ class TestGenerateDefaultsJsonStructure:
 
 
 # ---------------------------------------------------------------------------
-# generate_defaults_json -- conformance with current settings registry
+# generate_defaults_json -- conformance with current settings UI metadata
 # ---------------------------------------------------------------------------
 
 
 class TestGenerateDefaultsJsonConformance:
-    """Verify generated JSON matches the checked-in settings registry."""
+    """Verify generated JSON matches the checked-in settings UI metadata."""
 
     @pytest.fixture
     def real_config(self):
@@ -565,11 +474,11 @@ class TestGenerateDefaultsJsonConformance:
 
     @pytest.fixture
     def current_defaults(self):
-        with open(PROJECT_ROOT / "config" / "admin" / "settings-registry.generated.json") as f:
+        with open(PROJECT_ROOT / "config" / "settings" / "ui-metadata.generated.json") as f:
             return json.load(f)
 
     def test_same_setting_ids(self, generated, current_defaults):
-        """Every setting ID in the settings registry is in the generated JSON."""
+        """Every setting ID in the settings UI metadata is in the generated JSON."""
         current_ids = set(_collect_setting_ids(current_defaults["settings"]).keys())
         gen_ids = set(_collect_setting_ids(generated["settings"]).keys())
         missing = current_ids - gen_ids
@@ -607,8 +516,8 @@ class TestGenerateDefaultsJsonConformance:
                     assert generated["mcp"][key].get(field) == current_defaults["mcp"][key][field], \
                         f"mcp.{key}.{field}: mismatch"
 
-    def test_ai_provider_settings_do_not_reappear(self, generated, current_defaults):
-        """Runtime AI provider control must stay out of generated settings."""
+    def test_agent_provider_settings_do_not_reappear(self, generated, current_defaults):
+        """Runtime model provider control must stay out of generated settings."""
         assert "ai" not in generated["settings"]
         assert "ai" not in current_defaults["settings"]
 
@@ -637,15 +546,15 @@ class TestGenerateDefaultsJsonConformance:
                 assert gen_provs[key].get("enabled_by") == cur_provs[key]["enabled_by"]
 
     def test_defaults_json_not_stale(self, generated):
-        """Generated settings registry must exactly match the on-disk file.
+        """Generated settings UI metadata must exactly match the on-disk file.
 
         If this fails, run: just _generate-settings
         """
         on_disk = json.loads(
-            (PROJECT_ROOT / "config" / "admin" / "settings-registry.generated.json").read_text()
+            (PROJECT_ROOT / "config" / "settings" / "ui-metadata.generated.json").read_text()
         )
         assert generated == on_disk, (
-            "config/admin/settings-registry.generated.json is stale -- regenerate with: just _generate-settings"
+            "config/settings/ui-metadata.generated.json is stale -- regenerate with: just _generate-settings"
         )
 
     def test_mock_ts_not_stale(self):
@@ -655,10 +564,7 @@ class TestGenerateDefaultsJsonConformance:
         """
         config = load_guest_config(PROJECT_ROOT / "guest")
         defaults = generate_defaults_json(config)
-        # Load MCP tool defs (exported by mcp_export binary)
-        mcp_tools_path = PROJECT_ROOT / "config" / "admin" / "mcp-tools.generated.json"
-        mcp_tools = json.loads(mcp_tools_path.read_text()) if mcp_tools_path.exists() else []
-        expected = generate_mock_ts(defaults, mcp_tools=mcp_tools)
+        expected = generate_mock_ts(defaults, mcp_tools=[])
         on_disk = (
             PROJECT_ROOT / "frontend" / "src" / "lib" / "mock-settings.generated.ts"
         ).read_text()

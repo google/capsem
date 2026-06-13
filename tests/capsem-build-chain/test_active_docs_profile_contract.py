@@ -1,4 +1,4 @@
-"""Active docs and skills must teach the profile/admin build contract."""
+"""Active docs and skills must teach the profile-derived build contract."""
 
 from __future__ import annotations
 
@@ -34,7 +34,21 @@ STALE_GUIDANCE = [
     "uv run capsem-builder build guest/",
     "capsem-builder build guest/",
     "capsem-builder init",
+    "capsem-builder new",
+    "capsem-builder add",
     "capsem-builder add ai-provider",
+    "config/admin",
+    "settings-registry",
+    "settings-schema.generated",
+    "mcp-tools.generated",
+    "capsem-admin profile init",
+    "capsem-admin settings init",
+    "capsem-admin manifest verify",
+    "capsem-admin image plan",
+    "capsem-admin image workspace",
+    "capsem-admin image verify",
+    "capsem-admin enforcement compile",
+    "capsem-admin detection compile",
     "AI providers declare how their CLI gets installed",
     "providers are allowed out of the box",
     "rootfs.squashfs",

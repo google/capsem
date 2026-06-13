@@ -184,7 +184,6 @@ jobs:
             tests/test_models.py \
             tests/test_protocol_fixture_recorder.py \
             tests/test_repack_deb.py \
-            tests/test_scaffold.py \
             tests/test_settings_spec.py \
             tests/test_skills.py \
             tests/test_validate.py \
@@ -214,7 +213,9 @@ jobs:
       - name: Schema drift check
         run: |
           uv run python scripts/generate_schema.py
-          git diff --exit-code config/settings-schema.json
+          git diff --exit-code config/settings/schema.generated.json \
+            config/settings/ui-metadata.generated.json \
+            frontend/src/lib/mock-settings.generated.ts
 
       # Upload coverage with flags
       - name: Upload Rust unit test coverage

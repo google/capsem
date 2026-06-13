@@ -10,12 +10,11 @@ Error code ranges:
   E200-E202: Cross-language conformance
   E300-E305: Artifact validation
   E400-E402: Docker validation
-  W001-W013: Warnings
+  W001-W012: Warnings
 """
 
 from __future__ import annotations
 
-import json
 import re
 import tomllib
 from dataclasses import dataclass
@@ -195,8 +194,6 @@ def _validate_pydantic(
 def _guess_file_for_error(config_dir: Path, loc: str) -> str:
     """Best-effort file path for a Pydantic validation error location."""
     loc_lower = loc.lower()
-    if "ai_provider" in loc_lower:
-        return "config/ai/*.toml"
     if "package_set" in loc_lower:
         return "config/packages/*.toml"
     if "mcp_server" in loc_lower:
@@ -212,18 +209,6 @@ def _guess_file_for_error(config_dir: Path, loc: str) -> str:
 
 def _validate_domains(config: GuestImageConfig, diags: list[Diagnostic]) -> None:
     """Validate domain patterns, emit E006."""
-    # AI provider domains
-    for key, prov in config.ai_providers.items():
-        for domain in prov.network.domains:
-            if _is_bad_domain(domain):
-                diags.append(Diagnostic(
-                    code="E006",
-                    severity=Severity.ERROR,
-                    message=f"Invalid domain pattern '{domain}' in ai.{key}.network.domains",
-                    file=f"config/ai/{key}.toml",
-                ))
-
-    # Web security domains
     ws = config.web_security
     for section_name, section in [("search", ws.search), ("registry", ws.registry), ("repository", ws.repository)]:
         for key, svc in section.items():
@@ -247,42 +232,12 @@ def _is_bad_domain(domain: str) -> bool:
     return False
 
 
-def _validate_file_paths(config: GuestImageConfig, diags: list[Diagnostic]) -> None:
-    """Validate file paths are absolute and JSON content is valid, emit E009/E010."""
-    for key, prov in config.ai_providers.items():
-        for file_key, file_cfg in prov.files.items():
-            # E009: File path must be absolute
-            if not file_cfg.path.startswith("/"):
-                diags.append(Diagnostic(
-                    code="E009",
-                    severity=Severity.ERROR,
-                    message=f"File path must be absolute: '{file_cfg.path}' in ai.{key}.files.{file_key}",
-                    file=f"config/ai/{key}.toml",
-                ))
-            # E010: JSON files must have valid JSON content
-            if file_cfg.path.endswith(".json") and file_cfg.content:
-                try:
-                    json.loads(file_cfg.content)
-                except json.JSONDecodeError as e:
-                    diags.append(Diagnostic(
-                        code="E010",
-                        severity=Severity.ERROR,
-                        message=f"Invalid JSON in ai.{key}.files.{file_key}: {e}",
-                        file=f"config/ai/{key}.toml",
-                    ))
-
-
 def _validate_duplicates(
     config_dir: Path,
     parsed: dict[str, dict[str, Any]],
     diags: list[Diagnostic],
 ) -> None:
     """Check for duplicate keys across files in the same directory, emit E008."""
-    # Check AI providers
-    ai_dir = config_dir / "ai"
-    if ai_dir.is_dir():
-        _check_dir_key_collisions(ai_dir, parsed, diags, "AI provider")
-
     # Check MCP servers
     mcp_dir = config_dir / "mcp"
     if mcp_dir.is_dir():
@@ -411,16 +366,7 @@ def _validate_warnings(
                     file=f"config/packages/{key}.toml",
                 ))
 
-    # W003: Potential secrets in file content, MCP headers/env, shell configs
-    for key, prov in config.ai_providers.items():
-        for file_key, file_cfg in prov.files.items():
-            if _contains_secret(file_cfg.content):
-                diags.append(Diagnostic(
-                    code="W003",
-                    severity=Severity.WARNING,
-                    message=f"Potential secret in ai.{key}.files.{file_key}.content",
-                    file=f"config/ai/{key}.toml",
-                ))
+    # W003: Potential secrets in MCP headers/env and shell configs
     for key, mcp in config.mcp_servers.items():
         for hdr_key, hdr_val in mcp.headers.items():
             if _contains_secret(hdr_val):
@@ -465,22 +411,8 @@ def _validate_warnings(
                 file=f"config/packages/{key}.toml",
             ))
 
-    # W006: Placeholder file content
-    for key, prov in config.ai_providers.items():
-        for file_key, file_cfg in prov.files.items():
-            if _is_placeholder(file_cfg.content):
-                diags.append(Diagnostic(
-                    code="W006",
-                    severity=Severity.WARNING,
-                    message=f"File content looks like a placeholder in ai.{key}.files.{file_key}",
-                    file=f"config/ai/{key}.toml",
-                ))
-
     # W007: Overly broad wildcard domains
     _check_broad_wildcards(config, diags)
-
-    # W008: Duplicate env_vars across AI providers
-    _check_duplicate_env_vars(config, diags)
 
     # W009: Shell metacharacters in install_cmd
     for key, ps in config.package_sets.items():
@@ -534,16 +466,6 @@ def _is_broad_wildcard(domain: str) -> bool:
 
 def _check_broad_wildcards(config: GuestImageConfig, diags: list[Diagnostic]) -> None:
     """Emit W007 for overly broad wildcard domains."""
-    # AI provider domains
-    for key, prov in config.ai_providers.items():
-        for domain in prov.network.domains:
-            if _is_broad_wildcard(domain):
-                diags.append(Diagnostic(
-                    code="W007",
-                    severity=Severity.WARNING,
-                    message=f"Overly broad wildcard domain '{domain}' in ai.{key}",
-                    file=f"config/ai/{key}.toml",
-                ))
     ws = config.web_security
     # Web security service domains
     for section_name, section in [("search", ws.search), ("registry", ws.registry), ("repository", ws.repository)]:
@@ -556,22 +478,6 @@ def _check_broad_wildcards(config: GuestImageConfig, diags: list[Diagnostic]) ->
                         message=f"Overly broad wildcard domain '{domain}' in web.{section_name}.{key}",
                         file="config/security/web.toml",
                     ))
-
-
-def _check_duplicate_env_vars(config: GuestImageConfig, diags: list[Diagnostic]) -> None:
-    """Emit W008 for duplicate env_vars across AI providers."""
-    seen: dict[str, str] = {}  # env_var -> first provider key
-    for key, prov in config.ai_providers.items():
-        for var in prov.api_key.env_vars:
-            if var in seen:
-                diags.append(Diagnostic(
-                    code="W008",
-                    severity=Severity.WARNING,
-                    message=f"Duplicate env_var '{var}' in ai.{key} (also in ai.{seen[var]})",
-                    file=f"config/ai/{key}.toml",
-                ))
-            else:
-                seen[var] = key
 
 
 def _has_shell_metachar(cmd: str) -> bool:
@@ -588,23 +494,6 @@ def _check_rust_targets(config: GuestImageConfig, diags: list[Diagnostic]) -> No
                 severity=Severity.WARNING,
                 message=f"Unknown rust_target '{arch.rust_target}' for {arch_name} (expected musl target)",
                 file="config/build.toml",
-            ))
-
-
-def _check_ai_version_commands(
-    config: GuestImageConfig, diags: list[Diagnostic],
-) -> None:
-    """Emit W013 for enabled AI providers with cli but no version_command."""
-    for key, provider in config.ai_providers.items():
-        if provider.enabled and provider.cli and not provider.cli.version_command:
-            diags.append(Diagnostic(
-                code="W013",
-                severity=Severity.WARNING,
-                message=(
-                    f"AI provider '{key}' has cli but no version_command -- "
-                    "tool-versions.txt will not track this CLI"
-                ),
-                file=f"config/ai/{key}.toml",
             ))
 
 
@@ -681,9 +570,6 @@ def validate_guest(
     # E008: Duplicate keys
     _validate_duplicates(config_dir, parsed, diags)
 
-    # E009/E010: File path and content validation
-    _validate_file_paths(config, diags)
-
     # E300: Defconfig validation
     _validate_defconfigs(config, config_dir, diags)
 
@@ -693,8 +579,5 @@ def validate_guest(
 
     # W001-W006: Warnings
     _validate_warnings(config, diags)
-
-    # W013: AI providers missing version_command
-    _check_ai_version_commands(config, diags)
 
     return sorted(diags, key=lambda d: (d.severity.value, d.code))

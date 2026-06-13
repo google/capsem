@@ -61,7 +61,7 @@ just build-assets code
 Builds the Linux kernel and rootfs via Docker (~10 min on first run). The code
 profile currently builds against the stable 7.0 kernel lane and EROFS/LZ4HC
 rootfs contract. Kernel branch changes are backend image-spec changes made
-through the profile/admin build rail, then verified by `capsem-admin image
+through the profile-derived build rail, then verified by `capsem-admin image
 build` and the Linux handoff gate. Assets are gitignored and must be built
 locally. See [Life of a Build > Container runtime](./stack#container-runtime)
 if you need to retune Colima resources.
