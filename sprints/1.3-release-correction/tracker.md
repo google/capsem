@@ -1036,8 +1036,16 @@ next one, and stage only the files for that slice.
 
 ## S9. Agent Bootstrap Repair
 
-- [ ] RED/GREEN: profile root contains non-secret AGY config/wrapper and does
+- [x] RED/GREEN: profile root contains non-secret AGY config/wrapper and does
   not contain OAuth token/log/conversation/history/cache files.
+  - 2026-06-13 progress: Profile payload contracts now require AGY non-secret
+    settings, the AGY build wrapper that preserves `agy-real` and adds
+    `--dangerously-skip-permissions`, Claude bootstrap state, Codex MCP config,
+    and the shared root MCP config. The test rejects checked-in root payload
+    paths containing OAuth/token/log/conversation/history/cache material.
+  - Proof: `uv run python -m pytest
+    tests/capsem-build-chain/test_profile_payload_contract.py -q`; `cargo test
+    -p capsem-admin`.
 - [x] RED/GREEN: Claude install/bootstrap includes MCP approval and dangerous
   mode acknowledgement without first-run prompts.
   - 2026-06-12 progress: Code and Co-work profile roots now package
@@ -1051,10 +1059,31 @@ next one, and stage only the files for that slice.
     -p capsem-admin -- profile check config/profiles/code/profile.toml
     --config-root config --json`; `cargo run -p capsem-admin -- profile check
     config/profiles/co-work/profile.toml --config-root config --json`.
-- [ ] RED/GREEN: Claude binary/install path is valid or doctor reports exact
+- [x] RED/GREEN: Claude binary/install path is valid or doctor reports exact
   remediation; no broken symlink in shipped profile.
-- [ ] RED/GREEN: Codex config/MCP/bootstrap files are profile-owned and pinned.
-- [ ] RED/GREEN: profile root manifest hashes every shipped bootstrap file.
+  - 2026-06-13 progress: The profile build hook contract asserts Claude is
+    installed through the profile build rail and promoted to
+    `/usr/local/bin/claude` instead of relying on a broken home-directory
+    symlink.
+  - Proof: `uv run python -m pytest
+    tests/capsem-build-chain/test_profile_payload_contract.py -q`.
+- [x] RED/GREEN: Codex config/MCP/bootstrap files are profile-owned and pinned.
+  - 2026-06-13 progress: `root/.codex/config.toml` must declare the `capsem`
+    MCP server command `/run/capsem-mcp-server`, and the root manifest must pin
+    that file exactly.
+  - Proof: `uv run python -m pytest
+    tests/capsem-build-chain/test_profile_payload_contract.py -q`.
+- [x] RED/GREEN: profile root manifest hashes every shipped bootstrap file.
+  - 2026-06-13 progress: `capsem-admin profile check` now walks the profile
+    `root/` seed directory and rejects any unlisted regular file before image
+    materialization can copy it. It also rejects duplicate manifest entries,
+    stale/missing entries, and non-regular root payloads.
+  - Proof: RED `cargo test -p capsem-admin
+    profile_check_rejects_unpinned_profile_root_payload_files -- --nocapture`
+    failed before the admin fix; GREEN `cargo test -p capsem-admin`; `cargo run
+    -p capsem-admin -- profile check config/profiles/code/profile.toml
+    --config-root config --json`; `cargo run -p capsem-admin -- profile check
+    config/profiles/co-work/profile.toml --config-root config --json`.
 - [ ] Proof: fresh VM can start AGY/Claude/Codex bootstrap paths without
   mutating unpinned profile state before first model request.
 

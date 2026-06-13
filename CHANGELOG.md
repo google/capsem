@@ -109,6 +109,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed credential broker stats so captured, brokered, injected, and error
   events are counted independently instead of treating every broker row as a
   captured credential.
+- Hardened profile root bootstrap packaging: `capsem-admin profile check` now
+  rejects unpinned files under a profile root seed, profile payload tests prove
+  AGY/Claude/Codex/MCP non-secret bootstrap files are pinned exactly, and
+  OAuth tokens, logs, conversations, history, and cache payloads cannot be
+  baked into checked-in profile roots silently.
 - Tightened the VM Stats Process panel so it reports command executions and
   observed processes as separate ledgers, replaces the unrelated credential-ref
   counter with unique binary counts, and removes tutorial prose from the app UI.

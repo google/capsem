@@ -93,8 +93,9 @@ def test_profiles_package_claude_bypass_permissions_bootstrap() -> None:
     for profile_dir in sorted(PROFILES_DIR.iterdir()):
         if not profile_dir.is_dir():
             continue
-        profile, _, _ = _profile_payload(profile_dir)
+        profile, build_path, _ = _profile_payload(profile_dir)
         profile_id = profile["id"]
+        build_script = build_path.read_text()
         settings_path = profile_dir / "root/root/.claude/settings.json"
         if not settings_path.is_file():
             failures.append(f"{profile_id}: missing root/.claude/settings.json")
@@ -105,5 +106,101 @@ def test_profiles_package_claude_bypass_permissions_bootstrap() -> None:
             failures.append(
                 f"{profile_id}: Claude defaultMode is {default_mode!r}, expected bypassPermissions"
             )
+        if 'install_from_url "https://claude.ai/install.sh" "claude"' not in build_script:
+            failures.append(f"{profile_id}: build script does not install Claude")
+        if 'install -m 555 "/root/.local/bin/$name" "/usr/local/bin/$name"' not in build_script:
+            failures.append(
+                f"{profile_id}: build script does not promote CLI binaries to /usr/local/bin"
+            )
 
     assert not failures, "invalid Claude permissions bootstrap contract:\n" + "\n".join(failures)
+
+
+def test_profile_root_manifests_pin_exactly_the_shipped_root_payload() -> None:
+    failures: list[str] = []
+    forbidden_path_fragments = (
+        "oauth",
+        "token",
+        "conversation",
+        "history",
+        "cache",
+        ".log",
+    )
+    required_payloads = {
+        "root/.antigravity/settings.json",
+        "root/.claude.json",
+        "root/.claude/settings.json",
+        "root/.claude/settings.local.json",
+        "root/.codex/config.toml",
+        "root/.mcp.json",
+    }
+
+    for profile_dir in sorted(PROFILES_DIR.iterdir()):
+        if not profile_dir.is_dir():
+            continue
+        profile_id = profile_dir.name
+        root_dir = profile_dir / "root"
+        manifest_entries = _root_manifest_entries(profile_dir)
+        actual_paths = {
+            path.relative_to(root_dir).as_posix()
+            for path in root_dir.rglob("*")
+            if path.is_file()
+        }
+        manifest_paths = set(manifest_entries)
+
+        missing = sorted(actual_paths - manifest_paths)
+        if missing:
+            failures.append(f"{profile_id}: unpinned root payload files: {missing}")
+        stale = sorted(manifest_paths - actual_paths)
+        if stale:
+            failures.append(f"{profile_id}: manifest lists missing root payload files: {stale}")
+
+        for required in sorted(required_payloads):
+            if required not in actual_paths:
+                failures.append(f"{profile_id}: missing non-secret bootstrap payload {required}")
+
+        for rel in sorted(actual_paths):
+            lowered = rel.lower()
+            if any(fragment in lowered for fragment in forbidden_path_fragments):
+                failures.append(f"{profile_id}: forbidden secret/cache/log payload path {rel}")
+                continue
+            payload = (root_dir / rel).read_bytes()
+            entry = manifest_entries.get(rel)
+            if entry is None:
+                continue
+            expected_hash = "blake3:" + blake3.blake3(payload).hexdigest()
+            if entry.get("hash") != expected_hash:
+                failures.append(f"{profile_id}: {rel} manifest hash is stale")
+            if entry.get("size") != len(payload):
+                failures.append(f"{profile_id}: {rel} manifest size is stale")
+
+    assert not failures, "invalid profile root payload contract:\n" + "\n".join(failures)
+
+
+def test_profiles_package_agent_bootstrap_without_baking_credentials() -> None:
+    failures: list[str] = []
+    for profile_dir in sorted(PROFILES_DIR.iterdir()):
+        if not profile_dir.is_dir():
+            continue
+        profile, build_path, _ = _profile_payload(profile_dir)
+        profile_id = profile["id"]
+        root_dir = profile_dir / "root"
+
+        agy_settings = json.loads((root_dir / "root/.antigravity/settings.json").read_text())
+        if "/root" not in agy_settings.get("trustedWorkspaces", []):
+            failures.append(f"{profile_id}: AGY does not trust /root workspace")
+        if "auth" in agy_settings or "token" in json.dumps(agy_settings).lower():
+            failures.append(f"{profile_id}: AGY settings bake auth material")
+
+        build_script = build_path.read_text()
+        if "agy-real" not in build_script:
+            failures.append(f"{profile_id}: AGY wrapper does not preserve vendor binary as agy-real")
+        if "--dangerously-skip-permissions" not in build_script:
+            failures.append(f"{profile_id}: AGY wrapper does not enable Capsem sandbox mode")
+
+        codex = tomllib.loads((root_dir / "root/.codex/config.toml").read_text())
+        command = codex.get("mcp_servers", {}).get("capsem", {}).get("command")
+        if command != "/run/capsem-mcp-server":
+            failures.append(f"{profile_id}: Codex capsem MCP command is {command!r}")
+
+    assert not failures, "invalid agent bootstrap contract:\n" + "\n".join(failures)

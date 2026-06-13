@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fs,
     io::Read,
     path::{Path, PathBuf},
@@ -1383,9 +1383,16 @@ fn check_profile_root_manifest(path: &Path) -> Result<Vec<LocalAssetCheckReport>
         .parent()
         .ok_or_else(|| anyhow!("profile root manifest has no parent: {}", path.display()))?
         .join("root");
-    let mut reports = Vec::new();
-    for entry in manifest.files {
+    let mut listed_files = BTreeSet::new();
+    for entry in &manifest.files {
         validate_relative_manifest_path("profile root manifest file", &entry.path)?;
+        if !listed_files.insert(entry.path.clone()) {
+            return Err(anyhow!(
+                "profile root manifest {} lists duplicate payload file {}",
+                path.display(),
+                entry.path
+            ));
+        }
         if entry.size == 0 {
             return Err(anyhow!(
                 "profile root manifest {} entry {} has zero size",
@@ -1393,6 +1400,24 @@ fn check_profile_root_manifest(path: &Path) -> Result<Vec<LocalAssetCheckReport>
                 entry.path
             ));
         }
+    }
+    let actual_files = collect_profile_root_files(&root_dir)?;
+    for unlisted in actual_files.difference(&listed_files) {
+        return Err(anyhow!(
+            "unlisted profile root payload file {} under {}",
+            unlisted,
+            root_dir.display()
+        ));
+    }
+    for missing in listed_files.difference(&actual_files) {
+        return Err(anyhow!(
+            "profile root manifest {} lists missing payload file {}",
+            path.display(),
+            missing
+        ));
+    }
+    let mut reports = Vec::new();
+    for entry in manifest.files {
         reports.push(check_exact_local_asset(
             &root_dir.join(&entry.path),
             "profile-root",
@@ -1402,6 +1427,53 @@ fn check_profile_root_manifest(path: &Path) -> Result<Vec<LocalAssetCheckReport>
         )?);
     }
     Ok(reports)
+}
+
+fn collect_profile_root_files(root_dir: &Path) -> Result<BTreeSet<String>> {
+    let mut files = BTreeSet::new();
+    if !root_dir.is_dir() {
+        return Err(anyhow!(
+            "profile root directory {} is missing",
+            root_dir.display()
+        ));
+    }
+    collect_profile_root_files_into(root_dir, root_dir, &mut files)?;
+    Ok(files)
+}
+
+fn collect_profile_root_files_into(
+    root_dir: &Path,
+    current: &Path,
+    files: &mut BTreeSet<String>,
+) -> Result<()> {
+    for entry in fs::read_dir(current)
+        .with_context(|| format!("read profile root directory {}", current.display()))?
+    {
+        let entry = entry.with_context(|| format!("read entry in {}", current.display()))?;
+        let path = entry.path();
+        let metadata = entry
+            .metadata()
+            .with_context(|| format!("stat profile root payload {}", path.display()))?;
+        if metadata.is_dir() {
+            collect_profile_root_files_into(root_dir, &path, files)?;
+            continue;
+        }
+        if !metadata.is_file() {
+            return Err(anyhow!(
+                "profile root payload {} is not a regular file",
+                path.display()
+            ));
+        }
+        let relative = path
+            .strip_prefix(root_dir)
+            .with_context(|| format!("strip profile root prefix for {}", path.display()))?;
+        let relative = relative
+            .to_string_lossy()
+            .replace(std::path::MAIN_SEPARATOR, "/");
+        validate_relative_manifest_path("profile root payload file", &relative)?;
+        files.insert(relative);
+    }
+    Ok(())
 }
 
 fn materialize_profile_config(args: &ProfileMaterializeArgs) -> Result<ProfileMaterializeReport> {
@@ -3482,6 +3554,66 @@ decision = "block"
 
         assert!(
             error.to_string().contains("profile root manifest file"),
+            "{error:#}"
+        );
+    }
+
+    #[test]
+    fn profile_check_rejects_unpinned_profile_root_payload_files() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let config_root = temp.path().join("config");
+        let profile_dir = config_root.join("profiles/code");
+        let profile_root = profile_dir.join("root");
+        fs::create_dir_all(profile_root.join("root/.codex")).expect("profile root");
+        fs::create_dir_all(profile_root.join("root/.antigravity")).expect("agy root");
+        let codex_payload = b"[mcp_servers.capsem]\ncommand = \"/run/capsem-mcp-server\"\n";
+        fs::write(profile_root.join("root/.codex/config.toml"), codex_payload)
+            .expect("codex config");
+        fs::write(
+            profile_root.join("root/.antigravity/antigravity-oauth-token"),
+            b"secret",
+        )
+        .expect("unlisted token");
+        let root_manifest = format!(
+            r#"{{
+  "format": "capsem.profile-root.v1",
+  "files": [
+    {{
+      "path": "root/.codex/config.toml",
+      "hash": "blake3:{}",
+      "size": {}
+    }}
+  ]
+}}
+"#,
+            blake3::hash(codex_payload).to_hex(),
+            codex_payload.len()
+        );
+        fs::write(profile_dir.join("root.manifest.json"), root_manifest).expect("root manifest");
+        let mut profile = ProfileConfigFile::builtin_primary();
+        profile.rule_files.enforcement = None;
+        profile.rule_files.sigma = None;
+        profile.assets.arch.retain(|arch, _| arch == "arm64");
+        profile.files = Default::default();
+        profile.files.root_manifest =
+            Some(capsem_core::net::policy_config::ProfileFileDescriptor {
+                path: "profiles/code/root.manifest.json".to_string(),
+                hash: None,
+                size: None,
+            });
+        let profile_path = profile_dir.join("profile.toml");
+        fs::write(&profile_path, toml::to_string(&profile).unwrap()).expect("profile");
+
+        let error = check_profile(&ProfileCheckArgs {
+            path: profile_path,
+            config_root: Some(config_root),
+            arch: Some("arm64".to_string()),
+            json: true,
+        })
+        .expect_err("unlisted profile root payload rejected");
+
+        assert!(
+            format!("{error:#}").contains("unlisted profile root payload file"),
             "{error:#}"
         );
     }
