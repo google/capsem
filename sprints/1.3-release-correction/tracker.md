@@ -1493,7 +1493,7 @@ next one, and stage only the files for that slice.
     default-only asset set.
   - Proof: `bash -n scripts/doctor-common.sh`; `uv run python -m pytest
     tests/test_release_doctor_contract.py -q --tb=short` (`15 passed`).
-- [ ] Proof: status/debug show service version, manifest origin/hash, profile
+- [x] Proof: status/debug show service version, manifest origin/hash, profile
   status, plugin status, route status, doctor evidence, OBOM/SBOM references.
   - 2026-06-13 progress: support-bundle tests now expect the current
     `config/settings.toml` path, gateway mock fixtures include route-provided
