@@ -79,6 +79,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and native Ollama Python SDK clients through the shared mock server, and
   fixed native Ollama `/api/chat` classification so session DB rows, security
   ledgers, route output, token counts, byte counts, and file writes agree.
+- Extended gateway `/status` to preserve the service profile catalog and
+  installed asset manifest provenance, including profile readiness, manifest
+  origin/source/hash, validation status, and current asset/binary versions.
 - Tightened the Ironbank doctor ledger gate so local-network `ask` decisions,
   informational detections, serialized detection payloads, and security plugin
   execution timings are proven from session DB rows instead of only counted.

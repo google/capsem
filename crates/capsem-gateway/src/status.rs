@@ -47,6 +47,8 @@ pub struct StatusResponse {
     pub resource_summary: Option<ResourceSummary>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub assets: Option<AssetHealth>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profiles: Option<serde_json::Value>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
@@ -250,6 +252,7 @@ async fn fetch_status(state: &AppState) -> StatusResponse {
         vms: vec![],
         resource_summary: None,
         assets: None,
+        profiles: None,
     };
 
     let list = match uds_get(&state.uds_path, "/vms/list").await {
@@ -311,6 +314,7 @@ async fn fetch_status(state: &AppState) -> StatusResponse {
         version: h.version,
         missing: h.missing,
     });
+    let profiles = fetch_profiles_status(state).await;
 
     StatusResponse {
         service: "running".into(),
@@ -325,7 +329,13 @@ async fn fetch_status(state: &AppState) -> StatusResponse {
             suspended_count: suspended,
         }),
         assets,
+        profiles,
     }
+}
+
+async fn fetch_profiles_status(state: &AppState) -> Option<serde_json::Value> {
+    let body = uds_get(&state.uds_path, "/profiles/status").await.ok()?;
+    serde_json::from_slice::<serde_json::Value>(&body).ok()
 }
 
 /// Simple GET request over UDS.

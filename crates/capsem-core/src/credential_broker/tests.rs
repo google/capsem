@@ -96,7 +96,10 @@ fn http_detector_detects_google_api_key_header_with_provider_hint() {
     .expect("google API key header should be detected without provider hint");
 
     assert_eq!(obs.provider, CredentialProvider::Google);
-    assert_eq!(obs.raw_value, "capsem_test_google_stream_key_0123456789abcdef");
+    assert_eq!(
+        obs.raw_value,
+        "capsem_test_google_stream_key_0123456789abcdef"
+    );
     assert_eq!(obs.source, "http.header.x-goog-api-key");
     let event = obs.redacted_event("captured");
     assert!(is_broker_reference(&event.substitution_ref));

@@ -22,6 +22,7 @@ fn status_response_serializes() {
             suspended_count: 0,
         }),
         assets: None,
+        profiles: None,
     };
 
     let json = serde_json::to_value(&resp).unwrap();
@@ -40,6 +41,7 @@ fn unavailable_response_shape() {
         vms: vec![],
         resource_summary: None,
         assets: None,
+        profiles: None,
     };
 
     let json = serde_json::to_value(&resp).unwrap();
@@ -67,6 +69,7 @@ fn status_response_multiple_vms_resource_aggregation() {
             suspended_count: 0,
         }),
         assets: None,
+        profiles: None,
     };
 
     let json = serde_json::to_value(&resp).unwrap();
@@ -152,6 +155,7 @@ async fn cache_returns_fresh_data() {
         vms: vec![],
         resource_summary: None,
         assets: None,
+        profiles: None,
     };
 
     // Populate cache
@@ -180,6 +184,7 @@ async fn cache_expires_after_ttl() {
         vms: vec![],
         resource_summary: None,
         assets: None,
+        profiles: None,
     };
 
     // Populate cache with a timestamp beyond the 1s TTL
@@ -282,6 +287,91 @@ async fn fetch_status_empty_vm_list() {
     assert_eq!(rs.total_cpus, 0);
     assert_eq!(rs.running_count, 0);
     assert_eq!(rs.stopped_count, 0);
+    h.abort();
+}
+
+#[tokio::test]
+async fn fetch_status_preserves_profile_catalog_and_manifest_provenance() {
+    let mock = axum::Router::new()
+        .route(
+            "/vms/list",
+            axum::routing::get(|| async { axum::Json(serde_json::json!({"sandboxes": []})) }),
+        )
+        .route(
+            "/profiles/status",
+            axum::routing::get(|| async {
+                axum::Json(serde_json::json!({
+                    "source": "directory",
+                    "profile_count": 2,
+                    "ready_count": 1,
+                    "asset_manifest": {
+                        "origin": "package",
+                        "path": "/Users/test/.capsem/assets/manifest.json",
+                        "origin_path": "/Users/test/.capsem/assets/manifest-origin.json",
+                        "origin_source": "file:///tmp/corp/manifest.json",
+                        "packaged_at": "2026-06-13T00:00:00Z",
+                        "blake3": "0123456789abcdef",
+                        "validation_status": "valid",
+                        "refresh_policy": "24h",
+                        "assets_current": "2026.0613.1",
+                        "binaries_current": "1.3.0"
+                    },
+                    "profiles": [
+                        {
+                            "id": "code",
+                            "name": "Code",
+                            "description": "Optimized for coding and long-running agents.",
+                            "ready": true,
+                            "current_arch": "arm64",
+                            "missing_assets": [],
+                            "invalid_assets": [],
+                            "invalid_files": [],
+                            "errors": [],
+                            "asset_count": 3
+                        },
+                        {
+                            "id": "co-work",
+                            "name": "Co-work",
+                            "description": "Shared profile for collaborative agent sessions.",
+                            "ready": false,
+                            "current_arch": "arm64",
+                            "missing_assets": [{"kind": "rootfs", "path": "/missing/rootfs.erofs", "valid": false}],
+                            "invalid_assets": [],
+                            "invalid_files": [],
+                            "errors": ["missing rootfs"],
+                            "asset_count": 3
+                        }
+                    ]
+                }))
+            }),
+        );
+    let (path, h, _d) = mock_uds(mock).await;
+
+    let state = test_app_state(&path);
+    let resp = fetch_status(&state).await;
+
+    assert_eq!(resp.service, "running");
+    let profiles = resp
+        .profiles
+        .expect("gateway status must include profile status");
+    assert_eq!(profiles["source"], "directory");
+    assert_eq!(profiles["profile_count"], 2);
+    assert_eq!(profiles["ready_count"], 1);
+    assert_eq!(profiles["asset_manifest"]["origin"], "package");
+    assert_eq!(
+        profiles["asset_manifest"]["origin_source"],
+        "file:///tmp/corp/manifest.json"
+    );
+    assert_eq!(profiles["asset_manifest"]["blake3"], "0123456789abcdef");
+    assert_eq!(profiles["asset_manifest"]["validation_status"], "valid");
+    assert_eq!(profiles["asset_manifest"]["refresh_policy"], "24h");
+    assert_eq!(profiles["profiles"][0]["id"], "code");
+    assert_eq!(profiles["profiles"][0]["ready"], true);
+    assert_eq!(profiles["profiles"][1]["id"], "co-work");
+    assert_eq!(
+        profiles["profiles"][1]["missing_assets"][0]["kind"],
+        "rootfs"
+    );
     h.abort();
 }
 

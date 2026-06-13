@@ -1478,6 +1478,20 @@ next one, and stage only the files for that slice.
     tests/capsem-gateway/test_mitm_policy.py -q --tb=short`; and `uv run ruff
     check tests/capsem-gateway/conftest.py
     tests/capsem-gateway/test_mitm_policy.py`.
+  - 2026-06-13 progress: gateway `/status` now fetches service
+    `/profiles/status` and preserves the route-owned profile catalog plus
+    installed manifest provenance (`origin`, source, BLAKE3, validation,
+    refresh policy, current asset version, current binary version) so the UI
+    status surface no longer hides profile readiness behind VM counts.
+  - Proof: RED
+    `cargo test -p capsem-gateway
+    fetch_status_preserves_profile_catalog_and_manifest_provenance --
+    --nocapture` failed on the missing `profiles` contract; GREEN
+    `cargo test -p capsem-gateway status -- --nocapture` (`24 passed`);
+    `cargo build -p capsem-gateway`; `uv run python -m pytest
+    tests/capsem-gateway/test_gw_status.py -q` (`5 passed`); `uv run ruff
+    check tests/capsem-gateway/conftest.py
+    tests/capsem-gateway/test_gw_status.py`.
 - [ ] Proof: changelog, docs, skills, and benchmark docs updated.
 - [ ] Proof: full final gates pass and branch is pushed.
 

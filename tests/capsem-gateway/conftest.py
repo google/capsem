@@ -137,6 +137,50 @@ class MockServiceHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
+        elif path_only == "/profiles/status":
+            self._send_json({
+                "source": "directory",
+                "profile_count": 2,
+                "ready_count": 1,
+                "asset_manifest": {
+                    "origin": "package",
+                    "path": "/Users/test/.capsem/assets/manifest.json",
+                    "origin_path": "/Users/test/.capsem/assets/manifest-origin.json",
+                    "origin_source": "file:///tmp/corp/manifest.json",
+                    "packaged_at": "2026-06-13T00:00:00Z",
+                    "blake3": "0123456789abcdef",
+                    "validation_status": "valid",
+                    "refresh_policy": "24h",
+                    "assets_current": "2026.0613.1",
+                    "binaries_current": "1.3.0",
+                },
+                "profiles": [
+                    {
+                        "id": CODE_PROFILE_ID,
+                        "name": "Code",
+                        "description": "Optimized for coding and long-running agents.",
+                        "ready": True,
+                        "current_arch": "arm64",
+                        "missing_assets": [],
+                        "invalid_assets": [],
+                        "invalid_files": [],
+                        "errors": [],
+                        "asset_count": 3,
+                    },
+                    {
+                        "id": "co-work",
+                        "name": "Co-work",
+                        "description": "Shared profile for collaborative agent sessions.",
+                        "ready": False,
+                        "current_arch": "arm64",
+                        "missing_assets": [{"kind": "rootfs", "path": "/missing/rootfs.erofs", "valid": False}],
+                        "invalid_assets": [],
+                        "invalid_files": [],
+                        "errors": ["missing rootfs"],
+                        "asset_count": 3,
+                    },
+                ],
+            })
         else:
             self._send_error(404, f"unknown endpoint: {self.clean_path}")
 
