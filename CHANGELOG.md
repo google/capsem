@@ -104,6 +104,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed dashboard session actions so incompatible or defunct sessions remain
   non-openable and expose only the delete action even if a stale status payload
   includes start, resume, or fork actions.
+- Tightened the MCP profile UI so default and per-tool permission controls use
+  the same typed allow/ask/block option list as the route contract.
 - Tightened the VM Stats Process panel so it reports command executions and
   observed processes as separate ledgers, replaces the unrelated credential-ref
   counter with unique binary counts, and removes tutorial prose from the app UI.

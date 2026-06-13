@@ -983,8 +983,19 @@ next one, and stage only the files for that slice.
     gateway_security_routes_are_explicitly_forwarded -- --nocapture`; `pnpm
     --dir frontend test src/lib/__tests__/profile-page-contract.test.ts
     src/lib/__tests__/api.test.ts`.
-- [ ] RED/GREEN: plugin/MCP/rule modes use enum-backed selects/icons and
+- [x] RED/GREEN: plugin/MCP/rule modes use enum-backed selects/icons and
   disabled rows are visibly disabled.
+  - 2026-06-13 progress: MCP default and per-tool permission selectors now
+    render from a single typed `ToolPermission` option list instead of
+    duplicated raw `<option>` values; plugin mode selectors already render from
+    typed `PluginMode` metadata, and rule rows render typed action/detection
+    metadata with disabled styling from the backend `enabled` field.
+  - Proof: RED/GREEN `pnpm --dir frontend test
+    src/lib/__tests__/mcp-section-contract.test.ts`; focused proof `pnpm
+    --dir frontend test src/lib/__tests__/mcp-section-contract.test.ts
+    src/lib/__tests__/plugin-section-contract.test.ts
+    src/lib/__tests__/profile-page-contract.test.ts`; `pnpm --dir frontend
+    check`.
 - [x] RED/GREEN: stats detail panels show one canonical presentation and move
   raw JSON to debug-only.
   - 2026-06-11 progress: stats detail drawers no longer render the selected

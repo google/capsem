@@ -8,11 +8,14 @@ const source = readFileSync(
 
 describe('McpSection route contract', () => {
   it('renders tool permissions with enum metadata and keeps the route-backed selector', () => {
+    expect(source).toContain('const PERMISSIONS: { value: ToolPermission');
+    expect(source).toContain('{#each PERMISSIONS as permission');
     expect(source).toContain('const PERMISSION_META: Record<ToolPermission');
     expect(source).toContain('allow:');
     expect(source).toContain('ask:');
     expect(source).toContain('block:');
     expect(source).toContain('<meta.icon');
+    expect(source).not.toContain('<option value="allow">Allow</option>');
     expect(source).toContain('setToolPermission(tool, event.currentTarget.value as ToolPermission)');
   });
 

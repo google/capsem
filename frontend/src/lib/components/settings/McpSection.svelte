@@ -18,6 +18,12 @@
   let actionError = $state<string | null>(null);
   let loadedProfileId = $state<string | null>(null);
 
+  const PERMISSIONS: { value: ToolPermission; label: string }[] = [
+    { value: 'allow', label: 'Allow' },
+    { value: 'ask', label: 'Ask' },
+    { value: 'block', label: 'Block' },
+  ];
+
   const PERMISSION_META: Record<ToolPermission, { label: string; icon: typeof CheckCircle; tone: string }> = {
     allow: {
       label: 'Allow',
@@ -139,9 +145,9 @@
             disabled={saving}
             onchange={(event) => setToolPermission(tool, event.currentTarget.value as ToolPermission)}
           >
-            <option value="allow">Allow</option>
-            <option value="ask">Ask</option>
-            <option value="block">Block</option>
+            {#each PERMISSIONS as permission (permission.value)}
+              <option value={permission.value}>{permission.label}</option>
+            {/each}
           </select>
         </div>
       </div>
@@ -197,9 +203,9 @@
           disabled={saving}
           onchange={(event) => setDefaultPermission(event.currentTarget.value as ToolPermission)}
         >
-          <option value="allow">Allow</option>
-          <option value="ask">Ask</option>
-          <option value="block">Block</option>
+          {#each PERMISSIONS as permission (permission.value)}
+            <option value={permission.value}>{permission.label}</option>
+          {/each}
         </select>
       </div>
     </div>
