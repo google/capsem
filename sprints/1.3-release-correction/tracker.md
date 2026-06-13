@@ -524,6 +524,14 @@ next one, and stage only the files for that slice.
     tests/ironbank/test_doctor_ledger.py`; full suite
     `CAPSEM_TEST_PRESERVE_ALWAYS=1 uv run python -m pytest tests/ironbank/
     -q -s` (`3 passed in 37.53s`).
+  - 2026-06-13 correction: the HTTP gateway now explicitly forwards
+    `/profiles/{id}/plugins/credential_broker/credentials/reload`, matching the
+    already-shipped service route and frontend API helper. This removes one
+    profile/plugin UI 404 class while keeping the gateway on explicit paths
+    only.
+  - Proof: `cargo test -p capsem-gateway
+    gateway_security_routes_are_explicitly_forwarded -- --nocapture`;
+    `cargo fmt --check`.
   - 2026-06-13 progress: `tests/capsem-mcp/test_mcp_call.py` now proves the
     native host `capsem_mcp_call` route, not just doctor-triggered MCP. RED
     caught that service-initiated profile MCP calls invoked the aggregator

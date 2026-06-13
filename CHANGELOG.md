@@ -62,6 +62,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   miss, service `/status` reports only ready/degraded state, and
   `/profiles/{id}/plugins/credential_broker/credentials/{info,reload}` exposes
   the detailed broker store object plus explicit retry.
+- Routed the profile-scoped credential broker retry endpoint through the HTTP
+  gateway and pinned it in the explicit route allowlist so the UI cannot see a
+  404 for a service-supported profile/plugin operation.
 - Extended file-boundary IPC so plugin `rewrite` decisions can return mutated
   bytes to the service for import/export/read/write boundaries; the service
   now writes or returns only the bytes approved by the plugin-aware security
