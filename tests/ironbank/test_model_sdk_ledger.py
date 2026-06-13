@@ -239,6 +239,54 @@ def _broker_replay_script(base_url: str, credential_ref: str) -> str:
     ).strip()
 
 
+def _unknown_shape_probe_script(base_url: str) -> str:
+    payload = {
+        "url": f"{base_url.rstrip('/')}/model/shape",
+        "api_key_parts": ["capsem_test_unknown_shape_", "key_0123456789abcdef"],
+        "model": "gpt-4.1",
+    }
+    return textwrap.dedent(
+        f"""
+        import json
+        import urllib.request
+
+        cfg = json.loads({json.dumps(json.dumps(payload))})
+        body = json.dumps({{
+            "model": cfg["model"],
+            "messages": [{{"role": "user", "content": "Classify this by body shape."}}],
+            "tools": [{{
+                "type": "function",
+                "function": {{
+                    "name": "fixture_lookup",
+                    "parameters": {{
+                        "type": "object",
+                        "properties": {{"query": {{"type": "string"}}}},
+                    }},
+                }},
+            }}],
+        }}).encode("utf-8")
+        request = urllib.request.Request(
+            cfg["url"],
+            data=body,
+            headers={{
+                "Authorization": "Bearer " + "".join(cfg["api_key_parts"]),
+                "Content-Type": "application/json",
+            }},
+            method="POST",
+        )
+        with urllib.request.urlopen(request, timeout=30) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        result = {{
+            "model": payload["model"],
+            "content": payload["choices"][0]["message"]["content"],
+            "tool_name": payload["choices"][0]["message"]["tool_calls"][0]["function"]["name"],
+            "usage_total": payload["usage"]["total_tokens"],
+        }}
+        print("IRONBANK_UNKNOWN_SHAPE_RESULT=" + json.dumps(result, sort_keys=True))
+        """
+    ).strip()
+
+
 def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
     assert MOCK_SERVER_BINARY.exists(), f"{MOCK_SERVER_BINARY} missing; restore mock server runtime"
     assert ASSETS_DIR.exists(), f"{ASSETS_DIR} missing; build VM assets before Ironbank"
@@ -314,6 +362,42 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
         )
         assert poem_status == 200
         assert poem_bytes.decode() == EXPECTED_POEM + "\n"
+
+        shape_script_name = f"ironbank-unknown-shape-{uuid.uuid4().hex[:8]}.py"
+        shape_script = _unknown_shape_probe_script(mock_base_url).encode()
+        shape_upload = client.post_bytes(
+            f"/vms/{session_id}/files/content?path={shape_script_name}",
+            shape_script,
+            timeout=30,
+        )
+        assert shape_upload is not None
+        assert shape_upload["success"] is True
+        assert shape_upload["size"] == len(shape_script)
+        shape_exec = client.post(
+            f"/vms/{session_id}/exec",
+            {"command": f"python3 /root/{shape_script_name}", "timeout_secs": 120},
+            timeout=150,
+        )
+        assert shape_exec is not None, "unknown-shape exec returned no body"
+        assert shape_exec["exit_code"] == 0, shape_exec
+        shape_output = shape_exec.get("stdout", "") + shape_exec.get("stderr", "")
+        assert "capsem_test_unknown_shape_key" not in shape_output
+        shape_line = next(
+            (
+                line
+                for line in shape_exec.get("stdout", "").splitlines()
+                if line.startswith("IRONBANK_UNKNOWN_SHAPE_RESULT=")
+            ),
+            None,
+        )
+        assert shape_line is not None, shape_output
+        shape_result = json.loads(shape_line.split("=", 1)[1])
+        assert shape_result == {
+            "content": EXPECTED_POEM,
+            "model": "gpt-4.1",
+            "tool_name": "fixture_lookup",
+            "usage_total": 12,
+        }
 
         history = client.get(f"/vms/{session_id}/history", timeout=30)
         assert history is not None
@@ -544,6 +628,34 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
                 assert row["credential_ref"] == credential_ref
                 assert RAW_SDK_SECRET not in (row["request_body_preview"] or "")
 
+            unknown_shape_rows = _eventually(
+                lambda: conn.execute(
+                    """
+                    SELECT *
+                    FROM model_calls
+                    WHERE path = '/model/shape'
+                    ORDER BY id
+                    """
+                ).fetchall(),
+                lambda rows: len(rows) >= 1,
+            )
+            unknown_shape = unknown_shape_rows[-1]
+            _assert_event_id(unknown_shape["event_id"])
+            assert unknown_shape["provider"] == "openai"
+            assert unknown_shape["model"] == "gpt-4.1"
+            assert unknown_shape["method"] == "POST"
+            assert unknown_shape["status_code"] == 200
+            assert unknown_shape["messages_count"] == 1
+            assert unknown_shape["tools_count"] == 1
+            assert unknown_shape["input_tokens"] == 7
+            assert unknown_shape["output_tokens"] == 5
+            assert unknown_shape["text_content"] == EXPECTED_POEM
+            assert unknown_shape["credential_ref"] is not None
+            _assert_credential_ref(unknown_shape["credential_ref"])
+            assert "capsem_test_unknown_shape_key" not in (
+                unknown_shape["request_body_preview"] or ""
+            )
+
             tool_rows = _eventually(
                 lambda: conn.execute(
                     """
@@ -558,6 +670,10 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
             )
             assert len(tool_rows) >= 2
             assert {row["call_id"] for row in tool_rows} == {"tool_0001"}
+            valid_tool_credential_refs = {
+                credential_ref,
+                unknown_shape["credential_ref"],
+            }
             for row in tool_rows:
                 _assert_event_id(row["event_id"])
                 assert row["provider"] == "openai"
@@ -566,7 +682,8 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
                 assert row["arguments"] == '{"query":"capsem"}'
                 assert row["origin"] == "native"
                 assert row["trace_id"] == row["model_trace_id"]
-                assert row["credential_ref"] == credential_ref
+                _assert_credential_ref(row["credential_ref"])
+                assert row["credential_ref"] in valid_tool_credential_refs
 
             info = _eventually(
                 lambda: client.get(f"/vms/{session_id}/info", timeout=30),
@@ -592,6 +709,8 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
                 FROM security_rule_events
                 WHERE event_id IN (
                     SELECT event_id FROM model_calls WHERE path = '/v1/chat/completions'
+                    UNION
+                    SELECT event_id FROM model_calls WHERE path = '/model/shape'
                     UNION
                     SELECT event_id FROM net_events WHERE path = '/v1/chat/completions'
                 )
@@ -625,6 +744,17 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
                     "profiles.rules.ai_openai_model_api",
                     "profiles.rules.default_model",
                 } <= {item["rule_id"] for item in rows}
+            shape_security_rows = security_by_event[unknown_shape["event_id"]]
+            assert {item["rule_action"] for item in shape_security_rows} == {"allow"}
+            assert {
+                "profiles.rules.ai_openai_model_api",
+                "profiles.rules.default_model",
+            } <= {item["rule_id"] for item in shape_security_rows}
+            assert any(
+                item["rule_id"] == "profiles.rules.ai_openai_model_api"
+                and item["detection_level"] == "informational"
+                for item in shape_security_rows
+            )
             security_payloads = [json.loads(row["event_json"]) for row in security_rows]
             plugin_executions = [
                 execution

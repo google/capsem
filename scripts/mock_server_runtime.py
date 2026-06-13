@@ -44,6 +44,7 @@ ENDPOINTS = [
     "/gzip/{size}",
     "/sse/model",
     "/model/response",
+    "/model/shape",
     "/v1/chat/completions",
     "/oauth/authorize",
     "/oauth/token",
@@ -213,6 +214,10 @@ class MockHandler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         path = parsed.path
         if path == "/v1/chat/completions":
+            payload = self._json_body()
+            model = payload.get("model") if isinstance(payload.get("model"), str) else "mock-local"
+            self._send_json(_model_payload(model))
+        elif path == "/model/shape":
             payload = self._json_body()
             model = payload.get("model") if isinstance(payload.get("model"), str) else "mock-local"
             self._send_json(_model_payload(model))

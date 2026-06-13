@@ -1050,8 +1050,19 @@ next one, and stage only the files for that slice.
     snapshot_pagination_params_preserve_include_changes -- --nocapture`; `uv
     run python -m py_compile guest/artifacts/snapshots
     guest/artifacts/diagnostics/test_mcp.py`.
-- [ ] RED/GREEN: unknown AI-compatible protocol shape on unknown host emits
+- [x] RED/GREEN: unknown AI-compatible protocol shape on unknown host emits
   model provider plus host and triggers detection.
+  - 2026-06-13 closure: the hermetic mock server exposes `/model/shape`, a
+    neutral non-provider path that returns an OpenAI-compatible response. The
+    Ironbank SDK ledger proof posts an OpenAI-shaped JSON request there,
+    verifies a `model_calls` row with `provider = openai`, validates the
+    brokered credential ref, and proves `profiles.rules.ai_openai_model_api`
+    plus `profiles.rules.default_model` fire from the security ledger.
+  - Proof: `CAPSEM_TEST_PRESERVE_ALWAYS=1 uv run python -m pytest
+    tests/ironbank/test_model_sdk_ledger.py::test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox
+    -q -s --tb=short`; `cargo test -p capsem-core --lib
+    provider_detection -- --nocapture`; `uv run ruff check
+    tests/ironbank/test_model_sdk_ledger.py scripts/mock_server_runtime.py`.
 - [ ] RED/GREEN: unknown remote MCP activity becomes route-visible profile
   evidence.
 - [x] RED/GREEN: credential broker logs `captured`, `brokered`, `injected`, and

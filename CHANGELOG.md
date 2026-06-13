@@ -132,6 +132,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `injected`.
 - Fixed the hermetic credential broker test store so concurrent captures cannot
   corrupt the store or lose refs before replay.
+- Added Ironbank coverage for unknown-host OpenAI-compatible body-shape
+  detection: neutral-path model traffic now proves model rows, broker refs, and
+  detection-rule ledger output.
 - Hardened profile root bootstrap packaging: `capsem-admin profile check` now
   rejects unpinned files under a profile root seed, profile payload tests prove
   AGY/Claude/Codex/MCP non-secret bootstrap files are pinned exactly, and
