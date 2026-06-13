@@ -65,6 +65,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   suspended, save/restore remain exclusive across service workers, cold starts
   stay concurrent, and timing probes run isolated after the `-n 4` integration
   canary so published boot/lifecycle numbers remain meaningful.
+- Replaced fork-package proof in MCP and lifecycle benchmarks with a hermetic
+  local `.deb` probe installed through the public VM file/exec routes, so fork
+  preservation no longer depends on public `apt` repositories while still
+  proving rootfs overlay package state survives the fork.
 - Hardened profile routing assumptions by passing the full release gate under
   temporary arbitrary profile ids before restoring the shipping `code` and
   `co-work` profile identities. This keeps profile-aware routes, UI/TUI

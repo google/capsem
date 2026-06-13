@@ -23,7 +23,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from helpers.constants import EXEC_READY_TIMEOUT
 from helpers.mcp import kill_mcp_proc, wait_exec_ready as mcp_wait_exec_ready
-from helpers.service import preserve_tmp_dir_on_failure
+from helpers.service import materialize_test_profiles, preserve_tmp_dir_on_failure
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 MCP_BINARY = PROJECT_ROOT / "target/debug/capsem-mcp"
@@ -141,6 +141,10 @@ def _start_capsem_service():
     env["CAPSEM_RUN_DIR"] = str(tmp_dir)
     env["CAPSEM_HOME"] = str(tmp_dir)
     env["HOME"] = str(tmp_dir)
+    env["CAPSEM_PROFILES_DIR"] = str(materialize_test_profiles(tmp_dir))
+    env["CAPSEM_CREDENTIAL_BROKER_TEST_STORE"] = str(
+        tmp_dir / "credential-broker-store.json"
+    )
 
     log_path = tmp_dir / "service.log"
     stderr_path = tmp_dir / "service.stderr.log"

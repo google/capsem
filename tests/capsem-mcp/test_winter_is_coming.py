@@ -12,6 +12,7 @@ import uuid
 import pytest
 
 from helpers.mcp import content_text, parse_content, wait_exec_ready as wait_ready
+from helpers.package_probe import assert_fork_probe_with_mcp, install_fork_probe_with_mcp
 
 pytestmark = pytest.mark.mcp
 
@@ -32,23 +33,8 @@ def test_winter_is_coming(mcp_session):
         mcp_session.call_tool("capsem_create", {"name": vm})
         assert wait_ready(mcp_session, vm), f"{vm} never exec-ready"
 
-        # 2. Install packages (rootfs overlay changes)
-        res = mcp_session.call_tool("capsem_exec", {
-            "id": vm,
-            "command": "apt-get update -qq && apt-get install -y -qq curl jq tree 2>&1 | tail -1",
-            "timeout": 120,
-        })
-        data = parse_content(res)
-        assert data["exit_code"] == 0, f"apt-get failed: {data['stderr']}"
-
-        # Verify packages installed
-        res = mcp_session.call_tool("capsem_exec", {
-            "id": vm,
-            "command": "which curl jq tree",
-        })
-        data = parse_content(res)
-        assert data["exit_code"] == 0
-        assert "/usr/bin/curl" in data["stdout"]
+        # 2. Install a hermetic package (rootfs overlay changes).
+        install_fork_probe_with_mcp(mcp_session, vm)
 
         # 3. Write workspace files
         mcp_session.call_tool("capsem_write_file", {
@@ -94,14 +80,8 @@ def test_winter_is_coming(mcp_session):
         })
         assert wait_ready(mcp_session, forked), f"{forked} never exec-ready"
 
-        # 7. Packages survived (rootfs overlay)
-        res = mcp_session.call_tool("capsem_exec", {
-            "id": forked,
-            "command": "which curl jq tree",
-        })
-        data = parse_content(res)
-        assert data["exit_code"] == 0, "packages did not survive fork"
-        assert "/usr/bin/curl" in data["stdout"]
+        # 7. Package survived (rootfs overlay).
+        assert_fork_probe_with_mcp(mcp_session, forked)
 
         # 8. Workspace files survived
         res = mcp_session.call_tool("capsem_read_file", {

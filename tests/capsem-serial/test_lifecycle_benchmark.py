@@ -16,6 +16,11 @@ from pathlib import Path
 import pytest
 
 from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
+from helpers.package_probe import (
+    FORK_PROBE_COMMAND,
+    FORK_PROBE_OUTPUT,
+    install_fork_probe_with_service_client,
+)
 from helpers.service import ServiceInstance, wait_exec_ready
 
 pytestmark = pytest.mark.serial
@@ -106,7 +111,7 @@ def _run_lifecycle(client):
 
 
 def _run_fork_benchmark(client):
-    """Provision VM -> install packages -> write workspace -> fork -> verify.
+    """Provision VM -> install package -> write workspace -> fork -> verify.
 
     Returns dict with fork timing, image size, and boot-from-image timing.
     """
@@ -119,12 +124,8 @@ def _run_fork_benchmark(client):
         client.post("/vms/create", {"name": src, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
         assert wait_exec_ready(client, src, timeout=EXEC_READY_TIMEOUT), f"{src} not ready"
 
-        # Install a package (rootfs overlay change)
-        resp = client.post(f"/vms/{src}/exec", {
-            "command": "apt-get update -qq && apt-get install -y -qq jq 2>&1 | tail -1",
-            "timeout_secs": 120,
-        }, timeout=130)
-        assert resp and resp.get("exit_code") == 0, f"apt-get failed: {resp}"
+        # Install a hermetic local package (rootfs overlay change)
+        install_fork_probe_with_service_client(client, src)
 
         # Write workspace file
         client.post(f"/vms/{src}/files/write", {
@@ -152,9 +153,17 @@ def _run_fork_benchmark(client):
         assert wait_exec_ready(client, dst, timeout=EXEC_READY_TIMEOUT), f"{dst} not ready"
         boot_ready_ms = (time.monotonic() - t0) * 1000
 
-        # Verify packages survived (rootfs overlay)
-        resp = client.post(f"/vms/{dst}/exec", {"command": "which jq", "timeout_secs": 10}, timeout=15)
-        pkg_survived = resp is not None and resp.get("exit_code") == 0
+        # Verify package survived (rootfs overlay)
+        resp = client.post(
+            f"/vms/{dst}/exec",
+            {"command": FORK_PROBE_COMMAND, "timeout_secs": 10},
+            timeout=15,
+        )
+        pkg_survived = (
+            resp is not None
+            and resp.get("exit_code") == 0
+            and resp.get("stdout", "").strip() == FORK_PROBE_OUTPUT
+        )
 
         # Verify workspace survived
         resp = client.post(f"/vms/{dst}/exec", {

@@ -723,6 +723,18 @@ next one, and stage only the files for that slice.
     targeted package-manager probe is now `9 passed` in `1.53s`, so this gate
     can be run repeatedly while broadening coverage instead of burning minutes
     on registry instability.
+  - 2026-06-13 progress: Winterfell/MCP fork and lifecycle fork benchmark
+    package preservation now install a generated local `.deb` through the
+    public VM file/exec routes and re-run the installed binary after fork.
+    This keeps the test functional while removing public `apt` dependency from
+    fork proof.
+  - Proof: `uv run ruff check tests/helpers/package_probe.py
+    tests/capsem-mcp/conftest.py tests/capsem-mcp/test_winter_is_coming.py
+    tests/capsem-serial/test_lifecycle_benchmark.py`; `uv run python -m pytest
+    tests/capsem-mcp/test_winter_is_coming.py -q --tb=short`; and
+    `CAPSEM_REQUIRE_ARTIFACTS=1 uv run python -m pytest
+    tests/capsem-serial/test_lifecycle_benchmark.py::test_fork_benchmark -q
+    --tb=short`.
 - [x] RED/GREEN: cargo test runner codesigning is serialized so parallel test
   shards do not race while replacing ad-hoc signatures.
   - 2026-06-11 progress: `scripts/run_signed.sh` now uses a portable
