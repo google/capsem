@@ -1025,6 +1025,14 @@ next one, and stage only the files for that slice.
     tests/capsem-build-chain/test_source_profiles_unpinned.py
     tests/test_injection_script.py tests/test_integration_script_profiles.py
     -q` all passed with the shipping ids.
+  - 2026-06-13 follow-up: `scripts/injection_test.py` now defaults to
+    `target/config/profiles`, accepts `--profiles-dir`, forwards
+    `CAPSEM_PROFILES_DIR`, and uses a short `/tmp` CAPSEM_HOME so injection
+    scenarios exercise the same materialized profile catalog as packages/CI
+    without hitting macOS UDS path limits.
+  - Proof: `uv run ruff check scripts/injection_test.py
+    tests/test_injection_script.py`; `uv run python -m pytest
+    tests/test_injection_script.py -q --tb=short`.
 - [ ] Proof: status/debug show service version, manifest origin/hash, profile
   status, plugin status, route status, doctor evidence, OBOM/SBOM references.
 - [ ] Proof: changelog, docs, skills, and benchmark docs updated.

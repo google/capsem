@@ -13,6 +13,7 @@ Usage:
 
 import argparse
 import os
+from pathlib import Path
 import subprocess
 import sys
 import tempfile
@@ -119,9 +120,16 @@ match = 'http.host == "example.invalid"'
 ]
 
 
+def default_materialized_profiles_dir() -> str:
+    """Return the generated profile catalog used by packages and CI."""
+    repo_root = Path(__file__).resolve().parent.parent
+    return str(repo_root / "target" / "config" / "profiles")
+
+
 def run_scenario(
     binary: str,
     assets_dir: str,
+    profiles_dir: str,
     scenario: dict,
     results: Results,
 ) -> None:
@@ -131,7 +139,10 @@ def run_scenario(
     print(f"  {DIM}{scenario['description']}{RESET}")
 
     # Write temporary settings.toml inside an isolated Capsem home.
-    capsem_home = tempfile.TemporaryDirectory(prefix=f"capsem-injection-{name}-home-")
+    # macOS UDS paths are short; the default tempfile location under
+    # /var/folders/... can exceed the usable socket path once /run/service.sock
+    # is appended.
+    capsem_home = tempfile.TemporaryDirectory(prefix=f"capsem-injection-{name}-home-", dir="/tmp")
     settings_path = os.path.join(capsem_home.name, "settings.toml")
     with open(settings_path, "w") as settings_file:
         settings_file.write(scenario["settings_toml"])
@@ -149,6 +160,7 @@ def run_scenario(
     env = {
         **os.environ,
         "CAPSEM_ASSETS_DIR": assets_dir,
+        "CAPSEM_PROFILES_DIR": profiles_dir,
         "RUST_LOG": "capsem=warn",
         "CAPSEM_HOME": capsem_home.name,
     }
@@ -190,7 +202,7 @@ def run_scenario(
         results.fail(f"{name}: VM timed out after 120s")
     finally:
         # Clean up temp files.
-        os.unlink(user_file.name)
+        capsem_home.cleanup()
         if corp_path:
             os.unlink(corp_path)
 
@@ -210,6 +222,11 @@ def main():
         help="Path to VM assets directory (default: assets)",
     )
     parser.add_argument(
+        "--profiles-dir",
+        default=default_materialized_profiles_dir(),
+        help="Path to materialized profile catalog (default: target/config/profiles)",
+    )
+    parser.add_argument(
         "--scenario",
         default=None,
         help="Run only this scenario (by name). Default: run all.",
@@ -219,6 +236,7 @@ def main():
     print(f"{BOLD}=== Capsem Injection Test ==={RESET}")
     print(f"  binary: {args.binary}")
     print(f"  assets: {args.assets}")
+    print(f"  profiles: {args.profiles_dir}")
 
     results = Results()
 
@@ -231,7 +249,7 @@ def main():
             sys.exit(1)
 
     for scenario in scenarios:
-        run_scenario(args.binary, args.assets, scenario, results)
+        run_scenario(args.binary, args.assets, args.profiles_dir, scenario, results)
 
     # Summary.
     print(f"\n{BOLD}{'=' * 60}{RESET}")

@@ -69,6 +69,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   local `.deb` probe installed through the public VM file/exec routes, so fork
   preservation no longer depends on public `apt` repositories while still
   proving rootfs overlay package state survives the fork.
+- Pointed the injection test runner at the materialized profile catalog and a
+  short `/tmp` CAPSEM_HOME so injection scenarios exercise package/CI-style
+  profile config without tripping macOS Unix-socket path limits.
 - Hardened profile routing assumptions by passing the full release gate under
   temporary arbitrary profile ids before restoring the shipping `code` and
   `co-work` profile identities. This keeps profile-aware routes, UI/TUI
