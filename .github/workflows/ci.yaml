@@ -168,7 +168,32 @@ jobs:
           uv run capsem-builder validate-skills skills
 
       - name: Python schema tests with coverage
-        run: uv run python -m pytest tests/ --cov=src/capsem --cov-report=xml:codecov-python.xml --cov-fail-under=90 --junitxml=python-junit.xml
+        run: |
+          uv run python -m pytest \
+            tests/test_audit.py \
+            tests/test_build_pkg.py \
+            tests/test_capsem_bench_mitm_local.py \
+            tests/test_capsem_bench_storage.py \
+            tests/test_cli.py \
+            tests/test_config.py \
+            tests/test_docker.py \
+            tests/test_doctor.py \
+            tests/test_manifest.py \
+            tests/test_mcp.py \
+            tests/test_mock_server_launcher.py \
+            tests/test_models.py \
+            tests/test_protocol_fixture_recorder.py \
+            tests/test_repack_deb.py \
+            tests/test_scaffold.py \
+            tests/test_settings_spec.py \
+            tests/test_skills.py \
+            tests/test_validate.py \
+            tests/capsem-cleanup-script/test_clean_stale.py \
+            tests/capsem-rootfs-artifacts/test_rootfs_artifacts.py \
+            --cov=src/capsem \
+            --cov-report=xml:codecov-python.xml \
+            --cov-fail-under=90 \
+            --junitxml=python-junit.xml
 
       # Python integration tests that need no VM
       - name: Python integration tests (non-VM suites)

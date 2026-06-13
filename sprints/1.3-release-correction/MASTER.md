@@ -268,5 +268,17 @@ prove the same rails without user credentials.
   tests/test_release_doctor_contract.py
   tests/capsem-build-chain/test_coverage_infra_contract.py`; `git diff
   --check`.
+- PR CI Python coverage drift found on 2026-06-13 after the frontend repair:
+  the new remote run passed settings generation, frontend install/build,
+  dependency audit, Rust unit coverage, Rust integration coverage, frontend
+  type-check/test/build, Python lint, and install e2e, then sat in the Python
+  coverage step because CI was still running one broad
+  `pytest tests/ --cov=src/capsem` command over VM-heavy suites. The coverage
+  gate now names the Python builder/config contract suite explicitly and keeps
+  install, serial, Ironbank, MCP, and service trees in their own gates instead
+  of replaying them under coverage. Local proof: RED
+  `test_pr_ci_python_coverage_is_not_a_monolithic_vm_tree_rerun` failed on the
+  monolithic command; GREEN same guard plus the exact workflow coverage command
+  (`773 passed, 9 skipped`, `90.09%` total coverage, `26.44s`).
 
 Those files remain evidence. This sprint is the execution authority.

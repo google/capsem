@@ -241,6 +241,26 @@ def test_pr_ci_coverage_reports_without_local_threshold_abort() -> None:
     assert "coverage-summary-linux.txt" in workflow
 
 
+def test_pr_ci_python_coverage_is_not_a_monolithic_vm_tree_rerun() -> None:
+    workflow = (PROJECT_ROOT / ".github" / "workflows" / "ci.yaml").read_text()
+    coverage_step = workflow.split("- name: Python schema tests with coverage", maxsplit=1)[1].split(
+        "# Python integration tests that need no VM",
+        maxsplit=1,
+    )[0]
+
+    assert "pytest tests/ --cov" not in coverage_step
+    assert "tests/capsem-install" not in coverage_step
+    assert "tests/capsem-serial" not in coverage_step
+    assert "tests/ironbank" not in coverage_step
+    assert "tests/capsem-mcp" not in coverage_step
+    assert "tests/capsem-service" not in coverage_step
+    assert "tests/test_config.py" in coverage_step
+    assert "tests/test_manifest.py" in coverage_step
+    assert "tests/test_models.py" in coverage_step
+    assert "tests/test_skills.py" in coverage_step
+    assert "--cov=src/capsem" in coverage_step
+
+
 def test_kvm_checkpoint_x86_state_tests_are_arch_gated() -> None:
     source = (PROJECT_ROOT / "crates" / "capsem-core" / "src" / "hypervisor" / "kvm" / "checkpoint.rs").read_text()
     tests = source.split("#[cfg(test)]\nmod tests", maxsplit=1)[1]

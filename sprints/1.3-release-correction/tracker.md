@@ -1841,6 +1841,22 @@ next one, and stage only the files for that slice.
     tests/test_release_doctor_contract.py
     tests/capsem-build-chain/test_coverage_infra_contract.py`; `git diff
     --check`.
+  - 2026-06-13 PR CI Python coverage correction: the next remote macOS run
+    proved the settings/frontend fix and advanced through frontend
+    type-check/test/build, Python lint, Rust coverage, Rust integration
+    coverage, and install e2e, but then spent excessive time in
+    `Python schema tests with coverage` because CI still ran one broad
+    `uv run python -m pytest tests/ --cov=src/capsem` over VM-heavy suites.
+    Fixed by making the coverage step enumerate the Python builder/config
+    contract suite that actually covers `src/capsem`, while install, serial,
+    Ironbank, MCP, service, and other VM-heavy suites remain in their own
+    release gates.
+  - Guard proof: RED
+    `uv run python -m pytest
+    tests/test_release_doctor_contract.py::test_pr_ci_python_coverage_is_not_a_monolithic_vm_tree_rerun
+    -q` failed on the monolithic command; GREEN same guard and exact workflow
+    coverage command passed locally with `773 passed, 9 skipped`, coverage
+    `90.09%`, wall time `26.44s`.
 
 ## Coverage Ledger
 
