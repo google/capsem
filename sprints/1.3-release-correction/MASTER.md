@@ -182,5 +182,15 @@ prove the same rails without user credentials.
   capsem-service checkpoint -- --nocapture`; `cargo test -p capsem-process
   --no-run`; Python non-serial canary `1418 passed, 71 skipped` in `407.58s`;
   serial timing bucket `11 passed, 1 skipped` in `87.67s`.
+- Remote CI drift found on 2026-06-13 after the local final gate: macOS and
+  Linux Rust coverage still selected the deleted `capsem-debug-upstream`
+  crate, and Python lint still validated retired `config/skills`. The workflow
+  now selects only packages present in `cargo metadata` and validates
+  top-level `skills/`. Keep S10 open until PR CI is green on the pushed
+  branch. Proof: `uv run python -m pytest
+  tests/test_release_doctor_contract.py::test_ci_workflow_references_only_live_workspace_packages_and_skills
+  tests/test_release_doctor_contract.py::test_mock_server_is_the_only_hermetic_fixture_server_contract
+  -q`; focused release guard `25 passed`; `uv run capsem-builder
+  validate-skills skills`.
 
 Those files remain evidence. This sprint is the execution authority.

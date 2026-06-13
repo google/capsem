@@ -1730,6 +1730,19 @@ next one, and stage only the files for that slice.
   - DbWriter invariant proof in the same gate: `tests/test_security_rails_retired.py::test_session_event_writes_stay_behind_dbwriter`
     and `tests/capsem-build-chain/test_install_asset_payload.py::test_security_event_rows_go_through_security_engine_emitter`
     both passed. No new DB writing path was added.
+  - 2026-06-13 remote CI correction: PR CI failed before running the release
+    suite because `.github/workflows/ci.yaml` still selected the deleted
+    `capsem-debug-upstream` crate in both macOS and Linux Rust coverage jobs,
+    and still validated retired `config/skills`. The workflow now selects only
+    packages present in `cargo metadata` and validates top-level `skills/`.
+    Guard proof: `uv run python -m pytest
+    tests/test_release_doctor_contract.py::test_ci_workflow_references_only_live_workspace_packages_and_skills
+    tests/test_release_doctor_contract.py::test_mock_server_is_the_only_hermetic_fixture_server_contract
+    -q` (`2 passed`); broader focused gate `uv run python -m pytest
+    tests/test_release_doctor_contract.py tests/test_security_rails_retired.py
+    tests/capsem-build-chain/test_install_asset_payload.py::test_security_event_rows_go_through_security_engine_emitter
+    -q` (`25 passed`); `uv run capsem-builder validate-skills skills`;
+    `git diff --check`.
 
 ## Coverage Ledger
 

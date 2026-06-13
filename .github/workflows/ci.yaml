@@ -44,8 +44,8 @@ jobs:
       # other host crate is portable and runs here so it gets Linux-specific regression coverage.
       - name: Unit tests (KVM backend) with coverage
         run: |
-          cargo llvm-cov nextest --no-cfg-coverage --profile ci --codecov --output-path codecov-linux.json --fail-under-lines 70 -p capsem-core -p capsem-admin -p capsem-agent -p capsem-debug-upstream -p capsem-logger -p capsem-proto -p capsem-guard -p capsem-gateway -p capsem-service -p capsem -p capsem-tui -p capsem-mcp -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-process
-          cargo llvm-cov report --no-cfg-coverage --summary-only -p capsem-core -p capsem-admin -p capsem-agent -p capsem-debug-upstream -p capsem-logger -p capsem-proto -p capsem-guard -p capsem-gateway -p capsem-service -p capsem -p capsem-tui -p capsem-mcp -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-process 2>&1 | tee coverage-summary-linux.txt
+          cargo llvm-cov nextest --no-cfg-coverage --profile ci --codecov --output-path codecov-linux.json --fail-under-lines 70 -p capsem-core -p capsem-admin -p capsem-agent -p capsem-logger -p capsem-proto -p capsem-guard -p capsem-gateway -p capsem-service -p capsem -p capsem-tui -p capsem-mcp -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-process
+          cargo llvm-cov report --no-cfg-coverage --summary-only -p capsem-core -p capsem-admin -p capsem-agent -p capsem-logger -p capsem-proto -p capsem-guard -p capsem-gateway -p capsem-service -p capsem -p capsem-tui -p capsem-mcp -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-process 2>&1 | tee coverage-summary-linux.txt
 
       - name: Upload Linux coverage
         if: ${{ !cancelled() }}
@@ -143,8 +143,8 @@ jobs:
       # capsem-mcp-builtin are thin binaries that pull capsem-core logic.
       - name: Unit tests with coverage
         run: |
-          cargo llvm-cov nextest --no-cfg-coverage --profile ci --codecov --output-path codecov-unit.json --fail-under-lines 70 -p capsem-core -p capsem-admin -p capsem-agent -p capsem-debug-upstream -p capsem-logger -p capsem-proto -p capsem-guard -p capsem-gateway -p capsem-service -p capsem -p capsem-tui -p capsem-mcp -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-tray -p capsem-app -p capsem-process
-          cargo llvm-cov report --no-cfg-coverage --summary-only -p capsem-core -p capsem-admin -p capsem-agent -p capsem-debug-upstream -p capsem-logger -p capsem-proto -p capsem-guard -p capsem-gateway -p capsem-service -p capsem -p capsem-tui -p capsem-mcp -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-tray -p capsem-app -p capsem-process 2>&1 | tee coverage-summary.txt
+          cargo llvm-cov nextest --no-cfg-coverage --profile ci --codecov --output-path codecov-unit.json --fail-under-lines 70 -p capsem-core -p capsem-admin -p capsem-agent -p capsem-logger -p capsem-proto -p capsem-guard -p capsem-gateway -p capsem-service -p capsem -p capsem-tui -p capsem-mcp -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-tray -p capsem-app -p capsem-process
+          cargo llvm-cov report --no-cfg-coverage --summary-only -p capsem-core -p capsem-admin -p capsem-agent -p capsem-logger -p capsem-proto -p capsem-guard -p capsem-gateway -p capsem-service -p capsem -p capsem-tui -p capsem-mcp -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-tray -p capsem-app -p capsem-process 2>&1 | tee coverage-summary.txt
 
       # Integration tests (tests/ directory, cross-crate)
       - name: Integration tests with coverage
@@ -164,7 +164,7 @@ jobs:
         run: |
           uv run ruff check .
           uv run ty check src/capsem
-          uv run capsem-builder validate-skills config/skills
+          uv run capsem-builder validate-skills skills
 
       - name: Python schema tests with coverage
         run: uv run python -m pytest tests/ --cov=src/capsem --cov-report=xml:codecov-python.xml --cov-fail-under=90 --junitxml=python-junit.xml

@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed (route surfaces and diagnostics)
+- Fixed CI release gates so Rust coverage no longer references the deleted
+  `capsem-debug-upstream` crate and Python lint validates the top-level
+  `skills/` library instead of the retired `config/skills` path.
 - Made the credential broker memory-first behind an opaque `CredentialStore`:
   captures update runtime memory before durable storage, replay/status checks
   no longer hit Keychain or disk, real substitutions can hydrate on cache

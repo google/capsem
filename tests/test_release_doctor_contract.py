@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import json
+import re
+import subprocess
 from pathlib import Path
 
 
@@ -136,6 +139,25 @@ def test_mock_server_is_the_only_hermetic_fixture_server_contract() -> None:
     assert (PROJECT_ROOT / "crates" / "capsem-mock-server").exists() is False
     assert (PROJECT_ROOT / "scripts" / "debug_upstream.py").exists() is False
     assert (PROJECT_ROOT / "tests" / "helpers" / "debug_upstream.py").exists() is False
+
+
+def test_ci_workflow_references_only_live_workspace_packages_and_skills() -> None:
+    workflow = (PROJECT_ROOT / ".github" / "workflows" / "ci.yaml").read_text()
+    metadata = json.loads(
+        subprocess.check_output(
+            ["cargo", "metadata", "--no-deps", "--format-version", "1"],
+            cwd=PROJECT_ROOT,
+            text=True,
+        )
+    )
+    packages = {package["name"] for package in metadata["packages"]}
+    referenced = set(re.findall(r"(?:^|\\s)-p\\s+([a-z0-9_-]+)", workflow))
+    unknown = sorted(referenced - packages)
+
+    assert unknown == []
+    assert "capsem-debug-upstream" not in workflow
+    assert "validate-skills skills" in workflow
+    assert "validate-skills config/skills" not in workflow
 
 
 def test_mock_server_has_no_rust_fixture_crate() -> None:
