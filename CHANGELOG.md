@@ -91,6 +91,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Advanced the 1.3 release metadata to `1.3.1781205836`, pinned the frontend
   `esbuild` override through the lockfile, and archived fresh lifecycle, fork,
   in-VM storage, and parallel benchmark ledgers for the current build.
+- Fixed the gateway profile MCP surface so the UI/TUI route for reading and
+  editing a profile's default MCP permission forwards to the service instead
+  of returning a route-level 404.
 - Moved frontend MCP controls off settings-backed `mcp.servers.*` mutation and
   onto profile-scoped MCP routes. Settings now stays focused on UI/app
   preferences, while the Profile surface owns rules, plugins, MCP, and assets.

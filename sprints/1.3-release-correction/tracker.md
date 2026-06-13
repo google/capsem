@@ -922,6 +922,15 @@ next one, and stage only the files for that slice.
   and `co-work`.
 - [ ] RED/GREEN: enforcement/detection/plugins/MCP/assets pages load for both
   profiles with no 404/501.
+  - 2026-06-13 progress: the frontend MCP page already called
+    `/profiles/{profile_id}/mcp/default/info` and
+    `/profiles/{profile_id}/mcp/default/edit`, and the service implemented
+    both routes, but the gateway did not forward them. The gateway route
+    matrix now covers both paths so profile MCP default policy controls cannot
+    regress to a UI-visible 404.
+  - Proof: RED/GREEN `cargo test -p capsem-gateway
+    gateway_security_routes_are_explicitly_forwarded -- --nocapture`; `pnpm
+    --dir frontend test src/lib/__tests__/api.test.ts`.
 - [ ] RED/GREEN: plugin/MCP/rule modes use enum-backed selects/icons and
   disabled rows are visibly disabled.
 - [x] RED/GREEN: stats detail panels show one canonical presentation and move

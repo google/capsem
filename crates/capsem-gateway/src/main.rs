@@ -374,6 +374,14 @@ fn service_proxy_routes() -> Router<Arc<AppState>> {
         )
         .route("/profiles/{profile_id}/mcp/info", get(proxy::handle_proxy))
         .route(
+            "/profiles/{profile_id}/mcp/default/info",
+            get(proxy::handle_proxy),
+        )
+        .route(
+            "/profiles/{profile_id}/mcp/default/edit",
+            patch(proxy::handle_proxy),
+        )
+        .route(
             "/profiles/{profile_id}/mcp/servers/{server_id}/edit",
             put(proxy::handle_proxy),
         )
@@ -684,6 +692,8 @@ mod tests {
             ),
             ("GET", "/profiles/code/mcp/info"),
             ("GET", "/profiles/code/mcp/servers/list"),
+            ("GET", "/profiles/code/mcp/default/info"),
+            ("PATCH", "/profiles/code/mcp/default/edit"),
             ("PUT", "/profiles/code/mcp/servers/local/edit"),
             ("DELETE", "/profiles/code/mcp/servers/local/delete"),
             ("GET", "/profiles/code/mcp/servers/local/tools/list"),
