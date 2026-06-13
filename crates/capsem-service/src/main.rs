@@ -7519,7 +7519,7 @@ async fn handle_history_transcript(
     }))
 }
 
-/// Acquire the host-wide VZ save/restore flock (`startup::VzHostLock`)
+/// Acquire the host-wide VZ lifecycle flock (`startup::VzHostLock`)
 /// from an async context. The underlying `flock(2)` syscall is blocking
 /// and can wait on a sibling service; wrap in `spawn_blocking` so we
 /// don't stall a tokio worker.
@@ -7528,9 +7528,11 @@ async fn handle_history_transcript(
 /// test load observed is ~15s, so 60s absorbs the typical p99. Returning
 /// 503 on timeout tells the caller "try again" instead of blocking
 /// indefinitely.
-async fn acquire_vz_host_lock() -> Result<startup::VzHostLock, AppError> {
-    let result = tokio::task::spawn_blocking(|| {
-        startup::VzHostLock::acquire(std::time::Duration::from_secs(60))
+async fn acquire_vz_host_lock(
+    mode: startup::VzHostLockMode,
+) -> Result<startup::VzHostLock, AppError> {
+    let result = tokio::task::spawn_blocking(move || {
+        startup::VzHostLock::acquire(mode, std::time::Duration::from_secs(60))
     })
     .await
     .map_err(|e| {
