@@ -1773,6 +1773,16 @@ next one, and stage only the files for that slice.
     tests/test_release_doctor_contract.py::test_ci_workflow_references_only_live_workspace_packages_and_skills
     -q` (`2 passed`); `uv run ruff check
     tests/test_release_doctor_contract.py`; `cargo fmt --check`.
+  - 2026-06-13 install CI correction: remote `test-install` built the Linux
+    `.deb` inside Docker, then called `scripts/repack-deb.sh` before
+    materializing `target/config/profiles`, so the closed package payload
+    contract failed exactly where it should. `test-install` now runs
+    `just _materialize-config` in the same container before repacking. Guard
+    proof: `uv run python -m pytest
+    tests/test_release_doctor_contract.py::test_install_e2e_materializes_config_before_repacking_package
+    tests/test_release_doctor_contract.py::test_ci_builds_frontend_before_compiling_tauri_app_tests
+    -q` (`2 passed`); `uv run ruff check
+    tests/test_release_doctor_contract.py`; `git diff --check`.
 
 ## Coverage Ledger
 

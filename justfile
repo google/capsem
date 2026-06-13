@@ -999,6 +999,9 @@ test-install:
         "rm -f /cargo-target/debug/bundle/deb/*.deb"
     docker exec -u capsem "$CONTAINER" bash -c \
         "cd /src && cargo tauri build --debug --bundles deb --config '{\"bundle\":{\"createUpdaterArtifacts\":false}}'"
+    echo "Materializing runtime config..."
+    docker exec -u capsem "$CONTAINER" bash -c \
+        "cd /src && just _materialize-config"
     echo "Repacking .deb with companion binaries..."
     docker exec -u capsem "$CONTAINER" bash -c \
         'cd /src && DEB=$(ls -t /cargo-target/debug/bundle/deb/*.deb | head -1) && bash scripts/repack-deb.sh --manifest assets/manifest.json "$DEB" /cargo-target/debug target/config assets'
