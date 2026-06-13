@@ -18,6 +18,9 @@ just test                      # ALL tests: unit + integration + cross-compile +
 before any local install, `just exec`, asset sync, or package signing path can
 claim to be healthy.
 
+Release asset manifests are generated through `capsem-admin manifest generate`.
+Do not publish or document alternate manifest writers.
+
 ## Cutting a release
 
 ### Release history discipline

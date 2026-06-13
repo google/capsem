@@ -256,12 +256,17 @@
   remaining `/setup/*` service routes. Corporate policy provisioning now lives
   at `POST /corp-config`.
 - Completed slice: T1 package discipline now moves exactly one selected
-  manifest into the package payload, installs it into `~/.capsem/assets`, and
-  relies on profile `file://`/`https://` descriptors for asset reconciliation.
+  manifest into the package payload, installs only `manifest.json` and
+  `manifest-origin.json` into `~/.capsem/assets`, and relies on profile
+  `file://`/`https://` descriptors for asset reconciliation. VM asset payloads
+  are not embedded in `.pkg` or `.deb`.
   `CAPSEM_PKG_ASSET_MODE` and `CAPSEM_DEB_ASSET_MODE` are removed. Packages
   also install `manifest-origin.json`, and service status reports the installed
   manifest path, BLAKE3 hash, origin, source, and package timestamp for
   corp/debug provenance.
+- Verification: closed package payload guardrails passed with
+  `uv run python -m pytest tests/capsem-build-chain/test_install_asset_payload.py tests/test_build_pkg.py -vv --tb=short` on macOS and
+  `docker run --rm -v "$PWD":/repo -w /repo -e UV_PROJECT_ENVIRONMENT=/tmp/capsem-uv-venv capsem-install-test:latest bash -lc 'uv run --python /usr/bin/python3 python -m pytest tests/test_repack_deb.py -vv --tb=short'` on Linux.
 - Completed slice: manifest status now treats the manifest as mutable release
   metadata, not an immutable install pin. Status reports `validation_status`,
   `validation_error`, `refreshed_at`, current BLAKE3 hash, source provenance,

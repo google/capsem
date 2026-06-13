@@ -88,6 +88,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `capsem-admin profile init --from`, and tightened Profile UI/TUI/service
   tests so profile-aware surfaces consume route-provided profile ids instead of
   silently falling back to `code`.
+- Advanced the 1.3 release metadata to `1.3.1781205836`, pinned the frontend
+  `esbuild` override through the lockfile, and archived fresh lifecycle, fork,
+  in-VM storage, and parallel benchmark ledgers for the current build.
 - Moved frontend MCP controls off settings-backed `mcp.servers.*` mutation and
   onto profile-scoped MCP routes. Settings now stays focused on UI/app
   preferences, while the Profile surface owns rules, plugins, MCP, and assets.

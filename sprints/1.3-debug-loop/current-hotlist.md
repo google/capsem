@@ -15,13 +15,17 @@ This is the active debug list for the 1.3 release loop. Older captured bugs in
   - Network engine parses/routes only; it must not decide, broker, redact, or
     credential-classify.
   - Security engine owns rules/plugins/decisions.
-  - Credential broker is the pre-plugin for runtime capture/store/injection.
-  - Log sanitizer is the final plugin before DB/log/route/UI materialization.
+  - Every plugin gets a `SecurityEvent` and emits/returns a `SecurityEvent`.
+    No plugin gets network, logger, DB, route, or formatter side-channel
+    objects.
+  - Credential broker is a plugin for runtime capture/store/injection; it does
+    not own logging projection.
+  - Log sanitizer is a security-engine logging plugin before DB/log/route/UI
+    materialization; it does not care whether brokering happened.
   - Runtime bytes and ledger bytes are separate materializations: upstream may
     need the real header/token, but session DB, structured logs, route JSON, and
     frontend stats must only see sanitized broker refs/hashes/bounded previews.
-  - Missing sanitizer fails closed. No fallback logger and no network formatter
-    side-channel.
+  - No logger-specific sanitizer fallback and no network formatter side-channel.
   - Architecture docs and developer skills must be updated as part of the same
     fix so future agents keep credential handling in the broker/sanitizer rail.
 

@@ -262,8 +262,10 @@ Implemented:
 - macOS and Linux package scripts write durable install diagnostics to
   `~/.capsem/logs/install.log`, plus per-run timestamped logs and
   `install-latest.log`.
-- macOS and Linux postinstall copy any package-provided assets into the
-  installed asset directory as part of the package install path.
+- macOS and Linux postinstall copy only package-provided `manifest.json` and
+  `manifest-origin.json` into the installed asset directory. VM asset payloads
+  remain external and are reconciled by the service from the installed
+  manifest.
 - Asset copy scripts skip nested directories inside `assets/<arch>/`, so a
   stray nested arch directory cannot abort install.
 - Added fast package-contract tests and a reinstall test where only

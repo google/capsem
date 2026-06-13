@@ -34,7 +34,7 @@ When `window.__TAURI_INTERNALS__` is absent (browser via `just ui`), `api.ts` au
 
 This means you can test the full UI without a VM by running `just ui`.
 
-**Generated mock data**: `mock-settings.generated.ts` is produced by `scripts/generate_schema.py` from the TOML configs in `guest/config/`. It runs as part of `just run` and `just test` via the `_generate-settings` recipe. Never hand-edit this file.
+**Generated mock data**: `mock-settings.generated.ts` is produced by `scripts/generate_schema.py` from `config/admin/settings-registry.generated.json`. It runs as part of `just run` and `just test` via the `_generate-settings` recipe. Never hand-edit this file.
 
 ## Visual verification with Chrome DevTools MCP
 
@@ -64,7 +64,7 @@ Click through every section (AI Providers, Repositories, Security, VM, Appearanc
 
 ### After changing TOML configs or generated mock data
 
-When modifying `guest/config/*.toml` or regenerating `mock-settings.generated.ts`:
+When modifying `config/admin/settings-registry.generated.json` or regenerating `mock-settings.generated.ts`:
 1. Run `just _generate-settings` (or let `just run`/`just test` do it)
 2. Start `just ui`
 3. Navigate to Settings view
