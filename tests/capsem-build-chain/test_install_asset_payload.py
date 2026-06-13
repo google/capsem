@@ -117,6 +117,10 @@ def test_package_builders_stage_manifest_only_not_vm_asset_payload() -> None:
     assert 'install -m 0644 /usr/share/capsem/assets/manifest.json "$CAPSEM_DIR/assets/manifest.json"' in deb_postinst
     assert 'install -m 0644 /usr/share/capsem/assets/manifest-origin.json "$CAPSEM_DIR/assets/manifest-origin.json"' in deb_postinst
     assert "event=manifest_copied" in deb_postinst
+    assert 'MANIFEST_REPORT=$(/usr/bin/capsem-admin manifest check --json "$CAPSEM_DIR/assets/manifest.json" | tr' in deb_postinst
+    assert "event=manifest_report" in deb_postinst
+    assert 'MANIFEST_ORIGIN=$(tr' in deb_postinst
+    assert "event=manifest_origin" in deb_postinst
     assert 'CAPSEM_HOME=\\"$CAPSEM_DIR\\" CAPSEM_RUN_DIR=\\"$CAPSEM_DIR/run\\" \\"$CAPSEM_DIR/bin/capsem\\" update --assets' in deb_postinst
     assert "event=assets_hydrated" in deb_postinst
     assert "event=asset_hydration_failed" in deb_postinst
@@ -132,6 +136,10 @@ def test_package_builders_stage_manifest_only_not_vm_asset_payload() -> None:
     assert 'install -m 0644 "$PKG_SHARE/assets/manifest.json" "$CAPSEM_DIR/assets/manifest.json"' in pkg_postinstall
     assert 'install -m 0644 "$PKG_SHARE/assets/manifest-origin.json" "$CAPSEM_DIR/assets/manifest-origin.json"' in pkg_postinstall
     assert "event=manifest_copied" in pkg_postinstall
+    assert 'MANIFEST_REPORT=$("$CAPSEM_DIR/bin/capsem-admin" manifest check --json "$CAPSEM_DIR/assets/manifest.json" | tr' in pkg_postinstall
+    assert "event=manifest_report" in pkg_postinstall
+    assert 'MANIFEST_ORIGIN=$(tr' in pkg_postinstall
+    assert "event=manifest_origin" in pkg_postinstall
     assert 'CAPSEM_HOME=\\"$CAPSEM_DIR\\" CAPSEM_RUN_DIR=\\"$CAPSEM_DIR/run\\" \\"$CAPSEM_DIR/bin/capsem\\" update --assets' in pkg_postinstall
     assert "event=assets_hydrated" in pkg_postinstall
     assert "event=asset_hydration_failed" in pkg_postinstall

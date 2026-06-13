@@ -73,6 +73,12 @@ if [ -f "$PKG_SHARE/assets/manifest.json" ]; then
         install -m 0644 "$PKG_SHARE/assets/manifest-origin.json" "$CAPSEM_DIR/assets/manifest-origin.json"
     fi
     echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=postinstall event=manifest_copied"
+    MANIFEST_REPORT=$("$CAPSEM_DIR/bin/capsem-admin" manifest check --json "$CAPSEM_DIR/assets/manifest.json" | tr '\n' ' ')
+    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=postinstall event=manifest_report $MANIFEST_REPORT"
+    if [ -f "$CAPSEM_DIR/assets/manifest-origin.json" ]; then
+        MANIFEST_ORIGIN=$(tr '\n' ' ' < "$CAPSEM_DIR/assets/manifest-origin.json")
+        echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=postinstall event=manifest_origin $MANIFEST_ORIGIN"
+    fi
 fi
 
 # Copy the materialized profile catalog and its rule files. Profiles pin the

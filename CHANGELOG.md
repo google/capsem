@@ -88,6 +88,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Hardened package artifact tests so local and remote manifest overrides prove
   the packaged manifest payload and `manifest-origin.json` provenance instead
   of only checking installer script text.
+- Added the manifest file BLAKE3 to `capsem-admin manifest check --json` and
+  logged manifest report/provenance events during package postinstall.
 - Tightened the Ironbank doctor ledger gate so local-network `ask` decisions,
   informational detections, serialized detection payloads, and security plugin
   execution timings are proven from session DB rows instead of only counted.

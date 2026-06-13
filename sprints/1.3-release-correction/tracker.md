@@ -1392,7 +1392,7 @@ next one, and stage only the files for that slice.
     tests/test_repack_deb.py tests/test_build_pkg.py -q`; `bash -n
     scripts/build-pkg.sh scripts/repack-deb.sh scripts/deb-postinst.sh
     scripts/pkg-scripts/postinstall`.
-- [ ] GREEN: package accepts local/remote manifest override, copies it to the
+- [x] GREEN: package accepts local/remote manifest override, copies it to the
   service-owned location, and records origin/hash in status/debug/install log.
   - 2026-06-13 progress: artifact-level package tests now exercise local path
     and `http://127.0.0.1` manifest overrides through the actual `.pkg` build
@@ -1409,6 +1409,19 @@ next one, and stage only the files for that slice.
     On this macOS host the focused `.deb` provenance tests are present but
     skipped because `dpkg-deb` is unavailable; Linux CI/test-install owns that
     artifact execution.
+  - 2026-06-13 closure: `capsem-admin manifest check --json` now includes the
+    manifest file BLAKE3, and both package postinstall scripts log
+    `manifest_report` plus `manifest_origin` immediately after copying
+    `manifest.json`/`manifest-origin.json`. This joins the existing live
+    `/status` and support-bundle provenance proof with install-log evidence.
+  - Proof: `cargo test -p capsem-admin checks_manifest_contract --
+    --nocapture`; `uv run python -m pytest
+    tests/capsem-build-chain/test_install_asset_payload.py -q --tb=short`
+    (`6 passed`); `uv run ruff check
+    tests/capsem-build-chain/test_install_asset_payload.py tests/test_build_pkg.py
+    tests/test_repack_deb.py`; `bash -n scripts/build-pkg.sh
+    scripts/repack-deb.sh scripts/deb-postinst.sh
+    scripts/pkg-scripts/postinstall`.
 - [x] GREEN: package postinstall hydrates local manifest assets without
   embedding VM blobs in the package.
   - Root cause from full `just test`: the `.deb` installed

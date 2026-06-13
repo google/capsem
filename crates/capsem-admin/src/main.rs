@@ -489,6 +489,7 @@ struct ManifestReport {
     schema: &'static str,
     ok: bool,
     path: String,
+    blake3: String,
     refresh_policy: String,
     current_assets: String,
     current_binary: String,
@@ -2773,6 +2774,7 @@ fn manifest_report(
         schema: "capsem.admin.manifest_report.v1",
         ok: true,
         path: path.display().to_string(),
+        blake3: hash_file(path)?,
         refresh_policy: manifest.refresh_policy.clone(),
         current_assets: manifest.assets.current.clone(),
         current_binary: manifest.binaries.current.clone(),
@@ -3307,6 +3309,12 @@ decision = "block"
         let manifest = load_manifest(&path).expect("manifest parses");
         let report = manifest_report(&path, &manifest, None, None).expect("report");
 
+        assert_eq!(
+            report.blake3,
+            blake3::hash(fs::read(&path).unwrap().as_slice())
+                .to_hex()
+                .to_string()
+        );
         assert_eq!(report.refresh_policy, "24h");
         assert_eq!(report.current_assets, "2026.0607.1");
         assert!(report.arches.iter().any(|arch| arch.arch == "arm64"));
