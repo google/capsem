@@ -42,7 +42,7 @@ config/
             detection.yaml            Sigma detection rules
             tips.txt                  Login tips
             root/                     Guest root seed
-            root.manifest.json        Root seed hashes
+            root.manifest.json        Guest root seed integrity manifest
     docker/
         Dockerfile.rootfs.j2
         Dockerfile.kernel.j2
@@ -173,6 +173,11 @@ Source profiles do not hand-author asset hashes. `capsem-admin profile
 materialize` combines source profile/corp/settings config with the generated
 asset manifest into `target/config` for local builds, CI, packages, and
 installed runtime config.
+
+The source profile is the ledger, not a generated evidence file. Do not add
+asset hashes, sibling-file hashes, package hashes, or build-output hashes to
+checked-in `profile.toml`. Evidence belongs in root seed manifests, asset
+manifests, OBOMs, build ledgers, and generated `target/config`.
 
 ## Corporate Deployment
 

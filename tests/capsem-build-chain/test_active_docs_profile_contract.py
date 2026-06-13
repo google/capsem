@@ -6,6 +6,27 @@ from pathlib import Path
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+CONFIG_ROOT = PROJECT_ROOT / "config"
+
+ALLOWED_CONFIG_DIRS = {
+    "corp",
+    "data",
+    "docker",
+    "profiles",
+    "settings",
+}
+
+FORBIDDEN_CONFIG_DIRS = {
+    "admin",
+    "default",
+    "defaults",
+    "guest",
+    "preset",
+    "presets",
+    "registry",
+    "schemas",
+    "templates",
+}
 
 ACTIVE_DOCS_AND_SKILLS = [
     PROJECT_ROOT / "docs/src/content/docs/architecture/asset-pipeline.md",
@@ -80,3 +101,36 @@ def test_active_docs_do_not_teach_retired_guest_config_authority() -> None:
                 failures.append(f"{path.relative_to(PROJECT_ROOT)} contains {needle!r}")
 
     assert not failures, "stale active docs/skills:\n" + "\n".join(sorted(failures))
+
+
+def test_config_root_has_only_declared_authority_directories() -> None:
+    actual_dirs = {
+        path.name
+        for path in CONFIG_ROOT.iterdir()
+        if path.is_dir() and not path.name.startswith(".")
+    }
+    assert actual_dirs == ALLOWED_CONFIG_DIRS
+
+    unexpected_files = [
+        path.name
+        for path in CONFIG_ROOT.iterdir()
+        if path.is_file() and path.name != "README.md" and not path.name.startswith(".")
+    ]
+    assert unexpected_files == []
+
+    forbidden_present = sorted(FORBIDDEN_CONFIG_DIRS & actual_dirs)
+    assert forbidden_present == []
+
+
+def test_config_readme_declares_authority_and_public_admin_surface() -> None:
+    text = (CONFIG_ROOT / "README.md").read_text()
+    for directory in sorted(ALLOWED_CONFIG_DIRS):
+        assert f"`{directory}/`" in text
+    for directory in sorted(FORBIDDEN_CONFIG_DIRS):
+        assert f"`{directory}/`" in text
+
+    assert "Settings have a schema; profiles may\nhave a catalog" in text
+    assert "Settings do not have a registry" in text
+    assert "`profile validate|check|materialize`" in text
+    assert "`image build`" in text
+    assert "Do not add\n`init`, `new`, `add`" in text

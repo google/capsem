@@ -111,6 +111,12 @@ Config naming is strict:
   source.
 - UI metadata renders settings only.
 - `admin`, `guest`, and `registry` are not config authority roots.
+- The only top-level config directories are `settings/`, `corp/`,
+  `profiles/`, `docker/`, and `data/`. Adding another root is a contract
+  change and needs a failing guard first.
+- `capsem-admin` is a validator/materializer/builder, not an authoring wizard.
+  It must not grow `init`, `new`, `add`, provider, registry, or backend
+  workspace authoring commands.
 
 ## Key invariants
 

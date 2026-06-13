@@ -12,7 +12,7 @@ Capsem image builds are profile-led.
 - `config/profiles/<profile_id>/profile.toml` is the profile ledger.
 - Profile sibling files own packages, MCP declarations, rule files, detection
   files, tips, build-time hooks, and packaged guest root seed files.
-- `capsem-admin` validates and materializes profile-owned inputs into the
+- `capsem-admin` validates profile-owned inputs and materializes the generated
   backend build workspace.
 - The Python `capsem-builder` backend renders Docker templates and emits
   assets, build ledgers, and OBOMs. Do not add product truth directly to the
@@ -46,7 +46,8 @@ packages/                 Generated native packages
 
 The materialized backend workspace may contain generated package-set files and
 profile build scripts. Treat those as implementation details, not authoring
-surfaces.
+surfaces. The workspace is never a config root and never a second profile
+catalog.
 
 `capsem-admin` is a tool, not a config authority. It validates, materializes,
 builds, and checks the profile/corp/settings contracts; it must not grow
@@ -205,7 +206,7 @@ needs validation, add it to the normal profile/admin validation path.
 
 The data flows through four layers:
 
-1. **Profile ledger** (`config/profiles/<id>/profile.toml`) and admin-pinned
+1. **Profile ledger** (`config/profiles/<id>/profile.toml`) and profile-owned
    sibling files.
 2. **capsem-admin** validates and materializes a backend build workspace.
 3. **Pydantic models** (`src/capsem/builder/models.py`) parse that workspace.
@@ -260,8 +261,8 @@ The data flows through four layers:
 2. Use profile-owned `build.sh` when the vendor ships an official shell
    installer. The build hook runs during rootfs construction only.
 3. Make sure binaries end up in stable system paths such as `/usr/local/bin`.
-4. Refresh profile file descriptor pins through `capsem-admin`; if the rail
-   cannot express the change, implement it with tests first.
+4. Validate and materialize through `capsem-admin`; if the rail cannot express
+   the change, implement it with tests first.
 5. Add or update capsem-admin materialization tests and Docker context tests.
 6. Rebuild: `just build-assets code` and verify with `capsem-doctor`.
 
@@ -273,8 +274,8 @@ testing available in every shipped profile image that declares the hook.
 
 1. Edit `config/profiles/<profile_id>/apt-packages.txt`,
    `python-requirements.txt`, or `npm-packages.txt`.
-2. Refresh the matching descriptor pin through `capsem-admin`.
-3. Validate through capsem-admin.
+2. Validate and materialize through `capsem-admin`.
+3. Keep the checked-in profile source free of generated hashes or sizes.
 4. Rebuild: `just build-assets <profile_id>`.
 
 ## How to: Add a new guest binary

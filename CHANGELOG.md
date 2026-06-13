@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed (route surfaces and diagnostics)
+- Tightened the config authority guard so `config/` can only contain the
+  declared `settings/`, `corp/`, `profiles/`, `docker/`, and `data/` roots;
+  active docs and skills now explicitly reject admin/default/guest/preset/
+  registry/template roots, clarify that settings have schemas while profiles
+  have catalogs, and describe `capsem-admin` as a validation/materialization
+  tool rather than a product authoring surface.
 - Tightened the profile-derived image/config contract in docs and developer
   skills: `config/` is now documented as settings/corp/profiles/docker/data,
   `capsem-admin` is explicitly a validator/materializer/build tool rather

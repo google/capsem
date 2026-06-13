@@ -131,6 +131,13 @@ next one, and stage only the files for that slice.
     `payload pins`, `BLAKE3/size pins`, `source pins`, and `resolved pins`).
     `capsem-admin` also no longer carries private test-only scaffold helpers
     named like old init commands; a Python guard keeps those fossils burned.
+  - 2026-06-13 stricter config root guard: `config/` is now tested as exactly
+    `settings`, `corp`, `profiles`, `docker`, and `data` plus `README.md`.
+    `config/README.md`, `/dev-capsem`, `/build-images`, and active docs now
+    explicitly reject admin/default/guest/preset/registry/template roots,
+    state that settings have schemas while profiles have catalogs, and keep
+    `capsem-admin` as a validation/materialization/build tool rather than a
+    product authoring surface.
   - Proof: `cargo test -p capsem-admin -- --nocapture`; `uv run python -m
     pytest tests/test_config.py tests/test_cli.py
     tests/test_release_doctor_contract.py::test_config_contract_has_no_admin_or_registry_authority

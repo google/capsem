@@ -1,6 +1,6 @@
 ---
 title: Build System
-description: Architecture of capsem-builder, the config-driven build system for Capsem VM images.
+description: Architecture of the profile-derived Capsem VM image build rail.
 sidebar:
   order: 30
 ---
@@ -18,7 +18,7 @@ assets.
 flowchart TD
   subgraph Input["Source of Truth"]
     PROFILE["config/profiles/<id>/profile.toml\n+ package, MCP, rule,\nroot, build, tips files"]
-    MATERIALIZED["internal materialized image workspace\nbackend image spec"]
+    MATERIALIZED["generated backend workspace\nbackend image spec"]
   end
 
   subgraph Validation["Validation Layer"]
@@ -63,7 +63,7 @@ The data flows through four layers:
    product truth: assets, package files, MCP config, security rules, plugins,
    root seed, install script, tips, and OBOM descriptors.
 2. **Image materialization** (`capsem-admin image build`) -- validates profile
-   references and writes an internal generated backend image workspace.
+   references and writes a generated backend image workspace.
 3. **Pydantic models** (`models.py`) -- validate the generated backend image
    spec with enums (`PackageManager`: apt, uv, pip, npm, curl), frozen models,
    and cross-field validators.
@@ -296,7 +296,7 @@ To add a new manager type (e.g., `cargo`):
 2. Collect packages in `_rootfs_context()` in `docker.py` -- create a new list variable
 3. Pass it to the template context dict
 4. Add a Jinja2 block in `Dockerfile.rootfs.j2`
-5. Update tests in `test_docker.py` and the admin workspace materialization tests
+5. Update tests in `test_docker.py` and the admin materialization tests
 
 ### Rootfs Dockerfile layer structure
 

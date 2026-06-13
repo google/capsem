@@ -3,6 +3,20 @@
 `config/` contains source contracts and templates. Generated runtime config
 belongs under `target/config/` and must be produced by `capsem-admin`.
 
+There are exactly five top-level config directories:
+
+- `settings/`
+- `corp/`
+- `profiles/`
+- `docker/`
+- `data/`
+
+Do not add `admin/`, `default/`, `defaults/`, `guest/`, `preset/`,
+`presets/`, `registry/`, `schemas/`, `templates/`, or provider-specific config
+roots. If a new product input is needed, it belongs under settings, corp, or a
+profile, then the existing admin validation and materialization rail must learn
+it.
+
 ## Directories
 
 - `settings/` contains UI/application preference source and generated support
@@ -41,7 +55,8 @@ Do not introduce `admin`, `guest`, or `registry` as config authorities.
 `capsem-admin` is a tool; it does not own product configuration. Profiles and
 corp own runtime behavior. Settings may have generated UI metadata and JSON
 Schema, but those artifacts describe settings only; they do not define profile,
-corp, MCP, AI, package, or security truth.
+corp, MCP, AI, package, or security truth. Settings have a schema; profiles may
+have a catalog. Settings do not have a registry.
 
 ## Admin Tool Surface
 

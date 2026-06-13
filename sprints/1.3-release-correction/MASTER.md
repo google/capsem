@@ -181,6 +181,9 @@ prove the same rails without user credentials.
   `settings init`, rule compile, manifest verify, image plan/workspace/verify).
   Source profile hash/pin wording is also guarded out of active docs/skills,
   and private capsem-admin scaffold helper names are guarded out of the crate.
+  `config/` is also guarded as exactly settings/corp/profiles/docker/data plus
+  `README.md`, with settings allowed schemas/UI metadata and profiles allowed
+  catalogs/materialized instances.
   Proof: full `cargo test -p capsem-admin -- --nocapture` plus focused Python
   config/CLI/active-doc/admin-surface guard suite.
 - Backend CLI burn proof on 2026-06-13: public `capsem-builder build`,
