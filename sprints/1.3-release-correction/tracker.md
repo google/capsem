@@ -744,7 +744,7 @@ next one, and stage only the files for that slice.
     -q`; `uv run python -m pytest
     tests/capsem-serial/test_mitm_local_benchmark.py -q`; `pnpm --dir docs
     build`.
-- [ ] RED/GREEN: doctor exercises HTTP/HTTPS, gzip, chunked, SSE, WebSocket,
+- [x] RED/GREEN: doctor exercises HTTP/HTTPS, gzip, chunked, SSE, WebSocket,
   DNS, MCP, model, OAuth/broker, file, process, import/export, local backend,
   snapshot route, blocked/error paths.
   - 2026-06-12 progress: in-VM doctor now posts a synthetic OAuth
