@@ -1054,25 +1054,28 @@ next one, and stage only the files for that slice.
   model provider plus host and triggers detection.
 - [ ] RED/GREEN: unknown remote MCP activity becomes route-visible profile
   evidence.
-- [ ] RED/GREEN: credential broker logs `captured`, `brokered`, `injected`, and
+- [x] RED/GREEN: credential broker logs `captured`, `brokered`, `injected`, and
   errors without raw secret leakage or generic status fields.
   - 2026-06-11 progress: new `substitution_events` tables now CHECK broker
     outcomes against the closed verb set `captured|brokered|injected|error`;
     successful observed credential saves emit `captured`, stale `substituted`
     outcomes are rejected, and credential inventory exposes `injected_count`
     instead of stale substitution language.
-  - Proof: `cargo test -p capsem-logger
-    substitution_events_require_brokered_reference -- --nocapture`; `cargo
-    test -p capsem-logger --lib
-    brokered_substitution_persists_reference_and_not_secret -- --nocapture`;
-    `cargo test -p capsem-core --lib
+  - 2026-06-13 closure: runtime capture now emits a second durable broker
+    ledger row with outcome `brokered`; Ironbank verifies model SDK traffic
+    produces `captured`, `brokered`, and `injected`, and body credentials emit
+    both `captured` and `brokered` without raw secret leakage. The hermetic
+    test credential store is locked so concurrent captures cannot corrupt or
+    lose brokered refs before replay.
+  - Proof: `cargo build -p capsem-process`; `CAPSEM_TEST_PRESERVE_ALWAYS=1 uv
+    run python -m pytest
+    tests/ironbank/test_model_sdk_ledger.py::test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox
+    -q -s --tb=short`; `cargo test -p capsem-core --lib
     hook_writes_substitution_event_and_shared_credential_ref -- --nocapture`;
-    `cargo test -p capsem-service
-    credential_broker_plugin_runtime_reports_session_db_captures --
-    --nocapture`; `pnpm --dir frontend test
-    src/lib/__tests__/stats-view-contract.test.ts src/lib/__tests__/api.test.ts`;
-    `cargo check -p capsem-core -p capsem-logger -p capsem-service`; `pnpm
-    --dir frontend check`.
+    `cargo test -p capsem-core --lib
+    broker_test_store_preserves_concurrent_captures -- --nocapture`;
+    `cargo test -p capsem-logger
+    substitution_events_require_brokered_reference -- --nocapture`.
 
 ## S8. UI/TUI Contract Repair
 

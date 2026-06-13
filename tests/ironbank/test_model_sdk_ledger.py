@@ -685,7 +685,9 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
                 (credential_ref,),
             ).fetchall()
             assert substitutions
-            assert {"captured", "injected"} <= {row["outcome"] for row in substitutions}
+            assert {"captured", "brokered", "injected"} <= {
+                row["outcome"] for row in substitutions
+            }
             assert all(row["material_class"] == "credential" for row in substitutions)
             assert all(row["algorithm"] == "blake3" for row in substitutions)
             assert all(row["substitution_ref"] == credential_ref for row in substitutions)
@@ -710,7 +712,10 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
             assert "http.body.response.$.refresh_token" in sources
             assert "http.body.response.$.id_token" in sources
             assert "http.body.response.$.api_key" in sources
-            assert {row["outcome"] for row in body_substitutions} == {"captured"}
+            assert {row["outcome"] for row in body_substitutions} == {
+                "captured",
+                "brokered",
+            }
             assert all(row["substitution_ref"].startswith("credential:blake3:") for row in body_substitutions)
 
             poem_rows = _eventually(

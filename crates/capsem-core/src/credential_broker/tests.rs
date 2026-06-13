@@ -271,6 +271,50 @@ fn broker_stores_secret_without_writing_user_settings() {
 }
 
 #[test]
+fn broker_test_store_preserves_concurrent_captures() {
+    let _lock = TEST_ENV_LOCK.blocking_lock();
+    let dir = tempfile::tempdir().unwrap();
+    let capsem_home = dir.path().join("capsem-home");
+    let test_store = dir.path().join("credential-store.json");
+    let _guard = EnvGuard::install(&capsem_home, dir.path(), &test_store);
+
+    let observations: Vec<_> = (0..64)
+        .map(|index| CredentialObservation {
+            provider: if index % 2 == 0 {
+                CredentialProvider::OpenAi
+            } else {
+                CredentialProvider::Google
+            },
+            raw_value: format!("capsem_concurrent_secret_{index:02}"),
+            source: "http.header.authorization".to_string(),
+            event_type: Some("http.request".to_string()),
+            confidence: 1.0,
+            trace_id: Some("trace-concurrent".to_string()),
+            context_json: None,
+        })
+        .collect();
+
+    std::thread::scope(|scope| {
+        for observation in &observations {
+            scope.spawn(move || {
+                broker_observed_credential(observation).unwrap();
+            });
+        }
+    });
+
+    for observation in &observations {
+        let credential_ref = observation.credential_ref();
+        assert_eq!(
+            resolve_broker_reference_for_provider(observation.provider, &credential_ref)
+                .unwrap()
+                .as_deref(),
+            Some(observation.raw_value.as_str()),
+            "missing brokered credential ref {credential_ref}"
+        );
+    }
+}
+
+#[test]
 fn replay_availability_requires_resolvable_broker_secret() {
     let _lock = TEST_ENV_LOCK.blocking_lock();
     let dir = tempfile::tempdir().unwrap();

@@ -615,14 +615,21 @@ async fn hook_writes_substitution_event_and_shared_credential_ref() {
                 |row| row.get(0),
             )
             .unwrap();
-        let sub_count: i64 = conn
+        let captured_count: i64 = conn
             .query_row(
                 "SELECT COUNT(*) FROM substitution_events WHERE substitution_ref = ?1 AND outcome = 'captured'",
                 [&credential_ref],
                 |row| row.get(0),
             )
             .unwrap();
-        if net_count == 1 && sub_count == 1 {
+        let brokered_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM substitution_events WHERE substitution_ref = ?1 AND outcome = 'brokered'",
+                [&credential_ref],
+                |row| row.get(0),
+            )
+            .unwrap();
+        if net_count == 1 && captured_count == 1 && brokered_count == 1 {
             seen = true;
             break;
         }

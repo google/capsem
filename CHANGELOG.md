@@ -127,6 +127,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed credential broker stats so captured, brokered, injected, and error
   events are counted independently instead of treating every broker row as a
   captured credential.
+- Made credential capture write the full durable verb trail: observed secrets
+  now emit `captured` and `brokered`, while replayed references emit
+  `injected`.
+- Fixed the hermetic credential broker test store so concurrent captures cannot
+  corrupt the store or lose refs before replay.
 - Hardened profile root bootstrap packaging: `capsem-admin profile check` now
   rejects unpinned files under a profile root seed, profile payload tests prove
   AGY/Claude/Codex/MCP non-secret bootstrap files are pinned exactly, and

@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::{Mutex, OnceLock};
 
 use capsem_logger::{credential_reference, DbWriter, SubstitutionEvent, CREDENTIAL_REF_PREFIX};
 use tracing::warn;
@@ -13,6 +14,7 @@ const KEYCHAIN_SERVICE: &str = "com.capsem.credentials";
 pub(crate) const TEST_STORE_ENV: &str = "CAPSEM_CREDENTIAL_BROKER_TEST_STORE";
 #[cfg(test)]
 pub(crate) static TEST_ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+static TEST_STORE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CredentialProvider {
@@ -387,6 +389,14 @@ pub async fn broker_and_log_observations(
             observation.redacted_event(save_outcome),
         )
         .await;
+        if save_outcome == "captured" {
+            crate::security_engine::emit_substitution_security_write_and_rules(
+                db,
+                rules,
+                observation.redacted_event("brokered"),
+            )
+            .await;
+        }
     }
     first_ref
 }
@@ -885,6 +895,9 @@ fn test_store_write(
     credential_ref: &str,
     raw_value: &str,
 ) -> Result<(), String> {
+    let _guard = test_store_lock()
+        .lock()
+        .map_err(|_| "credential test store lock poisoned".to_string())?;
     let mut map = test_store_load(path)?;
     map.insert(
         keychain_account(provider, credential_ref),
@@ -904,11 +917,18 @@ fn test_store_read(
     provider: CredentialProvider,
     credential_ref: &str,
 ) -> Result<String, String> {
+    let _guard = test_store_lock()
+        .lock()
+        .map_err(|_| "credential test store lock poisoned".to_string())?;
     let map = test_store_load(path)?;
     let account = keychain_account(provider, credential_ref);
     map.get(&account)
         .cloned()
         .ok_or_else(|| format!("credential reference not found in test store: {account}"))
+}
+
+fn test_store_lock() -> &'static Mutex<()> {
+    TEST_STORE_LOCK.get_or_init(|| Mutex::new(()))
 }
 
 fn test_store_load(path: &PathBuf) -> Result<HashMap<String, String>, String> {
