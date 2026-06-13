@@ -19,6 +19,7 @@ class VmStore {
   acting = $state(false);
   polled = $state(false);
   showCreateModal = $state(false);
+  createProfileId = $state<string | null>(null);
 
   get loading(): boolean {
     return !this.polled || this.acting;
@@ -148,6 +149,16 @@ class VmStore {
     } finally {
       this.acting = false;
     }
+  }
+
+  openCreateModal(profileId?: string): void {
+    this.createProfileId = profileId ?? null;
+    this.showCreateModal = true;
+  }
+
+  closeCreateModal(): void {
+    this.showCreateModal = false;
+    this.createProfileId = null;
   }
 
   async ensureAssets(profileId: string): Promise<void> {

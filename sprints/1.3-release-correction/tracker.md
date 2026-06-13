@@ -916,6 +916,15 @@ next one, and stage only the files for that slice.
     frontend check`; targeted grep for retired visible VM labels is quiet.
 - [ ] RED/GREEN: profile cards render name, description, icon, readiness, asset
   checklist, `New`, and `Customize` from route data.
+  - 2026-06-13 progress: dashboard profile cards no longer rely on a global
+    customize-session button. Each profile card renders the route-provided
+    name, description, icon, readiness text, and explicit actions: `New` for
+    ready profiles, `Download` for missing assets, and `Customize` to open the
+    create dialog preselected to that profile.
+  - Proof: RED/GREEN `pnpm --dir frontend test
+    src/lib/__tests__/session-language-contract.test.ts`; `pnpm --dir
+    frontend test src/lib/__tests__/profile-page-contract.test.ts`; `pnpm
+    --dir frontend check`.
 - [ ] RED/GREEN: incompatible/defunct sessions are greyed and expose only valid
   actions.
 - [ ] RED/GREEN: profile selection is route-backed and works with both `code`

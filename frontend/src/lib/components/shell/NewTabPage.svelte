@@ -296,6 +296,10 @@
       updateProfileLauncher(profileId, { ensuring: false, error: parseApiError(err) });
     }
   }
+
+  function openCustomizeProfile(profileId: string) {
+    vmStore.openCreateModal(profileId);
+  }
 </script>
 
 {#snippet sessionTable(vms: VmSummary[])}
@@ -385,18 +389,6 @@
   <!-- Sessions header -->
   <div class="flex items-center justify-between mb-6">
     <h2 class="text-2xl font-bold text-foreground">Sessions</h2>
-    <div class="flex items-center gap-x-2">
-      <button
-        type="button"
-        class="inline-flex items-center gap-x-2 bg-surface border border-line-2 text-foreground hover:bg-muted-hover rounded-lg px-4 py-2 text-sm font-medium transition-colors disabled:opacity-50 disabled:pointer-events-none"
-        onclick={() => vmStore.showCreateModal = true}
-        disabled={creatingVm}
-        title="Customize session"
-      >
-        <Plus size={16} weight="bold" />
-        Customize Session...
-      </button>
-    </div>
   </div>
 
   <!-- Profile launchers -->
@@ -430,13 +422,7 @@
       {#each profileLaunchers as launcher (launcher.profile.id)}
         {@const ready = launcher.assets?.ready === true}
         {@const busy = launcher.loading || launcher.ensuring || launcher.creating || launcher.assets?.downloading === true}
-        <button
-          type="button"
-          class="group text-left bg-card border border-card-line rounded-xl p-4 transition-colors hover:border-primary/50 hover:bg-muted-hover disabled:opacity-70 disabled:pointer-events-none"
-          onclick={() => ready ? createFromProfile(launcher.profile.id) : ensureProfileAssets(launcher.profile.id)}
-          disabled={creatingVm || launcher.loading || launcher.creating || launcher.ensuring || launcher.assets?.downloading === true}
-          title={ready ? `Start ${launcher.profile.name}` : profileAssetText(launcher.assets)}
-        >
+        <div class="group bg-card border border-card-line rounded-xl p-4 transition-colors hover:border-primary/50 hover:bg-muted-hover">
           <div class="flex items-start gap-x-3">
             <span class="size-10 shrink-0 inline-flex items-center justify-center rounded-lg bg-muted text-foreground [&>svg]:size-5 [&>svg]:max-w-5 [&>svg]:max-h-5" aria-hidden="true">
               {#if launcher.profile.icon_svg}
@@ -448,7 +434,7 @@
             <span class="min-w-0 flex-1">
               <span class="flex items-center justify-between gap-x-3">
                 <span class="text-sm font-semibold text-foreground truncate">{launcher.profile.name}</span>
-                <span class="shrink-0 inline-flex items-center gap-x-1 text-xs font-medium {ready ? 'text-primary' : 'text-muted-foreground-1'}">
+                <span class="shrink-0 inline-flex items-center gap-x-1 text-xs font-medium {ready ? 'text-primary' : 'text-muted-foreground-1'}" aria-label={profileAssetText(launcher.assets)}>
                   {#if busy}
                     <CircleNotch size={14} class="animate-spin" />
                     {launcher.creating ? 'Creating' : launcher.ensuring || launcher.assets?.downloading ? 'Downloading' : 'Checking'}
@@ -463,9 +449,36 @@
               </span>
               <span class="block text-xs text-muted-foreground-1 mt-1 line-clamp-2">{launcher.profile.description}</span>
               <span class="block text-[11px] text-muted-foreground-2 mt-2">{launcher.error ?? profileAssetText(launcher.assets)}</span>
+              <span class="mt-3 flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  class="inline-flex items-center justify-center gap-x-2 rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary-hover focus:outline-hidden focus:bg-primary-focus disabled:opacity-50 disabled:pointer-events-none"
+                  onclick={() => ready ? createFromProfile(launcher.profile.id) : ensureProfileAssets(launcher.profile.id)}
+                  disabled={creatingVm || launcher.loading || launcher.creating || launcher.ensuring || launcher.assets?.downloading === true}
+                  title={ready ? `New ${launcher.profile.name} session` : profileAssetText(launcher.assets)}
+                >
+                  {#if ready}
+                    <Plus size={14} weight="bold" />
+                    New
+                  {:else}
+                    <DownloadSimple size={14} />
+                    Download
+                  {/if}
+                </button>
+                <button
+                  type="button"
+                  class="inline-flex items-center justify-center gap-x-2 rounded-lg bg-surface border border-line-2 px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted-hover focus:outline-hidden disabled:opacity-50 disabled:pointer-events-none"
+                  onclick={() => openCustomizeProfile(launcher.profile.id)}
+                  disabled={creatingVm}
+                  title={`Customize ${launcher.profile.name} session`}
+                >
+                  <Plus size={14} weight="bold" />
+                  Customize
+                </button>
+              </span>
             </span>
           </div>
-        </button>
+        </div>
       {/each}
     </div>
   {/if}

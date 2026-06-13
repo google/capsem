@@ -27,6 +27,14 @@ describe('user-facing session language contract', () => {
     expect(dashboard).not.toContain('Failed to create VM');
   });
 
+  it('keeps profile creation controls on each profile card', () => {
+    expect(dashboard).toContain('New');
+    expect(dashboard).toContain('Customize');
+    expect(dashboard).toContain('openCustomizeProfile');
+    expect(dashboard).not.toContain('Customize Session...');
+    expect(dashboard).not.toContain('vmStore.showCreateModal = true');
+  });
+
   it('uses sessions in toolbar controls and hides build stamp on session tabs', () => {
     expect(toolbar).toContain('Session Logs');
     expect(toolbar).toContain('session');

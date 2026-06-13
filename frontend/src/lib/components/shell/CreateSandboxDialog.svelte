@@ -16,15 +16,15 @@
   onMount(async () => {
     try {
       profiles = (await listProfiles()).profiles.filter(profile => profile.availability.web);
-      profileId = profiles[0]?.id ?? 'code';
+      profileId = vmStore.createProfileId ?? profiles[0]?.id ?? 'code';
     } catch {
       profiles = [];
     }
   });
 
   function close() {
-    vmStore.showCreateModal = false;
-    profileId = profiles[0]?.id ?? 'code';
+    vmStore.closeCreateModal();
+    profileId = vmStore.createProfileId ?? profiles[0]?.id ?? 'code';
     name = '';
     ramMb = 2048;
     cpus = 2;
@@ -55,11 +55,17 @@
       creating = false;
     }
   }
+
+  $effect(() => {
+    if (vmStore.showCreateModal && vmStore.createProfileId) {
+      profileId = vmStore.createProfileId;
+    }
+  });
 </script>
 
 <Modal
   open={vmStore.showCreateModal}
-  title="Customize VM"
+  title="Customize session"
   confirmLabel={creating ? 'Creating...' : 'Create'}
   onconfirm={handleSubmit}
   oncancel={close}
