@@ -27,8 +27,8 @@ def test_manifest_generation_public_path_is_capsem_admin() -> None:
     public_docs = [
         PROJECT_ROOT / "docs" / "src" / "content" / "docs" / "architecture" / "asset-pipeline.md",
         PROJECT_ROOT / "docs" / "src" / "content" / "docs" / "security" / "build-verification.md",
-        PROJECT_ROOT / "config" / "skills" / "asset-pipeline" / "SKILL.md",
-        PROJECT_ROOT / "config" / "skills" / "release-process" / "SKILL.md",
+        PROJECT_ROOT / "skills" / "asset-pipeline" / "SKILL.md",
+        PROJECT_ROOT / "skills" / "release-process" / "SKILL.md",
     ]
 
     assert "capsem-admin -- manifest generate" in justfile
@@ -117,6 +117,9 @@ def test_package_builders_stage_manifest_only_not_vm_asset_payload() -> None:
     assert 'install -m 0644 /usr/share/capsem/assets/manifest.json "$CAPSEM_DIR/assets/manifest.json"' in deb_postinst
     assert 'install -m 0644 /usr/share/capsem/assets/manifest-origin.json "$CAPSEM_DIR/assets/manifest-origin.json"' in deb_postinst
     assert "event=manifest_copied" in deb_postinst
+    assert 'CAPSEM_HOME=\\"$CAPSEM_DIR\\" CAPSEM_RUN_DIR=\\"$CAPSEM_DIR/run\\" \\"$CAPSEM_DIR/bin/capsem\\" update --assets' in deb_postinst
+    assert "event=assets_hydrated" in deb_postinst
+    assert "event=asset_hydration_failed" in deb_postinst
     assert "event=assets_copied" not in deb_postinst
     assert 'INSTALL_LOG="$CAPSEM_DIR/logs/install.log"' in deb_postinst
     assert 'INSTALL_RUN_LOG="$CAPSEM_DIR/logs/install-$INSTALL_RUN_ID.log"' in deb_postinst
@@ -129,6 +132,9 @@ def test_package_builders_stage_manifest_only_not_vm_asset_payload() -> None:
     assert 'install -m 0644 "$PKG_SHARE/assets/manifest.json" "$CAPSEM_DIR/assets/manifest.json"' in pkg_postinstall
     assert 'install -m 0644 "$PKG_SHARE/assets/manifest-origin.json" "$CAPSEM_DIR/assets/manifest-origin.json"' in pkg_postinstall
     assert "event=manifest_copied" in pkg_postinstall
+    assert 'CAPSEM_HOME=\\"$CAPSEM_DIR\\" CAPSEM_RUN_DIR=\\"$CAPSEM_DIR/run\\" \\"$CAPSEM_DIR/bin/capsem\\" update --assets' in pkg_postinstall
+    assert "event=assets_hydrated" in pkg_postinstall
+    assert "event=asset_hydration_failed" in pkg_postinstall
     assert "event=assets_copied" not in pkg_postinstall
 
 

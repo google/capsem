@@ -88,6 +88,15 @@ fi
 # Fix ownership (we ran as root)
 chown -R "$USER" "$CAPSEM_DIR"
 
+if [ -f "$CAPSEM_DIR/assets/manifest.json" ] && [ -x "$CAPSEM_DIR/bin/capsem" ]; then
+    if ! su "$USER" -c "CAPSEM_HOME=\"$CAPSEM_DIR\" CAPSEM_RUN_DIR=\"$CAPSEM_DIR/run\" \"$CAPSEM_DIR/bin/capsem\" update --assets"; then
+        echo "capsem: asset hydration failed" >&2
+        echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=postinstall event=asset_hydration_failed"
+        exit 1
+    fi
+    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=postinstall event=assets_hydrated"
+fi
+
 # Add ~/.capsem/bin to PATH in shell profile
 CAPSEM_BIN="$CAPSEM_DIR/bin"
 for PROFILE in "$USER_HOME/.zshrc" "$USER_HOME/.bash_profile" "$USER_HOME/.bashrc"; do

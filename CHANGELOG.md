@@ -78,6 +78,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   snapshot internals no longer appear as a generic Stats tab; explicit snapshot
   MCP calls still surface through MCP activity, but host snapshot state is no
   longer written to or exposed from `session.db`.
+- Hardened the black-box integration gate so credential-broker tests use an
+  isolated file-backed broker store instead of the developer's native keychain,
+  and bounded the VM model fixture call so model/credential regressions fail
+  quickly with ledger evidence instead of hanging the release test.
+- Hardened the integration service startup wait so a clean `capsem-service`
+  idempotent exit during a compatible peer-start race keeps probing the UDS
+  route instead of failing the release gate before `/list` becomes ready.
+- Isolated each integration gate invocation under its own test CAPSEM_HOME so
+  focused and full runs do not share stale service sockets, pidfiles, or broker
+  stores; `CAPSEM_INTEGRATION_HOME` remains available as an explicit debug
+  override.
+- Pinned integration-test `CAPSEM_RUN_DIR` and `capsem-service --uds-path` to
+  the same process-scoped runtime directory so inherited test environment
+  cannot redirect service startup to a foreign singleton socket.
+- Made package postinstall hydrate VM assets through `capsem update --assets`
+  after copying the selected manifest/profile ledgers. Local dev/corp manifests
+  now use `manifest-origin.json` to hydrate from the source asset tree with the
+  same hash-named layout and blake3 verification as remote downloads, while the
+  package payload remains free of rootfs/initrd/kernel blobs.
 - Added VM-scoped snapshot status/list routes backed by the running
   `capsem-process` in-memory snapshot scheduler. Stopped VMs reconstruct
   snapshot status from that VM's snapshot metadata only when requested, and

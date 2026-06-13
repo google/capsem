@@ -297,12 +297,20 @@ fn env_truthy(value: &str) -> bool {
 /// with the existing `CAPSEM_TRACE_ID` 16-hex convention -- one fewer
 /// representation to remember when grepping.
 pub fn ambient_capsem_trace_id() -> Option<String> {
-    if let Ok(env) = std::env::var("CAPSEM_TRACE_ID") {
+    let env = std::env::var("CAPSEM_TRACE_ID").ok();
+    resolve_ambient_capsem_trace_id(env.as_deref(), PARENT_TRACEPARENT.get().map(String::as_str))
+}
+
+fn resolve_ambient_capsem_trace_id(
+    capsem_trace_id: Option<&str>,
+    parent_traceparent: Option<&str>,
+) -> Option<String> {
+    if let Some(env) = capsem_trace_id {
         if !env.is_empty() {
-            return Some(env);
+            return Some(env.to_string());
         }
     }
-    let tp = PARENT_TRACEPARENT.get()?;
+    let tp = parent_traceparent?;
     let mut parts = tp.split('-');
     let _version = parts.next()?;
     let trace_id = parts.next()?;

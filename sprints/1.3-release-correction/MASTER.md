@@ -95,5 +95,46 @@ prove the same rails without user credentials.
   response capture, model response parsing, native tool call ledger rows, file
   write, security latest route, session DB rows, plugin execution counters,
   profile plugin route telemetry, and raw-secret absence.
+- Integration gate hardening on 2026-06-12: `scripts/integration_test.py` now
+  runs service and VM paths with an isolated credential broker test store and
+  bounded model fixture calls. Proof:
+  `python3 scripts/integration_test.py --binary target/debug/capsem --assets
+  assets` passed 47 ledger checks plus ephemeral proof after reproducing the
+  native-keychain hang on authenticated local model traffic.
+- Integration gate hardening on 2026-06-12 also covers service startup
+  self-idempotence: `_wait_for_service_ready` keeps probing after a clean
+  `capsem-service` early exit from a compatible peer-start race and fails only
+  on nonzero exits or socket timeout. Proof:
+  `uv run python -m pytest tests/test_integration_script_profiles.py -q` and
+  `python3 scripts/integration_test.py --binary target/debug/capsem --assets
+  assets`.
+- Integration gate hardening on 2026-06-12 now isolates each integration
+  script invocation under `target/integration-capsem-home-$PID`, with
+  `CAPSEM_INTEGRATION_HOME` reserved for explicit debugging. The harness
+  creates its run directory before writing `service.pid` and closes the parent
+  service-log handle after spawn, preventing stale singleton sockets and file
+  descriptor leaks from poisoning the final `just test` integration step.
+  Proof: `uv run python -m pytest tests/test_integration_script_profiles.py
+  -q` and `python3 scripts/integration_test.py --binary target/debug/capsem
+  --assets assets`.
+- Integration gate hardening on 2026-06-12 also pins `CAPSEM_RUN_DIR` and
+  passes `--uds-path` to `capsem-service`. This closes the full-gate failure
+  where inherited run-dir state outranked `CAPSEM_HOME`, sent the service to a
+  foreign singleton socket, and left the harness waiting on the wrong UDS.
+  Proof: `uv run python -m pytest tests/test_integration_script_profiles.py
+  -q` and `python3 scripts/integration_test.py --binary target/debug/capsem
+  --assets assets`.
+- Package install hardening on 2026-06-13 keeps the closed package payload
+  contract while making postinstall hydrate VM assets from the installed
+  manifest via `capsem update --assets`. Local dev/corp manifests use
+  `manifest-origin.json` as the source asset tree; every copied asset is
+  blake3-verified and materialized into the same hash-named layout remote
+  downloads use. Proof: `cargo test -p capsem-core copy_missing_local_assets
+  -- --nocapture`; `cargo test -p capsem local_manifest_asset_source --
+  --nocapture`; `uv run python -m pytest
+  tests/capsem-build-chain/test_install_asset_payload.py
+  tests/capsem-install/test_installed_layout.py::TestInstalledLayoutContract::test_hash_named_assets_exist
+  -q`; `just test-install` passes 39/39 install checks with 22 skips and logs
+  `event=assets_hydrated`.
 
 Those files remain evidence. This sprint is the execution authority.

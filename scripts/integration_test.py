@@ -39,6 +39,24 @@ if str(SCRIPT_DIR) not in sys.path:
 
 from mock_server import local_fixture_env, start_mock_server, stop_process  # noqa: E402
 
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+
+def _integration_home() -> Path:
+    """Return the per-run integration home.
+
+    `just test` can invoke focused and full integration probes back-to-back.
+    A fixed service socket lets a cleanly exiting singleton peer race the
+    harness before readiness is observable, so each invocation owns its own
+    CAPSEM_HOME by default. The override keeps manual debugging reproducible.
+    """
+    if env := os.environ.get("CAPSEM_INTEGRATION_HOME"):
+        return Path(env)
+    return PROJECT_ROOT / "target" / f"integration-capsem-home-{os.getpid()}"
+
+
+INTEGRATION_HOME = _integration_home()
+
 BOLD = "\033[1m"
 DIM = "\033[2m"
 GREEN = "\033[32m"
@@ -66,18 +84,50 @@ def _run_dir() -> Path:
     return _capsem_home() / "run"
 
 
-CAPSEM_HOME = _capsem_home()
-SESSIONS_DIR = _run_dir() / "sessions"
-MAIN_DB = CAPSEM_HOME / "sessions" / "main.db"
-SERVICE_SOCKET = _run_dir() / "service.sock"
-SERVICE_PIDFILE = _run_dir() / "service.pid"
+CAPSEM_HOME = INTEGRATION_HOME
+SESSIONS_DIR = INTEGRATION_HOME / "run" / "sessions"
+MAIN_DB = INTEGRATION_HOME / "sessions" / "main.db"
+SERVICE_SOCKET = INTEGRATION_HOME / "run" / "service.sock"
+SERVICE_PIDFILE = INTEGRATION_HOME / "run" / "service.pid"
+
+
+def default_materialized_profiles_dir() -> str:
+    """Return the generated profile catalog used by packages, CI, and install."""
+    return str(PROJECT_ROOT / "target" / "config" / "profiles")
+
+
+def _profile_env() -> dict[str, str]:
+    return {"CAPSEM_PROFILES_DIR": default_materialized_profiles_dir()}
+
+
+def _test_isolation_env() -> dict[str, str]:
+    """Environment that keeps black-box integration tests hermetic.
+
+    The credential broker must not touch the developer's native keychain during
+    release gates. Native storage belongs to installed/manual runs; tests use
+    an isolated JSON store inside CAPSEM_HOME so captured credentials can be
+    asserted without host prompts or hidden state.
+    """
+    return {
+        "CAPSEM_CREDENTIAL_BROKER_TEST_STORE": str(
+            INTEGRATION_HOME / "run" / "credential-broker-test-store.json"
+        )
+    }
+
+
+def _integration_runtime_env() -> dict[str, str]:
+    """Pin every integration subprocess to the same home and run directory."""
+    return {
+        "CAPSEM_HOME": str(INTEGRATION_HOME),
+        "CAPSEM_RUN_DIR": str(INTEGRATION_HOME / "run"),
+    }
 
 
 def _vm_command(local_base_url: str) -> str:
     """Build the compound command executed inside the VM.
 
-    Semicolons ensure every step runs even if an earlier one fails -- the
-    host-side assertions decide pass/fail.
+    Required steps are chained with `&&` so a broken fixture stops immediately.
+    The denied-domain probe is the only intentionally non-fatal command.
     """
     tiny_url = shlex.quote(f"{local_base_url.rstrip('/')}/tiny")
     bytes_url = shlex.quote(f"{local_base_url.rstrip('/')}/bytes/10mb")
@@ -116,12 +166,14 @@ def _vm_command(local_base_url: str) -> str:
     # -- model_calls: deterministic local OpenAI-compatible fixture --
     (
         "curl -sf -X POST"
+        " --connect-timeout 5 -m 30"
         " -H 'content-type: application/json'"
         " -H 'authorization: Bearer capsem_test_openai_api_key'"
         f" --data {model_payload}"
         f" {model_url}"
         " -o /root/model_fixture.json"
     ),
+    "test -s /root/model_fixture.json",
     (
         "python3 -c \"import json;"
         " data=json.load(open('/root/model_fixture.json'));"
@@ -135,7 +187,7 @@ def _vm_command(local_base_url: str) -> str:
         # -- sentinel so the host can confirm full execution --
         "echo CAPSEM_INTEGRATION_DONE",
     ]
-    return "; ".join(commands)
+    return " && ".join(commands)
 
 
 def _kill_dev_service() -> None:
@@ -173,6 +225,59 @@ def _kill_dev_service() -> None:
         pass
 
 
+def _wait_for_service_ready(
+    proc: subprocess.Popen,
+    *,
+    service_socket: Path,
+    log_path: Path,
+    timeout_secs: float = 15.0,
+    poll_interval: float = 0.2,
+    run_cmd=subprocess.run,
+    sleep=time.sleep,
+    monotonic=time.monotonic,
+) -> None:
+    """Wait for the service socket to answer, honoring idempotent startup.
+
+    `capsem-service` intentionally exits 0 when a compatible peer wins a
+    startup race. The integration harness must keep probing the socket in that
+    case instead of treating a clean early exit as failure.
+    """
+    deadline = monotonic() + timeout_secs
+    clean_early_exit = False
+    while monotonic() < deadline:
+        if service_socket.exists():
+            # Socket alone isn't enough -- wait for /list to respond.
+            r = run_cmd(
+                [
+                    "curl",
+                    "-s",
+                    "--unix-socket",
+                    str(service_socket),
+                    "--max-time",
+                    "2",
+                    "http://localhost/list",
+                ],
+                capture_output=True,
+            )
+            if r.returncode == 0:
+                return
+        if proc.poll() is not None:
+            if proc.returncode != 0:
+                raise RuntimeError(
+                    f"capsem-service exited early (code {proc.returncode}); "
+                    f"see {log_path}"
+                )
+            clean_early_exit = True
+        sleep(poll_interval)
+
+    if clean_early_exit:
+        raise RuntimeError(
+            f"capsem-service exited 0 before the service socket became ready; "
+            f"see {log_path}"
+        )
+    raise RuntimeError(f"capsem-service did not become ready in {timeout_secs:g}s; see {log_path}")
+
+
 def _start_service_with_test_config(
     assets_dir: str, settings_config: str, corp_config: str
 ) -> subprocess.Popen:
@@ -182,16 +287,19 @@ def _start_service_with_test_config(
     runtime policy picks up `example.com` and the other overrides from
     `tests/fixtures/config/integration/settings.toml`.
     """
-    project_root = Path(__file__).resolve().parent.parent
+    project_root = PROJECT_ROOT
     service_bin = project_root / "target/debug/capsem-service"
     process_bin = project_root / "target/debug/capsem-process"
-    test_home = project_root / "target/integration-capsem-home"
+    test_home = INTEGRATION_HOME
     test_home.mkdir(parents=True, exist_ok=True)
+    SERVICE_PIDFILE.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(project_root / settings_config, test_home / "settings.toml")
 
     env = {
         **os.environ,
-        "CAPSEM_HOME": str(test_home),
+        **_profile_env(),
+        **_test_isolation_env(),
+        **_integration_runtime_env(),
         "CAPSEM_CORP_CONFIG": str(project_root / corp_config),
         "RUST_LOG": "capsem=info",
     }
@@ -200,37 +308,28 @@ def _start_service_with_test_config(
     log_path.parent.mkdir(parents=True, exist_ok=True)
     log_file = open(log_path, "w")
 
-    proc = subprocess.Popen(
-        [
-            str(service_bin),
-            "--assets-dir", f"{assets_dir}/arm64" if (Path(assets_dir) / "arm64").exists() else assets_dir,
-            "--process-binary", str(process_bin),
-            "--foreground",
-        ],
-        env=env,
-        stdout=log_file,
-        stderr=subprocess.STDOUT,
-    )
+    try:
+        proc = subprocess.Popen(
+            [
+                str(service_bin),
+                "--assets-dir",
+                f"{assets_dir}/arm64" if (Path(assets_dir) / "arm64").exists() else assets_dir,
+                "--process-binary",
+                str(process_bin),
+                "--uds-path",
+                str(SERVICE_SOCKET),
+                "--foreground",
+            ],
+            env=env,
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+        )
+    finally:
+        log_file.close()
     SERVICE_PIDFILE.write_text(str(proc.pid))
 
-    deadline = time.monotonic() + 15.0
-    while time.monotonic() < deadline:
-        if SERVICE_SOCKET.exists():
-            # Socket alone isn't enough -- wait for /list to respond.
-            r = subprocess.run(
-                ["curl", "-s", "--unix-socket", str(SERVICE_SOCKET),
-                 "--max-time", "2", "http://localhost/list"],
-                capture_output=True,
-            )
-            if r.returncode == 0:
-                return proc
-        if proc.poll() is not None:
-            raise RuntimeError(
-                f"capsem-service exited early (code {proc.returncode}); "
-                f"see {log_path}"
-            )
-        time.sleep(0.2)
-    raise RuntimeError(f"capsem-service did not become ready in 15s; see {log_path}")
+    _wait_for_service_ready(proc, service_socket=SERVICE_SOCKET, log_path=log_path)
+    return proc
 
 
 def run_vm(binary: str, assets_dir: str) -> tuple[str, int]:
@@ -242,9 +341,11 @@ def run_vm(binary: str, assets_dir: str) -> tuple[str, int]:
     """
     env = {
         **os.environ,
+        **_profile_env(),
+        **_test_isolation_env(),
+        **_integration_runtime_env(),
         "CAPSEM_ASSETS_DIR": assets_dir,
         "RUST_LOG": "capsem=warn",
-        "CAPSEM_HOME": str(Path("target/integration-capsem-home").resolve()),
         "CAPSEM_CORP_CONFIG": "tests/fixtures/config/integration/corp.toml",
     }
 
@@ -913,9 +1014,10 @@ def check_persistence(binary: str, assets_dir: str) -> bool:
     print(f"\n{BOLD}=== Ephemeral model check ==={RESET}")
     env = {
         **os.environ,
+        **_profile_env(),
+        **_integration_runtime_env(),
         "CAPSEM_ASSETS_DIR": assets_dir,
         "RUST_LOG": "capsem=warn",
-        "CAPSEM_HOME": str(Path("target/integration-capsem-home").resolve()),
         "CAPSEM_CORP_CONFIG": "tests/fixtures/config/integration/corp.toml",
     }
 
@@ -984,10 +1086,9 @@ def main():
 
     session_id, exit_code = run_vm(args.binary, args.assets)
 
-    # The VM command uses semicolons so individual failures don't abort.
-    # We don't fail on a non-zero exit code -- the DB assertions decide.
     if exit_code != 0:
-        print(f"{YELLOW}VM exited with code {exit_code} (non-fatal, checking DB){RESET}")
+        print(f"{RED}FAIL: VM integration workload exited with code {exit_code}{RESET}")
+        sys.exit(1)
 
     telemetry_ok = verify_session(session_id)
     ephemeral_ok = check_persistence(args.binary, args.assets)

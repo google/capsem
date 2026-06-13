@@ -164,6 +164,67 @@ next one, and stage only the files for that slice.
     `/vms/{id}/files/content`, runs it through `/vms/{id}/exec`, proves local
     apt/npm/uv/pip/node packages function, and verifies `/status`, `/history`,
     `/history/counts`, plus `exec_events` and `fs_events` ledger fields.
+- [x] RED/GREEN: integration model fixture must not touch the developer's
+  native credential store or hang on a broker/model regression.
+  - Root cause: `scripts/integration_test.py` did not set
+    `CAPSEM_CREDENTIAL_BROKER_TEST_STORE`, so the model POST carrying an
+    Authorization header could hit the native macOS Keychain during a
+    black-box VM gate. The request reached MITM but never emitted
+    `net_events`, `model_calls`, or `substitution_events`.
+  - Fix: integration service and `capsem run` both inherit an isolated
+    file-backed broker store under `target/integration-capsem-home/run/`, the
+    model curl has explicit connect/total timeouts, and the VM command fails
+    closed if the model fixture output file is missing.
+  - Proof: `uv run python -m pytest tests/test_integration_script_profiles.py
+    -q`; `python3 scripts/integration_test.py --binary target/debug/capsem
+    --assets assets` passed with 47 integration ledger checks, local
+    OpenAI-compatible model response text, model/tool rows, and ephemeral
+    proof.
+- [x] RED/GREEN: integration service startup honors `capsem-service`
+  self-idempotent startup instead of failing on a clean early exit.
+  - Root cause: after the parallel Python gate, a compatible service startup
+    race can make one `capsem-service --foreground` process exit `0` while the
+    peer owns the socket. `scripts/integration_test.py` treated any early exit
+    as fatal before giving the UDS `/list` probe the full readiness window.
+  - Fix: `_wait_for_service_ready` keeps probing after a clean `0` exit and
+    still fails immediately on nonzero service exits.
+  - Proof: RED/GREEN `uv run python -m pytest
+    tests/test_integration_script_profiles.py::test_service_ready_wait_accepts_zero_exit_peer_startup
+    -q`; `uv run python -m pytest tests/test_integration_script_profiles.py
+    -q`; `python3 scripts/integration_test.py --binary target/debug/capsem
+    --assets assets` passed with 47 ledger checks and ephemeral proof.
+- [x] RED/GREEN: integration harness owns a per-invocation CAPSEM_HOME instead
+  of reusing a stale fixed UDS path across focused/full gates.
+  - Root cause: the first self-idempotence fix still allowed a fixed
+    `target/integration-capsem-home` to race a previous compatible service
+    that exited cleanly before this harness could observe `/list`; the failure
+    had an empty `target/integration-test-service.log` because the process
+    returned before the test-owned service produced child output.
+  - Fix: `scripts/integration_test.py` now defaults to
+    `target/integration-capsem-home-$PID`, honors
+    `CAPSEM_INTEGRATION_HOME` only as an explicit debug override, creates the
+    run directory before writing `service.pid`, and closes the parent copy of
+    the service log handle immediately after `Popen`.
+  - Proof: RED/GREEN `uv run python -m pytest
+    tests/test_integration_script_profiles.py -q`; `python3
+    scripts/integration_test.py --binary target/debug/capsem --assets assets`
+    passed with 47 ledger checks and ephemeral proof from a process-scoped
+    integration home.
+- [x] RED/GREEN: integration harness pins `CAPSEM_RUN_DIR` and the service UDS
+  path so inherited test env cannot redirect service startup.
+  - Root cause: `CAPSEM_RUN_DIR` has higher precedence than `CAPSEM_HOME`.
+    Under the full `just test` environment, a foreign inherited run dir could
+    make `capsem-service` probe a different socket, clean-exit as a compatible
+    singleton, and leave the harness waiting on
+    `target/integration-capsem-home-$PID/run/service.sock`.
+  - Fix: service launch, `capsem run`, and persistence checks all inherit
+    `CAPSEM_RUN_DIR=$CAPSEM_INTEGRATION_HOME/run`; service launch also passes
+    `--uds-path` with the exact socket the readiness probe uses.
+  - Proof: RED/GREEN `uv run python -m pytest
+    tests/test_integration_script_profiles.py -q`; `python3
+    scripts/integration_test.py --binary target/debug/capsem --assets assets`
+    passed with 47 ledger checks and ephemeral proof from the pinned
+    runtime directory.
 
 ## S3. Route Contract and API Coverage
 
@@ -869,9 +930,28 @@ next one, and stage only the files for that slice.
     scripts/pkg-scripts/postinstall`.
 - [ ] GREEN: package accepts local/remote manifest override, copies it to the
   service-owned location, and records origin/hash in status/debug/install log.
-- [ ] GREEN: install logs are timestamped and actionable.
-- [ ] Proof: `just install` builds CI-like package and installs through package
-  path.
+- [x] GREEN: package postinstall hydrates local manifest assets without
+  embedding VM blobs in the package.
+  - Root cause from full `just test`: the `.deb` installed
+    `manifest.json`/profiles but never materialized
+    `$CAPSEM_HOME/assets/{arch}/{hash-name}`, so installed-layout validation
+    failed on missing `vmlinuz-<hash16>`.
+  - Fix: `capsem update --assets` now reads local package
+    `manifest-origin.json`, copies from the source asset tree through
+    `copy_missing_local_assets`, verifies blake3, and writes the same
+    hash-named layout as remote downloads. `.pkg` and `.deb` postinstall call
+    that public reconciler and fail with `asset_hydration_failed` if it fails.
+  - Proof: `cargo test -p capsem-core copy_missing_local_assets --
+    --nocapture`; `cargo test -p capsem local_manifest_asset_source --
+    --nocapture`; `uv run python -m pytest
+    tests/capsem-build-chain/test_install_asset_payload.py
+    tests/capsem-install/test_installed_layout.py::TestInstalledLayoutContract::test_hash_named_assets_exist
+    -q`; `just test-install` passes 39/39 install checks with 22 skips and
+    logs `event=assets_hydrated`.
+- [x] GREEN: install logs are timestamped and actionable for manifest/profile
+  copy, asset hydration success/failure, service registration, and completion.
+- [x] Proof: `just test-install` builds a CI-like package and installs through
+  the package path.
 - [ ] Proof: status/debug show service version, manifest origin/hash, profile
   status, plugin status, route status, doctor evidence, OBOM/SBOM references.
 - [ ] Proof: changelog, docs, skills, and benchmark docs updated.

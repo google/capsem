@@ -684,6 +684,130 @@ where
     Ok(downloaded)
 }
 
+/// Copy any missing / hash-mismatched VM assets from a local asset tree into
+/// `base_dir/{arch}/{hash_filename}`.
+///
+/// This is the file:// twin of [`download_missing_assets`]. It intentionally
+/// preserves the same manifest resolver, hash naming, hash verification, and
+/// read-only permissions so local dev/corp package manifests exercise the same
+/// installed layout as remote release downloads.
+pub fn copy_missing_local_assets<F>(
+    manifest: &ManifestV2,
+    binary_version: &str,
+    arch: &str,
+    source_dir: &Path,
+    base_dir: &Path,
+    on_progress: F,
+) -> Result<Vec<PathBuf>>
+where
+    F: Fn(DownloadProgress),
+{
+    let asset_version = pick_asset_version(manifest, binary_version);
+    let release = manifest
+        .assets
+        .releases
+        .get(&asset_version)
+        .with_context(|| format!("asset version {asset_version} not found in manifest"))?;
+    let arch_assets = release
+        .arches
+        .get(arch)
+        .with_context(|| format!("arch {arch} not found in asset release {asset_version}"))?;
+
+    let arch_dir = asset_storage_dir(base_dir, arch);
+    std::fs::create_dir_all(&arch_dir)
+        .with_context(|| format!("cannot create {}", arch_dir.display()))?;
+
+    let mut copied = Vec::new();
+    let mut names: Vec<&String> = arch_assets.keys().collect();
+    names.sort();
+
+    for name in names {
+        let entry = &arch_assets[name];
+        let hname = hash_filename(name, &entry.hash);
+        let target = arch_dir.join(&hname);
+
+        let mut candidates = vec![base_dir.join(&hname), target.clone()];
+        candidates.dedup();
+        let mut needs_copy = true;
+        for candidate in candidates {
+            if candidate.exists() {
+                match hash_file(&candidate) {
+                    Ok(h) if h == entry.hash => {
+                        needs_copy = false;
+                        break;
+                    }
+                    _ => {
+                        info!(path = %candidate.display(), "existing file hash mismatch, recopying");
+                        let _ = std::fs::remove_file(&candidate);
+                    }
+                }
+            }
+        }
+        if !needs_copy {
+            on_progress(DownloadProgress {
+                logical_name: name.clone(),
+                bytes_done: entry.size,
+                bytes_total: Some(entry.size),
+                done: true,
+            });
+            continue;
+        }
+
+        let source = [
+            source_dir.join(arch).join(&hname),
+            source_dir.join(arch).join(name),
+            source_dir.join("current").join(&hname),
+            source_dir.join("current").join(name),
+            source_dir.join(&hname),
+            source_dir.join(name),
+        ]
+        .into_iter()
+        .find(|path| path.is_file())
+        .with_context(|| {
+            format!(
+                "local asset source missing for {name}; checked {}/{arch}, {}/current, and {}",
+                source_dir.display(),
+                source_dir.display(),
+                source_dir.display()
+            )
+        })?;
+
+        let actual =
+            hash_file(&source).with_context(|| format!("hash local asset {}", source.display()))?;
+        if actual != entry.hash {
+            bail!(
+                "{}: local asset hash mismatch at {} (expected {}, got {})",
+                name,
+                source.display(),
+                entry.hash,
+                actual
+            );
+        }
+
+        let tmp = arch_dir.join(format!("{hname}.tmp"));
+        let _ = std::fs::remove_file(&tmp);
+        std::fs::copy(&source, &tmp)
+            .with_context(|| format!("copy {} -> {}", source.display(), tmp.display()))?;
+        std::fs::rename(&tmp, &target)
+            .with_context(|| format!("rename {} -> {}", tmp.display(), target.display()))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o444));
+        }
+
+        on_progress(DownloadProgress {
+            logical_name: name.clone(),
+            bytes_done: entry.size,
+            bytes_total: Some(entry.size),
+            done: true,
+        });
+        copied.push(target);
+    }
+
+    Ok(copied)
+}
+
 /// Pick the asset version that [`ManifestV2::resolve`] would pick for a
 /// given binary version. Extracted so `download_missing_assets` and the
 /// resolver stay in lock-step.
@@ -984,6 +1108,136 @@ mod tests {
         assert!(resolved.kernel.exists());
         assert!(resolved.initrd.exists());
         assert!(resolved.rootfs.exists());
+    }
+
+    #[test]
+    fn copy_missing_local_assets_materializes_hash_named_layout() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("source");
+        let install = dir.path().join("install");
+        let arch_dir = source.join("arm64");
+        std::fs::create_dir_all(&arch_dir).unwrap();
+
+        let kernel = b"kernel-local";
+        let initrd = b"initrd-local";
+        let rootfs = b"rootfs-local";
+        std::fs::write(arch_dir.join("vmlinuz"), kernel).unwrap();
+        std::fs::write(arch_dir.join("initrd.img"), initrd).unwrap();
+        std::fs::write(arch_dir.join("rootfs.erofs"), rootfs).unwrap();
+
+        let manifest = ManifestV2::from_json(&format!(
+            r#"{{
+                "format": 2,
+                "refresh_policy": "24h",
+                "assets": {{
+                    "current": "2030.0101.1",
+                    "releases": {{
+                        "2030.0101.1": {{
+                            "date": "2030-01-01",
+                            "deprecated": false,
+                            "min_binary": "1.0.0",
+                            "arches": {{
+                                "arm64": {{
+                                    "vmlinuz": {{ "hash": "{}", "size": {} }},
+                                    "initrd.img": {{ "hash": "{}", "size": {} }},
+                                    "rootfs.erofs": {{ "hash": "{}", "size": {} }}
+                                }}
+                            }}
+                        }}
+                    }}
+                }},
+                "binaries": {{
+                    "current": "9.9.9",
+                    "releases": {{
+                        "9.9.9": {{
+                            "date": "2030-01-01",
+                            "deprecated": false,
+                            "min_assets": "2030.0101.1"
+                        }}
+                    }}
+                }}
+            }}"#,
+            blake3::hash(kernel).to_hex(),
+            kernel.len(),
+            blake3::hash(initrd).to_hex(),
+            initrd.len(),
+            blake3::hash(rootfs).to_hex(),
+            rootfs.len(),
+        ))
+        .unwrap();
+
+        let copied =
+            copy_missing_local_assets(&manifest, "9.9.9", "arm64", &source, &install, |_| {})
+                .unwrap();
+
+        assert_eq!(copied.len(), 3);
+        for (logical, bytes) in [
+            ("vmlinuz", kernel.as_slice()),
+            ("initrd.img", initrd.as_slice()),
+            ("rootfs.erofs", rootfs.as_slice()),
+        ] {
+            let digest = blake3::hash(bytes).to_hex().to_string();
+            let target = install.join("arm64").join(hash_filename(logical, &digest));
+            assert_eq!(std::fs::read(&target).unwrap(), bytes);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                assert_eq!(
+                    std::fs::metadata(&target).unwrap().permissions().mode() & 0o777,
+                    0o444
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn copy_missing_local_assets_rejects_hash_mismatch() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("source");
+        let install = dir.path().join("install");
+        std::fs::create_dir_all(source.join("arm64")).unwrap();
+        std::fs::write(source.join("arm64").join("vmlinuz"), b"wrong").unwrap();
+
+        let manifest = ManifestV2::from_json(
+            r#"{
+                "format": 2,
+                "refresh_policy": "24h",
+                "assets": {
+                    "current": "2030.0101.1",
+                    "releases": {
+                        "2030.0101.1": {
+                            "date": "2030-01-01",
+                            "deprecated": false,
+                            "min_binary": "1.0.0",
+                            "arches": {
+                                "arm64": {
+                                    "vmlinuz": { "hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "size": 5 }
+                                }
+                            }
+                        }
+                    }
+                },
+                "binaries": {
+                    "current": "9.9.9",
+                    "releases": {
+                        "9.9.9": {
+                            "date": "2030-01-01",
+                            "deprecated": false,
+                            "min_assets": "2030.0101.1"
+                        }
+                    }
+                }
+            }"#,
+        )
+        .unwrap();
+
+        let err = copy_missing_local_assets(&manifest, "9.9.9", "arm64", &source, &install, |_| {})
+            .expect_err("wrong bytes must not be installed");
+        assert!(err.to_string().contains("hash mismatch"), "{err:#}");
+        assert!(!install
+            .join("arm64")
+            .join("vmlinuz-aaaaaaaaaaaaaaaa")
+            .exists());
     }
 
     #[test]
