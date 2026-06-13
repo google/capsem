@@ -201,5 +201,13 @@ prove the same rails without user credentials.
   tests/test_release_doctor_contract.py::test_kvm_checkpoint_x86_state_tests_are_arch_gated
   -q`; `cargo check -p capsem-core --tests`; `uv run ruff check
   tests/test_release_doctor_contract.py`; `git diff --check`.
+- Second CI drift found on 2026-06-13: macOS coverage compiled `capsem-app`
+  before `frontend/dist` existed, and Linux ARM pty-agent exec tests selected
+  `/root` as cwd for a non-root runner user because the directory existed.
+  The workflow now builds frontend before Rust coverage, and agent exec uses
+  `/root` only when running as root. Keep S10 open until pushed CI proves this
+  remotely. Local proof: `cargo test -p capsem-agent exec_ -- --nocapture`;
+  `cd frontend && CI=true pnpm install --frozen-lockfile && pnpm run build`;
+  `cargo check -p capsem-app --tests`; release-doctor workflow guards.
 
 Those files remain evidence. This sprint is the execution authority.

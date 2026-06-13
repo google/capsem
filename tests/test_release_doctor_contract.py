@@ -160,6 +160,18 @@ def test_ci_workflow_references_only_live_workspace_packages_and_skills() -> Non
     assert "validate-skills config/skills" not in workflow
 
 
+def test_ci_builds_frontend_before_compiling_tauri_app_tests() -> None:
+    workflow = (PROJECT_ROOT / ".github" / "workflows" / "ci.yaml").read_text()
+    build_pos = workflow.find("cd frontend && pnpm run build")
+    capsem_app_pos = workflow.find("-p capsem-app")
+    coverage_pos = workflow.rfind("cargo llvm-cov nextest --no-cfg-coverage", 0, capsem_app_pos)
+
+    assert build_pos != -1, "Tauri frontendDist must exist before capsem-app tests compile"
+    assert coverage_pos != -1
+    assert capsem_app_pos != -1
+    assert build_pos < coverage_pos < capsem_app_pos
+
+
 def test_kvm_checkpoint_x86_state_tests_are_arch_gated() -> None:
     source = (PROJECT_ROOT / "crates" / "capsem-core" / "src" / "hypervisor" / "kvm" / "checkpoint.rs").read_text()
     tests = source.split("#[cfg(test)]\nmod tests", maxsplit=1)[1]

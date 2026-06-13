@@ -1758,6 +1758,21 @@ next one, and stage only the files for that slice.
     was attempted after installing the Rust target but stopped in C dependency
     build scripts because this Mac lacks `aarch64-linux-gnu-gcc`; remote Linux
     ARM CI remains the authoritative compile proof for that target.
+  - 2026-06-13 second CI correction: remote macOS Rust coverage compiled
+    `capsem-app` before the frontend build existed, so Tauri's
+    `frontendDist = "../../frontend/dist"` proc macro panicked. Remote Linux
+    ARM also proved the pty-agent exec tests were selecting `/root` as cwd for
+    a non-root CI user just because `/root` existed, causing child spawns to
+    fail with EACCES. Fixed the workflow to build frontend before Rust
+    coverage, and fixed the agent exec cwd helper to use `/root` only when the
+    process is actually root. Guard proof: `cargo test -p capsem-agent exec_
+    -- --nocapture` (`16 passed`); `cd frontend && CI=true pnpm install
+    --frozen-lockfile && pnpm run build`; `cargo check -p capsem-app --tests`;
+    `uv run python -m pytest
+    tests/test_release_doctor_contract.py::test_ci_builds_frontend_before_compiling_tauri_app_tests
+    tests/test_release_doctor_contract.py::test_ci_workflow_references_only_live_workspace_packages_and_skills
+    -q` (`2 passed`); `uv run ruff check
+    tests/test_release_doctor_contract.py`; `cargo fmt --check`.
 
 ## Coverage Ledger
 

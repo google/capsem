@@ -1307,11 +1307,7 @@ fn run_exec_on_fds(
     }
 
     // Spawn child process with piped stdout and stderr.
-    let cwd = if std::path::Path::new("/root").exists() {
-        "/root"
-    } else {
-        "/"
-    };
+    let cwd = default_exec_cwd();
     let mut child = match std::process::Command::new("bash")
         .arg("-c")
         .arg(command)
@@ -1381,6 +1377,14 @@ fn run_exec_on_fds(
     eprintln!("[capsem-agent] exec[{id}] done: exit_code={exit_code}");
     let _ = ctrl_tx.send(GuestToHost::ExecDone { id, exit_code });
     exit_code
+}
+
+fn default_exec_cwd() -> &'static str {
+    if unsafe { libc::geteuid() } == 0 && std::path::Path::new("/root").is_dir() {
+        "/root"
+    } else {
+        "/"
+    }
 }
 
 /// Guest workspace root (VirtioFS mount point).
@@ -2255,6 +2259,15 @@ mod tests {
         match rx.recv_timeout(std::time::Duration::from_secs(10)).unwrap() {
             GuestToHost::ExecDone { id, exit_code } => (id, exit_code),
             other => panic!("expected ExecDone, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn exec_default_cwd_uses_root_only_for_root_user() {
+        if unsafe { libc::geteuid() } == 0 && std::path::Path::new("/root").is_dir() {
+            assert_eq!(default_exec_cwd(), "/root");
+        } else {
+            assert_eq!(default_exec_cwd(), "/");
         }
     }
 

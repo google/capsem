@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed (route surfaces and diagnostics)
+- Fixed CI regressions where macOS Rust coverage compiled the Tauri app before
+  `frontend/dist` existed, and Linux ARM agent exec tests selected `/root` as
+  cwd for a non-root runner user simply because the directory existed.
 - Fixed ARM Linux CI compilation for KVM checkpoint tests by keeping portable
   checkpoint header decode coverage on every target while gating x86 KVM vCPU,
   IRQ, PIT, and MMIO serialization tests to x86_64 where those structs exist.
