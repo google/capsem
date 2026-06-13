@@ -18,6 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bytes to the service for import/export/read/write boundaries; the service
   now writes or returns only the bytes approved by the plugin-aware security
   rail, while block still fails closed.
+- Fixed file-boundary rewrite materialization so logging-stage sanitizers and
+  large-content security previews cannot truncate or replace guest file bytes;
+  data-plane rewrites now require a complete payload and an applied
+  non-logging `rewrite` plugin.
 - Tightened plugin route regression coverage so `rewrite` mode proves an
   actual event mutation and `block` mode remains the only plugin mode that
   denies the evaluated security event.

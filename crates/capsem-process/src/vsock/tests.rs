@@ -84,6 +84,84 @@ fn empty_plugin_policy() -> PluginPolicyHandle {
     Arc::new(std::sync::RwLock::new(std::collections::BTreeMap::new()))
 }
 
+fn file_import_event_with_content(content: &str) -> capsem_core::security_engine::SecurityEvent {
+    capsem_core::security_engine::SecurityEvent::new(
+        capsem_core::security_engine::RuntimeSecurityEventType::FileImport,
+    )
+    .with_file(capsem_core::security_engine::FileSecurityEvent {
+        import_content: Some(content.to_string()),
+        ..Default::default()
+    })
+}
+
+fn add_plugin_rewrite_marker(
+    event: &mut capsem_core::security_engine::SecurityEvent,
+    plugin_id: &str,
+    stage: capsem_core::security_engine::SecurityPluginStage,
+) {
+    event.record_plugin_execution(capsem_core::security_engine::SecurityPluginExecution {
+        plugin_id: plugin_id.to_string(),
+        stage,
+        applied: true,
+        duration_us: 7,
+    });
+    event.record_detection(capsem_core::security_engine::SecurityDetectionEvent {
+        source: capsem_core::security_engine::SecurityDetectionSource::Plugin,
+        detection_level: capsem_core::net::policy_config::DetectionLevel::Informational,
+        rule_id: None,
+        plugin_id: Some(plugin_id.to_string()),
+        action: None,
+        plugin_mode: Some(capsem_core::net::policy_config::SecurityPluginMode::Rewrite),
+        reason: None,
+    });
+}
+
+#[test]
+fn file_boundary_preview_is_not_rewrite_data() {
+    let preview = b"x".repeat(FILE_SECURITY_CONTENT_PREVIEW_MAX);
+    let preview_text = String::from_utf8(preview.clone()).unwrap();
+    let event = file_import_event_with_content(&preview_text);
+
+    assert_eq!(
+        rewritten_file_content(&preview, 100_000, &event),
+        None,
+        "file boundary previews must not truncate larger data-plane payloads"
+    );
+}
+
+#[test]
+fn file_boundary_logging_rewrite_is_not_data_plane_rewrite() {
+    let original = b"token=secret";
+    let mut event = file_import_event_with_content("token=hash:abc123");
+    add_plugin_rewrite_marker(
+        &mut event,
+        "log_sanitizer",
+        capsem_core::security_engine::SecurityPluginStage::Logging,
+    );
+
+    assert_eq!(
+        rewritten_file_content(original, original.len() as u64, &event),
+        None,
+        "logging plugins sanitize the ledger and must not rewrite guest bytes"
+    );
+}
+
+#[test]
+fn file_boundary_preprocess_rewrite_changes_complete_payload() {
+    let original = b"EICAR";
+    let mut event = file_import_event_with_content("CAPSEM_REWRITTEN_EICAR");
+    add_plugin_rewrite_marker(
+        &mut event,
+        "dummy_pre_eicar",
+        capsem_core::security_engine::SecurityPluginStage::Preprocess,
+    );
+
+    assert_eq!(
+        rewritten_file_content(original, original.len() as u64, &event),
+        Some(b"CAPSEM_REWRITTEN_EICAR".to_vec())
+    );
+}
+
 #[test]
 fn broken_pipe_is_retryable() {
     let io_err = std::io::Error::from(std::io::ErrorKind::BrokenPipe);

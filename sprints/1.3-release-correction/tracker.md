@@ -920,6 +920,13 @@ next one, and stage only the files for that slice.
     the caller instead of treating "event id exists" as success. Profile plugin
     edits now materialize into runtime overlays and reload matching active VMs
     before the edit route returns.
+  - 2026-06-13 follow-up: full-gate MCP large payload coverage exposed that
+    file security previews were being treated as replacement bytes. The fix
+    keeps all ledger writes on the existing `DbWriter` path, but gates
+    runtime file-content replacement on a complete evaluated payload plus an
+    applied non-logging `rewrite` plugin. Logging-stage sanitizers and 64 KiB
+    previews can still sanitize the ledger, detect, or block, but cannot
+    truncate user/guest file bytes.
   - Proof: `cargo test -p capsem-service
     reload_refreshes_session_runtime_profile_from_source_profile -- --nocapture`;
     `cargo test -p capsem-service
@@ -932,6 +939,12 @@ next one, and stage only the files for that slice.
     tests/ironbank/test_doctor_ledger.py::test_runtime_plugin_action_matrix_pays_file_import_ledger_debt
     -q -s --tb=short` (`1 passed in 1.97s`). Remaining debt: full rewrite
     matrix and full `just test`.
+  - Preview/rewrite regression proof: `cargo fmt --check`; `cargo test -p
+    capsem-process file_boundary_ -- --nocapture`; `cargo build -p
+    capsem-process`; `cargo build -p capsem-service -p capsem-mcp`; `uv run
+    python -m pytest tests/capsem-mcp/test_file_io.py::test_large_payload -q
+    -s`; `uv run python -m pytest tests/capsem-mcp/test_file_io.py -q -s`
+    (`8 passed`).
 - [x] RED/GREEN: doctor/toolchain probes cover apt/dpkg triggers, Python, pip,
   uv, Node, npm, npx, packaged CLIs, aliases, MCP bootstrap, DNS, TLS, FS
   writes.

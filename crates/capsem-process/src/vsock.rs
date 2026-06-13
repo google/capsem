@@ -536,9 +536,11 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                     )
                     .await;
                     let (success, data, error) = match event_id {
-                        Ok(Some(emission)) if emission.enforcement.is_allowed() => {
-                            (true, rewritten_file_content(&emission.event), None)
-                        }
+                        Ok(Some(emission)) if emission.enforcement.is_allowed() => (
+                            true,
+                            rewritten_file_content(&data, size, &emission.event),
+                            None,
+                        ),
                         Ok(Some(emission)) => (
                             false,
                             None,
@@ -1265,7 +1267,29 @@ async fn emit_explicit_file_security_event(
     .await
 }
 
-fn rewritten_file_content(event: &capsem_core::security_engine::SecurityEvent) -> Option<Vec<u8>> {
+fn rewritten_file_content(
+    original_preview: &[u8],
+    original_size: u64,
+    event: &capsem_core::security_engine::SecurityEvent,
+) -> Option<Vec<u8>> {
+    if original_preview.len() as u64 != original_size {
+        return None;
+    }
+    let mutating_rewrite = event.plugin_executions.iter().any(|execution| {
+        execution.applied
+            && !matches!(
+                execution.stage,
+                capsem_core::security_engine::SecurityPluginStage::Logging
+            )
+            && event.detections.iter().any(|detection| {
+                detection.plugin_id.as_deref() == Some(execution.plugin_id.as_str())
+                    && detection.plugin_mode
+                        == Some(capsem_core::net::policy_config::SecurityPluginMode::Rewrite)
+            })
+    });
+    if !mutating_rewrite {
+        return None;
+    }
     let file = event.file.as_ref()?;
     let content = file
         .import_content
@@ -1276,7 +1300,11 @@ fn rewritten_file_content(event: &capsem_core::security_engine::SecurityEvent) -
         .or(file.create_content.as_deref())
         .or(file.delete_content.as_deref())
         .or(file.content.as_deref())?;
-    Some(content.as_bytes().to_vec())
+    if content.as_bytes() == original_preview {
+        None
+    } else {
+        Some(content.as_bytes().to_vec())
+    }
 }
 
 async fn handle_guest_msg(
