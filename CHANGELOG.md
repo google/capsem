@@ -48,6 +48,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Replaced the Rust mock-server crate with the shared Python mock server
   runtime for doctor, integration, recorder, benchmark, and Ironbank tests, so
   there is one hermetic protocol lab and no duplicate fixture implementation.
+- Extended `capsem-mock-server` with deterministic DNS fixtures over UDP and
+  TCP, reported in its ready JSON, so doctor, recorder, benchmark, and
+  Ironbank work can exercise DNS without public resolvers or a second fixture
+  server.
 - Clarified the shared skills contract for profile `build.sh`: it is a
   rootfs-only build hook, not an installer/runtime/config path, and changes
   require profile descriptor updates, asset rebuilds, and black-box VM proof.

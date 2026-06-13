@@ -8,6 +8,7 @@ import base64
 import gzip
 import hashlib
 import json
+import socketserver
 import struct
 import sys
 import threading
@@ -51,6 +52,11 @@ ENDPOINTS = [
     "/ws/ping",
     "/ws/close",
 ]
+DNS_FIXTURES = {
+    "fixture.capsem.test": "127.0.0.1",
+    "model.capsem.test": "127.0.0.1",
+    "mcp.capsem.test": "127.0.0.1",
+}
 
 
 def _deterministic_bytes(size: str) -> bytes:
@@ -433,12 +439,99 @@ class MockHandler(BaseHTTPRequestHandler):
         self._ws_send_frame(0x8, struct.pack("!H", 1000) + b"capsem-fixture-close")
 
 
-def _ready_payload(addr: tuple[str, int]) -> dict:
-    host, port = addr
+def _decode_dns_name(packet: bytes, offset: int = 12) -> tuple[str, int]:
+    labels: list[str] = []
+    while True:
+        if offset >= len(packet):
+            raise ValueError("truncated dns name")
+        length = packet[offset]
+        offset += 1
+        if length == 0:
+            break
+        if length & 0xC0:
+            raise ValueError("compressed dns query names are unsupported in fixtures")
+        if offset + length > len(packet):
+            raise ValueError("truncated dns label")
+        labels.append(packet[offset:offset + length].decode("ascii").lower())
+        offset += length
+    return ".".join(labels), offset
+
+
+def _dns_response(packet: bytes) -> bytes:
+    if len(packet) < 12:
+        return b""
+    query_id, _flags, qdcount, _ancount, _nscount, _arcount = struct.unpack("!HHHHHH", packet[:12])
+    if qdcount != 1:
+        return struct.pack("!HHHHHH", query_id, 0x8183, qdcount, 0, 0, 0) + packet[12:]
+    try:
+        qname, offset = _decode_dns_name(packet)
+    except ValueError:
+        return struct.pack("!HHHHHH", query_id, 0x8183, 0, 0, 0, 0)
+    if offset + 4 > len(packet):
+        return struct.pack("!HHHHHH", query_id, 0x8183, 0, 0, 0, 0)
+    qtype, qclass = struct.unpack("!HH", packet[offset:offset + 4])
+    question = packet[12:offset + 4]
+    address = DNS_FIXTURES.get(qname)
+    if qtype != 1 or qclass != 1 or address is None:
+        return struct.pack("!HHHHHH", query_id, 0x8183, 1, 0, 0, 0) + question
+    rdata = bytes(int(part) for part in address.split("."))
+    answer = (
+        struct.pack("!HHHIH", 0xC00C, 1, 1, 60, len(rdata))
+        + rdata
+    )
+    return struct.pack("!HHHHHH", query_id, 0x8180, 1, 1, 0, 0) + question + answer
+
+
+class DnsUdpHandler(socketserver.BaseRequestHandler):
+    def handle(self) -> None:
+        data, socket = self.request
+        response = _dns_response(data)
+        if response:
+            socket.sendto(response, self.client_address)
+
+
+class DnsTcpHandler(socketserver.BaseRequestHandler):
+    def handle(self) -> None:
+        length_bytes = self.request.recv(2)
+        if len(length_bytes) != 2:
+            return
+        length = struct.unpack("!H", length_bytes)[0]
+        packet = b""
+        while len(packet) < length:
+            chunk = self.request.recv(length - len(packet))
+            if not chunk:
+                return
+            packet += chunk
+        response = _dns_response(packet)
+        if response:
+            self.request.sendall(struct.pack("!H", len(response)) + response)
+
+
+class ThreadingUdpServer(socketserver.ThreadingMixIn, socketserver.UDPServer):
+    daemon_threads = True
+    allow_reuse_address = True
+
+
+class ThreadingTcpServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
+    daemon_threads = True
+    allow_reuse_address = True
+
+
+def _ready_payload(
+    http_addr: tuple[str, int],
+    dns_udp_addr: tuple[str, int],
+    dns_tcp_addr: tuple[str, int],
+) -> dict:
+    host, port = http_addr
+    dns_udp_host, dns_udp_port = dns_udp_addr
+    dns_tcp_host, dns_tcp_port = dns_tcp_addr
     return {
         "service": "capsem-mock-server",
         "http_addr": f"{host}:{port}",
         "base_url": f"http://{host}:{port}",
+        "dns_udp_addr": f"{dns_udp_host}:{dns_udp_port}",
+        "dns_tcp_addr": f"{dns_tcp_host}:{dns_tcp_port}",
+        "dns_fixtures": sorted(DNS_FIXTURES),
         "endpoints": ENDPOINTS,
     }
 
@@ -449,17 +542,34 @@ def main() -> int:
     args = parser.parse_args()
     host, port_text = args.addr.rsplit(":", 1)
     server = ThreadingHTTPServer((host, int(port_text)), MockHandler)
-    print(json.dumps(_ready_payload(server.server_address)), flush=True)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
+    dns_udp = ThreadingUdpServer((host, 0), DnsUdpHandler)
+    dns_tcp = ThreadingTcpServer((host, 0), DnsTcpHandler)
+    print(
+        json.dumps(
+            _ready_payload(
+                server.server_address,
+                dns_udp.server_address,
+                dns_tcp.server_address,
+            )
+        ),
+        flush=True,
+    )
+    threads = [
+        threading.Thread(target=server.serve_forever, daemon=True),
+        threading.Thread(target=dns_udp.serve_forever, daemon=True),
+        threading.Thread(target=dns_tcp.serve_forever, daemon=True),
+    ]
+    for thread in threads:
+        thread.start()
     try:
         while True:
             time.sleep(3600)
     except KeyboardInterrupt:
         pass
     finally:
-        server.shutdown()
-        server.server_close()
+        for fixture_server in (server, dns_udp, dns_tcp):
+            fixture_server.shutdown()
+            fixture_server.server_close()
     return 0
 
 

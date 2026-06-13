@@ -381,6 +381,20 @@ next one, and stage only the files for that slice.
     integration, benchmark, and Ironbank tests all use that same runtime.
     `tests/test_release_doctor_contract.py` rejects a restored Rust fixture
     crate or CLI dependency.
+  - 2026-06-13 progress: the shared Python runtime now serves deterministic
+    DNS A-record fixtures over both UDP and TCP and exposes `dns_udp_addr`,
+    `dns_tcp_addr`, and fixture names in the same ready JSON used by recorder,
+    doctor, benchmark, and Ironbank callers. This removes the last need for a
+    separate local DNS fixture server.
+  - Proof: RED `uv run python -m pytest
+    tests/test_mock_server_launcher.py::test_mock_server_serves_dns_udp_fixture
+    -q` failed before `dns_udp_addr` existed; GREEN `uv run python -m pytest
+    tests/test_release_doctor_contract.py tests/test_mock_server_launcher.py
+    tests/test_protocol_fixture_recorder.py -q`; `uv run ruff check
+    scripts/mock_server_runtime.py tests/test_mock_server_launcher.py
+    tests/test_protocol_fixture_recorder.py`; `python3 -m py_compile
+    scripts/mock_server_runtime.py scripts/mock_server.py
+    scripts/protocol_fixture_recorder.py`.
 - [ ] RED/GREEN: every protocol lab case is a full-chain acceptance spec, not
   a status-code replay.
   - Suite home: `tests/ironbank/`.
