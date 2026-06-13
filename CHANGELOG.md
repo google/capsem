@@ -924,6 +924,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   process-owned security-event emitter so `fs_events` and
   `security_rule_events` share the same primary event id without a service-side
   DB writer or fallback logger.
+- Added a release guard that keeps session event writes behind
+  `capsem_logger::DbWriter`: production protocol, plugin, security, service,
+  and process code may not open ad-hoc SQLite writers or insert event rows
+  directly.
 - Added a security rule forensic ledger: `security_rule_events` stores the
   triggering event id/type, rule id/name/action/detection level, rule snapshot,
   matched `SecurityEvent` payload, and trace id. `security_ask_events` records

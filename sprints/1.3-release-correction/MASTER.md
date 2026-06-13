@@ -62,6 +62,9 @@ prove the same rails without user credentials.
 - Hold: no profile route may return 404/501 from installed UI/TUI surfaces.
 - Hold: no S4/S7 protocol slice may close on status-code replay or row-exists
   tests; every protocol needs the full-chain assertion matrix in the tracker.
+- Hold: session event writes must stay behind `capsem_logger::DbWriter`; no
+  protocol, plugin, security, service, or process path may open an ad-hoc
+  SQLite writer or insert event rows directly.
 - Hold: project dev skills must live under top-level `skills/` with
   `.codex/skills -> ../skills`; `config/skills/` is profile/product payload
   only.

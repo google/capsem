@@ -870,6 +870,16 @@ next one, and stage only the files for that slice.
     tests/ironbank/test_doctor_ledger.py::test_capsem_doctor_pays_protocol_and_security_ledger_debt
     -q -s --tb=short` (`1 passed in 31.66s`). Remaining debt: explicit
     block/disable/rewrite/pre/post matrix and full `just test`.
+  - 2026-06-13 progress: added an executable single-writer guard for the event
+    ledger. Production protocol/security/service/process code may read session
+    DBs or use documented offline copy/maintenance helpers, but only
+    `capsem_logger::DbWriter` may own event-table inserts. The guard scans
+    live Rust sources and fails if an ad-hoc SQLite connection or direct event
+    insert appears outside the logger/schema/reader/maintenance allowlist.
+  - Proof: RED `uv run pytest tests/test_security_rails_retired.py -q`
+    initially failed on inline test-only SQLite opens in `fs_monitor.rs`;
+    GREEN after stripping `#[cfg(test)] mod tests` bodies from the scanner:
+    `uv run pytest tests/test_security_rails_retired.py -q` (`4 passed`).
   - 2026-06-13 progress: added the first explicit runtime plugin action matrix
     proof for file imports. The test starts the service through public routes,
     enables `dummy_pre_eicar=block/critical` and
