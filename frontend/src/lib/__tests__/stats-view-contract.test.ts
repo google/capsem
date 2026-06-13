@@ -91,6 +91,13 @@ describe('StatsView detail drawer contract', () => {
     expect(source).toContain('visibleDetailEntries(detail.data)');
     expect(source).toContain('detailPayloadSections(detail.data)');
   });
+
+  it('uses payload-aware syntax highlighting instead of forcing every payload through JSON', () => {
+    expect(source).toContain('detailPayloadLang(key, value)');
+    expect(source).toContain("ensureShikiLang('http')");
+    expect(source).toContain("if (key.endsWith('_headers')) return 'http';");
+    expect(source).not.toContain("lang: 'json',");
+  });
 });
 
 describe('StatsView file summary contract', () => {

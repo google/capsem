@@ -101,6 +101,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Tightened the VM Stats Process panel so it reports command executions and
   observed processes as separate ledgers, replaces the unrelated credential-ref
   counter with unique binary counts, and removes tutorial prose from the app UI.
+- Made Stats detail payload rendering content-aware: HTTP header fields use an
+  HTTP grammar, JSON previews are parsed and formatted as JSON, and non-JSON
+  payloads stay as escaped text instead of being forced through a JSON view.
 - Moved frontend MCP controls off settings-backed `mcp.servers.*` mutation and
   onto profile-scoped MCP routes. Settings now stays focused on UI/app
   preferences, while the Profile surface owns rules, plugins, MCP, and assets.

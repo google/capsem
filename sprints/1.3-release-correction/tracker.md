@@ -968,6 +968,10 @@ next one, and stage only the files for that slice.
     from observed process inventory, replace the unrelated process credential
     reference card with a unique-binary count, show observed argv/command
     context, and remove visible tutorial prose from the app.
+  - 2026-06-13 progress: stats detail payload sections now choose syntax
+    highlighting by field/value shape: HTTP headers use the HTTP grammar,
+    JSON previews parse/format as JSON, and non-JSON payloads stay escaped
+    text instead of a fake JSON panel.
   - Proof: `pnpm --dir frontend test
     src/lib/__tests__/stats-view-contract.test.ts`; `pnpm --dir frontend
     check`.

@@ -139,8 +139,24 @@
         key,
         label: labelForDetailKey(key),
         value,
-        lang: 'json',
+        lang: detailPayloadLang(key, value),
       }));
+  }
+
+  function detailPayloadLang(key: string, value: unknown): string {
+    if (key.endsWith('_headers')) return 'http';
+    if (key === 'context_json') return 'json';
+    const content = normalizePreviewContent(typeof value === 'string' ? value : JSON.stringify(value));
+    const trimmed = content.trim();
+    if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+      try {
+        JSON.parse(trimmed);
+        return 'json';
+      } catch {
+        return 'text';
+      }
+    }
+    return 'text';
   }
 
   function formatDetailValue(value: unknown): string {
@@ -195,6 +211,7 @@
     const theme = resolveShikiTheme(themeStore.terminalTheme, themeStore.mode);
     Promise.all([
       ensureShikiLang('json'),
+      ensureShikiLang('http'),
       ensureShikiLang('sql'),
       ensureShikiTheme(theme),
     ]).then(() => { shikiTick++; }).catch(() => {});

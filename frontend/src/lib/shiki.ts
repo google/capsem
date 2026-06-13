@@ -57,6 +57,7 @@ const LANG_LOADERS: Record<string, () => Promise<unknown>> = {
   bash:       () => import('@shikijs/langs/bash'),
   yaml:       () => import('@shikijs/langs/yaml'),
   html:       () => import('@shikijs/langs/html'),
+  http:       () => import('@shikijs/langs/http'),
   css:        () => import('@shikijs/langs/css'),
   sql:        () => import('@shikijs/langs/sql'),
   go:         () => import('@shikijs/langs/go'),
