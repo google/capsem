@@ -268,6 +268,21 @@ next one, and stage only the files for that slice.
     profile_ui_route_matrix_is_registered_for_all_profiles -- --nocapture`;
     `pnpm --dir frontend test src/lib/__tests__/api.test.ts`; `cargo check -p
     capsem-gateway`.
+  - 2026-06-13 progress: credential broker detail now exposes the credential
+    store object (`backend`, `ready`, cache count, hydration time/error) on the
+    broker route, while service `/status` only reports readiness/degraded
+    state. Added the explicit retry route
+    `/profiles/{profile_id}/plugins/credential_broker/credentials/reload`,
+    wired it into the profile route matrix and frontend API helper, and proved
+    reload hydrates the memory cache from the durable test store without adding
+    a second DB writer path.
+  - Proof: `cargo test -p capsem-service credential_broker -- --nocapture`;
+    `cargo test -p capsem-service
+    service_status_reports_ready_empty_credential_store_without_inventory_counters
+    -- --nocapture`; `cargo test -p capsem-service
+    profile_ui_route_matrix_is_registered_for_all_profiles -- --nocapture`;
+    `npm test -- --run src/lib/__tests__/api.test.ts`; `cargo check -p
+    capsem-core -p capsem-service -p capsem-process -p capsem-proto`.
 - [x] RED/GREEN: mutation routes either persist via profile object or do not
   exist; no fake success.
   - 2026-06-11 progress: MCP server edit/delete are no longer mounted 501

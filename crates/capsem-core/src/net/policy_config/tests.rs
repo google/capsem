@@ -1205,7 +1205,6 @@ fn brokered_api_key_ref_stays_out_of_guest_env() {
         raw_value: "sk-ant-keychain-env".to_string(),
         source: ".env:ANTHROPIC_API_KEY".to_string(),
         event_type: Some("file.content".to_string()),
-        confidence: 1.0,
         trace_id: None,
         context_json: None,
     };
@@ -1245,7 +1244,6 @@ fn brokered_google_api_key_ref_stays_out_of_guest_env() {
         raw_value: "AIza-keychain-env".to_string(),
         source: ".env:GEMINI_API_KEY".to_string(),
         event_type: Some("file.content".to_string()),
-        confidence: 1.0,
         trace_id: None,
         context_json: None,
     };
@@ -1286,7 +1284,6 @@ fn brokered_openai_key_does_not_write_settings_or_raw_secret() {
         raw_value: "sk-openai-discovery-secret".to_string(),
         source: "http.header.authorization".to_string(),
         event_type: Some("http.request".to_string()),
-        confidence: 0.95,
         trace_id: Some("trace-discovery".to_string()),
         context_json: None,
     };
@@ -1325,7 +1322,6 @@ fn brokered_provider_discovery_does_not_mutate_settings() {
         raw_value: "sk-openai-corp-locked".to_string(),
         source: ".env:OPENAI_API_KEY".to_string(),
         event_type: Some("file.event".to_string()),
-        confidence: 1.0,
         trace_id: None,
         context_json: None,
     };

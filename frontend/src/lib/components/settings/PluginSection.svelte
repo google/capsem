@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { getCredentialBrokerInfo, listPlugins, updatePlugin } from '../../api';
+  import { getCredentialBrokerInfo, listPlugins, reloadCredentialBrokerStore, updatePlugin } from '../../api';
   import type {
     CredentialBrokerInfo,
     PluginDetectionLevel,
@@ -60,7 +60,7 @@
   const STAGE_LABELS = {
     preprocess: 'Preprocess',
     postprocess: 'Postprocess',
-    pre_and_post: 'Pre + post',
+    logging: 'Logging',
   };
 
   function pluginModeMeta(mode: PluginMode) {
@@ -115,6 +115,18 @@
       credentialBrokerInfo = await getCredentialBrokerInfo(activeProfileId);
     } catch (err) {
       credentialBrokerInfo = null;
+      brokerError = String(err instanceof Error ? err.message : err);
+    } finally {
+      brokerLoading = false;
+    }
+  }
+
+  async function retryCredentialBrokerStore(activeProfileId = response?.scope.profile_id ?? profileId) {
+    brokerLoading = true;
+    brokerError = null;
+    try {
+      credentialBrokerInfo = await reloadCredentialBrokerStore(activeProfileId);
+    } catch (err) {
       brokerError = String(err instanceof Error ? err.message : err);
     } finally {
       brokerLoading = false;
@@ -259,6 +271,14 @@
               >
                 Refresh
               </button>
+              <button
+                type="button"
+                class="py-1.5 px-3 text-xs font-medium rounded-md bg-primary text-primary-foreground hover:bg-primary-hover disabled:opacity-60"
+                disabled={brokerLoading}
+                onclick={() => retryCredentialBrokerStore(response?.scope.profile_id ?? profileId)}
+              >
+                Retry store
+              </button>
             </div>
 
             {#if brokerError}
@@ -268,11 +288,23 @@
             {:else if credentialBrokerInfo}
               <div class="grid grid-cols-2 gap-3 mt-4">
                 <div class="rounded-md border border-line-2 p-3">
+                  <p class="text-[11px] uppercase tracking-wide text-muted-foreground-2">Store</p>
+                  <p class="mt-2 text-xs text-foreground">
+                    {credentialBrokerInfo.store.status} · {credentialBrokerInfo.store.backend} · {credentialBrokerInfo.store.cached_count} cached
+                  </p>
+                  {#if credentialBrokerInfo.store.last_error}
+                    <p class="mt-1 text-xs text-destructive-foreground">{credentialBrokerInfo.store.last_error}</p>
+                  {/if}
+                </div>
+                <div class="rounded-md border border-line-2 p-3">
                   <p class="text-[11px] uppercase tracking-wide text-muted-foreground-2">Supported providers</p>
                   <p class="mt-2 text-xs text-foreground">
                     {plugin.capabilities.credential_providers.join(', ') || 'none'}
                   </p>
                 </div>
+              </div>
+
+              <div class="grid grid-cols-2 gap-3 mt-4">
                 <div class="rounded-md border border-line-2 p-3">
                   <p class="text-[11px] uppercase tracking-wide text-muted-foreground-2">Credential sources</p>
                   <p class="mt-2 text-xs text-foreground">

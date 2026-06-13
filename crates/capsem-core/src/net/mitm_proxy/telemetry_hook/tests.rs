@@ -162,7 +162,6 @@ fn build_net_event_and_model_call_carry_credential_ref() {
         raw_value: "sk-ant-test".to_string(),
         source: "http.header.x-api-key".to_string(),
         event_type: Some("http.request".to_string()),
-        confidence: 1.0,
         trace_id: None,
         context_json: None,
     }];
@@ -588,7 +587,6 @@ async fn hook_writes_substitution_event_and_shared_credential_ref() {
         raw_value: raw.to_string(),
         source: "http.header.x-api-key".to_string(),
         event_type: Some("http.request".to_string()),
-        confidence: 1.0,
         trace_id: Some("trace-hook".to_string()),
         context_json: Some(r#"{"domain":"api.anthropic.com"}"#.to_string()),
     }];
@@ -814,7 +812,6 @@ async fn hook_writes_injected_substitution_event_for_broker_ref_replay() {
         credential_ref: credential_ref.clone(),
         source: "http.header.authorization".to_string(),
         event_type: Some("http.request".to_string()),
-        confidence: 1.0,
         trace_id: Some("trace-injected-hook".to_string()),
         context_json: Some(r#"{"domain":"api.anthropic.com"}"#.to_string()),
     }];

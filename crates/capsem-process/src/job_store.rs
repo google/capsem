@@ -114,6 +114,7 @@ pub(crate) enum JobResult {
     },
     LogFileBoundary {
         success: bool,
+        data: Option<Vec<u8>>,
         error: Option<String>,
     },
     Error {

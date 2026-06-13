@@ -1,22 +1,34 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use capsem_logger::{credential_reference, DbWriter, SubstitutionEvent, CREDENTIAL_REF_PREFIX};
-use tracing::warn;
+use serde::{Deserialize, Serialize};
+use tracing::{info, warn};
 
 use crate::net::ai_traffic::provider::ProviderKind;
 use crate::net::policy_config::SecurityRuleSet;
 use crate::security_engine::RuntimeSecurityEventType;
 
 #[cfg(target_os = "macos")]
-const KEYCHAIN_SERVICE: &str = "com.capsem.credentials";
+const KEYCHAIN_SERVICE: &str = "org.capsem.credentials";
+#[cfg(target_os = "macos")]
+const KEYCHAIN_INDEX_ACCOUNT: &str = "__capsem_credential_index_v1";
 pub(crate) const TEST_STORE_ENV: &str = "CAPSEM_CREDENTIAL_BROKER_TEST_STORE";
 #[cfg(test)]
 pub(crate) static TEST_ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 static TEST_STORE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+static CREDENTIAL_STORE: OnceLock<CredentialStore> = OnceLock::new();
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct DurableCredentialIndexEntry {
+    provider: CredentialProvider,
+    credential_ref: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum CredentialProvider {
     Anthropic,
     Google,
@@ -47,29 +59,277 @@ impl CredentialProvider {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+/// Opaque credential storage boundary for the credential broker.
+///
+/// All runtime credential access goes through this object: hot-path
+/// substitution reads the in-memory cache first, capture writes RAM first and
+/// then durable storage, and startup/reload hydrates RAM from durable storage.
+/// UI/status callers must use the memory-only status helpers so they cannot
+/// accidentally hammer Keychain.
+pub struct CredentialStore {
+    cache: Mutex<HashMap<String, String>>,
+    durable_lock: Mutex<()>,
+    status: Mutex<CredentialStoreStatusState>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct CredentialStoreStatus {
+    pub backend: String,
+    pub ready: bool,
+    pub status: &'static str,
+    pub cached_count: usize,
+    pub last_hydrated_count: usize,
+    pub last_hydrated_unix_ms: Option<u64>,
+    pub last_error: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CredentialStoreStatusState {
+    ready: bool,
+    last_hydrated_count: usize,
+    last_hydrated_unix_ms: Option<u64>,
+    last_error: Option<String>,
+}
+
+impl Default for CredentialStoreStatusState {
+    fn default() -> Self {
+        Self {
+            ready: true,
+            last_hydrated_count: 0,
+            last_hydrated_unix_ms: None,
+            last_error: None,
+        }
+    }
+}
+
+impl Default for CredentialStore {
+    fn default() -> Self {
+        Self {
+            cache: Mutex::new(HashMap::new()),
+            durable_lock: Mutex::new(()),
+            status: Mutex::new(CredentialStoreStatusState::default()),
+        }
+    }
+}
+
+impl CredentialStore {
+    pub fn global() -> &'static Self {
+        CREDENTIAL_STORE.get_or_init(Self::default)
+    }
+
+    pub fn capture(
+        &self,
+        provider: CredentialProvider,
+        credential_ref: &str,
+        raw_value: &str,
+    ) -> Result<(), String> {
+        self.cache_insert(provider, credential_ref, raw_value)?;
+        let _durable_guard = self
+            .durable_lock
+            .lock()
+            .map_err(|_| "credential durable store lock poisoned".to_string())?;
+        if let Err(error) = durable_store_write(provider, credential_ref, raw_value) {
+            self.mark_error(error.clone());
+            warn!(
+                provider = provider.as_str(),
+                credential_ref,
+                error = %error,
+                "credential store: durable write failed; runtime cache will continue serving active sessions"
+            );
+        } else {
+            self.clear_error();
+            info!(
+                provider = provider.as_str(),
+                credential_ref, "credential store: credential captured into durable backend"
+            );
+        }
+        Ok(())
+    }
+
+    pub fn resolve(
+        &self,
+        provider: CredentialProvider,
+        credential_ref: &str,
+    ) -> Result<Option<String>, String> {
+        if !is_broker_reference(credential_ref) {
+            return Ok(None);
+        }
+        if let Some(raw_value) = self.cache_get(provider, credential_ref)? {
+            return Ok(Some(raw_value));
+        }
+        let _durable_guard = self
+            .durable_lock
+            .lock()
+            .map_err(|_| "credential durable store lock poisoned".to_string())?;
+        match durable_store_read(provider, credential_ref) {
+            Ok(raw_value) => {
+                self.cache_insert(provider, credential_ref, &raw_value)?;
+                self.clear_error();
+                info!(
+                    provider = provider.as_str(),
+                    credential_ref, "credential store: hydrated credential on runtime miss"
+                );
+                Ok(Some(raw_value))
+            }
+            Err(error) => {
+                self.mark_error(error.clone());
+                Err(error)
+            }
+        }
+    }
+
+    pub fn replay_available_in_memory(
+        &self,
+        provider: CredentialProvider,
+        credential_ref: &str,
+    ) -> bool {
+        self.cache_get(provider, credential_ref)
+            .ok()
+            .flatten()
+            .is_some()
+    }
+
+    pub fn hydrate_from_durable_store(&self) -> Result<usize, String> {
+        let _durable_guard = self
+            .durable_lock
+            .lock()
+            .map_err(|_| "credential durable store lock poisoned".to_string())?;
+        let entries = match durable_store_hydrate() {
+            Ok(entries) => entries,
+            Err(error) => {
+                self.mark_degraded(error.clone());
+                return Err(error);
+            }
+        };
+        let count = entries.len();
+        {
+            let mut cache = self
+                .cache
+                .lock()
+                .map_err(|_| "credential runtime cache lock poisoned".to_string())?;
+            for (provider, credential_ref, raw_value) in entries {
+                cache.insert(credential_store_key(provider, &credential_ref), raw_value);
+            }
+        }
+        self.mark_hydrated(count);
+        info!(
+            count,
+            "credential store: hydrated runtime cache from durable backend"
+        );
+        Ok(count)
+    }
+
+    pub fn status(&self) -> CredentialStoreStatus {
+        let cached_count = self.cache.lock().map(|cache| cache.len()).unwrap_or(0);
+        let state = self
+            .status
+            .lock()
+            .map(|state| state.clone())
+            .unwrap_or_else(|_| CredentialStoreStatusState {
+                ready: false,
+                last_hydrated_count: 0,
+                last_hydrated_unix_ms: None,
+                last_error: Some("credential store status lock poisoned".to_string()),
+            });
+        CredentialStoreStatus {
+            backend: credential_store_backend().to_string(),
+            ready: state.ready,
+            status: if state.ready { "ready" } else { "degraded" },
+            cached_count,
+            last_hydrated_count: state.last_hydrated_count,
+            last_hydrated_unix_ms: state.last_hydrated_unix_ms,
+            last_error: state.last_error,
+        }
+    }
+
+    #[cfg(test)]
+    fn clear_for_test(&self) {
+        self.cache.lock().unwrap().clear();
+        *self.status.lock().unwrap() = CredentialStoreStatusState::default();
+    }
+
+    fn cache_insert(
+        &self,
+        provider: CredentialProvider,
+        credential_ref: &str,
+        raw_value: &str,
+    ) -> Result<(), String> {
+        let mut cache = self
+            .cache
+            .lock()
+            .map_err(|_| "credential runtime cache lock poisoned".to_string())?;
+        cache.insert(
+            credential_store_key(provider, credential_ref),
+            raw_value.to_string(),
+        );
+        Ok(())
+    }
+
+    fn cache_get(
+        &self,
+        provider: CredentialProvider,
+        credential_ref: &str,
+    ) -> Result<Option<String>, String> {
+        let cache = self
+            .cache
+            .lock()
+            .map_err(|_| "credential runtime cache lock poisoned".to_string())?;
+        Ok(cache
+            .get(&credential_store_key(provider, credential_ref))
+            .cloned())
+    }
+
+    fn mark_hydrated(&self, count: usize) {
+        if let Ok(mut status) = self.status.lock() {
+            status.ready = true;
+            status.last_hydrated_count = count;
+            status.last_hydrated_unix_ms = Some(now_unix_ms());
+            status.last_error = None;
+        }
+    }
+
+    fn mark_error(&self, error: String) {
+        if let Ok(mut status) = self.status.lock() {
+            status.last_error = Some(error);
+        }
+    }
+
+    fn mark_degraded(&self, error: String) {
+        if let Ok(mut status) = self.status.lock() {
+            status.ready = false;
+            status.last_error = Some(error);
+        }
+    }
+
+    fn clear_error(&self) {
+        if let Ok(mut status) = self.status.lock() {
+            status.ready = true;
+            status.last_error = None;
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CredentialObservation {
     pub provider: CredentialProvider,
     pub raw_value: String,
     pub source: String,
     pub event_type: Option<String>,
-    pub confidence: f64,
     pub trace_id: Option<String>,
     pub context_json: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CredentialInjection {
     pub provider: Option<CredentialProvider>,
     pub credential_ref: String,
     pub source: String,
     pub event_type: Option<String>,
-    pub confidence: f64,
     pub trace_id: Option<String>,
     pub context_json: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BrokeredCredential {
     pub provider: CredentialProvider,
     pub credential_ref: String,
@@ -92,7 +352,7 @@ impl CredentialObservation {
             substitution_ref: self.credential_ref(),
             outcome: outcome.to_string(),
             provider: Some(self.provider.as_str().to_string()),
-            confidence: Some(self.confidence),
+            confidence: None,
             trace_id: self.trace_id.clone(),
             context_json: self.context_json.clone(),
         }
@@ -111,7 +371,7 @@ impl CredentialInjection {
             substitution_ref: self.credential_ref.clone(),
             outcome: outcome.to_string(),
             provider: self.provider.map(|provider| provider.as_str().to_string()),
-            confidence: Some(self.confidence),
+            confidence: None,
             trace_id: self.trace_id.clone(),
             context_json: self.context_json.clone(),
         }
@@ -123,7 +383,7 @@ pub fn broker_observed_credential(
 ) -> Result<BrokeredCredential, String> {
     let credential_ref = observation.credential_ref();
     let keychain_account = keychain_account(observation.provider, &credential_ref);
-    store_credential_secret(
+    CredentialStore::global().capture(
         observation.provider,
         &credential_ref,
         &observation.raw_value,
@@ -139,25 +399,34 @@ pub fn resolve_broker_reference_for_provider(
     provider: CredentialProvider,
     credential_ref: &str,
 ) -> Result<Option<String>, String> {
-    if !is_broker_reference(credential_ref) {
-        return Ok(None);
-    }
-    load_credential_secret(provider, credential_ref).map(Some)
+    CredentialStore::global().resolve(provider, credential_ref)
 }
 
 pub fn broker_reference_replay_available(provider: Option<&str>, credential_ref: &str) -> bool {
     let Some(provider) = provider.and_then(credential_provider_from_str) else {
         return CredentialProvider::all().iter().copied().any(|provider| {
-            resolve_broker_reference_for_provider(provider, credential_ref)
-                .ok()
-                .flatten()
-                .is_some()
+            CredentialStore::global().replay_available_in_memory(provider, credential_ref)
         });
     };
-    resolve_broker_reference_for_provider(provider, credential_ref)
-        .ok()
-        .flatten()
-        .is_some()
+    CredentialStore::global().replay_available_in_memory(provider, credential_ref)
+}
+
+pub fn hydrate_credential_runtime_cache_from_durable_store() -> Result<usize, String> {
+    CredentialStore::global().hydrate_from_durable_store()
+}
+
+pub fn credential_store_status() -> CredentialStoreStatus {
+    CredentialStore::global().status()
+}
+
+#[cfg(target_os = "macos")]
+pub const fn credential_broker_keychain_service() -> &'static str {
+    KEYCHAIN_SERVICE
+}
+
+#[cfg(not(target_os = "macos"))]
+pub const fn credential_broker_keychain_service() -> &'static str {
+    "org.capsem.credentials"
 }
 
 fn credential_provider_from_str(provider: &str) -> Option<CredentialProvider> {
@@ -185,7 +454,6 @@ pub fn parse_env_credentials(source_path: &str, content: &str) -> Vec<Credential
                 raw_value: raw_value.to_string(),
                 source: format!("{source_path}:{name}"),
                 event_type: Some(RuntimeSecurityEventType::FileEvent.as_str().to_string()),
-                confidence: 1.0,
                 trace_id: None,
                 context_json: Some(format!(
                     r#"{{"path":"{}","env":"{}"}}"#,
@@ -226,7 +494,6 @@ pub fn detect_http_credential_with_provider(
         raw_value: raw.to_string(),
         source: format!("http.header.{}", header_name.to_ascii_lowercase()),
         event_type: Some("http.request".to_string()),
-        confidence: 1.0,
         trace_id: None,
         context_json: Some(format!(
             r#"{{"domain":"{}","header":"{}"}}"#,
@@ -301,7 +568,6 @@ pub fn detect_brokered_http_references(
             credential_ref: reference,
             source: format!("http.header.{}", name.as_str().to_ascii_lowercase()),
             event_type: Some("http.request".to_string()),
-            confidence: 1.0,
             trace_id: trace_id.clone(),
             context_json: Some(format!(
                 r#"{{"domain":"{}","header":"{}"}}"#,
@@ -583,7 +849,6 @@ fn collect_query_brokered_references(
             credential_ref: decoded,
             source: format!("http.query.{name}"),
             event_type: Some("http.request".to_string()),
-            confidence: 1.0,
             trace_id: trace_id.clone(),
             context_json: Some(format!(
                 r#"{{"domain":"{}","query_key":"{}"}}"#,
@@ -728,7 +993,6 @@ fn collect_json_credentials(
                             raw_value: raw.trim().to_string(),
                             source: format!("http.body.{direction}.{child_path}"),
                             event_type: Some(format!("http.{direction}")),
-                            confidence: 1.0,
                             trace_id: None,
                             context_json: Some(format!(
                                 r#"{{"domain":"{}","path":"{}","json_path":"{}","direction":"{}"}}"#,
@@ -780,7 +1044,6 @@ fn collect_form_credentials(
                 raw_value: raw.to_string(),
                 source: format!("http.body.{direction}.form.{key}"),
                 event_type: Some(format!("http.{direction}")),
-                confidence: 1.0,
                 trace_id: None,
                 context_json: Some(format!(
                     r#"{{"domain":"{}","path":"{}","form_key":"{}","direction":"{}"}}"#,
@@ -866,25 +1129,62 @@ fn json_escape(value: &str) -> String {
     value.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
-fn store_credential_secret(
+fn credential_store_key(provider: CredentialProvider, credential_ref: &str) -> String {
+    keychain_account(provider, credential_ref)
+}
+
+fn credential_store_backend() -> &'static str {
+    if test_store_path().is_some() {
+        return "test_disk";
+    }
+    credential_store_backend_native()
+}
+
+#[cfg(target_os = "macos")]
+fn credential_store_backend_native() -> &'static str {
+    "keychain"
+}
+
+#[cfg(not(target_os = "macos"))]
+fn credential_store_backend_native() -> &'static str {
+    "disk"
+}
+
+fn now_unix_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .try_into()
+        .unwrap_or(u64::MAX)
+}
+
+fn durable_store_write(
     provider: CredentialProvider,
     credential_ref: &str,
     raw_value: &str,
 ) -> Result<(), String> {
     if let Some(path) = test_store_path() {
-        return test_store_write(&path, provider, credential_ref, raw_value);
+        return disk_store_write(&path, provider, credential_ref, raw_value);
     }
-    store_credential_secret_native(provider, credential_ref, raw_value)
+    durable_store_write_native(provider, credential_ref, raw_value)
 }
 
-fn load_credential_secret(
+fn durable_store_read(
     provider: CredentialProvider,
     credential_ref: &str,
 ) -> Result<String, String> {
     if let Some(path) = test_store_path() {
-        return test_store_read(&path, provider, credential_ref);
+        return disk_store_read(&path, provider, credential_ref);
     }
-    load_credential_secret_native(provider, credential_ref)
+    durable_store_read_native(provider, credential_ref)
+}
+
+fn durable_store_hydrate() -> Result<Vec<(CredentialProvider, String, String)>, String> {
+    if let Some(path) = test_store_path() {
+        return disk_store_hydrate(&path);
+    }
+    durable_store_hydrate_native()
 }
 
 fn test_store_path() -> Option<PathBuf> {
@@ -893,7 +1193,14 @@ fn test_store_path() -> Option<PathBuf> {
         .map(PathBuf::from)
 }
 
-fn test_store_write(
+#[cfg(not(target_os = "macos"))]
+fn disk_credential_store_path() -> PathBuf {
+    crate::paths::capsem_home()
+        .join("credentials")
+        .join("credential-store.json")
+}
+
+fn disk_store_write(
     path: &PathBuf,
     provider: CredentialProvider,
     credential_ref: &str,
@@ -901,8 +1208,8 @@ fn test_store_write(
 ) -> Result<(), String> {
     let _guard = test_store_lock()
         .lock()
-        .map_err(|_| "credential test store lock poisoned".to_string())?;
-    let mut map = test_store_load(path)?;
+        .map_err(|_| "credential disk store lock poisoned".to_string())?;
+    let mut map = disk_store_load(path)?;
     map.insert(
         keychain_account(provider, credential_ref),
         raw_value.to_string(),
@@ -912,92 +1219,194 @@ fn test_store_write(
             .map_err(|e| format!("create credential test store dir: {e}"))?;
     }
     let json = serde_json::to_string_pretty(&map)
-        .map_err(|e| format!("serialize credential test store: {e}"))?;
-    std::fs::write(path, json).map_err(|e| format!("write credential test store: {e}"))
+        .map_err(|e| format!("serialize credential disk store: {e}"))?;
+    std::fs::write(path, json).map_err(|e| format!("write credential disk store: {e}"))?;
+    restrict_secret_file(path)?;
+    Ok(())
 }
 
-fn test_store_read(
+fn disk_store_read(
     path: &PathBuf,
     provider: CredentialProvider,
     credential_ref: &str,
 ) -> Result<String, String> {
     let _guard = test_store_lock()
         .lock()
-        .map_err(|_| "credential test store lock poisoned".to_string())?;
-    let map = test_store_load(path)?;
+        .map_err(|_| "credential disk store lock poisoned".to_string())?;
+    let map = disk_store_load(path)?;
     let account = keychain_account(provider, credential_ref);
     map.get(&account)
         .cloned()
-        .ok_or_else(|| format!("credential reference not found in test store: {account}"))
+        .ok_or_else(|| format!("credential reference not found in disk store: {account}"))
+}
+
+fn disk_store_hydrate(path: &PathBuf) -> Result<Vec<(CredentialProvider, String, String)>, String> {
+    let _guard = test_store_lock()
+        .lock()
+        .map_err(|_| "credential disk store lock poisoned".to_string())?;
+    let map = disk_store_load(path)?;
+    let mut entries = Vec::new();
+    for (account, raw_value) in map {
+        let Some((provider, credential_ref)) = parse_credential_store_account(&account) else {
+            warn!(account, "credential store: ignoring malformed disk account");
+            continue;
+        };
+        entries.push((provider, credential_ref.to_string(), raw_value));
+    }
+    Ok(entries)
 }
 
 fn test_store_lock() -> &'static Mutex<()> {
     TEST_STORE_LOCK.get_or_init(|| Mutex::new(()))
 }
 
-fn test_store_load(path: &PathBuf) -> Result<HashMap<String, String>, String> {
+fn disk_store_load(path: &PathBuf) -> Result<HashMap<String, String>, String> {
     if !path.exists() {
         return Ok(HashMap::new());
     }
     let text =
-        std::fs::read_to_string(path).map_err(|e| format!("read credential test store: {e}"))?;
+        std::fs::read_to_string(path).map_err(|e| format!("read credential disk store: {e}"))?;
     if text.trim().is_empty() {
         return Ok(HashMap::new());
     }
-    serde_json::from_str(&text).map_err(|e| format!("parse credential test store: {e}"))
+    serde_json::from_str(&text).map_err(|e| format!("parse credential disk store: {e}"))
 }
 
 #[cfg(target_os = "macos")]
-fn store_credential_secret_native(
+fn durable_store_write_native(
     provider: CredentialProvider,
     credential_ref: &str,
     raw_value: &str,
 ) -> Result<(), String> {
-    use security_framework::os::macos::keychain::SecKeychain;
-
-    let keychain = SecKeychain::default().map_err(|e| format!("open default keychain: {e}"))?;
-    keychain
-        .set_generic_password(
-            KEYCHAIN_SERVICE,
-            &keychain_account(provider, credential_ref),
-            raw_value.as_bytes(),
-        )
-        .map_err(|e| format!("write credential to keychain: {e}"))
+    keychain_write_account(&keychain_account(provider, credential_ref), raw_value)?;
+    keychain_index_insert(provider, credential_ref)?;
+    Ok(())
 }
 
 #[cfg(not(target_os = "macos"))]
-fn store_credential_secret_native(
-    _provider: CredentialProvider,
-    _credential_ref: &str,
-    _raw_value: &str,
+fn durable_store_write_native(
+    provider: CredentialProvider,
+    credential_ref: &str,
+    raw_value: &str,
 ) -> Result<(), String> {
-    Err("credential keychain storage is only implemented on macOS".to_string())
+    disk_store_write(
+        &disk_credential_store_path(),
+        provider,
+        credential_ref,
+        raw_value,
+    )
 }
 
 #[cfg(target_os = "macos")]
-fn load_credential_secret_native(
+fn durable_store_read_native(
     provider: CredentialProvider,
     credential_ref: &str,
 ) -> Result<String, String> {
+    keychain_read_account(&keychain_account(provider, credential_ref))
+}
+
+#[cfg(not(target_os = "macos"))]
+fn durable_store_read_native(
+    provider: CredentialProvider,
+    credential_ref: &str,
+) -> Result<String, String> {
+    disk_store_read(&disk_credential_store_path(), provider, credential_ref)
+}
+
+#[cfg(target_os = "macos")]
+fn durable_store_hydrate_native() -> Result<Vec<(CredentialProvider, String, String)>, String> {
+    let entries = keychain_read_index()?;
+    let mut hydrated = Vec::new();
+    for entry in entries {
+        match durable_store_read_native(entry.provider, &entry.credential_ref) {
+            Ok(raw_value) => hydrated.push((entry.provider, entry.credential_ref, raw_value)),
+            Err(error) => warn!(
+                provider = entry.provider.as_str(),
+                credential_ref = entry.credential_ref.as_str(),
+                error = %error,
+                "credential store: failed to hydrate indexed keychain credential"
+            ),
+        }
+    }
+    Ok(hydrated)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn durable_store_hydrate_native() -> Result<Vec<(CredentialProvider, String, String)>, String> {
+    disk_store_hydrate(&disk_credential_store_path())
+}
+
+fn parse_credential_store_account(account: &str) -> Option<(CredentialProvider, &str)> {
+    let (provider, credential_ref) = account.split_once(':')?;
+    let provider = credential_provider_from_str(provider)?;
+    Some((provider, credential_ref))
+}
+
+#[cfg(unix)]
+fn restrict_secret_file(path: &PathBuf) -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+        .map_err(|e| format!("restrict credential disk store permissions: {e}"))
+}
+
+#[cfg(not(unix))]
+fn restrict_secret_file(_path: &PathBuf) -> Result<(), String> {
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn keychain_index_insert(provider: CredentialProvider, credential_ref: &str) -> Result<(), String> {
+    let mut entries = keychain_read_index().unwrap_or_else(|error| {
+        warn!(error = %error, "credential store: rebuilding empty keychain index");
+        Vec::new()
+    });
+    if !entries
+        .iter()
+        .any(|entry| entry.provider == provider && entry.credential_ref == credential_ref)
+    {
+        entries.push(DurableCredentialIndexEntry {
+            provider,
+            credential_ref: credential_ref.to_string(),
+        });
+    }
+    keychain_write_index(&entries)
+}
+
+#[cfg(target_os = "macos")]
+fn keychain_read_index() -> Result<Vec<DurableCredentialIndexEntry>, String> {
+    match keychain_read_account(KEYCHAIN_INDEX_ACCOUNT) {
+        Ok(raw) => serde_json::from_str(&raw).map_err(|e| format!("parse keychain index: {e}")),
+        Err(_) => Ok(Vec::new()),
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn keychain_write_index(entries: &[DurableCredentialIndexEntry]) -> Result<(), String> {
+    let raw =
+        serde_json::to_string(entries).map_err(|e| format!("serialize keychain index: {e}"))?;
+    keychain_write_account(KEYCHAIN_INDEX_ACCOUNT, &raw)
+}
+
+#[cfg(target_os = "macos")]
+fn keychain_read_account(account: &str) -> Result<String, String> {
     use security_framework::os::macos::keychain::SecKeychain;
 
     let keychain = SecKeychain::default().map_err(|e| format!("open default keychain: {e}"))?;
     let (password, _) = keychain
-        .find_generic_password(
-            KEYCHAIN_SERVICE,
-            &keychain_account(provider, credential_ref),
-        )
+        .find_generic_password(KEYCHAIN_SERVICE, account)
         .map_err(|e| format!("read credential from keychain: {e}"))?;
     String::from_utf8(password.as_ref().to_vec())
         .map_err(|e| format!("credential in keychain is not UTF-8: {e}"))
 }
 
-#[cfg(not(target_os = "macos"))]
-fn load_credential_secret_native(
-    _provider: CredentialProvider,
-    _credential_ref: &str,
-) -> Result<String, String> {
-    Err("credential keychain storage is only implemented on macOS".to_string())
+#[cfg(target_os = "macos")]
+fn keychain_write_account(account: &str, raw_value: &str) -> Result<(), String> {
+    use security_framework::os::macos::keychain::SecKeychain;
+
+    let keychain = SecKeychain::default().map_err(|e| format!("open default keychain: {e}"))?;
+    keychain
+        .set_generic_password(KEYCHAIN_SERVICE, account, raw_value.as_bytes())
+        .map_err(|e| format!("write credential to keychain: {e}"))
 }
 
 #[cfg(test)]

@@ -121,6 +121,76 @@ This is the active debug list for the 1.3 release loop. Older captured bugs in
   - VM asset blobs must not be embedded in installer payloads.
   - Package tests must fail if rootfs/initrd/kernel blobs enter the package.
 
+- [ ] Credential broker Keychain namespace/prompt storm
+  - Manual evidence: macOS prompts repeatedly for credential items named
+    `com.capsem.credential`, `com.capsem.credentials`, and
+    `org.capsem.credentials` during release testing.
+  - Canonical production Keychain service namespace is
+    `org.capsem.credentials` because the product identity is `capsem.org`.
+    `com.capsem.credential` and `com.capsem.credentials` are legacy/wrong and
+    must not be used by new broker writes. If migration is needed, it must be
+    explicit, one-shot, tested, and silent after completion.
+  - The broker must not ask Keychain on every security event. Capture/injection
+    needs per-process caching/singleflight/batching so one AGY/Claude/Codex
+    session does not trigger a prompt storm.
+  - Keychain access must be memory-first and out of status/UI hot paths.
+    Once a credential is captured, the broker must keep enough material in
+    process memory to keep active agents authenticating without touching
+    Keychain on every event. Keychain is durable backing for startup/reload or
+    real substitution cache misses, not a per-request dependency. It is
+    acceptable for macOS to ask for Keychain access when the user deliberately
+    loads credentials; it is not acceptable for stats/status refreshes to
+    hammer Keychain or prompt repeatedly after "Always Allow".
+  - Linux currently uses a restricted disk-backed durable credential store
+    behind the same opaque `CredentialStore` object until we add a real Linux
+    secret backend. Release debt: replace the Linux disk backend with native
+    protected storage while preserving the `CredentialStore` API.
+  - Proof must include a macOS-keychain contract test around service/account
+    naming, a test-store equivalent proving repeated broker resolution does
+    not hit the backing store per event, and route/plugin runtime counters that
+    expose cache hits/misses without raw secrets.
+  - 2026-06-13 proof slice: credential storage now goes through the opaque
+    `CredentialStore` object. Runtime capture writes memory first, durable
+    storage second; replay/status checks are memory-only; real substitution
+    can hydrate on cache miss; service `/status` only reports store
+    ready/degraded, while `/profiles/{id}/plugins/credential_broker/credentials/info`
+    owns backend/cache/hydration details. Added
+    `/profiles/{id}/plugins/credential_broker/credentials/reload` as the
+    explicit user retry route. Focused proof:
+    `cargo test -p capsem-core credential_broker -- --nocapture`; `cargo test
+    -p capsem-service credential_broker -- --nocapture`; `cargo test -p
+    capsem-service service_status_reports_ready_empty_credential_store_without_inventory_counters
+    -- --nocapture`; `cargo check -p capsem-core -p capsem-service -p
+    capsem-process -p capsem-proto`; `npm test -- --run
+    src/lib/__tests__/api.test.ts`.
+
+- [ ] File boundary ask/rewrite IPC contract is incomplete
+  - Manual/code evidence from the S5 Ironbank plugin matrix: file boundary IPC
+    originally returned only `success/error`, so plugin rewrite had no channel
+    to return mutated bytes to the service. The fix must return rewritten data
+    for import/export/read/write boundaries that can be safely transformed.
+  - Ask has the same shape problem for decisions: it must not collapse into a
+    generic 500/error. File import/export ask must return a typed ask response
+    carrying `ask_id`/rule evidence, and the service must not write imported
+    bytes or return exported bytes until the ask is resolved.
+  - Proof must cover allow, block, rewrite-with-mutated-bytes, disable, and
+    ask-pending across UDS result, HTTP status/body, `fs_events`,
+    `security_rule_events`, and route-visible latest/status payloads.
+  - 2026-06-13 proof slice: file boundary IPC now carries rewritten bytes from
+    `capsem-process` back to the service, and the service writes/returns those
+    bytes only after the plugin-aware security event rail allows them. Focused
+    proof covers UDS data propagation, import/export fail-closed behavior, and
+    Ironbank rewrite evidence:
+    `cargo test -p capsem-service upload_logs_file_import_before_writing_workspace_file
+    -- --nocapture`; `cargo test -p capsem-service
+    mounted_file_import_export_routes_log_boundary_events -- --nocapture`;
+    `cargo test -p capsem-service
+    upload_does_not_write_workspace_file_when_import_ledger_fails --
+    --nocapture`; `CAPSEM_TEST_PRESERVE_ALWAYS=1 uv run python -m pytest
+    tests/ironbank/test_doctor_ledger.py::test_runtime_plugin_action_matrix_pays_file_import_ledger_debt
+    -q -s --tb=short`. Ask remains open and must return a typed ask response,
+    not a generic 500.
+
 - [ ] Hermetic integration matrix for all security/event rails
   - Add a release-blocking local integration suite that drives real requests
     through the same Capsem network/MITM/security/logging path used by VMs.

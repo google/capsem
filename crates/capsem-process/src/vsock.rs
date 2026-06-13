@@ -536,24 +536,32 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                         mime_type,
                     )
                     .await;
-                    let (success, error) = match event_id {
-                        Ok(Some(emission)) if emission.enforcement.is_allowed() => (true, None),
+                    let (success, data, error) = match event_id {
+                        Ok(Some(emission)) if emission.enforcement.is_allowed() => {
+                            (true, rewritten_file_content(&emission.event), None)
+                        }
                         Ok(Some(emission)) => (
                             false,
+                            None,
                             Some(emission.enforcement.reason.unwrap_or_else(|| {
                                 "file boundary blocked by security policy".into()
                             })),
                         ),
                         Ok(None) => (
                             false,
+                            None,
                             Some("failed to write file boundary security event".into()),
                         ),
-                        Err(error) => (false, Some(error)),
+                        Err(error) => (false, None, Some(error)),
                     };
                     if let Some(tx) = js_for_cmd.jobs.lock().unwrap().remove(&id) {
                         capsem_core::try_send!(
                             "job_result_log_file_boundary",
-                            tx.send(JobResult::LogFileBoundary { success, error })
+                            tx.send(JobResult::LogFileBoundary {
+                                success,
+                                data,
+                                error
+                            })
                         );
                     }
                 }
@@ -1259,6 +1267,20 @@ async fn emit_explicit_file_security_event(
         },
     )
     .await
+}
+
+fn rewritten_file_content(event: &capsem_core::security_engine::SecurityEvent) -> Option<Vec<u8>> {
+    let file = event.file.as_ref()?;
+    let content = file
+        .import_content
+        .as_deref()
+        .or(file.export_content.as_deref())
+        .or(file.read_content.as_deref())
+        .or(file.write_content.as_deref())
+        .or(file.create_content.as_deref())
+        .or(file.delete_content.as_deref())
+        .or(file.content.as_deref())?;
+    Some(content.as_bytes().to_vec())
 }
 
 async fn handle_guest_msg(

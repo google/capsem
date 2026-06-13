@@ -421,7 +421,6 @@ fn credential_broker_resolves_mcp_oauth_material_by_reference() {
         raw_value: "oauth-access-token".to_string(),
         source: "mcp.auth.remote".to_string(),
         event_type: None,
-        confidence: 1.0,
         trace_id: None,
         context_json: None,
     };

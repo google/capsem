@@ -811,7 +811,6 @@ mod tests {
             raw_value: "local-mcp-oauth-token".to_string(),
             source: "mcp.auth.local_e2e".to_string(),
             event_type: Some("mcp.server.auth".to_string()),
-            confidence: 1.0,
             trace_id: Some("trace-local-mcp".to_string()),
             context_json: None,
         };

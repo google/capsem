@@ -840,9 +840,10 @@ fn prepare_event_for_security_rule_ledger(
 pub struct SecurityRuleEmission {
     pub emitted: usize,
     pub enforcement: SecurityEnforcementDecision,
+    pub event: SecurityEvent,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SecurityBoundaryEvaluation {
     pub event: SecurityEvent,
     pub enforcement: SecurityEnforcementDecision,
@@ -972,6 +973,7 @@ pub async fn emit_matching_security_rules_with_decision(
     Ok(SecurityRuleEmission {
         emitted,
         enforcement,
+        event: enriched_event,
     })
 }
 
@@ -1045,6 +1047,7 @@ pub fn emit_matching_security_rules_with_decision_blocking(
     Ok(SecurityRuleEmission {
         emitted,
         enforcement,
+        event: enriched_event,
     })
 }
 
@@ -1461,7 +1464,6 @@ fn security_event_forensic_json(event: &SecurityEvent) -> serde_json::Value {
                 "provider": observation.provider.as_str(),
                 "source": observation.source,
                 "event_type": observation.event_type,
-                "confidence": observation.confidence,
                 "trace_id": observation.trace_id,
                 "context_json": observation.context_json,
                 "credential_ref": observation.credential_ref(),
@@ -1472,7 +1474,6 @@ fn security_event_forensic_json(event: &SecurityEvent) -> serde_json::Value {
                 "provider": injection.provider.map(|provider| provider.as_str()),
                 "source": injection.source,
                 "event_type": injection.event_type,
-                "confidence": injection.confidence,
                 "trace_id": injection.trace_id,
                 "context_json": injection.context_json,
                 "credential_ref": injection.credential_ref,
@@ -1697,7 +1698,7 @@ pub struct SecurityPluginExecution {
 /// Protocol parsers attach typed context to this object; action plugins return
 /// the next object. Persistence, fanout, batching, and future process
 /// transport should hang off `SecurityEventEmitter`, not protocol side writes.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SecurityEvent {
     pub event_type: RuntimeSecurityEventType,
     pub trace_id: Option<String>,
@@ -1720,7 +1721,7 @@ pub struct SecurityEvent {
     pub udp: Option<UdpSecurityEvent>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct SerializableSecurityEvent {
     pub event_type: String,
     pub trace_id: Option<String>,
@@ -2334,7 +2335,11 @@ pub trait SecurityPlugin: Send + Sync {
     fn id(&self) -> &'static str;
     fn stage(&self) -> SecurityPluginStage;
 
-    fn apply(&self, event: SecurityEvent) -> Result<SecurityPluginResult, SecurityActionError>;
+    fn apply(
+        &self,
+        event: SecurityEvent,
+        config: SecurityPluginConfig,
+    ) -> Result<SecurityPluginResult, SecurityActionError>;
 }
 
 #[derive(Default)]
@@ -2405,7 +2410,7 @@ impl SecurityActionRegistry {
                 continue;
             }
             let started = std::time::Instant::now();
-            let result = plugin.apply(event)?;
+            let result = plugin.apply(event, plugin_config)?;
             let duration_us = started.elapsed().as_micros().min(u128::from(u64::MAX)) as u64;
             event = result.event;
             event.record_plugin_execution(SecurityPluginExecution {

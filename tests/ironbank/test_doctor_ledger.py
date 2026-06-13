@@ -547,10 +547,7 @@ def test_capsem_doctor_pays_protocol_and_security_ledger_debt():
             row["event_type"] in {"http.request", "http.response", "model.call"}
             for row in substitution_rows
         )
-        assert all(
-            row["confidence"] is None or 0.0 <= float(row["confidence"]) <= 1.0
-            for row in substitution_rows
-        )
+        assert all(row["confidence"] is None for row in substitution_rows)
         assert all(
             json.loads(row["context_json"]) if row["context_json"] else True
             for row in substitution_rows
@@ -647,6 +644,36 @@ def test_runtime_plugin_action_matrix_pays_file_import_ledger_debt():
         )
         assert get_status in {404, 500}
 
+        rewrite_pre = client.patch(
+            f"/profiles/{CODE_PROFILE_ID}/plugins/dummy_pre_eicar/edit",
+            {"mode": "rewrite", "detection_level": "medium"},
+            timeout=30,
+        )
+        assert rewrite_pre["id"] == "dummy_pre_eicar"
+        assert rewrite_pre["config"]["mode"] == "rewrite"
+        assert rewrite_pre["config"]["detection_level"] == "medium"
+        assert rewrite_pre["runtime"]["enabled"] is True
+
+        rewrite_status, rewrite_body = _post_bytes_with_status(
+            service.uds_path,
+            f"/vms/{session_id}/files/content?path=eicar-rewrite.txt",
+            EICAR_TEXT.encode(),
+            timeout=30,
+        )
+        assert rewrite_status == 200, rewrite_body
+        rewrite_json = json.loads(rewrite_body)
+        assert rewrite_json["success"] is True
+        assert rewrite_json["size"] != len(EICAR_TEXT.encode())
+
+        rewrite_read_status, rewrite_read_body = client.get_bytes(
+            f"/vms/{session_id}/files/content?path=eicar-rewrite.txt",
+            timeout=30,
+        )
+        assert rewrite_read_status == 200
+        rewrite_content = rewrite_read_body.decode()
+        assert rewrite_content == "[capsem-rewritten-eicar]"
+        assert "EICAR-STANDARD-ANTIVIRUS-TEST-FILE" not in rewrite_content
+
         disabled_pre = client.patch(
             f"/profiles/{CODE_PROFILE_ID}/plugins/dummy_pre_eicar/edit",
             {"mode": "disable", "detection_level": "informational"},
@@ -724,6 +751,40 @@ def test_runtime_plugin_action_matrix_pays_file_import_ledger_debt():
             for execution in plugin_executions
         )
         assert all(payload["decision"]["effective"] == "block" for payload in blocked_payloads)
+
+        rewrite_file_row = _single(
+            conn,
+            """
+            SELECT *
+            FROM fs_events
+            WHERE path = 'eicar-rewrite.txt'
+              AND action = 'import'
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+        )
+        _assert_ledger_id(rewrite_file_row["event_id"])
+        rewrite_security = [
+            row for row in security_rows if row["event_id"] == rewrite_file_row["event_id"]
+        ]
+        assert rewrite_security, "rewrite-mode import must carry security rows"
+        rewrite_payloads = [json.loads(row["event_json"]) for row in rewrite_security]
+        assert all(payload["decision"]["effective"] == "allow" for payload in rewrite_payloads)
+        assert any(
+            detection.get("source") == "plugin"
+            and detection.get("plugin_id") == "dummy_pre_eicar"
+            and detection.get("plugin_mode") == "rewrite"
+            and detection.get("detection_level") == "medium"
+            for payload in rewrite_payloads
+            for detection in payload.get("detections", [])
+        )
+        assert any(
+            execution["plugin_id"] == "dummy_pre_eicar"
+            and execution["stage"] == "preprocess"
+            and execution["applied"] is True
+            for payload in rewrite_payloads
+            for execution in payload.get("plugin_executions", [])
+        )
 
         allowed_file_row = _single(
             conn,

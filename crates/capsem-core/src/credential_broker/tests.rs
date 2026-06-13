@@ -12,6 +12,7 @@ impl EnvGuard {
         home: &std::path::Path,
         test_store: &std::path::Path,
     ) -> Self {
+        CredentialStore::global().clear_for_test();
         let old_home_override = std::env::var("CAPSEM_HOME").ok();
         let old_home = std::env::var("HOME").ok();
         let old_store = std::env::var(TEST_STORE_ENV).ok();
@@ -28,6 +29,7 @@ impl EnvGuard {
 
 impl Drop for EnvGuard {
     fn drop(&mut self) {
+        CredentialStore::global().clear_for_test();
         match &self.old_home_override {
             Some(v) => std::env::set_var("CAPSEM_HOME", v),
             None => std::env::remove_var("CAPSEM_HOME"),
@@ -41,6 +43,14 @@ impl Drop for EnvGuard {
             None => std::env::remove_var(TEST_STORE_ENV),
         }
     }
+}
+
+#[test]
+fn credential_store_namespace_is_capsem_org() {
+    assert_eq!(
+        credential_broker_keychain_service(),
+        "org.capsem.credentials"
+    );
 }
 
 #[test]
@@ -267,7 +277,6 @@ fn broker_stores_secret_without_writing_user_settings() {
         raw_value: "github_pat_store_me".to_string(),
         source: "http.header.authorization".to_string(),
         event_type: Some("http.request".to_string()),
-        confidence: 1.0,
         trace_id: Some("trace-test".to_string()),
         context_json: None,
     };
@@ -294,6 +303,91 @@ fn broker_stores_secret_without_writing_user_settings() {
 }
 
 #[test]
+fn replay_status_is_memory_only_and_hydration_is_explicit() {
+    let _lock = TEST_ENV_LOCK.blocking_lock();
+    let dir = tempfile::tempdir().unwrap();
+    let capsem_home = dir.path().join("capsem-home");
+    let test_store = dir.path().join("credential-store.json");
+    let _guard = EnvGuard::install(&capsem_home, dir.path(), &test_store);
+
+    let empty_status = credential_store_status();
+    assert_eq!(empty_status.backend, "test_disk");
+    assert!(empty_status.ready);
+    assert_eq!(empty_status.cached_count, 0);
+
+    let obs = CredentialObservation {
+        provider: CredentialProvider::Google,
+        raw_value: "ya29.memory-first".to_string(),
+        source: "http.body.response.$.refresh_token".to_string(),
+        event_type: Some("http.response".to_string()),
+        trace_id: Some("trace-hydrate".to_string()),
+        context_json: None,
+    };
+    let brokered = broker_observed_credential(&obs).unwrap();
+    assert!(broker_reference_replay_available(
+        Some("google"),
+        &brokered.credential_ref
+    ));
+
+    CredentialStore::global().clear_for_test();
+    assert!(
+        !broker_reference_replay_available(Some("google"), &brokered.credential_ref),
+        "status checks must not read durable credential storage"
+    );
+    assert_eq!(
+        credential_store_status().cached_count,
+        0,
+        "credential-store status must be memory-only"
+    );
+
+    assert_eq!(
+        hydrate_credential_runtime_cache_from_durable_store().unwrap(),
+        1
+    );
+    let hydrated = credential_store_status();
+    assert!(hydrated.ready);
+    assert_eq!(hydrated.status, "ready");
+    assert_eq!(hydrated.cached_count, 1);
+    assert_eq!(hydrated.last_hydrated_count, 1);
+    assert!(hydrated.last_hydrated_unix_ms.is_some());
+    assert!(broker_reference_replay_available(
+        Some("google"),
+        &brokered.credential_ref
+    ));
+}
+
+#[test]
+fn substitution_resolution_rehydrates_runtime_cache_on_real_use() {
+    let _lock = TEST_ENV_LOCK.blocking_lock();
+    let dir = tempfile::tempdir().unwrap();
+    let capsem_home = dir.path().join("capsem-home");
+    let test_store = dir.path().join("credential-store.json");
+    let _guard = EnvGuard::install(&capsem_home, dir.path(), &test_store);
+
+    let obs = CredentialObservation {
+        provider: CredentialProvider::OpenAi,
+        raw_value: "sk-openai-runtime-miss".to_string(),
+        source: "http.header.authorization".to_string(),
+        event_type: Some("http.request".to_string()),
+        trace_id: Some("trace-rehydrate".to_string()),
+        context_json: None,
+    };
+    let brokered = broker_observed_credential(&obs).unwrap();
+    CredentialStore::global().clear_for_test();
+
+    assert_eq!(
+        resolve_broker_reference_for_provider(CredentialProvider::OpenAi, &brokered.credential_ref)
+            .unwrap()
+            .as_deref(),
+        Some("sk-openai-runtime-miss")
+    );
+    assert!(
+        broker_reference_replay_available(Some("openai"), &brokered.credential_ref),
+        "real substitution use should populate the runtime cache"
+    );
+}
+
+#[test]
 fn broker_test_store_preserves_concurrent_captures() {
     let _lock = TEST_ENV_LOCK.blocking_lock();
     let dir = tempfile::tempdir().unwrap();
@@ -311,7 +405,6 @@ fn broker_test_store_preserves_concurrent_captures() {
             raw_value: format!("capsem_concurrent_secret_{index:02}"),
             source: "http.header.authorization".to_string(),
             event_type: Some("http.request".to_string()),
-            confidence: 1.0,
             trace_id: Some("trace-concurrent".to_string()),
             context_json: None,
         })
@@ -353,7 +446,6 @@ fn replay_availability_requires_resolvable_broker_secret() {
         raw_value: "ya29.refresh-token".to_string(),
         source: "http.body.response.$.refresh_token".to_string(),
         event_type: Some("http.response".to_string()),
-        confidence: 1.0,
         trace_id: Some("trace-oauth".to_string()),
         context_json: None,
     })

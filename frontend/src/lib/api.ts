@@ -72,7 +72,7 @@ export type InitResult = {
 
 export type PluginMode = 'allow' | 'ask' | 'block' | 'disable' | 'rewrite';
 export type PluginDetectionLevel = 'informational' | 'low' | 'medium' | 'high' | 'critical';
-export type PluginStage = 'preprocess' | 'postprocess' | 'pre_and_post';
+export type PluginStage = 'preprocess' | 'postprocess' | 'logging';
 export type PluginDetailRouteKind = 'credential_broker';
 
 export interface PluginConfig {
@@ -90,12 +90,18 @@ export interface BrokeredCredentialStatus {
   credential_ref: string;
   observed_count: number;
   injected_count: number;
+  replay_available: boolean;
   last_seen: string | null;
 }
 
 export interface PluginRuntimeStatus {
   enabled: boolean;
   event_count: number;
+  execution_count: number;
+  applied_count: number;
+  skipped_count: number;
+  total_duration_us: number;
+  max_duration_us: number;
   detection_count: number;
   block_count: number;
   rewrite_count: number;
@@ -153,9 +159,20 @@ export interface CredentialBrokerCorpConstraint {
   description: string;
 }
 
+export interface CredentialStoreStatus {
+  backend: string;
+  ready: boolean;
+  status: 'ready' | 'degraded';
+  cached_count: number;
+  last_hydrated_count: number;
+  last_hydrated_unix_ms: number | null;
+  last_error: string | null;
+}
+
 export interface CredentialBrokerInfo {
   scope: PluginScope;
   plugin_id: 'credential_broker';
+  store: CredentialStoreStatus;
   inventory: BrokeredCredentialStatus[];
   grants: CredentialBrokerGrantStatus;
   corp_constraints: CredentialBrokerCorpConstraint[];
@@ -1046,6 +1063,14 @@ export async function updatePlugin(
 export async function getCredentialBrokerInfo(profileId: string): Promise<CredentialBrokerInfo> {
   const resp = await _get(
     `/profiles/${encodeURIComponent(profileId)}/plugins/credential_broker/credentials/info`,
+  );
+  return await resp.json();
+}
+
+export async function reloadCredentialBrokerStore(profileId: string): Promise<CredentialBrokerInfo> {
+  const resp = await _post(
+    `/profiles/${encodeURIComponent(profileId)}/plugins/credential_broker/credentials/reload`,
+    {},
   );
   return await resp.json();
 }

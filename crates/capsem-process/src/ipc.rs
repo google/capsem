@@ -540,13 +540,18 @@ pub(crate) async fn handle_ipc_connection(
                             .await
                     );
                     match tokio::time::timeout(Duration::from_secs(5), j_rx).await {
-                        Ok(Ok(JobResult::LogFileBoundary { success, error })) => {
+                        Ok(Ok(JobResult::LogFileBoundary {
+                            success,
+                            data,
+                            error,
+                        })) => {
                             capsem_core::try_send!(
                                 "ipc_log_file_boundary_result",
                                 ipc_tx_out
                                     .send(ProcessToService::LogFileBoundaryResult {
                                         id,
                                         success,
+                                        data,
                                         error,
                                     })
                                     .await
@@ -559,6 +564,7 @@ pub(crate) async fn handle_ipc_connection(
                                     .send(ProcessToService::LogFileBoundaryResult {
                                         id,
                                         success: false,
+                                        data: None,
                                         error: Some(message),
                                     })
                                     .await
@@ -572,6 +578,7 @@ pub(crate) async fn handle_ipc_connection(
                                     .send(ProcessToService::LogFileBoundaryResult {
                                         id,
                                         success: false,
+                                        data: None,
                                         error: Some("unexpected log file boundary result".into()),
                                     })
                                     .await
@@ -585,6 +592,7 @@ pub(crate) async fn handle_ipc_connection(
                                     .send(ProcessToService::LogFileBoundaryResult {
                                         id,
                                         success: false,
+                                        data: None,
                                         error: Some(
                                             "log file boundary result channel closed".into()
                                         ),
@@ -600,6 +608,7 @@ pub(crate) async fn handle_ipc_connection(
                                     .send(ProcessToService::LogFileBoundaryResult {
                                         id,
                                         success: false,
+                                        data: None,
                                         error: Some("log file boundary timed out".into()),
                                     })
                                     .await

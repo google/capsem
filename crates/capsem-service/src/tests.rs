@@ -1488,30 +1488,58 @@ async fn profile_ui_route_matrix_is_registered_for_all_profiles() {
     install_test_profile_catalog(&state, &code);
     install_test_profile_catalog(&state, &co_work);
     let routes = [
-        "/profiles/{profile}/info",
-        "/profiles/{profile}/assets/status",
-        "/profiles/{profile}/assets/info",
-        "/profiles/{profile}/enforcement/info",
-        "/profiles/{profile}/enforcement/rules/list",
-        "/profiles/{profile}/detection/info",
-        "/profiles/{profile}/detection/rules/list",
-        "/profiles/{profile}/plugins/info",
-        "/profiles/{profile}/plugins/list",
-        "/profiles/{profile}/plugins/credential_broker/info",
-        "/profiles/{profile}/plugins/credential_broker/credentials/info",
-        "/profiles/{profile}/mcp/info",
-        "/profiles/{profile}/mcp/default/info",
-        "/profiles/{profile}/mcp/servers/list",
-        "/profiles/{profile}/skills/info",
-        "/profiles/{profile}/skills/list",
+        (axum::http::Method::GET, "/profiles/{profile}/info"),
+        (axum::http::Method::GET, "/profiles/{profile}/assets/status"),
+        (axum::http::Method::GET, "/profiles/{profile}/assets/info"),
+        (
+            axum::http::Method::GET,
+            "/profiles/{profile}/enforcement/info",
+        ),
+        (
+            axum::http::Method::GET,
+            "/profiles/{profile}/enforcement/rules/list",
+        ),
+        (
+            axum::http::Method::GET,
+            "/profiles/{profile}/detection/info",
+        ),
+        (
+            axum::http::Method::GET,
+            "/profiles/{profile}/detection/rules/list",
+        ),
+        (axum::http::Method::GET, "/profiles/{profile}/plugins/info"),
+        (axum::http::Method::GET, "/profiles/{profile}/plugins/list"),
+        (
+            axum::http::Method::GET,
+            "/profiles/{profile}/plugins/credential_broker/info",
+        ),
+        (
+            axum::http::Method::GET,
+            "/profiles/{profile}/plugins/credential_broker/credentials/info",
+        ),
+        (
+            axum::http::Method::POST,
+            "/profiles/{profile}/plugins/credential_broker/credentials/reload",
+        ),
+        (axum::http::Method::GET, "/profiles/{profile}/mcp/info"),
+        (
+            axum::http::Method::GET,
+            "/profiles/{profile}/mcp/default/info",
+        ),
+        (
+            axum::http::Method::GET,
+            "/profiles/{profile}/mcp/servers/list",
+        ),
+        (axum::http::Method::GET, "/profiles/{profile}/skills/info"),
+        (axum::http::Method::GET, "/profiles/{profile}/skills/list"),
     ];
 
     for profile in ["code", "co-work"] {
-        for route in routes {
+        for (method, route) in routes.iter() {
             let path = route.replace("{profile}", profile);
             let (status, body) = route_request(
                 build_service_router(Arc::clone(&state)),
-                axum::http::Method::GET,
+                method.clone(),
                 &path,
                 None,
             )
@@ -2728,7 +2756,7 @@ async fn profile_plugin_endpoint_matrix_dynamically_controls_enforcement_evaluat
             "mcp.auth_reference"
         ]
     );
-    assert_eq!(broker.detail_routes.len(), 1);
+    assert_eq!(broker.detail_routes.len(), 2);
     assert_eq!(broker.detail_routes[0].id, "credential_broker_credentials");
     assert_eq!(
         broker.detail_routes[0].kind,
@@ -2737,6 +2765,14 @@ async fn profile_plugin_endpoint_matrix_dynamically_controls_enforcement_evaluat
     assert_eq!(
         broker.detail_routes[0].path,
         "/profiles/code/plugins/credential_broker/credentials/info"
+    );
+    assert_eq!(
+        broker.detail_routes[1].id,
+        "credential_broker_credentials_reload"
+    );
+    assert_eq!(
+        broker.detail_routes[1].path,
+        "/profiles/code/plugins/credential_broker/credentials/reload"
     );
     assert!(broker.runtime.enabled);
     assert_eq!(broker.runtime.event_count, 0);
@@ -2977,6 +3013,12 @@ async fn credential_broker_detail_route_exposes_inventory_and_grant_surface() {
 
     assert_eq!(detail.scope.profile_id, "code");
     assert_eq!(detail.plugin_id, "credential_broker");
+    assert!(detail.store.ready);
+    assert_eq!(detail.store.status, "ready");
+    assert_eq!(
+        detail.store.backend,
+        capsem_core::credential_broker::credential_store_status().backend
+    );
     assert!(detail.inventory.is_empty());
     assert!(detail.grants.profile_enabled);
     assert_eq!(
@@ -2991,6 +3033,122 @@ async fn credential_broker_detail_route_exposes_inventory_and_grant_surface() {
         detail.corp_constraints.is_empty(),
         "test profile has no corp broker OAuth/provider constraints"
     );
+}
+
+#[tokio::test]
+async fn service_status_reports_ready_empty_credential_store_without_inventory_counters() {
+    let _lock = SETTINGS_ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let _store_guard = EnvVarGuard::set(
+        "CAPSEM_CREDENTIAL_BROKER_TEST_STORE",
+        dir.path().join("credential-store.json"),
+    );
+    capsem_core::credential_broker::hydrate_credential_runtime_cache_from_durable_store().unwrap();
+
+    let state = make_test_state();
+    let app = build_service_router(state);
+    let (status, body) = route_request(app, axum::http::Method::GET, "/status", None).await;
+
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["ready"], true);
+    assert_eq!(body["components"]["credential_store"]["ready"], true);
+    assert_eq!(body["components"]["credential_store"]["status"], "ready");
+    assert_eq!(
+        body["components"]["credential_store"]["last_error"],
+        serde_json::Value::Null
+    );
+    assert!(
+        body["components"]["credential_store"]["cached_count"].is_null(),
+        "credential inventory counters belong to the credential broker object, not /status"
+    );
+}
+
+#[tokio::test]
+async fn credential_broker_reload_route_rehydrates_store_and_returns_same_contract() {
+    let _lock = SETTINGS_ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let test_store = dir.path().join("credential-store.json");
+    let _store_guard = EnvVarGuard::set("CAPSEM_CREDENTIAL_BROKER_TEST_STORE", test_store.clone());
+    let state = make_test_state();
+    let app = build_service_router(Arc::clone(&state));
+    let session_dir = dir.path().join("sessions").join("broker-reload-vm");
+    std::fs::create_dir_all(&session_dir).unwrap();
+    insert_fake_instance_with_session_dir(
+        &state,
+        "broker-reload-vm",
+        std::process::id(),
+        session_dir.clone(),
+    );
+
+    let credential_ref = capsem_logger::credential_reference("google", "ya29.reload-route");
+    let store_json = serde_json::json!({
+        capsem_core::credential_broker::keychain_account(
+            capsem_core::credential_broker::CredentialProvider::Google,
+            &credential_ref,
+        ): "ya29.reload-route"
+    });
+    std::fs::write(
+        &test_store,
+        serde_json::to_string_pretty(&store_json).unwrap(),
+    )
+    .unwrap();
+
+    let writer = capsem_logger::DbWriter::open(&session_dir.join("session.db"), 16).unwrap();
+    writer
+        .write(capsem_logger::WriteOp::SubstitutionEvent(
+            capsem_logger::SubstitutionEvent {
+                event_id: Some("abcd1234ef56".to_string()),
+                timestamp: std::time::SystemTime::now(),
+                material_class: "credential".to_string(),
+                source: "http.body.response.$.access_token".to_string(),
+                event_type: Some("http.response".to_string()),
+                algorithm: "blake3".to_string(),
+                substitution_ref: credential_ref.clone(),
+                outcome: "captured".to_string(),
+                provider: Some("google".to_string()),
+                confidence: None,
+                trace_id: None,
+                context_json: Some(r#"{"domain":"oauth2.googleapis.com"}"#.to_string()),
+            },
+        ))
+        .await;
+    writer.shutdown_blocking();
+    let direct_rows = capsem_logger::DbReader::open(&session_dir.join("session.db"))
+        .unwrap()
+        .brokered_credential_stats()
+        .unwrap();
+    assert_eq!(direct_rows.len(), 1);
+    assert_eq!(direct_rows[0].credential_ref, credential_ref);
+
+    let (status, before) = route_request(
+        app.clone(),
+        axum::http::Method::GET,
+        "/profiles/code/plugins/credential_broker/credentials/info",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{before}");
+    assert_eq!(before["plugin_id"], "credential_broker");
+    assert_eq!(before["store"]["backend"], "test_disk");
+    assert_eq!(before["inventory"][0]["credential_ref"], credential_ref);
+    assert_eq!(before["inventory"][0]["replay_available"], false);
+
+    let (status, after) = route_request(
+        app,
+        axum::http::Method::POST,
+        "/profiles/code/plugins/credential_broker/credentials/reload",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{after}");
+    assert_eq!(after["plugin_id"], "credential_broker");
+    assert_eq!(after["store"]["ready"], true);
+    assert_eq!(after["store"]["status"], "ready");
+    assert_eq!(after["store"]["backend"], "test_disk");
+    assert_eq!(after["store"]["last_hydrated_count"], 1);
+    assert!(after["store"]["last_hydrated_unix_ms"].as_u64().is_some());
+    assert_eq!(after["inventory"][0]["credential_ref"], credential_ref);
+    assert_eq!(after["inventory"][0]["replay_available"], true);
 }
 
 #[tokio::test]
@@ -3022,7 +3180,7 @@ async fn credential_broker_plugin_runtime_reports_session_db_captures() {
                         .to_string(),
                 outcome: "captured".to_string(),
                 provider: Some("google".to_string()),
-                confidence: Some(1.0),
+                confidence: None,
                 trace_id: None,
                 context_json: Some(r#"{"domain":"oauth2.googleapis.com"}"#.to_string()),
             },
@@ -6688,6 +6846,7 @@ async fn spawn_file_boundary_ipc(
                     tx.send(ProcessToService::LogFileBoundaryResult {
                         id: *id,
                         success: true,
+                        data: None,
                         error: None,
                     })
                     .await
@@ -6912,6 +7071,7 @@ async fn upload_does_not_write_workspace_file_when_import_ledger_fails() {
                 tx.send(ProcessToService::LogFileBoundaryResult {
                     id: *id,
                     success: false,
+                    data: None,
                     error: Some("security ledger rejected import".to_string()),
                 })
                 .await

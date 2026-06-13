@@ -726,7 +726,7 @@ describe('api', () => {
             overridden: false,
             scope: { kind: 'profile', profile_id: 'code' },
             description: 'captures observed credentials',
-            stage: 'pre_and_post',
+            stage: 'preprocess',
             version: '1',
             capabilities: {
               event_families: ['http', 'file', 'mcp'],
@@ -741,6 +741,11 @@ describe('api', () => {
             runtime: {
               enabled: true,
               event_count: 0,
+              execution_count: 0,
+              applied_count: 0,
+              skipped_count: 0,
+              total_duration_us: 0,
+              max_duration_us: 0,
               detection_count: 0,
               block_count: 0,
               rewrite_count: 0,
@@ -753,6 +758,12 @@ describe('api', () => {
                 label: 'Credential Broker',
                 kind: 'credential_broker',
                 path: '/profiles/code/plugins/credential_broker/credentials/info',
+              },
+              {
+                id: 'credential_broker_credentials_reload',
+                label: 'Retry Credential Store',
+                kind: 'credential_broker',
+                path: '/profiles/code/plugins/credential_broker/credentials/reload',
               },
             ],
           },
@@ -783,6 +794,11 @@ describe('api', () => {
         runtime: {
           enabled: true,
           event_count: 1,
+          execution_count: 1,
+          applied_count: 1,
+          skipped_count: 0,
+          total_duration_us: 25,
+          max_duration_us: 25,
           detection_count: 1,
           block_count: 1,
           rewrite_count: 0,
@@ -815,6 +831,15 @@ describe('api', () => {
       const detail = {
         scope: { kind: 'profile', profile_id: 'code' },
         plugin_id: 'credential_broker',
+        store: {
+          backend: 'test_disk',
+          ready: true,
+          status: 'ready',
+          cached_count: 0,
+          last_hydrated_count: 0,
+          last_hydrated_unix_ms: null,
+          last_error: null,
+        },
         inventory: [],
         grants: {
           profile_enabled: true,
@@ -828,6 +853,35 @@ describe('api', () => {
       expect(result).toEqual(detail);
       const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
       expect(call[0]).toContain('/profiles/code/plugins/credential_broker/credentials/info');
+    });
+
+    it('reloadCredentialBrokerStore sends POST /profiles/{profile_id}/plugins/credential_broker/credentials/reload', async () => {
+      const detail = {
+        scope: { kind: 'profile', profile_id: 'code' },
+        plugin_id: 'credential_broker',
+        store: {
+          backend: 'test_disk',
+          ready: true,
+          status: 'ready',
+          cached_count: 1,
+          last_hydrated_count: 1,
+          last_hydrated_unix_ms: 1789000123456,
+          last_error: null,
+        },
+        inventory: [],
+        grants: {
+          profile_enabled: true,
+          vm_grants: [],
+          fork_default: 'inherit_profile',
+        },
+        corp_constraints: [],
+      };
+      mockFetch.mockReturnValueOnce(jsonResponse(detail));
+      const result = await api.reloadCredentialBrokerStore('code');
+      expect(result).toEqual(detail);
+      const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
+      expect(call[0]).toContain('/profiles/code/plugins/credential_broker/credentials/reload');
+      expect(call[1].method).toBe('POST');
     });
   });
 

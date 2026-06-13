@@ -116,6 +116,7 @@ pub enum ProcessToService {
     LogFileBoundaryResult {
         id: u64,
         success: bool,
+        data: Option<Vec<u8>>,
         error: Option<String>,
     },
     /// Guest requested shutdown (forwarded from capsem-sysutil via vsock:5004).

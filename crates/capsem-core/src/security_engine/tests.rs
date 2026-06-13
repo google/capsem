@@ -52,7 +52,11 @@ impl SecurityPlugin for TracePlugin {
         self.stage
     }
 
-    fn apply(&self, mut event: SecurityEvent) -> Result<SecurityPluginResult, SecurityActionError> {
+    fn apply(
+        &self,
+        mut event: SecurityEvent,
+        _config: SecurityPluginConfig,
+    ) -> Result<SecurityPluginResult, SecurityActionError> {
         event
             .action_trace
             .push(PolicyActionId::CredentialBrokerSubstitute);
@@ -75,7 +79,11 @@ impl SecurityPlugin for MarkDecisionPlugin {
         SecurityPluginStage::Preprocess
     }
 
-    fn apply(&self, mut event: SecurityEvent) -> Result<SecurityPluginResult, SecurityActionError> {
+    fn apply(
+        &self,
+        mut event: SecurityEvent,
+        _config: SecurityPluginConfig,
+    ) -> Result<SecurityPluginResult, SecurityActionError> {
         event.request_decision(SecurityDecisionKind::Block);
         event
             .action_trace
@@ -99,7 +107,11 @@ impl SecurityPlugin for DecisionPlugin {
         self.stage
     }
 
-    fn apply(&self, mut event: SecurityEvent) -> Result<SecurityPluginResult, SecurityActionError> {
+    fn apply(
+        &self,
+        mut event: SecurityEvent,
+        _config: SecurityPluginConfig,
+    ) -> Result<SecurityPluginResult, SecurityActionError> {
         event.request_decision(self.requested);
         Ok(SecurityPluginResult::applied(event))
     }
@@ -436,7 +448,7 @@ fn builtin_dummy_plugins_block_eicar_and_cannot_be_downgraded_by_postprocess() {
         SecurityActionRegistry::with_builtin_actions().with_plugin_policy(BTreeMap::from([
             (
                 "dummy_pre_eicar".to_string(),
-                plugin_config(SecurityPluginMode::Rewrite, DetectionLevel::Critical),
+                plugin_config(SecurityPluginMode::Block, DetectionLevel::Critical),
             ),
             (
                 "dummy_post_allow".to_string(),
@@ -488,7 +500,7 @@ match = 'file.import.content.contains("EICAR")'
                 None,
                 Some("dummy_pre_eicar"),
                 DetectionLevel::Critical,
-                Some(SecurityPluginMode::Rewrite),
+                Some(SecurityPluginMode::Block),
             ),
             (
                 SecurityDetectionSource::Rule,
@@ -585,7 +597,6 @@ fn credential_broker_plugin_uses_matched_security_rule_metadata() {
             raw_value: raw.to_string(),
             source: "http.body.response.$.token".to_string(),
             event_type: Some("http.response".to_string()),
-            confidence: 1.0,
             trace_id: None,
             context_json: None,
         }]);
@@ -648,7 +659,6 @@ fn security_event_log_sanitizer_logging_plugin_redacts_before_logger_emit() {
             raw_value: raw.to_string(),
             source: "http.request.headers.authorization".to_string(),
             event_type: Some("http.request".to_string()),
-            confidence: 1.0,
             trace_id: None,
             context_json: None,
         }]);
@@ -980,7 +990,6 @@ fn serializable_security_event_exposes_stable_first_party_wire_shape_without_raw
             raw_value: "sk-real-secret".to_string(),
             source: "http.response.body".to_string(),
             event_type: Some("http.response".to_string()),
-            confidence: 0.99,
             trace_id: Some("trace_wire".to_string()),
             context_json: None,
         }]);
@@ -1304,7 +1313,6 @@ reason = "corp block"
             raw_value: "sk-live-should-not-appear".into(),
             source: "http.request.header.authorization".into(),
             event_type: Some("http.request".into()),
-            confidence: 1.0,
             trace_id: Some("trace_deadbeef".into()),
             context_json: None,
         }]);
@@ -2328,7 +2336,7 @@ async fn emit_substitution_security_write_and_rules_keeps_ref_without_fake_root(
             substitution_ref: credential_ref.clone(),
             outcome: "captured".to_string(),
             provider: Some("openai".to_string()),
-            confidence: Some(1.0),
+            confidence: None,
             trace_id: Some("trace_credential".to_string()),
             context_json: None,
         },
@@ -2597,7 +2605,7 @@ fn substitution_write(credential_ref: &str) -> WriteOp {
         substitution_ref: credential_ref.to_string(),
         outcome: "stored".to_string(),
         provider: Some("openai".to_string()),
-        confidence: Some(1.0),
+        confidence: None,
         trace_id: Some("trace".to_string()),
         context_json: None,
     })
@@ -2623,7 +2631,6 @@ fn brokered_anthropic_header_event() -> (
         raw_value: raw.to_string(),
         source: "http.request.headers.authorization".to_string(),
         event_type: Some("http.request".to_string()),
-        confidence: 1.0,
         trace_id: None,
         context_json: None,
     })

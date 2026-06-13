@@ -1,4 +1,5 @@
 use crate::credential_broker::redact_observed_credentials_in_bytes;
+use crate::net::policy_config::SecurityPluginConfig;
 use crate::security_engine::{
     SecurityActionError, SecurityEvent, SecurityPlugin, SecurityPluginResult, SecurityPluginStage,
 };
@@ -14,7 +15,11 @@ impl SecurityPlugin for LogSanitizerPlugin {
         SecurityPluginStage::Logging
     }
 
-    fn apply(&self, mut event: SecurityEvent) -> Result<SecurityPluginResult, SecurityActionError> {
+    fn apply(
+        &self,
+        mut event: SecurityEvent,
+        _config: SecurityPluginConfig,
+    ) -> Result<SecurityPluginResult, SecurityActionError> {
         if event.credential_observations.is_empty() {
             return Ok(SecurityPluginResult::skipped(event));
         }

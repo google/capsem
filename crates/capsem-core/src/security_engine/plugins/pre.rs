@@ -2,10 +2,10 @@ use crate::credential_broker::{
     broker_observed_credential, detect_brokered_http_references,
     detect_http_credential_with_provider,
 };
-use crate::net::policy_config::PolicyActionId;
+use crate::net::policy_config::{PolicyActionId, SecurityPluginConfig, SecurityPluginMode};
 use crate::security_engine::{
-    security_event_contains_text, SecurityActionError, SecurityDecisionKind, SecurityEvent,
-    SecurityPlugin, SecurityPluginResult, SecurityPluginStage, DUMMY_EICAR_TEST_STRING,
+    security_event_contains_text, SecurityActionError, SecurityEvent, SecurityPlugin,
+    SecurityPluginResult, SecurityPluginStage, DUMMY_EICAR_TEST_STRING,
 };
 
 pub(in crate::security_engine) struct CredentialBrokerPlugin;
@@ -19,7 +19,11 @@ impl SecurityPlugin for CredentialBrokerPlugin {
         SecurityPluginStage::Preprocess
     }
 
-    fn apply(&self, mut event: SecurityEvent) -> Result<SecurityPluginResult, SecurityActionError> {
+    fn apply(
+        &self,
+        mut event: SecurityEvent,
+        _config: SecurityPluginConfig,
+    ) -> Result<SecurityPluginResult, SecurityActionError> {
         let trace_id = event.trace_id();
         if let Some(request) = event.http_request.as_ref() {
             let injections = detect_brokered_http_references(
@@ -86,16 +90,44 @@ impl SecurityPlugin for DummyPreEicarPlugin {
         SecurityPluginStage::Preprocess
     }
 
-    fn apply(&self, mut event: SecurityEvent) -> Result<SecurityPluginResult, SecurityActionError> {
+    fn apply(
+        &self,
+        mut event: SecurityEvent,
+        config: SecurityPluginConfig,
+    ) -> Result<SecurityPluginResult, SecurityActionError> {
         if !security_event_contains_text(&event, DUMMY_EICAR_TEST_STRING)
             && !security_event_contains_text(&event, "EICAR")
         {
             return Ok(SecurityPluginResult::skipped(event));
         }
-        event.request_decision(SecurityDecisionKind::Block);
+        if matches!(config.mode, SecurityPluginMode::Rewrite) {
+            rewrite_file_eicar_content(&mut event);
+        }
         event
             .action_trace
             .push(PolicyActionId::CredentialBrokerCapture);
         Ok(SecurityPluginResult::applied(event))
+    }
+}
+
+fn rewrite_file_eicar_content(event: &mut SecurityEvent) {
+    const REPLACEMENT: &str = "[capsem-rewritten-eicar]";
+    let Some(file) = event.file.as_mut() else {
+        return;
+    };
+    for value in [
+        &mut file.content,
+        &mut file.import_content,
+        &mut file.export_content,
+        &mut file.read_content,
+        &mut file.create_content,
+        &mut file.write_content,
+        &mut file.delete_content,
+    ] {
+        if let Some(content) = value.as_mut() {
+            *content = content
+                .replace(DUMMY_EICAR_TEST_STRING, REPLACEMENT)
+                .replace("EICAR", "CAPSEM_REWRITTEN_EICAR");
+        }
     }
 }

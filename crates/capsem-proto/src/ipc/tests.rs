@@ -337,14 +337,21 @@ fn log_file_boundary_result_roundtrip() {
     let msg = ProcessToService::LogFileBoundaryResult {
         id: 101,
         success: false,
+        data: Some(b"rewritten".to_vec()),
         error: Some("ledger failed".into()),
     };
     let bytes = serde_json::to_vec(&msg).unwrap();
     let msg2: ProcessToService = serde_json::from_slice(&bytes).unwrap();
     match msg2 {
-        ProcessToService::LogFileBoundaryResult { id, success, error } => {
+        ProcessToService::LogFileBoundaryResult {
+            id,
+            success,
+            data,
+            error,
+        } => {
             assert_eq!(id, 101);
             assert!(!success);
+            assert_eq!(data.as_deref(), Some(&b"rewritten"[..]));
             assert_eq!(error.as_deref(), Some("ledger failed"));
         }
         _ => panic!("wrong variant"),

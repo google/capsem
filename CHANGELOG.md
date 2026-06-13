@@ -8,6 +8,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed (route surfaces and diagnostics)
+- Made the credential broker memory-first behind an opaque `CredentialStore`:
+  captures update runtime memory before durable storage, replay/status checks
+  no longer hit Keychain or disk, real substitutions can hydrate on cache
+  miss, service `/status` reports only ready/degraded state, and
+  `/profiles/{id}/plugins/credential_broker/credentials/{info,reload}` exposes
+  the detailed broker store object plus explicit retry.
+- Extended file-boundary IPC so plugin `rewrite` decisions can return mutated
+  bytes to the service for import/export/read/write boundaries; the service
+  now writes or returns only the bytes approved by the plugin-aware security
+  rail, while block still fails closed.
+- Removed fake confidence from broker-created credential observations and
+  injections; substitution rows keep the historical nullable column, but
+  broker emissions now record `NULL` confidence.
 - Hardened file import/export security boundaries so explicit file writes run
   through the plugin-aware security rail, plugin `block` decisions deny the
   VM-facing file operation before bytes are written or returned, and profile

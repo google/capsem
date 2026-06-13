@@ -333,6 +333,7 @@ struct CredentialBrokerCorpConstraint {
 struct CredentialBrokerDetailResponse {
     scope: PluginScope,
     plugin_id: &'static str,
+    store: capsem_core::credential_broker::CredentialStoreStatus,
     inventory: Vec<BrokeredCredentialStatus>,
     grants: CredentialBrokerGrantStatus,
     corp_constraints: Vec<CredentialBrokerCorpConstraint>,
@@ -2196,7 +2197,7 @@ async fn log_file_boundary(
     data_preview: Vec<u8>,
     size: u64,
     mime_type: Option<String>,
-) -> Result<(), AppError> {
+) -> Result<Option<Vec<u8>>, AppError> {
     let uds_path = active_instance_uds_path(state, sandbox_id)?;
     wait_for_vm_ready(&uds_path, 30, Some(state), Some(sandbox_id))
         .await
@@ -2219,7 +2220,11 @@ async fn log_file_boundary(
     .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
     match res {
-        ProcessToService::LogFileBoundaryResult { success: true, .. } => Ok(()),
+        ProcessToService::LogFileBoundaryResult {
+            success: true,
+            data,
+            ..
+        } => Ok(data),
         ProcessToService::LogFileBoundaryResult { error, .. } => Err(AppError(
             StatusCode::INTERNAL_SERVER_ERROR,
             error.unwrap_or_else(|| "failed to log file boundary".into()),
@@ -2277,7 +2282,7 @@ async fn handle_download_file(
     .await
     .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("task: {e}")))??;
 
-    log_file_boundary(
+    let rewritten = log_file_boundary(
         &state,
         &id,
         FileBoundaryAction::Export,
@@ -2287,6 +2292,7 @@ async fn handle_download_file(
         Some(mime.clone()),
     )
     .await?;
+    let data = rewritten.unwrap_or(data);
 
     use axum::response::IntoResponse;
     Ok((
@@ -2313,11 +2319,12 @@ async fn handle_upload_file(
     let sanitized = sanitize_file_path(&params.path)?;
     let (_ws_root, target) = resolve_workspace_path(&state, &id, &sanitized)?;
 
-    let size = body.len() as u64;
-    let preview = file_security_preview_bytes(&body);
+    let mut data = body.to_vec();
+    let size = data.len() as u64;
+    let preview = file_security_preview_bytes(&data);
     let target_for_write = target.clone();
 
-    log_file_boundary(
+    if let Some(rewritten) = log_file_boundary(
         &state,
         &id,
         FileBoundaryAction::Import,
@@ -2326,7 +2333,11 @@ async fn handle_upload_file(
         size,
         None,
     )
-    .await?;
+    .await?
+    {
+        data = rewritten;
+    }
+    let written_size = data.len() as u64;
 
     // Write file in spawn_blocking (blocking I/O)
     tokio::task::spawn_blocking(move || {
@@ -2344,7 +2355,7 @@ async fn handle_upload_file(
             .and_then(|f| {
                 use std::io::Write;
                 let mut f = f;
-                f.write_all(&body)?;
+                f.write_all(&data)?;
                 Ok(())
             })
             .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("write: {e}")))?;
@@ -2355,7 +2366,7 @@ async fn handle_upload_file(
 
     Ok(Json(UploadResponse {
         success: true,
-        size,
+        size: written_size,
     }))
 }
 
@@ -3835,18 +3846,22 @@ async fn handle_write_file(
         i.uds_path.clone()
     };
 
-    let data = payload.content.into_bytes();
+    let mut data = payload.content.into_bytes();
     let path = payload.path;
-    log_file_boundary(
+    let size = data.len() as u64;
+    if let Some(rewritten) = log_file_boundary(
         &state,
         &id,
         FileBoundaryAction::Import,
         path.clone(),
         file_security_preview_bytes(&data),
-        data.len() as u64,
+        size,
         None,
     )
-    .await?;
+    .await?
+    {
+        data = rewritten;
+    }
 
     let id_val = state.next_job_id();
     let res = send_ipc_command(
@@ -6705,15 +6720,26 @@ fn plugin_capabilities(plugin_id: &str) -> PluginCapabilities {
 
 fn plugin_detail_routes(plugin_id: &str, scope: &PluginScope) -> Vec<PluginDetailRoute> {
     match plugin_id {
-        "credential_broker" => vec![PluginDetailRoute {
-            id: "credential_broker_credentials",
-            label: "Credential Broker",
-            kind: PluginDetailRouteKind::CredentialBroker,
-            path: format!(
-                "/profiles/{}/plugins/credential_broker/credentials/info",
-                scope.profile_id
-            ),
-        }],
+        "credential_broker" => vec![
+            PluginDetailRoute {
+                id: "credential_broker_credentials",
+                label: "Credential Broker",
+                kind: PluginDetailRouteKind::CredentialBroker,
+                path: format!(
+                    "/profiles/{}/plugins/credential_broker/credentials/info",
+                    scope.profile_id
+                ),
+            },
+            PluginDetailRoute {
+                id: "credential_broker_credentials_reload",
+                label: "Retry Credential Store",
+                kind: PluginDetailRouteKind::CredentialBroker,
+                path: format!(
+                    "/profiles/{}/plugins/credential_broker/credentials/reload",
+                    scope.profile_id
+                ),
+            },
+        ],
         _ => Vec::new(),
     }
 }
@@ -6941,6 +6967,7 @@ async fn handle_profile_credential_broker_credentials_info(
     Ok(Json(CredentialBrokerDetailResponse {
         scope,
         plugin_id: "credential_broker",
+        store: capsem_core::credential_broker::credential_store_status(),
         inventory: runtime.brokered_credentials,
         grants: CredentialBrokerGrantStatus {
             profile_enabled: config.mode != SecurityPluginMode::Disable,
@@ -6949,6 +6976,30 @@ async fn handle_profile_credential_broker_credentials_info(
         },
         corp_constraints: Vec::new(),
     }))
+}
+
+async fn handle_profile_credential_broker_credentials_reload(
+    State(state): State<Arc<ServiceState>>,
+    Path(profile_id): Path<String>,
+) -> Result<Json<CredentialBrokerDetailResponse>, AppError> {
+    let profile_id = validate_profile_route_id(profile_id)?;
+    match capsem_core::credential_broker::hydrate_credential_runtime_cache_from_durable_store() {
+        Ok(count) => info!(
+            component = "credential_store",
+            profile_id = profile_id.as_str(),
+            loaded_count = count,
+            status = "ready",
+            "credential store retry hydrated runtime cache"
+        ),
+        Err(error) => warn!(
+            component = "credential_store",
+            profile_id = profile_id.as_str(),
+            error = %error,
+            status = "degraded",
+            "credential store retry failed"
+        ),
+    }
+    handle_profile_credential_broker_credentials_info(State(state), Path(profile_id)).await
 }
 
 fn list_plugins_for_scope(
@@ -8655,6 +8706,7 @@ async fn handle_run(
 
 fn build_service_router(state: Arc<ServiceState>) -> Router {
     Router::new()
+        .route("/status", get(handle_service_status))
         .route(
             "/version",
             get(|| async { Json(serde_json::json!({ "version": env!("CARGO_PKG_VERSION") })) }),
@@ -8771,6 +8823,10 @@ fn build_service_router(state: Arc<ServiceState>) -> Router {
             get(handle_profile_credential_broker_credentials_info),
         )
         .route(
+            "/profiles/{profile_id}/plugins/credential_broker/credentials/reload",
+            post(handle_profile_credential_broker_credentials_reload),
+        )
+        .route(
             "/profiles/{profile_id}/plugins/{plugin_id}/info",
             get(handle_profile_plugin_info),
         )
@@ -8872,6 +8928,25 @@ fn build_service_router(state: Arc<ServiceState>) -> Router {
         )
         .layer(TraceLayer::new_for_http())
         .with_state(state)
+}
+
+async fn handle_service_status(
+    State(state): State<Arc<ServiceState>>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let credential_store = capsem_core::credential_broker::credential_store_status();
+    let ready = credential_store.ready;
+    Ok(Json(serde_json::json!({
+        "service": "capsem-service",
+        "version": state.current_version,
+        "ready": ready,
+        "components": {
+            "credential_store": {
+                "ready": credential_store.ready,
+                "status": credential_store.status,
+                "last_error": credential_store.last_error,
+            },
+        },
+    })))
 }
 
 #[tokio::main]
@@ -9055,6 +9130,25 @@ async fn main() -> Result<()> {
         persistent_vms = persistent_registry.data.vms.len(),
         "loaded persistent VM registry"
     );
+
+    match capsem_core::credential_broker::hydrate_credential_runtime_cache_from_durable_store() {
+        Ok(count) => {
+            info!(
+                component = "credential_store",
+                status = "ready",
+                loaded_count = count,
+                "credential broker runtime cache hydrated"
+            );
+        }
+        Err(error) => {
+            warn!(
+                component = "credential_store",
+                status = "degraded",
+                error = %error,
+                "credential broker runtime cache hydration failed"
+            );
+        }
+    }
 
     // Clean up stale assets (legacy v*/ dirs, unreferenced hash-named files).
     // Preserve every filename referenced by the profile catalog or by saved VM
