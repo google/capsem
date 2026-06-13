@@ -713,6 +713,28 @@ fn config_diagnostics(home: &Path) -> serde_json::Value {
             let profiles = catalog
                 .profiles()
                 .map(|profile| {
+                    let obom = profile.obom.as_ref().and_then(|obom| {
+                        let current_arch =
+                            capsem_core::net::policy_config::current_profile_arch().to_string();
+                        let descriptor = obom.current_arch_obom()?;
+                        let rootfs_hash = profile
+                            .assets
+                            .current_arch_assets()
+                            .and_then(|assets| assets.rootfs.hash.clone());
+                        Some(serde_json::json!({
+                            "current_arch": current_arch,
+                            "scope": "base_image",
+                            "format": obom.format,
+                            "name": descriptor.name,
+                            "url": descriptor.url,
+                            "hash": descriptor.hash,
+                            "size": descriptor.size,
+                            "generator": descriptor.generator,
+                            "generator_version": descriptor.generator_version,
+                            "rootfs_hash": rootfs_hash,
+                            "route": format!("/profiles/{}/obom", profile.id),
+                        }))
+                    });
                     let mcp_server_count = profile
                         .mcp
                         .as_ref()
@@ -736,6 +758,7 @@ fn config_diagnostics(home: &Path) -> serde_json::Value {
                         "ai_rule_count": profile.ai.values().map(|provider| provider.rules.len()).sum::<usize>(),
                         "plugin_count": profile.plugins.len(),
                         "mcp_server_count": mcp_server_count,
+                        "obom": obom,
                     })
                 })
                 .collect::<Vec<_>>();
@@ -876,11 +899,13 @@ fn runtime_boundary_debug_contract() -> serde_json::Value {
             "/profiles/status",
             "/profiles/list",
             "/profiles/{profile_id}/info",
-            "/profiles/{profile_id}/assets/status",
+            "/profiles/{profile_id}/obom",
+            "/profiles/{profile_id}/assets/info",
             "/profiles/{profile_id}/plugins/info",
             "/profiles/{profile_id}/plugins/{plugin_id}/info",
             "/profiles/{profile_id}/plugins/credential_broker/credentials/info",
             "/profiles/{profile_id}/mcp/info",
+            "/profiles/{profile_id}/mcp/default/info",
             "/profiles/{profile_id}/mcp/servers/list"
         ],
     })

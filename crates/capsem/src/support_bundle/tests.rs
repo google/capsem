@@ -17,6 +17,47 @@ fn write(p: &Path, content: &[u8]) {
     fs::write(p, content).unwrap();
 }
 
+fn copy_dir_all(src: &Path, dst: &Path) {
+    fs::create_dir_all(dst).unwrap();
+    for entry in fs::read_dir(src).unwrap() {
+        let entry = entry.unwrap();
+        let ty = entry.file_type().unwrap();
+        let dst_path = dst.join(entry.file_name());
+        if ty.is_dir() {
+            copy_dir_all(&entry.path(), &dst_path);
+        } else {
+            fs::copy(entry.path(), dst_path).unwrap();
+        }
+    }
+}
+
+struct EnvVarGuard {
+    key: &'static str,
+    previous: Option<std::ffi::OsString>,
+}
+
+impl EnvVarGuard {
+    fn set(key: &'static str, value: impl AsRef<std::ffi::OsStr>) -> Self {
+        let previous = std::env::var_os(key);
+        unsafe {
+            std::env::set_var(key, value);
+        }
+        Self { key, previous }
+    }
+}
+
+impl Drop for EnvVarGuard {
+    fn drop(&mut self) {
+        unsafe {
+            if let Some(previous) = &self.previous {
+                std::env::set_var(self.key, previous);
+            } else {
+                std::env::remove_var(self.key);
+            }
+        }
+    }
+}
+
 fn read_tar_entries(path: &Path) -> Vec<(String, Vec<u8>)> {
     let f = fs::File::open(path).unwrap();
     let gz = flate2::read::GzDecoder::new(f);
@@ -252,4 +293,84 @@ fn bundle_includes_runtime_boundary_debug_contract() {
             .any(|route| route == "/triage"),
         "debug route inventory should include /triage: {boundary}"
     );
+    let routes = boundary["debug_routes"].as_array().unwrap();
+    for route in [
+        "/profiles/{profile_id}/info",
+        "/profiles/{profile_id}/obom",
+        "/profiles/{profile_id}/assets/info",
+        "/profiles/{profile_id}/plugins/info",
+        "/profiles/{profile_id}/plugins/{plugin_id}/info",
+        "/profiles/{profile_id}/plugins/credential_broker/credentials/info",
+        "/profiles/{profile_id}/mcp/info",
+        "/profiles/{profile_id}/mcp/default/info",
+    ] {
+        assert!(
+            routes.iter().any(|candidate| candidate == route),
+            "runtime boundary debug contract missing {route}: {boundary}"
+        );
+    }
+    assert!(
+        !routes
+            .iter()
+            .any(|route| route == "/profiles/{profile_id}/assets/status"),
+        "runtime boundary debug contract must not advertise stale assets/status route: {boundary}"
+    );
+}
+
+#[test]
+fn bundle_config_diagnostics_include_profile_obom_evidence() {
+    use capsem_core::net::policy_config::current_profile_arch;
+
+    let _g = ENV_LOCK.lock().unwrap();
+    let _home = fake_capsem_home();
+    let profiles_dir = TempDir::new().unwrap();
+    let profile_dir = profiles_dir.path().join("code");
+    let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(Path::parent)
+        .unwrap();
+    copy_dir_all(&repo_root.join("config/profiles/code"), &profile_dir);
+    let obom_doc = br#"{"bomFormat":"CycloneDX","components":[{"name":"bash","version":"5.2"}]}"#;
+    let obom_path = profile_dir.join("obom.cdx.json");
+    write(&obom_path, obom_doc);
+    let obom_hash = blake3::hash(obom_doc).to_hex().to_string();
+    let arch = current_profile_arch().to_string();
+    let mut profile_text = fs::read_to_string(profile_dir.join("profile.toml")).unwrap();
+    profile_text.push_str(&format!(
+        r#"
+
+[obom]
+format = "cyclonedx-obom.v1"
+
+[obom.arch.{arch}]
+name = "obom.cdx.json"
+url = "file://{}"
+hash = "blake3:{obom_hash}"
+size = {}
+generator = "cdxgen"
+generator_version = "11.0.0"
+"#,
+        obom_path.display(),
+        obom_doc.len()
+    ));
+    write(&profile_dir.join("profile.toml"), profile_text.as_bytes());
+    let _profiles_guard = EnvVarGuard::set("CAPSEM_PROFILES_DIR", profiles_dir.path());
+
+    let out = crate::support_bundle::run(None, 0, false, false).unwrap();
+    let entries = read_tar_entries(&out);
+    let diagnostics_entry = entries
+        .iter()
+        .find(|(p, _)| p.ends_with("system/config-diagnostics.json"))
+        .expect("config diagnostics should be in bundle");
+    let diagnostics: serde_json::Value = serde_json::from_slice(&diagnostics_entry.1).unwrap();
+    let profile = diagnostics["profiles"]["profiles"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|profile| profile["id"] == "code")
+        .expect("code profile should be in diagnostics");
+    assert_eq!(profile["obom"]["current_arch"], arch);
+    assert_eq!(profile["obom"]["hash"], format!("blake3:{obom_hash}"));
+    assert_eq!(profile["obom"]["scope"], "base_image");
+    assert_eq!(profile["obom"]["route"], "/profiles/code/obom");
 }

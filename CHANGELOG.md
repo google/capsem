@@ -85,6 +85,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Included installed asset manifest provenance in support bundles so debug
   reports preserve the manifest origin/source/hash trail alongside the active
   asset manifest.
+- Extended support-bundle debug diagnostics with the current profile route
+  inventory and profile OBOM descriptors, including `/profiles/{id}/obom`,
+  BLAKE3 hash, generator metadata, size, and base-image scope.
 - Hardened package artifact tests so local and remote manifest overrides prove
   the packaged manifest payload and `manifest-origin.json` provenance instead
   of only checking installer script text.

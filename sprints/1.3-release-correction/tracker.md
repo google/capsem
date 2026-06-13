@@ -1531,6 +1531,16 @@ next one, and stage only the files for that slice.
     bundle_includes_asset_manifest_origin_provenance -- --nocapture`;
     `cargo test -p capsem support_bundle -- --nocapture` (`8 passed`);
     `cargo fmt --check`.
+  - 2026-06-13 progress: support-bundle runtime-boundary diagnostics now
+    advertise the mounted profile routes (`/profiles/{profile_id}/obom`,
+    `/profiles/{profile_id}/assets/info`, `/profiles/{profile_id}/mcp/default/info`)
+    instead of stale route names, and config diagnostics include per-profile
+    OBOM descriptor evidence (`base_image` scope, current architecture,
+    BLAKE3 hash, generator, size, rootfs hash, and route).
+  - Proof: RED `cargo test -p capsem support_bundle -- --nocapture` failed on
+    the missing `/profiles/{profile_id}/obom` route and missing OBOM
+    diagnostics; GREEN `cargo test -p capsem support_bundle -- --nocapture`
+    (`9 passed`).
 - [ ] Proof: changelog, docs, skills, and benchmark docs updated.
 - [ ] Proof: full final gates pass and branch is pushed.
 
