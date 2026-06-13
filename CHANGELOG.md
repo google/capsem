@@ -60,6 +60,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   instead of copied as a raw file. Forks of forks now preserve WAL-backed
   committed ledger rows as a standalone quick-check-clean database, preventing
   boot failures from malformed copied session DBs.
+- Hardened Apple VZ suspend/resume and benchmark gates: checkpoint files now
+  require an fsynced completion marker before a VM can be considered
+  suspended, save/restore remain exclusive across service workers, cold starts
+  stay concurrent, and timing probes run isolated after the `-n 4` integration
+  canary so published boot/lifecycle numbers remain meaningful.
 - Added a real checked-in `co-work` profile created through
   `capsem-admin profile init --from`, and tightened Profile UI/TUI/service
   tests so profile-aware surfaces consume route-provided profile ids instead of

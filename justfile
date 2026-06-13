@@ -431,10 +431,14 @@ test: _bootstrap _install-tools _clean-stale _pnpm-install _generate-settings _c
     echo "=== Sign binaries for integration tests ==="
     just _sign
 
-    # ---- Stage 5: Python pytest, n=4 ----------------------------------------
+    # ---- Stage 5: Python pytest ---------------------------------------------
     # Dogfooding canary: 4 concurrent VMs. --dist=loadfile keeps per-file
     # fixtures on the same worker. Any concurrency flake here is a Capsem-side
     # bug.
+    #
+    # Tests marked `serial` are benchmark/timing probes. They run after the
+    # n=4 canary so their numbers measure Capsem, not another benchmark file
+    # stealing the same Apple VZ launch budget.
     #
     # --ignore=tests/capsem-recipes -- recipe meta-tests invoke `cargo build
     #   --workspace` via subprocess, which atomically replaces the codesigned
@@ -445,7 +449,7 @@ test: _bootstrap _install-tools _clean-stale _pnpm-install _generate-settings _c
     #   build -p capsem` from within pytest. This directory is owned by
     #   Stage 7's `just test-install`, which runs it inside Docker with
     #   CAPSEM_DEB_INSTALLED=1 (the skip flag live_system tests respect).
-    echo "=== Python: ALL tests (n=4 parallel) ==="
+    echo "=== Python: non-serial tests (n=4 parallel) ==="
     # CAPSEM_REQUIRE_ARTIFACTS=1: fail the suite if any of assets/<arch>/
     # manifest.json, initrd.img, entitlements.plist, or target/linux-agent/
     # <arch>/ is missing. Stages 1-4 already produced them (this recipe
@@ -454,10 +458,14 @@ test: _bootstrap _install-tools _clean-stale _pnpm-install _generate-settings _c
     # we want that to fail loudly here rather than manifest as a pile of
     # individually-skipped tests whose absence goes unnoticed.
     CAPSEM_REQUIRE_ARTIFACTS=1 uv run python -m pytest tests/ -v --tb=short -n 4 --dist=loadfile \
+        -m "not serial" \
         --ignore=tests/capsem-recipes \
         --ignore=tests/capsem-install \
         --ignore=tests/capsem-build-chain \
         --cov=src/capsem --cov-report=xml:codecov-python.xml --cov-fail-under=90
+
+    echo "=== Python: serial timing and benchmark tests ==="
+    CAPSEM_REQUIRE_ARTIFACTS=1 uv run python -m pytest tests/capsem-serial/ -v --tb=short -m serial
 
     echo "=== Python: Build chain tests (serial) ==="
     CAPSEM_REQUIRE_ARTIFACTS=1 uv run python -m pytest tests/capsem-build-chain/ -v --tb=short

@@ -34,6 +34,18 @@ use tracing::{error, info, warn, Instrument};
 
 mod startup;
 
+const RESUME_CHECKPOINT_NAME: &str = "checkpoint.vzsave";
+const RESUME_CHECKPOINT_COMPLETE_NAME: &str = "checkpoint.vzsave.complete";
+
+fn checkpoint_complete_path(checkpoint_path: &StdPath) -> PathBuf {
+    let marker_name = checkpoint_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(|name| format!("{name}.complete"))
+        .unwrap_or_else(|| RESUME_CHECKPOINT_COMPLETE_NAME.to_string());
+    checkpoint_path.with_file_name(marker_name)
+}
+
 #[cfg(test)]
 thread_local! {
     static TEST_PROFILE_DIR_OVERRIDE: std::cell::RefCell<Option<PathBuf>> =
@@ -133,15 +145,12 @@ struct ServiceState {
     /// Profile-owned plugin policy overrides. Effective policy is built-in
     /// plugin defaults plus overrides for the profile executing the VM.
     plugin_policy_by_profile: Mutex<HashMap<String, BTreeMap<String, SecurityPluginConfig>>>,
-    /// Serializes Apple VZ save_state and restore_state calls across all VMs
-    /// managed by this service. Apple's Virtualization.framework does not
-    /// tolerate concurrent save/restore on sibling VMs: when two VZ instances
-    /// each call saveMachineStateToURL (or one calls save_state while another
-    /// is mid-restore), one of them can come back with ext4 overlay I/O
-    /// errors after resume. Held for the full suspend IPC + child-exit wait,
-    /// and for the resume spawn + wait_for_vm_ready window. See
-    /// docs/src/content/docs/gotchas/concurrent-suspend-resume.mdx.
-    save_restore_lock: tokio::sync::Mutex<()>,
+    /// Guards Apple VZ lifecycle edges across all VMs managed by this
+    /// service. Cold starts and teardown take a read guard; save/restore take
+    /// a write guard. That keeps checkpoint edges exclusive without
+    /// serializing independent cold boots and breaking the boot latency gate.
+    /// See docs/src/content/docs/gotchas/concurrent-suspend-resume.mdx.
+    save_restore_lock: tokio::sync::RwLock<()>,
     /// Serializes VM teardown (delete / stop / purge per-VM / handle_run)
     /// across all VMs managed by this service. N concurrent shutdowns starve
     /// each other of the resources each capsem-process needs to (a) let VZ
@@ -893,20 +902,19 @@ impl ServiceState {
             let clean_exit = exit_status.as_ref().is_some_and(|s| s.success());
             let unexpected_exit = removed.is_some() && !clean_exit;
 
-            // Persistent-VM registry bookkeeping. Checkpoint takes
-            // precedence: a graceful suspend writes checkpoint.vzsave
-            // which we must honor regardless of whether the exit looked
-            // "unexpected". `defunct` only fires when the process died
-            // WITHOUT writing a checkpoint AND without an explicit
-            // shutdown handler removing the instance first.
+            // Persistent-VM registry bookkeeping. A checkpoint only takes
+            // precedence when the process wrote the completion marker after
+            // save_state + fsync. A bare checkpoint file can be a partial
+            // failed suspend and must never become registry truth.
             {
                 let mut registry = state_clone.persistent_registry.lock().unwrap();
                 if let Some(entry) = registry.data.vms.get_mut(&id_clone) {
-                    let checkpoint_path = session_dir_clone.join("checkpoint.vzsave");
-                    if checkpoint_path.exists() {
+                    let checkpoint_path = session_dir_clone.join(RESUME_CHECKPOINT_NAME);
+                    let checkpoint_complete_path = checkpoint_complete_path(&checkpoint_path);
+                    if checkpoint_path.exists() && checkpoint_complete_path.exists() {
                         info!(id_clone, "Checkpoint file found, marking VM as suspended");
                         entry.suspended = true;
-                        entry.checkpoint_path = Some("checkpoint.vzsave".to_string());
+                        entry.checkpoint_path = Some(RESUME_CHECKPOINT_NAME.to_string());
                         entry.defunct = false;
                         entry.last_error = None;
                     } else {
@@ -1088,15 +1096,17 @@ impl ServiceState {
             }
         }
 
-        // Pass checkpoint path for warm restore from suspended state
+        // Pass checkpoint path for warm restore from suspended state only
+        // when the completion marker proves save_state + fsync finished.
         if entry.suspended {
             if let Some(ref cp) = entry.checkpoint_path {
                 let full_checkpoint = entry.session_dir.join(cp);
-                if full_checkpoint.exists() {
+                let complete = checkpoint_complete_path(&full_checkpoint);
+                if full_checkpoint.exists() && complete.exists() {
                     child_cmd.arg("--checkpoint-path").arg(&full_checkpoint);
                     info!(name, checkpoint = %full_checkpoint.display(), "warm restore from checkpoint");
                 } else {
-                    tracing::warn!(name, checkpoint = %full_checkpoint.display(), "checkpoint file missing, cold booting");
+                    tracing::warn!(name, checkpoint = %full_checkpoint.display(), complete = %complete.display(), "checkpoint incomplete, cold booting");
                 }
             }
         }
@@ -1212,7 +1222,10 @@ impl ServiceState {
                 && entry
                     .checkpoint_path
                     .as_ref()
-                    .is_some_and(|cp| entry.session_dir.join(cp).exists())
+                    .is_some_and(|cp| {
+                        let checkpoint = entry.session_dir.join(cp);
+                        checkpoint.exists() && checkpoint_complete_path(&checkpoint).exists()
+                    })
         })
     }
 
@@ -1228,6 +1241,7 @@ impl ServiceState {
         if !checkpoint_path.exists() {
             return None;
         }
+        let complete_path = checkpoint_complete_path(&checkpoint_path);
 
         let epoch_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -1238,6 +1252,17 @@ impl ServiceState {
 
         match std::fs::rename(&checkpoint_path, &archived_path) {
             Ok(()) => {
+                if complete_path.exists() {
+                    let archived_complete_path = checkpoint_complete_path(&archived_path);
+                    if let Err(e) = std::fs::rename(&complete_path, &archived_complete_path) {
+                        warn!(
+                            name,
+                            complete = %complete_path.display(),
+                            archived = %archived_complete_path.display(),
+                            "failed to archive restore checkpoint completion marker: {e}"
+                        );
+                    }
+                }
                 warn!(
                     name,
                     checkpoint = %checkpoint_path.display(),
@@ -1261,6 +1286,10 @@ impl ServiceState {
     fn clear_resume_checkpoint(&self, id: &str) {
         let mut registry = self.persistent_registry.lock().unwrap();
         if let Some(entry) = registry.get_mut(id) {
+            if let Some(checkpoint_name) = entry.checkpoint_path.as_ref() {
+                let checkpoint_path = entry.session_dir.join(checkpoint_name);
+                let _ = std::fs::remove_file(checkpoint_complete_path(&checkpoint_path));
+            }
             entry.suspended = false;
             entry.checkpoint_path = None;
             entry.defunct = false;
@@ -2510,6 +2539,21 @@ async fn provision_attempt(
     env: Option<std::collections::HashMap<String, String>>,
     from: Option<String>,
 ) -> ProvisionAttemptOutcome {
+    // Creating/starting a VM is an Apple VZ lifecycle operation too. Cold
+    // starts take the shared rail so independent boots can overlap, but they
+    // still wait behind any in-flight save/restore checkpoint edge.
+    let _vz_guard = state.save_restore_lock.read().await;
+    let _vz_host_guard =
+        match acquire_vz_host_lock(startup::VzHostLockMode::Shared).await {
+        Ok(guard) => guard,
+        Err(e) => {
+            return ProvisionAttemptOutcome::ProvisionError(anyhow::anyhow!(
+                "vz lifecycle lock acquire failed: {}",
+                e.1
+            ))
+        }
+    };
+
     let state_clone = Arc::clone(state);
     let id_owned = id.to_string();
     let version = state.current_version.clone();
@@ -7566,7 +7610,13 @@ async fn shutdown_vm_process(
     state: &ServiceState,
     id: &str,
     graceful: bool,
-) -> Option<(PathBuf, bool, u32)> {
+) -> Result<Option<(PathBuf, bool, u32)>, AppError> {
+    // Teardown must not overlap save_state/restore_state, but it does not
+    // need to block independent cold starts. Take the shared lifecycle rail
+    // before shutdown bookkeeping so save/restore still gets a clean edge.
+    let _vz_guard = state.save_restore_lock.read().await;
+    let _vz_host_guard = acquire_vz_host_lock(startup::VzHostLockMode::Shared).await?;
+
     // Serialize VM teardown across the service. Concurrent deletes under
     // load starve each other: VZ guest teardown + DbWriter WAL checkpoint +
     // socket cleanup all compete, and a single shutdown can exceed the 1s
@@ -7578,7 +7628,9 @@ async fn shutdown_vm_process(
 
     let (uds_path, session_dir, pid, persistent) = {
         let instances = state.instances.lock().unwrap();
-        let i = instances.get(id)?;
+        let Some(i) = instances.get(id) else {
+            return Ok(None);
+        };
         (
             i.uds_path.clone(),
             i.session_dir.clone(),
@@ -7644,7 +7696,7 @@ async fn shutdown_vm_process(
     let _ = std::fs::remove_file(&uds_path);
     let _ = std::fs::remove_file(uds_path.with_extension("ready"));
 
-    Some((session_dir, persistent, pid))
+    Ok(Some((session_dir, persistent, pid)))
 }
 
 #[tracing::instrument(skip_all, fields(vm_id = %id))]
@@ -7656,10 +7708,10 @@ async fn handle_suspend(
     // save_state / restore_state calls overlap. Serialize across all VMs
     // managed by this service. Held for the whole handler; released when
     // the child has exited and the checkpoint is durable.
-    let _vz_guard = state.save_restore_lock.lock().await;
+    let _vz_guard = state.save_restore_lock.write().await;
     // Plus a host-wide flock so serialization survives pytest-xdist's
     // per-worker `capsem-service` processes. See `VzHostLock`.
-    let _vz_host_guard = acquire_vz_host_lock().await?;
+    let _vz_host_guard = acquire_vz_host_lock(startup::VzHostLockMode::Exclusive).await?;
 
     let (uds_path, pid) = {
         let mut instances = state.instances.lock().unwrap();
@@ -7708,7 +7760,7 @@ async fn handle_suspend(
             )
         })?;
 
-    let checkpoint_path = "checkpoint.vzsave".to_string();
+    let checkpoint_path = RESUME_CHECKPOINT_NAME.to_string();
     tx.send(ServiceToProcess::Suspend { checkpoint_path })
         .await
         .map_err(|e| {
@@ -7782,7 +7834,7 @@ async fn handle_suspend(
         let mut registry = state.persistent_registry.lock().unwrap();
         if let Some(entry) = registry.get_mut(&id) {
             entry.suspended = true;
-            entry.checkpoint_path = Some("checkpoint.vzsave".to_string());
+            entry.checkpoint_path = Some(RESUME_CHECKPOINT_NAME.to_string());
             if let Err(e) = registry.save() {
                 error!(id, "failed to save persistent registry: {e}");
             }
@@ -7800,7 +7852,9 @@ async fn handle_stop(
     // socket inline -- when it returns, resume can immediately reuse the
     // path without a SO_REUSEADDR-style race. Graceful so persistent VMs
     // get bash history + filesystem sync before teardown.
-    if let Some((session_dir, persistent, _pid)) = shutdown_vm_process(&state, &id, true).await {
+    if let Some((session_dir, persistent, _pid)) =
+        shutdown_vm_process(&state, &id, true).await?
+    {
         if !persistent {
             let dir = session_dir;
             tokio::task::spawn_blocking(move || {
@@ -7823,7 +7877,7 @@ async fn handle_delete(
     // Delete fast-paths through SIGTERM + 1s poll: session dir is about
     // to be removed, guest sync() and bash history don't matter.
     let session_dir =
-        if let Some((session_dir, _, _pid)) = shutdown_vm_process(&state, &id, false).await {
+        if let Some((session_dir, _, _pid)) = shutdown_vm_process(&state, &id, false).await? {
             session_dir
         } else {
             // Not running -- check persistent registry for stopped VM
@@ -7873,8 +7927,8 @@ async fn handle_resume(
     // freshly spawned capsem-process's boot, so the lock must bridge the
     // spawn and the readiness sentinel for a sibling save_state not to
     // overlap with the restoreMachineStateFromURL call.
-    let _vz_guard = state.save_restore_lock.lock().await;
-    let _vz_host_guard = acquire_vz_host_lock().await?;
+    let _vz_guard = state.save_restore_lock.write().await;
+    let _vz_host_guard = acquire_vz_host_lock(startup::VzHostLockMode::Exclusive).await?;
 
     let attempted_checkpoint = state.has_existing_resume_checkpoint(&name);
 
@@ -8113,17 +8167,17 @@ async fn handle_purge(
             // Purge fast-paths for the same reason as delete: every VM
             // here is being destroyed, so the 2.5s graceful floor is pure
             // waste per VM. join_all still runs them concurrently.
-            if let Some((session_dir, _, _pid)) = shutdown_vm_process(state_ref, &id, false).await {
-                Some((id, session_dir, persistent))
-            } else {
-                None
-            }
+            shutdown_vm_process(state_ref, &id, false)
+                .await
+                .map(|result| result.map(|(session_dir, _, _pid)| (id, session_dir, persistent)))
         }
     }))
     .await;
 
-    for item in results.into_iter().flatten() {
-        let (id, session_dir, persistent) = item;
+    for result in results {
+        let Some((id, session_dir, persistent)) = result? else {
+            continue;
+        };
         if persistent {
             let mut registry = state.persistent_registry.lock().unwrap();
             let _ = registry.unregister(&id);
@@ -8207,33 +8261,63 @@ async fn handle_run(
     let id_clone = id.clone();
     let version = state.current_version.clone();
     let env = payload.env.clone();
-    let provision_result = tokio::task::spawn_blocking(move || {
-        state_clone.provision_sandbox(ProvisionOptions {
-            id: &id_clone,
-            profile_id,
-            ram_mb,
-            cpus,
-            scratch_disk_size_gb,
-            version_override: Some(version),
-            persistent: false,
-            env,
-            from: None,
-            description: None,
+    {
+        let _vz_guard = state.save_restore_lock.read().await;
+        let _vz_host_guard = acquire_vz_host_lock(startup::VzHostLockMode::Shared).await?;
+        let provision_result = tokio::task::spawn_blocking(move || {
+            state_clone.provision_sandbox(ProvisionOptions {
+                id: &id_clone,
+                profile_id,
+                ram_mb,
+                cpus,
+                scratch_disk_size_gb,
+                version_override: Some(version),
+                persistent: false,
+                env,
+                from: None,
+                description: None,
+            })
         })
-    })
-    .await
-    .map_err(|e| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("provision task: {e}"),
-        )
-    })?;
-    provision_result.map_err(|e| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("provision failed: {e}"),
-        )
-    })?;
+        .await
+        .map_err(|e| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("provision task: {e}"),
+            )
+        })?;
+        provision_result.map_err(|e| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("provision failed: {e}"),
+            )
+        })?;
+
+        // 3. Wait for VM socket to appear while still holding the VZ
+        // lifecycle rail. The child does its Apple VZ start/restore before it
+        // writes the ready sentinel; releasing earlier reintroduces the
+        // sibling-service overlap this lock exists to prevent.
+        let uds_path = state.instance_socket_path(&id);
+        if let Err(e) = wait_for_vm_ready(&uds_path, 30, Some(&state), Some(&id)).await {
+            drop(_vz_host_guard);
+            drop(_vz_guard);
+            // Wait for the child to actually exit before renaming. Rename on
+            // an open-for-write dir is safe (fds survive) but any path-based
+            // reopens the child might do during shutdown (log rotation, db
+            // reopen) would ENOENT -- so we let it finish flushing first.
+            // shutdown_vm_process now blocks until exit (5s budget, SIGKILL
+            // fallback) and cleans the UDS socket inline. Graceful because
+            // preserve_failed_session_dir inspects session logs that capsem-process
+            // is still flushing.
+            let _ = shutdown_vm_process(&state, &id, true).await?;
+            let dir = session_dir;
+            let state_clone = Arc::clone(&state);
+            let id_owned = id.clone();
+            tokio::task::spawn_blocking(move || {
+                state_clone.preserve_failed_session_dir(&dir, &id_owned);
+            });
+            return Err(AppError(StatusCode::INTERNAL_SERVER_ERROR, e));
+        }
+    }
 
     // 2. Register session in main.db
     let sessions_db_dir = state
@@ -8277,26 +8361,7 @@ async fn handle_run(
         }
     }
 
-    // 3. Wait for VM socket to appear
     let uds_path = state.instance_socket_path(&id);
-    if let Err(e) = wait_for_vm_ready(&uds_path, 30, Some(&state), Some(&id)).await {
-        // Wait for the child to actually exit before renaming. Rename on
-        // an open-for-write dir is safe (fds survive) but any path-based
-        // reopens the child might do during shutdown (log rotation, db
-        // reopen) would ENOENT -- so we let it finish flushing first.
-        // shutdown_vm_process now blocks until exit (5s budget, SIGKILL
-        // fallback) and cleans the UDS socket inline. Graceful because
-        // preserve_failed_session_dir inspects session logs that capsem-process
-        // is still flushing.
-        let _ = shutdown_vm_process(&state, &id, true).await;
-        let dir = session_dir;
-        let state_clone = Arc::clone(&state);
-        let id_owned = id.clone();
-        tokio::task::spawn_blocking(move || {
-            state_clone.preserve_failed_session_dir(&dir, &id_owned);
-        });
-        return Err(AppError(StatusCode::INTERNAL_SERVER_ERROR, e));
-    }
 
     // 4. Execute command
     let job_id = state.next_job_id();
@@ -8314,7 +8379,7 @@ async fn handle_run(
     // blocks until the process is actually gone -- the leak detector
     // (and downstream session-DB reads) need that guarantee. Graceful so
     // the DbWriter has a chance to flush before we read session.db at step 6.
-    let _ = shutdown_vm_process(&state, &id, true).await;
+    let _ = shutdown_vm_process(&state, &id, true).await?;
 
     let response = match exec_result {
         Ok(ProcessToService::ExecResult {
@@ -8819,7 +8884,7 @@ async fn main() -> Result<()> {
         asset_status_path,
         magika: Mutex::new(magika_session),
         plugin_policy_by_profile: Mutex::new(HashMap::new()),
-        save_restore_lock: tokio::sync::Mutex::new(()),
+        save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
     });
 

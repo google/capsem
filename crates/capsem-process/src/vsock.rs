@@ -23,6 +23,15 @@ use crate::job_store::{with_quiescence, ActiveFileOp, JobResult, JobStore};
 /// retry: the guest drives retry at the transport layer.
 const HANDSHAKE_RETRY_MAX: usize = 3;
 
+fn checkpoint_complete_path(checkpoint_path: &std::path::Path) -> PathBuf {
+    let marker_name = checkpoint_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(|name| format!("{name}.complete"))
+        .unwrap_or_else(|| "checkpoint.vzsave.complete".to_string());
+    checkpoint_path.with_file_name(marker_name)
+}
+
 pub(crate) struct VsockOptions {
     pub(crate) vm_id: String,
     pub(crate) vm: Arc<tokio::sync::Mutex<Box<dyn capsem_core::hypervisor::VmHandle>>>,
@@ -526,6 +535,8 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                 }
                 ServiceToProcess::Suspend { checkpoint_path } => {
                     let full_path = session_dir.join(checkpoint_path);
+                    let complete_path = checkpoint_complete_path(&full_path);
+                    let _ = std::fs::remove_file(&complete_path);
                     let checkpoint_path_for_save = full_path.clone();
                     let rootfs_img = session_dir.join("guest").join("system").join("rootfs.img");
                     let h_tx = hub_tx.clone();
@@ -580,6 +591,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                         if suspend_result.is_ok() {
                             let fsync_start = std::time::Instant::now();
                             let checkpoint_path = full_path.clone();
+                            let complete_marker_path = complete_path.clone();
                             if let Err(e) =
                                 tokio::task::spawn_blocking(move || -> std::io::Result<()> {
                                     let checkpoint_file = std::fs::OpenOptions::new()
@@ -592,6 +604,11 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                                         .write(true)
                                         .open(&rootfs_img)?;
                                     f.sync_all()?;
+                                    std::fs::write(&complete_marker_path, b"ok\n")?;
+                                    let complete_file = std::fs::OpenOptions::new()
+                                        .read(true)
+                                        .open(&complete_marker_path)?;
+                                    complete_file.sync_all()?;
                                     Ok(())
                                 })
                                 .await
@@ -604,7 +621,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                                     "failed to fsync checkpoint/rootfs after save_state: {e}"
                                 ));
                             } else {
-                                info!(target: "fs", op = "fsync", path = "checkpoint.vzsave+rootfs.img", duration_ms = fsync_start.elapsed().as_millis() as u64, "host_fsync_checkpoint_and_rootfs ok");
+                                info!(target: "fs", op = "fsync", path = "checkpoint.vzsave+rootfs.img", marker = %complete_path.display(), duration_ms = fsync_start.elapsed().as_millis() as u64, "host_fsync_checkpoint_and_rootfs ok");
                             }
                         } else if let Err(ref e) = suspend_result {
                             error!(target: "suspend", error = %e, "suspend failed");
@@ -630,6 +647,8 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                         // service notices and can re-spawn cleanly; but DO NOT claim
                         // Suspended -- service treats process death without "Suspended"
                         // as crash and will not write a checkpoint marker.
+                        let _ = std::fs::remove_file(&complete_path);
+                        let _ = std::fs::remove_file(&full_path);
                         warn!("suspend did not complete; exiting without Suspended marker");
                         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
                         std::process::exit(1);

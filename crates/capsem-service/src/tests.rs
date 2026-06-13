@@ -145,7 +145,7 @@ fn make_test_state() -> Arc<ServiceState> {
         asset_status_path,
         magika: test_magika(),
         plugin_policy_by_profile: Mutex::new(HashMap::new()),
-        save_restore_lock: tokio::sync::Mutex::new(()),
+        save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
     })
 }
@@ -198,7 +198,7 @@ fn make_asset_state(assets_dir: PathBuf) -> Arc<ServiceState> {
         asset_status_path,
         magika: test_magika(),
         plugin_policy_by_profile: Mutex::new(HashMap::new()),
-        save_restore_lock: tokio::sync::Mutex::new(()),
+        save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
     })
 }
@@ -4163,7 +4163,7 @@ fn make_state_in(run_dir: PathBuf) -> Arc<ServiceState> {
         asset_status_path,
         magika: test_magika(),
         plugin_policy_by_profile: Mutex::new(HashMap::new()),
-        save_restore_lock: tokio::sync::Mutex::new(()),
+        save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
     })
 }
@@ -4690,7 +4690,7 @@ fn make_test_state_with_tempdir() -> (Arc<ServiceState>, tempfile::TempDir) {
         asset_status_path,
         magika: test_magika(),
         plugin_policy_by_profile: Mutex::new(HashMap::new()),
-        save_restore_lock: tokio::sync::Mutex::new(()),
+        save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
     });
     (state, dir)
@@ -5564,7 +5564,9 @@ fn archive_failed_restore_checkpoint_moves_checkpoint_aside() {
     let session_dir = state.run_dir.join("persistent/resume-vm");
     std::fs::create_dir_all(&session_dir).unwrap();
     let checkpoint = session_dir.join("checkpoint.vzsave");
+    let complete = session_dir.join("checkpoint.vzsave.complete");
     std::fs::write(&checkpoint, b"bad checkpoint").unwrap();
+    std::fs::write(&complete, b"ok\n").unwrap();
 
     {
         let mut reg = state.persistent_registry.lock().unwrap();
@@ -5597,16 +5599,119 @@ fn archive_failed_restore_checkpoint_moves_checkpoint_aside() {
         .expect("checkpoint should be archived");
 
     assert!(!checkpoint.exists(), "original checkpoint must be moved");
+    assert!(!complete.exists(), "completion marker must be moved");
     assert!(
         archived.exists(),
         "archived checkpoint should exist: {}",
         archived.display()
+    );
+    let archived_complete = session_dir.join(format!(
+        "{}.complete",
+        archived.file_name().unwrap().to_string_lossy()
+    ));
+    assert!(
+        archived_complete.exists(),
+        "archived completion marker should exist: {}",
+        archived_complete.display()
     );
     assert!(archived
         .file_name()
         .unwrap()
         .to_string_lossy()
         .starts_with("checkpoint.vzsave.failed-restore-"));
+}
+
+#[test]
+fn existing_resume_checkpoint_requires_completion_marker() {
+    let (state, _dir) = make_test_state_with_tempdir();
+    let session_dir = state.run_dir.join("persistent/resume-vm");
+    std::fs::create_dir_all(&session_dir).unwrap();
+    let checkpoint = session_dir.join("checkpoint.vzsave");
+    let complete = session_dir.join("checkpoint.vzsave.complete");
+    std::fs::write(&checkpoint, b"partial checkpoint").unwrap();
+
+    {
+        let mut reg = state.persistent_registry.lock().unwrap();
+        reg.data.vms.insert(
+            "resume-vm".into(),
+            PersistentVmEntry {
+                name: "resume-vm".into(),
+                profile_id: "code".into(),
+                profile_revision: test_profile_revision(),
+                profile_payload_hash: test_profile_payload_hash(),
+                asset_pins: test_asset_pins(),
+                ram_mb: 2048,
+                cpus: 2,
+                base_version: "0.0.0".into(),
+                created_at: "0".into(),
+                session_dir: session_dir.clone(),
+                forked_from: None,
+                description: None,
+                suspended: true,
+                defunct: false,
+                last_error: None,
+                checkpoint_path: Some("checkpoint.vzsave".into()),
+                env: None,
+            },
+        );
+    }
+
+    assert!(
+        !state.has_existing_resume_checkpoint("resume-vm"),
+        "bare checkpoint without completion marker must not be resumable"
+    );
+
+    std::fs::write(&complete, b"ok\n").unwrap();
+    assert!(
+        state.has_existing_resume_checkpoint("resume-vm"),
+        "checkpoint with completion marker should be resumable"
+    );
+}
+
+#[test]
+fn clear_resume_checkpoint_removes_completion_marker() {
+    let (state, _dir) = make_test_state_with_tempdir();
+    let session_dir = state.run_dir.join("persistent/resume-vm");
+    std::fs::create_dir_all(&session_dir).unwrap();
+    let complete = session_dir.join("checkpoint.vzsave.complete");
+    std::fs::write(session_dir.join("checkpoint.vzsave"), b"checkpoint").unwrap();
+    std::fs::write(&complete, b"ok\n").unwrap();
+
+    {
+        let mut reg = state.persistent_registry.lock().unwrap();
+        reg.data.vms.insert(
+            "resume-vm".into(),
+            PersistentVmEntry {
+                name: "resume-vm".into(),
+                profile_id: "code".into(),
+                profile_revision: test_profile_revision(),
+                profile_payload_hash: test_profile_payload_hash(),
+                asset_pins: test_asset_pins(),
+                ram_mb: 2048,
+                cpus: 2,
+                base_version: "0.0.0".into(),
+                created_at: "0".into(),
+                session_dir,
+                forked_from: None,
+                description: None,
+                suspended: true,
+                defunct: false,
+                last_error: None,
+                checkpoint_path: Some("checkpoint.vzsave".into()),
+                env: None,
+            },
+        );
+    }
+
+    state.clear_resume_checkpoint("resume-vm");
+    assert!(
+        !complete.exists(),
+        "completion marker must be removed once checkpoint state is cleared"
+    );
+    let reg = state.persistent_registry.lock().unwrap();
+    let entry = reg.get("resume-vm").unwrap();
+    assert!(!entry.suspended);
+    assert!(entry.checkpoint_path.is_none());
 }
 
 // -----------------------------------------------------------------------
@@ -6051,7 +6156,7 @@ fn make_test_state_with_tempdir_at(
         asset_status_path,
         magika: test_magika(),
         plugin_policy_by_profile: Mutex::new(HashMap::new()),
-        save_restore_lock: tokio::sync::Mutex::new(()),
+        save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
     });
     (state, dir)

@@ -149,5 +149,15 @@ prove the same rails without user credentials.
   forked sessions carry a standalone ledger DB. Proof: `cargo test -p
   capsem-core clone_sandbox_state -- --nocapture`; `uv run python -m pytest
   tests/capsem-mcp/test_fork_images.py::test_fork_of_fork -q`.
+- Apple VZ lifecycle hardening on 2026-06-13: checkpoint files now require an
+  fsynced `.complete` marker before service registry state can mark a VM
+  suspended or resume from warm checkpoint. Save/restore use exclusive
+  host-wide locking, cold starts remain shared, and `just test` separates the
+  non-serial `-n 4` canary from serial timing/benchmark probes so benchmark
+  numbers measure Capsem rather than sibling VZ contention. Proof: `cargo test
+  -p capsem-service startup::tests -- --nocapture`; `cargo test -p
+  capsem-service checkpoint -- --nocapture`; `cargo test -p capsem-process
+  --no-run`; Python non-serial canary `1418 passed, 71 skipped` in `407.58s`;
+  serial timing bucket `11 passed, 1 skipped` in `87.67s`.
 
 Those files remain evidence. This sprint is the execution authority.

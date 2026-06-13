@@ -99,6 +99,12 @@ Anti-patterns when a test flakes under `-n 4`:
 - Bumping the per-test timeout -- buying time for a real bug to manifest in prod instead of CI
 - Marking the test `serial` so it runs alone -- defeating the dogfooding signal
 
+The exception is a true timing or benchmark probe whose assertion is the
+measured number. Those tests must already be marked `serial` and `just test`
+runs them immediately after the `-n 4` canary. That is not a flake escape
+hatch: it prevents another benchmark file from stealing the same Apple VZ
+launch budget and corrupting the number we are trying to publish.
+
 The host has plenty of headroom (48 GB RAM, 14 cores; 4 VMs at 2 GB / 2 CPU each = 8 GB / 8 cores). If concurrency surfaces a flake, fix the product, then re-run. Bumping `-n` higher (8, 12) is the natural follow-on once n=4 is stable -- real users will run more.
 
 ### Orphan processes across runs are a product bug (not a test bug)
@@ -107,13 +113,23 @@ If a previous `just test -n 4` run was interrupted (ctrl-C, pytest-xdist worker 
 
 **Never `pkill -f capsem-` with a broad pattern** during test debugging: `capsem-` matches `--crate-name capsem-core` in running rustc/cargo invocations and will SIGKILL the compiler mid-build. Use a binary-path pattern like `pkill -f "target/debug/capsem-(service|process|gateway|tray|mcp)"` instead.
 
-### When `-n 1` is actually the right answer: multi-service-only gotchas
+### Apple VZ lifecycle serialization is part of the product
 
-One narrow class of concurrency bug belongs at `-n 1`, not `-n 4`: **bugs that only exist when two `capsem-service` processes run on the same host**. Apple's Virtualization.framework does not tolerate overlapping `saveMachineStateToURL` / `restoreMachineStateFromURL` calls on sibling VMs, and we serialize with a per-service `tokio::sync::Mutex` (`ServiceState::save_restore_lock`). That lock is in-process, so it only serializes VMs inside one service. Production always has exactly one service per host per user, so the lock is sufficient in real deployments.
+Apple's Virtualization.framework does not tolerate overlapping checkpoint
+lifecycle operations (`saveMachineStateToURL` and `restoreMachineStateFromURL`)
+on sibling VMs, and teardown must not cross those checkpoint edges. Capsem uses
+`ServiceState::save_restore_lock` plus the host-wide `VzHostLock` flock:
+cold starts and teardown take shared/read guards, save and restore take
+exclusive/write guards. The rail holds even when pytest-xdist spawns one
+`capsem-service` per worker, while independent cold starts can still run
+together for the boot-latency gate.
 
-`tests/capsem-mcp/test_stress_suspend_resume.py` runs under pytest-xdist, which spawns one `capsem-service` per worker. At `-n 2+`, worker A's service can't see worker B's lock, and you re-expose the bug that never happens in production. This is the one case where the "n=4 dogfoods concurrency" rule doesn't apply -- the concurrency being tested would never happen outside the test harness. Keep this harness at `-n 1`. Full context and the failure signature live in `docs/src/content/docs/gotchas/concurrent-suspend-resume.md`.
-
-This is NOT a blanket license to run any flaky test at `-n 1`. If you're tempted to demote another test, first ask: *"Would this failure occur in production with one capsem-service and N VMs?"* If yes, it belongs at `-n 4`; fix the product.
+Do not demote suspend/resume, lifecycle, provisioning, or teardown tests to
+`-n 1` to sidestep VZ races. `just test` at `-n 4` is the contract; if a
+concurrent run sees restore permission errors, loop-device corruption,
+connection-refused startup races, or readiness misses, fix the lifecycle rail.
+Full context and failure signatures live in
+`docs/src/content/docs/gotchas/concurrent-suspend-resume.md`.
 
 ## Adversarial testing
 

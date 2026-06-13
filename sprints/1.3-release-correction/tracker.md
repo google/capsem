@@ -737,6 +737,32 @@ next one, and stage only the files for that slice.
 - [ ] RED/GREEN: benchmarks use concurrency and request counts large enough to
   produce meaningful p50/p95/p99/rps for HTTP/SSE/WS/DNS/MCP/broker/model
   replay/storage/startup/lifecycle/fork.
+  - 2026-06-13 progress: `just test` now keeps the Python non-serial
+    integration suite under `pytest -n 4 --dist=loadfile` while running
+    `tests/capsem-serial/` immediately afterward for timing and benchmark
+    probes. This preserves the multi-VM canary and stops benchmark files from
+    stealing the same Apple VZ launch budget from each other.
+  - Proof: `CAPSEM_REQUIRE_ARTIFACTS=1 uv run python -m pytest tests/ -v
+    --tb=short -n 4 --dist=loadfile -m "not serial"
+    --ignore=tests/capsem-recipes --ignore=tests/capsem-install
+    --ignore=tests/capsem-build-chain` passed `1418 passed, 71 skipped` in
+    `407.58s`.
+  - Proof: `CAPSEM_REQUIRE_ARTIFACTS=1 uv run python -m pytest
+    tests/capsem-serial/ -v --tb=short -m serial` passed `11 passed, 1
+    skipped` in `87.67s`, covering boot, exec latency, three-concurrent-VM
+    latency, lifecycle/fork benchmarks, serial logs, and the baseline bench.
+- [x] RED/GREEN: failed suspend cannot leave a VM resumable from a partial
+  Apple VZ checkpoint.
+  - 2026-06-13 progress: `capsem-process` writes
+    `checkpoint.vzsave.complete` only after save_state plus checkpoint/rootfs
+    fsync succeeds. `capsem-service` treats a checkpoint as resumable only
+    when both files exist, archives both on failed warm restore, and clears
+    both after successful resume.
+  - Proof: `cargo test -p capsem-service startup::tests -- --nocapture` (`8
+    passed`); `cargo test -p capsem-service checkpoint -- --nocapture` (`3
+    passed`); `cargo test -p capsem-process --no-run`; full `-n 4` Python
+    canary above includes
+    `tests/capsem-service/test_svc_suspend_corruption.py::TestSuspendOverlayDurability::test_suspend_failure_does_not_brick_vm`.
 
 ## S6. CEL and Security Event Contract
 
