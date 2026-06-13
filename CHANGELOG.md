@@ -141,6 +141,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added Ironbank coverage for declaration-only model tools: an
   OpenAI-compatible request may advertise tools without creating executed
   `tool_calls` rows unless the model response actually emits a tool call.
+- Tightened Ironbank tool-call ledger coverage so executed model tool calls
+  must have exact row counts, declaration-only tools stay absent, and observed
+  MCP `tools/call` rows correlate by trace and tool name without protocol
+  chatter becoming phantom executions.
 - Hardened profile root bootstrap packaging: `capsem-admin profile check` now
   rejects unpinned files under a profile root seed, profile payload tests prove
   AGY/Claude/Codex/MCP non-secret bootstrap files are pinned exactly, and

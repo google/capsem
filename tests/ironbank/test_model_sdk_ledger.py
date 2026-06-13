@@ -863,8 +863,13 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
                 ).fetchall(),
                 lambda rows: len(rows) >= 2,
             )
-            assert len(tool_rows) >= 2
+            assert len(tool_rows) == len(model_rows) + 1
             assert {row["call_id"] for row in tool_rows} == {"tool_0001"}
+            assert {row["model_call_id"] for row in tool_rows} == {
+                *(row["id"] for row in model_rows),
+                unknown_shape["id"],
+            }
+            assert declared_tool_only["id"] not in {row["model_call_id"] for row in tool_rows}
             valid_tool_credential_refs = {
                 credential_ref,
                 unknown_shape["credential_ref"],
@@ -895,12 +900,16 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
             )
             observed_methods = {row["method"] for row in observed_mcp_rows}
             assert {"initialize", "tools/list", "tools/call"} <= observed_methods
+            assert sum(1 for row in observed_mcp_rows if row["method"] == "tools/call") == 1
+            assert all(row["tool_name"] is None for row in observed_mcp_rows if row["method"] != "tools/call")
             observed_tool_call = next(
                 row for row in observed_mcp_rows if row["method"] == "tools/call"
             )
             _assert_event_id(observed_tool_call["event_id"])
             assert observed_tool_call["tool_name"] == "fixture_lookup"
             assert observed_tool_call["decision"] == "allowed"
+            assert observed_tool_call["trace_id"] in {row["trace_id"] for row in tool_rows}
+            assert observed_tool_call["tool_name"] in {row["tool_name"] for row in tool_rows}
             assert observed_tool_call["bytes_sent"] > 0
             assert observed_tool_call["bytes_received"] > 0
             assert "fixture_lookup" in (observed_tool_call["request_preview"] or "")

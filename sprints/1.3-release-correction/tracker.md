@@ -1039,8 +1039,20 @@ next one, and stage only the files for that slice.
     -q -s --tb=short`; `uv run ruff check
     tests/ironbank/test_model_sdk_ledger.py scripts/mock_server_runtime.py`;
     `python3 -m py_compile scripts/mock_server_runtime.py`.
-- [ ] RED/GREEN: executed model tool calls and MCP tools/call rows are linked
+- [x] RED/GREEN: executed model tool calls and MCP tools/call rows are linked
   without phantom calls.
+  - 2026-06-13 closure: Ironbank now requires the executed model tool-call
+    ledger to have an exact count: every `/v1/chat/completions` model response
+    that emits `tool_calls` plus the unknown-shape emitted tool call, and no
+    row for the declaration-only model request. Observed MCP JSON-RPC rows must
+    contain exactly one `tools/call`, no tool names on protocol chatter, and
+    the observed MCP tool call must correlate to an executed model tool by
+    trace id and tool name.
+  - Proof: `CAPSEM_TEST_PRESERVE_ALWAYS=1 uv run python -m pytest
+    tests/ironbank/test_model_sdk_ledger.py::test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox
+    -q -s --tb=short`; `uv run ruff check
+    tests/ironbank/test_model_sdk_ledger.py`; `python3 -m py_compile
+    tests/ironbank/test_model_sdk_ledger.py`.
 - [x] RED/GREEN: MCP user-facing stats distinguish executed tool calls from
   protocol chatter and host-only snapshot tooling.
   - 2026-06-11 progress: `DbReader::mcp_call_stats()` keeps filtering
