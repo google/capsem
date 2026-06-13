@@ -14,6 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   than a config authority, stale `guest/config` authoring guidance is removed
   from active docs, and `capsem-admin image build --dry-run` is no longer a
   public product rail.
+- Burned the public `capsem-builder build`, `validate`, `inspect`, and
+  `--dry-run` rails so product image/config work can only enter through
+  profile-owned config plus `capsem-admin`; docs, skills, and CLI tests now
+  document and enforce `capsem-builder` as a backend helper only.
 - Fixed PR CI Python coverage so the schema/builder coverage step runs the
   explicit Python contract suite that exercises `src/capsem`, instead of
   replaying VM, serial, install, MCP, service, and Ironbank suites under one

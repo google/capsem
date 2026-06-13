@@ -126,7 +126,11 @@ the credential broker plugin at runtime and logged only as BLAKE3 references.
 
 ## Validation Pipeline
 
-`capsem-builder validate` runs compiler-style diagnostics with error codes, severity levels, and file:line references. Errors block the build; warnings are informational.
+Profile validation is exposed through `capsem-admin profile check`. The Python
+builder keeps compiler-style diagnostics internally, with error codes, severity
+levels, and file:line references, but it is not a second public profile
+validation rail. Errors block the admin/profile build path; warnings are
+informational.
 
 ### Error Codes
 
@@ -339,8 +343,11 @@ The `audit` subcommand parses vulnerability scanner output and fails on CRITICAL
 |---------|-------------|-------------|
 | `capsem-admin image build` | Build profile-derived kernel/rootfs assets | `--profile`, `--config-root`, `--arch`, `--template`, `--output`, `--clean`, `--json` |
 | `capsem-admin profile check` | Validate source profile, file references, rules, MCP, and root seed | `--config-root`, `--arch`, `--json` |
-| `audit` | Parse vulnerability scan results | `--scanner` (trivy/grype), `--input`, `--json` |
-| `mcp` | Start MCP stdio server for builder tools | (none) |
+| `capsem-builder doctor` | Backend prerequisite checks used by the build rail | `--profile`, `--config-root` |
+| `capsem-builder agent` | Cross-compile guest agent binaries for initrd repack | `--arch`, `--output` |
+| `capsem-builder audit` | Parse vulnerability scan results | `--scanner` (trivy/grype), `--input`, `--json` |
+| `capsem-builder validate-skills` | Validate repository development skills | `--json` |
+| `capsem-builder mcp` | Start MCP stdio server for builder tools | (none) |
 
 Usage:
 
@@ -354,6 +361,11 @@ cargo run -p capsem-admin -- image build --profile config/profiles/code/profile.
 # Build kernel for all architectures
 cargo run -p capsem-admin -- image build --profile config/profiles/code/profile.toml --config-root config --template kernel
 ```
+
+There is no public `capsem-builder build`, `capsem-builder validate`,
+`capsem-builder inspect`, or `--dry-run` rendering rail. Product image inputs
+must enter through profile/corp/settings config and the `capsem-admin` checks
+above.
 
 ## Settings JSON Generation
 

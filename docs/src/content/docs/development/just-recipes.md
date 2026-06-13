@@ -153,7 +153,7 @@ ui               -> _ensure-setup + _pnpm-install + run-service
 build-ui         -> _pnpm-install + frontend build + cargo build -p capsem-app
 smoke            -> _install-tools + _pnpm-install + _check-assets + _pack-initrd + _ensure-service
 test             -> _install-tools + _clean-stale + _pnpm-install + _generate-settings + _check-assets + _pack-initrd
-build-assets     -> _install-tools + _clean-stale + doctor + capsem-builder kernel/rootfs
+build-assets     -> _install-tools + _clean-stale + doctor + capsem-admin image build
 test-install     -> _build-host
 cut-release      -> test + _stamp-version
 ```

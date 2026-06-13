@@ -29,7 +29,7 @@ just schema                                                        # Regenerate 
 |------|-------|----------------|
 | `test_validate.py` | 96 | TOML config linting, error codes E001-E305, warnings W001-W012 |
 | `test_models.py` | 80 | Pydantic models (GuestImageConfig, ArchConfig, all sub-models) |
-| `test_cli.py` | 79 | Click CLI commands (build, validate, inspect, audit, mcp, doctor) |
+| `test_cli.py` | 18 | Backend-only Click CLI surface; product build/validate/inspect commands stay burned |
 | `test_docker.py` | 75 | Jinja Dockerfile rendering, conformance with legacy Dockerfiles |
 | `test_settings_spec.py` | 73 | Settings schema conformance (golden fixture round-trip) |
 | `test_manifest.py` | 48 | BOM collection, manifest rendering, dpkg/pip/npm parsers |
@@ -79,7 +79,7 @@ src/capsem/
     __init__.py
     builder/
         __init__.py
-        cli.py           Click CLI entry point
+        cli.py           Backend-only Click CLI entry point
         config.py         TOML config loading, defaults generation
         models.py         Pydantic models (GuestImageConfig, ArchConfig, etc.)
         schema.py         Settings schema (SettingsRoot, GroupNode, SettingNode)

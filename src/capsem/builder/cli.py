@@ -1,10 +1,8 @@
-"""Capsem builder CLI -- config-driven guest image tooling.
+"""Capsem builder CLI -- backend-only helper tooling.
 
-Commands:
-  doctor    Check build prerequisites
-  validate  Lint and validate guest config
-  build     Render Dockerfiles (--dry-run) or build images
-  inspect   Show config summary
+Product profile validation, materialization, and image builds are owned by
+capsem-admin. This CLI intentionally exposes only backend helpers that are used
+by just/CI and do not create a second product authoring rail.
 """
 
 from __future__ import annotations
@@ -15,15 +13,13 @@ from pathlib import Path
 import click
 
 from capsem.builder.config import load_guest_config
-from capsem.builder.docker import render_dockerfile
-from capsem.builder.validate import Severity, validate_guest
 
 
 @click.group(invoke_without_command=True)
 @click.version_option(package_name="capsem", prog_name="capsem-builder")
 @click.pass_context
 def cli(ctx: click.Context) -> None:
-    """Capsem builder -- config-driven guest image tooling."""
+    """Capsem builder -- backend helper tooling."""
     if ctx.invoked_subcommand is None:
         click.echo(ctx.get_help())
 
@@ -55,41 +51,6 @@ def doctor(profile_id: str, config_root: str) -> None:
         raise SystemExit(1)
 
 
-# ---------------------------------------------------------------------------
-# validate
-# ---------------------------------------------------------------------------
-
-
-@cli.command()
-@click.argument("guest_dir", default="guest", type=click.Path(exists=False))
-@click.option("--artifacts", type=click.Path(exists=True), default=None,
-              help="Artifacts directory to check (capsem-init, CA cert, etc.)")
-def validate(guest_dir: str, artifacts: str | None) -> None:
-    """Validate a guest image configuration."""
-    path = Path(guest_dir)
-    if not path.is_dir():
-        click.echo(f"error: directory not found: {guest_dir}", err=True)
-        raise SystemExit(1)
-
-    artifacts_path = Path(artifacts) if artifacts else None
-    diags = validate_guest(path, artifacts_dir=artifacts_path)
-
-    errors = [d for d in diags if d.severity == Severity.ERROR]
-    warnings = [d for d in diags if d.severity == Severity.WARNING]
-
-    for d in diags:
-        click.echo(str(d))
-
-    if errors:
-        click.echo(f"\n{len(errors)} error(s), {len(warnings)} warning(s)")
-        raise SystemExit(1)
-
-    if warnings:
-        click.echo(f"\n{len(warnings)} warning(s), 0 errors -- passed")
-    else:
-        click.echo("passed: config is clean")
-
-
 @cli.command("validate-skills")
 @click.argument("skills_dir", default="skills", type=click.Path(exists=False))
 @click.option("--json", "json_output", is_flag=True, help="Output validation report as JSON.")
@@ -108,133 +69,6 @@ def validate_skills(skills_dir: str, json_output: bool) -> None:
         click.echo(report.model_dump_json(indent=2))
     else:
         click.echo(f"passed: {report.skill_count} skills validated in {report.root}")
-
-
-# ---------------------------------------------------------------------------
-# build
-# ---------------------------------------------------------------------------
-
-
-@cli.command()
-@click.argument("guest_dir", default="guest", type=click.Path(exists=False))
-@click.option("--arch", default=None, help="Build for a single architecture only.")
-@click.option("--dry-run", is_flag=True, help="Render Dockerfiles without building.")
-@click.option("--json", "json_output", is_flag=True, help="Output build manifest as JSON (with --dry-run).")
-@click.option("--template", default="rootfs", type=click.Choice(["rootfs", "kernel"]),
-              help="Dockerfile template to render.")
-@click.option("--output", "output_dir", default="assets", type=click.Path(),
-              help="Output directory for built assets (default: assets/).")
-@click.option("--kernel-version", default=None,
-              help="Explicit kernel version (skips auto-detection from kernel.org).")
-def build(
-    guest_dir: str,
-    arch: str | None,
-    dry_run: bool,
-    json_output: bool,
-    template: str,
-    output_dir: str,
-    kernel_version: str | None,
-) -> None:
-    """Build guest images from config."""
-    path = Path(guest_dir)
-    if not path.is_dir():
-        click.echo(f"error: directory not found: {guest_dir}", err=True)
-        raise SystemExit(1)
-
-    # Validate first
-    diags = validate_guest(path)
-    errors = [d for d in diags if d.severity == Severity.ERROR]
-    if errors:
-        for d in errors:
-            click.echo(str(d), err=True)
-        click.echo(f"\n{len(errors)} validation error(s) -- fix before building", err=True)
-        raise SystemExit(1)
-
-    config = load_guest_config(path)
-    template_name = f"Dockerfile.{template}.j2"
-
-    # Determine architectures
-    arches = list(config.build.architectures.keys())
-    if arch:
-        if arch not in config.build.architectures:
-            click.echo(
-                f"error: architecture '{arch}' not in config "
-                f"(available: {', '.join(arches)})",
-                err=True,
-            )
-            raise SystemExit(1)
-        arches = [arch]
-
-    if dry_run:
-        if json_output:
-            manifest = {
-                "architectures": {},
-                "template": template,
-                "compression": config.build.compression.value,
-                "compression_level": config.build.compression_level,
-            }
-            for arch_name in arches:
-                rendered = render_dockerfile(template_name, config, arch_name)
-                manifest["architectures"][arch_name] = {
-                    "dockerfile": rendered,
-                    "platform": config.build.architectures[arch_name].docker_platform,
-                    "rust_target": config.build.architectures[arch_name].rust_target,
-                }
-            click.echo(json.dumps(manifest, indent=2))
-        else:
-            for arch_name in arches:
-                if len(arches) > 1:
-                    click.echo(f"# --- {arch_name} ({template}) ---")
-                rendered = render_dockerfile(template_name, config, arch_name)
-                click.echo(rendered)
-    else:
-        import subprocess
-
-        from capsem.builder.docker import (
-            build_all_architectures,
-            build_image,
-            detect_runtime,
-        )
-
-        try:
-            runtime = detect_runtime()
-        except RuntimeError as e:
-            click.echo(f"error: {e}", err=True)
-            raise SystemExit(1)
-
-        click.echo("Using container runtime: docker")
-        out = Path(output_dir)
-
-        try:
-            if arch:
-                build_image(
-                    config, arch,
-                    template=template,
-                    output_dir=out,
-                    kernel_version=kernel_version,
-                )
-            else:
-                build_all_architectures(
-                    config,
-                    template=template,
-                    output_dir=out,
-                    kernel_version=kernel_version,
-                )
-        except subprocess.CalledProcessError as e:
-            click.echo(f"error: build command failed: {e.cmd}", err=True)
-            raise SystemExit(1)
-        except RuntimeError as e:
-            click.echo(f"error: {e}", err=True)
-            raise SystemExit(1)
-        finally:
-            # Prune dangling images from multi-stage builds
-            from capsem.builder.docker import run_cmd
-            try:
-                run_cmd([runtime, "image", "prune", "-f"], capture=True)
-            except RuntimeError:
-                pass
-
-        click.echo(f"\nDone! Assets are in {out}/")
 
 
 # ---------------------------------------------------------------------------
@@ -282,60 +116,6 @@ def agent(
         raise SystemExit(1)
 
     click.echo(f"Done! Agent binaries for {arch_name} are in {out}/")
-
-
-# ---------------------------------------------------------------------------
-# inspect
-# ---------------------------------------------------------------------------
-
-
-@cli.command()
-@click.argument("guest_dir", default="guest", type=click.Path(exists=False))
-@click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
-def inspect(guest_dir: str, json_output: bool) -> None:
-    """Show guest config summary."""
-    path = Path(guest_dir)
-    if not path.is_dir():
-        click.echo(f"error: directory not found: {guest_dir}", err=True)
-        raise SystemExit(1)
-
-    try:
-        config = load_guest_config(path)
-    except Exception as e:
-        click.echo(f"error: failed to load config: {e}", err=True)
-        raise SystemExit(1)
-
-    if json_output:
-        data = config.model_dump(mode="json")
-        click.echo(json.dumps(data, indent=2))
-        return
-
-    # Human-readable summary
-    if config.manifest:
-        click.echo(f"Image: {config.manifest.name} v{config.manifest.version}")
-        if config.manifest.description:
-            click.echo(f"  {config.manifest.description}")
-        click.echo("")
-
-    click.echo("Build")
-    click.echo(f"  compression: {config.build.compression.value} (level {config.build.compression_level})")
-    click.echo("  architectures:")
-    for name, arch in config.build.architectures.items():
-        click.echo(f"    {name}: {arch.docker_platform} ({arch.rust_target})")
-
-    if config.package_sets:
-        click.echo("\nPackage Sets")
-        for key, ps in config.package_sets.items():
-            click.echo(f"  {key}: {ps.manager.value} ({len(ps.packages)} packages)")
-
-    if config.mcp_servers:
-        click.echo("\nMCP Servers")
-        for key, server in config.mcp_servers.items():
-            click.echo(f"  {key}: {server.name} ({server.transport.value})")
-
-    res = config.vm_resources
-    click.echo("\nVM Resources")
-    click.echo(f"  cpu: {res.cpu_count} cores, ram: {res.ram_gb} GB, disk: {res.scratch_disk_size_gb} GB")
 
 
 # ---------------------------------------------------------------------------

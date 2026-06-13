@@ -127,7 +127,7 @@ next one, and stage only the files for that slice.
     not a config owner; and `capsem-admin image build --dry-run` is rejected
     as an escape hatch.
   - Proof: `cargo test -p capsem-admin -- --nocapture`; `uv run python -m
-    pytest tests/test_config.py tests/test_cli.py::TestRemovedAuthoringCommands
+    pytest tests/test_config.py tests/test_cli.py
     tests/test_release_doctor_contract.py::test_config_contract_has_no_admin_or_registry_authority
     tests/test_release_doctor_contract.py::test_builder_has_no_guest_scaffold_authoring_rail
     tests/capsem-build-chain/test_active_docs_profile_contract.py -q`.
@@ -137,6 +137,16 @@ next one, and stage only the files for that slice.
     tests/test_release_doctor_contract.py
     tests/capsem-build-chain/test_active_docs_profile_contract.py -q`;
     `cargo fmt --check`; `git diff --check`.
+  - 2026-06-13 backend CLI burn proof: public `capsem-builder build`,
+    `validate`, `inspect`, and `--dry-run` are removed. Surviving
+    `capsem-builder` commands are backend helpers only: `doctor`,
+    `validate-skills`, `agent`, `audit`, and `mcp`. Active docs/skills now
+    say product image/config work goes through `capsem-admin`.
+  - Proof: `uv run python -m pytest tests/test_cli.py
+    tests/capsem-build-chain/test_active_docs_profile_contract.py
+    tests/test_release_doctor_contract.py -q`; `uv run ruff check
+    src/capsem/builder/cli.py src/capsem/builder/config.py
+    src/capsem/builder/models.py tests/test_cli.py`.
 
 ## S2. Materialization, Assets, VM Resources
 

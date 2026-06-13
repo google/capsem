@@ -1,7 +1,8 @@
 """Backend image config loader and settings UI metadata generator.
 
-Loads TOML configs from guest/config/ into Pydantic models, and transforms
-settings metadata into the UI metadata format consumed by Rust at compile time.
+Loads the admin-materialized backend image workspace into Pydantic models, and
+transforms settings metadata into the UI metadata format consumed by Rust at
+compile time.
 """
 
 from __future__ import annotations
@@ -89,16 +90,16 @@ def _load_vm_environment(config_dir: Path) -> VmEnvironmentConfig:
 
 
 def load_guest_config(guest_dir: Path) -> GuestImageConfig:
-    """Walk a guest/config/ directory, parse all TOML files, return GuestImageConfig.
+    """Parse an admin-materialized backend image workspace.
 
     Args:
-        guest_dir: Path to the guest directory (contains config/ subdirectory).
+        guest_dir: Path to the generated workspace containing config/.
 
     Returns:
         GuestImageConfig with all parsed and validated config.
 
     Raises:
-        FileNotFoundError: If guest_dir/config/build.toml is missing (required).
+        FileNotFoundError: If config/build.toml is missing (required).
         pydantic.ValidationError: If any TOML file fails validation.
     """
     config_dir = guest_dir / "config"

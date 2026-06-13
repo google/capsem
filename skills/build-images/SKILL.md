@@ -62,8 +62,9 @@ just build-rootfs arm64 code                 # Rootfs slice
 uv run capsem-builder audit                  # Parse trivy/grype vulnerability output
 ```
 
-Prefer admin/just recipes over direct `capsem-builder build` calls unless the
-task is explicitly inside the backend.
+Use admin/just recipes for all product image work. `capsem-builder` is a
+backend helper only; it must not expose or document public `build`, `validate`,
+`inspect`, render-only, or dry-run rails for profile/image authoring.
 
 ## Building assets
 
@@ -348,7 +349,8 @@ colima stop && colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8
 # sudo apt install docker.io
 ```
 
-`just doctor` and `capsem-builder doctor` both check these resources automatically.
+`just doctor` owns the product readiness gate. `capsem-builder doctor` is a
+backend helper used by the build rail to check container/runtime prerequisites.
 
 The resource check lives in `src/capsem/builder/doctor.py`:
 - `check_container_resources()` -- checks docker info

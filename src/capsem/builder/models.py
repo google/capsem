@@ -1,7 +1,8 @@
-"""Capsem build configuration models -- Pydantic models for guest image config.
+"""Capsem build configuration models -- Pydantic backend image spec models.
 
-These models define the structure of the TOML config files in guest/config/.
-Distinct from schema.py which defines the settings interchange format.
+These models define the structure of the admin-materialized backend image
+workspace. Distinct from schema.py which defines the settings interchange
+format.
 """
 
 from __future__ import annotations
@@ -309,9 +310,9 @@ class ImageManifestConfig(BaseModel):
 
 
 class GuestImageConfig(BaseModel):
-    """Top-level config combining all TOML files for a guest image.
+    """Top-level config combining the generated backend image workspace.
 
-    Produced by load_guest_config() which walks a guest/config/ directory.
+    Produced by load_guest_config() after capsem-admin materializes a profile.
     """
 
     model_config = ConfigDict(frozen=True)

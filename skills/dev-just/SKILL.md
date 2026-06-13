@@ -71,7 +71,7 @@ shell            -> _check-assets + _pack-initrd + _ensure-service (_sign + buil
 ui               -> _ensure-setup + _pnpm-install + run-service
 run-service      -> _check-assets + _pack-initrd + _ensure-service
 exec             -> run-service
-build-assets     -> _install-tools + _clean-stale (inline: doctor, capsem-builder kernel + rootfs)
+build-assets     -> _install-tools + _clean-stale (inline: doctor, capsem-admin image build)
 build-ui         -> _frontend-dist (pnpm build + cargo build -p capsem-app)
 smoke            -> _install-tools + _frontend-dist + _check-assets + _pack-initrd + _ensure-service
 test             -> _install-tools + _clean-stale + _frontend-dist + _generate-settings
@@ -152,10 +152,11 @@ just build-assets              # Build profile-owned VM assets through the profi
 just _materialize-config       # Materialize generated runtime profile config
 ```
 
-Direct `capsem-builder` calls are backend debugging only. They must not create
-profiles, packages, MCP servers, provider config, runtime settings, or rule
-files. If the public product contract needs a new image input, add it to the
-profile/corp/settings config model and the `capsem-admin` validation path.
+The only public `capsem-builder` helper commands are backend support commands
+used by just/CI: `doctor`, `validate-skills`, `agent`, `audit`, and `mcp`.
+There is no public `capsem-builder build`, `validate`, `inspect`, `--dry-run`,
+or render-only rail. If the product contract needs a new image input, add it to
+the profile/corp/settings config model and the `capsem-admin` validation path.
 
 ## Cross-compilation
 
