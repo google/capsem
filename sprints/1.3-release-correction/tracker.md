@@ -712,6 +712,22 @@ next one, and stage only the files for that slice.
     tests/test_release_doctor_contract.py::test_guest_network_doctor_exercises_oauth_fixture
     -q`. Full VM Ironbank rerun is intentionally held until the next asset
     swap; no rebuild was performed after the shutdown contract change.
+  - 2026-06-13 progress: local HTTP/SSE/WebSocket/OAuth/model doctor fixtures
+    no longer skip if `CAPSEM_MOCK_SERVER_BASE_URL` is missing or points at a
+    port outside the guest redirect allowlist. That is a release wiring failure
+    and now fails the diagnostic directly.
+  - Proof: RED
+    `uv run python -m pytest tests/test_release_doctor_contract.py::test_guest_network_doctor_requires_local_mock_server_instead_of_skipping -q`
+    failed on `pytest.skip`; GREEN local network doctor contract subset passed:
+    `uv run python -m pytest
+    tests/test_release_doctor_contract.py::test_guest_network_doctor_requires_local_mock_server_instead_of_skipping
+    tests/test_release_doctor_contract.py::test_guest_network_doctor_is_hermetic_by_default
+    tests/test_release_doctor_contract.py::test_guest_network_doctor_exercises_oauth_fixture
+    -q`. Additional proof: `uv run ruff check
+    guest/artifacts/diagnostics/test_network.py
+    tests/test_release_doctor_contract.py`; `python3 -m py_compile
+    guest/artifacts/diagnostics/test_network.py
+    tests/test_release_doctor_contract.py`.
 - [ ] RED/GREEN: doctor verifies DB ledger rows and rule/plugin evidence for
   allow/ask/block/disable/rewrite/pre/post/detection levels.
   - 2026-06-12 progress: `tests/ironbank/test_doctor_ledger.py` now proves the

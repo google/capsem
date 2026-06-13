@@ -57,6 +57,20 @@ def test_guest_network_doctor_exercises_oauth_fixture() -> None:
     assert "grant_type=authorization_code" in source
 
 
+def test_guest_network_doctor_requires_local_mock_server_instead_of_skipping() -> None:
+    diagnostics = PROJECT_ROOT / "guest" / "artifacts" / "diagnostics" / "test_network.py"
+    source = diagnostics.read_text()
+    helper = source.split("def _require_local_mock_url", maxsplit=1)[1].split(
+        "\n\n# ---------------------------------------------------------------",
+        maxsplit=1,
+    )[0]
+
+    assert "pytest.skip" not in helper
+    assert "pytest.fail" in helper
+    assert "LOCAL_MOCK_SERVER_ENV" in helper
+    assert 'LOCAL_MOCK_SERVER_ENV = "CAPSEM_MOCK_SERVER_BASE_URL"' in source
+
+
 def test_doctor_session_validation_starts_mock_server() -> None:
     source = (PROJECT_ROOT / "scripts" / "doctor_session_test.py").read_text()
 

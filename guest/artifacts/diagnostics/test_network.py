@@ -24,13 +24,13 @@ def _local_mock_url(path):
 def _require_local_mock_url(path, reason):
     url = _local_mock_url(path)
     if not url:
-        pytest.skip(
+        pytest.fail(
             f"{reason}; set {LOCAL_MOCK_SERVER_ENV} for deterministic local proof"
         )
     parsed = urlsplit(url)
     port = parsed.port or (443 if parsed.scheme == "https" else 80)
     if parsed.scheme == "http" and port not in (80, 3128, 3713, 8080, 11434):
-        pytest.skip(
+        pytest.fail(
             f"{reason}; local mock server port {port} is outside the "
             "default HTTP upstream allowlist"
         )

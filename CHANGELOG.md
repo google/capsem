@@ -59,6 +59,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tests and restored its default load to 50,000 requests at concurrency 64, so
   `just test` always produces meaningful local HTTP/SSE/WebSocket MITM
   baseline numbers through the shared mock server.
+- Hardened the in-VM network doctor so missing or unroutable
+  `CAPSEM_MOCK_SERVER_BASE_URL` fails the local HTTP/SSE/WebSocket/OAuth/model
+  proof instead of silently skipping deterministic protocol coverage.
 - Clarified the shared skills contract for profile `build.sh`: it is a
   rootfs-only build hook, not an installer/runtime/config path, and changes
   require profile descriptor updates, asset rebuilds, and black-box VM proof.
