@@ -163,6 +163,8 @@ def _package_probe_script() -> str:
         chmod 755 "$work/npm/bin/cli.js"
         npm install -g "file:$work/npm" >/tmp/ironbank-npm.log 2>&1
         ironbank-npm-pkg
+        printf 'IRONBANK:npx:'
+        npx --yes --package "file:$work/npm" ironbank-npm-pkg | sed 's/^IRONBANK:npm://'
 
         cat > "$work/deb/DEBIAN/control" <<'EOF'
         Package: ironbank-apt-tool
@@ -184,7 +186,7 @@ def _package_probe_script() -> str:
         apt-get install -y -qq "$work/ironbank-apt-tool.deb" >/tmp/ironbank-apt.log 2>&1
         ironbank-apt-tool "$work/payload.txt"
 
-        printf 'IRONBANK:complete:apt+npm+node+pip+uv\n'
+        printf 'IRONBANK:complete:apt+npm+npx+node+pip+uv\n'
         '''
     ).lstrip()
 
@@ -239,8 +241,9 @@ def test_package_managers_pay_their_ledger_debt_blackbox():
         assert "IRONBANK:pip:42" in stdout
         assert "IRONBANK:uv:uv:ironbank" in stdout
         assert "IRONBANK:npm:npm:realm" in stdout
+        assert "IRONBANK:npx:npm:realm" in stdout
         assert "IRONBANK:apt:apt:ironbank-package-bytes" in stdout
-        assert "IRONBANK:complete:apt+npm+node+pip+uv" in stdout
+        assert "IRONBANK:complete:apt+npm+npx+node+pip+uv" in stdout
         assert "No space left on device" not in stdout + stderr
         assert "Permission denied" not in stdout + stderr
         assert "externally-managed" not in (stdout + stderr).lower()

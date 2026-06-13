@@ -825,7 +825,7 @@ next one, and stage only the files for that slice.
     tests/ironbank/ -q -s` (`3 passed in 37.39s`). Remaining S5/S7 debt is
     still explicit below: MCP-native iron tests, streaming provider replay,
     ask/block/disable/rewrite/pre/post matrix, and full `just test`.
-- [ ] RED/GREEN: doctor/toolchain probes cover apt/dpkg triggers, Python, pip,
+- [x] RED/GREEN: doctor/toolchain probes cover apt/dpkg triggers, Python, pip,
   uv, Node, npm, npx, packaged CLIs, aliases, MCP bootstrap, DNS, TLS, FS
   writes.
   - 2026-06-12 progress: CA propagation is no longer implicit. Guest init now
@@ -877,10 +877,21 @@ next one, and stage only the files for that slice.
   - Proof: `uv run ruff check tests/helpers/package_probe.py
     tests/capsem-mcp/conftest.py tests/capsem-mcp/test_winter_is_coming.py
     tests/capsem-serial/test_lifecycle_benchmark.py`; `uv run python -m pytest
-    tests/capsem-mcp/test_winter_is_coming.py -q --tb=short`; and
+    tests/capsem-mcp/test_winter_is_coming.py -q --tb=short`;
     `CAPSEM_REQUIRE_ARTIFACTS=1 uv run python -m pytest
     tests/capsem-serial/test_lifecycle_benchmark.py::test_fork_benchmark -q
     --tb=short`.
+  - 2026-06-13 progress: Ironbank package-manager proof now includes `npx`
+    against the same generated local npm package used by the npm proof, so
+    no package-manager coverage depends on public registries or installed
+    package theater.
+  - Proof: RED `CAPSEM_TEST_PRESERVE_ALWAYS=1 uv run python -m pytest
+    tests/ironbank/test_package_managers.py::test_package_managers_pay_their_ledger_debt_blackbox
+    -q -s --tb=short` failed before the npx marker existed; GREEN same command
+    (`1 passed in 3.19s`); `uv run ruff check
+    tests/ironbank/test_package_managers.py`; full Ironbank
+    `CAPSEM_TEST_PRESERVE_ALWAYS=1 uv run python -m pytest tests/ironbank/
+    -q -s` (`3 passed in 37.95s`).
 - [x] RED/GREEN: cargo test runner codesigning is serialized so parallel test
   shards do not race while replacing ad-hoc signatures.
   - 2026-06-11 progress: `scripts/run_signed.sh` now uses a portable
