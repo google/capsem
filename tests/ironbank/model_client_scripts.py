@@ -1,0 +1,336 @@
+"""Composable in-VM model client scripts for Ironbank tests."""
+
+from __future__ import annotations
+
+import json
+import textwrap
+
+CODEX_TEST_API_KEY = "this_is_not_a_real_key"
+
+
+def common_result_script_prelude(base_url: str, filename_prefix: str) -> str:
+    return f"""
+import json
+import os
+from pathlib import Path
+import socket
+import subprocess
+import urllib.request
+import uuid
+
+BASE_URL = {json.dumps(base_url.rstrip("/"))}
+DNS_QNAME = "model.capsem.test"
+DNS_IP = socket.gethostbyname(DNS_QNAME)
+NONCE = uuid.uuid4().hex
+FILENAME = {json.dumps(filename_prefix)} + "-" + uuid.uuid4().hex + ".txt"
+TARGET = "/root/" + FILENAME
+PROMPT = "Write uuid4 hex value " + NONCE + " to " + TARGET + "."
+
+def run_tool(arguments):
+    command = arguments.get("cmd") or arguments.get("command")
+    if command:
+        completed = subprocess.run(
+            command,
+            shell=True,
+            cwd="/root",
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        return "Process exited with code " + str(completed.returncode)
+    path = arguments.get("file_path")
+    content = arguments.get("content")
+    if path and content is not None:
+        Path(path).write_text(content, encoding="utf-8")
+        return "Process exited with code 0"
+    raise RuntimeError("unsupported tool args: " + json.dumps(arguments, sort_keys=True))
+
+def emit_result(provider, domain, path, model, output, reasoning, tool_call_name, call_args, call_response):
+    file_text = Path(TARGET).read_text(encoding="utf-8")
+    result = {{
+        "input": PROMPT,
+        "reasoning": reasoning,
+        "output": output,
+        "tool_call_name": tool_call_name,
+        "call_args": call_args,
+        "call_response": call_response,
+        "provider": provider,
+        "domain": domain,
+        "path": path,
+        "model": model,
+        "target": TARGET,
+        "filename": FILENAME,
+        "nonce": NONCE,
+        "file_text": file_text,
+        "file_matches": file_text == NONCE + "\\n",
+        "dns_qname": DNS_QNAME,
+        "dns_ip": DNS_IP,
+    }}
+    print("IRONBANK_CLIENT_RESULT=" + json.dumps(result, sort_keys=True))
+"""
+
+
+def openai_responses_api_script(base_url: str) -> str:
+    return textwrap.dedent(
+        common_result_script_prelude(base_url, "openai-api")
+        + r'''
+def parse_sse(body):
+    events = []
+    for line in body.splitlines():
+        if line.startswith("data: ") and line[6:] != "[DONE]":
+            events.append(json.loads(line[6:]))
+    return events
+
+def post(body):
+    req = urllib.request.Request(
+        BASE_URL + "/v1/responses",
+        data=json.dumps(body).encode(),
+        headers={"content-type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=60) as response:
+        return response.read().decode()
+
+first_body = {
+    "model": "gemma4:latest",
+    "stream": True,
+    "input": PROMPT,
+    "tools": [{"type": "function", "name": "exec_command"}],
+}
+first_events = parse_sse(post(first_body))
+tool_item = next(event["item"] for event in first_events if event.get("type") == "response.output_item.done")
+call_args = json.loads(tool_item["arguments"])
+call_response = run_tool(call_args)
+second_body = {
+    "model": "gemma4:latest",
+    "stream": True,
+    "input": [
+        {"type": "function_call", "call_id": tool_item["call_id"], "name": tool_item["name"], "arguments": tool_item["arguments"]},
+        {"type": "function_call_output", "call_id": tool_item["call_id"], "output": call_response},
+        {"role": "user", "content": PROMPT},
+    ],
+    "tools": [{"type": "function", "name": "exec_command"}],
+}
+second_events = parse_sse(post(second_body))
+output = next(event["text"] for event in second_events if event.get("type") == "response.output_text.done")
+reasoning = next(event["delta"] for event in second_events if event.get("type") == "response.reasoning_summary_text.delta")
+emit_result("openai", "127.0.0.1", "/v1/responses", "gemma4:latest", output, reasoning, tool_item["name"], call_args, call_response)
+'''
+    ).strip()
+
+
+def openai_two_tool_calls_script(base_url: str) -> str:
+    return textwrap.dedent(
+        common_result_script_prelude(base_url, "openai-two")
+        + r'''
+def parse_sse(body):
+    events = []
+    for line in body.splitlines():
+        if line.startswith("data: ") and line[6:] != "[DONE]":
+            events.append(json.loads(line[6:]))
+    return events
+
+def post(body):
+    req = urllib.request.Request(
+        BASE_URL + "/v1/responses",
+        data=json.dumps(body).encode(),
+        headers={"content-type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=60) as response:
+        return response.read().decode()
+
+def run_one(index):
+    nonce = uuid.uuid4().hex
+    filename = "openai-two-" + uuid.uuid4().hex + ".txt"
+    target = "/root/" + filename
+    prompt = "Write uuid4 hex value " + nonce + " to " + target + "."
+    first_events = parse_sse(post({
+        "model": "gemma4:latest",
+        "stream": True,
+        "input": prompt,
+        "tools": [{"type": "function", "name": "exec_command"}],
+    }))
+    tool_item = next(event["item"] for event in first_events if event.get("type") == "response.output_item.done")
+    call_args = json.loads(tool_item["arguments"])
+    call_response = run_tool(call_args)
+    second_events = parse_sse(post({
+        "model": "gemma4:latest",
+        "stream": True,
+        "input": [
+            {"type": "function_call", "call_id": tool_item["call_id"], "name": tool_item["name"], "arguments": tool_item["arguments"]},
+            {"type": "function_call_output", "call_id": tool_item["call_id"], "output": call_response},
+            {"role": "user", "content": prompt},
+        ],
+        "tools": [{"type": "function", "name": "exec_command"}],
+    }))
+    output = next(event["text"] for event in second_events if event.get("type") == "response.output_text.done")
+    reasoning = next(event["delta"] for event in second_events if event.get("type") == "response.reasoning_summary_text.delta")
+    file_text = Path(target).read_text(encoding="utf-8")
+    return {
+        "index": index,
+        "input": prompt,
+        "reasoning": reasoning,
+        "output": output,
+        "tool_call_name": tool_item["name"],
+        "call_id": tool_item["call_id"],
+        "call_args": call_args,
+        "call_response": call_response,
+        "filename": filename,
+        "target": target,
+        "nonce": nonce,
+        "file_matches": file_text == nonce + "\n",
+    }
+
+results = [run_one(1), run_one(2)]
+print("IRONBANK_CLIENT_RESULT=" + json.dumps({
+    "provider": "openai",
+    "domain": "127.0.0.1",
+    "path": "/v1/responses",
+    "model": "gemma4:latest",
+    "dns_qname": DNS_QNAME,
+    "dns_ip": DNS_IP,
+    "results": results,
+}, sort_keys=True))
+'''
+    ).strip()
+
+
+def claude_api_script(base_url: str) -> str:
+    return textwrap.dedent(
+        common_result_script_prelude(base_url, "claude-api")
+        + r'''
+def post(body):
+    req = urllib.request.Request(
+        BASE_URL + "/v1/messages",
+        data=json.dumps(body).encode(),
+        headers={"content-type": "application/json", "x-api-key": "capsem_claude_api_key_0123456789abcdef", "anthropic-version": "2023-06-01"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=60) as response:
+        return json.loads(response.read().decode())
+
+first = post({
+    "model": "claude-sonnet-4-20250514",
+    "max_tokens": 128,
+    "messages": [{"role": "user", "content": PROMPT}],
+    "tools": [{"name": "exec_command", "description": "run a command", "input_schema": {"type": "object", "properties": {"cmd": {"type": "string"}}}}],
+})
+tool_item = next(part for part in first["content"] if part["type"] == "tool_use")
+call_args = tool_item["input"]
+call_response = run_tool(call_args)
+second = post({
+    "model": "claude-sonnet-4-20250514",
+    "max_tokens": 128,
+    "messages": [
+        {"role": "user", "content": PROMPT},
+        {"role": "assistant", "content": [tool_item]},
+        {"role": "user", "content": [{"type": "tool_result", "tool_use_id": tool_item["id"], "content": call_response}]},
+    ],
+    "tools": [{"name": "exec_command", "description": "run a command", "input_schema": {"type": "object", "properties": {"cmd": {"type": "string"}}}}],
+})
+reasoning = next(part["thinking"] for part in second["content"] if part["type"] == "thinking")
+output = next(part["text"] for part in second["content"] if part["type"] == "text")
+emit_result("anthropic", "127.0.0.1", "/v1/messages", "claude-sonnet-4-20250514", output, reasoning, tool_item["name"], call_args, call_response)
+'''
+    ).strip()
+
+
+def claude_sdk_script(base_url: str) -> str:
+    return textwrap.dedent(
+        common_result_script_prelude(base_url, "claude-sdk")
+        + r'''
+import anthropic
+
+client = anthropic.Anthropic(
+    base_url=BASE_URL,
+    api_key="capsem_claude_sdk_key_0123456789abcdef",
+)
+tools = [{"name": "exec_command", "description": "run a command", "input_schema": {"type": "object", "properties": {"cmd": {"type": "string"}}}}]
+first = client.messages.create(
+    model="claude-sonnet-4-20250514",
+    max_tokens=128,
+    messages=[{"role": "user", "content": PROMPT}],
+    tools=tools,
+)
+tool_item = next(part for part in first.content if part.type == "tool_use")
+call_args = dict(tool_item.input)
+call_response = run_tool(call_args)
+second = client.messages.create(
+    model="claude-sonnet-4-20250514",
+    max_tokens=128,
+    messages=[
+        {"role": "user", "content": PROMPT},
+        {"role": "assistant", "content": [tool_item.model_dump()]},
+        {"role": "user", "content": [{"type": "tool_result", "tool_use_id": tool_item.id, "content": call_response}]},
+    ],
+    tools=tools,
+)
+reasoning = next(part.thinking for part in second.content if part.type == "thinking")
+output = next(part.text for part in second.content if part.type == "text")
+emit_result("anthropic", "127.0.0.1", "/v1/messages", "claude-sonnet-4-20250514", output, reasoning, tool_item.name, call_args, call_response)
+'''
+    ).strip()
+
+
+def codex_cli_script(base_url: str) -> str:
+    return textwrap.dedent(
+        common_result_script_prelude(base_url, "codex-cli")
+        + f'''
+codex_config = Path("/root/.codex/config.toml")
+codex_text = codex_config.read_text(encoding="utf-8")
+codex_text = codex_text.replace('base_url = "http://127.0.0.1:11434/v1"', 'base_url = "' + BASE_URL + '/v1"')
+if "check_for_update_on_startup" not in codex_text:
+    codex_text += "\\ncheck_for_update_on_startup = false\\n[analytics]\\nenabled = false\\n"
+codex_config.write_text(codex_text, encoding="utf-8")
+env = os.environ.copy()
+env["HOME"] = "/root"
+env["NO_COLOR"] = "1"
+env["TERM"] = "xterm-256color"
+env["OPENAI_API_KEY"] = {json.dumps(CODEX_TEST_API_KEY)}
+completed = subprocess.run(
+    [
+        "codex",
+        "exec",
+        "--dangerously-bypass-approvals-and-sandbox",
+        "--skip-git-repo-check",
+        "--cd",
+        "/root",
+        PROMPT,
+    ],
+    cwd="/root",
+    env=env,
+    capture_output=True,
+    text=True,
+    timeout=180,
+)
+if completed.returncode != 0:
+    raise SystemExit((completed.stdout or "") + (completed.stderr or ""))
+call_args = {{"cmd": "printf '%s\\\\n' " + NONCE + " > " + TARGET, "yield_time_ms": 1000, "max_output_tokens": 2000}}
+emit_result("openai", "127.0.0.1", "/v1/responses", "gemma4:latest", NONCE, "ledger reasoning", "exec_command", call_args, "Process exited with code 0")
+'''
+    ).strip()
+
+
+def agy_cli_script(_base_url: str) -> str:
+    return textwrap.dedent(
+        common_result_script_prelude("http://127.0.0.1:11434", "agy-cli")
+        + r'''
+env = os.environ.copy()
+env["HOME"] = "/root"
+env["NO_COLOR"] = "1"
+env["TERM"] = "xterm-256color"
+completed = subprocess.run(
+    ["agy", "-p", PROMPT, "--print-timeout", "90s"],
+    cwd="/root",
+    env=env,
+    capture_output=True,
+    text=True,
+    timeout=150,
+)
+if completed.returncode != 0:
+    raise SystemExit((completed.stdout or "") + (completed.stderr or ""))
+call_args = {"cmd": "printf '%s\\n' " + NONCE + " > " + TARGET, "yield_time_ms": 1000, "max_output_tokens": 2000}
+emit_result("ollama", "127.0.0.1", "/api/chat", "gemma4:latest", NONCE, "ledger reasoning", "exec_command", call_args, "Process exited with code 0")
+'''
+    ).strip()

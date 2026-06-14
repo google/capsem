@@ -47,6 +47,13 @@ next one, and stage only the files for that slice.
     4 `net_events`, 1 `dns_events` row, 2 `tool_calls`, 2 `tool_responses`, 2
     created `fs_events`, plus `security_rule_events` coverage for model, HTTP,
     DNS, and file event IDs.
+  - 2026-06-14 progress: split the model-client Ironbank helpers into
+    composable script builders (`tests/ironbank/model_client_scripts.py`) and
+    shared ledger assertions (`tests/ironbank/model_client_assertions.py`).
+    Codex now uses the explicit non-secret fixture marker
+    `this_is_not_a_real_key` and asserts truthful file-import forensic rows;
+    credential-broker raw-secret non-leak proof remains in broker/credential
+    cases, not the Codex model-client fixture.
   - Product fix: model tool-call arguments now register bounded workspace
     file-path trace hints in `TraceState`; the fs monitor uses those hints
     before emission so `fs_events.trace_id` and matching security-rule rows
@@ -76,8 +83,15 @@ next one, and stage only the files for that slice.
     tests/ironbank/test_model_client_ledger_contract.py
     tests/ironbank/model_ledger.py`; `cargo build -p capsem-service -p
     capsem-process -p capsem-mcp-builtin`; `uv run pytest
-    tests/ironbank/test_model_client_ledger_contract.py::test_openai_two_tool_calls_have_exact_item_cardinality_red
-    -q -s`; `cargo check -p capsem-core -p capsem-logger -p capsem-process -p
+    tests/ironbank/test_model_client_ledger_contract.py::test_openai_two_tool_calls_have_exact_item_cardinality
+    -q -s`; `uv run ruff check
+    tests/ironbank/model_client_assertions.py
+    tests/ironbank/model_client_scripts.py tests/ironbank/model_ledger.py
+    tests/ironbank/test_model_client_ledger_contract.py`; `uv run pytest
+    tests/ironbank/test_model_client_ledger_contract.py::test_openai_responses_api_ledger_contract
+    tests/ironbank/test_model_client_ledger_contract.py::test_openai_two_tool_calls_have_exact_item_cardinality
+    tests/ironbank/test_model_client_ledger_contract.py::test_codex_cli_ledger_contract
+    -q -s --tb=short`; `cargo check -p capsem-core -p capsem-logger -p capsem-process -p
     capsem-service -p capsem-mcp-builtin`; `cargo test -p capsem-process
     runtime_config -- --nocapture`; `cargo test -p capsem-service
     runtime_profile -- --nocapture`; `cargo test -p capsem-mcp-builtin

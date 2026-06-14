@@ -7,6 +7,7 @@ from dataclasses import dataclass
 import json
 import re
 import sqlite3
+import time
 from pathlib import Path
 from typing import Any
 
@@ -145,15 +146,27 @@ def assert_model_ledger_exchange(spec: ModelLedgerSpec, run: ModelLedgerRun) -> 
         ).fetchall()
         assert len(net_rows) >= len(upstream_records), [dict(row) for row in net_rows]
         net_rows = net_rows[-len(upstream_records) :]
-        for row in net_rows:
+        for row, upstream in zip(net_rows, upstream_records, strict=True):
             _assert_event_id(row["event_id"])
             assert row["method"] == "POST"
             assert row["status_code"] == 200
             assert row["decision"] == "allowed"
             assert row["bytes_sent"] > 0
             assert row["bytes_received"] > 0
-            assert spec.input in (row["request_body_preview"] or "")
-            assert spec.tool_call_name in (row["response_body_preview"] or "")
+            request_preview = row["request_body_preview"] or ""
+            response_preview = row["response_body_preview"] or ""
+            upstream_request = upstream["request_body"]
+            upstream_response = upstream["response_body"]
+            if spec.input in upstream_request:
+                assert spec.input in request_preview, dict(row)
+            if spec.call_response in upstream_request:
+                assert spec.call_response in request_preview, dict(row)
+            if spec.tool_call_name in upstream_response:
+                assert spec.tool_call_name in response_preview, dict(row)
+            if spec.output in upstream_response:
+                assert spec.output in response_preview, dict(row)
+            if spec.reasoning and spec.reasoning in upstream_response:
+                assert spec.reasoning in response_preview, dict(row)
 
         _assert_security_rows(conn, [row["event_id"] for row in (*model_rows, *net_rows)])
         _assert_tool_output_file(conn, spec)
@@ -262,15 +275,21 @@ def _assert_tool_output_file(conn: sqlite3.Connection, spec: ModelLedgerSpec) ->
     if not match:
         return
     path = Path(match.group(1)).name
-    rows = conn.execute(
-        """
-        SELECT *
-        FROM fs_events
-        WHERE name = ? OR path = ?
-        ORDER BY id
-        """,
-        (path, path),
-    ).fetchall()
+    deadline = time.monotonic() + 15.0
+    rows = []
+    while time.monotonic() < deadline:
+        rows = conn.execute(
+            """
+            SELECT *
+            FROM fs_events
+            WHERE name = ? OR path = ?
+            ORDER BY id
+            """,
+            (path, path),
+        ).fetchall()
+        if rows:
+            break
+        time.sleep(0.25)
     assert rows, f"missing fs_events for tool output {path}"
     assert any(row["action"] in {"created", "modified", "export"} for row in rows)
     assert all(row["name"] in {path, None} for row in rows)

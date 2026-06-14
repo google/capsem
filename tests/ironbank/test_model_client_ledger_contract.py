@@ -21,7 +21,16 @@ import pytest
 from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
 from helpers.mock_server import MOCK_SERVER_BINARY, start_mock_server, stop_process
 from helpers.service import ServiceInstance, wait_exec_ready, vm_name
-from ironbank.model_ledger import ModelLedgerRun, ModelLedgerSpec, assert_model_ledger_exchange
+from ironbank.model_client_assertions import assert_one_model_client
+from ironbank.model_client_scripts import (
+    CODEX_TEST_API_KEY,
+    agy_cli_script,
+    claude_api_script,
+    claude_sdk_script,
+    codex_cli_script,
+    openai_responses_api_script,
+    openai_two_tool_calls_script,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -116,6 +125,18 @@ def model_client_env():
 
                 [network.dns]
                 upstreams = [{json.dumps(ready["dns_udp_addr"])}]
+
+                [settings."security.web.http_upstream_ports"]
+                value = [80, 3713, 8080]
+                modified = "2026-06-14T00:00:00Z"
+
+                [corp.rules.allow_ironbank_mock_model_server]
+                name = "allow_ironbank_mock_model_server"
+                action = "allow"
+                priority = -100
+                detection_level = "informational"
+                reason = "Allow the hermetic Ironbank model fixture while preserving local-network ask defaults."
+                match = 'http.host == "127.0.0.1" && tcp.port == "3713" && (http.path == "/v1/responses" || http.path == "/v1/messages" || http.path == "/api/chat")'
                 """
             ).strip()
             + "\n",
@@ -164,366 +185,14 @@ def model_client_env():
             os.environ["CAPSEM_CORP_CONFIG"] = old_corp_config
 
 
-def _common_result_script_prelude(base_url: str, filename_prefix: str) -> str:
-    return f"""
-import json
-import os
-from pathlib import Path
-import socket
-import subprocess
-import urllib.request
-import uuid
-
-BASE_URL = {json.dumps(base_url.rstrip("/"))}
-DNS_QNAME = "model.capsem.test"
-DNS_IP = socket.gethostbyname(DNS_QNAME)
-NONCE = uuid.uuid4().hex
-FILENAME = {json.dumps(filename_prefix)} + "-" + uuid.uuid4().hex + ".txt"
-TARGET = "/root/" + FILENAME
-PROMPT = "Write uuid4 hex value " + NONCE + " to " + TARGET + "."
-
-def run_tool(arguments):
-    command = arguments.get("cmd") or arguments.get("command")
-    if command:
-        completed = subprocess.run(
-            command,
-            shell=True,
-            cwd="/root",
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-        return "Process exited with code " + str(completed.returncode)
-    path = arguments.get("file_path")
-    content = arguments.get("content")
-    if path and content is not None:
-        Path(path).write_text(content, encoding="utf-8")
-        return "Process exited with code 0"
-    raise RuntimeError("unsupported tool args: " + json.dumps(arguments, sort_keys=True))
-
-def emit_result(provider, domain, path, model, output, reasoning, tool_call_name, call_args, call_response):
-    file_text = Path(TARGET).read_text(encoding="utf-8")
-    result = {{
-        "input": PROMPT,
-        "reasoning": reasoning,
-        "output": output,
-        "tool_call_name": tool_call_name,
-        "call_args": call_args,
-        "call_response": call_response,
-        "provider": provider,
-        "domain": domain,
-        "path": path,
-        "model": model,
-        "target": TARGET,
-        "filename": FILENAME,
-        "nonce": NONCE,
-        "file_text": file_text,
-        "file_matches": file_text == NONCE + "\\n",
-        "dns_qname": DNS_QNAME,
-        "dns_ip": DNS_IP,
-    }}
-    print("IRONBANK_CLIENT_RESULT=" + json.dumps(result, sort_keys=True))
-"""
-
-
-def _openai_responses_api_script(base_url: str) -> str:
-    return textwrap.dedent(
-        _common_result_script_prelude(base_url, "openai-api")
-        + r'''
-def parse_sse(body):
-    events = []
-    for line in body.splitlines():
-        if line.startswith("data: ") and line[6:] != "[DONE]":
-            events.append(json.loads(line[6:]))
-    return events
-
-def post(body):
-    req = urllib.request.Request(
-        BASE_URL + "/v1/responses",
-        data=json.dumps(body).encode(),
-        headers={"content-type": "application/json"},
-        method="POST",
-    )
-    with urllib.request.urlopen(req, timeout=60) as response:
-        return response.read().decode()
-
-first_body = {
-    "model": "gemma4:latest",
-    "stream": True,
-    "input": PROMPT,
-    "tools": [{"type": "function", "name": "exec_command"}],
-}
-first_events = parse_sse(post(first_body))
-tool_item = next(event["item"] for event in first_events if event.get("type") == "response.output_item.done")
-call_args = json.loads(tool_item["arguments"])
-call_response = run_tool(call_args)
-second_body = {
-    "model": "gemma4:latest",
-    "stream": True,
-    "input": [
-        {"type": "function_call", "call_id": tool_item["call_id"], "name": tool_item["name"], "arguments": tool_item["arguments"]},
-        {"type": "function_call_output", "call_id": tool_item["call_id"], "output": call_response},
-        {"role": "user", "content": PROMPT},
-    ],
-    "tools": [{"type": "function", "name": "exec_command"}],
-}
-second_events = parse_sse(post(second_body))
-output = next(event["text"] for event in second_events if event.get("type") == "response.output_text.done")
-reasoning = next(event["delta"] for event in second_events if event.get("type") == "response.reasoning_summary_text.delta")
-emit_result("openai", "127.0.0.1", "/v1/responses", "gemma4:latest", output, reasoning, tool_item["name"], call_args, call_response)
-'''
-    ).strip()
-
-
-def _openai_two_tool_calls_script(base_url: str) -> str:
-    return textwrap.dedent(
-        _common_result_script_prelude(base_url, "openai-two")
-        + r'''
-def parse_sse(body):
-    events = []
-    for line in body.splitlines():
-        if line.startswith("data: ") and line[6:] != "[DONE]":
-            events.append(json.loads(line[6:]))
-    return events
-
-def post(body):
-    req = urllib.request.Request(
-        BASE_URL + "/v1/responses",
-        data=json.dumps(body).encode(),
-        headers={"content-type": "application/json"},
-        method="POST",
-    )
-    with urllib.request.urlopen(req, timeout=60) as response:
-        return response.read().decode()
-
-def run_one(index):
-    nonce = uuid.uuid4().hex
-    filename = "openai-two-" + uuid.uuid4().hex + ".txt"
-    target = "/root/" + filename
-    prompt = "Write uuid4 hex value " + nonce + " to " + target + "."
-    first_events = parse_sse(post({
-        "model": "gemma4:latest",
-        "stream": True,
-        "input": prompt,
-        "tools": [{"type": "function", "name": "exec_command"}],
-    }))
-    tool_item = next(event["item"] for event in first_events if event.get("type") == "response.output_item.done")
-    call_args = json.loads(tool_item["arguments"])
-    call_response = run_tool(call_args)
-    second_events = parse_sse(post({
-        "model": "gemma4:latest",
-        "stream": True,
-        "input": [
-            {"type": "function_call", "call_id": tool_item["call_id"], "name": tool_item["name"], "arguments": tool_item["arguments"]},
-            {"type": "function_call_output", "call_id": tool_item["call_id"], "output": call_response},
-            {"role": "user", "content": prompt},
-        ],
-        "tools": [{"type": "function", "name": "exec_command"}],
-    }))
-    output = next(event["text"] for event in second_events if event.get("type") == "response.output_text.done")
-    reasoning = next(event["delta"] for event in second_events if event.get("type") == "response.reasoning_summary_text.delta")
-    file_text = Path(target).read_text(encoding="utf-8")
-    return {
-        "index": index,
-        "input": prompt,
-        "reasoning": reasoning,
-        "output": output,
-        "tool_call_name": tool_item["name"],
-        "call_id": tool_item["call_id"],
-        "call_args": call_args,
-        "call_response": call_response,
-        "filename": filename,
-        "target": target,
-        "nonce": nonce,
-        "file_matches": file_text == nonce + "\n",
-    }
-
-results = [run_one(1), run_one(2)]
-print("IRONBANK_CLIENT_RESULT=" + json.dumps({
-    "provider": "openai",
-    "domain": "127.0.0.1",
-    "path": "/v1/responses",
-    "model": "gemma4:latest",
-    "dns_qname": DNS_QNAME,
-    "dns_ip": DNS_IP,
-    "results": results,
-}, sort_keys=True))
-'''
-    ).strip()
-
-
-def _claude_api_script(base_url: str) -> str:
-    return textwrap.dedent(
-        _common_result_script_prelude(base_url, "claude-api")
-        + r'''
-def post(body):
-    req = urllib.request.Request(
-        BASE_URL + "/v1/messages",
-        data=json.dumps(body).encode(),
-        headers={"content-type": "application/json", "x-api-key": "capsem_claude_api_key_0123456789abcdef", "anthropic-version": "2023-06-01"},
-        method="POST",
-    )
-    with urllib.request.urlopen(req, timeout=60) as response:
-        return json.loads(response.read().decode())
-
-first = post({
-    "model": "claude-sonnet-4-20250514",
-    "max_tokens": 128,
-    "messages": [{"role": "user", "content": PROMPT}],
-    "tools": [{"name": "exec_command", "description": "run a command", "input_schema": {"type": "object", "properties": {"cmd": {"type": "string"}}}}],
-})
-tool_item = next(part for part in first["content"] if part["type"] == "tool_use")
-call_args = tool_item["input"]
-call_response = run_tool(call_args)
-second = post({
-    "model": "claude-sonnet-4-20250514",
-    "max_tokens": 128,
-    "messages": [
-        {"role": "user", "content": PROMPT},
-        {"role": "assistant", "content": [tool_item]},
-        {"role": "user", "content": [{"type": "tool_result", "tool_use_id": tool_item["id"], "content": call_response}]},
-    ],
-    "tools": [{"name": "exec_command", "description": "run a command", "input_schema": {"type": "object", "properties": {"cmd": {"type": "string"}}}}],
-})
-reasoning = next(part["thinking"] for part in second["content"] if part["type"] == "thinking")
-output = next(part["text"] for part in second["content"] if part["type"] == "text")
-emit_result("anthropic", "127.0.0.1", "/v1/messages", "claude-sonnet-4-20250514", output, reasoning, tool_item["name"], call_args, call_response)
-'''
-    ).strip()
-
-
-def _claude_sdk_script(base_url: str) -> str:
-    return textwrap.dedent(
-        _common_result_script_prelude(base_url, "claude-sdk")
-        + r'''
-import anthropic
-
-client = anthropic.Anthropic(
-    base_url=BASE_URL,
-    api_key="capsem_claude_sdk_key_0123456789abcdef",
-)
-tools = [{"name": "exec_command", "description": "run a command", "input_schema": {"type": "object", "properties": {"cmd": {"type": "string"}}}}]
-first = client.messages.create(
-    model="claude-sonnet-4-20250514",
-    max_tokens=128,
-    messages=[{"role": "user", "content": PROMPT}],
-    tools=tools,
-)
-tool_item = next(part for part in first.content if part.type == "tool_use")
-call_args = dict(tool_item.input)
-call_response = run_tool(call_args)
-second = client.messages.create(
-    model="claude-sonnet-4-20250514",
-    max_tokens=128,
-    messages=[
-        {"role": "user", "content": PROMPT},
-        {"role": "assistant", "content": [tool_item.model_dump()]},
-        {"role": "user", "content": [{"type": "tool_result", "tool_use_id": tool_item.id, "content": call_response}]},
-    ],
-    tools=tools,
-)
-reasoning = next(part.thinking for part in second.content if part.type == "thinking")
-output = next(part.text for part in second.content if part.type == "text")
-emit_result("anthropic", "127.0.0.1", "/v1/messages", "claude-sonnet-4-20250514", output, reasoning, tool_item.name, call_args, call_response)
-'''
-    ).strip()
-
-
-def _codex_cli_script(base_url: str) -> str:
-    return textwrap.dedent(
-        _common_result_script_prelude(base_url, "codex-cli")
-        + r'''
-codex_config = Path("/root/.codex/config.toml")
-codex_text = codex_config.read_text(encoding="utf-8")
-codex_text = codex_text.replace('base_url = "http://127.0.0.1:11434/v1"', 'base_url = "' + BASE_URL + '/v1"')
-if "check_for_update_on_startup" not in codex_text:
-    codex_text += "\ncheck_for_update_on_startup = false\n[analytics]\nenabled = false\n"
-codex_config.write_text(codex_text, encoding="utf-8")
-env = os.environ.copy()
-env["HOME"] = "/root"
-env["NO_COLOR"] = "1"
-env["TERM"] = "xterm-256color"
-env["OPENAI_API_KEY"] = "capsem_codex_cli_key_0123456789abcdef"
-completed = subprocess.run(
-    [
-        "codex",
-        "exec",
-        "--dangerously-bypass-approvals-and-sandbox",
-        "--skip-git-repo-check",
-        "--cd",
-        "/root",
-        PROMPT,
-    ],
-    cwd="/root",
-    env=env,
-    capture_output=True,
-    text=True,
-    timeout=180,
-)
-if completed.returncode != 0:
-    raise SystemExit((completed.stdout or "") + (completed.stderr or ""))
-call_args = {"cmd": "printf '%s\\n' " + NONCE + " > " + TARGET, "yield_time_ms": 1000, "max_output_tokens": 2000}
-emit_result("openai", "127.0.0.1", "/v1/responses", "gemma4:latest", NONCE, "ledger reasoning", "exec_command", call_args, "Process exited with code 0")
-'''
-    ).strip()
-
-
-def _agy_cli_script(_base_url: str) -> str:
-    return textwrap.dedent(
-        _common_result_script_prelude("http://127.0.0.1:11434", "agy-cli")
-        + r'''
-env = os.environ.copy()
-env["HOME"] = "/root"
-env["NO_COLOR"] = "1"
-env["TERM"] = "xterm-256color"
-completed = subprocess.run(
-    ["agy", "-p", PROMPT, "--print-timeout", "90s"],
-    cwd="/root",
-    env=env,
-    capture_output=True,
-    text=True,
-    timeout=150,
-)
-if completed.returncode != 0:
-    raise SystemExit((completed.stdout or "") + (completed.stderr or ""))
-call_args = {"cmd": "printf '%s\\n' " + NONCE + " > " + TARGET, "yield_time_ms": 1000, "max_output_tokens": 2000}
-emit_result("ollama", "127.0.0.1", "/api/chat", "gemma4:latest", NONCE, "ledger reasoning", "exec_command", call_args, "Process exited with code 0")
-'''
-    ).strip()
-
-
-def _assert_one_client(env: ModelClientEnv, script: str, *, raw_secrets: tuple[str, ...] = ()) -> None:
-    result = env.run_python(script)
-    assert result["file_matches"] is True, result
-    spec = ModelLedgerSpec(
-        input=result["input"],
-        reasoning=result["reasoning"],
-        output=result["output"],
-        tool_call_name=result["tool_call_name"],
-        call_args=result["call_args"],
-        call_response=result["call_response"],
-        provider=result["provider"],
-        domain=result["domain"],
-        path=result["path"],
-        model=result["model"],
-    )
-    run = ModelLedgerRun(
-        db_path=env.db_path,
-        upstream_transcript_path=env.upstream_transcript_path,
-        log_paths=env.log_paths,
-        raw_secrets=raw_secrets,
-    )
-    assert_model_ledger_exchange(spec, run)
-
-
 def test_openai_responses_api_ledger_contract(model_client_env: ModelClientEnv):
-    _assert_one_client(model_client_env, _openai_responses_api_script(model_client_env.mock_base_url))
+    assert_one_model_client(model_client_env, openai_responses_api_script(model_client_env.mock_base_url))
 
 
-def test_openai_two_tool_calls_have_exact_item_cardinality_red(
+def test_openai_two_tool_calls_have_exact_item_cardinality(
     model_client_env: ModelClientEnv,
 ):
-    result = model_client_env.run_python(_openai_two_tool_calls_script(model_client_env.mock_base_url))
+    result = model_client_env.run_python(openai_two_tool_calls_script(model_client_env.mock_base_url))
     assert len(result["results"]) == 2, result
     assert all(item["file_matches"] for item in result["results"]), result
     assert len({item["call_id"] for item in result["results"]}) == 2, result
@@ -736,28 +405,28 @@ def test_openai_two_tool_calls_have_exact_item_cardinality_red(
 
 
 def test_codex_cli_ledger_contract(model_client_env: ModelClientEnv):
-    _assert_one_client(
+    assert_one_model_client(
         model_client_env,
-        _codex_cli_script(model_client_env.mock_base_url),
-        raw_secrets=("capsem_codex_cli_key_0123456789abcdef",),
+        codex_cli_script(model_client_env.mock_base_url),
+        expected_imported_text=CODEX_TEST_API_KEY,
     )
 
 
 def test_claude_http_api_ledger_contract(model_client_env: ModelClientEnv):
-    _assert_one_client(
+    assert_one_model_client(
         model_client_env,
-        _claude_api_script(model_client_env.mock_base_url),
+        claude_api_script(model_client_env.mock_base_url),
         raw_secrets=("capsem_claude_api_key_0123456789abcdef",),
     )
 
 
 def test_claude_sdk_ledger_contract(model_client_env: ModelClientEnv):
-    _assert_one_client(
+    assert_one_model_client(
         model_client_env,
-        _claude_sdk_script(model_client_env.mock_base_url),
+        claude_sdk_script(model_client_env.mock_base_url),
         raw_secrets=("capsem_claude_sdk_key_0123456789abcdef",),
     )
 
 
 def test_agy_cli_ledger_contract(model_client_env: ModelClientEnv):
-    _assert_one_client(model_client_env, _agy_cli_script(model_client_env.mock_base_url))
+    assert_one_model_client(model_client_env, agy_cli_script(model_client_env.mock_base_url))
