@@ -701,6 +701,28 @@ next one, and stage only the files for that slice.
     tests/ironbank/test_http_protocol_ledger.py::test_plain_json_http_request_pays_full_ledger_debt_blackbox
     -q -s --tb=short` (`1 passed in 4.48s`). Remaining HTTP cases stay open
     below.
+  - 2026-06-14 progress: extended the HTTP Ironbank proof with a CEL-denied
+    plain JSON `POST /deny-target` case. The RED run first exposed a test
+    assumption that empty upstream transcripts may not create a file, then
+    exposed the product gap: denied HTTP telemetry recorded `bytes_sent = 0`
+    and no response body preview even though MITM had already collected the
+    request body and returned a client-visible 403. GREEN seeds denied
+    telemetry from the collected request body and uses the normal response
+    preview cap, proving no upstream request, exact 403 body, `net_events`,
+    `security_rule_events`, UDS inspect, HTTP gateway inspect, security
+    latest/status, `/vms/list` denied counters, and structured logs agree.
+  - Proof: RED `cargo build -p capsem-service -p capsem-process -p
+    capsem-gateway && uv run pytest
+    tests/ironbank/test_http_protocol_ledger.py::test_denied_http_request_pays_full_ledger_debt_blackbox
+    -q -s --tb=short` failed on `bytes_sent = 0`; GREEN `cargo fmt --check`;
+    `uv run ruff check tests/ironbank/test_http_protocol_ledger.py`; `cargo
+    build -p capsem-service -p capsem-process -p capsem-gateway && uv run
+    pytest
+    tests/ironbank/test_http_protocol_ledger.py::test_denied_http_request_pays_full_ledger_debt_blackbox
+    -q -s --tb=short` (`1 passed in 4.39s`); full HTTP file `cargo build -p
+    capsem-service -p capsem-process -p capsem-gateway && uv run pytest
+    tests/ironbank/test_http_protocol_ledger.py -q -s --tb=short` (`2 passed
+    in 7.22s`). Remaining HTTP cases stay open below.
   - Required protocol specs:
     - HTTP must have at least twelve full-chain cases:
       1. accepted plain JSON request/response;

@@ -1401,6 +1401,19 @@ async fn handle_request(
         Collected(Bytes),
     }
 
+    fn collected_request_body_stats(
+        request_body_source: &RequestBodySource,
+        max_preview: usize,
+    ) -> Arc<Mutex<BodyStats>> {
+        let mut stats = BodyStats::new(max_preview);
+        if let RequestBodySource::Collected(body) = request_body_source {
+            stats.bytes = body.len() as u64;
+            let to_copy = max_preview.min(body.len());
+            stats.preview.extend_from_slice(&body[..to_copy]);
+        }
+        Arc::new(Mutex::new(stats))
+    }
+
     let mut effective_ai_provider = ai_provider;
     let mut sniffed_model_request = false;
     let mut observed_mcp_request: Option<ObservedMcpHttpRequest> = None;
@@ -1570,8 +1583,8 @@ async fn handle_request(
             request_headers: Some(req_hdrs.clone()),
             response_headers: None,
             start_time,
-            request_body_stats: Arc::new(Mutex::new(BodyStats::new(0))),
-            max_response_preview: 0,
+            request_body_stats: collected_request_body_stats(&request_body_source, max_body),
+            max_response_preview: max_body,
             port: upstream_port,
             conn_type,
             policy_mode: request_security_decision.policy_mode.clone(),

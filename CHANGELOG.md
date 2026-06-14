@@ -22,6 +22,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   transcript, `net_events`, `security_rule_events`, UDS inspect, gateway
   inspect, timeline, security status/latest, VM status counters, and structured
   service/gateway logs.
+- Fixed blocked HTTP telemetry so CEL-denied requests now keep request byte
+  counts, request previews, and client-visible denial response previews in the
+  same ledger path as allowed requests, with Ironbank proof that the denied
+  request never reaches the upstream fixture.
 - Tightened Ironbank model/client coverage so the mock server replays an
   Ollama-compatible OpenAI chat-completion shape with native tool calls, the
   OpenAI SDK/Anthropic SDK/LiteLLM/Ollama SDK/Codex CLI paths assert full

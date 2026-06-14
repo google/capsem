@@ -129,6 +129,13 @@ prove the same rails without user credentials.
   `net_events`, `security_rule_events`, UDS inspect, gateway inspect, timeline,
   security latest/status, VM counters, and structured logs agree for one
   request. The broader HTTP matrix remains open.
+- Ironbank/HTTP denied progress on 2026-06-14: the same test file now covers a
+  CEL-blocked plain JSON request. RED proved denied HTTP rows recorded
+  `bytes_sent = 0` and no denial response preview even though MITM had already
+  read the request body. GREEN seeds denied-request telemetry from the
+  collected body and proves the 403 body, request bytes, response bytes,
+  security row, UDS/gateway inspect rows, counters, logs, and empty upstream
+  transcript all agree. The remaining HTTP cases still stay open.
 - Ironbank/MCP progress on 2026-06-13: native profile MCP calls now use the
   same logged MCP JSON-RPC rail as framed guest MCP instead of calling the
   aggregator directly. Focused RED/GREEN coverage proves `capsem_mcp_call`
