@@ -1490,6 +1490,9 @@ fn security_event_forensic_json(event: &SecurityEvent) -> serde_json::Value {
         "model": event.model,
         "file": event.file,
         "process": event.process,
+        "ip": event.ip,
+        "tcp": event.tcp,
+        "udp": event.udp,
     })
 }
 
@@ -1932,6 +1935,7 @@ pub struct HttpSecurityEvent {
     pub host: Option<String>,
     pub method: Option<String>,
     pub path: Option<String>,
+    pub query: Option<String>,
     pub status: Option<String>,
     pub body: Option<String>,
 }
@@ -1943,6 +1947,7 @@ impl HttpSecurityEvent {
             "host" => borrowed_string(self.host.as_deref()),
             "method" => borrowed_string(self.method.as_deref()),
             "path" => borrowed_string(self.path.as_deref()),
+            "query" => borrowed_string(self.query.as_deref()),
             "status" => borrowed_string(self.status.as_deref()),
             "body" => borrowed_string(self.body.as_deref()),
             _ => None,

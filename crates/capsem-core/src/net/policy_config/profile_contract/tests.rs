@@ -429,6 +429,44 @@ fn profile_download_assets_uses_file_url_same_status_path() {
 }
 
 #[test]
+fn active_profile_materializes_corp_network_mechanics() {
+    let fixture = ProfileFixture::new();
+    let profile = Profile::load_from_dir(fixture.profile_dir()).expect("profile loads");
+    let corp: SettingsFile = toml::from_str(
+        r#"
+refresh_policy = "24h"
+
+[settings."vm.resources.log_bodies"]
+value = true
+modified = "2026-06-14T00:00:00Z"
+
+[settings."vm.resources.max_body_capture"]
+value = 8192
+modified = "2026-06-14T00:00:00Z"
+
+[settings."security.web.http_upstream_ports"]
+value = [80, 3713, 8080]
+modified = "2026-06-14T00:00:00Z"
+
+[network.dns]
+upstreams = ["127.0.0.1:5353"]
+"#,
+    )
+    .expect("corp TOML parses");
+
+    let active = ActiveProfileFile::from_profile_and_corp(&profile, &corp, BTreeMap::new())
+        .expect("active profile materializes");
+
+    assert_eq!(active.network.log_bodies, Some(true));
+    assert_eq!(active.network.max_body_capture, Some(8192));
+    assert_eq!(active.network.http_upstream_ports, vec![80, 3713, 8080]);
+    assert_eq!(
+        active.network.dns.upstreams,
+        vec!["127.0.0.1:5353".to_string()]
+    );
+}
+
+#[test]
 fn profile_mcp_tool_permission_mutation_updates_rule_and_pin() {
     let fixture = ProfileFixture::new();
     let mut profile = Profile::load_from_dir(fixture.profile_dir()).expect("profile loads");

@@ -648,6 +648,34 @@ fn built_in_local_network_guard_asks_unless_explicit_ollama_rule_allows() {
                 && rule.action == SecurityRuleAction::Ask),
         "the default guard must still be visible in the ledger when local backend access is allowed"
     );
+
+    let non_ollama_local_event = SecurityEvent::new(RuntimeSecurityEventType::HttpRequest)
+        .with_http(HttpSecurityEvent {
+            host: Some("127.0.0.1".to_string()),
+            path: Some("/echo".to_string()),
+            ..Default::default()
+        })
+        .with_ip(IpSecurityEvent {
+            value: Some("127.0.0.1".to_string()),
+            version: Some("4".to_string()),
+        })
+        .with_tcp(TcpSecurityEvent {
+            port: Some("3713".to_string()),
+        });
+    let non_ollama_eval = compiled
+        .evaluate(&non_ollama_local_event)
+        .expect("non-Ollama local event evaluates");
+    assert!(
+        non_ollama_eval
+            .enforcement_rules()
+            .iter()
+            .all(
+                |rule| rule.rule_id != "profiles.rules.ai_ollama_http_local_host"
+                    && rule.rule_id != "profiles.rules.ai_ollama_http_native_api"
+                    && rule.rule_id != "profiles.rules.ai_ollama_http_openai_compatible"
+            ),
+        "Ollama convenience rules must not classify arbitrary localhost HTTP traffic"
+    );
 }
 
 #[test]

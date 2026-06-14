@@ -120,6 +120,15 @@ prove the same rails without user credentials.
   `function_call_output`, and Ironbank reconciles the exact HTTP bodies with
   `model_calls`, `tool_calls`, `fs_events`, `net_events`, and
   `security_rule_events` by trace id.
+- Ironbank/HTTP progress on 2026-06-14: `tests/ironbank/test_http_protocol_ledger.py`
+  adds the first plain-JSON HTTP full-chain proof through a real VM, real
+  service, real gateway, and shared mock server. RED exposed that active
+  profiles were dropping corp network mechanics before `capsem-process`, and
+  that reconstructed HTTP security-rule events lost `http.query`, request body,
+  `tcp.port`, and `ip.value`. GREEN now proves client output, upstream JSONL,
+  `net_events`, `security_rule_events`, UDS inspect, gateway inspect, timeline,
+  security latest/status, VM counters, and structured logs agree for one
+  request. The broader HTTP matrix remains open.
 - Ironbank/MCP progress on 2026-06-13: native profile MCP calls now use the
   same logged MCP JSON-RPC rail as framed guest MCP instead of calling the
   aggregator directly. Focused RED/GREEN coverage proves `capsem_mcp_call`

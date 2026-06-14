@@ -44,7 +44,7 @@ use crate::net::ai_traffic::{request_parser, TraceState};
 use crate::net::policy_config::SecurityRuleSet;
 use crate::security_engine::{
     emit_matching_security_rules_with_plugins, emit_security_write, HttpSecurityEvent,
-    ModelSecurityEvent, RuntimeSecurityEventType, SecurityEvent,
+    IpSecurityEvent, ModelSecurityEvent, RuntimeSecurityEventType, SecurityEvent, TcpSecurityEvent,
 };
 
 /// Per-request snapshot of the request-side fields that the response
@@ -358,14 +358,27 @@ pub fn build_net_event(
 }
 
 fn security_event_from_net_event(event: &NetEvent) -> SecurityEvent {
-    let security_event =
+    let mut security_event =
         SecurityEvent::new(RuntimeSecurityEventType::HttpRequest).with_http(HttpSecurityEvent {
             host: Some(event.domain.clone()),
             method: event.method.clone(),
             path: event.path.clone(),
+            query: event.query.clone(),
             status: event.status_code.map(|status| status.to_string()),
             body: event.request_body_preview.clone(),
         });
+    security_event = security_event.with_tcp(TcpSecurityEvent {
+        port: Some(event.port.to_string()),
+    });
+    if let Ok(ip) = event.domain.parse::<std::net::IpAddr>() {
+        security_event = security_event.with_ip(IpSecurityEvent {
+            value: Some(event.domain.clone()),
+            version: Some(match ip {
+                std::net::IpAddr::V4(_) => "4".to_string(),
+                std::net::IpAddr::V6(_) => "6".to_string(),
+            }),
+        });
+    }
     apply_security_event_trace(security_event, event.trace_id.clone())
 }
 

@@ -672,6 +672,35 @@ next one, and stage only the files for that slice.
     DB table schema, or structured log schema gains a field that the field
     coverage ledger does not know about. New fields require new assertions or
     explicit not-applicable entries in the test fixture.
+  - 2026-06-14 progress: added the first standalone HTTP Ironbank full-chain
+    proof at `tests/ironbank/test_http_protocol_ledger.py`. It drives a real
+    VM through `/vms/create`, sends a nonce-bearing plain JSON `POST /echo`
+    to the shared mock server, then reconciles client-visible response,
+    upstream JSONL transcript, `net_events`, `security_rule_events`, UDS
+    inspect, HTTP gateway inspect, timeline, security latest/status, `/vms/list`
+    counters, and structured service/gateway logs. RED exposed two product
+    bugs: active profiles materialized only DNS network config, dropping corp
+    `log_bodies`, `max_body_capture`, and HTTP upstream ports before
+    `capsem-process`; and telemetry-reconstructed HTTP security events dropped
+    `http.query`, request body, `tcp.port`, and `ip.value`, so CEL/rule ledger
+    truth diverged from the net row. GREEN fixed both and added unit/contract
+    proof for the active-profile runtime config and forensic event JSON.
+  - Proof: `cargo test -p capsem-core
+    active_profile_materializes_corp_network_mechanics -- --nocapture`;
+    `cargo test -p capsem-core
+    emit_security_rule_match_writes_forensic_ledger_row -- --nocapture`;
+    `cargo test -p capsem-core
+    hook_writes_security_rule_ledger_for_matching_http_event -- --nocapture`;
+    `cargo test -p capsem-core
+    http_request_security_event_exposes_transport_and_body_to_cel --
+    --nocapture`; `cargo test -p capsem-process
+    runtime_profile_source_loads_active_profile_rules_plugins_mcp --
+    --nocapture`; `uv run ruff check
+    tests/ironbank/test_http_protocol_ledger.py`; `cargo build -p
+    capsem-service -p capsem-process -p capsem-gateway && uv run pytest
+    tests/ironbank/test_http_protocol_ledger.py::test_plain_json_http_request_pays_full_ledger_debt_blackbox
+    -q -s --tb=short` (`1 passed in 4.48s`). Remaining HTTP cases stay open
+    below.
   - Required protocol specs:
     - HTTP must have at least twelve full-chain cases:
       1. accepted plain JSON request/response;

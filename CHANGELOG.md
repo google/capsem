@@ -15,6 +15,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   focused proof now asserts two random tool calls produce exactly two traces,
   ten model item rows, four model calls, four HTTP rows, one DNS row, two tool
   calls, two tool responses, and two created file events.
+- Tightened the HTTP Ironbank ledger path so active profiles carry corp network
+  mechanics into `capsem-process`, HTTP security events expose `http.query`,
+  `http.body`, `tcp.port`, and `ip.value` to CEL and forensic rows, and the
+  first plain-JSON HTTP full-chain test reconciles client output, upstream
+  transcript, `net_events`, `security_rule_events`, UDS inspect, gateway
+  inspect, timeline, security status/latest, VM status counters, and structured
+  service/gateway logs.
 - Tightened Ironbank model/client coverage so the mock server replays an
   Ollama-compatible OpenAI chat-completion shape with native tool calls, the
   OpenAI SDK/Anthropic SDK/LiteLLM/Ollama SDK/Codex CLI paths assert full

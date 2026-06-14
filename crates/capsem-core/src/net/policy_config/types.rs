@@ -459,17 +459,58 @@ impl SettingsFile {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]
 #[serde(deny_unknown_fields)]
 pub struct NetworkConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub log_bodies: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_body_capture: Option<usize>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub http_upstream_ports: Vec<u16>,
     #[serde(default, skip_serializing_if = "DnsNetworkConfig::is_empty")]
     pub dns: DnsNetworkConfig,
 }
 
 impl NetworkConfig {
     pub fn is_empty(&self) -> bool {
-        self.dns.is_empty()
+        self.log_bodies.is_none()
+            && self.max_body_capture.is_none()
+            && self.http_upstream_ports.is_empty()
+            && self.dns.is_empty()
     }
 
     pub fn validate(&self) -> Result<(), String> {
+        if matches!(self.max_body_capture, Some(value) if value > 1024 * 1024) {
+            return Err("network.max_body_capture must be at most 1048576".to_string());
+        }
+        for port in &self.http_upstream_ports {
+            if *port == 0 {
+                return Err("network.http_upstream_ports must not contain 0".to_string());
+            }
+        }
         self.dns.validate()
+    }
+
+    pub fn from_policy_and_dns(
+        policy: &crate::net::policy::NetworkPolicy,
+        dns: DnsNetworkConfig,
+    ) -> Self {
+        Self {
+            log_bodies: Some(policy.log_bodies),
+            max_body_capture: Some(policy.max_body_capture),
+            http_upstream_ports: policy.http_upstream_ports.clone(),
+            dns,
+        }
+    }
+
+    pub fn apply_to_policy(&self, policy: &mut crate::net::policy::NetworkPolicy) {
+        if let Some(log_bodies) = self.log_bodies {
+            policy.log_bodies = log_bodies;
+        }
+        if let Some(max_body_capture) = self.max_body_capture {
+            policy.max_body_capture = max_body_capture;
+        }
+        if !self.http_upstream_ports.is_empty() {
+            policy.http_upstream_ports = self.http_upstream_ports.clone();
+        }
     }
 }
 

@@ -29,6 +29,7 @@ mod util;
 
 use std::io::Read;
 use std::mem::ManuallyDrop;
+use std::net::IpAddr;
 use std::os::unix::io::{FromRawFd, RawFd};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -54,7 +55,9 @@ impl<T> TokioReadWrite for T where T: AsyncRead + AsyncWrite {}
 use super::cert_authority::{CertAuthority, MitmCertResolver};
 use super::policy::NetworkPolicy;
 use crate::net::ai_traffic::provider::{route_provider, ProviderKind};
-use crate::security_engine::{HttpSecurityEvent, ModelSecurityEvent, SecurityEvent};
+use crate::security_engine::{
+    HttpSecurityEvent, IpSecurityEvent, ModelSecurityEvent, SecurityEvent, TcpSecurityEvent,
+};
 use body::{BodyStats, ProxyBoxBody, TrackedBody};
 use fd_stream::{set_nonblocking, AsyncFdStream, ReplayReader};
 use protocol::Protocol;
@@ -946,6 +949,49 @@ async fn serve_pipeline<IO>(
     }
 }
 
+fn http_request_security_event(
+    domain: &str,
+    upstream_port: u16,
+    method: &str,
+    path: &str,
+    query: Option<String>,
+    ai_provider: Option<ProviderKind>,
+    headers: http::HeaderMap,
+    body: Option<&Bytes>,
+) -> SecurityEvent {
+    let body = body.and_then(|body| std::str::from_utf8(body).ok().map(ToOwned::to_owned));
+    let mut event = SecurityEvent::new(RuntimeSecurityEventType::HttpRequest)
+        .with_http(HttpSecurityEvent {
+            host: Some(domain.to_string()),
+            method: Some(method.to_string()),
+            path: Some(path.to_string()),
+            query: query.clone(),
+            status: None,
+            body,
+        })
+        .with_tcp(TcpSecurityEvent {
+            port: Some(upstream_port.to_string()),
+        })
+        .with_http_request(crate::security_engine::HttpRequestSecurityEvent::new(
+            domain,
+            ai_provider,
+            headers,
+            query,
+        ));
+
+    if let Ok(ip) = domain.parse::<IpAddr>() {
+        event = event.with_ip(IpSecurityEvent {
+            value: Some(ip.to_string()),
+            version: Some(match ip {
+                IpAddr::V4(_) => "4".to_string(),
+                IpAddr::V6(_) => "6".to_string(),
+            }),
+        });
+    }
+
+    event
+}
+
 /// Handle a single HTTP request within a MITM-proxied connection
 /// (TLS or plain HTTP).
 ///
@@ -1445,21 +1491,19 @@ async fn handle_request(
         }
     }
 
-    let http_security_event =
-        crate::security_engine::SecurityEvent::new(RuntimeSecurityEventType::HttpRequest)
-            .with_http(crate::security_engine::HttpSecurityEvent {
-                host: Some(domain.to_string()),
-                method: Some(method.clone()),
-                path: Some(path.clone()),
-                status: None,
-                body: None,
-            })
-            .with_http_request(crate::security_engine::HttpRequestSecurityEvent::new(
-                domain,
-                effective_ai_provider,
-                original_headers.clone(),
-                query.clone(),
-            ));
+    let http_security_event = http_request_security_event(
+        domain,
+        upstream_port,
+        &method,
+        &path,
+        query.clone(),
+        effective_ai_provider,
+        original_headers.clone(),
+        match &request_body_source {
+            RequestBodySource::Collected(body) => Some(body),
+            RequestBodySource::Incoming(_) => None,
+        },
+    );
     let rules = config.telemetry.security_rules.read().unwrap().clone();
     let actions_span = tracing::debug_span!(
         target: "capsem.mitm",
@@ -1635,6 +1679,7 @@ async fn handle_request(
             host: Some(domain.to_string()),
             method: Some(method.clone()),
             path: Some(path.clone()),
+            query: query.clone(),
             status: None,
             body: observed.request_preview.clone(),
         });
@@ -1830,6 +1875,7 @@ async fn handle_request(
                 host: Some(domain.to_string()),
                 method: Some(method.clone()),
                 path: Some(path.clone()),
+                query: query.clone(),
                 status: None,
                 body: Some(String::from_utf8_lossy(&body_bytes).to_string()),
             });
@@ -2353,6 +2399,7 @@ async fn handle_request(
                 host: Some(domain.to_string()),
                 method: Some(method.clone()),
                 path: Some(path.clone()),
+                query: query.clone(),
                 status: Some(resp_status.to_string()),
                 body: Some(String::from_utf8_lossy(&response_body).to_string()),
             });
@@ -2560,6 +2607,7 @@ async fn handle_request(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::net::policy_config::{SecurityRuleAction, SecurityRuleProfile, SecurityRuleSet};
 
     #[test]
     fn provider_detection_promotes_unknown_host_by_canonical_model_path() {
@@ -2623,6 +2671,48 @@ mod tests {
         );
         assert_eq!(ai_provider_for_body_preview(&oversized), None);
         assert_eq!(ai_provider_for_body_preview(br#"{"hello":"world"}"#), None);
+    }
+
+    #[test]
+    fn http_request_security_event_exposes_transport_and_body_to_cel() {
+        let profile = SecurityRuleProfile::parse_toml(
+            r#"
+[corp.rules.allow_local_fixture]
+name = "allow_local_fixture"
+action = "allow"
+priority = -100
+match = 'http.host == "127.0.0.1" && tcp.port == "3713" && ip.value == "127.0.0.1" && http.query == "case=plain-json" && http.body.contains("ironbank_http_plain_json")'
+"#,
+        )
+        .expect("profile parses");
+        let rules = SecurityRuleSet::compile_profile(
+            &profile,
+            crate::net::policy_config::SecurityRuleSource::Corp,
+        )
+        .expect("rules compile");
+
+        let event = http_request_security_event(
+            "127.0.0.1",
+            3713,
+            "POST",
+            "/echo",
+            Some("case=plain-json".to_string()),
+            None,
+            http::HeaderMap::new(),
+            Some(&Bytes::from_static(
+                br#"{"kind":"ironbank_http_plain_json"}"#,
+            )),
+        );
+        let first = rules
+            .evaluate(&event)
+            .expect("event evaluates")
+            .enforcement_rules()
+            .into_iter()
+            .next()
+            .expect("transport/body rule matches");
+
+        assert_eq!(first.rule_id, "corp.rules.allow_local_fixture");
+        assert_eq!(first.action, SecurityRuleAction::Allow);
     }
 
     #[test]

@@ -53,6 +53,8 @@ impl RuntimeProfileConfig {
             .with_context(|| format!("validate {}", active_profile_path.display()))?;
         let (profile_settings, corp_settings) = active.merged_policy_inputs();
         let merged = MergedPolicies::from_files(&profile_settings, &corp_settings);
+        let mut network = merged.network;
+        active.network.apply_to_policy(&mut network);
         let security_rules = active
             .compile_security_rule_set()
             .map_err(anyhow::Error::msg)
@@ -79,7 +81,7 @@ impl RuntimeProfileConfig {
         Ok(Self {
             profile_id: active.id.clone(),
             active_profile_path,
-            network: merged.network,
+            network,
             dns_upstreams,
             security_rules,
             plugins: active.plugins.clone(),
@@ -177,6 +179,11 @@ priority = -100
 detection_level = "high"
 match = 'http.host == "127.0.0.1" && http.path == "/deny-target"'
 
+[network]
+log_bodies = true
+max_body_capture = 8192
+http_upstream_ports = [80, 3713]
+
 [network.dns]
 upstreams = ["127.0.0.1:5353"]
 "#,
@@ -202,6 +209,9 @@ upstreams = ["127.0.0.1:5353"]
             runtime.dns_upstreams,
             vec!["127.0.0.1:5353".parse().unwrap()]
         );
+        assert!(runtime.network.log_bodies);
+        assert_eq!(runtime.network.max_body_capture, 8192);
+        assert_eq!(runtime.network.http_upstream_ports, vec![80, 3713]);
         assert_eq!(
             first.action,
             capsem_core::net::policy_config::SecurityRuleAction::Block

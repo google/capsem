@@ -1305,8 +1305,16 @@ reason = "corp block"
             host: Some("api.openai.com".into()),
             method: Some("POST".into()),
             path: Some("/v1/chat/completions".into()),
+            query: None,
             status: None,
             body: Some("{\"model\":\"gpt-4.1\"}".into()),
+        })
+        .with_ip(IpSecurityEvent {
+            value: Some("203.0.113.10".into()),
+            version: Some("4".into()),
+        })
+        .with_tcp(TcpSecurityEvent {
+            port: Some("443".into()),
         })
         .with_credential_observations(vec![CredentialObservation {
             provider: CredentialProvider::OpenAi,
@@ -1343,6 +1351,12 @@ reason = "corp block"
     );
     assert!(row.rule_json.contains("openai_api_block"));
     assert!(row.event_json.contains("api.openai.com"));
+    let event_json: serde_json::Value = serde_json::from_str(&row.event_json).unwrap();
+    assert_eq!(event_json["event_type"], "http.request");
+    assert_eq!(event_json["http"]["host"], "api.openai.com");
+    assert_eq!(event_json["ip"]["value"], "203.0.113.10");
+    assert_eq!(event_json["ip"]["version"], "4");
+    assert_eq!(event_json["tcp"]["port"], "443");
     assert!(row.event_json.contains("credential:blake3:"));
     assert!(
         !row.event_json.contains("sk-live-should-not-appear"),
@@ -1473,6 +1487,7 @@ match = 'http.path.startsWith("/v1/")'
             host: Some("api.openai.com".into()),
             method: Some("POST".into()),
             path: Some("/v1/responses".into()),
+            query: None,
             status: Some("200".into()),
             body: None,
         });

@@ -775,6 +775,7 @@ fn evaluate_builtin_http_request(
             host: Some(domain.clone()),
             method: Some(method.to_string()),
             path: Some(parsed.path().to_string()),
+            query: parsed.query().map(str::to_string),
             status: None,
             body: None,
         })

@@ -244,19 +244,19 @@ allowed_remote_targets = [
 name = "ollama_local_http_observed"
 action = "allow"
 detection_level = "informational"
-match = 'http.host.matches("^(localhost|127\.0\.0\.1|host\.docker\.internal|local\.ollama)$")'
+match = 'http.host.matches("^(localhost|127\.0\.0\.1|host\.docker\.internal|local\.ollama)$") && tcp.port == "11434"'
 
 [ai.ollama.rules.http_native_api]
 name = "ollama_native_http_observed"
 action = "allow"
 detection_level = "informational"
-match = 'http.path.matches("^/api/(chat|generate|embeddings|embed|tags|show|pull|push|create|copy|delete|ps|version)")'
+match = 'http.host.matches("^(localhost|127\.0\.0\.1|host\.docker\.internal|local\.ollama)$") && tcp.port == "11434" && http.path.matches("^/api/(chat|generate|embeddings|embed|tags|show|pull|push|create|copy|delete|ps|version)")'
 
 [ai.ollama.rules.http_openai_compatible]
 name = "ollama_openai_http_observed"
 action = "allow"
 detection_level = "informational"
-match = 'http.path.matches("^/v1/(chat/completions|completions|embeddings|models)")'
+match = 'http.host.matches("^(localhost|127\.0\.0\.1|host\.docker\.internal|local\.ollama)$") && tcp.port == "11434" && http.path.matches("^/v1/(chat/completions|completions|embeddings|models)")'
 
 [ai.ollama.rules.model_api]
 name = "ollama_model_api_observed"

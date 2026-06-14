@@ -1240,6 +1240,26 @@ impl ActiveProfileFile {
         };
         corp_rules.validate()?;
 
+        let network_profile = SettingsFile {
+            default: profile_rules.default.clone(),
+            profiles: profile_rules.profiles.clone(),
+            ai: profile_rules.ai.clone(),
+            ..SettingsFile::default()
+        };
+        let network_corp = SettingsFile {
+            settings: corp.settings.clone(),
+            default: corp.default.clone(),
+            profiles: corp.profiles.clone(),
+            corp: corp.corp.clone(),
+            ai: corp.ai.clone(),
+            plugins: corp.plugins.clone(),
+            network: corp.network.clone(),
+            ..SettingsFile::default()
+        };
+        let merged_network =
+            super::builder::MergedPolicies::from_files(&network_profile, &network_corp).network;
+        let network = NetworkConfig::from_policy_and_dns(&merged_network, corp.network.dns.clone());
+
         let active = Self {
             id: config.id.clone(),
             name: config.name.clone(),
@@ -1248,7 +1268,7 @@ impl ActiveProfileFile {
             profile_rules,
             corp_rules,
             plugins,
-            network: corp.network.clone(),
+            network,
             mcp: config.mcp.clone(),
         };
         active.validate()?;

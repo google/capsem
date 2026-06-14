@@ -656,7 +656,7 @@ async fn hook_writes_security_rule_ledger_for_matching_http_event() {
 name = "anthropic_http_seen"
 action = "allow"
 detection_level = "informational"
-match = 'http.host == "api.anthropic.com" && http.path == "/v1/messages"'
+match = 'http.host == "api.anthropic.com" && http.path == "/v1/messages" && tcp.port == "443"'
 "#,
     )
     .expect("rules parse");
