@@ -765,12 +765,12 @@ impl DbReader {
     /// Aggregate credential-broker runtime state from the session DB only.
     pub fn brokered_credential_stats(&self) -> rusqlite::Result<Vec<BrokeredCredentialStat>> {
         let mut stmt = self.conn.prepare(
-            "SELECT provider, substitution_ref, COUNT(*),
+            "SELECT MAX(provider), substitution_ref, COUNT(*),
                     SUM(CASE WHEN outcome = 'injected' THEN 1 ELSE 0 END),
                     MAX(timestamp)
              FROM substitution_events
              WHERE material_class = 'credential'
-             GROUP BY provider, substitution_ref
+             GROUP BY substitution_ref
              ORDER BY MAX(timestamp) DESC
              LIMIT 100",
         )?;
@@ -2307,6 +2307,59 @@ mod tests {
 
         assert_eq!(r.mcp_call_stats().unwrap().total, 1);
         assert_eq!(r.raw_mcp_call_count().unwrap(), 4);
+    }
+
+    #[test]
+    fn brokered_credential_stats_merges_injected_rows_without_provider() {
+        let r = DbReader::open_in_memory().unwrap();
+        let credential_ref = crate::events::credential_reference("google", "ya29.runtime-token");
+        r.conn
+            .execute(
+                "INSERT INTO substitution_events (
+                    timestamp, material_class, source, event_type, algorithm,
+                    substitution_ref, outcome, provider, trace_id
+                 ) VALUES (?1, 'credential', ?2, 'http.response', 'blake3', ?3, 'captured', 'google', 'trace-1')",
+                params![
+                    "2026-06-14T22:00:00Z",
+                    "http.body.response.$.access_token",
+                    credential_ref,
+                ],
+            )
+            .unwrap();
+        r.conn
+            .execute(
+                "INSERT INTO substitution_events (
+                    timestamp, material_class, source, event_type, algorithm,
+                    substitution_ref, outcome, provider, trace_id
+                 ) VALUES (?1, 'credential', ?2, 'http.request', 'blake3', ?3, 'injected', NULL, 'trace-2')",
+                params![
+                    "2026-06-14T22:00:01Z",
+                    "http.header.authorization",
+                    credential_ref,
+                ],
+            )
+            .unwrap();
+        r.conn
+            .execute(
+                "INSERT INTO substitution_events (
+                    timestamp, material_class, source, event_type, algorithm,
+                    substitution_ref, outcome, provider, trace_id
+                 ) VALUES (?1, 'credential', ?2, 'http.request', 'blake3', ?3, 'injected', NULL, 'trace-3')",
+                params![
+                    "2026-06-14T22:00:02Z",
+                    "http.query.access_token",
+                    credential_ref,
+                ],
+            )
+            .unwrap();
+
+        let stats = r.brokered_credential_stats().unwrap();
+        assert_eq!(stats.len(), 1);
+        assert_eq!(stats[0].provider.as_deref(), Some("google"));
+        assert_eq!(stats[0].credential_ref, credential_ref);
+        assert_eq!(stats[0].observed_count, 3);
+        assert_eq!(stats[0].injected_count, 2);
+        assert_eq!(stats[0].last_seen.as_deref(), Some("2026-06-14T22:00:02Z"));
     }
 
     // -----------------------------------------------------------------------

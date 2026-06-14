@@ -143,6 +143,15 @@ prove the same rails without user credentials.
   action `ask`, the pending `security_ask_events` lifecycle row, UDS/gateway
   inspect output, security status/latest, counters, logs, and empty upstream
   transcript. The remaining HTTP cases still stay open.
+- Ironbank/HTTP brokered rewrite progress on 2026-06-14: the HTTP ledger proof
+  now covers real credential-broker preprocess rewrite. It captures synthetic
+  OAuth response credentials as broker refs, replays the selected ref through
+  authorization header and query string, proves the upstream mock server
+  receives raw credentials, and proves DB/routes/logs expose only broker refs
+  plus exact `captured`/`brokered`/`injected` substitution verbs. RED caught
+  grouped CEL validation drift and credential inventory splitting injected
+  rows from provider-known captures; GREEN fixes both. The remaining HTTP
+  cases still stay open.
 - Ironbank/MCP progress on 2026-06-13: native profile MCP calls now use the
   same logged MCP JSON-RPC rail as framed guest MCP instead of calling the
   aggregator directly. Focused RED/GREEN coverage proves `capsem_mcp_call`

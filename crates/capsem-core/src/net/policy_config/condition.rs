@@ -42,21 +42,9 @@ impl CompiledCondition {
     where
         F: Fn(&str) -> Result<(), String>,
     {
-        let raw_clauses = split_disjunction(condition)?;
-        if raw_clauses.is_empty() {
+        let clauses = parse_clauses(condition, &validate)?;
+        if clauses.is_empty() {
             return Err("policy condition must not be empty".into());
-        }
-        let mut clauses = Vec::with_capacity(raw_clauses.len());
-        for clause in raw_clauses {
-            let raw_atoms = split_conjunction(clause)?;
-            if raw_atoms.is_empty() {
-                return Err("policy condition contains an empty CEL term".into());
-            }
-            let mut atoms = Vec::with_capacity(raw_atoms.len());
-            for atom in raw_atoms {
-                atoms.push(ConditionAtom::parse_with(atom, &validate)?);
-            }
-            clauses.push(ConditionClause { atoms });
         }
         Ok(Self { clauses })
     }
@@ -79,6 +67,48 @@ impl CompiledCondition {
         }
         Ok(false)
     }
+}
+
+fn parse_clauses<F>(condition: &str, validate: &F) -> Result<Vec<ConditionClause>, String>
+where
+    F: Fn(&str) -> Result<(), String>,
+{
+    let condition = strip_outer_grouping(condition.trim())?;
+    let raw_clauses = split_disjunction(condition)?;
+    if raw_clauses.len() > 1 {
+        let mut clauses = Vec::new();
+        for clause in raw_clauses {
+            clauses.extend(parse_clauses(clause, validate)?);
+        }
+        return Ok(clauses);
+    }
+
+    let raw_terms = split_conjunction(condition)?;
+    if raw_terms.is_empty() {
+        return Err("policy condition contains an empty CEL term".into());
+    }
+    let mut clauses = vec![ConditionClause { atoms: Vec::new() }];
+    for term in raw_terms {
+        let term = strip_outer_grouping(term.trim())?;
+        if contains_top_level_operator(term, "||")? || contains_top_level_operator(term, "&&")? {
+            let nested = parse_clauses(term, validate)?;
+            let mut expanded = Vec::new();
+            for existing in &clauses {
+                for nested_clause in &nested {
+                    let mut atoms = existing.atoms.clone();
+                    atoms.extend(nested_clause.atoms.clone());
+                    expanded.push(ConditionClause { atoms });
+                }
+            }
+            clauses = expanded;
+        } else {
+            let atom = ConditionAtom::parse_with(term, validate)?;
+            for clause in &mut clauses {
+                clause.atoms.push(atom.clone());
+            }
+        }
+    }
+    Ok(clauses)
 }
 
 impl ConditionAtom {
@@ -211,6 +241,10 @@ fn split_conjunction(condition: &str) -> Result<Vec<&str>, String> {
     split_top_level_operator(condition, "&&")
 }
 
+fn contains_top_level_operator(condition: &str, operator: &str) -> Result<bool, String> {
+    Ok(split_top_level_operator(condition, operator)?.len() > 1)
+}
+
 fn split_top_level_operator<'a>(
     condition: &'a str,
     operator: &str,
@@ -273,6 +307,62 @@ fn split_top_level_operator<'a>(
     }
     atoms.push(atom);
     Ok(atoms)
+}
+
+fn strip_outer_grouping(mut value: &str) -> Result<&str, String> {
+    loop {
+        let trimmed = value.trim();
+        if !(trimmed.starts_with('(') && trimmed.ends_with(')')) {
+            return Ok(trimmed);
+        }
+        if outer_parens_wrap(trimmed)? {
+            value = &trimmed[1..trimmed.len() - 1];
+        } else {
+            return Ok(trimmed);
+        }
+    }
+}
+
+fn outer_parens_wrap(value: &str) -> Result<bool, String> {
+    let mut quote = None;
+    let mut escaped = false;
+    let mut paren_depth = 0usize;
+    let bytes = value.as_bytes();
+
+    for (index, byte) in bytes.iter().enumerate() {
+        let ch = *byte as char;
+        if let Some(active_quote) = quote {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == active_quote {
+                quote = None;
+            }
+            continue;
+        }
+
+        match ch {
+            '\'' | '"' => quote = Some(ch),
+            '(' => paren_depth += 1,
+            ')' => {
+                paren_depth = paren_depth
+                    .checked_sub(1)
+                    .ok_or_else(|| "policy condition has unmatched ')'".to_string())?;
+                if paren_depth == 0 && index != bytes.len() - 1 {
+                    return Ok(false);
+                }
+            }
+            _ => {}
+        }
+    }
+    if quote.is_some() {
+        return Err("policy condition has an unterminated string literal".into());
+    }
+    if paren_depth != 0 {
+        return Err("policy condition has unmatched '('".into());
+    }
+    Ok(true)
 }
 
 fn parse_method_call<'a>(

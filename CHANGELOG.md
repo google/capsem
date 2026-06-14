@@ -30,6 +30,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   instead of a generic block message, while Ironbank proves the pending
   `security_ask_events` lifecycle row, `policy_action = ask`, security status,
   UDS inspect, gateway inspect, counters, and logs all agree.
+- Fixed brokered HTTP credential rewrite accounting so OAuth captures emit
+  exact `captured`/`brokered`/`injected` ledger verbs, broker refs replay into
+  upstream header/query bytes without leaking raw credentials to DB, routes, or
+  logs, and credential inventory merges injected rows with their captured
+  provider identity. Grouped CEL rule matches such as `a && (b || c)` now
+  compile through the same profile rule path used by the HTTP rewrite proof.
 - Tightened Ironbank model/client coverage so the mock server replays an
   Ollama-compatible OpenAI chat-completion shape with native tool calls, the
   OpenAI SDK/Anthropic SDK/LiteLLM/Ollama SDK/Codex CLI paths assert full

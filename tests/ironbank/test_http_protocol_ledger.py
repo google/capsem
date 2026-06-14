@@ -9,6 +9,7 @@ from pathlib import Path
 import re
 import sqlite3
 import textwrap
+import time
 import uuid
 
 import pytest
@@ -83,6 +84,22 @@ EXPECTED_SECURITY_ASK_COLUMNS = {
     "trace_id",
 }
 
+EXPECTED_SUBSTITUTION_COLUMNS = {
+    "id",
+    "event_id",
+    "timestamp",
+    "material_class",
+    "source",
+    "event_type",
+    "algorithm",
+    "substitution_ref",
+    "outcome",
+    "provider",
+    "confidence",
+    "trace_id",
+    "context_json",
+}
+
 
 def _connect_session_db(service: ServiceInstance, session_id: str) -> sqlite3.Connection:
     db_path = service.tmp_dir / "sessions" / session_id / "session.db"
@@ -107,6 +124,24 @@ def _event_id(value: object) -> str:
     assert len(value) == 12
     assert all(ch in "0123456789abcdef" for ch in value)
     return value
+
+
+def _credential_ref(value: object) -> str:
+    assert isinstance(value, str)
+    assert re.fullmatch(r"credential:blake3:[0-9a-f]{64}", value), value
+    return value
+
+
+def _eventually(fetch, predicate, *, timeout_s: float = 20.0, interval_s: float = 0.25):
+    deadline = time.monotonic() + timeout_s
+    last = None
+    while time.monotonic() < deadline:
+        last = fetch()
+        if predicate(last):
+            return last
+        time.sleep(interval_s)
+    assert predicate(last), f"condition not met before timeout; last={last!r}"
+    return last
 
 
 def _one_json_line(stdout: str, prefix: str) -> dict:
@@ -411,6 +446,521 @@ def test_plain_json_http_request_pays_full_ledger_debt_blackbox() -> None:
         assert "gateway.proxy.ok" in gateway_log
         assert f"/vms/{session_id}/inspect" in gateway_log
         assert gateway_body == ""
+    finally:
+        stop_process(mock_proc)
+        if client is not None:
+            try:
+                client.delete(f"/vms/{session_id}/delete", timeout=60)
+            except Exception:
+                pass
+        if gateway is not None:
+            gateway.stop()
+        service.stop()
+        if old_corp_config is None:
+            os.environ.pop("CAPSEM_CORP_CONFIG", None)
+        else:
+            os.environ["CAPSEM_CORP_CONFIG"] = old_corp_config
+
+
+def test_brokered_http_rewrite_pays_full_ledger_debt_blackbox() -> None:
+    assert MOCK_SERVER_BINARY.exists(), f"{MOCK_SERVER_BINARY} missing"
+    assert ASSETS_DIR.exists(), f"{ASSETS_DIR} missing; build VM assets before Ironbank"
+    assert PROFILES_DIR.exists(), f"{PROFILES_DIR} missing; materialize profile config"
+
+    service = ServiceInstance()
+    gateway: GatewayInstance | None = None
+    mock_proc = None
+    client = None
+    session_id = vm_name("ironbank-http-rewrite")
+    nonce = uuid.uuid4().hex
+    old_corp_config = os.environ.get("CAPSEM_CORP_CONFIG")
+    try:
+        mock_proc, ready = start_mock_server(
+            request_log=service.tmp_dir / "upstream-http-rewrite-transcript.jsonl"
+        )
+        corp_path = service.tmp_dir / "corp.toml"
+        corp_path.write_text(
+            textwrap.dedent(
+                """
+                refresh_policy = "24h"
+
+                [settings."vm.resources.log_bodies"]
+                value = true
+                modified = "2026-06-14T00:00:00Z"
+
+                [settings."vm.resources.max_body_capture"]
+                value = 8192
+                modified = "2026-06-14T00:00:00Z"
+
+                [settings."security.web.http_upstream_ports"]
+                value = [80, 3713, 8080]
+                modified = "2026-06-14T00:00:00Z"
+
+                [corp.rules.allow_ironbank_mock_http_rewrite]
+                name = "allow_ironbank_mock_http_rewrite"
+                action = "allow"
+                priority = -100
+                detection_level = "informational"
+                reason = "Allow the hermetic Ironbank credential-broker rewrite fixture."
+                match = 'http.host == "127.0.0.1" && tcp.port == "3713" && (http.path == "/oauth/token" || http.path == "/echo")'
+                """
+            ).strip()
+            + "\n",
+            encoding="utf-8",
+        )
+        os.environ["CAPSEM_CORP_CONFIG"] = str(corp_path)
+        service.start()
+        client = service.client()
+        gateway = GatewayInstance(uds_path=service.uds_path)
+        gateway.start()
+        gateway_client = TcpHttpClient(gateway.base_url, gateway.token)
+
+        create = client.post(
+            "/vms/create",
+            {
+                "name": session_id,
+                "profile_id": CODE_PROFILE_ID,
+                "ram_mb": DEFAULT_RAM_MB,
+                "cpus": DEFAULT_CPUS,
+                "env": {"CAPSEM_MOCK_SERVER_BASE_URL": ready["base_url"]},
+            },
+            timeout=90,
+        )
+        assert create is not None
+        assert create.get("id") == session_id or create.get("name") == session_id
+        assert wait_exec_ready(client, session_id, timeout=EXEC_READY_TIMEOUT)
+
+        capture_script = textwrap.dedent(
+            f"""
+            import json
+            import urllib.parse
+            import urllib.request
+
+            token_req = urllib.request.Request(
+                {json.dumps(ready["base_url"].rstrip("/") + "/oauth/token")},
+                data=urllib.parse.urlencode({{"code": "capsem_test_oauth_code_rewrite_{nonce}"}}).encode(),
+                method="POST",
+                headers={{
+                    "content-type": "application/x-www-form-urlencoded",
+                    "user-agent": "capsem-ironbank-http-rewrite-capture/1",
+                    "x-ironbank-nonce": {json.dumps(nonce)},
+                }},
+            )
+            with urllib.request.urlopen(token_req, timeout=30) as response:
+                token_body = json.loads(response.read().decode())
+            print("IRONBANK_HTTP_REWRITE_CAPTURE=" + json.dumps({{
+                "status": "captured",
+                "kind": token_body["kind"],
+                "nonce": {json.dumps(nonce)},
+            }}, sort_keys=True))
+            """
+        ).strip()
+        upload = client.post_bytes(
+            f"/vms/{session_id}/files/content?path=ironbank-http-rewrite-capture.py",
+            capture_script.encode(),
+            timeout=30,
+        )
+        assert upload is not None
+        assert upload["success"] is True
+        capture_exec = client.post(
+            f"/vms/{session_id}/exec",
+            {
+                "command": "python3 /root/ironbank-http-rewrite-capture.py",
+                "timeout_secs": 120,
+            },
+            timeout=150,
+        )
+        assert capture_exec is not None
+        assert capture_exec["exit_code"] == 0, capture_exec
+        capture_result = _one_json_line(
+            capture_exec.get("stdout") or "", "IRONBANK_HTTP_REWRITE_CAPTURE="
+        )
+        assert capture_result == {
+            "kind": "synthetic_oauth_token_fixture",
+            "nonce": nonce,
+            "status": "captured",
+        }
+
+        with closing(_connect_session_db(service, session_id)) as conn:
+            token_rows = _eventually(
+                lambda: conn.execute(
+                    """
+                    SELECT *
+                    FROM net_events
+                    WHERE path = '/oauth/token'
+                    ORDER BY id
+                    """
+                ).fetchall(),
+                lambda rows: len(rows) == 1 and rows[0]["credential_ref"] is not None,
+            )
+            token_net = dict(token_rows[0])
+            _event_id(token_net["event_id"])
+            _credential_ref(token_net["credential_ref"])
+            assert token_net["domain"] == "127.0.0.1"
+            assert token_net["port"] == 3713
+            assert token_net["method"] == "POST"
+            assert token_net["status_code"] == 200
+            assert token_net["decision"] == "allowed"
+            assert token_net["matched_rule"] == "corp.rules.allow_ironbank_mock_http_rewrite"
+            assert token_net["policy_action"] == "allow"
+            assert token_net["policy_rule"] == "corp.rules.allow_ironbank_mock_http_rewrite"
+            assert token_net["conn_type"] == "http-mitm"
+            assert "capsem_test_oauth_code_rewrite_" not in (
+                token_net["request_body_preview"] or ""
+            )
+            assert "capsem_test_oauth_access_" not in (
+                token_net["response_body_preview"] or ""
+            )
+            assert "capsem_test_oauth_refresh_" not in (
+                token_net["response_body_preview"] or ""
+            )
+            assert "credential:blake3:" in (token_net["request_body_preview"] or "")
+            assert "credential:blake3:" in (token_net["response_body_preview"] or "")
+            response_access_token_refs = _eventually(
+                lambda: conn.execute(
+                    """
+                    SELECT *
+                    FROM substitution_events
+                    WHERE source = 'http.body.response.$.access_token'
+                      AND outcome = 'captured'
+                    ORDER BY id
+                    """
+                ).fetchall(),
+                lambda rows: len(rows) == 1,
+            )
+            credential_ref = _credential_ref(response_access_token_refs[0]["substitution_ref"])
+
+        replay_script = textwrap.dedent(
+            f"""
+            import json
+            import urllib.parse
+            import urllib.request
+
+            cfg = {{
+                "credential_ref": {json.dumps(credential_ref)},
+                "echo_url": {json.dumps(ready["base_url"].rstrip("/") + "/echo")},
+                "nonce": {json.dumps(nonce)},
+            }}
+            header_req = urllib.request.Request(
+                cfg["echo_url"],
+                data=b"broker header rewrite",
+                method="POST",
+                headers={{
+                    "authorization": "Bearer " + cfg["credential_ref"],
+                    "content-type": "text/plain",
+                    "user-agent": "capsem-ironbank-http-rewrite-header/1",
+                    "x-ironbank-nonce": cfg["nonce"],
+                }},
+            )
+            with urllib.request.urlopen(header_req, timeout=30) as response:
+                header_echo = json.loads(response.read().decode())
+
+            query_url = cfg["echo_url"] + "?access_token=" + urllib.parse.quote(
+                cfg["credential_ref"],
+                safe="",
+            )
+            query_req = urllib.request.Request(
+                query_url,
+                data=b"broker query rewrite",
+                method="POST",
+                headers={{
+                    "content-type": "text/plain",
+                    "user-agent": "capsem-ironbank-http-rewrite-query/1",
+                    "x-ironbank-nonce": cfg["nonce"],
+                }},
+            )
+            with urllib.request.urlopen(query_req, timeout=30) as response:
+                query_echo = json.loads(response.read().decode())
+
+            print("IRONBANK_HTTP_REWRITE_REPLAY=" + json.dumps({{
+                "header_has_authorization": header_echo["has_authorization"],
+                "header_authorization_is_broker_ref": header_echo["authorization_is_broker_ref"],
+                "query_has_access_token": query_echo["query_has_access_token"],
+                "query_has_broker_ref": query_echo["query_has_broker_ref"],
+                "nonce": cfg["nonce"],
+            }}, sort_keys=True))
+            """
+        ).strip()
+        upload = client.post_bytes(
+            f"/vms/{session_id}/files/content?path=ironbank-http-rewrite-replay.py",
+            replay_script.encode(),
+            timeout=30,
+        )
+        assert upload is not None
+        assert upload["success"] is True
+        replay_exec = client.post(
+            f"/vms/{session_id}/exec",
+            {
+                "command": "python3 /root/ironbank-http-rewrite-replay.py",
+                "timeout_secs": 120,
+            },
+            timeout=150,
+        )
+        assert replay_exec is not None
+        assert replay_exec["exit_code"] == 0, replay_exec
+        replay_result = _one_json_line(
+            replay_exec.get("stdout") or "", "IRONBANK_HTTP_REWRITE_REPLAY="
+        )
+        assert replay_result == {
+            "header_authorization_is_broker_ref": False,
+            "header_has_authorization": True,
+            "nonce": nonce,
+            "query_has_access_token": True,
+            "query_has_broker_ref": False,
+        }
+
+        request_log_path = Path(ready["request_log"])
+        upstream_text = (
+            request_log_path.read_text(encoding="utf-8") if request_log_path.exists() else ""
+        )
+        upstream_records = [
+            json.loads(line) for line in upstream_text.splitlines() if line.strip()
+        ]
+        upstream_echo = [row for row in upstream_records if row["path"] == "/echo"]
+        assert len(upstream_echo) == 2, upstream_records
+        header_upstream = next(row for row in upstream_echo if row["query"] == "")
+        query_upstream = next(row for row in upstream_echo if "access_token=" in row["query"])
+        assert credential_ref not in header_upstream["headers"].get("authorization", "")
+        assert "credential:blake3:" not in header_upstream["headers"].get("authorization", "")
+        assert header_upstream["headers"]["authorization"].startswith("Bearer capsem_test_")
+        assert credential_ref not in query_upstream["query"]
+        assert "credential:blake3:" not in query_upstream["query"]
+        assert "access_token=capsem_test_" in query_upstream["query"]
+
+        with closing(_connect_session_db(service, session_id)) as conn:
+            assert _table_columns(conn, "net_events") == EXPECTED_NET_COLUMNS
+            assert _table_columns(conn, "security_rule_events") == EXPECTED_SECURITY_COLUMNS
+            assert _table_columns(conn, "substitution_events") == EXPECTED_SUBSTITUTION_COLUMNS
+
+            echo_rows = _eventually(
+                lambda: conn.execute(
+                    """
+                    SELECT *
+                    FROM net_events
+                    WHERE path = '/echo'
+                    ORDER BY id
+                    """
+                ).fetchall(),
+                lambda rows: len(rows) == 2,
+            )
+            header_net = dict(next(row for row in echo_rows if not row["query"]))
+            query_net = dict(next(row for row in echo_rows if row["query"]))
+            for net in (header_net, query_net):
+                event_id = _event_id(net["event_id"])
+                assert net["domain"] == "127.0.0.1"
+                assert net["port"] == 3713
+                assert net["method"] == "POST"
+                assert net["status_code"] == 200
+                assert net["decision"] == "allowed"
+                assert net["matched_rule"] == "corp.rules.allow_ironbank_mock_http_rewrite"
+                assert net["policy_action"] == "allow"
+                assert net["policy_rule"] == "corp.rules.allow_ironbank_mock_http_rewrite"
+                assert net["credential_ref"] == credential_ref
+                assert net["conn_type"] == "http-mitm"
+                assert isinstance(net["trace_id"], str) and net["trace_id"]
+                assert "capsem_test_oauth_access_" not in (net["request_headers"] or "")
+                assert "capsem_test_oauth_access_" not in (net["query"] or "")
+                assert "credential:blake3:" not in (net["request_headers"] or "")
+                assert "authorization: hash:" in (net["request_headers"] or "").lower() or net is query_net
+                assert "credential:blake3:" not in (net["response_body_preview"] or "")
+                response_preview = json.loads(net["response_body_preview"])
+                assert response_preview["path"] == "/echo"
+                assert response_preview["authorization_is_broker_ref"] is False
+                if net is header_net:
+                    assert response_preview["has_authorization"] is True
+                    assert response_preview["query_has_access_token"] is False
+                    assert response_preview["query_has_broker_ref"] is False
+                else:
+                    assert response_preview["has_authorization"] is False
+                    assert response_preview["query_has_access_token"] is True
+                    assert response_preview["query_has_broker_ref"] is False
+
+                security_rows = conn.execute(
+                    """
+                    SELECT *
+                    FROM security_rule_events
+                    WHERE event_id = ? AND event_type = 'http.request'
+                    ORDER BY id
+                    """,
+                    (event_id,),
+                ).fetchall()
+                assert security_rows, event_id
+                rewrite_rule = next(
+                    row
+                    for row in security_rows
+                    if row["rule_id"] == "corp.rules.allow_ironbank_mock_http_rewrite"
+                )
+                assert rewrite_rule["rule_action"] == "allow"
+                assert rewrite_rule["detection_level"] == "informational"
+                assert rewrite_rule["trace_id"] == net["trace_id"]
+                event_json = json.loads(rewrite_rule["event_json"])
+                assert event_json["event_type"] == "http.request"
+                assert event_json["http"]["host"] == "127.0.0.1"
+                assert event_json["http"]["path"] == "/echo"
+                assert event_json["tcp"]["port"] == "3713"
+                assert event_json["ip"]["value"] == "127.0.0.1"
+
+            assert header_net["query"] in (None, "")
+            assert query_net["query"].startswith("access_token=")
+            assert credential_ref not in query_net["query"]
+            assert "capsem_test_oauth_access_" not in query_net["query"]
+
+            substitutions = conn.execute(
+                """
+                SELECT *
+                FROM substitution_events
+                WHERE substitution_ref = ?
+                ORDER BY id
+                """,
+                (credential_ref,),
+            ).fetchall()
+            assert substitutions
+            outcomes = {row["outcome"] for row in substitutions}
+            assert {"captured", "brokered", "injected"} <= outcomes
+            assert all(row["material_class"] == "credential" for row in substitutions)
+            assert all(row["algorithm"] == "blake3" for row in substitutions)
+            assert all(row["substitution_ref"] == credential_ref for row in substitutions)
+            assert all(row["provider"] == "google" for row in substitutions)
+            assert all(row["confidence"] is None for row in substitutions)
+            assert all(row["trace_id"] for row in substitutions)
+            sources_by_outcome = {
+                outcome: {
+                    row["source"] for row in substitutions if row["outcome"] == outcome
+                }
+                for outcome in outcomes
+            }
+            assert "http.body.response.$.access_token" in sources_by_outcome["captured"]
+            assert "http.body.response.$.access_token" in sources_by_outcome["brokered"]
+            assert "http.header.authorization" in sources_by_outcome["injected"]
+            assert "http.query.access_token" in sources_by_outcome["injected"]
+
+            uds_rows = _query_rows(
+                client,
+                session_id,
+                """
+                SELECT event_id, path, query, status_code, decision, credential_ref,
+                       request_headers, response_body_preview, trace_id
+                FROM net_events
+                WHERE path = '/echo'
+                ORDER BY id
+                """,
+            )
+            assert len(uds_rows) == 2
+            assert {row["credential_ref"] for row in uds_rows} == {credential_ref}
+            assert all("capsem_test_oauth_access_" not in (row["request_headers"] or "") for row in uds_rows)
+            assert all("credential:blake3:" not in (row["request_headers"] or "") for row in uds_rows)
+
+            gateway_rows = gateway_client.post(
+                f"/vms/{session_id}/inspect",
+                {
+                    "sql": (
+                        "SELECT event_id, method, path, status_code, decision, credential_ref "
+                        "FROM net_events WHERE path = '/echo' ORDER BY id"
+                    )
+                },
+                timeout=30,
+            )
+            assert gateway_rows["columns"] == [
+                "event_id",
+                "method",
+                "path",
+                "status_code",
+                "decision",
+                "credential_ref",
+            ]
+            assert len(gateway_rows["rows"]) == 2
+            assert {row[5] for row in gateway_rows["rows"]} == {credential_ref}
+
+            broker_reload = client.post(
+                f"/profiles/{CODE_PROFILE_ID}/plugins/credential_broker/credentials/reload",
+                {},
+                timeout=30,
+            )
+            assert broker_reload["plugin_id"] == "credential_broker"
+            assert broker_reload["store"]["ready"] is True
+            assert any(
+                credential["credential_ref"] == credential_ref
+                and credential["provider"] == "google"
+                and credential["observed_count"] >= 1
+                and credential["injected_count"] >= 2
+                and credential["replay_available"] is True
+                for credential in broker_reload["inventory"]
+            ), broker_reload["inventory"]
+
+            plugins = client.get(f"/profiles/{CODE_PROFILE_ID}/plugins/list", timeout=30)
+            assert plugins is not None
+            by_plugin = {plugin["id"]: plugin for plugin in plugins["plugins"]}
+            broker_runtime = by_plugin["credential_broker"]["runtime"]
+            assert broker_runtime["enabled"] is True
+            assert broker_runtime["execution_count"] >= 3
+            assert broker_runtime["applied_count"] >= 2
+            assert broker_runtime["detection_count"] >= 2
+            assert broker_runtime["total_duration_us"] >= broker_runtime["max_duration_us"]
+            assert broker_runtime["rewrite_count"] >= 2
+            assert any(
+                credential["credential_ref"] == credential_ref
+                and credential["provider"] == "google"
+                and credential["observed_count"] >= 1
+                and credential["injected_count"] >= 2
+                and credential["replay_available"] is True
+                for credential in broker_runtime["brokered_credentials"]
+            ), (
+                credential_ref,
+                [
+                    (
+                        credential["provider"],
+                        credential["credential_ref"][-12:],
+                        credential["observed_count"],
+                        credential["injected_count"],
+                        credential["replay_available"],
+                    )
+                    for credential in broker_runtime["brokered_credentials"]
+                ],
+            )
+
+            broker_info = client.get(
+                f"/profiles/{CODE_PROFILE_ID}/plugins/credential_broker/credentials/info",
+                timeout=30,
+            )
+            assert broker_info["plugin_id"] == "credential_broker"
+            assert broker_info["store"]["ready"] is True
+            assert any(
+                credential["credential_ref"] == credential_ref
+                and credential["provider"] == "google"
+                and credential["observed_count"] >= 1
+                and credential["injected_count"] >= 2
+                and credential["replay_available"] is True
+                for credential in broker_info["inventory"]
+            ), broker_info["inventory"]
+
+            security_latest = client.get(
+                f"/vms/{session_id}/security/latest?limit=50",
+                timeout=30,
+            )
+            latest_echo = [
+                row
+                for row in security_latest
+                if row["rule_id"] == "corp.rules.allow_ironbank_mock_http_rewrite"
+                and row["event_type"] == "http.request"
+            ]
+            assert len(latest_echo) >= 3
+            assert {row["rule_action"] for row in latest_echo} == {"allow"}
+            assert "informational" in {row["detection_level"] for row in latest_echo}
+
+            security_status = client.get(f"/vms/{session_id}/security/status", timeout=30)
+            by_action = {row["rule_action"]: row["count"] for row in security_status["by_action"]}
+            by_event_type = {
+                row["event_type"]: row["count"] for row in security_status["by_event_type"]
+            }
+            assert by_action["allow"] >= 3
+            assert by_event_type["http.request"] >= 3
+
+        service_log = (service.tmp_dir / "service.log").read_text(encoding="utf-8")
+        gateway_log = (gateway.run_dir / "gateway.log").read_text(encoding="utf-8")
+        assert "capsem_test_oauth_access_" not in service_log
+        assert "capsem_test_oauth_refresh_" not in service_log
+        assert "gateway.proxy.ok" in gateway_log
+        assert f"/vms/{session_id}/inspect" in gateway_log
     finally:
         stop_process(mock_proc)
         if client is not None:

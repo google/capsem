@@ -386,6 +386,55 @@ match = 'has(model.request.body)'
 }
 
 #[test]
+fn rule_match_supports_grouped_cel_disjunctions() {
+    let profile = SecurityRuleProfile::parse_toml(
+        r#"
+[profiles.rules.grouped_http_paths]
+name = "grouped_http_paths"
+action = "allow"
+detection_level = "informational"
+match = 'http.host == "127.0.0.1" && tcp.port == "3713" && (http.path == "/oauth/token" || http.path == "/echo")'
+"#,
+    )
+    .expect("grouped CEL disjunction parses");
+
+    let rules = SecurityRuleSet::compile_profile(&profile, SecurityRuleSource::User)
+        .expect("grouped CEL disjunction compiles");
+
+    let token = SecurityEvent::new(RuntimeSecurityEventType::HttpRequest)
+        .with_http(HttpSecurityEvent {
+            host: Some("127.0.0.1".to_string()),
+            path: Some("/oauth/token".to_string()),
+            ..Default::default()
+        })
+        .with_tcp(TcpSecurityEvent {
+            port: Some("3713".to_string()),
+        });
+    let echo = SecurityEvent::new(RuntimeSecurityEventType::HttpRequest)
+        .with_http(HttpSecurityEvent {
+            host: Some("127.0.0.1".to_string()),
+            path: Some("/echo".to_string()),
+            ..Default::default()
+        })
+        .with_tcp(TcpSecurityEvent {
+            port: Some("3713".to_string()),
+        });
+    let miss = SecurityEvent::new(RuntimeSecurityEventType::HttpRequest)
+        .with_http(HttpSecurityEvent {
+            host: Some("127.0.0.1".to_string()),
+            path: Some("/other".to_string()),
+            ..Default::default()
+        })
+        .with_tcp(TcpSecurityEvent {
+            port: Some("3713".to_string()),
+        });
+
+    assert_eq!(rules.evaluate(&token).unwrap().matched_rules().len(), 1);
+    assert_eq!(rules.evaluate(&echo).unwrap().matched_rules().len(), 1);
+    assert_eq!(rules.evaluate(&miss).unwrap().matched_rules().len(), 0);
+}
+
+#[test]
 fn compiled_rule_set_evaluates_once_over_security_event() {
     let profile = SecurityRuleProfile::parse_toml(RULE_FIXTURE).expect("fixture parses");
     let rules = SecurityRuleSet::compile_profile(&profile, SecurityRuleSource::BuiltinDefault)

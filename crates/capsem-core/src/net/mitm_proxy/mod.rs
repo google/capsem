@@ -1504,7 +1504,7 @@ async fn handle_request(
         }
     }
 
-    let http_security_event = http_request_security_event(
+    let mut http_security_event = http_request_security_event(
         domain,
         upstream_port,
         &method,
@@ -1517,6 +1517,9 @@ async fn handle_request(
             RequestBodySource::Incoming(_) => None,
         },
     );
+    if let Some(trace_id) = crate::telemetry::ambient_capsem_trace_id() {
+        http_security_event = http_security_event.with_trace_id(trace_id);
+    }
     let rules = config.telemetry.security_rules.read().unwrap().clone();
     let actions_span = tracing::debug_span!(
         target: "capsem.mitm",

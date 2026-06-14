@@ -745,13 +745,44 @@ next one, and stage only the files for that slice.
     capsem-service -p capsem-process -p capsem-gateway && uv run pytest
     tests/ironbank/test_http_protocol_ledger.py -q -s --tb=short` (`3 passed
     in 9.55s`). Remaining HTTP cases stay open below.
+  - 2026-06-14 progress: extended the HTTP Ironbank proof with a real
+    credential-broker preprocess rewrite case. The test first captures a
+    synthetic OAuth token through `/oauth/token`, proves the raw token is
+    replaced by `credential:blake3:*` in `net_events`, `substitution_events`,
+    security rows, route JSON, and logs, then replays that broker ref through
+    `Authorization: Bearer ...` and query `access_token=...`. The mock-server
+    upstream transcript proves Capsem injected the raw credential on the
+    outbound wire while the session DB, UDS inspect, HTTP gateway inspect,
+    plugin runtime, credential broker reload/info routes, and structured logs
+    expose only broker refs and exact `captured`/`brokered`/`injected` ledger
+    verbs. RED exposed two contract bugs: grouped CEL expressions like
+    `a && (b || c)` were rejected by rule validation, and credential inventory
+    grouped provider-known capture rows separately from provider-unknown
+    injection rows. GREEN added grouped-condition expansion and aggregates
+    credential inventory by broker ref while recovering the non-null provider.
+  - Proof: `cargo test -p capsem-core
+    rule_match_supports_grouped_cel_disjunctions -- --nocapture`; `cargo test
+    -p capsem-logger
+    brokered_credential_stats_merges_injected_rows_without_provider --
+    --nocapture`; `uv run ruff check
+    tests/ironbank/test_http_protocol_ledger.py`; `cargo build -p
+    capsem-service -p capsem-process -p capsem-gateway`; focused GREEN `uv run
+    pytest
+    tests/ironbank/test_http_protocol_ledger.py::test_brokered_http_rewrite_pays_full_ledger_debt_blackbox
+    -q -s --tb=short` (`1 passed in 4.67s`); full HTTP file `cargo fmt
+    --check`; `cargo test -p capsem-core
+    rule_match_supports_grouped_cel_disjunctions -- --nocapture`; `uv run
+    pytest tests/ironbank/test_http_protocol_ledger.py -q -s --tb=short` (`4
+    passed in 11.29s`). Remaining HTTP cases stay open below.
   - Required protocol specs:
     - HTTP must have at least twelve full-chain cases:
       1. accepted plain JSON request/response;
       2. denied request by CEL rule with client-visible denial body;
       3. asked request with ask ledger/status evidence;
       4. rewrite/preprocess request mutation with mutated upstream bytes and
-         original/mutated audit rows;
+         original/mutated audit rows; covered by the real credential broker
+         pre-plugin path (`captured`/`brokered` then broker-ref replay to
+         upstream header/query bytes), not a dummy rewrite.
       5. rewrite/postprocess response mutation with client-visible mutation;
       6. HTTPS/MITM JSON request/response with cert path and no fallback;
       7. gzip response decompression with parsed body and capped preview;
