@@ -8,6 +8,8 @@ import base64
 import gzip
 import hashlib
 import json
+import re
+import shlex
 import socketserver
 import ssl
 import struct
@@ -29,21 +31,6 @@ OLLAMA_OPENAI_TOOL_ARGUMENTS = '{"query":"Capsem ironbank poem"}'
 CODEX_RESPONSES_TOOL_CALL_ID = "call_codex_write_poem"
 CODEX_RESPONSES_TOOL_ITEM_ID = "fc_codex_write_poem"
 CODEX_RESPONSES_TOOL_NAME = "exec_command"
-CODEX_RESPONSES_TOOL_ARGUMENTS = json.dumps(
-    {
-        "cmd": (
-            "python3 - <<'PY'\n"
-            "from pathlib import Path\n"
-            "poem = 'Capsem ironbank poem\\nledgers count the sparks\\nno secret crosses raw\\n'\n"
-            "Path('/root/codex-cli-poem.md').write_text(poem, encoding='utf-8')\n"
-            "print(poem, end='')\n"
-            "PY"
-        ),
-        "yield_time_ms": 1000,
-        "max_output_tokens": 2000,
-    },
-    separators=(",", ":"),
-)
 HTML_ABOUT = """<!doctype html>
 <html>
   <head><title>Capsem Mock Server About</title></head>
@@ -147,6 +134,10 @@ def _model_payload(
 
 
 def _responses_payload(model: str = "mock-local") -> dict:
+    return _responses_payload_for_output(model, EXPECTED_POEM)
+
+
+def _responses_payload_for_output(model: str = "mock-local", output_text: str = EXPECTED_POEM) -> dict:
     return {
         "id": "resp_ironbank_01",
         "object": "response",
@@ -162,13 +153,13 @@ def _responses_payload(model: str = "mock-local") -> dict:
                 "content": [
                     {
                         "type": "output_text",
-                        "text": EXPECTED_POEM,
+                        "text": output_text,
                         "annotations": [],
                     }
                 ],
             }
         ],
-        "output_text": EXPECTED_POEM,
+        "output_text": output_text,
         "usage": {
             "input_tokens": 7,
             "output_tokens": 5,
@@ -177,7 +168,29 @@ def _responses_payload(model: str = "mock-local") -> dict:
     }
 
 
-def _responses_tool_call_payload(model: str = "mock-local") -> dict:
+def _codex_responses_write_target(payload: dict) -> tuple[str, str]:
+    body = json.dumps(payload, separators=(",", ":"))
+    token_match = re.search(r"uuid4 hex value ([0-9a-f]{32})", body)
+    path_match = re.search(r"(/root/codex-cli-[0-9a-f]{32}\.txt)", body)
+    token = token_match.group(1) if token_match else EXPECTED_POEM
+    path = path_match.group(1) if path_match else "/root/codex-cli-output.txt"
+    return token, path
+
+
+def _codex_responses_tool_arguments(payload: dict) -> str:
+    token, path = _codex_responses_write_target(payload)
+    return json.dumps(
+        {
+            "cmd": f"printf '%s\\n' {shlex.quote(token)} > {shlex.quote(path)}",
+            "yield_time_ms": 1000,
+            "max_output_tokens": 2000,
+        },
+        separators=(",", ":"),
+    )
+
+
+def _responses_tool_call_payload(model: str = "mock-local", payload: dict | None = None) -> dict:
+    payload = payload or {}
     return {
         "id": "resp_ironbank_tool_01",
         "object": "response",
@@ -191,7 +204,7 @@ def _responses_tool_call_payload(model: str = "mock-local") -> dict:
                 "status": "completed",
                 "call_id": CODEX_RESPONSES_TOOL_CALL_ID,
                 "name": CODEX_RESPONSES_TOOL_NAME,
-                "arguments": CODEX_RESPONSES_TOOL_ARGUMENTS,
+                "arguments": _codex_responses_tool_arguments(payload),
             }
         ],
         "usage": {
@@ -204,13 +217,11 @@ def _responses_tool_call_payload(model: str = "mock-local") -> dict:
 
 def _responses_payload_has_tool_output(payload: dict) -> bool:
     body = json.dumps(payload, separators=(",", ":"))
-    return (
-        CODEX_RESPONSES_TOOL_CALL_ID in body
-        and ("function_call_output" in body or EXPECTED_POEM in body)
-    )
+    return CODEX_RESPONSES_TOOL_CALL_ID in body and "function_call_output" in body
 
 
-def _responses_tool_call_stream_body(model: str = "mock-local") -> bytes:
+def _responses_tool_call_stream_body(model: str = "mock-local", payload: dict | None = None) -> bytes:
+    payload = payload or {}
     response = {
         "id": "resp_ironbank_tool_01",
         "object": "response",
@@ -236,26 +247,28 @@ def _responses_tool_call_stream_body(model: str = "mock-local") -> bytes:
         "type": "response.function_call_arguments.done",
         "output_index": 0,
         "item_id": CODEX_RESPONSES_TOOL_ITEM_ID,
-        "arguments": CODEX_RESPONSES_TOOL_ARGUMENTS,
+        "arguments": _codex_responses_tool_arguments(payload),
     }
     item_done = {
         "type": "response.output_item.done",
         "output_index": 0,
-        "item": _responses_tool_call_payload(model)["output"][0],
+        "item": _responses_tool_call_payload(model, payload)["output"][0],
     }
-    completed = {"type": "response.completed", "response": _responses_tool_call_payload(model)}
+    completed = {"type": "response.completed", "response": _responses_tool_call_payload(model, payload)}
+    arguments = _codex_responses_tool_arguments(payload)
     return (
         f"event: response.created\ndata: {json.dumps(created, separators=(',', ':'))}\n\n"
         f"event: response.output_item.added\ndata: {json.dumps(item_started, separators=(',', ':'))}\n\n"
         f"event: response.function_call_arguments.delta\ndata: "
-        f"{json.dumps({'type': 'response.function_call_arguments.delta', 'output_index': 0, 'item_id': CODEX_RESPONSES_TOOL_ITEM_ID, 'delta': CODEX_RESPONSES_TOOL_ARGUMENTS}, separators=(',', ':'))}\n\n"
+        f"{json.dumps({'type': 'response.function_call_arguments.delta', 'output_index': 0, 'item_id': CODEX_RESPONSES_TOOL_ITEM_ID, 'delta': arguments}, separators=(',', ':'))}\n\n"
         f"event: response.function_call_arguments.done\ndata: {json.dumps(arguments_done, separators=(',', ':'))}\n\n"
         f"event: response.output_item.done\ndata: {json.dumps(item_done, separators=(',', ':'))}\n\n"
         f"event: response.completed\ndata: {json.dumps(completed, separators=(',', ':'))}\n\n"
     ).encode()
 
 
-def _responses_stream_body(model: str = "mock-local") -> bytes:
+def _responses_stream_body(model: str = "mock-local", payload: dict | None = None) -> bytes:
+    output_text, _ = _codex_responses_write_target(payload or {})
     response = {
         "id": "resp_ironbank_01",
         "object": "response",
@@ -265,7 +278,10 @@ def _responses_stream_body(model: str = "mock-local") -> bytes:
         "output": [],
     }
     created = {"type": "response.created", "response": response}
-    completed = {"type": "response.completed", "response": _responses_payload(model)}
+    completed = {
+        "type": "response.completed",
+        "response": _responses_payload_for_output(model, output_text),
+    }
     message_item = completed["response"]["output"][0]
     content_part = message_item["content"][0]
     return (
@@ -279,9 +295,9 @@ def _responses_stream_body(model: str = "mock-local") -> bytes:
         '"output_index":0,"content_index":0,'
         '"part":{"type":"output_text","text":"","annotations":[]}}\n\n'
         f"event: response.output_text.delta\ndata: "
-        f"{json.dumps({'type': 'response.output_text.delta', 'item_id': 'msg_ironbank_01', 'output_index': 0, 'content_index': 0, 'delta': EXPECTED_POEM}, separators=(',', ':'))}\n\n"
+        f"{json.dumps({'type': 'response.output_text.delta', 'item_id': 'msg_ironbank_01', 'output_index': 0, 'content_index': 0, 'delta': output_text}, separators=(',', ':'))}\n\n"
         f"event: response.output_text.done\ndata: "
-        f"{json.dumps({'type': 'response.output_text.done', 'item_id': 'msg_ironbank_01', 'output_index': 0, 'content_index': 0, 'text': EXPECTED_POEM}, separators=(',', ':'))}\n\n"
+        f"{json.dumps({'type': 'response.output_text.done', 'item_id': 'msg_ironbank_01', 'output_index': 0, 'content_index': 0, 'text': output_text}, separators=(',', ':'))}\n\n"
         f"event: response.content_part.done\ndata: "
         f"{json.dumps({'type': 'response.content_part.done', 'item_id': 'msg_ironbank_01', 'output_index': 0, 'content_index': 0, 'part': content_part}, separators=(',', ':'))}\n\n"
         f"event: response.output_item.done\ndata: "
@@ -500,16 +516,16 @@ class MockHandler(BaseHTTPRequestHandler):
             has_tool_output = _responses_payload_has_tool_output(payload)
             if payload.get("stream") is True:
                 body = (
-                    _responses_stream_body(model)
+                    _responses_stream_body(model, payload)
                     if has_tool_output
-                    else _responses_tool_call_stream_body(model)
+                    else _responses_tool_call_stream_body(model, payload)
                 )
                 self._send(HTTPStatus.OK, body, "text/event-stream")
             else:
                 self._send_json(
-                    _responses_payload(model)
+                    _responses_payload_for_output(model, _codex_responses_write_target(payload)[0])
                     if has_tool_output
-                    else _responses_tool_call_payload(model)
+                    else _responses_tool_call_payload(model, payload)
                 )
         elif path == "/model/shape":
             payload = self._json_body()

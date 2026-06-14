@@ -823,7 +823,7 @@ next one, and stage only the files for that slice.
     Ollama-compatible OpenAI chat-completion shape, including the exact native
     tool-call payload `call_fm3e3d2f` with
     `{"query":"Capsem ironbank poem"}`. Ironbank now proves OpenAI Python SDK,
-    Anthropic SDK, LiteLLM, Ollama SDK, and Codex CLI poem generation through a
+    Anthropic SDK, LiteLLM, Ollama SDK, and Codex CLI dynamic UUID generation through a
     fresh VM. The proof caught two release bugs: Codex leaked plugin/OTLP
     traffic to `chatgpt.com`, `github.com`, and `ab.chatgpt.com` until its
     test config disabled plugins, update checks, analytics, and OTLP; LiteLLM
@@ -844,12 +844,13 @@ next one, and stage only the files for that slice.
     first, then added a mock-server JSONL request ledger and an OpenAI
     Responses API two-turn fixture: first `/v1/responses` emits native
     `exec_command` call `call_codex_write_poem`; Codex executes it; the second
-    `/v1/responses` request carries `function_call_output` containing the poem.
-    Passing artifact
-    `test-artifacts/20260614-104415-master-no-failures-on-this-worker/capsem-test-d5ju6cfa`
-    proves trace `a516fd2534184659` across `model_calls` ids 1/2,
-    `tool_calls` id 1, `net_events` ids 1/2, and `fs_events.created`
-    `codex-cli-poem.md` size 68. Security rows prove
+    `/v1/responses` request carries successful `function_call_output` without
+    echoing the file contents. Passing artifact
+    `test-artifacts/20260614-110258-master-no-failures-on-this-worker/capsem-test-1ucaf36k`
+    proves random nonce `e0388f7db347435fa5d44748a9361523` and random file
+    `codex-cli-7d032bf101174512a6f3616ab4c3c14e.txt` across trace
+    `4024d1b019521269`, `model_calls` ids 1/2, `tool_calls` id 1,
+    `net_events` ids 1/2, and `fs_events.created` size 33. Security rows prove
     `profiles.rules.ai_openai_model_api`, `profiles.rules.default_model`,
     `profiles.rules.ai_ollama_http_local_host`,
     `profiles.rules.default_000_local_network`, and

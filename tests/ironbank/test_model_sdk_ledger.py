@@ -555,7 +555,6 @@ def _codex_cli_probe_script(base_url: str) -> str:
     payload = {
         "openai_base_url": f"{base_url.rstrip('/')}/v1",
         "codex_config": "/root/.codex/config.toml",
-        "poem_path": "/root/codex-cli-poem.md",
         "api_key_parts": ["capsem_test_codex_cli_", "key_0123456789abcdef"],
     }
     return textwrap.dedent(
@@ -563,6 +562,7 @@ def _codex_cli_probe_script(base_url: str) -> str:
         import json
         import os
         import subprocess
+        import uuid
         from pathlib import Path
 
         cfg = json.loads({json.dumps(json.dumps(payload))})
@@ -582,9 +582,11 @@ def _codex_cli_probe_script(base_url: str) -> str:
         env["TERM"] = "xterm-256color"
         env["OPENAI_API_KEY"] = "".join(cfg["api_key_parts"])
 
+        nonce = uuid.uuid4().hex
+        filename = "codex-cli-" + uuid.uuid4().hex + ".txt"
+        target_path = "/root/" + filename
         prompt = (
-            "Write exactly this text to /root/codex-cli-poem.md and print it: "
-            {json.dumps(EXPECTED_POEM)!r}
+            "Write uuid4 hex value " + nonce + " to " + target_path + "."
         )
         completed = subprocess.run(
             [
@@ -605,18 +607,18 @@ def _codex_cli_probe_script(base_url: str) -> str:
         output = (completed.stdout or "") + (completed.stderr or "")
         if completed.returncode != 0:
             raise SystemExit("codex failed with " + str(completed.returncode) + "\\n" + output)
-        poem_path = Path(cfg["poem_path"])
+        poem_path = Path(target_path)
         if not poem_path.exists():
-            raise SystemExit(
-                "codex completed without writing " + cfg["poem_path"] + "\\n" + output
-            )
+            raise SystemExit("codex completed without writing " + target_path + "\\n" + output)
         poem_text = poem_path.read_text(encoding="utf-8")
         result = {{
-            "contains_poem": {EXPECTED_POEM!r} in output,
-            "file_contains_poem": {EXPECTED_POEM!r} in poem_text,
+            "contains_nonce": nonce in output,
+            "file_contains_nonce": poem_text == nonce + "\\n",
+            "filename": filename,
+            "nonce": nonce,
             "output_bytes": len(output.encode("utf-8")),
             "poem_bytes": len(poem_text.encode("utf-8")),
-            "poem_path": cfg["poem_path"],
+            "poem_path": target_path,
         }}
         print("IRONBANK_CODEX_CLI_RESULT=" + json.dumps(result, sort_keys=True))
         """
@@ -1785,18 +1787,22 @@ def test_codex_cli_poem_path_pays_full_ledger_debt_blackbox():
         )
         assert result_line is not None, output
         result = json.loads(result_line.split("=", 1)[1])
-        assert result["contains_poem"] is True
-        assert result["file_contains_poem"] is True
-        assert result["output_bytes"] > len(EXPECTED_POEM)
-        assert result["poem_bytes"] == len((EXPECTED_POEM + "\n").encode())
-        assert result["poem_path"] == "/root/codex-cli-poem.md"
+        nonce = result["nonce"]
+        filename = result["filename"]
+        assert re.fullmatch(r"[0-9a-f]{32}", nonce), result
+        assert re.fullmatch(r"codex-cli-[0-9a-f]{32}\.txt", filename), result
+        assert result["contains_nonce"] is True
+        assert result["file_contains_nonce"] is True
+        assert result["output_bytes"] > len(nonce)
+        assert result["poem_bytes"] == len((nonce + "\n").encode())
+        assert result["poem_path"] == f"/root/{filename}"
 
         poem_status, poem_bytes = client.get_bytes(
-            f"/vms/{session_id}/files/content?path=codex-cli-poem.md",
+            f"/vms/{session_id}/files/content?path={filename}",
             timeout=30,
         )
         assert poem_status == 200
-        assert EXPECTED_POEM in poem_bytes.decode()
+        assert poem_bytes.decode() == nonce + "\n"
 
         mock_records = [json.loads(line) for line in mock_request_log.read_text().splitlines()]
         responses_records = [row for row in mock_records if row["path"] == "/v1/responses"]
@@ -1816,10 +1822,12 @@ def test_codex_cli_poem_path_pays_full_ledger_debt_blackbox():
         assert tool_http_request["stream"] is True
         assert len(tool_http_request["tools"]) == 14
         assert any(tool["name"] == "exec_command" for tool in tool_http_request["tools"])
-        assert "/root/codex-cli-poem.md" in tool_http_record["request_body"]
+        assert nonce in tool_http_record["request_body"]
+        assert f"/root/{filename}" in tool_http_record["request_body"]
         assert "call_codex_write_poem" in tool_http_record["response_body"]
         assert "response.function_call_arguments.delta" in tool_http_record["response_body"]
-        assert "/root/codex-cli-poem.md" in tool_http_record["response_body"]
+        assert nonce in tool_http_record["response_body"]
+        assert f"/root/{filename}" in tool_http_record["response_body"]
         assert "capsem_test_codex_cli_key" not in tool_http_record["request_body"]
 
         assert final_http_record["method"] == "POST"
@@ -1839,17 +1847,19 @@ def test_codex_cli_poem_path_pays_full_ledger_debt_blackbox():
         assert final_inputs[-2]["type"] == "function_call"
         assert final_inputs[-2]["name"] == "exec_command"
         assert final_inputs[-2]["call_id"] == "call_codex_write_poem"
-        assert "/root/codex-cli-poem.md" in final_inputs[-2]["arguments"]
+        assert nonce in final_inputs[-2]["arguments"]
+        assert f"/root/{filename}" in final_inputs[-2]["arguments"]
         assert final_inputs[-1]["type"] == "function_call_output"
         assert final_inputs[-1]["call_id"] == "call_codex_write_poem"
-        assert EXPECTED_POEM in final_inputs[-1]["output"]
+        assert "Process exited with code 0" in final_inputs[-1]["output"]
+        assert nonce not in final_inputs[-1]["output"]
         final_sse_events = [
             json.loads(line.removeprefix("data: "))
             for line in final_http_record["response_body"].splitlines()
             if line.startswith("data: ")
         ]
-        assert any(event.get("delta") == EXPECTED_POEM for event in final_sse_events)
-        assert any(event.get("text") == EXPECTED_POEM for event in final_sse_events)
+        assert any(event.get("delta") == nonce for event in final_sse_events)
+        assert any(event.get("text") == nonce for event in final_sse_events)
         assert "capsem_test_codex_cli_key" not in final_http_record["request_body"]
 
         conn = _connect_session_db(service, session_id)
@@ -1895,7 +1905,7 @@ def test_codex_cli_poem_path_pays_full_ledger_debt_blackbox():
             assert codex_model["tools_count"] == 14
             assert codex_model["input_tokens"] == 7
             assert codex_model["output_tokens"] == 5
-            assert codex_model["text_content"] == EXPECTED_POEM
+            assert codex_model["text_content"] == nonce
             assert codex_model["stop_reason"] == "end_turn"
             assert codex_model["request_bytes"] > 0
             assert codex_model["response_bytes"] > 0
@@ -1925,9 +1935,10 @@ def test_codex_cli_poem_path_pays_full_ledger_debt_blackbox():
             assert tool_row["call_index"] == 0
             assert tool_row["tool_name"] == "exec_command"
             tool_args = json.loads(tool_row["arguments"])
-            assert tool_args["cmd"].startswith("python3 - <<'PY'")
-            assert "/root/codex-cli-poem.md" in tool_args["cmd"]
-            assert EXPECTED_POEM.replace("\n", "\\n") in tool_args["cmd"]
+            assert tool_args["cmd"] == (
+                f"printf '%s\\n' {nonce} > /root/{filename}"
+            )
+            assert f"/root/{filename}" in tool_args["cmd"]
             assert tool_args["yield_time_ms"] == 1000
             assert tool_args["max_output_tokens"] == 2000
             assert tool_row["origin"] == "native"
@@ -1974,9 +1985,7 @@ def test_codex_cli_poem_path_pays_full_ledger_debt_blackbox():
             )
             assert "call_codex_write_poem" in (codex_net["request_body_preview"] or "")
             assert "response.output_text.delta" in (codex_net["response_body_preview"] or "")
-            assert json.dumps(EXPECTED_POEM)[1:-1] in (
-                codex_net["response_body_preview"] or ""
-            )
+            assert nonce in (codex_net["response_body_preview"] or "")
 
             security_rows = _eventually(
                 lambda: conn.execute(
@@ -2045,7 +2054,8 @@ def test_codex_cli_poem_path_pays_full_ledger_debt_blackbox():
 
             file_rows = _eventually(
                 lambda: conn.execute(
-                    "SELECT * FROM fs_events WHERE path = 'codex-cli-poem.md' ORDER BY id"
+                    "SELECT * FROM fs_events WHERE path = ? ORDER BY id",
+                    (filename,),
                 ).fetchall(),
                 lambda rows: any(row["action"] in {"created", "modified"} for row in rows),
             )
@@ -2054,7 +2064,7 @@ def test_codex_cli_poem_path_pays_full_ledger_debt_blackbox():
                 row for row in file_rows if row["action"] in {"created", "modified"}
             ]
             assert any(
-                row["size"] == len((EXPECTED_POEM + "\n").encode())
+                row["size"] == len((nonce + "\n").encode())
                 and row["trace_id"] == tool_row["trace_id"]
                 for row in created_file_rows
             )
