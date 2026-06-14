@@ -169,7 +169,16 @@ def assert_model_ledger_exchange(spec: ModelLedgerSpec, run: ModelLedgerRun) -> 
                 assert spec.reasoning in response_preview, dict(row)
 
         _assert_security_rows(conn, [row["event_id"] for row in (*model_rows, *net_rows)])
-        _assert_tool_output_file(conn, spec)
+        credential_refs = _assert_brokered_model_credentials(
+            conn,
+            provider=spec.provider,
+            model_rows=model_rows,
+            tool_rows=tool_rows,
+            response_rows=response_rows,
+            net_rows=net_rows,
+            raw_secrets=run.raw_secrets,
+        )
+        _assert_tool_output_file(conn, spec, credential_refs=credential_refs)
         _assert_no_raw_secret_in_db(conn, run.raw_secrets)
     _assert_no_raw_secret_in_logs(run.log_paths, run.raw_secrets)
 
@@ -267,7 +276,78 @@ def _assert_security_rows(conn: sqlite3.Connection, event_ids: list[str]) -> Non
     assert all(json.loads(row["event_json"]) for row in rows)
 
 
-def _assert_tool_output_file(conn: sqlite3.Connection, spec: ModelLedgerSpec) -> None:
+def _assert_brokered_model_credentials(
+    conn: sqlite3.Connection,
+    *,
+    provider: str,
+    model_rows: list[sqlite3.Row],
+    tool_rows: list[sqlite3.Row],
+    response_rows: list[sqlite3.Row],
+    net_rows: list[sqlite3.Row],
+    raw_secrets: tuple[str, ...],
+) -> set[str]:
+    if not raw_secrets:
+        return set()
+
+    credential_refs = {
+        row["credential_ref"] for row in net_rows if row["credential_ref"] is not None
+    }
+    assert len(credential_refs) == 1, [dict(row) for row in net_rows]
+    credential_ref = next(iter(credential_refs))
+    _assert_credential_ref(credential_ref)
+    assert {row["credential_ref"] for row in net_rows} == {credential_ref}, [
+        dict(row) for row in net_rows
+    ]
+    assert {row["credential_ref"] for row in model_rows} == {credential_ref}, [
+        dict(row) for row in model_rows
+    ]
+    assert {row["credential_ref"] for row in tool_rows} == {credential_ref}, [
+        dict(row) for row in tool_rows
+    ]
+    assert {row["credential_ref"] for row in response_rows} == {credential_ref}, [
+        dict(row) for row in response_rows
+    ]
+
+    rows = conn.execute(
+        """
+        SELECT *
+        FROM substitution_events
+        WHERE substitution_ref = ?
+        ORDER BY id
+        """,
+        (credential_ref,),
+    ).fetchall()
+    assert rows, f"missing substitution_events for {credential_ref}"
+    outcomes = {row["outcome"] for row in rows}
+    assert {"captured", "brokered"} <= outcomes, [dict(row) for row in rows]
+    assert all(row["material_class"] == "credential" for row in rows)
+    assert all(row["algorithm"] == "blake3" for row in rows)
+    assert all(row["provider"] == provider for row in rows), [dict(row) for row in rows]
+    assert all(row["confidence"] is None for row in rows)
+    assert all(row["trace_id"] for row in rows)
+    captured_sources = {row["source"] for row in rows if row["outcome"] == "captured"}
+    expected_sources = {
+        "openai": "http.header.authorization",
+        "anthropic": "http.header.x-api-key",
+    }
+    expected_source = expected_sources.get(provider)
+    assert expected_source is not None, provider
+    assert expected_source in captured_sources, [dict(row) for row in rows]
+
+    return credential_refs
+
+
+def _assert_credential_ref(value: object) -> None:
+    assert isinstance(value, str)
+    assert re.fullmatch(r"credential:blake3:[0-9a-f]{64}", value), value
+
+
+def _assert_tool_output_file(
+    conn: sqlite3.Connection,
+    spec: ModelLedgerSpec,
+    *,
+    credential_refs: set[str],
+) -> None:
     command = spec.call_args.get("cmd") or spec.call_args.get("command")
     if not isinstance(command, str):
         return
@@ -293,6 +373,10 @@ def _assert_tool_output_file(conn: sqlite3.Connection, spec: ModelLedgerSpec) ->
     assert rows, f"missing fs_events for tool output {path}"
     assert any(row["action"] in {"created", "modified", "export"} for row in rows)
     assert all(row["name"] in {path, None} for row in rows)
+    if credential_refs:
+        assert any(row["credential_ref"] in credential_refs for row in rows), [
+            dict(row) for row in rows
+        ]
 
 
 def _assert_no_raw_secret_in_db(

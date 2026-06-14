@@ -122,6 +122,7 @@ mod tests {
                 content_preview: Some("ok".into()),
                 is_error: false,
                 trace_id: None,
+                credential_ref: None,
             }],
         }
     }

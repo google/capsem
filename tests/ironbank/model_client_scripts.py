@@ -5,9 +5,6 @@ from __future__ import annotations
 import json
 import textwrap
 
-CODEX_TEST_API_KEY = "this_is_not_a_real_key"
-
-
 def common_result_script_prelude(base_url: str, filename_prefix: str) -> str:
     return f"""
 import json
@@ -67,6 +64,16 @@ def emit_result(provider, domain, path, model, output, reasoning, tool_call_name
         "dns_ip": DNS_IP,
     }}
     print("IRONBANK_CLIENT_RESULT=" + json.dumps(result, sort_keys=True))
+
+def add_openai_auth(headers):
+    token = "sk-" + NONCE
+    headers["authorization"] = "Bearer " + token
+    return token
+
+def add_anthropic_auth(headers):
+    token = "sk-ant-" + NONCE
+    headers["x-api-key"] = token
+    return token
 """
 
 
@@ -82,10 +89,12 @@ def parse_sse(body):
     return events
 
 def post(body):
+    headers = {"content-type": "application/json"}
+    add_openai_auth(headers)
     req = urllib.request.Request(
         BASE_URL + "/v1/responses",
         data=json.dumps(body).encode(),
-        headers={"content-type": "application/json"},
+        headers=headers,
         method="POST",
     )
     with urllib.request.urlopen(req, timeout=60) as response:
@@ -131,10 +140,12 @@ def parse_sse(body):
     return events
 
 def post(body):
+    headers = {"content-type": "application/json"}
+    add_openai_auth(headers)
     req = urllib.request.Request(
         BASE_URL + "/v1/responses",
         data=json.dumps(body).encode(),
-        headers={"content-type": "application/json"},
+        headers=headers,
         method="POST",
     )
     with urllib.request.urlopen(req, timeout=60) as response:
@@ -190,6 +201,7 @@ print("IRONBANK_CLIENT_RESULT=" + json.dumps({
     "model": "gemma4:latest",
     "dns_qname": DNS_QNAME,
     "dns_ip": DNS_IP,
+    "credential_nonce": NONCE,
     "results": results,
 }, sort_keys=True))
 '''
@@ -201,10 +213,12 @@ def claude_api_script(base_url: str) -> str:
         common_result_script_prelude(base_url, "claude-api")
         + r'''
 def post(body):
+    headers = {"content-type": "application/json", "anthropic-version": "2023-06-01"}
+    add_anthropic_auth(headers)
     req = urllib.request.Request(
         BASE_URL + "/v1/messages",
         data=json.dumps(body).encode(),
-        headers={"content-type": "application/json", "x-api-key": "capsem_claude_api_key_0123456789abcdef", "anthropic-version": "2023-06-01"},
+        headers=headers,
         method="POST",
     )
     with urllib.request.urlopen(req, timeout=60) as response:
@@ -244,7 +258,7 @@ import anthropic
 
 client = anthropic.Anthropic(
     base_url=BASE_URL,
-    api_key="capsem_claude_sdk_key_0123456789abcdef",
+    api_key="sk-ant-" + NONCE,
 )
 tools = [{"name": "exec_command", "description": "run a command", "input_schema": {"type": "object", "properties": {"cmd": {"type": "string"}}}}]
 first = client.messages.create(
@@ -276,18 +290,20 @@ emit_result("anthropic", "127.0.0.1", "/v1/messages", "claude-sonnet-4-20250514"
 def codex_cli_script(base_url: str) -> str:
     return textwrap.dedent(
         common_result_script_prelude(base_url, "codex-cli")
-        + f'''
+        + r'''
 codex_config = Path("/root/.codex/config.toml")
 codex_text = codex_config.read_text(encoding="utf-8")
 codex_text = codex_text.replace('base_url = "http://127.0.0.1:11434/v1"', 'base_url = "' + BASE_URL + '/v1"')
+if 'env_key = "OPENAI_API_KEY"' not in codex_text:
+    codex_text = codex_text.replace('base_url = "' + BASE_URL + '/v1"', 'base_url = "' + BASE_URL + '/v1"\nenv_key = "OPENAI_API_KEY"')
 if "check_for_update_on_startup" not in codex_text:
-    codex_text += "\\ncheck_for_update_on_startup = false\\n[analytics]\\nenabled = false\\n"
+    codex_text += "\ncheck_for_update_on_startup = false\n[analytics]\nenabled = false\n"
 codex_config.write_text(codex_text, encoding="utf-8")
 env = os.environ.copy()
 env["HOME"] = "/root"
 env["NO_COLOR"] = "1"
 env["TERM"] = "xterm-256color"
-env["OPENAI_API_KEY"] = {json.dumps(CODEX_TEST_API_KEY)}
+env["OPENAI_API_KEY"] = "sk-" + NONCE
 completed = subprocess.run(
     [
         "codex",
@@ -306,7 +322,7 @@ completed = subprocess.run(
 )
 if completed.returncode != 0:
     raise SystemExit((completed.stdout or "") + (completed.stderr or ""))
-call_args = {{"cmd": "printf '%s\\\\n' " + NONCE + " > " + TARGET, "yield_time_ms": 1000, "max_output_tokens": 2000}}
+call_args = {"cmd": "printf '%s\\n' " + NONCE + " > " + TARGET, "yield_time_ms": 1000, "max_output_tokens": 2000}
 emit_result("openai", "127.0.0.1", "/v1/responses", "gemma4:latest", NONCE, "ledger reasoning", "exec_command", call_args, "Process exited with code 0")
 '''
     ).strip()

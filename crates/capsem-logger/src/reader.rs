@@ -840,7 +840,7 @@ impl DbReader {
         model_call_id: i64,
     ) -> rusqlite::Result<Vec<ToolResponseEntry>> {
         let mut stmt = self.conn.prepare(
-            "SELECT call_id, content_preview, is_error
+            "SELECT call_id, content_preview, is_error, credential_ref
              FROM tool_responses WHERE model_call_id = ?1",
         )?;
         let rows = stmt.query_map(params![model_call_id], |row| {
@@ -849,6 +849,7 @@ impl DbReader {
                 content_preview: row.get(1)?,
                 is_error: row.get::<_, i64>(2)? != 0,
                 trace_id: None,
+                credential_ref: row.get(3)?,
             })
         })?;
         rows.collect()
@@ -1330,7 +1331,7 @@ impl DbReader {
 
         // Fetch all tool responses for this trace in one batch.
         let mut tool_resps_stmt = self.conn.prepare(
-            "SELECT tr.model_call_id, tr.call_id, tr.content_preview, tr.is_error
+            "SELECT tr.model_call_id, tr.call_id, tr.content_preview, tr.is_error, tr.credential_ref
              FROM tool_responses tr
              JOIN model_calls mc ON tr.model_call_id = mc.id
              WHERE mc.trace_id = ?1",
@@ -1343,6 +1344,7 @@ impl DbReader {
                     content_preview: row.get(2)?,
                     is_error: row.get::<_, i64>(3)? != 0,
                     trace_id: None,
+                    credential_ref: row.get(4)?,
                 },
             ))
         })?;

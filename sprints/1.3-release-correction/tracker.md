@@ -50,14 +50,27 @@ next one, and stage only the files for that slice.
   - 2026-06-14 progress: split the model-client Ironbank helpers into
     composable script builders (`tests/ironbank/model_client_scripts.py`) and
     shared ledger assertions (`tests/ironbank/model_client_assertions.py`).
-    Codex now uses the explicit non-secret fixture marker
-    `this_is_not_a_real_key` and asserts truthful file-import forensic rows;
-    credential-broker raw-secret non-leak proof remains in broker/credential
-    cases, not the Codex model-client fixture.
+    Codex now uses the same runtime OpenAI credential broker path as the
+    SDK/API clients and asserts truthful model/tool/file forensic rows instead
+    of a non-secret marker shortcut.
   - Product fix: model tool-call arguments now register bounded workspace
     file-path trace hints in `TraceState`; the fs monitor uses those hints
     before emission so `fs_events.trace_id` and matching security-rule rows
     point at the model/tool trace instead of the ambient boot/process trace.
+  - 2026-06-14 progress: the shared model-client Ironbank harness now requires
+    broker proof for every credentialed AI client. OpenAI API, OpenAI
+    two-turn, Codex CLI, Claude HTTP, and Claude SDK proofs all assert the
+    same broker contract: credential capture, brokered request rewrite, one
+    `credential_ref` shared by `net_events`, `model_calls`, `tool_calls`,
+    `tool_responses`, and the created file event, exact
+    `substitution_events` verbs/metadata, and raw-secret absence from DB/log
+    output.
+  - Product fix: model tool-response rows now carry `credential_ref`; trace
+    credential hints are retained long enough for late fs-monitor events; file
+    security events preserve the same credential reference; and the Codex CLI
+    fixture explicitly configures its local provider to use `OPENAI_API_KEY`
+    so Codex exercises the same broker path as the SDK/API clients without
+    changing the shipped profile contract.
 - [x] S7: fix OpenAI parser/tool-response logging and dedup. Use fast BLAKE3
   hashes for model request/response/tool-call/tool-response identity, persist
   those hashes in the DB, and reload an in-memory hash map from session DB at
@@ -98,6 +111,19 @@ next one, and stage only the files for that slice.
     --no-run`; `just _materialize-config`; `uv run pytest
     tests/capsem-build-chain/test_profile_payload_contract.py
     tests/ironbank/test_agent_bootstrap.py -q`.
+  - Broker proof: `uv run ruff check
+    tests/ironbank/model_client_assertions.py
+    tests/ironbank/model_client_scripts.py tests/ironbank/model_ledger.py
+    tests/ironbank/test_model_client_ledger_contract.py`; `cargo test -p
+    capsem-logger tool_response -- --nocapture`; `cargo build -p
+    capsem-service -p capsem-process -p capsem-gateway`; `uv run pytest
+    tests/ironbank/test_model_client_ledger_contract.py::test_openai_responses_api_ledger_contract
+    tests/ironbank/test_model_client_ledger_contract.py::test_openai_two_tool_calls_have_exact_item_cardinality
+    tests/ironbank/test_model_client_ledger_contract.py::test_codex_cli_ledger_contract
+    tests/ironbank/test_model_client_ledger_contract.py::test_claude_http_api_ledger_contract
+    tests/ironbank/test_model_client_ledger_contract.py::test_claude_sdk_ledger_contract
+    -q -s --tb=short`; `cargo test -p capsem-core trace -- --nocapture`;
+    `cargo test -p capsem-core anthropic_tool -- --nocapture`.
 
 ## S0. Sprint Ledger and Release Hold
 

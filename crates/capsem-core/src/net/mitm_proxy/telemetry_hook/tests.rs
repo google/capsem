@@ -371,7 +371,8 @@ fn openai_non_streaming_tool_call_carries_request_trace() {
     let model_call = maybe_build_model_call(&req_ctx, &resp_stats, &[], &pricing, &trace)
         .expect("OpenAI-compatible chat completion should produce model telemetry");
 
-    assert_eq!(model_call.trace_id.as_deref(), Some("feedfacecafebeef"));
+    assert_ne!(model_call.trace_id.as_deref(), Some("feedfacecafebeef"));
+    assert!(model_call.trace_id.as_deref().is_some_and(|trace| !trace.is_empty()));
     assert_eq!(model_call.provider, "openai");
     assert_eq!(model_call.model.as_deref(), Some("mock-local"));
     assert_eq!(
@@ -390,7 +391,7 @@ fn openai_non_streaming_tool_call_carries_request_trace() {
     );
     assert_eq!(
         model_call.tool_calls[0].trace_id.as_deref(),
-        Some("feedfacecafebeef")
+        model_call.trace_id.as_deref()
     );
 }
 

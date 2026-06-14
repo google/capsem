@@ -124,6 +124,7 @@ fn sample_model_call(provider: &str) -> ModelCall {
             content_preview: Some("72F and sunny".to_string()),
             is_error: false,
             trace_id: None,
+            credential_ref: None,
         }],
     }
 }
@@ -252,6 +253,7 @@ async fn model_items_dedup_by_trace_kind_hash_and_call_id_across_restarts() {
         content_preview: Some("Process exited with code 0".to_string()),
         is_error: false,
         trace_id: None,
+        credential_ref: None,
     }];
 
     {
@@ -718,6 +720,7 @@ async fn model_call_many_tools() {
             content_preview: Some(format!("result {i}")),
             is_error: i == 3,
             trace_id: None,
+            credential_ref: None,
         })
         .collect();
     writer.write(WriteOp::ModelCall(call)).await;
@@ -1929,6 +1932,7 @@ async fn model_call_tool_data_roundtrip() {
         content_preview: Some("72F and sunny".to_string()),
         is_error: false,
         trace_id: None,
+        credential_ref: None,
     }];
 
     writer.write(WriteOp::ModelCall(call)).await;
@@ -3087,6 +3091,7 @@ async fn setup_dedup_scenario(writer: &DbWriter) {
         content_preview: Some("file1.txt\nfile2.txt".to_string()),
         is_error: false,
         trace_id: None,
+        credential_ref: None,
     }];
     writer.write(WriteOp::ModelCall(call2)).await;
 
@@ -3463,6 +3468,7 @@ async fn tool_responses_linked_by_call_id_not_model_call_id() {
         content_preview: Some("hi".to_string()),
         is_error: false,
         trace_id: None,
+        credential_ref: None,
     }];
     writer.write(WriteOp::ModelCall(call2)).await;
     drop(writer);
@@ -3566,6 +3572,7 @@ async fn tool_unified_only_native_calls() {
         content_preview: Some("# README\nContents here".to_string()),
         is_error: false,
         trace_id: None,
+        credential_ref: None,
     }];
     writer.write(WriteOp::ModelCall(call2)).await;
     drop(writer);

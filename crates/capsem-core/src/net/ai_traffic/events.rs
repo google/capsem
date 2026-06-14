@@ -339,6 +339,7 @@ pub fn parse_non_streaming_tool_calls(
     match kind {
         super::provider::ProviderKind::Google => google_non_streaming_tool_calls(&json),
         super::provider::ProviderKind::OpenAi => openai_non_streaming_tool_calls(&json),
+        super::provider::ProviderKind::Anthropic => anthropic_non_streaming_tool_calls(&json),
         _ => Vec::new(),
     }
 }
@@ -412,6 +413,44 @@ fn google_non_streaming_tool_calls(json: &serde_json::Value) -> Vec<ToolCall> {
                 arguments: args,
             });
         }
+    }
+    calls
+}
+
+fn anthropic_non_streaming_tool_calls(json: &serde_json::Value) -> Vec<ToolCall> {
+    let mut calls = Vec::new();
+    let Some(content) = json.get("content").and_then(|value| value.as_array()) else {
+        return calls;
+    };
+    for part in content {
+        if part.get("type").and_then(|value| value.as_str()) != Some("tool_use") {
+            continue;
+        }
+        let name = part
+            .get("name")
+            .and_then(|value| value.as_str())
+            .unwrap_or_default()
+            .to_string();
+        if name.is_empty() {
+            continue;
+        }
+        let index = calls.len() as u32;
+        let call_id = part
+            .get("id")
+            .and_then(|value| value.as_str())
+            .map(str::to_string)
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| format!("anthropic_{name}_{index}"));
+        let arguments = part
+            .get("input")
+            .map(|value| serde_json::to_string(value).unwrap_or_else(|_| "{}".to_string()))
+            .unwrap_or_else(|| "{}".to_string());
+        calls.push(ToolCall {
+            index,
+            call_id,
+            name,
+            arguments,
+        });
     }
     calls
 }

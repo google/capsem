@@ -44,6 +44,10 @@ pub struct TraceState {
     /// arguments to the trace_id that produced the tool call.
     file_hints: HashMap<String, String>,
     file_hint_order: VecDeque<(String, String)>,
+    /// Maps a trace_id to the brokered credential reference observed on
+    /// the model request that owns the trace.
+    trace_credentials: HashMap<String, String>,
+    trace_credential_order: VecDeque<(String, String)>,
 }
 
 const MAX_FILE_HINTS: usize = 4096;
@@ -60,6 +64,8 @@ impl TraceState {
             pending: HashMap::new(),
             file_hints: HashMap::new(),
             file_hint_order: VecDeque::new(),
+            trace_credentials: HashMap::new(),
+            trace_credential_order: VecDeque::new(),
         }
     }
 
@@ -105,6 +111,21 @@ impl TraceState {
         self.file_hints.get(&path).cloned()
     }
 
+    pub fn register_trace_credential(&mut self, trace_id: &str, credential_ref: Option<&str>) {
+        let Some(credential_ref) = credential_ref else {
+            return;
+        };
+        self.trace_credentials
+            .insert(trace_id.to_string(), credential_ref.to_string());
+        self.trace_credential_order
+            .push_back((trace_id.to_string(), credential_ref.to_string()));
+        self.trim_trace_credentials();
+    }
+
+    pub fn lookup_trace_credential(&self, trace_id: &str) -> Option<String> {
+        self.trace_credentials.get(trace_id).cloned()
+    }
+
     /// Remove all pending call_ids for a completed trace (called when
     /// stop_reason is not ToolUse, meaning the trace is done).
     pub fn complete_trace(&mut self, trace_id: &str) {
@@ -116,6 +137,16 @@ impl TraceState {
             if let Some((path, trace_id)) = self.file_hint_order.pop_front() {
                 if self.file_hints.get(&path) == Some(&trace_id) {
                     self.file_hints.remove(&path);
+                }
+            }
+        }
+    }
+
+    fn trim_trace_credentials(&mut self) {
+        while self.trace_credential_order.len() > MAX_FILE_HINTS {
+            if let Some((trace_id, credential_ref)) = self.trace_credential_order.pop_front() {
+                if self.trace_credentials.get(&trace_id) == Some(&credential_ref) {
+                    self.trace_credentials.remove(&trace_id);
                 }
             }
         }

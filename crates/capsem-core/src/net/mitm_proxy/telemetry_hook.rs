@@ -511,7 +511,7 @@ pub fn maybe_build_model_call(
             .collect();
     }
 
-    let tool_responses: Vec<ToolResponseEntry> = req_meta
+    let mut tool_responses: Vec<ToolResponseEntry> = req_meta
         .tool_results
         .iter()
         .map(|tr| ToolResponseEntry {
@@ -519,6 +519,7 @@ pub fn maybe_build_model_call(
             content_preview: Some(tr.content_preview.clone()),
             is_error: tr.is_error,
             trace_id: None,
+            credential_ref: req_ctx.credential_ref.clone(),
         })
         .collect();
 
@@ -578,9 +579,14 @@ pub fn maybe_build_model_call(
     let tool_call_ids: Vec<String> = tool_calls.iter().map(|tc| tc.call_id.clone()).collect();
     let trace_id = {
         let mut state = trace_state.lock().unwrap_or_else(|e| e.into_inner());
-        let tid = state
-            .lookup(&tool_response_ids)
-            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+        let tid = state.lookup(&tool_response_ids).unwrap_or_else(|| {
+            if tool_call_ids.is_empty() {
+                crate::telemetry::ambient_capsem_trace_id()
+                    .unwrap_or_else(|| uuid::Uuid::new_v4().to_string())
+            } else {
+                uuid::Uuid::new_v4().to_string()
+            }
+        });
         let is_tool_use = !tool_call_ids.is_empty()
             || stop_reason_str
                 .as_deref()
@@ -597,8 +603,22 @@ pub fn maybe_build_model_call(
         } else if !is_tool_use {
             state.complete_trace(&tid);
         }
+        state.register_trace_credential(&tid, req_ctx.credential_ref.as_deref());
         tid
     };
+    for tool_call in &mut tool_calls {
+        if tool_call.trace_id.is_none() {
+            tool_call.trace_id = Some(trace_id.clone());
+        }
+    }
+    for tool_response in &mut tool_responses {
+        if tool_response.trace_id.is_none() {
+            tool_response.trace_id = Some(trace_id.clone());
+        }
+        if tool_response.credential_ref.is_none() {
+            tool_response.credential_ref = req_ctx.credential_ref.clone();
+        }
+    }
 
     let request_body_preview = if req_body_bytes.is_empty() {
         None

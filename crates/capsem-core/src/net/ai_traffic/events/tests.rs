@@ -418,6 +418,44 @@ fn non_streaming_anthropic_usage() {
 }
 
 #[test]
+fn non_streaming_anthropic_tool_calls() {
+    let body = br#"{
+        "id": "msg_ironbank_tool_01",
+        "type": "message",
+        "role": "assistant",
+        "model": "claude-sonnet-4-20250514",
+        "content": [
+            {
+                "type": "tool_use",
+                "id": "toolu_capsem_write_poem",
+                "name": "exec_command",
+                "input": {
+                    "cmd": "printf '%s\\n' abc123 > /root/poem.txt",
+                    "yield_time_ms": 1000,
+                    "max_output_tokens": 2000
+                }
+            }
+        ],
+        "stop_reason": "tool_use",
+        "usage": {
+            "input_tokens": 31,
+            "output_tokens": 17
+        }
+    }"#;
+
+    let calls = parse_non_streaming_tool_calls(ProviderKind::Anthropic, body);
+
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].index, 0);
+    assert_eq!(calls[0].call_id, "toolu_capsem_write_poem");
+    assert_eq!(calls[0].name, "exec_command");
+    assert_eq!(
+        calls[0].arguments,
+        r#"{"cmd":"printf '%s\\n' abc123 > /root/poem.txt","max_output_tokens":2000,"yield_time_ms":1000}"#
+    );
+}
+
+#[test]
 fn non_streaming_openai_usage() {
     let body = br#"{
         "model": "gpt-4o",

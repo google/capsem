@@ -106,7 +106,8 @@ pub const CREATE_SCHEMA: &str = "
         call_id TEXT NOT NULL,
         content_preview TEXT,
         is_error INTEGER DEFAULT 0,
-        trace_id TEXT
+        trace_id TEXT,
+        credential_ref TEXT CHECK (credential_ref IS NULL OR (length(credential_ref) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f]*'))
     );
 
     CREATE INDEX IF NOT EXISTS idx_net_events_domain
@@ -664,6 +665,7 @@ pub fn migrate(conn: &Connection) {
         "mcp_calls",
         "fs_events",
         "exec_events",
+        "tool_responses",
         "dns_events",
         "audit_events",
     ] {
@@ -998,6 +1000,8 @@ mod tests {
             "exec_events",
             "dns_events",
             "audit_events",
+            "tool_calls",
+            "tool_responses",
         ] {
             let mut stmt = conn
                 .prepare(&format!("PRAGMA table_info({table})"))

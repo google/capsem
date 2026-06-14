@@ -120,6 +120,12 @@ prove the same rails without user credentials.
   `function_call_output`, and Ironbank reconciles the exact HTTP bodies with
   `model_calls`, `tool_calls`, `fs_events`, `net_events`, and
   `security_rule_events` by trace id.
+- Ironbank broker proof on 2026-06-14: OpenAI API, OpenAI two-turn, Codex CLI,
+  Claude HTTP, and Claude SDK now share one model-client harness contract for
+  credentials. Each proof requires captured and brokered substitution rows,
+  one `credential_ref` across HTTP/model/tool-call/tool-response/file rows, and
+  raw-secret absence from DB/log output; tool-response and late file events now
+  preserve trace credential attribution.
 - Ironbank/HTTP progress on 2026-06-14: `tests/ironbank/test_http_protocol_ledger.py`
   adds the first plain-JSON HTTP full-chain proof through a real VM, real
   service, real gateway, and shared mock server. RED exposed that active

@@ -23,7 +23,6 @@ from helpers.mock_server import MOCK_SERVER_BINARY, start_mock_server, stop_proc
 from helpers.service import ServiceInstance, wait_exec_ready, vm_name
 from ironbank.model_client_assertions import assert_one_model_client
 from ironbank.model_client_scripts import (
-    CODEX_TEST_API_KEY,
     agy_cli_script,
     claude_api_script,
     claude_sdk_script,
@@ -50,6 +49,32 @@ def _eventually(query, predicate, *, timeout_s: float = 10.0, interval_s: float 
     last = query()
     assert predicate(last), last
     return last
+
+
+def _credential_ref(value: object) -> str:
+    import re
+
+    assert isinstance(value, str)
+    assert re.fullmatch(r"credential:blake3:[0-9a-f]{64}", value), value
+    return value
+
+
+def _assert_raw_absent_from_db(conn, raw_secret: str) -> None:
+    tables = [
+        row[0]
+        for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name"
+        ).fetchall()
+    ]
+    for table in tables:
+        columns = conn.execute(f"PRAGMA table_info({table})").fetchall()
+        text_columns = [row[1] for row in columns if str(row[2]).upper() in {"TEXT", ""}]
+        if not text_columns:
+            continue
+        selected = ", ".join(f'"{column}"' for column in text_columns)
+        for row in conn.execute(f'SELECT {selected} FROM "{table}"').fetchall():
+            for column, value in zip(text_columns, row, strict=True):
+                assert raw_secret not in str(value), f"raw secret leaked in {table}.{column}"
 
 
 @dataclass
@@ -197,6 +222,7 @@ def test_openai_two_tool_calls_have_exact_item_cardinality(
     assert all(item["file_matches"] for item in result["results"]), result
     assert len({item["call_id"] for item in result["results"]}) == 2, result
     assert len({item["filename"] for item in result["results"]}) == 2, result
+    raw_secret = "sk-" + result["credential_nonce"]
 
     import sqlite3
 
@@ -287,6 +313,38 @@ def test_openai_two_tool_calls_have_exact_item_cardinality(
         assert all(row["decision"] == "allowed" for row in net_rows)
         assert all(row["bytes_sent"] > 0 for row in net_rows)
         assert all(row["bytes_received"] > 0 for row in net_rows)
+        credential_refs = {_credential_ref(row["credential_ref"]) for row in net_rows}
+        assert len(credential_refs) == 1, [dict(row) for row in net_rows]
+        credential_ref = next(iter(credential_refs))
+        assert {row["credential_ref"] for row in model_calls} == {credential_ref}, [
+            dict(row) for row in model_calls
+        ]
+        assert {row["credential_ref"] for row in tool_calls} == {credential_ref}, [
+            dict(row) for row in tool_calls
+        ]
+        assert {row["credential_ref"] for row in tool_responses} == {credential_ref}, [
+            dict(row) for row in tool_responses
+        ]
+        substitution_rows = conn.execute(
+            """
+            SELECT *
+            FROM substitution_events
+            WHERE substitution_ref = ?
+            ORDER BY id
+            """,
+            (credential_ref,),
+        ).fetchall()
+        assert substitution_rows, credential_ref
+        assert {"captured", "brokered"} <= {row["outcome"] for row in substitution_rows}, [
+            dict(row) for row in substitution_rows
+        ]
+        assert all(row["provider"] == "openai" for row in substitution_rows)
+        assert all(row["algorithm"] == "blake3" for row in substitution_rows)
+        assert all(row["material_class"] == "credential" for row in substitution_rows)
+        assert "http.header.authorization" in {
+            row["source"] for row in substitution_rows if row["outcome"] == "captured"
+        }
+        _assert_raw_absent_from_db(conn, raw_secret)
 
         dns_rows = conn.execute(
             """
@@ -370,6 +428,7 @@ def test_openai_two_tool_calls_have_exact_item_cardinality(
             assert len(created) == 1, [dict(row) for row in file_rows]
             assert created[0]["size"] == len((expected["nonce"] + "\n").encode())
             assert created[0]["directory"] == ".", dict(created[0])
+            assert created[0]["credential_ref"] == credential_ref, dict(created[0])
             file_event_ids.append(created[0]["event_id"])
 
         event_ids = [row["event_id"] for row in [*model_calls, *net_rows, dns]]
@@ -402,13 +461,17 @@ def test_openai_two_tool_calls_have_exact_item_cardinality(
         )
         assert all(json.loads(row["event_json"]) for row in rule_rows)
         assert all(json.loads(row["rule_json"]) for row in rule_rows)
+    for log_path in model_client_env.log_paths:
+        if log_path.exists():
+            assert raw_secret not in log_path.read_text(
+                encoding="utf-8", errors="replace"
+            ), f"raw secret leaked in {log_path}"
 
 
 def test_codex_cli_ledger_contract(model_client_env: ModelClientEnv):
     assert_one_model_client(
         model_client_env,
         codex_cli_script(model_client_env.mock_base_url),
-        expected_imported_text=CODEX_TEST_API_KEY,
     )
 
 
@@ -416,7 +479,6 @@ def test_claude_http_api_ledger_contract(model_client_env: ModelClientEnv):
     assert_one_model_client(
         model_client_env,
         claude_api_script(model_client_env.mock_base_url),
-        raw_secrets=("capsem_claude_api_key_0123456789abcdef",),
     )
 
 
@@ -424,7 +486,6 @@ def test_claude_sdk_ledger_contract(model_client_env: ModelClientEnv):
     assert_one_model_client(
         model_client_env,
         claude_sdk_script(model_client_env.mock_base_url),
-        raw_secrets=("capsem_claude_sdk_key_0123456789abcdef",),
     )
 
 

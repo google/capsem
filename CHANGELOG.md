@@ -9,10 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (route surfaces and diagnostics)
 - Refactored the Ironbank model-client proof into composable script-builder
-  and ledger-assertion helpers, and clarified the Codex CLI fixture so its
-  OpenAI API key is the explicit non-secret marker `this_is_not_a_real_key`
-  that may appear in truthful file-import forensic rows. Broker secret-leak
-  assertions remain in broker/credential-focused tests.
+  and ledger-assertion helpers, and made the Codex CLI fixture use the same
+  brokered OpenAI credential path as the SDK/API clients instead of a
+  non-secret marker shortcut.
+- Tightened the shared Ironbank AI-client harness so every credentialed model
+  client proof must show broker capture, brokered request rewrite, one shared
+  `credential_ref` across HTTP/model/tool-call/tool-response/file rows, exact
+  substitution ledger verbs, and raw-secret absence from DB/log output. The
+  OpenAI API, OpenAI two-turn, Codex CLI, Claude HTTP, and Claude SDK proofs
+  now all run through that same broker contract.
 - Tightened the OpenAI-compatible Ironbank double-turn ledger so repeated
   model history is deduplicated by persisted BLAKE3 item hashes, model tool
   calls register workspace file-path trace hints, and subsequent fs-monitor

@@ -568,6 +568,8 @@ pub struct ToolResponseEntry {
     pub is_error: bool,
     #[serde(default)]
     pub trace_id: Option<String>,
+    #[serde(default)]
+    pub credential_ref: Option<String>,
 }
 
 /// A single MCP tool call event (one row per tools/call or tools/list request).

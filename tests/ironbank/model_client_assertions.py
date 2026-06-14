@@ -46,6 +46,7 @@ def assert_one_model_client(
 ) -> None:
     result = env.run_python(script)
     assert result["file_matches"] is True, result
+    derived_raw_secrets = raw_secrets or _derive_model_client_raw_secrets(result)
     spec = ModelLedgerSpec(
         input=result["input"],
         reasoning=result["reasoning"],
@@ -62,8 +63,17 @@ def assert_one_model_client(
         db_path=env.db_path,
         upstream_transcript_path=env.upstream_transcript_path,
         log_paths=env.log_paths,
-        raw_secrets=raw_secrets,
+        raw_secrets=derived_raw_secrets,
     )
     assert_model_ledger_exchange(spec, run)
     if expected_imported_text is not None:
         assert_imported_script_contains(env, expected_imported_text)
+
+
+def _derive_model_client_raw_secrets(result: dict) -> tuple[str, ...]:
+    provider = result["provider"]
+    if provider == "openai":
+        return ("sk-" + result["nonce"],)
+    if provider == "anthropic":
+        return ("sk-ant-" + result["nonce"],)
+    return ()

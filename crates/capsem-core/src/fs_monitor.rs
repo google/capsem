@@ -299,8 +299,19 @@ impl FsMonitor {
             None
         };
         let rules = security_rules.read().unwrap().clone();
-        let credential_ref =
-            Self::broker_env_file_credentials(db, &rules, path, fs_path, action).await;
+        let (trace_id, trace_credential_ref) = {
+            let state = trace_state.lock().unwrap_or_else(|e| e.into_inner());
+            let trace_id = state
+                .lookup_file_path(path)
+                .or_else(crate::telemetry::ambient_capsem_trace_id);
+            let trace_credential_ref = trace_id
+                .as_deref()
+                .and_then(|trace_id| state.lookup_trace_credential(trace_id));
+            (trace_id, trace_credential_ref)
+        };
+        let credential_ref = Self::broker_env_file_credentials(db, &rules, path, fs_path, action)
+            .await
+            .or(trace_credential_ref);
         crate::security_engine::emit_file_security_write_and_rules(
             db,
             &rules,
@@ -310,11 +321,7 @@ impl FsMonitor {
                 action,
                 path: path.to_string(),
                 size,
-                trace_id: trace_state
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .lookup_file_path(path)
-                    .or_else(crate::telemetry::ambient_capsem_trace_id),
+                trace_id,
                 credential_ref,
             },
         )
@@ -729,6 +736,10 @@ match = 'file.create.path == "openai-two.txt"'
             "trace-model",
             [r#"{"cmd":"printf x > /root/openai-two.txt"}"#],
         );
+        trace_state.lock().unwrap().register_trace_credential(
+            "trace-model",
+            Some("credential:blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+        );
 
         FsMonitor::emit(
             &db,
@@ -742,23 +753,28 @@ match = 'file.create.path == "openai-two.txt"'
         db.shutdown_blocking();
 
         let conn = rusqlite::Connection::open(&db_path).unwrap();
-        let trace_id: String = conn
+        let (trace_id, credential_ref): (String, String) = conn
             .query_row(
-                "SELECT trace_id FROM fs_events WHERE path = 'openai-two.txt'",
+                "SELECT trace_id, credential_ref FROM fs_events WHERE path = 'openai-two.txt'",
                 [],
-                |row| row.get(0),
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .unwrap();
-        let rule_trace_id: String = conn
+        let (rule_trace_id, event_credential_ref): (String, String) = conn
             .query_row(
-                "SELECT trace_id FROM security_rule_events
+                "SELECT trace_id, json_extract(event_json, '$.credential_ref') FROM security_rule_events
                  WHERE event_id = (SELECT event_id FROM fs_events WHERE path = 'openai-two.txt')",
                 [],
-                |row| row.get(0),
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .unwrap();
         assert_eq!(trace_id, "trace-model");
         assert_eq!(rule_trace_id, "trace-model");
+        assert_eq!(
+            credential_ref,
+            "credential:blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        );
+        assert_eq!(event_credential_ref, credential_ref);
     }
 
     #[tokio::test]
